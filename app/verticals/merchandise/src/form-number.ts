@@ -1,9 +1,13 @@
+import { QUANTITY_DECIMAL_PLACES } from '../shared/domain/order-quantity.ts';
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
+/** Stock quantities retain every supported decimal digit in their inputs and ledger. */
+export const QUANTITY_FORMAT: Intl.NumberFormatOptions = { maximumFractionDigits: QUANTITY_DECIMAL_PLACES };
+
 /**
- * Whole-number inputs (quantities, thresholds, percent). The format allows decimals on purpose: with
+ * Whole-number inputs (thresholds, percent). The format allows decimals on purpose: with
  * `maximumFractionDigits: 0` the kit drops the cs-CZ decimal comma, so "2,5" silently becomes 25. Here "2,5"
  * reads as 2.5 and the field's whole-number check refuses it. Pair it with a string `value` (the text as typed)
  * and keep the number from `valueAsNumber`: a numeric value is re-formatted on every keystroke, which eats a

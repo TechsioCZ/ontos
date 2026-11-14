@@ -277,6 +277,7 @@
           "deactivateConfirm": "Deaktivovat ({{total}})"
         },
         "category": {
+          "missing": "Vybraná kategorie už neexistuje. Vyberte jinou kategorii.",
           "field": "Nová kategorie",
           "title": "Změnit kategorii"
         },
@@ -415,6 +416,11 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
+          "tierBasePriceRequired": "Množstevní ceny nelze přepočítat: chybí původní cena nebo platná sazba DPH. Zkontrolujte klasifikaci DPH produktu a uložte cenu znovu.",
+          "categorySlugTaken": "Tuto adresu v e-shopu už používá jiná kategorie. Zvolte jinou adresu.",
+          "variantSkuRequired": "Automatické SKU varianty je příliš dlouhé. Zadejte vlastní SKU varianty o délce nejvýše 64 znaků.",
+          "variantBulkPriceUnsupported": "Hromadnou cenu nelze změnit u produktů s prodejními variantami. Vyberte pouze produkty bez variant, nebo změňte cenu každé varianty v detailu produktu.",
+          "stockReconciliationRequired": "Před přidáním první prodejní varianty vyrovnejte zásobu produktu. Před odebráním varianty vyrovnejte její zásobu skladovým pohybem.",
           "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
           "saving": "Ukládám změny…",
           "updated": "Produkt uložen",
@@ -439,6 +445,7 @@
           "tab": "Historie cen"
         },
         "priceDialog": {
+          "variantProducts": "Hromadnou změnu ceny nelze použít pro produkty s prodejními variantami: {{names}}. Zrušte jejich výběr, nebo změňte ceny variant v detailu produktu.",
           "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
@@ -447,6 +454,7 @@
         },
         "receipt": {
           "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
+          "productFailed": "Produkt se nepodařilo načíst. Zkuste to znovu.",
           "submit": "Zaznamenat příjem",
           "title": "Příjem zboží"
         },
@@ -502,11 +510,11 @@
         },
         "title": "Produkty a sklad",
         "validation": {
-          "delta": "Zadejte celé číslo různé od nuly.",
+          "delta": "Zadejte nenulové množství od −1 000 000 do 1 000 000, nejvýše se 6 desetinnými místy.",
           "lowStock": "Zadejte celé číslo 0 nebo větší.",
           "percent": "Zadejte nenulové celé číslo od −90 do 1000.",
           "positive": "Zadejte částku větší než 0 Kč.",
-          "quantity": "Zadejte celé číslo větší než 0.",
+          "quantity": "Zadejte množství větší než 0 a nejvýše 1 000 000, nejvýše se 6 desetinnými místy.",
           "required": "Vyplňte toto pole.",
           "skuTaken": "Produkt s tímto SKU už existuje.",
           "stock": "Množství převyšuje zásobu na skladě.",
@@ -588,6 +596,7 @@
       "scheduled": "Od {{date}} {{rate}}"
     },
     "ui": {
+      "variantTiersRescaled": "Po uložení nové ceny se množstevní ceny přepočítají ve stejném poměru.",
       "offeredPriceChanged": "Cena přidaného zboží se mezitím změnila, nic se neuložilo. Řádky teď nesou aktuální cenu — {{lines}}. Zkontrolujte ji a uložte znovu.",
       "offeredPriceUnreadable": "Cena přidaného zboží se mezitím změnila a novou cenu se nepodařilo načíst. Řádek odeberte a přidejte znovu. Týká se: {{lines}}.",
       "storefrontBadge": "E-shop",

@@ -148,7 +148,7 @@ const MONTHS = [
 export const monthLabel = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1] ?? month} ${month.slice(0, 4)}`;
 
 /** Known domain refusals in Czech; anything else falls back to the generic feedback text. */
-export const reasonText = {
+const reasonText = {
   budget_line_already_exists: 'Rozpočtová položka pro tento měsíc, typ, kategorii a objekt už existuje.',
   confirm_requires_prepared:
     'Doklad nelze schválit, dokud není ve stavu „Připraveno ke schválení“. Nejdřív zvolte „Připravit ke schválení“.',
@@ -164,8 +164,16 @@ export const reasonText = {
   incoming_invoice_already_recorded: 'Faktura s tímto číslem od stejného dodavatele už je zaevidovaná.',
   invalid_invoice_anchors_or_dates: 'Splatnost nesmí být dřív než datum vystavení.',
   invalid_line_discount: 'Sleva musí být 1–100 % nebo částka nejvýše do výše položky a musí mít důvod.',
+  manual_counterparty_requires_received_invoice:
+    'Ručně zapsaného dodavatele lze použít jen u přijaté faktury s vyplněným názvem dodavatele. Vlastní fakturu vystavte odběrateli z evidence.',
   payment_exceeds_remaining_amount: 'Úhrada je vyšší než zbývající částka faktury.',
   payment_requires_confirmed_invoice: 'Úhradu lze zaznamenat jen u potvrzené faktury.',
+  pohoda_document_number_too_long:
+    'POHODA přijme číslo dokladu nejvýše o 32 znacích. Číslo zkraťte nebo doklad předejte ve formátu CSV či JSON.',
+  pohoda_text_has_forbidden_character:
+    'Text dokladu obsahuje neviditelný řídicí znak, který soubor POHODA neunese. Opravte text dokladu a balíček vytvořte znovu.',
+  pohoda_vat_rate_unsupported:
+    'Doklad obsahuje sazbu DPH, kterou POHODA nezná (podporuje 0, 10, 12 a 21 %). Předejte ho ve formátu CSV či JSON.',
   prepare_requires_draft: 'Ke schválení lze připravit jen návrhy.',
   price_list_item_already_exists: 'Aktivní položka ceníku se stejným názvem už existuje.',
   prior_settlement_exceeds_paid_amount: 'Částka přesahuje uhrazenou a dosud nezohledněnou část dřívějšího dokladu.',
@@ -178,8 +186,23 @@ export const reasonText = {
   recurring_period_already_generated: 'Pro toto období už faktura z této šablony existuje.',
   recurring_template_inactive: 'Šablona je pozastavená.',
   reminder_requires_open_invoice: 'Upomínku lze připravit jen k neuhrazené potvrzené faktuře.',
+  supplier_document_number_required: 'U přijaté faktury vyplňte číslo dokladu dodavatele.',
   unit_property_mismatch: 'Vybraná jednotka nepatří k vybrané nemovitosti.',
 } satisfies Readonly<Record<string, string>>;
+
+/**
+ * The Czech explanation of a known refusal. A `code: detail` reason names what to correct (e.g. the document
+ * number of the affected invoice); that detail is kept after the explanation.
+ */
+export const knownReasonText = (reason: string | undefined): string | undefined => {
+  const known = Object.entries(reasonText).find(([key]) => reason?.includes(key) === true);
+  if (reason === undefined || known === undefined) {
+    return undefined;
+  }
+  const [key, explanation] = known;
+  const prefix = `${key}: `;
+  return reason.startsWith(prefix) ? `${explanation} (${reason.slice(prefix.length)})` : explanation;
+};
 
 export const outcomeMessage = (
   vm: FinanceViewModel,
@@ -190,8 +213,7 @@ export const outcomeMessage = (
   if (vatIssue !== undefined) {
     return vm.t(`finance-billing.vat.rejected.${vatIssue}`);
   }
-  const known = Object.entries(reasonText).find(([key]) => outcome.reason?.includes(key) === true);
-  return known?.[1] ?? vm.t(`finance-billing.demo.feedback.${outcome.feedback}`);
+  return knownReasonText(outcome.reason) ?? vm.t(`finance-billing.demo.feedback.${outcome.feedback}`);
 };
 
 /** A command outcome as a panel shows it; `default` is neutral information, `error` a refusal or failure. */

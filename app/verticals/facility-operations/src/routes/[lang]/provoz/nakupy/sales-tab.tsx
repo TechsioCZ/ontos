@@ -1,8 +1,9 @@
 import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { SalesInvoicePreparationDenied } from './sales-invoice-preparation-denied.ts';
+import { SalesInvoiceVatUnresolved } from './sales-invoice-vat-unresolved.ts';
 import { SalesInvoiceSnapshotMissing } from './sales-invoice-snapshot-missing.ts';
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
-import { optionalField } from '../../../../../shared/domain/common.ts';
+import { IsoDateSchema, optionalField } from '../../../../../shared/domain/common.ts';
 // S06 prodej: nabídky zákazníkům → prodejní objednávky → dodání → vystavená faktura (návrh ve Financích).
 // The customer is a party-registry counterparty; the invoice is created by Finance from a snapshot of the order lines
 // and counterparty (CreateInvoiceDraft), so a later quote edit never changes an issued invoice.
@@ -28,9 +29,9 @@ import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Predicate, Random, Result, Schema } from 'effect';
+import { Effect, Option, Predicate, Random, Result, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
-import { salesRemainder } from '../../../../../shared/commands/sales.ts';
+import { canInvoiceSalesOrder, salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type {
   PurchasingState,
   SalesCustomer,
@@ -41,7 +42,9 @@ import type {
 import { salesTotals } from '../../../../../shared/domain/purchasing.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
-import { readFinance } from '../../../../ui/finance-reads.ts';
+import { readFinance, readFinanceVatChoices } from '../../../../ui/finance-reads.ts';
+import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';
+import { salesLineVat } from './invoice-vat.ts';
 import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { quoteDraftOf } from './sales-quote-draft.ts';
@@ -912,14 +915,52 @@ export const SalesQuotePanel = ({
 
 /** Creates the issued invoice draft in Finance from a snapshot of the order, then links it back to the order. */
 const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSalesInvoice')(
-  function* prepareSalesInvoice(order: SalesOrder, issueDate: string, dueDate: string) {
-    const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
-    const idempotencyKey = `sales-invoice:${order.id}:${parts.join(':')}`;
+  function* prepareSalesInvoice(input: IssueSalesInvoiceInput) {
+    const { dueDate, issueDate, order, pending } = input;
+    if (!canInvoiceSalesOrder(order)) {
+      return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
+    }
     const snapshot = yield* readFinance('facility-operations.sales-invoice.read');
     if (!snapshot.canWrite) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
     }
+    const retained = pending.get(order.id);
+    if (retained !== undefined) {
+      const current = snapshot.state.invoices.find(
+        (invoice) =>
+          invoice.ref.resourceId === retained.ref.resourceId &&
+          invoice.documentNumber === retained.documentNumber &&
+          invoice.counterpartyRef.resourceId === order.customer.counterpartyId &&
+          invoice.totalMinor === retained.totalMinor &&
+          invoice.direction === 'OUTGOING' &&
+          invoice.businessState !== 'VOIDED',
+      );
+      if (current === undefined) {
+        return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
+      }
+      return yield* Effect.succeed(current);
+    }
+    const choices = yield* readFinanceVatChoices(issueDate);
+    const lines = yield* Effect.forEach(
+      order.lines,
+      (line) =>
+        salesLineVat({ choices, issueDate, vatRate: line.vatRate }).pipe(
+          Option.match({
+            onNone: () => Effect.fail(new SalesInvoiceVatUnresolved({ orderId: order.id })),
+            onSome: (vat) =>
+              Effect.succeed({
+                description: line.description,
+                quantity: line.quantity,
+                unitPriceMinor: line.unitPriceMinor,
+                ...vat,
+              }),
+          }),
+        ),
+      { concurrency: 1 },
+    );
     const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
+    const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
+    const idempotencyKey = `sales-invoice:${order.id}:${parts.join(':')}`;
     const quoteSuffix = order.quoteNumber === undefined ? '' : ` (nabídka ${order.quoteNumber})`;
     const result = yield* applyFinanceCommand(
       {
@@ -936,12 +977,7 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
           documentNumber: `${order.number}-F${order.invoices.length + 1}`,
           dueDate,
           issueDate,
-          lines: order.lines.map((line) => ({
-            description: line.description,
-            quantity: line.quantity,
-            unitPriceMinor: line.unitPriceMinor,
-            vatRate: line.vatRate,
-          })),
+          lines,
           note: `Vystaveno z prodejní objednávky ${order.number}${quoteSuffix}.`,
           ...optionalField('partyId', order.customer.partyId),
           totalMinor: Math.max(1, salesTotals(order.lines).totalMinor),
@@ -955,7 +991,8 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
     if (Predicate.isTagged(result, 'ActionProposalAccepted') || result.invoice === undefined) {
       return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
     }
-    return result.invoice;
+    pending.set(order.id, result.invoice);
+    return yield* Effect.succeed(result.invoice);
   },
 );
 
@@ -965,37 +1002,48 @@ interface InvoiceIssueOutcome {
     | Extract<Effect.Success<ReturnType<RunCommand>>, { readonly ok: false }>;
   readonly number?: string;
   readonly ok: boolean;
+  readonly reason?: 'link' | 'vat';
 }
-const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIssueOutcome => ({
-  ok: false,
-  ...optionalField('failure', failure),
-});
+const isVatUnresolved = Schema.is(SalesInvoiceVatUnresolved);
+const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIssueOutcome => {
+  if (failure === undefined) {
+    return { ok: false };
+  }
+  if (isVatUnresolved(failure)) {
+    return { failure, ok: false, reason: 'vat' };
+  }
+  return { failure, ok: false };
+};
 
-interface IssueSalesInvoiceInput {
+/**
+ * Invoices Finance created for an order whose link back to the order has not gone through yet. The page keeps them,
+ * so the next Uložit links the same invoice even after the order panel was closed or reloaded.
+ */
+export interface RetainedSalesInvoices {
+  readonly get: (orderId: string) => FinanceInvoiceView | undefined;
+  readonly set: (orderId: string, invoice: FinanceInvoiceView) => void;
+}
+
+const SalesInvoiceDatesSchema = Schema.Struct({ dueDate: IsoDateSchema, issueDate: IsoDateSchema });
+type SalesInvoiceDates = typeof SalesInvoiceDatesSchema.Type;
+
+interface IssueSalesInvoiceInput extends SalesInvoiceDates {
   readonly busy: { current: boolean };
+  readonly order: SalesOrder;
+  readonly pending: RetainedSalesInvoices;
   readonly run: RunCommand;
 }
-const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueSalesInvoice')(
-  function* issueAndLinkSalesInvoice(
-    input: IssueSalesInvoiceInput,
-    order: SalesOrder,
-    issueDate: string,
-    dueDate: string,
-  ) {
-    const { busy, run } = input;
-    if (busy.current) {
-      return invoiceNotCreated();
-    }
-    busy.current = true;
-    const created = yield* prepareSalesInvoice(order, issueDate, dueDate).pipe(
+const linkPreparedInvoice = Effect.fn('FacilityOperations.Purchasing.linkPreparedInvoice')(
+  function* linkPreparedInvoice(input: IssueSalesInvoiceInput) {
+    const { order, run } = input;
+    const created = yield* prepareSalesInvoice(input).pipe(
       Effect.match({
         onFailure: (failure) => ({ failure, ok: false as const }),
         onSuccess: (invoice) => ({ invoice, ok: true as const }),
       }),
     );
     if (!created.ok) {
-      busy.current = false;
-      return invoiceNotCreated(created.failure);
+      return yield* Effect.succeed(invoiceNotCreated(created.failure));
     }
     const { invoice } = created;
     const number = invoice.number ?? invoice.documentNumber;
@@ -1006,15 +1054,33 @@ const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueSalesInv
       orderId: order.id,
       totalMinor: invoice.totalMinor,
     });
-    busy.current = false;
-    return linked.ok ? { number, ok: true as const } : { failure: linked, number, ok: false as const };
+    if (!linked.ok) {
+      return yield* Effect.succeed({ failure: linked, number, ok: false as const, reason: 'link' as const });
+    }
+    return yield* Effect.succeed({ number, ok: true as const });
   },
 );
 
-const useIssueInvoice = (run: RunCommand) => {
+export const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueSalesInvoice')(
+  function* issueSalesInvoice(input: IssueSalesInvoiceInput) {
+    if (input.busy.current) {
+      return yield* Effect.succeed(invoiceNotCreated());
+    }
+    input.busy.current = true;
+    return yield* linkPreparedInvoice(input).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          input.busy.current = false;
+        }),
+      ),
+    );
+  },
+);
+
+const useIssueInvoice = (run: RunCommand, pending: RetainedSalesInvoices) => {
   const busy = useRef(false);
   return (order: SalesOrder, issueDate: string, dueDate: string) =>
-    issueSalesInvoice({ busy, run }, order, issueDate, dueDate);
+    issueSalesInvoice({ busy, dueDate, issueDate, order, pending, run });
 };
 
 const OrderActionSchema = Schema.Literals(['deliver', 'close', 'invoice']);
@@ -1158,9 +1224,51 @@ const salesOrderCapabilities = (
       order.deliveries.length === 0,
     deliverable: (order.status === 'ordered' || order.status === 'partially_delivered') && remainingCount > 0,
     hasRemaining: remainingCount > 0 && persisted,
+    // An order is invoiced in full once; where the action was, the person reads which invoice already covers it.
+    invoiced: canWrite && financeWritable && persisted && order.invoices.length > 0,
     invoiceReadOnly: canWrite && financeReadOnly && persisted,
-    invoiceWritable: canWrite && financeWritable && persisted,
+    invoiceWritable: canWrite && financeWritable && canInvoiceSalesOrder(order),
   };
+};
+
+/** The number of an invoice Finance already created for `order` whose link back to it failed, if there is one. */
+const retainedInvoiceNumber = (order: SalesOrder, pending: RetainedSalesInvoices): string | undefined => {
+  const retained = order.invoices.length === 0 ? pending.get(order.id) : undefined;
+  return retained === undefined ? undefined : (retained.number ?? retained.documentNumber);
+};
+
+/** Where the invoice action is, or was: an invoice still waiting for its link, the invoice that covers the order. */
+const SalesInvoiceNotices = ({
+  capabilities,
+  formOpen,
+  order,
+  retainedNumber,
+}: {
+  readonly capabilities: ReturnType<typeof salesOrderCapabilities>;
+  readonly formOpen: boolean;
+  readonly order: SalesOrder;
+  readonly retainedNumber: string | undefined;
+}) => {
+  const k = usePurchasingT();
+  return (
+    <>
+      {retainedNumber !== undefined && !formOpen && (
+        <StatusText showIcon status="warning">
+          {k('sales.invoicePendingLink', { number: retainedNumber })}
+        </StatusText>
+      )}
+      {capabilities.invoiced && (
+        <p className="text-fg-secondary text-xs">
+          {k('sales.invoiceAlreadyLinked', { numbers: order.invoices.map((entry) => entry.number).join(', ') })}
+        </p>
+      )}
+      {capabilities.invoiceReadOnly && (
+        <p className="text-fg-secondary text-xs" data-testid="sales-invoice-readonly">
+          Fakturu k této objednávce vystaví účetní nebo vedení ve Financích. Vaše role má ve Financích jen čtení.
+        </p>
+      )}
+    </>
+  );
 };
 
 export const SalesOrderPanel = ({
@@ -1168,6 +1276,7 @@ export const SalesOrderPanel = ({
   onClose,
   onOpenQuote,
   orderId,
+  pendingInvoices,
   run,
   state,
 }: {
@@ -1175,13 +1284,14 @@ export const SalesOrderPanel = ({
   readonly onClose: () => void;
   readonly onOpenQuote: (id: string) => void;
   readonly orderId: string;
+  readonly pendingInvoices: RetainedSalesInvoices;
   readonly run: RunCommand;
   readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { language, t } = useModernI18n();
   const toast = useToast();
-  const issueInvoice = useIssueInvoice(run);
+  const issueInvoice = useIssueInvoice(run, pendingInvoices);
   // Finance decides who may create invoice drafts; read-only Finance roles get no invoice action at all.
   const finance = useIncomingInvoiceLinks();
   const [busy, setBusy] = useState(false);
@@ -1197,6 +1307,7 @@ export const SalesOrderPanel = ({
   const done = (command: Parameters<RunCommand>[0], success: string) =>
     submitSalesOrderCommand({ k, run, setAction, setBusy, setError, t, toast }, command, success);
   const capabilities = salesOrderCapabilities(order, finance, canWrite, remainder.length);
+  const retainedNumber = retainedInvoiceNumber(order, pendingInvoices);
   return (
     <SidePanel
       description={order.customer.name}
@@ -1318,11 +1429,12 @@ export const SalesOrderPanel = ({
             )}
           </div>
         )}
-        {capabilities.invoiceReadOnly && (
-          <p className="text-fg-secondary text-xs" data-testid="sales-invoice-readonly">
-            Fakturu k této objednávce vystaví účetní nebo vedení ve Financích. Vaše role má ve Financích jen čtení.
-          </p>
-        )}
+        <SalesInvoiceNotices
+          capabilities={capabilities}
+          formOpen={action === 'invoice'}
+          order={order}
+          retainedNumber={retainedNumber}
+        />
         {action === 'deliver' && (
           <SalesDeliverForm onDone={() => setAction(undefined)} order={order} remainder={remainder} run={run} />
         )}
@@ -1334,6 +1446,7 @@ export const SalesOrderPanel = ({
             issueInvoice={issueInvoice}
             onDone={() => setAction(undefined)}
             order={order}
+            retainedNumber={retainedNumber}
             totalLabel={k(withVatKey, { total: formatAmount(totals.totalMinor) })}
           />
         )}

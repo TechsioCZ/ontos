@@ -277,6 +277,7 @@
           "deactivateConfirm": "Deactivate ({{total}})"
         },
         "category": {
+          "missing": "The selected category no longer exists. Choose another category.",
           "field": "New category",
           "title": "Change category"
         },
@@ -411,6 +412,11 @@
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
+          "tierBasePriceRequired": "The quantity prices cannot be recalculated: the original price or a valid VAT rate is missing. Check the product’s VAT classification and save the price again.",
+          "categorySlugTaken": "Another category already uses this storefront address. Choose a different address.",
+          "variantSkuRequired": "The generated variant SKU is too long. Enter an explicit variant SKU of at most 64 characters.",
+          "variantBulkPriceUnsupported": "Bulk prices cannot be changed for products with sellable variants. Select only products without variants, or change each variant’s price in the product details.",
+          "stockReconciliationRequired": "Reconcile the product stock before adding its first sellable variant. Reconcile a variant’s stock with a stock movement before removing it.",
           "rejected": "The action is not possible in the current state, for example because of insufficient stock. Check the values you entered.",
           "saving": "Saving changes…",
           "updated": "Product saved",
@@ -435,6 +441,7 @@
           "tab": "Price history"
         },
         "priceDialog": {
+          "variantProducts": "A bulk price change cannot be used for products with sellable variants: {{names}}. Deselect them, or change the variant prices in the product details.",
           "affected": "Products affected: {{total}}",
           "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
           "field": "Price change (%)",
@@ -443,6 +450,7 @@
         },
         "receipt": {
           "description": "Record stock received. On-hand stock is recalculated from movements.",
+          "productFailed": "The product could not be loaded. Try again.",
           "submit": "Record receipt",
           "title": "Goods receipt"
         },
@@ -498,11 +506,11 @@
         },
         "title": "Products and stock",
         "validation": {
-          "delta": "Enter a whole number other than zero.",
+          "delta": "Enter a non-zero quantity between −1,000,000 and 1,000,000, with at most 6 decimal places.",
           "lowStock": "Enter a whole number of 0 or more.",
           "percent": "Enter a non-zero whole number from −90 to 1000.",
           "positive": "Enter an amount greater than 0 CZK.",
-          "quantity": "Enter a whole number greater than 0.",
+          "quantity": "Enter a quantity greater than 0 and at most 1,000,000, with at most 6 decimal places.",
           "required": "Fill in this field.",
           "skuTaken": "A product with this SKU already exists.",
           "stock": "The quantity exceeds the stock on hand.",
@@ -584,6 +592,7 @@
       "scheduled": "From {{date}} {{rate}}"
     },
     "ui": {
+      "variantTiersRescaled": "When the new price is saved, the quantity prices are recalculated in the same ratio.",
       "offeredPriceChanged": "The price of an added item changed in the meantime; nothing was saved. The lines now carry the current price — {{lines}}. Check it and save again.",
       "offeredPriceUnreadable": "The price of an added item changed in the meantime and the new price could not be loaded. Remove the line and add it again. Affected: {{lines}}.",
       "storefrontBadge": "Online store",

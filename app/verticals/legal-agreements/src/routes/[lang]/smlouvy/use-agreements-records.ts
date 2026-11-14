@@ -12,16 +12,17 @@ import type { Contract, Document } from '../../../../shared/apis/records.ts';
 import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
 import type { ContractRef } from '../../../../shared/resources/contract.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { createAgreement, failedWith, newUuid, savePeriodDraft, sendAgreementsCommand } from './agreements-command.ts';
-import type { AgreementOutcome } from './agreements-command.ts';
 import {
-  DEFAULT_END_DATE,
-  DEFAULT_START_DATE,
-  contractReferenceAudiences,
-  contractTerms,
-  editableDraft,
-} from './agreement-draft.ts';
-import type { CreateDraft, PeriodDraft } from './agreement-draft.ts';
+  createAgreement,
+  failedWith,
+  newUuid,
+  renewAgreement,
+  savePeriodDraft,
+  sendAgreementsCommand,
+} from './agreements-command.ts';
+import type { AgreementOutcome } from './agreements-command.ts';
+import { contractReferenceAudiences, editableDraft, renewalDraftOf } from './agreement-draft.ts';
+import type { CreateDraft, PeriodDraft, RenewalDraft } from './agreement-draft.ts';
 import {
   agreements,
   agreementsView,
@@ -40,6 +41,13 @@ import { executeRecords } from '../../../api/records-client.ts';
 import type { SignatureDraft } from './signature-form.tsx';
 
 const sameContractRef = Schema.toEquivalence(ContractRefSchema);
+/** Today as a Prague business date: the earliest default start of an open-ended contract's successor. */
+const businessDateFormat = new Intl.DateTimeFormat('sv-SE', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
 /**
  * Documents belong to a contract only when every reference part matches. A shared resource id in another tenant,
  * owner module, or resource type identifies a different record and must not appear in the detail.
@@ -97,9 +105,10 @@ const stillUnsigned = (record: Contract) => (item: Contract) =>
   sameContractRef(item.contractRef, record.contractRef) &&
   item.signatureState === record.signatureState &&
   item.lifecycleState === record.lifecycleState;
-/** The open contract form: a new contract, or the period of the draft contract it was opened for. */
+/** The open contract form: a new contract, the renewal of a contract, or the period of a draft contract. */
 export type DraftForm =
   | { readonly kind: Contract['kind']; readonly mode: 'create' }
+  | { readonly mode: 'renew'; readonly renewal: RenewalDraft }
   | { readonly contract: Contract; readonly mode: 'edit' };
 export const useRecordsPage = (input: AgreementsInput) => {
   const { language, t } = useModernI18n();
@@ -311,6 +320,13 @@ export const useRecordsPage = (input: AgreementsInput) => {
       expectedRevision: snapshot?.revision ?? 0,
       references: { customers, occupancies: occupancies?.occupancies ?? [], units: properties?.units ?? [] },
     }).pipe(Effect.ensuring(invalidate), Effect.flatMap(settleForm));
+  const renewContract = (draft: CreateDraft): Effect.Effect<AgreementOutcome> =>
+    draftForm?.mode === 'renew'
+      ? renewAgreement(draft, { expectedRevision: snapshot?.revision ?? 0, previous: draftForm.renewal.previous }).pipe(
+          Effect.ensuring(invalidate),
+          Effect.flatMap(settleForm),
+        )
+      : Effect.succeed(failedWith('validation'));
   const savePeriod = (
     draft: PeriodDraft,
     expectedRevision: number,
@@ -384,35 +400,10 @@ export const useRecordsPage = (input: AgreementsInput) => {
       }),
       Effect.flatMap(settleForm),
     );
+  /** Renew opens the contract form with a successor period of its own; nothing is sent before Uložit. */
   const renew = (record: Contract) => {
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) =>
-            runCommand({
-              _tag: 'RenewContract',
-              contractRef: record.contractRef,
-              successor: {
-                ...contractTerms(record),
-                contractRef: { ...record.contractRef, resourceId },
-                counterpartyRef: record.counterpartyRef,
-                endDate: DEFAULT_END_DATE,
-                kind: record.kind,
-                lifecycleState: 'DRAFT',
-                note: record.note,
-                occupancyRef: record.occupancyRef,
-                propertyRef: record.propertyRef,
-                renewalNoticeDate: null,
-                signatureState: 'NOT_SENT',
-                startDate: record.endDate ?? DEFAULT_START_DATE,
-                supersedesContractRef: record.contractRef,
-                unitRef: record.unitRef,
-              },
-            }),
-        }),
-      ),
-    );
+    const today = businessDateFormat.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+    setDraftForm({ mode: 'renew', renewal: { opening: renewalDraftOf(record, today), previous: record } });
   };
   const unitName = (resourceId: string | undefined) =>
     properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ??
@@ -469,6 +460,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
     recordSignature,
     refreshAgreements,
     renew,
+    renewContract,
     rentalFeedback,
     reportProposal: setProposal,
     resetDraftForm,

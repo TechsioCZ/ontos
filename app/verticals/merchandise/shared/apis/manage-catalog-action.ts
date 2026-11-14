@@ -49,8 +49,13 @@ export const ManageCatalogActionConflictProblemSchema = makeProblemDetailsSchema
     code: Schema.Literals([
       'action_request_hash_conflict',
       'action_invocation_state_invalid',
+      'merchandise_category_slug_taken',
       'merchandise_lifecycle_conflict',
       'merchandise_offered_price_changed',
+      'merchandise_stock_reconciliation_required',
+      'merchandise_tier_base_price_required',
+      'merchandise_variant_bulk_price_unsupported',
+      'merchandise_variant_sku_required',
       'merchandise_revision_conflict',
     ]),
   },

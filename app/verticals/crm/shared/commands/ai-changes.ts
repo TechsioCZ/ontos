@@ -954,7 +954,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
               status: 'applied',
             };
             if (Predicate.isTagged(change.operation, 'CreateClient')) {
-              const createdId = applied.success.entityIds[0] ?? change.target.id;
+              const [createdId] = applied.success.entityIds;
               if (createdId === undefined) {
                 return yield* conflict(missingProposalReason);
               }
@@ -978,8 +978,21 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
         );
         const { log, state: working } = progress;
         const slice = sliceOf(working);
+        // The post-commit Party intake consumes these ids. Proposal ids (and ids of contacts/orders/plans)
+        // are not clients. Resolve only client creations actually applied by this decision.
+        const createdClientIds =
+          value.decision === 'approve'
+            ? slice.changes.flatMap((change) =>
+                value.changeIds.includes(change.id) &&
+                change.status === 'applied' &&
+                Predicate.isTagged(change.operation, 'CreateClient') &&
+                change.target.id !== undefined
+                  ? [change.target.id]
+                  : [],
+              )
+            : [];
         return {
-          entityIds: [...value.changeIds],
+          entityIds: createdClientIds,
           state: withSlice(working, { ...slice, log: [...slice.log, ...log] }),
         } satisfies CommandChange;
       }),

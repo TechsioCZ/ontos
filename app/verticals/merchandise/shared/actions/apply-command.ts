@@ -1,3 +1,4 @@
+import { hasQuantityPrecision, MAX_QUANTITY } from '../domain/order-quantity.ts';
 import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
 import { MediaImageUploadSchema } from '@app/core-runtime/media/image-contract';
 import { Schema } from 'effect';
@@ -113,7 +114,10 @@ export const OrderLineRequestSchema = Schema.Struct({
   variantId: Schema.optionalKey(VariantIdSchema),
 });
 
-const QuantitySchema = Schema.Finite.check(Schema.isBetween({ maximum: 1_000_000, minimum: 0.001 }));
+const QuantitySchema = Schema.Finite.check(
+  Schema.isBetween({ maximum: MAX_QUANTITY, minimum: 0.001 }),
+  Schema.makeFilter(hasQuantityPrecision),
+);
 
 /** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
 export const StorefrontOrderLineRequestSchema = Schema.Struct({
@@ -310,7 +314,10 @@ const ApplyBulkUpdateProductsCommandSchema = Schema.TaggedStruct('BulkUpdateProd
 });
 
 const ApplyRecordStockMovementCommandSchema = Schema.TaggedStruct('RecordStockMovement', {
-  delta: Schema.Int,
+  delta: Schema.Finite.check(
+    Schema.isBetween({ maximum: MAX_QUANTITY, minimum: -MAX_QUANTITY }),
+    Schema.makeFilter(hasQuantityPrecision),
+  ),
   note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   productId: ProductIdSchema,
   reason: Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT']),

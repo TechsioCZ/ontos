@@ -39,6 +39,26 @@ const withCamera = Effect.gen(function* withCamera() {
   );
 });
 
+it.effect('retains the complete inspection note at the history limit and refuses any excess', () =>
+  Effect.gen(function* boundedInspectionNote() {
+    const created = yield* withCamera;
+    const inspectionDate = '2026-10-20';
+    const prefix = `Kontrola provedena ${inspectionDate}: `;
+    const note = 'x'.repeat(500 - prefix.length);
+    const command = {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate,
+      note,
+    } as const;
+    const inspected = yield* apply(created.state, command);
+    expect(inspected.state.devices[0]?.history?.at(-1)?.summary).toBe(`${prefix}${note}`);
+    const refused = yield* apply(created.state, { ...command, note: `${note}x` }).pipe(Effect.flip);
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(refused)).toBe(true);
+    expect(created.state.devices[0]?.lastInspectionDate).toBeUndefined();
+  }),
+);
+
 it.effect('creates a device card in operation with an audit stamp and history', () =>
   Effect.gen(function* createCard() {
     const change = yield* withCamera;
@@ -180,6 +200,44 @@ it.effect('records inspections, attaches files once and clears optional fields',
     });
     expect(cleared.state.devices[0]?.location).toBeUndefined();
     expect(cleared.state.devices[0]?.administrator).toBe('Petr Dvořák');
+  }),
+);
+
+it.effect('clears the previous deadline when an inspection has no replacement deadline', () =>
+  Effect.gen(function* clearInspectionDeadline() {
+    const created = yield* withCamera;
+    const inspected = yield* apply(created.state, {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate: '2026-10-20',
+    });
+    const [device] = inspected.state.devices;
+    expect(device?.lastInspectionDate).toBe('2026-10-20');
+    expect(device?.nextInspectionDate).toBeUndefined();
+    expect(device === undefined ? true : isInspectionOverdue(device, '2026-10-21')).toBe(false);
+    expect(device?.history?.at(-1)?.event).toBe('inspection');
+  }),
+);
+
+it.effect('refuses backdated inspections rather than replacing the latest dates or evidence', () =>
+  Effect.gen(function* refuseOlderInspection() {
+    const created = yield* withCamera;
+    const inspected = yield* apply(created.state, {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate: '2026-10-20',
+      nextInspectionDate: '2027-10-20',
+    });
+    const refused = yield* apply(inspected.state, {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate: '2025-10-20',
+      nextInspectionDate: '2026-10-20',
+    }).pipe(Effect.flip);
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(refused)).toBe(true);
+    expect(inspected.state.devices[0]?.lastInspectionDate).toBe('2026-10-20');
+    expect(inspected.state.devices[0]?.nextInspectionDate).toBe('2027-10-20');
+    expect(inspected.state.devices[0]?.history).toHaveLength(2);
   }),
 );
 

@@ -134,7 +134,7 @@ describe('Invoice line totals', () => {
 describe('Invoice line snapshots', () => {
   it.effect('stores computed totals at create, recomputes only on draft update, and never after confirm', () =>
     Effect.gen(function* snapshotImmutability() {
-      const create: FinanceCommand = {
+      const create = {
         _tag: 'CreateInvoiceDraft',
         counterpartyRef,
         currency: 'CZK',
@@ -145,7 +145,7 @@ describe('Invoice line snapshots', () => {
         lines,
         partyId,
         totalMinor: 1,
-      };
+      } satisfies FinanceCommand;
       const draft = yield* run({ ...empty, invoices: [legacyInvoice] }, create, 'invoice-manual');
       if (draft.invoice === undefined) {
         expect.unreachable('The draft transition must return its invoice');

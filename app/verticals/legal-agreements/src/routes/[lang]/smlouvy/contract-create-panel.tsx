@@ -2,16 +2,17 @@ import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
+  formatDate,
   saveLabelsFor,
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Effect, Match, Option } from 'effect';
 import { useRef, useState } from 'react';
@@ -20,8 +21,14 @@ import type { Contract } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { failureReasonOf } from './agreements-command.ts';
 import type { AgreementOutcome } from './agreements-command.ts';
-import { createDraftComplete, createDraftOf } from './agreement-draft.ts';
-import type { CreateDraft, CreateReferences } from './agreement-draft.ts';
+import {
+  createDraftComplete,
+  createDraftOf,
+  renewalEarliestStart,
+  renewalPeriodValid,
+  renewalStartValid,
+} from './agreement-draft.ts';
+import type { CreateDraft, CreateReferences, RenewalDraft } from './agreement-draft.ts';
 
 const KINDS = ['OTHER', 'LEASE'] as const;
 const nothingCreated = Option.none<string>();
@@ -105,27 +112,58 @@ export interface ContractCreatePanelProps {
   /** The person picked another kind; the page reads what that kind needs. */
   readonly onKindChange: (kind: Contract['kind']) => void;
   readonly references: CreateReferences;
+  /** The contract this form renews, with the successor period it opens with; absent for a new contract. */
+  readonly renewal?: RenewalDraft | undefined;
   /** Why the leases could not be read, when they could not. */
   readonly rentalFeedback?: string | undefined;
 }
+
+type Translate = ReturnType<typeof useModernI18n>['t'];
+interface DateHint {
+  readonly helpText?: string;
+  readonly validateStatus?: 'error';
+}
+const noHint: DateHint = {};
+
+const renewalStartHintOf = (draft: CreateDraft, renewal: RenewalDraft | undefined, t: Translate): DateHint => {
+  if (renewal === undefined) {
+    return noHint;
+  }
+  const helpText = t('legal-agreements.demo.renewalStartHelp', {
+    date: formatDate(renewalEarliestStart(renewal.previous)),
+  });
+  return renewalStartValid(draft, renewal.previous) ? { helpText } : { helpText, validateStatus: 'error' };
+};
+
+const renewalEndHintOf = (draft: CreateDraft, renewal: RenewalDraft | undefined, t: Translate): DateHint =>
+  renewal === undefined || draft.endDate > draft.startDate
+    ? noHint
+    : { helpText: t('legal-agreements.demo.renewalEndInvalid'), validateStatus: 'error' };
 
 /**
  * A new contract. Typing changes the draft only; Uložit creates the contract once and the page opens it. Leaving
  * with unsaved input asks Uložit / Zahodit změny / Zůstat; an untouched form closes at once.
  */
 export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
-  const { customers, leases, onClose, onCreate, onCreated, onKindChange, references, rentalFeedback } = props;
+  const { customers, leases, onClose, onCreate, onCreated, onKindChange, references, renewal, rentalFeedback } = props;
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   /** The form as it opens: the draft starts from it, and it is what discarding goes back to. */
-  const opening = createDraftOf(props.kind);
+  const opening = renewal?.opening ?? createDraftOf(props.kind);
+  /**
+   * What the draft counts as unsaved against. A renewal opens with a valid suggested period Uložit can send at once,
+   * so its opening values are not the saved version; leaving the untouched form still does not ask.
+   */
+  const unopened = renewal === undefined ? opening : { ...opening, endDate: '', startDate: '' };
   const [draft, setDraft] = useState(opening);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   /** The contract the last save created. */
   const created = useRef(nothingCreated);
   const record = useDraftSave<CreateDraft, never>({
-    initial: opening,
-    isValid: (value) => createDraftComplete(value, references),
+    initial: unopened,
+    isValid: (value) =>
+      renewal === undefined ? createDraftComplete(value, references) : renewalPeriodValid(value, renewal.previous),
+    opened: renewal === undefined ? undefined : opening,
     runtime: browserRuntime,
     save: (value) =>
       onCreate(value).pipe(
@@ -149,11 +187,11 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
   };
   const handleDiscard = () => {
     setDraft(opening);
-    record.adopt(opening);
+    record.adopt(unopened);
   };
   /** Nothing to reload for a new contract: the typed draft stays and Uložit sends it again. */
   const handleReloadLatest = () => {
-    record.adopt(opening);
+    record.adopt(unopened);
   };
   const savable = { ...record, save: handleSave };
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
@@ -173,6 +211,9 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
   const requestClose = () => {
     guard.request(onClose);
   };
+  // A renewal shows its earliest start before anything is typed, and marks a date the owner would refuse.
+  const renewalStartHint = renewalStartHintOf(draft, renewal, t);
+  const renewalEndHint = renewalEndHintOf(draft, renewal, t);
   return (
     <SidePanel
       actions={
@@ -203,7 +244,7 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
       open
       resizeLabel={t('legal-agreements.detail.resizePanel')}
       size="lg"
-      title={t('legal-agreements.demo.create')}
+      title={t(renewal === undefined ? 'legal-agreements.demo.create' : 'legal-agreements.demo.renew')}
     >
       <form
         className="legalagreements:space-y-4 legalagreements:py-2"
@@ -213,13 +254,15 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
           event.preventDefault();
         }}
       >
-        <ChoiceSelect
-          items={KINDS.map((value) => ({ label: t(`legal-agreements.demo.kinds.${value}`), value }))}
-          label={t('legal-agreements.demo.contractKind')}
-          onChange={handleKindChange}
-          value={draft.kind}
-        />
-        {draft.kind === 'OTHER' && (
+        {renewal === undefined && (
+          <ChoiceSelect
+            items={KINDS.map((value) => ({ label: t(`legal-agreements.demo.kinds.${value}`), value }))}
+            label={t('legal-agreements.demo.contractKind')}
+            onChange={handleKindChange}
+            value={draft.kind}
+          />
+        )}
+        {renewal === undefined && draft.kind === 'OTHER' && (
           <ChoiceSelect
             items={customers}
             label={t('legal-agreements.demo.customer')}
@@ -228,8 +271,10 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
             value={draft.customerId}
           />
         )}
-        {draft.kind === 'LEASE' && rentalFeedback !== undefined && <output aria-live="polite">{rentalFeedback}</output>}
-        {draft.kind === 'LEASE' && (
+        {renewal === undefined && draft.kind === 'LEASE' && rentalFeedback !== undefined && (
+          <output aria-live="polite">{rentalFeedback}</output>
+        )}
+        {renewal === undefined && draft.kind === 'LEASE' && (
           <ChoiceSelect
             items={leases}
             label={t('legal-agreements.demo.occupancy')}
@@ -245,6 +290,7 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
             onChange={(event) => change({ startDate: event.target.value })}
             type="date"
             value={draft.startDate}
+            {...renewalStartHint}
           />
           <FormInput
             id="contract-end-date"
@@ -252,6 +298,7 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
             onChange={(event) => change({ endDate: event.target.value })}
             type="date"
             value={draft.endDate}
+            {...renewalEndHint}
           />
         </div>
       </form>

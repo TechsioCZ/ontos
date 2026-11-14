@@ -2,7 +2,8 @@ import { DateTime, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { PurchasingCommandSchema, evolvePurchasing } from '../../shared/commands/purchasing.ts';
-import { salesRemainder } from '../../shared/commands/sales.ts';
+import { canInvoiceSalesOrder, salesRemainder } from '../../shared/commands/sales.ts';
+import { FacilityOperationsLifecycleConflict } from '../../shared/errors/facility-operations-lifecycle-conflict.ts';
 import { PurchasingStateSchema, emptyPurchasingState } from '../../shared/domain/purchasing.ts';
 import type { PurchasingState } from '../../shared/domain/purchasing.ts';
 
@@ -92,5 +93,25 @@ it.effect('S06-01/02: quote → sales order keeps line, price and quote link; 1 
       ),
     );
     expect(Exit.isFailure(overDelivery)).toBe(true);
+    const billable = edited.state.salesOrders?.[0];
+    expect(billable === undefined ? false : canInvoiceSalesOrder(billable)).toBe(true);
+    const command = {
+      _tag: 'SalesOrderLinkInvoice',
+      invoiceId: 'invoice-1',
+      number: 'FV-2026-1',
+      orderId: 'o1',
+    } as const;
+    const linked = yield* apply(edited.state, command, 'link-1');
+    const invoiced = linked.state.salesOrders?.[0];
+    expect(invoiced === undefined ? true : canInvoiceSalesOrder(invoiced)).toBe(false);
+    const replay = yield* apply(linked.state, command, 'link-retry');
+    expect(replay.state).toEqual(linked.state);
+    const refused = yield* apply(
+      linked.state,
+      { ...command, invoiceId: 'invoice-2', number: 'FV-2026-2' },
+      'link-2',
+    ).pipe(Effect.flip);
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(refused)).toBe(true);
+    expect(linked.state.salesOrders?.[0]?.invoices).toHaveLength(1);
   }),
 );

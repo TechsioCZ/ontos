@@ -31,15 +31,8 @@ import type {
   RecordsResponse,
 } from '../../shared/apis/records.ts';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
-import {
-  lineVatChoice,
-  lineVatIssue,
-  lineVatOf,
-  rateOf,
-  sellerVatChoice,
-  withCurrentTaxRate,
-} from '../../shared/domain/line-vat.ts';
-import type { InvoiceDirection } from '../../shared/domain/line-vat.ts';
+import { lineVatChoice, lineVatIssue, lineVatOf, rateOf, withCurrentTaxRate } from '../../shared/domain/line-vat.ts';
+import type { InvoiceDirection, LineVatChoice } from '../../shared/domain/line-vat.ts';
 import { computeInvoiceTotals, isLineDiscountValid, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
 import {
   addCalendarDaysTo,
@@ -100,6 +93,7 @@ export const MANUAL_COUNTERPARTY_ID = '00000000-0000-4000-8000-000000000000';
 const FINANCE_MODULE_ID = 'finance.billing';
 const INVOICE_RESOURCE_TYPE = 'finance.billing.invoice';
 const EXPORT_NOT_FOUND = 'Export not found';
+const INVOICE_ALREADY_EXISTS = 'invoice_already_exists';
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
 const sameInvoiceLine = Schema.toEquivalence(InvoiceLineSchema);
 const conflict = (reason: string) => new FinanceConflict({ code: 'finance_conflict', reason });
@@ -195,6 +189,11 @@ const validate = Effect.fn('Finance.validate')(function* validate(
     return yield* rejected('invalid_invoice_anchors_or_dates');
   }
   if (invoice.counterpartyRef.resourceId === MANUAL_COUNTERPARTY_ID) {
+    // Only a received invoice may name a hand-typed supplier (by its name on the invoice); our own invoices always go
+    // to a registry counterparty, whose customer role is checked.
+    if (invoice.direction !== 'INCOMING' || invoice.counterpartyName === undefined) {
+      return yield* rejected('manual_counterparty_requires_received_invoice');
+    }
     // Manually entered suppliers are not registry parties; only the object anchors are checked.
     return yield* validateAnchors(anchorsOf(invoice), scope, validators);
   }
@@ -286,18 +285,67 @@ const findInvoice = (
       )
     : Effect.succeed(invoice);
 };
+/** Who issued a received invoice as Finance knows it: the IČO on the document, the registry counterparty, the name. */
+interface SupplierIdentity {
+  readonly companyId: string | undefined;
+  readonly name: string | undefined;
+  readonly registeredId: string | undefined;
+}
+type NumberedInvoice = Pick<
+  Invoice,
+  'counterpartyCompanyId' | 'counterpartyName' | 'counterpartyRef' | 'direction' | 'documentNumber'
+>;
+const supplierOf = (invoice: NumberedInvoice): SupplierIdentity => ({
+  companyId: invoice.counterpartyCompanyId,
+  name: invoice.counterpartyName?.trim().toLocaleLowerCase('cs'),
+  registeredId:
+    invoice.counterpartyRef.resourceId === MANUAL_COUNTERPARTY_ID ? undefined : invoice.counterpartyRef.resourceId,
+});
+/**
+ * The same supplier whichever way each invoice names it: the IČO on both documents decides; else the registry
+ * counterparty of both; else (a hand-typed supplier on either side) the supplier's name.
+ */
+const sameSupplier = (left: SupplierIdentity, right: SupplierIdentity): boolean => {
+  if (left.companyId !== undefined && right.companyId !== undefined) {
+    return left.companyId === right.companyId;
+  }
+  if (left.registeredId !== undefined && right.registeredId !== undefined) {
+    return left.registeredId === right.registeredId;
+  }
+  return left.name !== undefined && left.name === right.name;
+};
+/**
+ * Whether another invoice already holds this document number. Our own (outgoing) numbers are one series of the
+ * company; a received invoice's number is its supplier's, so it only collides with a live received invoice of that
+ * same supplier and never reserves a number of our series.
+ */
+const documentNumberTaken = (invoices: readonly Invoice[], candidate: NumberedInvoice, except?: Invoice['ref']) => {
+  const supplier = supplierOf(candidate);
+  return invoices.some(
+    (record) =>
+      (except === undefined || !matchesFinanceRef(record.ref, except)) &&
+      record.direction === candidate.direction &&
+      record.documentNumber === candidate.documentNumber &&
+      (candidate.direction === 'OUTGOING' ||
+        (record.businessState !== 'VOIDED' && sameSupplier(supplierOf(record), supplier))),
+  );
+};
+
 const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(function* handleCreateInvoiceDraft(
   command: Extract<FinanceCommand, { readonly _tag: 'CreateInvoiceDraft' }>,
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const { input, scope, state, validators } = context;
 
-  if (
-    state.invoices.some(
-      (record) => record.documentNumber === command.documentNumber || record.ref.resourceId === input.resourceId,
-    )
-  ) {
-    return yield* conflict('invoice_already_exists');
+  if (state.invoices.some((record) => record.ref.resourceId === input.resourceId)) {
+    return yield* conflict(INVOICE_ALREADY_EXISTS);
+  }
+  // Our own invoice takes the next number of the company's series, from the complete ledger here, never a number a
+  // (possibly filtered) browser view guessed; a received invoice needs its supplier's number.
+  const number = nextInvoiceNumber(state.invoices);
+  const documentNumber = command.documentNumber ?? (command.direction === 'OUTGOING' ? number : undefined);
+  if (documentNumber === undefined) {
+    return yield* rejected('supplier_document_number_required');
   }
   const { _tag: _commandTag, lines: _lines, totalMinor: _totalMinor, ...fields } = command;
   const totals = yield* draftTotals(command);
@@ -309,7 +357,8 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
     accountingSyncState: 'NOT_SYNCED',
     businessState: 'DRAFT',
     createdAt: input.now,
-    number: nextInvoiceNumber(state.invoices),
+    documentNumber,
+    number,
     paidMinor: 0,
     paymentState: 'UNPAID',
     ref: {
@@ -320,16 +369,20 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
     },
     updatedAt: input.now,
   };
+  if (documentNumberTaken(state.invoices, invoice)) {
+    return yield* conflict(INVOICE_ALREADY_EXISTS);
+  }
   yield* validate(invoice, scope, validators);
   return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
 });
 
 /**
  * A won opportunity's lines as a new invoice stores them, priced exactly as the invoice form prices a person's new line
- * for this company on the issue date (`sellerVatChoice`, then `lineVatOf`): a VAT payer's line takes Tax's rate for
- * its classification with the Tax rule revision that published it; a company that is not a VAT payer issues it with
- * the non-payer treatment at 0 %. A line whose rate names no classification, or a company Tax gives no usable VAT,
- * refuses the invoice; Finance never guesses a rate.
+ * for this company on the issue date (`lineVatOf`): a VAT payer's line takes Tax's rate for
+ * its classification with the Tax rule revision that published it; a company that is not a VAT payer issues every
+ * line with the non-payer treatment at 0 %, whatever rate the opportunity was won with (the form offers it nothing
+ * else). A payer's line whose rate names no classification (0 % or 10 %: exempt or reverse charge cannot be told
+ * apart), or a company Tax gives no usable VAT, refuses the invoice; Finance never guesses a rate or a treatment.
  */
 const opportunityLines = Effect.fn('Finance.opportunityLines')(function* opportunityLines(
   lines: readonly InvoiceLine[],
@@ -342,7 +395,9 @@ const opportunityLines = Effect.fn('Finance.opportunityLines')(function* opportu
   const choices = yield* validators.vat(issueDate);
   const priced: InvoiceLine[] = [];
   for (const line of lines) {
-    const vat = lineVatOf(sellerVatChoice(lineVatChoice(line), choices.regime), choices);
+    const choice: LineVatChoice =
+      choices.regime === 'NON_PAYER' ? { kind: 'treatment', treatment: 'NON_PAYER' } : lineVatChoice(line);
+    const vat = lineVatOf(choice, choices);
     const issue = vat === undefined ? 'vat_rate_changed' : lineVatIssue(vat, choices, 'OUTGOING');
     if (vat === undefined || issue !== undefined) {
       return yield* rejected(issue ?? 'vat_rate_changed');
@@ -371,10 +426,8 @@ const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoic
       return unchanged(state, existing);
     }
     const number = nextInvoiceNumber(state.invoices);
-    if (
-      state.invoices.some((record) => record.documentNumber === number || record.ref.resourceId === input.resourceId)
-    ) {
-      return yield* conflict('invoice_already_exists');
+    if (state.invoices.some((record) => record.ref.resourceId === input.resourceId)) {
+      return yield* conflict(INVOICE_ALREADY_EXISTS);
     }
     const issueDate = command.issueDate ?? calendarDateOf(input.now);
     const totals = yield* draftTotals({ lines: yield* opportunityLines(command.lines, issueDate, validators) });
@@ -408,6 +461,9 @@ const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoic
       },
       updatedAt: input.now,
     };
+    if (documentNumberTaken(state.invoices, invoice)) {
+      return yield* conflict(INVOICE_ALREADY_EXISTS);
+    }
     yield* validate(invoice, scope, validators);
     return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
   },
@@ -423,13 +479,6 @@ const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(f
   if (previous.businessState !== 'DRAFT') {
     return yield* conflict('update_requires_draft');
   }
-  if (
-    state.invoices.some(
-      (record) => !matchesFinanceRef(record.ref, previous.ref) && record.documentNumber === command.documentNumber,
-    )
-  ) {
-    return yield* conflict('document_number_already_exists');
-  }
   const { _tag: _commandTag, invoiceRef: _invoiceRef, lines: _lines, totalMinor: _total, ...fields } = command;
   const totals = yield* draftTotals(command);
   yield* validateLineVat(command.lines, command.issueDate, command.direction, validators, previous.lines);
@@ -439,6 +488,8 @@ const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(f
   const {
     contractRef: _contract,
     costCenter: _costCenter,
+    counterpartyCompanyId: previousCompanyId,
+    counterpartyName: previousName,
     lines: _previousLines,
     note: _note,
     occupancyRef: _occupancy,
@@ -455,7 +506,20 @@ const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(f
     vatRecap: _vatRecap,
     ...preserved
   } = previous;
-  const invoice: Invoice = { ...preserved, ...fields, ...totals, updatedAt: input.now };
+  let invoice: Invoice = { ...preserved, ...fields, ...totals, updatedAt: input.now };
+  // The name and IČO captured on the draft belong to its counterparty: another counterparty drops them, so neither the
+  // export nor duplicate detection reads the previous party's identity.
+  if (matchesFinanceRef(previous.counterpartyRef, command.counterpartyRef)) {
+    if (previousName !== undefined) {
+      invoice = { ...invoice, counterpartyName: previousName };
+    }
+    if (previousCompanyId !== undefined) {
+      invoice = { ...invoice, counterpartyCompanyId: previousCompanyId };
+    }
+  }
+  if (documentNumberTaken(state.invoices, invoice, previous.ref)) {
+    return yield* conflict('document_number_already_exists');
+  }
   yield* validate(invoice, scope, validators);
   return replace(state, invoice);
 });
@@ -731,24 +795,14 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
   const totals = yield* draftTotals(
     command.lines === undefined ? command : { ...command, lines: command.lines.map((line) => ({ ...line })) },
   );
-  const supplierKey = command.counterpartyRef?.resourceId ?? command.supplierName.toLocaleLowerCase('cs');
-  if (
-    state.invoices.some(
-      (record) =>
-        record.direction === 'INCOMING' &&
-        record.businessState !== 'VOIDED' &&
-        record.documentNumber === command.documentNumber &&
-        (record.counterpartyRef.resourceId === supplierKey ||
-          record.counterpartyName?.toLocaleLowerCase('cs') === supplierKey),
-    )
-  ) {
+  const invoice = incomingInvoiceSnapshot(command, context, totals);
+  if (documentNumberTaken(state.invoices, invoice)) {
     return yield* conflict('incoming_invoice_already_recorded');
   }
   if (command.dueDate < command.issueDate) {
     return yield* rejected('invalid_invoice_anchors_or_dates');
   }
   yield* validateLineVat(command.lines, command.issueDate, 'INCOMING', validators);
-  const invoice = incomingInvoiceSnapshot(command, context, totals);
   yield* validate(invoice, scope, validators);
   const prepared =
     command.document === undefined
@@ -909,9 +963,8 @@ const handleCreateRecurringTemplate = Effect.fn('Finance.handleCreateRecurringTe
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const { _tag: _command, ...fields } = command;
-  if (computeInvoiceTotals(command.lines)?.totalMinor === undefined) {
-    return yield* rejected('invoice_amount_out_of_range');
-  }
+  // The same rules every generated invoice must pass: a template that could never generate one is refused now.
+  yield* draftTotals({ lines: command.lines });
   yield* validateLineVat(command.lines, calendarDateOf(context.input.now), 'OUTGOING', context.validators);
   return stateOnly({
     ...context.state,
@@ -947,14 +1000,19 @@ const handleSetRecurringTemplateActive = Effect.fn('Finance.handleSetRecurringTe
 
 /**
  * A template's lines as the invoice of one period stores them: each classified line takes Tax's rate at that issue
- * date, so a rate change reaches the next generated invoice. Treatments and older rate-only lines stay as they are.
+ * date, so a rate change reaches the next generated invoice, and each treatment must still suit the company's VAT
+ * regime on that date (a company that registered for VAT no longer issues non-payer lines). Older rate-only lines
+ * stay as they are.
  */
 const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLines(
   lines: readonly InvoiceLine[],
   issueDate: string,
   validators: FinanceValidators,
 ) {
-  if (validators.vat === undefined || !lines.some((line) => line.vatClassification !== undefined)) {
+  if (
+    validators.vat === undefined ||
+    !lines.some((line) => line.vatClassification !== undefined || line.vatTreatment !== undefined)
+  ) {
     return lines;
   }
   const choices = yield* validators.vat(issueDate);
@@ -964,7 +1022,8 @@ const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLi
     if (current === undefined) {
       return yield* rejected('vat_rate_changed');
     }
-    const issue = current.vatClassification === undefined ? undefined : lineVatIssue(current, choices, 'OUTGOING');
+    const legacyRate = current.vatClassification === undefined && current.vatTreatment === undefined;
+    const issue = legacyRate ? undefined : lineVatIssue(current, choices, 'OUTGOING');
     if (issue !== undefined) {
       return yield* rejected(issue);
     }
@@ -972,6 +1031,24 @@ const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLi
   }
   return priced;
 });
+
+/** Finance notes hold at most 500 characters; a long template name is shortened so its invoice can still be made. */
+const RECURRING_NOTE_MAX_LENGTH = 500;
+const recurringNote = (templateName: string, period: string) => {
+  const note = (name: string) => `Opakovaná faktura „${name}“ za období ${period}`;
+  const room = RECURRING_NOTE_MAX_LENGTH - note('').length;
+  if (templateName.length <= room) {
+    return note(templateName);
+  }
+  let shortened = '';
+  for (const character of templateName) {
+    if (shortened.length + character.length > room - 1) {
+      break;
+    }
+    shortened += character;
+  }
+  return note(`${shortened.trimEnd()}…`);
+};
 
 const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurringInvoice')(function* generate(
   command: CommandOf<'GenerateRecurringInvoice'>,
@@ -1011,7 +1088,7 @@ const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurrin
     documentNumber: number,
     dueDate: addCalendarDaysTo(issueDate, template.dueDays),
     issueDate,
-    note: `Opakovaná faktura „${template.name}“ za období ${command.period}`,
+    note: recurringNote(template.name, command.period),
     number,
     paidMinor: 0,
     paymentState: 'UNPAID',
@@ -1156,7 +1233,17 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
             },
           ],
     ),
-  }).pipe(Effect.mapError(constructionUnavailable));
+  }).pipe(
+    Effect.catchTags({
+      PohodaExportRefused: (refusal) =>
+        Effect.fail(
+          rejected(
+            refusal.documentNumber === undefined ? refusal.problem : `${refusal.problem}: ${refusal.documentNumber}`,
+          ),
+        ),
+      SchemaError: (cause) => Effect.fail(constructionUnavailable(cause)),
+    }),
+  );
   let accountingExport: NonNullable<FinanceState['accountingExports']>[number] = {
     ...(yield* actorOf(context, command.actorLabel)),
     batchNumber,
@@ -1336,7 +1423,14 @@ const handleSetPriorSettlement = Effect.fn('Finance.handleSetPriorSettlement')(f
     return yield* conflict('prior_settlement_requires_draft');
   }
   yield* priorSettlementTotal(context.state, previous, command.entries);
-  const { priorSettlement: _previous, ...rest } = previous;
+  // What the earlier documents settle changes the amount to pay, so a prepared draft has to be prepared again.
+  const {
+    preparedAt: _preparedAt,
+    preparedByLabel: _preparedBy,
+    priorSettlement: _previous,
+    reviewState: _reviewState,
+    ...rest
+  } = previous;
   if (command.entries.length === 0) {
     return replace(context.state, { ...rest, updatedAt: context.input.now });
   }
@@ -1629,6 +1723,19 @@ export const transitionFinance = (
   );
 };
 
+/**
+ * The handover evidence a filtered read keeps for its own invoices: each package that contains one of them, narrowed
+ * to those invoices and without the file, which also lists invoices outside this read.
+ */
+const handoverEvidenceOf = (
+  state: FinanceState,
+  selected: ReadonlySet<string>,
+): NonNullable<FinanceState['accountingExports']> | undefined =>
+  state.accountingExports?.flatMap((entry) => {
+    const [first, ...rest] = entry.invoiceResourceIds.filter((id) => selected.has(id));
+    return first === undefined ? [] : [{ ...entry, content: '', invoiceResourceIds: [first, ...rest] }];
+  });
+
 /** Demo-v2 parts of the state. Invoice-scoped records follow the invoice filter; ledger-wide ones only unfiltered. */
 const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, request: RecordsRequest) => {
   const unfiltered =
@@ -1655,7 +1762,7 @@ const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, 
       | 'reminders'
     >
   > = {};
-  const accountingExports = unfiltered ? state.accountingExports : undefined;
+  const accountingExports = unfiltered ? state.accountingExports : handoverEvidenceOf(state, selected);
   if (accountingExports !== undefined) {
     parts = { ...parts, accountingExports };
   }

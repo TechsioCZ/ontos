@@ -12,6 +12,7 @@ import { createRoot } from 'react-dom/client';
 import { ProductRecordSchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
+import { executeRecordStockMovement } from '../../src/api/record-stock-movement-action-client.ts';
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
@@ -19,6 +20,7 @@ import { translateCs, translateIn } from './merchandise-translate.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
+rstest.mock('../../src/api/record-stock-movement-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
     language: 'cs',
@@ -192,6 +194,7 @@ beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
   rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 2 }));
+  rstest.mocked(executeRecordStockMovement).mockReturnValue(Effect.succeed({ entityIds: [], revision: 2 }));
   navigation.proceeded = 0;
   navigation.reset = 0;
   navigation.status = 'idle';
@@ -519,3 +522,55 @@ describe('the variants tab', () => {
     }),
   );
 });
+
+it.effect('variant base-price editing omits inherited tiers while metadata-only editing keeps them', () =>
+  Effect.gen(function* variantTierSubmission() {
+    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
+    const original = withVariants([
+      ['v1', 1000, 1210],
+      ['v2', 1000, 1210],
+    ]);
+    shown = {
+      ...original,
+      variants: original.variants?.map((variant) => ({ ...variant, priceTiers: [tier] })),
+    };
+    shownTab = 'variants';
+    yield* Effect.promise(mount);
+    yield* Effect.promise(() => typeInto('variant-price-v1', '20'));
+    yield* Effect.promise(() => typeInto('variant-label-v2', 'Renamed'));
+    // Every mounted tab has its own save bar; the variants tab saves its own drafts.
+    const variantsPanel = fieldById('variant-price-v1').closest('[role="tabpanel"]');
+    const saveVariants = [...(variantsPanel?.querySelectorAll('button') ?? [])].find(
+      (entry) => entry.textContent?.trim() === 'Uložit',
+    );
+    expect(saveVariants?.disabled).toBe(false);
+    yield* Effect.promise(() => click(saveVariants ?? document.createElement('button')));
+    yield* Effect.promise(() => waitUntil(() => rstest.mocked(executeManageCatalog).mock.calls.length === 1));
+    const command = rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].command;
+    expect(Predicate.isTagged(command, 'UpdateProduct')).toBe(true);
+    if (Predicate.isTagged(command, 'UpdateProduct')) {
+      expect(command.patch.variants?.[0]?.priceMinor).toBe(2000);
+      expect(command.patch.variants?.[0]).not.toHaveProperty('priceTiers');
+      expect(command.patch.variants?.[1]?.priceTiers).toEqual([tier]);
+    }
+  }),
+);
+
+it.effect('the variant movement form submits a fractional receipt without rounding it', () =>
+  Effect.gen(function* fractionalVariantForm() {
+    shown = withVariants([['v1', 1000, 1210]]);
+    shownTab = 'variants';
+    yield* Effect.promise(mount);
+    yield* Effect.promise(() => typeInto('variant-stock-quantity', '0,125'));
+    yield* Effect.promise(() => click(button('Zapsat pohyb')));
+    yield* Effect.promise(() => waitUntil(() => rstest.mocked(executeRecordStockMovement).mock.calls.length === 1));
+    expect(rstest.mocked(executeRecordStockMovement).mock.calls[0]?.[0].command).toMatchObject({
+      delta: 0.125,
+      productId: 'product-1',
+      variantId: 'v1',
+    });
+    yield* Effect.promise(() => typeInto('variant-stock-quantity', '1000001'));
+    yield* Effect.promise(() => click(button('Zapsat pohyb')));
+    expect(rstest.mocked(executeRecordStockMovement).mock.calls).toHaveLength(1);
+  }),
+);

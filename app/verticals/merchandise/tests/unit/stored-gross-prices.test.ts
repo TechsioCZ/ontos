@@ -1,13 +1,19 @@
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { Reactivity } from 'effect/reactivity';
+import { merchandiseRelations } from '../../src/database/schema.ts';
+import { loadProducts } from '../../src/services/merchandise-store.ts';
 // Stored prices are never recomputed: the gross a product was entered with stays its price through stock writes, a
 // classification change and a later rate change in Tax, and a storefront order sells at it. Only the VAT split inside
 // the gross follows the rate in force when the order is placed. The case is BOOK-IT on stage: entered at 10 %
 // (net 49 000, gross 53 900), now reduced (12 %), still sold at 539 Kč.
-import { DateTime, Effect, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { OrderSchema } from '../../shared/domain/merchandise-model.ts';
+import { OrderSchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import { sellableRatesAt } from '../../src/services/tax-rates.ts';
@@ -67,12 +73,21 @@ const grossOf = (state: MerchandiseState, rates = TEST_RATES) => {
     : toProductRecord(product, stockLevelsOf(state.movements, product.id), rates, {}).grossPriceMinor;
 };
 
-const storefrontOrder = (expectedUnitPriceMinor: number): CommandInput => ({
+/** Two units of one storefront line, of the product itself or of one of its variants. */
+const storefrontLine = (expectedUnitPriceMinor: number, productId: string, variantId?: string) => {
+  const line = { expectedUnitPriceMinor, productId, quantity: 2 };
+  return variantId === undefined ? line : { ...line, variantId };
+};
+
+const storefrontOrder = (
+  expectedUnitPriceMinor: number,
+  lines = [storefrontLine(expectedUnitPriceMinor, 'book-it')],
+): CommandInput => ({
   _tag: 'PlaceStorefrontOrder',
   clientRequestId: 'client-request-book-it',
   contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
   deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12' },
-  lines: [{ expectedUnitPriceMinor, productId: 'book-it', quantity: 2 }],
+  lines,
   partyId: 'test-customer-party',
   shippingMethod: 'ZASILKOVNA',
 });
@@ -168,4 +183,86 @@ it.effect('order history keeps its rate and amounts; lines from before classific
     );
     expect(confirmed.state.orders[0]?.lines).toEqual(legacyLines);
   }),
+);
+
+it.effect('never hydrates a missing base gross from the first-tier projection column', () =>
+  Effect.scoped(
+    Effect.gen(function* tierProjectionIsNotBase() {
+      const seeded = yield* bookIt;
+      const [original] = seeded.products;
+      if (original === undefined) {
+        return yield* Effect.die('Expected the seeded product');
+      }
+      const { grossPriceMinor: _missingBase, ...withoutBase } = original;
+      const scope = { legalEntityId: '30000000-0000-4000-8000-000000000001', tenantId: actor.tenantId };
+      const projectedGross = 22_400;
+      for (const variantMode of [false, true]) {
+        const services = yield* Layer.build(
+          scriptedPgClientLayer(
+            Effect.succeed(
+              testSqlConnection((sql) => {
+                if (sql.includes('from "demo_merchandise"."products"')) {
+                  return Effect.succeed([
+                    {
+                      document: Schema.encodeSync(ProductSchema)(withoutBase),
+                      grossPriceMinor: projectedGross,
+                      id: original.id,
+                      stockOnHand: 5,
+                    },
+                  ]);
+                }
+                if (sql.includes('from "demo_merchandise"."product_variants"')) {
+                  return Effect.succeed(
+                    variantMode
+                      ? [
+                          {
+                            document: {
+                              attributes: '',
+                              id: 'tier-only-variant',
+                              name: 'Tier only',
+                              priceMinor: 49_000,
+                              sku: 'TIER-ONLY',
+                            },
+                            grossPriceMinor: projectedGross,
+                            position: 0,
+                            productId: original.id,
+                            stockOnHand: 5,
+                            variantId: 'tier-only-variant',
+                          },
+                        ]
+                      : [],
+                  );
+                }
+                return Effect.succeed([
+                  {
+                    minimumQuantity: 10,
+                    position: 0,
+                    priceExcludingVatMinor: 20_000,
+                    priceMinor: projectedGross,
+                    productId: original.id,
+                    variantPosition: variantMode ? 0 : -1,
+                  },
+                ]);
+              }),
+            ),
+          ).pipe(Layer.provide(Reactivity.layer)),
+        );
+        const db = yield* makeWithDefaults({ relations: merchandiseRelations }).pipe(
+          Effect.provideService(PgClient.PgClient, Context.get(services, PgClient.PgClient)),
+        );
+        const loaded = yield* loadProducts(db, scope);
+        expect(loaded[0]?.product.grossPriceMinor).toBeUndefined();
+        expect(loaded[0]?.product.variants?.[0]?.grossPriceMinor).toBeUndefined();
+        const quoted = yield* apply(
+          { ...seeded, products: loaded.map(({ product }) => product) },
+          storefrontOrder(projectedGross, [
+            storefrontLine(projectedGross, original.id, variantMode ? 'tier-only-variant' : undefined),
+          ]),
+          'tier-only-quote',
+        );
+        expect(quoted.storefrontOrder?.issues[0]?.code).toBe('PRICE_UNAVAILABLE');
+      }
+      return yield* Effect.void;
+    }),
+  ),
 );

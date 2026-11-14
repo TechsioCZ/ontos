@@ -1,17 +1,26 @@
 // The contract form of the agreements page: a new contract, or the period of a draft contract.
 import type { Contract } from '../../../../shared/apis/records.ts';
+import type { RenewalDraft } from './agreement-draft.ts';
 import { ContractCreatePanel } from './contract-create-panel.tsx';
 import { ContractPeriodPanel } from './contract-period-panel.tsx';
 import type { useRecordsPage } from './use-agreements-records.ts';
 
 type PageState = ReturnType<typeof useRecordsPage>;
 
-const ContractCreateForm = ({ kind, state }: { readonly kind: Contract['kind']; readonly state: PageState }) => {
+const ContractCreateForm = ({
+  kind,
+  renewal,
+  state,
+}: {
+  readonly kind: Contract['kind'];
+  readonly renewal?: RenewalDraft | undefined;
+  readonly state: PageState;
+}) => {
   const { t, unitName } = state;
   const confirmedLeases = (state.occupancies?.occupancies ?? []).filter(
     (record) => record.kind === 'LONG_TERM_LEASE' && record.state === 'CONFIRMED',
   );
-  const handleCreate = state.createContract;
+  const handleCreate = renewal === undefined ? state.createContract : state.renewContract;
   const handleClose = state.closeDraftForm;
   const handleCreated = state.openCreated;
   const handleKindChange = state.selectContractKind;
@@ -38,6 +47,7 @@ const ContractCreateForm = ({ kind, state }: { readonly kind: Contract['kind']; 
         occupancies: state.occupancies?.occupancies ?? [],
         units: state.properties?.units ?? [],
       }}
+      renewal={renewal}
       rentalFeedback={
         state.rentalFeedback === undefined ? undefined : t(`legal-agreements.demo.feedback.${state.rentalFeedback}`)
       }
@@ -53,6 +63,16 @@ export const AgreementsDraftForm = ({ state }: { readonly state: PageState }) =>
   }
   if (form.mode === 'create') {
     return <ContractCreateForm kind={form.kind} state={state} />;
+  }
+  if (form.mode === 'renew') {
+    return (
+      <ContractCreateForm
+        key={form.renewal.previous.contractRef.resourceId}
+        kind={form.renewal.previous.kind}
+        renewal={form.renewal}
+        state={state}
+      />
+    );
   }
   const { contractRef } = form.contract;
   // The page's newest read of the contract; the one the form was opened with while the page hides its data.

@@ -20,6 +20,7 @@ import type { LineVatIssue } from '../../shared/domain/line-vat.ts';
 import {
   opportunityLeftWon,
   opportunityWonInvoiceCommand,
+  wonOpportunityLinesIncomplete,
 } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import { OpportunityInvoiceLedger } from './opportunity-invoice-ledger.ts';
@@ -48,6 +49,7 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
       'FINANCE_REJECTED',
       'INVOICE_NOT_DRAFTED',
       'OPPORTUNITY_COMPANY_WITHOUT_LEDGER',
+      'OPPORTUNITY_LINES_INCOMPLETE',
       'OPPORTUNITY_NO_LONGER_WON',
       'OPPORTUNITY_WITHOUT_COMPANY',
       'PERSISTENCE_UNAVAILABLE',
@@ -71,6 +73,7 @@ const rejected = (code: DraftInvoiceFromWonOpportunityRejected['code'], reason: 
 const SETTLED_WITHOUT_DRAFT: ReadonlyMap<DraftInvoiceFromWonOpportunityRejected['code'], 'Info' | 'Warning'> = new Map([
   ['OPPORTUNITY_NO_LONGER_WON', 'Info'],
   ['OPPORTUNITY_COMPANY_WITHOUT_LEDGER', 'Warning'],
+  ['OPPORTUNITY_LINES_INCOMPLETE', 'Warning'],
   ['OPPORTUNITY_WITHOUT_COMPANY', 'Warning'],
   ['FINANCE_REJECTED', 'Warning'],
   ['FINANCE_LEDGER_MISSING', 'Warning'],
@@ -253,6 +256,14 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
       return yield* rejected(
         'WORKER_CONTEXT_INVALID',
         'Core delivery evidence does not match the billing worker',
+        false,
+      );
+    }
+    // Lines without a catalog product never reach the message: billing only the rest would under-invoice the sale.
+    if (wonOpportunityLinesIncomplete(payload)) {
+      return yield* rejected(
+        'OPPORTUNITY_LINES_INCOMPLETE',
+        'The won opportunity has lines without a catalog product, which the stage change does not carry; its invoice is not drafted automatically and has to be issued by hand',
         false,
       );
     }

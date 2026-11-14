@@ -47,6 +47,7 @@ import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } f
 import {
   EntityIdSchema,
   OrderIdSchema,
+  OrderLineSchema,
   PartyIdSchema,
   ProductIdReferenceSchema,
   ProductIdSchema,
@@ -73,7 +74,12 @@ import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '.
 import { AKROS_LEGAL_ENTITY_ID, isAkrosCompany, isStorefrontServiceKey } from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
-import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
+import {
+  isOrderQuantityValid,
+  isQuantityMultipleOf,
+  normalizeQuantity,
+  orderQuantityRules,
+} from '../../shared/domain/order-quantity.ts';
 import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
 import {
   assignCategory,
@@ -426,29 +432,45 @@ const withProduct = (state: MerchandiseState, updated: Product): MerchandiseStat
 export const percentChangedPriceMinor = (currentMinor: number, percent: number): number =>
   Math.round((currentMinor * (100 + percent)) / 10_000) * 100;
 
-/** Preserve source discount breaks while a staff edit changes the base unit price. */
+const tierRepricingRefusal = () =>
+  new MerchandiseLifecycleConflict({
+    code: 'merchandise_tier_base_price_required',
+    reason:
+      'Množstevní ceny nelze přepočítat: chybí původní cena nebo platná sazba DPH. Zkontrolujte klasifikaci DPH produktu a uložte cenu znovu.',
+  });
+/**
+ * Preserve source discount breaks while a staff edit changes the base unit price: net tiers scale by the net ratio,
+ * gross tiers by the ratio of the actual old and new base gross. Without both base grosses the tiers are refused,
+ * never guessed.
+ */
 const repriceTiers = (
   tiers: NonNullable<Product['priceTiers']>,
-  oldNet: number | undefined,
-  newNet: number | undefined,
-  vat: number | undefined,
+  base: {
+    readonly newNet: number | undefined;
+    readonly oldGross: number | undefined;
+    readonly oldNet: number | undefined;
+    readonly rate: number | undefined;
+  },
 ) => {
+  const { newNet, oldGross, oldNet, rate } = base;
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
-    return tiers;
+    return Effect.succeed(tiers);
   }
-  const [firstTier] = tiers;
-  if (firstTier === undefined) {
-    return tiers;
+  if (oldNet === undefined || oldNet === 0) {
+    return Effect.fail(tierRepricingRefusal());
   }
-  const baseGross = firstTier.priceMinor;
-  // Without a sellable rate a zero gross base stays zero: no gross price is invented at 0 %.
-  const nextGross = vat === undefined ? baseGross : grossUnitPriceMinor(newNet, vat);
-  return tiers.map((tier) => ({
-    ...tier,
-    priceExcludingVatMinor:
-      oldNet === undefined || oldNet === 0 ? newNet : Math.round((tier.priceExcludingVatMinor * newNet) / oldNet),
-    priceMinor: baseGross === 0 ? nextGross : Math.round((tier.priceMinor * nextGross) / baseGross),
-  }));
+  const previousGross = oldGross ?? (rate === undefined ? undefined : grossUnitPriceMinor(oldNet, rate));
+  const nextGross = rate === undefined ? undefined : grossUnitPriceMinor(newNet, rate);
+  if (previousGross === undefined || previousGross === 0 || nextGross === undefined) {
+    return Effect.fail(tierRepricingRefusal());
+  }
+  return Effect.succeed(
+    tiers.map((tier) => ({
+      ...tier,
+      priceExcludingVatMinor: Math.round((tier.priceExcludingVatMinor * newNet) / oldNet),
+      priceMinor: Math.round((tier.priceMinor * nextGross) / previousGross),
+    })),
+  );
 };
 
 /**
@@ -488,10 +510,23 @@ const enteredRateOf = (
 ): number | undefined => heldRateOf(tax.held, product) ?? tax.rates[product.taxClassificationCode];
 
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
-const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product => {
+const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
+  product: Product,
+  priceMinor: number,
+  input: MerchandiseCommandInput,
+) {
   if (product.currentPriceMinor === priceMinor) {
     return product;
   }
+  const priceTiers =
+    product.priceTiers === undefined
+      ? undefined
+      : yield* repriceTiers(product.priceTiers, {
+          newNet: priceMinor,
+          oldGross: product.grossPriceMinor,
+          oldNet: product.currentPriceMinor,
+          rate: enteredRateOf(input.tax, product),
+        });
   const updated = {
     ...withEnteredGross(product, priceMinor, enteredRateOf(input.tax, product)),
     currentPriceMinor: priceMinor,
@@ -506,18 +541,8 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
     ],
     updatedAt: input.now,
   } satisfies Product;
-  return product.priceTiers === undefined
-    ? updated
-    : {
-        ...updated,
-        priceTiers: repriceTiers(
-          product.priceTiers,
-          product.currentPriceMinor,
-          priceMinor,
-          enteredRateOf(input.tax, product),
-        ),
-      };
-};
+  return priceTiers === undefined ? updated : { ...updated, priceTiers };
+});
 
 /** The storefront finds a product by slug, so two products with one slug would hide one of them. */
 const slugTaken = (products: readonly Product[], slug: string, exceptId: string) => {
@@ -573,6 +598,20 @@ const nextVariantPriceHistory = (
     previous?.priceMinor === undefined ? change : { ...change, previousPriceMinor: previous.priceMinor };
   return Option.some([...(previous?.priceHistory ?? variant.priceHistory ?? []), entry]);
 };
+const variantSkuRequiredReason = 'Zadejte SKU varianty o délce nejvýše 64 znaků; automatické SKU je příliš dlouhé.';
+const orderSkuValid = Schema.is(OrderLineSchema.fields.sku);
+const checkedVariantSku = (product: Product, variant: ProductVariant, id: ProductVariant['id']) => {
+  const sku = variant.sku ?? `${product.sku}-${id ?? ''}`;
+  return orderSkuValid(sku)
+    ? Effect.succeed(sku)
+    : Effect.fail(
+        new MerchandiseLifecycleConflict({
+          code: 'merchandise_variant_sku_required',
+          reason: variantSkuRequiredReason,
+        }),
+      );
+};
+
 const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
   product: Product,
   incoming: readonly ProductVariant[],
@@ -596,8 +635,9 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         }
         ids.add(id);
       }
-      if (variant.sku !== undefined) {
-        const key = variant.sku.trim().toLowerCase();
+      const sku = variant.priceMinor === undefined ? variant.sku : yield* checkedVariantSku(product, variant, id);
+      if (sku !== undefined) {
+        const key = sku.trim().toLowerCase();
         if (skus.has(key)) {
           return yield* conflict('Variant SKUs must be unique within the product');
         }
@@ -623,12 +663,12 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         variant.priceTiers === undefined && previous?.priceTiers !== undefined
           ? {
               ...withGross,
-              priceTiers: repriceTiers(
-                previous.priceTiers,
-                previous.priceMinor,
-                variant.priceMinor,
-                enteredRateOf(input.tax, product),
-              ),
+              priceTiers: yield* repriceTiers(previous.priceTiers, {
+                newNet: variant.priceMinor,
+                oldGross: previous.grossPriceMinor,
+                oldNet: previous.priceMinor,
+                rate: enteredRateOf(input.tax, product),
+              }),
             }
           : withGross;
       const withId = id === undefined ? withTiers : { ...withTiers, id };
@@ -656,8 +696,10 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   if (value.slug !== undefined && slugTaken(state.products, value.slug, id)) {
     return yield* conflict('Another product already uses this storefront slug');
   }
-  const { _tag, additionalCategoryIds, priceMinor, variants, ...fields } = value;
+  // categoryPathIds is server-derived from categoryId and the stored category tree, never taken from the request.
+  const { _tag, additionalCategoryIds, categoryPathIds: _clientPath, priceMinor, variants, ...fields } = value;
   void _tag;
+  void _clientPath;
   // A product priced through its variants stores no gross of its own; each priced variant stores its gross.
   const pricedByVariants = variants?.some((variant) => variant.priceMinor !== undefined) === true;
   const base: Product = {
@@ -674,15 +716,51 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
     return yield* conflict(missingPrimaryCategoryReason);
   }
   const categorized: Product =
-    additionalCategoryIds === undefined || value.categoryId === undefined
+    value.categoryId === undefined
       ? priced
-      : yield* assignCategoryMemberships(priced, value.categoryId, additionalCategoryIds, state.categories);
+      : yield* assignCategoryMemberships(priced, value.categoryId, additionalCategoryIds ?? [], state.categories);
   const product: Product =
     variants === undefined
       ? categorized
       : { ...categorized, variants: yield* normalizeVariants(categorized, variants, input) };
   const entity = yield* entityIdOf(id);
   return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
+});
+
+const requireReconciledVariantStock = Effect.fn('Merchandise.requireReconciledVariantStock')(
+  function* requireReconciledVariantStock(
+    state: MerchandiseState,
+    product: Product,
+    variants: readonly ProductVariant[],
+  ) {
+    const previous = realVariantsOf(product);
+    const next = realVariantsOf({ ...product, variants });
+    const levels = stockLevelsOf(state.movements, product.id);
+    const strandsBaseStock = previous.length === 0 && next.length > 0 && levels.total !== 0;
+    const keptIds = new Set(next.map((variant) => variant.id));
+    const strandsVariantStock = previous.some(
+      (variant) => !keptIds.has(variant.id) && (levels.variants.get(variant.id) ?? 0) !== 0,
+    );
+    if (strandsBaseStock || strandsVariantStock) {
+      return yield* new MerchandiseLifecycleConflict({
+        code: 'merchandise_stock_reconciliation_required',
+        reason: 'Před přidáním první prodejní varianty nebo odebráním varianty vyrovnejte její skladovou zásobu.',
+      });
+    }
+    return yield* Effect.void;
+  },
+);
+
+/** The normalized replacement variants of `product`, refused while they would strand recorded stock. */
+const reconciledVariants = Effect.fn('Merchandise.reconciledVariants')(function* reconciledVariants(
+  state: MerchandiseState,
+  product: Product,
+  incoming: readonly ProductVariant[],
+  input: MerchandiseCommandInput,
+) {
+  const variants = yield* normalizeVariants(product, incoming, input);
+  yield* requireReconciledVariantStock(state, product, variants);
+  return variants;
 });
 
 const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
@@ -714,7 +792,7 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   } = value.patch;
   void _clientPath;
   const variants =
-    patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
+    patchVariants === undefined ? product.variants : yield* reconciledVariants(state, product, patchVariants, input);
   const patched = { ...product, ...patch, updatedAt: input.now } satisfies Product;
   const merged: Product = patch.images === undefined ? patched : { ...patched, imageSrc: patch.images[0] ?? '' };
   let categorized: Product = merged;
@@ -754,12 +832,21 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
   const product = yield* findProduct(state.products, value.id);
   const entity = yield* entityIdOf(product.id);
   if (value.variantId === undefined) {
-    return { entityIds: [entity], state: withProduct(state, repriced(product, value.priceMinor, input)) };
+    return { entityIds: [entity], state: withProduct(state, yield* repriced(product, value.priceMinor, input)) };
   }
   const variant = yield* findVariant(product, value.variantId);
   if (variant.priceMinor === value.priceMinor) {
     return { entityIds: [entity], state };
   }
+  const priceTiers =
+    variant.priceTiers === undefined
+      ? undefined
+      : yield* repriceTiers(variant.priceTiers, {
+          newNet: value.priceMinor,
+          oldGross: variant.grossPriceMinor,
+          oldNet: variant.priceMinor,
+          rate: enteredRateOf(input.tax, product),
+        });
   const variants = (product.variants ?? []).map((entry) => {
     if (entry.id !== variant.id) {
       return entry;
@@ -777,17 +864,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       ],
       priceMinor: value.priceMinor,
     } satisfies ProductVariant;
-    return entry.priceTiers === undefined
-      ? repricedVariant
-      : {
-          ...repricedVariant,
-          priceTiers: repriceTiers(
-            entry.priceTiers,
-            entry.priceMinor,
-            value.priceMinor,
-            enteredRateOf(input.tax, product),
-          ),
-        };
+    return priceTiers === undefined ? repricedVariant : { ...repricedVariant, priceTiers };
   });
   return { entityIds: [entity], state: withProduct(state, { ...product, updatedAt: input.now, variants }) };
 });
@@ -800,6 +877,13 @@ const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editB
 ) {
   const product = yield* findProduct(state.products, id);
   const { additionalCategoryIds, categoryId, priceChangePercent, ...fields } = patch;
+  if (priceChangePercent !== undefined && realVariantsOf(product).length > 0) {
+    return yield* new MerchandiseLifecycleConflict({
+      code: 'merchandise_variant_bulk_price_unsupported',
+      reason:
+        'Hromadná změna ceny není dostupná pro produkty s prodejními variantami. Změňte ceny jednotlivých variant.',
+    });
+  }
   const nativeCategories = categoryId !== undefined || additionalCategoryIds !== undefined;
   const edited: Product = { ...product, ...fields, updatedAt: input.now };
   let categorized = edited;
@@ -818,7 +902,7 @@ const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editB
   const priced =
     priceChangePercent === undefined
       ? categorized
-      : repriced(categorized, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
+      : yield* repriced(categorized, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
   return withProduct(state, nativeCategories ? withContentHistory(product, priced, input) : priced);
 });
 
@@ -869,12 +953,12 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
     value.variantId === undefined
       ? stockOnHandOf(state.movements, product.id)
       : variantStockOf(state.movements, product.id, value.variantId);
-  if (current + value.delta < 0) {
+  if (normalizeQuantity(current + value.delta) < 0) {
     return yield* conflict('Stock cannot go below zero');
   }
   const base: StockMovement = {
     at: input.now,
-    delta: value.delta,
+    delta: normalizeQuantity(value.delta),
     id: yield* movementIdOf(input.resourceId),
     productId: product.id,
     reason: value.reason,
@@ -912,13 +996,13 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
     variant === undefined
       ? stockOnHandOf(build.movements, product.id)
       : variantStockOf(build.movements, product.id, variant.id);
-  if (available < request.quantity) {
+  if (available < normalizeQuantity(request.quantity)) {
     return yield* conflict(`Insufficient stock for ${variant?.sku ?? product.sku}`);
   }
   const line: OrderLine = {
     productId: product.id,
     productName: product.name,
-    quantity: request.quantity,
+    quantity: normalizeQuantity(request.quantity),
     sku: variant?.sku ?? product.sku,
     unitPriceMinor: variant?.priceMinor ?? product.currentPriceMinor,
     ...variantFields(variant?.id, variant?.name),
@@ -926,7 +1010,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
   };
   const movement: StockMovement = {
     at: context.input.now,
-    delta: -request.quantity,
+    delta: -normalizeQuantity(request.quantity),
     id: yield* movementIdOf(context.input.resourceId, build.lines.length),
     productId: product.id,
     reason: 'ORDER',
@@ -1007,7 +1091,7 @@ const returnOrderStock = (state: MerchandiseState, order: Order, input: Merchand
     balances.set(key, {
       productId: movement.productId,
       ...stockVariantFields(movement.variantId),
-      delta: (previous?.delta ?? 0) + movement.delta,
+      delta: normalizeQuantity((previous?.delta ?? 0) + movement.delta),
     });
   }
   return Effect.forEach(
@@ -1085,7 +1169,7 @@ const storefrontLines = (order: Pick<Order, 'lines' | 'pricesIncludeVat'>): Stor
     lineTotalMinor: lineGrossMinor(line, order.pricesIncludeVat),
     name: line.productName,
     productId: line.productId,
-    quantity: line.quantity,
+    quantity: normalizeQuantity(line.quantity),
     sku: line.sku,
     unitPriceMinor: line.unitPriceMinor,
     ...variantFields(line.variantId, line.variantName),
@@ -1122,6 +1206,13 @@ export const tierPriceForQuantity = (tiers: Product['priceTiers'], quantity: num
   tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]
     ?.priceMinor;
 
+/** A tiered catalog needs an actual base gross; a discount is not evidence of the price below its break. */
+const baseGrossForCheckout = (
+  priced: { readonly grossPriceMinor?: number; readonly priceTiers?: Product['priceTiers'] },
+  net: number,
+  rate: number,
+) => priced.grossPriceMinor ?? ((priced.priceTiers?.length ?? 0) === 0 ? grossUnitPriceMinor(net, rate) : 0);
+
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
   products: readonly Product[],
@@ -1143,12 +1234,15 @@ const sellableUnitOf = (
   const { tax } = taxed;
   const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.rates, input.tax.held);
   const variants = record.variantRecords ?? [];
-  if (variants.length > 0) {
+  if (variants.length > 0 || line.variantId !== undefined) {
     const variant = variants.find((entry) => entry.id === line.variantId);
     if (variant === undefined) {
       return {
         issue: { ...ids, code: 'VARIANT_REQUIRED', message: `Vyberte prosím variantu produktu ${product.name}.` },
       };
+    }
+    if (!orderSkuValid(variant.sku)) {
+      return { issue: { ...ids, code: 'NOT_AVAILABLE', message: variantSkuRequiredReason } };
     }
     if (!variant.active) {
       return {
@@ -1160,7 +1254,13 @@ const sellableUnitOf = (
       tax,
       unit: {
         availability: variant.availability,
-        grossPriceMinor: tierPriceForQuantity(variant.priceTiers, line.quantity) ?? variant.grossPriceMinor ?? 0,
+        grossPriceMinor:
+          tierPriceForQuantity(variant.priceTiers, line.quantity) ??
+          baseGrossForCheckout(
+            product.variants?.find((entry) => entry.id === variant.id) ?? variant,
+            variant.priceMinor,
+            tax.vatRate,
+          ),
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -1178,7 +1278,9 @@ const sellableUnitOf = (
     unit: {
       availability: record.availability ?? 'UNKNOWN',
       // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
-      grossPriceMinor: tierPriceForQuantity(product.priceTiers, line.quantity) ?? record.grossPriceMinor ?? 0,
+      grossPriceMinor:
+        tierPriceForQuantity(product.priceTiers, line.quantity) ??
+        baseGrossForCheckout(product, product.currentPriceMinor, tax.vatRate),
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,
@@ -1213,7 +1315,7 @@ const checkedStorefrontUnit = (
   const { product, unit } = resolved;
   const ids = { productId: product.id, ...stockVariantFields(unit.variantId) };
   const key = `${product.id}|${unit.variantId ?? ''}`;
-  const quantity = (requested.get(key) ?? 0) + line.quantity;
+  const quantity = normalizeQuantity((requested.get(key) ?? 0) + line.quantity);
   requested.set(key, quantity);
   const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
   // A zero or missing owner price is never sellable, whatever price the storefront claims it saw.
@@ -1226,7 +1328,7 @@ const checkedStorefrontUnit = (
       },
     };
   }
-  if (line.quantity < (unit.minimumQuantity ?? 1)) {
+  if (normalizeQuantity(line.quantity) < normalizeQuantity(unit.minimumQuantity ?? 1)) {
     return {
       issue: {
         ...ids,
@@ -1238,7 +1340,7 @@ const checkedStorefrontUnit = (
   if (
     unit.packageQuantity !== undefined &&
     unit.packageQuantity > 0 &&
-    Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001
+    !isQuantityMultipleOf(line.quantity, unit.packageQuantity)
   ) {
     return {
       issue: {
@@ -1420,7 +1522,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       const priced = {
         productId: product.id,
         productName: product.name,
-        quantity: line.quantity,
+        quantity: normalizeQuantity(line.quantity),
         sku: unit.sku,
         unitPriceMinor: unit.grossPriceMinor,
         ...tax,
@@ -1498,7 +1600,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       movementIdOf(input.resourceId, index).pipe(
         Effect.map((movementId): StockMovement => ({
           at: input.now,
-          delta: -line.quantity,
+          delta: -normalizeQuantity(line.quantity),
           id: movementId,
           note: `Objednávka ${number} z e-shopu`,
           productId: line.productId,
@@ -1534,6 +1636,8 @@ export const describeLines = (
   order.lines
     .map((line) => describeLine(line, order.pricesIncludeVat === true, currencyOf(order.market), withVat))
     .join('; ');
+
+const sameOrderLines = Schema.toEquivalence(Schema.Array(OrderLineSchema));
 
 /** Whether two line lists carry the same VAT snapshot (rate, classification and Tax rule revision) line by line. */
 const sameLineTax = (left: readonly OrderLine[], right: readonly OrderLine[]) =>
@@ -1635,7 +1739,7 @@ const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOr
   return {
     productId: product.id,
     productName: product.name,
-    quantity: request.quantity,
+    quantity: normalizeQuantity(request.quantity),
     sku: variant?.sku ?? product.sku,
     unitPriceMinor: request.unitPriceMinor ?? currentPrice,
     ...variantFields(variant?.id, variant?.name),
@@ -1649,7 +1753,12 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
   incoming: readonly EditLineRequest[],
   input: MerchandiseCommandInput,
 ) {
-  const previous = new Map(existing.lines.map((line) => [lineKey(line), line] as const));
+  const previous = new Map<string, OrderLine>();
+  for (const line of existing.lines) {
+    const key = lineKey(line);
+    const quantity = normalizeQuantity((previous.get(key)?.quantity ?? 0) + line.quantity);
+    previous.set(key, { ...line, quantity });
+  }
   const seen = new Set<string>();
   return yield* Effect.forEach(
     incoming,
@@ -1666,7 +1775,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       if (kept !== undefined) {
         return {
           ...kept,
-          quantity: request.quantity,
+          quantity: normalizeQuantity(request.quantity),
           unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
         };
       }
@@ -1686,11 +1795,11 @@ const reconciledOrderMovements = Effect.fn('Merchandise.reconcileOrderMovements'
   for (const line of existing.lines) {
     const key = lineKey(line);
     const entry = quantities.get(key);
-    quantities.set(key, { delta: (entry?.delta ?? 0) + line.quantity, line });
+    quantities.set(key, { delta: normalizeQuantity((entry?.delta ?? 0) + line.quantity), line });
   }
   for (const line of nextLines) {
     const entry = quantities.get(lineKey(line));
-    quantities.set(lineKey(line), { delta: (entry?.delta ?? 0) - line.quantity, line });
+    quantities.set(lineKey(line), { delta: normalizeQuantity((entry?.delta ?? 0) - line.quantity), line });
   }
   const changed = [...quantities.values()].filter(({ delta }) => delta !== 0);
   const added = yield* Effect.forEach(
@@ -1703,7 +1812,7 @@ const reconciledOrderMovements = Effect.fn('Merchandise.reconcileOrderMovements'
         line.variantId === undefined
           ? stockOnHandOf(state.movements, line.productId)
           : variantStockOf(state.movements, line.productId, line.variantId);
-      if (stock + delta < 0) {
+      if (normalizeQuantity(stock + delta) < 0) {
         return yield* conflict(`Insufficient stock for ${line.sku}`);
       }
       return {
@@ -1808,7 +1917,7 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       { lines: nextLines, market: existing.market, pricesIncludeVat: existing.pricesIncludeVat },
       withVat,
     );
-    if (before !== after) {
+    if (!sameOrderLines(existing.lines, nextLines)) {
       if (orderMovesStock(state, existing)) {
         movements = yield* reconciledOrderMovements(state, existing, nextLines, input);
       }
@@ -2113,6 +2222,7 @@ export const workingSetRequestOf = (
           onNone: () => [value.id],
           onSome: (parentId) => [value.id, parentId],
         }),
+        categorySlug: value.slug,
       }),
       CreateOrder: (value): WorkingSetRequest => ({
         lastOrderNumber: true,
@@ -2130,13 +2240,13 @@ export const workingSetRequestOf = (
               : { slug: value.slug }),
           },
         } satisfies WorkingSetRequest;
-        return value.additionalCategoryIds === undefined
+        return value.categoryId === undefined && value.additionalCategoryIds === undefined
           ? request
           : {
               ...request,
               categoryIds: [
                 ...(value.categoryId === undefined ? [] : [value.categoryId]),
-                ...value.additionalCategoryIds,
+                ...(value.additionalCategoryIds ?? []),
               ],
             };
       },
@@ -2161,7 +2271,10 @@ export const workingSetRequestOf = (
       SyncTaxRates: (): WorkingSetRequest => ({}),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
       UpdateProduct: (value): WorkingSetRequest => {
-        const request = { productIds: [value.id] } satisfies WorkingSetRequest;
+        const request = {
+          movements: value.patch.variants !== undefined,
+          productIds: [value.id],
+        } satisfies WorkingSetRequest;
         const keyed =
           value.patch.slug === undefined ? request : { ...request, productKeys: { slug: value.patch.slug } };
         return value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined
