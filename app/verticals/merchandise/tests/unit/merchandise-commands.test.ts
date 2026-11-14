@@ -852,3 +852,43 @@ it.effect('refuses a bulk price selection containing sellable variants instead o
     expect(accepted.state.products[1]).toBe(variants.state.products[1]);
   }),
 );
+
+it.effect('scales gross and net discount tiers by the same base price ratio', () =>
+  Effect.gen(function* discountedTierRepricing() {
+    const created = yield* addProduct(empty, 'tiered-base', 'TIERED', 1000);
+    const tier = { minimumQuantity: 10, priceExcludingVatMinor: 800, priceMinor: 968 };
+    const tiered: MerchandiseState = {
+      ...created.state,
+      products: created.state.products.map((product) => ({ ...product, priceTiers: [tier] })),
+    };
+    const repriced = yield* apply(tiered, { _tag: 'ChangePrice', id: 'tiered-base', priceMinor: 2000 }, 'tier-reprice');
+    expect(repriced.state.products[0]?.priceTiers).toEqual([
+      { minimumQuantity: 10, priceExcludingVatMinor: 1600, priceMinor: 1936 },
+    ]);
+    expect(repriced.state.products[0]?.priceTiers?.[0]?.priceMinor).not.toBe(2420);
+    const variant = yield* apply(
+      created.state,
+      {
+        _tag: 'UpdateProduct',
+        id: 'tiered-base',
+        patch: {
+          variants: [{ attributes: '', id: 'tier-v1', name: 'Tiered', priceMinor: 1000, priceTiers: [tier] }],
+        },
+      },
+      'add-tier-variant',
+    );
+    const changedVariant = yield* apply(
+      variant.state,
+      {
+        _tag: 'ChangePrice',
+        id: 'tiered-base',
+        priceMinor: 2000,
+        variantId: 'tier-v1',
+      },
+      'variant-tier-reprice',
+    );
+    expect(changedVariant.state.products[0]?.variants?.[0]?.priceTiers).toEqual([
+      { minimumQuantity: 10, priceExcludingVatMinor: 1600, priceMinor: 1936 },
+    ]);
+  }),
+);

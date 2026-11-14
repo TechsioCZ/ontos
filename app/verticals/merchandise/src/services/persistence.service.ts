@@ -432,23 +432,16 @@ const repriceTiers = (
   tiers: NonNullable<Product['priceTiers']>,
   oldNet: number | undefined,
   newNet: number | undefined,
-  vat: number | undefined,
 ) => {
   if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
     return tiers;
   }
-  const [firstTier] = tiers;
-  if (firstTier === undefined) {
-    return tiers;
-  }
-  const baseGross = firstTier.priceMinor;
-  // Without a sellable rate a zero gross base stays zero: no gross price is invented at 0 %.
-  const nextGross = vat === undefined ? baseGross : grossUnitPriceMinor(newNet, vat);
+  const scale = (amount: number) =>
+    oldNet === undefined || oldNet === 0 ? newNet : Math.round((amount * newNet) / oldNet);
   return tiers.map((tier) => ({
     ...tier,
-    priceExcludingVatMinor:
-      oldNet === undefined || oldNet === 0 ? newNet : Math.round((tier.priceExcludingVatMinor * newNet) / oldNet),
-    priceMinor: baseGross === 0 ? nextGross : Math.round((tier.priceMinor * nextGross) / baseGross),
+    priceExcludingVatMinor: scale(tier.priceExcludingVatMinor),
+    priceMinor: scale(tier.priceMinor),
   }));
 };
 
@@ -511,12 +504,7 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
     ? updated
     : {
         ...updated,
-        priceTiers: repriceTiers(
-          product.priceTiers,
-          product.currentPriceMinor,
-          priceMinor,
-          enteredRateOf(input.tax, product),
-        ),
+        priceTiers: repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor),
       };
 };
 
@@ -624,12 +612,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         variant.priceTiers === undefined && previous?.priceTiers !== undefined
           ? {
               ...withGross,
-              priceTiers: repriceTiers(
-                previous.priceTiers,
-                previous.priceMinor,
-                variant.priceMinor,
-                enteredRateOf(input.tax, product),
-              ),
+              priceTiers: repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor),
             }
           : withGross;
       const withId = id === undefined ? withTiers : { ...withTiers, id };
@@ -809,12 +792,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       ? repricedVariant
       : {
           ...repricedVariant,
-          priceTiers: repriceTiers(
-            entry.priceTiers,
-            entry.priceMinor,
-            value.priceMinor,
-            enteredRateOf(input.tax, product),
-          ),
+          priceTiers: repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor),
         };
   });
   return { entityIds: [entity], state: withProduct(state, { ...product, updatedAt: input.now, variants }) };
