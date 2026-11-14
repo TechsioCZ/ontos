@@ -192,3 +192,10 @@ patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/runtime-extensions
   # Preserve negotiation/406 while skipping probes for explicitly absent compressed assets; retain immutable MF lists.
   '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.19': patches/@bleedingdev__modern-js-server-runtime-extensions@3.9.3-ultramodern.19.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js (app-tools-extensions backend-federation-build codegen)
+  # A unit may opt in (package.json modernjs.backendFederation.containerMinify: "whitespace-syntax") to whitespace and
+  # syntax minification of its backend federation container only; identifiers are never mangled and names are kept.
+  # Only commerce-customer-context opts in: its container measured trunk 16,510,159 / main 16,090,643 / merged
+  # 17,875,235 bytes against the 16,777,216-byte federation entry limit. Follow-up: slim its import graph (Core root
+  # barrel exports, the outbox worker host behind gateway-context-server), then drop the opt-in and this patch.
+  '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.19': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.3-ultramodern.19.patch

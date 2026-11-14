@@ -303,6 +303,9 @@
       "moduleId": "commerce.customer-context",
       "registration": "./vertical.registration.ts",
       "schemaVersion": 2
+    },
+    "backendFederation": {
+      "containerMinify": "whitespace-syntax"
     }
   },
   "zephyr:dependencies": {}
