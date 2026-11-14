@@ -65,6 +65,7 @@ import {
   startProductWorker,
   SymmyC14ProductFixtureUnavailable,
 } from './symmy-c14-product-runtime.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 
 const PARTY_CREATE_EFFECT = 'party-create';
 const COUNTERPARTY_ONBOARD_EFFECT = 'counterparty-onboard';
@@ -131,6 +132,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
     );
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose,
     });

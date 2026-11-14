@@ -61,6 +61,7 @@ import {
   startProductOwner,
   startProductWorker,
 } from './support/symmy-c14-product-runtime.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -143,6 +144,7 @@ it.live(
         );
         const isolated = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,
+          databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
           mode: 'schema-only',
           purpose: 'implementation-1096-registered-workload-gateway',
         });

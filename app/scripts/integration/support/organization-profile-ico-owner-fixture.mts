@@ -29,6 +29,7 @@ import {
   startProductOwner,
   SymmyC14ProductFixtureUnavailable,
 } from './symmy-c14-product-runtime.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 
 export interface CompanyGovernorInitialization {
   readonly issuer: string;
@@ -76,6 +77,7 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
     );
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose,
     });

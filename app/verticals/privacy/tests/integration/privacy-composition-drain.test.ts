@@ -2659,9 +2659,12 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
             deliveriesAfter.length - deliveriesBefore.length,
           );
-          expect(completedCycle.matched.messagesMatched).toBeGreaterThanOrEqual(
-            completedCycle.matched.deliveriesCreated,
-          );
+          // Either Shell's matcher got there first and this worker matched nothing, or this worker matched the one
+          // message itself and created both of its subscribed deliveries (Party's consumer, Privacy's watchdog).
+          expect([
+            [0, 0],
+            [1, 2],
+          ]).toContainEqual([completedCycle.matched.messagesMatched, completedCycle.matched.deliveriesCreated]);
           const original = yield* coreDebtSettled(f);
           expect(original.handoffFingerprint).toBe(digest(canonical));
           expect(original.outcome).toMatchObject({
