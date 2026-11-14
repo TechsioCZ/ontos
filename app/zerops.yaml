@@ -42,6 +42,8 @@ zerops:
       prepareCommands:
         - sudo npm install --global pnpm@12.16.1
       buildCommands:
+        # Zerops restores .next/cache as root; the build user must own the tree to write .next/trace.
+        - sudo chown -R "$(id -u):$(id -g)" .
         - cd app && pnpm install --frozen-lockfile --filter 'akros-storefront...'
         - cd app && pnpm --filter akros-storefront run build
         - mkdir -p 'app/.zerops/runtime' && mv 'app/akros-storefront/.next/standalone' 'app/.zerops/runtime/akros-storefront'
@@ -91,6 +93,8 @@ zerops:
       prepareCommands:
         - sudo npm install --global pnpm@12.16.1
       buildCommands:
+        # Zerops restores .next/cache as root; the build user must own the tree to write .next/trace.
+        - sudo chown -R "$(id -u):$(id -g)" .
         - cd app && pnpm install --frozen-lockfile --filter 'n1-storefront...'
         - cd app && pnpm --filter n1-storefront run build
         - mkdir -p 'app/.zerops/runtime' && mv 'app/n1-storefront/.next/standalone' 'app/.zerops/runtime/n1-storefront'

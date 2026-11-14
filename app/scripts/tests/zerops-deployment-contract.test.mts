@@ -88,6 +88,29 @@ it('has exactly the spicedb, storefront, n1 and app setups, in that order', () =
   expect(setups).toStrictEqual(SETUPS);
 });
 
+it.effect('repairs checkout ownership before any build command in every setup with a restored build cache', () =>
+  Effect.gen(function* cachedBuildOwnership() {
+    const source = readZeropsDeploymentYaml();
+    const stage = yield* materializeZeropsSetupFiles(source, { environment: 'stage' });
+    const production = yield* materializeZeropsSetupFiles(source, {
+      environment: 'production',
+      spiceDbEndpoint: 'spicedb.production.example:443',
+    });
+    for (const yaml of [source, ...stage.map(({ file }) => file), ...production.map(({ file }) => file)]) {
+      const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(yaml));
+      for (const { setup } of zerops) {
+        const service = serviceNode(yaml, setup);
+        if (serviceStrings(service, ['build', 'cache']).length > 0) {
+          const [firstCommand] = serviceStrings(service, ['build', 'buildCommands']);
+          expect(firstCommand?.split(' && ')[0], `${setup}: restored build cache must belong to the build user`).toBe(
+            'sudo chown -R "$(id -u):$(id -g)" .',
+          );
+        }
+      }
+    }
+  }),
+);
+
 it('binds generated PostgreSQL credentials into the application container', () => {
   expect(serviceBlock(readZeropsDeploymentYaml(), 'app')).toContain(runtimeDatabaseUrl);
 });
