@@ -1,6 +1,7 @@
 import { withOptional } from '../access/decision/optional.ts';
 import { Clock, Context, Duration, Effect, Result, Schema } from 'effect';
 
+import type { TenantProjectionWrite } from '../access/intent/projection-writer.ts';
 import type { OperationalScope } from '../operations/context.ts';
 
 import { projectPeopleLifecycleSearch, rebuildPeopleSearch } from '../people/people-search-workers.ts';
@@ -67,11 +68,11 @@ const reconcileWhenFenceFree = Effect.fn('CoreSystemWorker.reconcileWhenFenceFre
   function* reconcileWhenFenceFreeEffect(
     scope: OperationalScope,
     waitUntil: number,
-  ): Effect.fn.Return<void, ActionAuthorizationLifecycleError, ActionAuthorizationLifecycle> {
+  ): Effect.fn.Return<TenantProjectionWrite, ActionAuthorizationLifecycleError, ActionAuthorizationLifecycle> {
     const lifecycle = yield* ActionAuthorizationLifecycle;
     const written = yield* Effect.result(lifecycle.reconcileTenant(scope));
     if (Result.isSuccess(written)) {
-      return yield* Effect.void;
+      return written.success;
     }
     const { failure } = written;
     if (!Schema.is(TenantProjectionBusyError)(failure)) {
@@ -87,6 +88,14 @@ const reconcileWhenFenceFree = Effect.fn('CoreSystemWorker.reconcileWhenFenceFre
     yield* Effect.logInfo('Another writer is projecting this tenant; reconciling again once its fence is free');
     yield* Effect.sleep(spacing);
     return yield* reconcileWhenFenceFree(scope, waitUntil);
+  },
+);
+
+/** One lifecycle wake-up's reconcile of its tenant, waiting for a busy fence within the attempt's budget. */
+export const reconcileLifecycleTenant = Effect.fn('CoreSystemWorker.reconcileLifecycleTenant')(
+  function* reconcileLifecycleTenantEffect(scope: OperationalScope) {
+    const { budget } = yield* CoreWorkerFenceWait;
+    return yield* reconcileWhenFenceFree(scope, (yield* Clock.currentTimeMillis) + Duration.toMillis(budget));
   },
 );
 
@@ -114,8 +123,7 @@ const reconcileTenantFromClaim = Effect.fn('CoreSystemWorker.reconcileTenant')(f
       context.actorPrincipalId,
     ),
   ).pipe(Effect.mapError((cause) => new ActionAuthorizationLifecycleError({ cause, reason: cause.reason })));
-  const { budget } = yield* CoreWorkerFenceWait;
-  return yield* reconcileWhenFenceFree(scope, (yield* Clock.currentTimeMillis) + Duration.toMillis(budget));
+  return yield* reconcileLifecycleTenant(scope).pipe(Effect.asVoid);
 });
 
 const installationWorker = defineOutboxWorker(
