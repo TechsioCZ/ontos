@@ -1,5 +1,5 @@
 import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
-import { SalesInvoicePreparationDenied } from './sales-invoice-preparation-denied.ts';
+import { SalesInvoicePreparationDenied, SalesInvoiceVatUnresolved } from './sales-invoice-preparation-denied.ts';
 import { SalesInvoiceSnapshotMissing } from './sales-invoice-snapshot-missing.ts';
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
@@ -28,7 +28,7 @@ import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Predicate, Random, Result, Schema } from 'effect';
+import { Effect, Option, Predicate, Random, Result, Schema, pipe } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { canInvoiceSalesOrder, salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type {
@@ -41,7 +41,8 @@ import type {
 import { salesTotals } from '../../../../../shared/domain/purchasing.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
-import { readFinance } from '../../../../ui/finance-reads.ts';
+import { readFinance, readFinanceVatChoices } from '../../../../ui/finance-reads.ts';
+import { salesLineVat } from './invoice-vat.ts';
 import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { quoteDraftOf } from './sales-quote-draft.ts';
@@ -922,6 +923,24 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
     if (!snapshot.canWrite) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
     }
+    const choices = yield* readFinanceVatChoices(issueDate);
+    const lines = yield* pipe(
+      order.lines,
+      Effect.forEach((line) =>
+        salesLineVat({ choices, issueDate, vatRate: line.vatRate }).pipe(
+          Option.match({
+            onNone: () => Effect.fail(new SalesInvoiceVatUnresolved({ orderId: order.id })),
+            onSome: (vat) =>
+              Effect.succeed({
+                description: line.description,
+                quantity: line.quantity,
+                unitPriceMinor: line.unitPriceMinor,
+                ...vat,
+              }),
+          }),
+        ),
+      ),
+    );
     const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
     const quoteSuffix = order.quoteNumber === undefined ? '' : ` (nabídka ${order.quoteNumber})`;
     const result = yield* applyFinanceCommand(
@@ -939,12 +958,7 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
           documentNumber: `${order.number}-F${order.invoices.length + 1}`,
           dueDate,
           issueDate,
-          lines: order.lines.map((line) => ({
-            description: line.description,
-            quantity: line.quantity,
-            unitPriceMinor: line.unitPriceMinor,
-            vatRate: line.vatRate,
-          })),
+          lines,
           note: `Vystaveno z prodejní objednávky ${order.number}${quoteSuffix}.`,
           ...optionalField('partyId', order.customer.partyId),
           totalMinor: Math.max(1, salesTotals(order.lines).totalMinor),
@@ -963,6 +977,7 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
 );
 
 interface InvoiceIssueOutcome {
+  readonly reason?: 'vat';
   readonly failure?:
     | Effect.Error<ReturnType<typeof prepareSalesInvoice>>
     | Extract<Effect.Success<ReturnType<RunCommand>>, { readonly ok: false }>;
@@ -971,6 +986,7 @@ interface InvoiceIssueOutcome {
 }
 const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIssueOutcome => ({
   ok: false,
+  ...(failure !== undefined && Schema.is(SalesInvoiceVatUnresolved)(failure) ? { reason: 'vat' as const } : {}),
   ...optionalField('failure', failure),
 });
 

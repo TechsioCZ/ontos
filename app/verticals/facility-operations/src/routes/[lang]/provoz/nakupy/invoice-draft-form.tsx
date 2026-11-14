@@ -6,30 +6,31 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Random } from 'effect';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';
 import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
-import { readFinance } from '../../../../ui/finance-reads.ts';
+import { readFinance, readFinanceVatChoices } from '../../../../ui/finance-reads.ts';
+import type { FinanceVatChoices } from '../../../../ui/finance-reads.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { incomingVatOptions } from './invoice-vat.ts';
+import type { InvoiceVat } from './invoice-vat.ts';
 import { FormSaveFooter, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 import { formatAmount, todayIso } from './purchasing-model.ts';
 import { purchaseInvoiceCommandOf } from './purchase-invoice-command.ts';
 
-const vatRates = [0, 10, 12, 21] as const;
 const saveFailure = 'Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.';
-type VatRate = (typeof vatRates)[number];
 interface SubmitInvoiceDraftInput {
   readonly documentNumber: string;
   readonly dueDate: IsoDate;
   readonly issueDate: IsoDate;
-  readonly lines: readonly {
+  readonly lines: readonly ({
     readonly description: string;
     readonly quantity: number;
     readonly unitPriceMinor: number;
-    readonly vatRate: VatRate;
-  }[];
+  } & InvoiceVat)[];
   readonly onCreated: () => void;
   readonly order: PurchaseOrder;
-  readonly rate: VatRate | undefined;
+  readonly vat: InvoiceVat | undefined;
   readonly setError: (value: string | undefined) => void;
   readonly submitting: { current: boolean };
   readonly supplier: Supplier;
@@ -44,7 +45,7 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
       lines,
       onCreated,
       order,
-      rate,
+      vat,
       setError,
       submitting,
       supplier,
@@ -53,7 +54,7 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
     if (submitting.current) {
       return 'failed' as const;
     }
-    if (rate === undefined || issueDate === '' || dueDate < issueDate) {
+    if (vat === undefined || issueDate === '' || dueDate < issueDate) {
       setError('Vyberte sazbu DPH a zkontrolujte datum vystavení a splatnost.');
       return 'failed' as const;
     }
@@ -122,14 +123,35 @@ export const InvoiceDraftForm = ({
   const [issueDate, setIssueDate] = useState(todayIso);
   const [documentNumber, setDocumentNumber] = useState('');
   const [dueDate, setDueDate] = useState(todayIso);
-  const [rate, setRate] = useState<VatRate | undefined>();
+  const [vatKey, setVatKey] = useState('');
+  const [choices, setChoices] = useState<FinanceVatChoices>();
+  const [vatUnavailable, setVatUnavailable] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setChoices(undefined);
+    setVatUnavailable(false);
+    if (issueDate !== '') {
+      void browserRuntime.runPromiseExit(
+        readFinanceVatChoices(issueDate).pipe(
+          Effect.match({
+            onFailure: () => setVatUnavailable(true),
+            onSuccess: setChoices,
+          }),
+        ),
+        { signal: controller.signal },
+      );
+    }
+    return () => controller.abort();
+  }, [issueDate]);
+  const vatOptions = choices?.on === issueDate ? incomingVatOptions(choices) : [];
+  const vat = vatOptions.find((candidate) => candidate.key === vatKey)?.vat;
   const submitting = useRef(false);
   const [error, setError] = useState<string>();
   const lines = order.lines.map((line) => ({
     description: line.description,
     quantity: line.quantity,
     unitPriceMinor: line.unitPriceMinor,
-    vatRate: rate ?? 0,
+    ...(vat ?? { vatRate: 0 }),
   }));
   let totalMinor = 0;
   for (const line of lines) {
@@ -138,7 +160,7 @@ export const InvoiceDraftForm = ({
   }
   // The draft is created on Uložit only; the dates it opens with are not typed input.
   const form = useFormSave({
-    isValid: (value) => value.documentNumber.trim() !== '',
+    isValid: (value) => value.documentNumber.trim() !== '' && vat !== undefined,
     submit: () =>
       submitInvoiceDraft({
         documentNumber,
@@ -147,13 +169,13 @@ export const InvoiceDraftForm = ({
         lines,
         onCreated,
         order,
-        rate,
+        vat,
         setError,
         submitting,
         supplier,
         totalMinor,
       }),
-    value: { documentNumber, dueDate, issueDate, rate },
+    value: { documentNumber, dueDate, issueDate, vatKey },
   });
   return (
     <SectionCard title={t('facility-operations.ui.prepareIncomingInvoice')}>
@@ -187,7 +209,10 @@ export const InvoiceDraftForm = ({
         <FormInput
           id="draft-invoice-issue"
           label={t('facility-operations.ui.issueDate')}
-          onChange={(event) => setIssueDate(event.target.value)}
+          onChange={(event) => {
+            setIssueDate(event.target.value);
+            setVatKey('');
+          }}
           required
           type="date"
           value={issueDate}
@@ -202,22 +227,23 @@ export const InvoiceDraftForm = ({
         />
       </div>
       <Select
-        items={vatRates.map((value) => ({
-          displayValue: `${value} %`,
-          label: `${value} %`,
-          value: String(value),
+        items={vatOptions.map((option) => ({
+          displayValue: t(option.labelKey, { rate: option.vat.vatRate }),
+          label: t(option.labelKey, { rate: option.vat.vatRate }),
+          value: option.key,
         }))}
         label={t('facility-operations.ui.supplierDocumentVat')}
         name="invoice-vat-rate"
-        onValueChange={({ value }) => setRate(vatRates.find((candidate) => String(candidate) === value[0]))}
+        onValueChange={({ value }) => setVatKey(value[0] ?? '')}
         placeholder={t('facility-operations.ui.selectVatRate')}
-        value={rate === undefined ? [] : [String(rate)]}
+        value={vatKey === '' ? [] : [vatKey]}
       />
+      {vatUnavailable && <StatusText status="error">{t('facility-operations.ui.vat.unavailable')}</StatusText>}
       <p className="text-fg-secondary text-xs">
         Ceny objednávky se přebírají beze změny jako základ bez DPH. Zvolená sazba se použije pro všechny řádky; ověřte
         ji podle skutečného dokladu dodavatele.
       </p>
-      {rate !== undefined && <p className="font-semibold text-sm">Celkem včetně DPH: {formatAmount(totalMinor)}</p>}
+      {vat !== undefined && <p className="font-semibold text-sm">Celkem včetně DPH: {formatAmount(totalMinor)}</p>}
       <FormSaveFooter
         cancelLabel={t('facility-operations.common.cancel')}
         error={error}

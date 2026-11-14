@@ -46,6 +46,16 @@ export const purchaseInvoiceCommandOf = ({
   if (order.currency !== 'CZK') {
     return Option.none();
   }
+  if (
+    invoice.lines === undefined ||
+    invoice.lines.some(
+      (line) =>
+        line.vatTreatment === undefined &&
+        (line.vatClassification === undefined || line.taxRuleRevisionRef === undefined),
+    )
+  ) {
+    return Option.none();
+  }
   const command: MutableIncomingInvoiceInput = {
     ...invoice,
     _tag: 'RecordIncomingInvoice',

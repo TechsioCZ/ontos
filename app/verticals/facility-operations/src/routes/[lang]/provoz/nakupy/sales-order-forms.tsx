@@ -141,7 +141,7 @@ export type IssueInvoice = (
   order: SalesOrder,
   issueDate: string,
   dueDate: string,
-) => Effect.Effect<{ readonly number?: string | undefined; readonly ok: boolean }>;
+) => Effect.Effect<{ readonly number?: string | undefined; readonly ok: boolean; readonly reason?: 'vat' }>;
 
 export const SalesInvoiceForm = ({
   issueInvoice,
@@ -167,7 +167,7 @@ export const SalesInvoiceForm = ({
       return issueInvoice(order, issueDate, dueDate).pipe(
         Effect.map((outcome): FormSubmitResult => {
           if (!outcome.ok) {
-            setError(k('sales.form.invoiceFailed'));
+            setError(k(outcome.reason === 'vat' ? 'sales.form.invoiceVatUnresolved' : 'sales.form.invoiceFailed'));
             return 'failed';
           }
           return submitDone(() => {

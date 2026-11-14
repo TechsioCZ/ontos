@@ -96,6 +96,14 @@
       "supplierDocumentNumber": "Číslo dokladu dodavatele",
       "supplierDocumentVat": "DPH podle dokladu dodavatele",
       "selectVatRate": "Vyberte sazbu DPH",
+      "vat": {
+        "standard": "Základní sazba ({{rate}} %)",
+        "reduced": "Snížená sazba ({{rate}} %)",
+        "EXEMPT": "Osvobozeno od DPH",
+        "REVERSE_CHARGE": "Přenesená daňová povinnost",
+        "NON_PAYER": "Dodavatel není plátce DPH",
+        "unavailable": "DPH pro datum vystavení nelze ověřit. Zkontrolujte nastavení DPH ve Financích."
+      },
       "leaseAgreement": "Nájemní smlouva",
       "financeInvoiceFilesTitle": "Soubory faktur z Financí",
       "financeInvoiceFilesCount": "Soubory faktur ve Financích"

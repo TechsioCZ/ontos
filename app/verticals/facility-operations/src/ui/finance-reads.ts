@@ -8,6 +8,7 @@ import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtim
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Effect, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { financeBillingApi } from '@app/finance-billing/api';
 
 const FINANCE_AUDIENCE = 'finance-billing' as const;
 const FINANCE_API_PREFIX = '/finance-billing-api';
@@ -138,3 +139,19 @@ export const readFinance = (requestCorrelation: string, request: { readonly docu
       ),
     ),
   );
+
+/** Use Finance's published issue-date read; Tax revisions and the seller's regime stay owner-authoritative. */
+export const readFinanceVatChoices = (on: string) =>
+  gateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    makeGovernedEffectBffClient(
+      {
+        api: financeBillingApi,
+        credential: Redacted.make(credential),
+        defaultApiPrefix: FINANCE_API_PREFIX,
+        requestCorrelation: 'facility-operations.invoice-vat.read',
+      },
+      { baseUrl: apiBaseUrl, compositionRevision },
+    ).pipe(Effect.flatMap((client) => client.vatChoices.execute({ payload: { on } }))),
+  );
+
+export type FinanceVatChoices = Effect.Success<ReturnType<typeof readFinanceVatChoices>>;

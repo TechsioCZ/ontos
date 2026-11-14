@@ -94,6 +94,14 @@
       "supplierDocumentNumber": "Supplier document number",
       "supplierDocumentVat": "VAT according to the supplier document",
       "selectVatRate": "Select a VAT rate",
+      "vat": {
+        "standard": "Standard rate ({{rate}} %)",
+        "reduced": "Reduced rate ({{rate}} %)",
+        "EXEMPT": "Exempt from VAT",
+        "REVERSE_CHARGE": "Reverse charge",
+        "NON_PAYER": "Supplier is not a VAT payer",
+        "unavailable": "VAT cannot be verified for the issue date. Check the VAT settings in Finance."
+      },
       "leaseAgreement": "Lease agreement",
       "financeInvoiceFilesTitle": "Invoice files from Finance",
       "financeInvoiceFilesCount": "Invoice files in Finance"

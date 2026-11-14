@@ -442,7 +442,8 @@
       "remainingHelp": "Zbývá dodat: {{count}}",
       "dueDate": "Splatnost nemůže být před datem vystavení.",
       "invoiceIntro": "Finance založí návrh vydané faktury pro {{customer}} s kopií řádků a cen této objednávky. Faktura odkazuje na objednávku a objednávka na fakturu.",
-      "invoiceFailed": "Návrh faktury se nepodařilo vytvořit. Obnovte stránku a zkuste to znovu."
+      "invoiceFailed": "Návrh faktury se nepodařilo vytvořit nebo propojit. Před dalším vystavením ověřte doklad ve Financích.",
+      "invoiceVatUnresolved": "DPH objednávky nelze jednoznačně ověřit pro datum vystavení. Ověřte nastavení DPH a připravte fakturu ve Financích s odpovídajícím daňovým režimem."
     },
     "messages": {
       "rejected": "Nabídka zamítnuta.",
