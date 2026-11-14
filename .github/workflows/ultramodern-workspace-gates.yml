@@ -760,9 +760,14 @@ jobs:
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
-  # Since tsrs 0.23 a type-aware lint run checks the whole program of every tsconfig its files touch, so two
-  # shards paid that check twice; one job pays it once. TSRS_FAST=1 is tsrs' fast whole-program mode, which still
-  # reports type errors; the separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace.
+  # The type-aware rules and the lint type check run on Effect's patched tsgolint, which reports type errors of the
+  # files the hook lists, each under its own tsconfig. tsrs-lint (0.23 and later) reports every file of every program
+  # those files touch, once, under whichever program reaches it first: a vertical test importing a script checked the
+  # script under the vertical's options, and a script importing vertical source checked that source under the script
+  # options, so the result depended on which files a run listed. Interleaved shards would each load nearly every program,
+  # so one job runs every file. The separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace,
+  # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
+  # outside its project graph (`pnpm lint:effect-diagnostics`).
   # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
   # candidate check, over every file.
   format-and-lint:
@@ -794,7 +799,6 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
           SHARDS: 1
-          TSRS_FAST: '1'
         run: |
           index=0
           git ls-files -z | while IFS= read -r -d '' file; do

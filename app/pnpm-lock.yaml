@@ -501,6 +501,9 @@ importers:
       oxlint-plugin-react-doctor:
         specifier: 0.9.12
         version: 0.9.12(patch_hash=a2dce633104441e703ec494b4e5b9fc790ee4d147b36292f25d386142ea4e6c4)
+      oxlint-tsgolint:
+        specifier: 7.0.2005
+        version: 7.0.2005
       playwright-core:
         specifier: 1.64.0
         version: 1.64.0

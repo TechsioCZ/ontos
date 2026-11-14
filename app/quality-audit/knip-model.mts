@@ -3236,7 +3236,7 @@ const finiteConsumer = (factsByPath: ReadonlyMap<string, SourceFacts>, appRoot: 
   };
 };
 
-// The harness launches Oxlint through `effect-tsgo --tsrs-lint`, the production lint launcher.
+// The rule-fixture harness launches Oxlint through `effect-tsgo --tsrs-lint`.
 
 interface NativeConsumerContext {
   readonly appRoot: string;

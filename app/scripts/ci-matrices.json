@@ -50,7 +50,7 @@
     {
       "name": "Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules",
       "typescript-build": true,
-      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
+      "commands": "pnpm typecheck\npnpm lint:effect-diagnostics\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
     },
     {
       "name": "Repository Tooling Tests (1/3)",
