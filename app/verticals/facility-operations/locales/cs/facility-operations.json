@@ -94,6 +94,7 @@
       "issueDate": "Datum vystavení",
       "dueDate": "Datum splatnosti",
       "supplierDocumentNumber": "Číslo dokladu dodavatele",
+      "supplierDocumentNumberRequired": "Doplňte číslo dokladu, které uvádí dodavatel na faktuře.",
       "supplierDocumentVat": "DPH podle dokladu dodavatele",
       "selectVatRate": "Vyberte sazbu DPH",
       "vat": {
@@ -102,6 +103,7 @@
         "EXEMPT": "Osvobozeno od DPH",
         "REVERSE_CHARGE": "Přenesená daňová povinnost",
         "NON_PAYER": "Dodavatel není plátce DPH",
+        "loading": "Načítáme sazby DPH platné k datu vystavení…",
         "unavailable": "DPH pro datum vystavení nelze ověřit. Zkontrolujte nastavení DPH ve Financích."
       },
       "leaseAgreement": "Nájemní smlouva",
