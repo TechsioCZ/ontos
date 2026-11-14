@@ -143,47 +143,45 @@ it.layer(services, { excludeTestServices: true })('Inventory durable gateway red
       ),
   );
 
-  suite.effect(
-    'inventory atomically rejects concurrent and cross-instance replay and foreign audiences',
-    () =>
-      fixture().pipe(
-        Effect.flatMap((test) =>
-          Effect.gen(function* concurrentDurableReplay() {
-            const first = yield* test.redemption;
-            const second = yield* test.redemption;
-            const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
-            const input = assertion('11111111-1111-4111-8111-111111111111', now + 300);
-            const outcomes = yield* Effect.all(
-              [first.consume(input).pipe(Effect.result), second.consume(input).pipe(Effect.result)],
-              { concurrency: 2 },
-            );
-            expect(outcomes.filter(Result.isSuccess)).toHaveLength(1);
-            const failures = outcomes.filter(Result.isFailure);
-            expect(failures).toHaveLength(1);
-            for (const failure of failures) {
-              expect(Schema.is(GatewayAssertionReplayError)(failure.failure)).toBe(true);
-            }
-            const restarted = yield* test.redemption;
-            const replay = yield* restarted.consume(input).pipe(Effect.result);
-            expect(Result.isFailure(replay)).toBe(true);
-            if (Result.isFailure(replay)) {
-              expect(Schema.is(GatewayAssertionReplayError)(replay.failure)).toBe(true);
-            }
-            const foreignAudience = yield* restarted
-              .consume({ ...input, audience: 'other-owned-audience' })
-              .pipe(Effect.result);
-            expect(Result.isFailure(foreignAudience)).toBe(true);
-            if (Result.isFailure(foreignAudience)) {
-              expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(foreignAudience.failure)).toBe(true);
-            }
-            const rows = yield* test.runtime.unsafe(
-              'select audience from inventory.gateway_assertion_redemptions order by audience',
-            );
-            expect(rows).toEqual([{ audience: 'inventory' }]);
-          }),
-        ),
-        Effect.scoped,
+  suite.effect('inventory atomically rejects concurrent and cross-instance replay and foreign audiences', () =>
+    fixture().pipe(
+      Effect.flatMap((test) =>
+        Effect.gen(function* concurrentDurableReplay() {
+          const first = yield* test.redemption;
+          const second = yield* test.redemption;
+          const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
+          const input = assertion('11111111-1111-4111-8111-111111111111', now + 300);
+          const outcomes = yield* Effect.all(
+            [first.consume(input).pipe(Effect.result), second.consume(input).pipe(Effect.result)],
+            { concurrency: 2 },
+          );
+          expect(outcomes.filter(Result.isSuccess)).toHaveLength(1);
+          const failures = outcomes.filter(Result.isFailure);
+          expect(failures).toHaveLength(1);
+          for (const failure of failures) {
+            expect(Schema.is(GatewayAssertionReplayError)(failure.failure)).toBe(true);
+          }
+          const restarted = yield* test.redemption;
+          const replay = yield* restarted.consume(input).pipe(Effect.result);
+          expect(Result.isFailure(replay)).toBe(true);
+          if (Result.isFailure(replay)) {
+            expect(Schema.is(GatewayAssertionReplayError)(replay.failure)).toBe(true);
+          }
+          const foreignAudience = yield* restarted
+            .consume({ ...input, audience: 'other-owned-audience' })
+            .pipe(Effect.result);
+          expect(Result.isFailure(foreignAudience)).toBe(true);
+          if (Result.isFailure(foreignAudience)) {
+            expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(foreignAudience.failure)).toBe(true);
+          }
+          const rows = yield* test.runtime.unsafe(
+            'select audience from inventory.gateway_assertion_redemptions order by audience',
+          );
+          expect(rows).toEqual([{ audience: 'inventory' }]);
+        }),
       ),
+      Effect.scoped,
+    ),
   );
 
   suite.effect('inventory rejects expired input before cleanup and fails closed when durable storage is absent', () =>

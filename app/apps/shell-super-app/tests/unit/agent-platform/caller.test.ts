@@ -1722,7 +1722,7 @@ it.effect('a request that goes away mid-description still lets every started evi
     const reference = yield* referenceWrites;
     const { installed, snapshot } = yield* refusedTwoBatchCatalog;
     const writesStarted = { count: 0 };
-    const releaseWrites = yield* Deferred.make<void>();
+    const releaseWrites = yield* Deferred.make<null>();
     const inspection = subjectInspectionFixture({
       onEvidenceWrite: () =>
         Effect.sync(() => {
@@ -1739,13 +1739,16 @@ it.effect('a request that goes away mid-description still lets every started evi
     yield* Effect.gen(function* interruptAfterBothWritesStart() {
       // Hold both writes until the handshake proves they started; a polling timeout must fail before interruption.
       yield* advanceUntil(() => writesStarted.count === 2);
-      expect({ settled: inspection.writtenRows.size, started: writesStarted.count }).toEqual({ settled: 0, started: 2 });
+      expect({ settled: inspection.writtenRows.size, started: writesStarted.count }).toEqual({
+        settled: 0,
+        started: 2,
+      });
       const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
       yield* Effect.yieldNow;
-      yield* Deferred.succeed(releaseWrites, undefined);
+      yield* Deferred.succeed(releaseWrites, null);
       yield* advanceUntilDone(interruption);
       yield* Fiber.join(interruption);
-    }).pipe(Effect.ensuring(Deferred.succeed(releaseWrites, undefined)));
+    }).pipe(Effect.ensuring(Deferred.succeed(releaseWrites, null)));
     // No answer is returned, but every started write committed: both batches' rows are there.
     expect([...inspection.writtenRows]).toEqual([
       [1, reference.first],

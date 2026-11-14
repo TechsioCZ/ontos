@@ -1086,6 +1086,13 @@ const totalOf = (
   count: 'evidenceRows' | 'statements' | 'transactions',
 ) => steps.reduce((sum, step) => sum + step[count], 0);
 
+/** A module the N1 owner's catalog admits: Core's own and the six installed ones. */
+const admittedModule = (moduleId: string) => moduleId.startsWith('core.') || N1_MODULES.includes(moduleId);
+
+/** The owner is allowed in run mode. Routine allows leave no row; a mode refusal still does. */
+const leavesEvidence = (declaration: ModuleCarrier['declaration']) =>
+  declaration !== undefined && (declaration.risk !== 'routine' || !declaration.modes.includes('run'));
+
 const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* measureApprovalPath(stageCase: StageCase) {
   const crypto = yield* Crypto.Crypto;
   const snapshot = yield* installedComposition;
@@ -1318,8 +1325,7 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   // is allowed above the old budgets; extra owner, authorization or evidence queries still break the fence.
   const statementsPerScope = 2;
   const previousStatementsPerScope = 1;
-  const scopeSetupIncrease = (transactions: number) =>
-    transactions * (statementsPerScope - previousStatementsPerScope);
+  const scopeSetupIncrease = (transactions: number) => transactions * (statementsPerScope - previousStatementsPerScope);
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
@@ -1328,10 +1334,6 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
       return yield* (yield* ShellInstalledModuleCatalog).load;
     }),
   );
-  const admittedModule = (moduleId: string) => moduleId.startsWith('core.') || N1_MODULES.includes(moduleId);
-  // The owner is allowed in run mode. Routine allows leave no row; a mode refusal still does.
-  const leavesEvidence = (declaration: ModuleCarrier['declaration']) =>
-    declaration !== undefined && (declaration.risk !== 'routine' || !declaration.modes.includes('run'));
   const carrierRows = moduleCarriers(installed).filter(
     ({ declaration, moduleId }) => admittedModule(moduleId) && leavesEvidence(declaration),
   ).length;
