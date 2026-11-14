@@ -1,9 +1,10 @@
-import { and, eq } from 'drizzle-orm';
-import { Duration, Effect, Option, Schema } from 'effect';
+import { and, eq, or, sql } from 'drizzle-orm';
+import { Context, Duration, Effect, Layer, Option, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
-import { principals, tenants } from '../db/schema.ts';
+import { CoreDatabase } from '../db/client.ts';
+import { accessWorkloadBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import { SystemPrincipalContextDeniedError } from './system-principal-context-denied-error.ts';
 import { SystemPrincipalContextInvalidError } from './system-principal-context-invalid-error.ts';
@@ -27,6 +28,7 @@ export interface SystemWorkloadRegistration {
   readonly jobKey: string;
   readonly [registrationProvenance]?: true;
 }
+const invalidWorkloadRegistrationReason = 'The trusted system workload registration is invalid';
 const safePart = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u;
 
 const rejectInvalidSystemWorkloadRegistration = (): never => {
@@ -53,6 +55,25 @@ export const registerSystemWorkload = (input: {
   return Object.freeze(registration);
 };
 
+/** Returns a registered admission's native auth reference without constructing an authenticated principal. */
+export const registeredAdmissionAuthContextRef = Effect.fn('registeredAdmissionAuthContextRef')(
+  function* registeredAdmissionAuthContextRefEffect(
+    registration: SystemWorkloadRegistration,
+    actionInvocationId: string,
+  ): Effect.fn.Return<string, SystemPrincipalContextInvalidError> {
+    if (
+      registration[registrationProvenance] !== true ||
+      !Schema.is(Schema.String.check(Schema.isUUID()))(actionInvocationId)
+    ) {
+      return yield* new SystemPrincipalContextInvalidError({
+        code: 'system_principal_context_invalid',
+        reason: invalidWorkloadRegistrationReason,
+      });
+    }
+    return `job:${registration.jobKey}:run:${actionInvocationId}`;
+  },
+);
+
 interface SystemPrincipalContextRecord {
   readonly kind: (typeof principals.$inferSelect)['kind'];
   readonly principalStatus: (typeof principals.$inferSelect)['status'];
@@ -66,6 +87,11 @@ type SystemPrincipalContextRepositoryLoadResult = Effect.Effect<
 
 interface SystemPrincipalContextRecordReader<Result extends SystemPrincipalContextRepositoryLoadResult> {
   readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Result;
+  readonly loadEnrolled?: (input: {
+    readonly allowServicePrincipal: boolean;
+    readonly jobKey: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<readonly { readonly principalId: string }[], SystemPrincipalContextUnavailableError>;
 }
 
 const unavailable = (cause?: unknown): SystemPrincipalContextUnavailableError =>
@@ -84,7 +110,7 @@ const loadSystemPrincipalContextRecord = <Result extends SystemPrincipalContextR
   repository.load(input);
 
 const systemPrincipalContextRepositoryFromDatabase = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+  readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>;
 }) => ({
   load: (input: { readonly principalId: string; readonly tenantId: string }) =>
     database.executor
@@ -105,6 +131,48 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
           orElse: () => Effect.fail(unavailable()),
         }),
       ),
+  loadEnrolled: (input: {
+    readonly allowServicePrincipal: boolean;
+    readonly jobKey: string;
+    readonly tenantId: string;
+  }) =>
+    database.executor
+      .transaction(
+        Effect.fn('SystemPrincipalContextRepository.loadEnrolled')(function* enrolled(transaction) {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${input.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
+            'objects',
+          );
+          return yield* transaction
+            .select({ principalId: principals.principalId })
+            .from(accessWorkloadBindings)
+            .innerJoin(
+              principals,
+              and(
+                eq(principals.tenantId, accessWorkloadBindings.tenantId),
+                eq(principals.principalId, accessWorkloadBindings.principalId),
+              ),
+            )
+            .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
+            .where(
+              and(
+                eq(accessWorkloadBindings.tenantId, input.tenantId),
+                eq(accessWorkloadBindings.workloadKey, input.jobKey),
+                eq(accessWorkloadBindings.status, 'active'),
+                eq(principals.status, 'active'),
+                eq(tenants.status, 'active'),
+                input.allowServicePrincipal
+                  ? or(eq(principals.kind, 'system'), eq(principals.kind, 'service'))
+                  : eq(principals.kind, 'system'),
+              ),
+            )
+            .limit(2);
+        }),
+      )
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.timeoutOrElse({ duration: DATABASE_OPERATION_TIMEOUT, orElse: () => Effect.fail(unavailable()) }),
+      ),
 });
 
 const isEligibleSystemPrincipal = (
@@ -117,8 +185,8 @@ const isEligibleSystemPrincipal = (
 
 export const systemPrincipalContextResolverFromRepository = <Result extends SystemPrincipalContextRepositoryLoadResult>(
   repository: SystemPrincipalContextRecordReader<Result>,
-) => ({
-  resolve: Effect.fn('systemPrincipalContextResolverFromRepository.resolve')(
+) => {
+  const resolve = Effect.fn('systemPrincipalContextResolverFromRepository.resolve')(
     function* resolveSystemPrincipalContext(input: {
       readonly principalId: string;
       readonly registration: SystemWorkloadRegistration;
@@ -133,7 +201,7 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
       ) {
         return yield* new SystemPrincipalContextInvalidError({
           code: 'system_principal_context_invalid',
-          reason: 'The trusted system workload registration is invalid',
+          reason: invalidWorkloadRegistrationReason,
         });
       }
       const maybeRecord = yield* loadSystemPrincipalContextRecord(repository, {
@@ -164,15 +232,66 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
             new SystemPrincipalContextInvalidError({
               cause,
               code: 'system_principal_context_invalid',
-              reason: 'The trusted system workload registration is invalid',
+              reason: invalidWorkloadRegistrationReason,
             }),
         ),
       );
       return trustResolvedSystemPrincipalContext(Object.freeze(context));
     },
-  ),
-});
+  );
+  return {
+    resolve,
+    resolveEnrolled: Effect.fn('SystemPrincipalContextResolver.resolveEnrolled')(function* resolveEnrolled(input: {
+      readonly registration: SystemWorkloadRegistration;
+      readonly runReference: string;
+      readonly tenantId: string;
+    }): Effect.fn.Return<TrustedPrincipalContext, SystemPrincipalContextError> {
+      if (
+        input.registration[registrationProvenance] !== true ||
+        !safePart.test(input.runReference) ||
+        !Schema.is(Schema.String.check(Schema.isUUID()))(input.tenantId)
+      ) {
+        return yield* new SystemPrincipalContextInvalidError({
+          code: 'system_principal_context_invalid',
+          reason: invalidWorkloadRegistrationReason,
+        });
+      }
+      if (repository.loadEnrolled === undefined) {
+        return yield* unavailable();
+      }
+      const enrolled = yield* repository.loadEnrolled({
+        allowServicePrincipal: input.registration.allowServicePrincipal,
+        jobKey: input.registration.jobKey,
+        tenantId: input.tenantId,
+      });
+      const [principal] = enrolled;
+      if (enrolled.length !== 1 || principal === undefined) {
+        return yield* new SystemPrincipalContextDeniedError({
+          code: 'system_principal_context_denied',
+          reason: 'The tenant workload must have exactly one eligible enrolled system principal',
+        });
+      }
+      return yield* resolve({ ...input, principalId: principal.principalId });
+    }),
+  };
+};
 
 export const makeSystemPrincipalContextResolver = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+  readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>;
 }) => systemPrincipalContextResolverFromRepository(systemPrincipalContextRepositoryFromDatabase(database));
+
+/** Public identity capability. Database construction stays inside Core infrastructure. */
+export class SystemPrincipalContextResolver extends Context.Service<
+  SystemPrincipalContextResolver,
+  ReturnType<typeof makeSystemPrincipalContextResolver>
+>()('@app/core-runtime/auth/system-principal-context/SystemPrincipalContextResolver') {}
+
+/** The resolver over the Core database the surrounding layers provide, for Core code already inside them. */
+export const SystemPrincipalContextResolverFromCoreDatabase = CoreDatabase.pipe(
+  Effect.map(makeSystemPrincipalContextResolver),
+);
+
+export const SystemPrincipalContextResolverLive = Layer.effect(
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverFromCoreDatabase,
+);

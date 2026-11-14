@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { HttpServerResponse } from 'effect/http';
+import { HttpBody, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { compositionSnapshotEtag, compositionSnapshotResponse } from '../zerops/composition-source-response.mts';
@@ -25,7 +25,7 @@ it.effect('answers a reader that holds the snapshot with a bodiless 304, every o
     const confirmed = compositionSnapshotResponse(snapshot, etag);
     expect(confirmed.status).toBe(304);
     expect(confirmed.headers.etag).toBe(etag);
-    expect(confirmed.body._tag).toBe('Empty');
+    expect(confirmed.body).toBe(HttpBody.empty);
     expect(HttpServerResponse.isHttpServerResponse(confirmed)).toBe(true);
     return yield* Effect.void;
   }),

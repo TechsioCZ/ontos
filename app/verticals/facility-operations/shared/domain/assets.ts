@@ -4,6 +4,7 @@
 // Depreciation here is EVIDENCE of approved values, never a legal or tax calculation (S03 „Nedělat“).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
+import type { Types } from 'effect';
 import {
   AuditFieldsSchema,
   IsoDateSchema,
@@ -347,7 +348,7 @@ export const upcomingServiceDue = (state: AssetsState): readonly ServiceDue[] =>
       if (record.nextDueOn === undefined) {
         continue;
       }
-      const entry: { -readonly [K in keyof ServiceDue]: ServiceDue[K] } = {
+      const entry: Types.Mutable<ServiceDue> = {
         assetId: asset.id,
         assetName: asset.name,
         inventoryNumber: asset.inventoryNumber,

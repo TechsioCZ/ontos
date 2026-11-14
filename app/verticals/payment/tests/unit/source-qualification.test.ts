@@ -41,6 +41,8 @@ const bankSource = {
   sourceSystem: 'erp-helios',
 } as const;
 
+const bankRefundRoute = { ...bankSource, sourceAuthorityId: BANK_AUTHORITY_ID };
+
 const ERP_PRINCIPAL_ID = '60000000-0000-4000-8000-000000000001';
 
 /** A configured authority as the owner persistence presents it to the bound ERP integration principal. */
@@ -81,7 +83,15 @@ const target = (
   payment: { amount: { amountMinor: 100_000, currency: 'CZK' }, executionBinding, method, paymentId: PAYMENT_ID },
 });
 
-const bankTarget = target('BANK_TRANSFER_ADVANCE', { _tag: 'BANK_ACCOUNTING_RECEIPT' });
+const bankTarget = target('BANK_TRANSFER_ADVANCE', {
+  _tag: 'BANK_ACCOUNTING_RECEIPT',
+  receiptAuthority: {
+    accountRef: bankSource.accountRef,
+    environment: bankSource.environment,
+    sourceAuthorityId: BANK_AUTHORITY_ID,
+    sourceSystem: bankSource.sourceSystem,
+  },
+});
 const codBinding: PaymentExecutionBinding = {
   _tag: 'COD_DELIVERY_OFFER',
   capabilityEvidenceRef: 'cod-capability-evidence-1',
@@ -199,6 +209,29 @@ describe('#1152 exact source qualification', () => {
     expect(tagOf(decision)).toBe('HeldUnassigned');
   });
 
+  it('#1152 ambiguous bank receipt requires the same original source pinned on every collection attempt', () => {
+    const retry = {
+      binding: bankTarget.payment.executionBinding,
+      kind: 'COLLECT',
+      operationId: '20000000-0000-4000-8000-000000000003',
+      outcome: 'PENDING',
+    } as const;
+    const prior = { ...retry, operationId: COLLECT_ID, outcome: 'NOT_EFFECTED_CONFIRMED' } as const;
+    const withPrior = (earlier: PaymentSourceTargetView['operations'][number]) =>
+      ({ ...bankTarget, operations: [earlier, retry] }) satisfies PaymentSourceTargetView;
+    const shared = qualify({ target: withPrior(prior) });
+    expect(tagOf(shared)).toBe('Qualified');
+    if (PaymentSourceQualification.$is('Qualified')(shared)) {
+      expect(shared.observation.operationId).toBeUndefined();
+    }
+
+    const legacy = withPrior({ ...prior, binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' } });
+    expect(tagOf(qualify({ target: legacy }))).toBe('Unauthorized');
+    expect(tagOf(qualify({ statement: statement({ operationId: retry.operationId }), target: legacy }))).toBe(
+      'Qualified',
+    );
+  });
+
   it('#1152 the method must have the exact configured authority (method-specific authority mismatch)', () => {
     const decision = qualify({ authorities: [authority({ method: 'DEFERRED_INVOICE' })] });
     expect(tagOf(decision)).toBe('Unauthorized');
@@ -229,7 +262,13 @@ describe('#1152 exact source qualification', () => {
         operationId: COLLECT_ID,
         outcome: 'EFFECT_CONFIRMED',
       },
-      { binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' }, kind: 'REFUND', operationId: REFUND_ID, outcome: 'PENDING' },
+      {
+        binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+        kind: 'REFUND',
+        operationId: REFUND_ID,
+        outcome: 'PENDING',
+        refundExecutionRoute: bankRefundRoute,
+      },
     ]);
     const refundInput = {
       authorities: [authority({ factFamily: 'REFUND_EXECUTION', refundRoute: true })],
@@ -377,7 +416,7 @@ describe('#1152 exact source qualification', () => {
     ).toBe('Unauthorized');
   });
 
-  it('#1152 refund evidence requires a configured refund route; a manual route cannot confirm returned money', () => {
+  it('#1152 refund evidence must match the exact configured executor', () => {
     const refundTarget = target('BANK_TRANSFER_ADVANCE', { _tag: 'BANK_ACCOUNTING_RECEIPT' }, [
       {
         binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
@@ -385,7 +424,13 @@ describe('#1152 exact source qualification', () => {
         operationId: COLLECT_ID,
         outcome: 'EFFECT_CONFIRMED',
       },
-      { binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' }, kind: 'REFUND', operationId: REFUND_ID, outcome: 'PENDING' },
+      {
+        binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+        kind: 'REFUND',
+        operationId: REFUND_ID,
+        outcome: 'PENDING',
+        refundExecutionRoute: bankRefundRoute,
+      },
     ]);
     const refundStatement = statement({
       factFamily: 'REFUND_EXECUTION',
@@ -424,7 +469,7 @@ describe('#1152 exact source qualification', () => {
           target: refundTarget,
         }),
       ),
-    ).toBe('Unsupported');
+    ).toBe('Unauthorized');
   });
 
   it('#1150 #1152 refund evidence must come from the executor the REFUND was requested through', () => {
@@ -441,7 +486,7 @@ describe('#1152 exact source qualification', () => {
         kind: 'REFUND',
         operationId: REFUND_ID,
         outcome: 'PENDING',
-        refundExecutionRoute: { sourceAuthorityId: BANK_AUTHORITY_ID, sourceKind: 'BANK_ACCOUNTING' },
+        refundExecutionRoute: bankRefundRoute,
       },
     ]);
     const refundStatement = statement({
@@ -449,7 +494,21 @@ describe('#1152 exact source qualification', () => {
       factKind: 'REFUND_CONFIRMED',
       operationId: REFUND_ID,
     });
-    const originalRoute = authority({ factFamily: 'REFUND_EXECUTION', refundRoute: true });
+    const originalRoute = authority({ factFamily: 'REFUND_EXECUTION', method: absent(), refundRoute: true });
+    const replacement = authority({
+      factFamily: 'REFUND_EXECUTION',
+      refundRoute: true,
+      sourceAuthorityId: OTHER_AUTHORITY_ID,
+    });
+    const exact = qualify({
+      authorities: [replacement, originalRoute],
+      statement: refundStatement,
+      target: routedTarget,
+    });
+    expect(tagOf(exact)).toBe('Qualified');
+    if (PaymentSourceQualification.$is('Qualified')(exact)) {
+      expect(exact.authority.sourceAuthorityId).toBe(BANK_AUTHORITY_ID);
+    }
     const otherRoute = authority({
       ...otherBank,
       factFamily: 'REFUND_EXECUTION',
@@ -548,7 +607,13 @@ describe('#1152 source authority configuration matrix', () => {
     ] as const;
     for (const [method, sourceKind] of routes) {
       expect(
-        sourceAuthorityConfigurationProblem({ factFamily: 'REFUND_EXECUTION', method, refundRoute: true, sourceKind }),
+        sourceAuthorityConfigurationProblem({
+          factFamily: 'REFUND_EXECUTION',
+          method,
+          pickupCapabilityRef: sourceKind === 'LOCAL_POS_OPERATOR' ? 'pickup-site-1' : undefined,
+          refundRoute: true,
+          sourceKind,
+        }),
       ).toBeUndefined();
     }
     // A gateway executes only gateway refunds; it never becomes a route for a merchant-side method.
@@ -591,6 +656,7 @@ describe('#1152 source authority configuration matrix', () => {
       sourceAuthorityConfigurationProblem({
         factFamily: 'LOCAL_POS_COLLECTION',
         method: 'PAY_ON_PICKUP_OR_ON_SITE',
+        pickupCapabilityRef: 'pickup-site-1',
         refundRoute: false,
         sourceKind: 'LOCAL_POS_OPERATOR',
       }),

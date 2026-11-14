@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 import {
   ApiKeyGatewayHeadersSchema,
   ApiKeyGatewayContextRequestSchema,
+  ApiKeyGatewayReadApiGroup,
   ApiKeyGatewayReadRequestSchema,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
@@ -18,13 +19,16 @@ import {
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
   decodeSupportedGatewayContextClaims,
+  demoCapabilityIssuerEntrypoints,
   gatewayContextAuthorizationEntrypoints,
   shellGatewayContextContract,
 } from '../../src/gateway-context.ts';
 import { issueApiKeyGatewayContext } from '../../src/gateway-context-api-key.ts';
 
 const endpointStatuses = (
-  endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
+  endpoint:
+    | (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints]
+    | typeof ApiKeyGatewayReadApiGroup.endpoints.readWithApiKeyGatewayContext,
 ) =>
   [...endpoint.error]
     // Effect's built-in HttpApiError schemas annotate the schema; the Problem schemas annotate their key.
@@ -271,8 +275,15 @@ it('schemas publish only the required public field names', () => {
 });
 
 it('classifies every Shell token-issuing endpoint as a capability issuer with its credential', () => {
+  // Main's three gateway issuers stay in main's array; the demo's three are classified beside them.
+  expect(gatewayContextAuthorizationEntrypoints.map(({ entrypointKey }) => entrypointKey)).toEqual([
+    'shell.gateway-context.issue.delegated',
+    'shell.gateway-context.issue.session',
+    'shell.gateway-context.issue.api-key',
+  ]);
+  const issuers = [...gatewayContextAuthorizationEntrypoints, ...demoCapabilityIssuerEntrypoints];
   expect(
-    gatewayContextAuthorizationEntrypoints.map(({ authorization, entrypointKey, path }) => ({
+    issuers.map(({ authorization, entrypointKey, path }) => ({
       credential: authorization.credential,
       entrypointKey,
       path,
@@ -304,7 +315,7 @@ it('classifies every Shell token-issuing endpoint as a capability issuer with it
       path: '/shell-super-app-api/auth/gateway-contexts',
     },
   ]);
-  for (const entrypoint of gatewayContextAuthorizationEntrypoints) {
+  for (const entrypoint of issuers) {
     expect(entrypoint.authorization.kind).toBe('capability_issuance');
     expect(entrypoint.surface).toBe('capability_issuance');
     expect(entrypoint.owner).toBe(shellGatewayContextContract.ownerId);
@@ -324,8 +335,11 @@ it('declares the delegated module-to-module issuer beside the session, API-key a
     'issueApiKeyGatewayContext',
     'issueDelegatedGatewayContext',
     'issueGatewayContext',
-    'readWithApiKeyGatewayContext',
   ]);
+  // The whole-body read relay is its own group; its route is unchanged.
+  expect(Object.keys(ApiKeyGatewayReadApiGroup.endpoints)).toEqual(['readWithApiKeyGatewayContext']);
+  expect(ApiKeyGatewayReadApiGroup.endpoints.readWithApiKeyGatewayContext.path).toBe('/auth/api-key/gateway-read');
+  expect(ApiKeyGatewayReadApiGroup.endpoints.readWithApiKeyGatewayContext.method).toBe('POST');
   expect(GatewayContextApiGroup.endpoints.issueDelegatedGatewayContext.path).toBe('/auth/delegated/gateway-context');
   expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueDelegatedGatewayContext)).toEqual([
     400, 401, 403, 409, 429, 500, 503,
@@ -455,7 +469,7 @@ it('declares the combined gateway protocol as whole-body JSON bytes rather than 
   expect(decode(payload)).toBe(payload);
   expect(() => decode({ audience: 'merchandise', query: {}, readName: 'records' })).toThrow();
   expect(() => decode(new TextDecoder().decode(payload))).toThrow();
-  expect(endpointStatuses(GatewayContextApiGroup.endpoints.readWithApiKeyGatewayContext)).toEqual([
+  expect(endpointStatuses(ApiKeyGatewayReadApiGroup.endpoints.readWithApiKeyGatewayContext)).toEqual([
     400, 400, 401, 403, 409, 429, 500, 503,
   ]);
 });

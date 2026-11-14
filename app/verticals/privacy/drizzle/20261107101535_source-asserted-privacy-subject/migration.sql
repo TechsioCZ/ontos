@@ -1,0 +1,4 @@
+ALTER TABLE "privacy"."privacy_subjects" ADD COLUMN "source_identity_key" text;--> statement-breakpoint
+ALTER TABLE "privacy"."privacy_subjects" ADD CONSTRAINT "privacy_subjects_source_identity_uk" UNIQUE("tenant_id","legal_entity_id","source_identity_key");--> statement-breakpoint
+ALTER TABLE "privacy"."privacy_subjects" ADD CONSTRAINT "privacy_subjects_source_identity_ck" CHECK (("subject_kind" = 'SOURCE_ASSERTED') = ("source_identity_key" is not null));--> statement-breakpoint
+ALTER TABLE "privacy"."privacy_subjects" DROP CONSTRAINT "privacy_subjects_kind_ck", ADD CONSTRAINT "privacy_subjects_kind_ck" CHECK ("subject_kind" in ('DATA_SUBJECT', 'ANONYMOUS', 'SOURCE_ASSERTED'));

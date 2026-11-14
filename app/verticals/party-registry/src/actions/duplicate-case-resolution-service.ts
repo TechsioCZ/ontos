@@ -1,3 +1,5 @@
+import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
+import type { PartyClientSourceScope } from '../services/party-client-source-evidence.service.ts';
 import { Effect, Schema } from 'effect';
 
 import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
@@ -14,15 +16,24 @@ export const duplicateCaseResolutionService = (
   transaction: Parameters<typeof transitionDuplicateCandidateCase>[0],
   tenantId: string,
   outcome: Parameters<typeof transitionDuplicateCandidateCase>[1]['outcome'],
+  entrypointKey: string,
+  sourceScope?: PartyClientSourceScope,
 ) =>
   Effect.succeed({
-    resolve: (payload: ConfirmDuplicatePartiesPayload, invocationId: string) =>
-      transitionDuplicateCandidateCase(transaction, {
+    resolve: (payload: ConfirmDuplicatePartiesPayload, invocationId: string) => {
+      const input: Parameters<typeof transitionDuplicateCandidateCase>[1] = {
         actionInvocationId: invocationId,
         candidateCaseId: payload.caseRef.resourceId,
         expectedRevision: payload.expectedRevision,
         outcome,
         reason: payload.reason,
         tenantId,
-      }),
+      };
+      if (sourceScope !== undefined) {
+        Object.assign(input, { sourceScope });
+      }
+      return transitionDuplicateCandidateCase(transaction, input).pipe(
+        withPartyClientSourcePrivacyRequirement(entrypointKey),
+      );
+    },
   });

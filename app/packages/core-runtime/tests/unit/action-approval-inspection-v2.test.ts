@@ -3,12 +3,13 @@ import { Crypto, Effect, Option, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
+import { ApprovalAuthorityUnavailableError, ApprovalStorageConflictError } from '../../src/access/approvals/errors.ts';
 import {
   ActionApprovalLifecycleV2Ports,
   makeActionApprovalLifecycleV2,
 } from '../../src/access/approvals/action-lifecycle-v2.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
-import { freezeActionCommandV2, makeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import { proposeActionV2 } from '../../src/access/approvals/action-proposal-v2.ts';
 import type { FrozenCommandRecord } from '../../src/access/approvals/frozen-command.ts';
 import type { LiveApprovalServices } from '../../src/access/approvals/live-composition.ts';
@@ -68,7 +69,7 @@ const fixture = (missing?: MissingAuthority) =>
     const action = actionFor(read);
     const owner = makeTestOperationOwner({ actions: [action], moduleId: ownerKey, reads: [read] });
     const { revision } = owner.composition;
-    const command = yield* makeActionCommandV2({
+    const command = yield* resolveActionCommandV2({
       payload: { ids: [first, second], salary: 25 },
       registration: action,
       scope: requesterScope,
@@ -318,20 +319,23 @@ it.layer(NodeCrypto.layer)('native full-target approval inspection', (suite) => 
     Effect.gen(function* noStaleObservation() {
       const test = yield* fixture();
       test.changeFenceAtFinalRecheck();
-      expect(yield* test.lifecycle.inspectApproval(test.input).pipe(Effect.result)).toHaveProperty(
-        'failure._tag',
-        'ApprovalAuthorityUnavailableError',
-      );
+      expect(
+        Schema.is(ApprovalAuthorityUnavailableError)(
+          yield* test.lifecycle.inspectApproval(test.input).pipe(Effect.flip),
+        ),
+      ).toBe(true);
       expect(test.saves()).toBe(0);
       const changed = yield* fixture();
       expect(
-        yield* changed.lifecycle
-          .inspectApproval({
-            ...changed.input,
-            proposal: { ...changed.input.proposal, expiresAt: at('2026-11-08T10:00:00Z') },
-          })
-          .pipe(Effect.result),
-      ).toHaveProperty('failure._tag', 'ApprovalStorageConflictError');
+        Schema.is(ApprovalStorageConflictError)(
+          yield* changed.lifecycle
+            .inspectApproval({
+              ...changed.input,
+              proposal: { ...changed.input.proposal, expiresAt: at('2026-11-08T10:00:00Z') },
+            })
+            .pipe(Effect.flip),
+        ),
+      ).toBe(true);
       expect(changed.saves()).toBe(0);
     }),
   );
@@ -352,17 +356,19 @@ it.layer(NodeCrypto.layer)('native full-target approval inspection', (suite) => 
       Effect.gen(function* currentReadOnlyInspection() {
         const test = yield* fixture();
         test.setUnavailable();
-        expect(yield* test.lifecycle.inspectApproval(test.input).pipe(Effect.result)).toHaveProperty(
-          'failure._tag',
-          'ApprovalAuthorityUnavailableError',
-        );
+        expect(
+          Schema.is(ApprovalAuthorityUnavailableError)(
+            yield* test.lifecycle.inspectApproval(test.input).pipe(Effect.flip),
+          ),
+        ).toBe(true);
         expect(test.saves()).toBe(0);
         const stale = yield* fixture();
         stale.setStale();
-        expect(yield* stale.lifecycle.inspectApproval(stale.input).pipe(Effect.result)).toHaveProperty(
-          'failure._tag',
-          'ApprovalAuthorityUnavailableError',
-        );
+        expect(
+          Schema.is(ApprovalAuthorityUnavailableError)(
+            yield* stale.lifecycle.inspectApproval(stale.input).pipe(Effect.flip),
+          ),
+        ).toBe(true);
         expect(stale.saves()).toBe(0);
       }),
   );

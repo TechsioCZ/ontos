@@ -6,6 +6,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { PlanOutcome } from '../../src/routes/[lang]/ukoly/planning-proposal.ts';
 import { ProjectEditor } from '../../src/routes/[lang]/ukoly/work-planning.tsx';
+import { PlanningCommandSchema } from '../../shared/actions/apply-command.ts';
 import { ProjectSchema } from '../../shared/apis/records.ts';
 import type { WorkProject } from '../../shared/apis/records.ts';
 
@@ -37,6 +38,7 @@ interface Mounted {
   readonly unmount: () => void;
 }
 
+const [, UpdateProjectCommand] = PlanningCommandSchema.members;
 const committed: PlanOutcome = { ok: true };
 const mountedViews: Mounted[] = [];
 
@@ -135,7 +137,7 @@ describe('project panel save', () => {
       expect(view.sent).toEqual([]);
       yield* clickSave();
       expect(view.sent).toHaveLength(1);
-      expect(view.sent[0]?._tag).toBe('UpdateProject');
+      expect(Schema.is(UpdateProjectCommand)(view.sent[0])).toBe(true);
       expect(view.closed).toEqual(['close']);
     }),
   );

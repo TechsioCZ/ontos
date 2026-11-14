@@ -245,6 +245,31 @@ Commerce Order, Customer Context, Commerce Cart and Pricing call each other thro
 
 Add these to the owner's entry, keyed by its `appId`, in the GitHub secret `DEMO_IMMUTABLE_RELEASE_SECRETS` of the `stage-edge` environment. Each deploy writes that JSON to the `app` service as `ONTOS_OWNER_SECRETS_JSON` (see [Secrets](#secrets)), and the app host hands each process only the entries of the owners it serves; the Outbox Worker host receives every owner's entries, because it runs their workers. Every owner base is the owner's loopback API origin `<origin>/<unit>-api`, derived, never stored. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in the shared process.
 
+### Payment gateway relay
+
+Providers deliver notifications to the Shell's typed relay at `/api/payment/v1/notifications/{gopay,stripe,comgate}/<tenantId>/<routeKey>`, and the Payment reconciliation driver requests recoveries at `/api/payment/v1/reconciliation/<routeKey>/recoveries`. The Shell mounts `/api/payment/v1` as its own always-on prefix beside `/shell-super-app-api`, and the app host routes every path outside `/_m/<appId>/` to the Shell, so the relay is served at the public origin.
+
+| Owner             | Credentials (sensitive, in `DEMO_IMMUTABLE_RELEASE_SECRETS`)                     |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `payment`         | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS`, `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` |
+| `shell-super-app` | `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS`                                   |
+
+- `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` is derived by the app host from the public origin (`scripts/zerops/app-host.mts`), never stored. Payment composes each binding's notification URL from it, the provider family, the tenant and the binding's generated route key. Outside an `https` origin (the local demo), configuring a provider binding fails with 503 `payment_notification_route_unavailable` and the rest of Payment keeps working.
+- `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. While it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
+- `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (Shell) and `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (Payment; read by the Payment Outbox Worker in the Outbox Worker host) are each a JSON array `[{ "tenantId": "<tenant uuid>", "apiKey": "<managed API key>" }]`, one entry per tenant. Each entry is decoded on its own and only when its tenant is needed, so a malformed entry fails only that tenant and an absent value makes the relay or the driver unavailable while the rest keeps working. Two entries for one tenant mean no key. A provider notification for a tenant with no relay entry gets the same 404 as an unknown route.
+- The driver calls the Shell at the origin of `ONTOS_SHELL_GATEWAY_BASE_URL` (the host-derived loopback Shell base) and drops the `/shell-super-app-api` path. Without a valid tenant entry, that tenant is skipped and logged at most once per hour.
+
+Before a tenant uses a payment gateway, a human operator, never an agent, provisions two integration principals in that tenant and records their keys:
+
+1. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment notification relay`. Register its workloads `payment.provider-notification-ingress` and `payment.source-ingress` (on stage through the accounts file `workloads`).
+2. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment reconciliation driver`. Register its workloads `payment.provider-reconciliation` and `payment.source-ingress`.
+3. For each principal, issue a managed API key through Shell's API key service and run `core.identity.bind-managed-api-key` with the principal ID and provider key ID.
+4. Add the relay key to the Shell's `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` and the driver key to Payment's `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS`, each under the tenant's ID.
+
+Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload registration makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
+
+Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own `accept-payment-observation` Action with a registered-workload assertion. Payment calls through the Shell's delegated issuance with its own module credential (`MODULE_CREDENTIAL_CALLERS`), and the Shell derives the registered-workload rules of the Payment binding from the installed contracts; nobody records them. Each tenant needs exactly one active system principal registered for `payment.source-ingress`; it is the executor.
+
 ### Module credentials and bindings
 
 The platform provisions module credentials itself, on every environment and with no human step. Nobody issues, copies or rotates a module key by hand, and no module key or binding is stored in GitHub, Zerops or an env file. Every module key ends 24 hours after it was issued (`MODULE_CREDENTIAL_LIFETIME`), so a key nobody retired still dies on its own.
@@ -537,6 +562,37 @@ passes on that proof. A commit without one (a dispatch on a commit pushed before
 gates.
 
 Stage deploys from `demo/sales-crm` (`zerops-stage.yml`), never from `main`.
+
+## Demo branch divergence from main
+
+When `main` merges into `demo/sales-crm`, main's design wins except for these recorded exceptions:
+
+1. Owner-action approvals and agent proposals, including the AI staleness comparators.
+2. The optional `mcp` key in module manifests.
+3. Staged prepare/load/finish reads (helpers with the `Staged` suffix).
+4. Owner-declared Search presentation.
+5. Build-time public components.
+6. The module-declared external identity provider (Customer Context portal auth).
+7. Demo capability issuers.
+8. Manifest-declared registered-workload calls.
+9. Declared in-transaction evidence calls. The demo's transaction I/O guard refuses remote I/O inside every governed read and Action transaction, but main's source-evidence design makes its owner proof reads (current Privacy, Party, Customer Profile and source facts) from inside the owner write or read transaction. Its request can only be derived there, from sealed invocation facts (the current invocation and its idempotency key, the admitted workload) and from correlation and replay lookups. Those proof calls are declared at their call sites with `declaredEvidenceCallInsideTransaction`, from one registry per owner (`src/declared-evidence-calls.ts`). Inside a declared call the remote refusals are lifted and a second pool connection is still refused. `scripts/tests/declared-evidence-calls-ratchet.test.mts` pins the 23 declarations by value and every file that uses one (and how often), so the number can only go down:
+   - Assortment (1): `assortment.symmy-rule-fixture-owner-currentness` (its owner authorization overlay for the enrolled Symmy rule fixture import reads current Catalog, Customer Context, Market Catalog and Storefront Registry facts).
+   - Party Registry (3): `party.client-source-privacy`, `party.client-source-organization-privacy`, `party.legacy-ico-privacy`.
+   - Privacy (9): `privacy.organization-ico-owner-facts`, `privacy.organization-profile-ico-owner-facts`, `privacy.organization-business-owner-context`, `privacy.organization-business-owner-facts`, `privacy.organization-source-owner-facts`, `privacy.organization-profile-owner-facts`, `privacy.organization-party-record-facts`, `privacy.customer-intake-owner-context`, `privacy.source-person-party-owner`.
+   - Symmy (2): `symmy.customer-intake-privacy`, `symmy.retention-privacy-current` (both retention checks, before and after the source fence cancellation wait).
+   - Customer Context (8): `commerce.organization-business-eligibility`, `commerce.source-processing-eligibility`, `commerce.source-counterparty-admission`, `commerce.source-person-admission`, `commerce.organization-profile-ico-eligibility`, `commerce.counterparty-organization-ico-facts`, `commerce.counterparty-migration-correlation`, `commerce.legacy-ico-inventory`.
+
+   Known follow-ups:
+   - Three Privacy declarations wrap an injected owner-provider seam that no production layer provides (`OrganizationBusinessFactsOwner`, `OrganizationIcoFactsOwner`, `OrganizationProfileIcoFactsOwner` in `organization-business-applicability.service.ts`, `organization-ico-applicability.service.ts` and `organization-profile-ico-applicability.service.ts`). They exist so main's integration tests, whose injected providers fetch, pass under the guard; they go once those test fakes stop doing remote I/O inside the read.
+   - A fiber forked as a daemon, or a finalizer registered on an outer scope, from inside a declared call would inherit the lifted state. No wrapped code does this today; the follow-up is a guard test for it and clearing the lifted state by identity when the declared effect exits, a guard change that needs its digest re-pinned and a re-review.
+
+   What removes each: staging that proof in the operation's prepare step (or a read's finish step) and revalidating it against transaction-local owner state, once Core exposes the sealed invocation facts to preparation. Privacy's read-only proofs can move first: their requests need no sealed facts (branch `fix/merge4-a2-restaging-20261114` holds a first attempt).
+
+Zerops-only deployment: the demo keeps main's GATES and none of main's deploy jobs or Cloudflare/edge workflows; it deploys through `zerops-stage.yml`. The deploy chain behind `MAIN_DEPLOY_ENABLED` in `ultramodern-workspace-gates.yml` and the workflows `active-application-composition-refresh.yml`, `initial-composition-cutover.yml` and `stage-edge-cost-guard.yml` are absent on purpose.
+
+The owner generator no longer scaffolds a Cloudflare build script.
+
+Upstream risk when the demo merges back into `main`: Tax keeps the demo's migrations `20261023223119_gateway-assertion-redemptions` and `20261030121613_gateway-assertion-redemption-main-shape` instead of main's `20261109213238_tax_gateway_assertion_redemptions`. A database that already ran main's migration would replay the demo's two by name. Reconcile the Tax migration history before that merge lands.
 
 ## Pull-request and release hygiene
 

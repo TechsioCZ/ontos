@@ -1,0 +1,2386 @@
+{
+  "id": "3e1fb529-d951-4d13-8af5-672f97495d20",
+  "prevIds": [
+    "c457ad02-5714-4112-bf52-e8e7a9f0fa55"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "symmy_integration",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "import_jobs",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "job_effects",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "job_notifications",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "privacy_measure_executions",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "job_retention_tombstones",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "job_routes",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "sync_admission_attempts",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "sync_admissions",
+      "entityType": "tables",
+      "schema": "symmy_integration"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "redeemed_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "admitted_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "admission_invocation_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "execution_plan",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fixture_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "job_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_policy",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mapping_version",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "phase",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_code",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_key",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "claim_token",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effect",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effect_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effect_key",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "item_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "job_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lease_until",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_invocation_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_executor_principal_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_request_hash",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_auth_context_ref",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_receipt",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resolved_effect",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "attempt",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "claim_token",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "destination_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "initial_backoff_ms",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "job_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lease_until",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "max_attempts",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "max_backoff_ms",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "next_attempt_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payload_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recipient_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "timeout_ms",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "governance_legal_entity_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "handoff_fingerprint",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "receipt_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resource_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resource_kind",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retention_status",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_legal_entity_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "authority_receipt_ref",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "authority_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "job_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "purged_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retained_effect_ids",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 1,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fixture_ids",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fixture_plan",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_policy",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mapping_version",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_code",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "route_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_key",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "invocation_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "admission_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "admission_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mapping_version",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "execution_plan",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_policy",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retention_receipt",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "admitted_at",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "symmy_gateway_assertion_redemptions_expiry_idx",
+      "entityType": "indexes",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "route_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "job_routes",
+      "columnsTo": [
+        "tenant_id",
+        "route_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_import_jobs_route_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "job_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "import_jobs",
+      "columnsTo": [
+        "tenant_id",
+        "job_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_job_effects_job_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "job_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "import_jobs",
+      "columnsTo": [
+        "tenant_id",
+        "job_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_job_notifications_job_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "job_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "import_jobs",
+      "columnsTo": [
+        "tenant_id",
+        "job_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_job_retention_tombstones_job_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "admission_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "sync_admissions",
+      "columnsTo": [
+        "tenant_id",
+        "admission_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_sync_attempt_scope_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "route_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "job_routes",
+      "columnsTo": [
+        "tenant_id",
+        "route_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_sync_admissions_route_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "job_id"
+      ],
+      "nameExplicit": true,
+      "name": "symmy_job_notifications_pk",
+      "entityType": "pks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "job_id"
+      ],
+      "nameExplicit": true,
+      "name": "symmy_job_retention_tombstones_pk",
+      "entityType": "pks",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "columns": [
+        "job_id"
+      ],
+      "nameExplicit": false,
+      "name": "import_jobs_pkey",
+      "schema": "symmy_integration",
+      "table": "import_jobs",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "effect_id"
+      ],
+      "nameExplicit": false,
+      "name": "job_effects_pkey",
+      "schema": "symmy_integration",
+      "table": "job_effects",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "receipt_id"
+      ],
+      "nameExplicit": false,
+      "name": "privacy_measure_executions_pkey",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "route_id"
+      ],
+      "nameExplicit": false,
+      "name": "job_routes_pkey",
+      "schema": "symmy_integration",
+      "table": "job_routes",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "invocation_id"
+      ],
+      "nameExplicit": false,
+      "name": "sync_admission_attempts_pkey",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "admission_id"
+      ],
+      "nameExplicit": false,
+      "name": "sync_admissions_pkey",
+      "schema": "symmy_integration",
+      "table": "sync_admissions",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_gateway_assertion_redemptions_identity_uk",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "job_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_import_jobs_tenant_job_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "route_id",
+        "route_key",
+        "idempotency_digest"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_import_jobs_admission_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "effect_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_job_effects_tenant_effect_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "job_id",
+        "item_id",
+        "effect_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_job_effects_item_key_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "governance_legal_entity_id",
+        "idempotency_digest",
+        "attempt"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_privacy_executions_scope_key_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "route_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_job_routes_tenant_route_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "principal_id",
+        "legal_entity_id",
+        "route_key",
+        "route_code"
+      ],
+      "nullsNotDistinct": true,
+      "name": "symmy_job_routes_scope_selector_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "route_id",
+        "idempotency_digest"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_sync_admissions_request_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "admission_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "symmy_sync_admissions_tenant_admission_uq",
+      "entityType": "uniques",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "value": "\"audience\" = 'symmy-integration'",
+      "name": "symmy_gateway_assertion_redemptions_audience_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "value": "\"idempotency_digest\" ~ '^[0-9a-f]{64}$' and \"intent_digest\" ~ '^[0-9a-f]{64}$'",
+      "name": "symmy_import_jobs_digests_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "value": "char_length(\"fixture_id\") between 1 and 80",
+      "name": "symmy_import_jobs_fixture_id_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "value": "\"phase\" = 'admitted'",
+      "name": "symmy_import_jobs_phase_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "value": "\"version\" >= 0",
+      "name": "symmy_job_effects_version_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "value": "\"state\" in ('planned', 'attempting', 'indeterminate', 'blocked', 'settled')",
+      "name": "symmy_job_effects_state_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "value": "\"effect\"->>'itemId' = \"item_id\"::text and \"effect\"->>'effectKey' = \"effect_key\" and \"effect\" #>> '{ref,effectId}' = \"effect_id\"::text",
+      "name": "symmy_job_effects_ref_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "value": "(\"state\" = 'attempting') = (\"claim_token\" is not null and \"lease_until\" is not null)",
+      "name": "symmy_job_effects_lease_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "value": "(\"state\" in ('settled', 'blocked')) = (\"outcome\" is not null)",
+      "name": "symmy_job_effects_outcome_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "value": "\"state\" <> 'blocked' or \"outcome\"->>'status' = 'denied'",
+      "name": "symmy_job_effects_blocked_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "value": "\"attempt\" between 0 and \"max_attempts\" and \"max_attempts\" between 1 and 20",
+      "name": "symmy_job_notifications_attempt_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "value": "\"state\" in ('pending','attempting','delivered','exhausted')",
+      "name": "symmy_job_notifications_state_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "value": "(\"state\" = 'attempting') = (\"claim_token\" is not null and \"lease_until\" is not null)",
+      "name": "symmy_job_notifications_lease_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "value": "\"version\" >= 0 and char_length(\"policy_id\") between 1 and 120 and char_length(\"policy_revision\") between 1 and 120",
+      "name": "symmy_job_notifications_versions_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "value": "\"destination_digest\" ~ '^[0-9a-f]{64}$' and \"payload_digest\" ~ '^[0-9a-f]{64}$'",
+      "name": "symmy_job_notifications_digest_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "value": "\"initial_backoff_ms\" between 1 and 3600000 and \"max_backoff_ms\" between \"initial_backoff_ms\" and 86400000 and \"timeout_ms\" between 1 and 60000",
+      "name": "symmy_job_notifications_retry_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "value": "\"attempt\" >= 1 and (\"outcome\"->>'attempt')::integer = \"attempt\"",
+      "name": "symmy_privacy_executions_attempt_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "value": "\"handoff_fingerprint\" ~ '^[a-f0-9]{64}$' and \"idempotency_digest\" ~ '^[a-f0-9]{64}$'",
+      "name": "symmy_privacy_executions_digests_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "value": "\"resource_kind\" in ('JOB','SYNC') and \"retention_status\" in ('PURGED','ALREADY_PURGED','BLOCKED')",
+      "name": "symmy_privacy_executions_kind_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "value": "\"outcome\"->>'owningCapability' = 'integration.symmy' and \"outcome\"->>'status' in ('SUCCEEDED','BLOCKED')",
+      "name": "symmy_privacy_executions_outcome_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "value": "jsonb_typeof(\"retained_effect_ids\") = 'array'",
+      "name": "symmy_job_retention_tombstones_effects_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "value": "(\n        \"route_key\" in ('customerGroupCustomersBatch', 'priceListPricesBatch')\n        and \"route_code\" is not null and char_length(\"route_code\") between 1 and 300\n      ) or (\n        \"route_key\" in ('customersBatch', 'priceListsBatchUpsert', 'productsBatch', 'customerGroupsBatch', 'inventoryStockBatch', 'adminCustomers', 'adminProducts', 'adminRegions', 'priceLists') and \"route_code\" is null\n      )",
+      "name": "symmy_job_routes_selector_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "value": "cardinality(\"fixture_ids\") between 1 and 32 and array_position(\"fixture_ids\", null) is null",
+      "name": "symmy_job_routes_fixture_ids_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "value": "char_length(\"route_revision\") between 1 and 80 and char_length(\"mapping_version\") between 1 and 80",
+      "name": "symmy_job_routes_versions_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "value": "\"idempotency_digest\" ~ '^[0-9a-f]{64}$' and \"intent_digest\" ~ '^[0-9a-f]{64}$'",
+      "name": "symmy_sync_admissions_digest_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"import_jobs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_import_jobs_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"import_jobs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_import_jobs_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"import_jobs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"import_jobs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_import_jobs_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"import_jobs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_import_jobs_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "import_jobs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_effects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_effects_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"job_effects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_effects_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_effects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"job_effects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_effects_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_effects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_effects_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_effects"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_notifications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_notifications_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"job_notifications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_notifications_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_notifications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"job_notifications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_notifications_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_notifications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_notifications_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_notifications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"privacy_measure_executions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"symmy_integration\".\"privacy_measure_executions\".\"governance_legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_privacy_executions_scope_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"privacy_measure_executions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"symmy_integration\".\"privacy_measure_executions\".\"governance_legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "symmy_privacy_executions_scope_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"privacy_measure_executions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"symmy_integration\".\"privacy_measure_executions\".\"governance_legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"privacy_measure_executions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"symmy_integration\".\"privacy_measure_executions\".\"governance_legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "symmy_privacy_executions_scope_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"privacy_measure_executions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"symmy_integration\".\"privacy_measure_executions\".\"governance_legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_privacy_executions_scope_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "privacy_measure_executions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_retention_tombstones\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_retention_tombstones_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"job_retention_tombstones\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_retention_tombstones_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_retention_tombstones\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"job_retention_tombstones\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_retention_tombstones_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_retention_tombstones\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_retention_tombstones_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_retention_tombstones"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_routes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_routes_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"job_routes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_routes_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_routes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"job_routes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_job_routes_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"job_routes\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_job_routes_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"sync_admission_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_sync_admission_attempts_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"sync_admission_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_sync_admission_attempts_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"sync_admission_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"sync_admission_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_sync_admission_attempts_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"sync_admission_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_sync_admission_attempts_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admission_attempts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"sync_admissions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_sync_admissions_tenant_select",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"symmy_integration\".\"sync_admissions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_sync_admissions_tenant_insert",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"sync_admissions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"symmy_integration\".\"sync_admissions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "symmy_sync_admissions_tenant_update",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"symmy_integration\".\"sync_admissions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "symmy_sync_admissions_tenant_delete",
+      "entityType": "policies",
+      "schema": "symmy_integration",
+      "table": "sync_admissions"
+    }
+  ],
+  "renames": []
+}

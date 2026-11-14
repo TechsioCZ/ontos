@@ -17,13 +17,16 @@ const IntegrationEntrySchema = Schema.Struct({
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
   'package-filters': Schema.optionalKey(Schema.String),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
+  'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
   suite: Schema.Literals(['integration', 'browser']),
 }).check(
   Schema.makeFilter((entry) =>
-    entry.suite === 'integration' && (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Every complete integration template must name its package filters'
+    entry.suite === 'integration' &&
+    entry['root-suite'] !== true &&
+    (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
+      ? 'Integration templates must name package filters or run the root suite'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
@@ -195,7 +198,8 @@ export const planCiChecks = (input: {
     if (entry.suite === 'browser') {
       return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
     }
-    const selected = matchingPackages(entry['package-filters'] ?? '', affected);
+    const packageFilters = entry['package-filters'] ?? '';
+    const selected = packageFilters.length === 0 ? [] : matchingPackages(packageFilters, affected);
     const rootSuite = entry['root-suite'] === true && affected.some(({ directory }) => directory === '.');
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
     if (selected.length === 0 && !rootSuite && !proofAffected) {

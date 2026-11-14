@@ -1,17 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
-import {
-  makeAccessProjectionCompiler,
-  makeDeferredAccessProjectionTransport,
-} from '../access/compiler/spice-db-compiler.ts';
-import { AccessProjectionCompiler } from '../access/intent/projection-compiler.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { SpiceDbConfig } from '../permissions/config.ts';
 
 /**
  * A Core-owned background reconcile that could not be prepared. It is a retryable worker failure, never a
@@ -83,21 +77,6 @@ export const reconcileTenantProjection = Effect.fn('CoreAuthorizationProjection.
 );
 
 /**
- * The projection compiler of the worker process. Its engine transport is deferred, so a worker that has
- * no SpiceDB configured still starts and answers readiness; the first reconcile that needs the engine
- * opens it, and a configuration it cannot read fails that reconcile as unavailable, never as a grant.
- */
-export const CoreAuthorizationProjectionCompilerLive: Layer.Layer<AccessProjectionCompiler, never, SpiceDbConfig> =
-  Layer.effect(
-    AccessProjectionCompiler,
-    Effect.gen(function* makeCoreAuthorizationProjectionCompiler() {
-      const configuration = yield* SpiceDbConfig;
-      const transport = yield* makeDeferredAccessProjectionTransport(Effect.succeed(configuration));
-      return makeAccessProjectionCompiler(transport);
-    }),
-  );
-
-/**
  * What a Core background process composes to reconcile a tenant, in the root's own order. Core keeps this
  * a description, never a `Layer.provide` (a library layer stays dependency transparent, so the
  * application root closes the graph — `effect-native/no-layer-provide-in-library`):
@@ -119,6 +98,7 @@ export const CoreAuthorizationProjectionCompilerLive: Layer.Layer<AccessProjecti
  * `SpiceDbConfigLive`, and registers `ActionAuthorizationLifecycleLive` provided with
  * `projectionLive` beside the workers' own dependencies.
  */
+export { CoreAuthorizationProjectionCompilerLive } from '../access/compiler/spice-db-compiler.ts';
 export { AccessProjectionWriter, AccessProjectionWriterLive } from '../access/intent/projection-writer.ts';
 export { AccessWriteJournalStoreLive } from '../access/lifecycle/persistence/journal-store.ts';
 export { SpiceDbConfigLive } from '../permissions/config.ts';

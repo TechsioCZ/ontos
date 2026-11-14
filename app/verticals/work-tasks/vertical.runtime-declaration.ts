@@ -38,7 +38,6 @@ const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded)
 
 const workTasksPlacementGroup = 'work-tasks';
 const moduleKey = 'work.tasks';
-const searchEntrypointKey = 'work.tasks.search.tasks';
 const recordsPageKey = 'work.tasks.page.records';
 
 const workFamily = {
@@ -169,12 +168,12 @@ export const workTasksRuntimeManifest: VerticalRuntimeRegistrationInput['manifes
             risk: 'sensitive',
             selectors: ['all', 'assigned'],
           },
-          contributionKey: searchEntrypointKey,
+          contributionKey: 'work.tasks.search.tasks',
           entrypoint: {
             access: 'read',
             authorization: { kind: 'protected' },
-            entrypointKey: searchEntrypointKey,
-            moduleKey,
+            entrypointKey: 'work.tasks.search.tasks',
+            moduleKey: 'work.tasks',
             role: 'search',
             scope: 'tenant',
           },

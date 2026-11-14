@@ -15,12 +15,12 @@ import {
 import { loadApplicationMigrationInventory } from '../application-migration-inventory.mts';
 
 it.effect(
-  'retains all 33 source-owned verifiers including Projects, Payment, Promotion and the Core application enrollment wrapper',
+  'retains all 34 source-owned verifiers including Projects, Payment, Promotion, Symmy and the Core application enrollment wrapper',
   () =>
     Effect.gen(function* sourceOwnedVerifiers() {
       const inventory = yield* loadApplicationMigrationInventory();
       const ownerVerifierPaths = inventory.filter((owner) => !owner.optional).flatMap((owner) => owner.verifierPaths);
-      expect(ownerVerifierPaths).toHaveLength(33);
+      expect(ownerVerifierPaths).toHaveLength(34);
       expect(inventory.find((owner) => owner.ownerId === 'core-runtime')?.verifierPaths).toEqual([
         'scripts/verify-core-db-schema.mts',
       ]);
@@ -59,6 +59,7 @@ it.effect(
           'verticals/tax/scripts/verify-db-schema.mts',
           'verticals/projects/scripts/verify-db-schema.mts',
           'verticals/promotion/scripts/verify-db-schema.mts',
+          'verticals/symmy-integration/scripts/verify-db-schema.mts',
         ].toSorted(),
       );
     }).pipe(Effect.provide(NodeServices.layer)),

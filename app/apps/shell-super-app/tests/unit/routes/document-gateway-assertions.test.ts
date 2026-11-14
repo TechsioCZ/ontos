@@ -3,7 +3,6 @@ import { Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 
-import * as actualAuthClient from '../../../src/api/auth-client.ts' with { rstest: 'importActual' };
 import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
 import type { DocumentGatewayContextsRequest } from '../../../shared/document-gateway-api.ts';
 import {
@@ -17,7 +16,6 @@ const { issueDocumentGatewayContextsMock } = rstest.hoisted(() => ({
 }));
 
 rstest.mock('../../../src/api/auth-client.ts', () => ({
-  ...actualAuthClient,
   issueDocumentGatewayContexts: issueDocumentGatewayContextsMock,
 }));
 

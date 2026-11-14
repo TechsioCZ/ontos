@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import {
   CommerceCustomerGroupSchema,
   CustomerGroupDefinitionTextSchema,
+  CustomerGroupDefinitionSourceSchema,
   CustomerGroupRevisionSchema,
   CustomerGroupTextSchema,
 } from '../domain/group-contract.ts';
@@ -17,6 +18,7 @@ export const UpdateCustomerGroupPayloadSchema = Schema.Struct({
   name: CustomerGroupTextSchema,
   purpose: CustomerGroupDefinitionTextSchema,
   reason: CustomerGroupTextSchema,
+  source: Schema.optionalKey(CustomerGroupDefinitionSourceSchema),
 });
 export type UpdateCustomerGroupPayload = typeof UpdateCustomerGroupPayloadSchema.Type;
 

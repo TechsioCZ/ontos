@@ -42,6 +42,7 @@ for (const owner of [
   'crm-activities',
   'payment',
   'promotion',
+  'symmy-integration',
 ]) {
   it(`D1 migrates and packages ${owner} before claiming database readiness`, () => {
     const migration = migrator.indexOf(`yield* migrate('verticals/${owner}', 'drizzle.config.ts');`);

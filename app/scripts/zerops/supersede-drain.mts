@@ -19,7 +19,20 @@
 import { promises as dns } from 'node:dns';
 import { networkInterfaces } from 'node:os';
 
-import { Clock, Console, Deferred, Duration, Effect, FileSystem, Option, Ref, Schedule, Schema } from 'effect';
+import {
+  Clock,
+  Console,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Ref,
+  Schedule,
+  Schema,
+} from 'effect';
 
 /**
  * How long a superseded host relays: the readiness probe period (`zerops.yaml` app `retryPeriod: 10s`) plus the
@@ -167,6 +180,17 @@ export const makeSupersedeDrain = (): SupersedeDrain => {
     superseded,
   };
 };
+
+interface SupersedeDrainsId {
+  readonly SupersedeDrains: never;
+}
+/** This host's hand-over state, shared by its public port, its relays and its authority loop. */
+export const SupersedeDrains = Context.Service<SupersedeDrainsId, SupersedeDrain>(
+  '@app/scripts/zerops/SupersedeDrains',
+);
+
+/** A fresh hand-over state for one host process. */
+export const SupersedeDrainsLive = Layer.sync(SupersedeDrains, makeSupersedeDrain);
 
 const ownAddresses = () =>
   new Set(

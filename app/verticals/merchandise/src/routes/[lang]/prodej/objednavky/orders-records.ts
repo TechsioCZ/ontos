@@ -709,15 +709,8 @@ const applyStatusStep = (
   status: OrderStatus,
   reason: string | undefined,
 ): Effect.Effect<StatusProgress> => {
-  const command: {
-    -readonly [Key in keyof Extract<MerchandiseCommand, { readonly _tag: 'ChangeOrderStatus' }>]: Extract<
-      MerchandiseCommand,
-      { readonly _tag: 'ChangeOrderStatus' }
-    >[Key];
-  } = { _tag: 'ChangeOrderStatus', id: order.id, status };
-  if (reason !== undefined) {
-    command.reason = reason;
-  }
+  const change = { _tag: 'ChangeOrderStatus', id: order.id, status } satisfies MerchandiseCommand;
+  const command = reason === undefined ? change : { ...change, reason };
   return submitCommand(command, progress.revision).pipe(
     Effect.match({
       onFailure: (failure): StatusProgress =>

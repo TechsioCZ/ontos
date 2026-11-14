@@ -3,7 +3,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 
-import type { ShellUnavailableDeployment } from '../../../shared/api.ts';
+import type { ShellUnavailableDeployment } from '../../../shared/browser-api.ts';
 import { buildShellNavigation, navigationSections, ShellRouteLink } from '../shell-frame';
 import type { AuthenticatedDashboardLayoutProps, ShellNavigationLink } from '../shell-frame';
 

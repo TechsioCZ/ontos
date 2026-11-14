@@ -1,6 +1,6 @@
 import { definePageData, modulePagePreload, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { executeCounterpartyRead, listCustomers } from '@app/party-registry/api/client';
+import { executeCounterpartyRead } from '@app/party-registry/apis/counterparty-read/client';
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeOccupancyRecords } from '@app/property-leasing/clients/records';
 import { Data, Effect, Match, Option, Result, Schema } from 'effect';
@@ -13,6 +13,7 @@ import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react
 import type { AgreementSelectionFields } from './document-selection.ts';
 import { parseAgreementSelector } from './document-selection.ts';
 import { rentalReferenceAccess } from './rental-reference-access.ts';
+import { listCustomers } from './party-customers.ts';
 
 /** The agreements a page shows: the person's legal entity and the optional record opened from the query. */
 export interface AgreementsInput extends AgreementSelectionFields {

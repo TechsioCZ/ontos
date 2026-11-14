@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // An investment plan item is created or edited on the shared Uložit only. An edit saves against the read its draft
 // came from: someone else's newer change is refused as a conflict, and "Načíst aktuální verzi" opens the latest.
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { constUndefined } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -117,11 +117,8 @@ describe('investment plan item', () => {
       yield* typeInto('#investment-responsible', 'Petr Dvořák');
       yield* save(agenda, 2);
       expect(agenda.applied.map((entry) => entry.expectedRevision)).toEqual([3, 4]);
-      expect(agenda.applied[1]?.command).toMatchObject({
-        _tag: 'AssetInvestmentUpdate',
-        investmentId: opened.id,
-        responsible: 'Petr Dvořák',
-      });
+      expect(Predicate.isTagged(agenda.applied[1]?.command, 'AssetInvestmentUpdate')).toBe(true);
+      expect(agenda.applied[1]?.command).toMatchObject({ investmentId: opened.id, responsible: 'Petr Dvořák' });
       expect(saved).toEqual(['saved']);
     }),
   );

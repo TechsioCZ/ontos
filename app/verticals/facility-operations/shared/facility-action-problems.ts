@@ -17,7 +17,7 @@ export const mapFacilityOperationsNotImplementedProblem = (
     code: 'facility_operations_not_implemented',
     detail: 'The Action capability is temporarily unavailable.',
     retryable: true,
-    status: 503,
+    status: FacilityOperationsNotImplementedProblemSchema.fields.status.literal,
     title: 'Action unavailable',
     type: 'https://ontos.dev/problems/action-unavailable',
   });

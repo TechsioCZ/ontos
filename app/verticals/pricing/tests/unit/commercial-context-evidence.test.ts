@@ -76,6 +76,7 @@ const portFromEnvironment = (
       acquire,
       context: {
         ...context,
+        operationRequirementKey: 'commerce.pricing.requirement.define-price-market',
         scope: verifiedTestScope({
           correlationId: context.requestCorrelation,
           legalEntityId: context.legalEntityId,
@@ -91,6 +92,7 @@ describe('Pricing commercial-context evidence integration', () => {
   it.effect('validates only the exact SLE, Channel, and Commerce Market without a Storefront selector', () =>
     Effect.gen(function* assessExactCommercialContext() {
       const requests: unknown[] = [];
+      const acquisitions: Parameters<OwnerGatewayConnectionAcquire>[0][] = [];
       const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         (payload, credential, requestCorrelation, options) =>
@@ -98,6 +100,10 @@ describe('Pricing commercial-context evidence integration', () => {
             requests.push({ credential: Redacted.value(credential), options, payload, requestCorrelation });
             return response;
           }),
+        (input) => {
+          acquisitions.push(input);
+          return marketOwner(input);
+        },
       );
 
       const result = yield* port.assess({ assessedAt, commercialScope, tenantId });
@@ -115,6 +121,11 @@ describe('Pricing commercial-context evidence integration', () => {
           requestCorrelation: 'define-price-commercial-context',
         },
       ]);
+      expect(acquisitions[0]?.conditionalRead).toEqual({
+        input: { at: assessedAt },
+        kind: 'CURRENT_MARKET',
+        operationRequirementKey: 'commerce.pricing.requirement.define-price-market',
+      });
       expect(requests[0]).not.toHaveProperty('storefrontId');
       expect(requests[0]).not.toHaveProperty('storefrontRef');
     }),

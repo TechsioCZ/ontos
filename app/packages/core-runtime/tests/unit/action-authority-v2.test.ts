@@ -1,4 +1,4 @@
-import { DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,7 +11,7 @@ import {
 import {
   actionCommandGateQuestionV2,
   actionCommandQuestionsV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
 } from '../../src/access/approvals/action-command-v2.ts';
 import {
   prepareActionAuthorityV2,
@@ -25,7 +25,10 @@ import {
   proposalInsertValues,
 } from '../../src/access/approvals/persistence/records.ts';
 import { verifyHumanPrincipal } from '../../src/access/approvals/principals.ts';
-import { assessAuthorityLoss } from '../../src/access/approvals/lapse.ts';
+import { LapseAssessmentSchema, assessAuthorityLoss } from '../../src/access/approvals/lapse.ts';
+import { ApprovalRefusedError } from '../../src/access/approvals/errors/approval-refused-error.ts';
+import { MandateRefusedError } from '../../src/access/approvals/errors/mandate-refused-error.ts';
+import { ActionPermissionCheckError, ActionPermissionDenied } from '../../src/actions/errors.ts';
 import { PreparedActionStepV2 } from '../../src/access/approvals/prepared-action-step-v2.ts';
 import { ActionInvocationRefSchema } from '../../src/access/approvals/execution.ts';
 import { ProposalSchema } from '../../src/access/model.ts';
@@ -52,6 +55,7 @@ import type { AuthoritySpec } from './access-decision-support.ts';
 
 const scope: OperationalScope = { ...principal, correlationId: 'forward-authority' };
 const now = at('2026-11-07T01:00:00Z');
+const [LapseMember, RetainMember] = LapseAssessmentSchema.members;
 const first = RecordKeySchema.make('record-1');
 const second = RecordKeySchema.make('record-2');
 const payload = { ids: [first, second], salary: 25 };
@@ -68,7 +72,7 @@ it('rejects a copied continuation prototype without treating it as prepared auth
 
 const makeFixture = (phase: 'approver' | 'requester', withPreparation = false) =>
   Effect.gen(function* proofFixture() {
-    const command = yield* makeActionCommandV2({ payload, registration: actionFor(), scope });
+    const command = yield* resolveActionCommandV2({ payload, registration: actionFor(), scope });
     const mode = phase === 'requester' ? 'propose' : 'approve';
     const spec: AuthoritySpec = {
       cells: [
@@ -191,18 +195,19 @@ it.effect('a real governing-read loss reaches the forward approver proof without
       tenantId: mandate.tenantId,
     };
     expect(mandate.witnesses).toEqual([]);
-    expect(assessAuthorityLoss(mandate, loss)).toMatchObject({
-      _tag: 'lapse',
-      authorityLoss: 'parent_record_read_lost',
-    });
-    expect(assessAuthorityLoss(pending, loss)).toHaveProperty('_tag', 'retain');
+    const lapsed = assessAuthorityLoss(mandate, loss);
+    expect(Schema.is(LapseMember)(lapsed)).toBe(true);
+    expect(lapsed).toMatchObject({ authorityLoss: 'parent_record_read_lost' });
+    expect(Schema.is(RetainMember)(assessAuthorityLoss(pending, loss))).toBe(true);
     expect(
-      assessAuthorityLoss(mandate, {
-        ...loss,
-        principalId: PrincipalIdSchema.make('00000000-0000-4000-8000-000000000099'),
-      }),
-    ).toHaveProperty('_tag', 'retain');
-    expect(assessAuthorityLoss({ ...mandate, status: 'executed' }, loss)).toHaveProperty('_tag', 'retain');
+      Schema.is(RetainMember)(
+        assessAuthorityLoss(mandate, {
+          ...loss,
+          principalId: PrincipalIdSchema.make('00000000-0000-4000-8000-000000000099'),
+        }),
+      ),
+    ).toBe(true);
+    expect(Schema.is(RetainMember)(assessAuthorityLoss({ ...mandate, status: 'executed' }, loss))).toBe(true);
   }),
 );
 
@@ -283,7 +288,8 @@ it.effect(
         now,
         proposal: executed,
       }).pipe(Effect.flip);
-      expect(replay).toMatchObject({ _tag: 'MandateRefusedError', code: 'proposal_already_executed' });
+      expect(Schema.is(MandateRefusedError)(replay)).toBe(true);
+      expect(replay).toMatchObject({ code: 'proposal_already_executed' });
     }),
 );
 
@@ -292,28 +298,31 @@ it.effect(
   () =>
     Effect.gen(function* forwardApprovalControls() {
       const { approve, requester } = yield* forwardProposalFixture();
-      expect(
-        yield* approveActionV2({ ...approve, policy: { selfApproval: 'forbidden' } }).pipe(Effect.flip),
-      ).toMatchObject({ _tag: 'ApprovalRefusedError', code: 'self_approval_forbidden' });
-      expect(
-        yield* approveActionV2({
-          ...approve,
-          currentRequesterAuthority: { ...requester.proof, questions: [requester.proof.questions[0]] },
-        }).pipe(Effect.flip),
-      ).toMatchObject({ _tag: 'ApprovalRefusedError', code: 'requester_authority_lost' });
-      const changed = yield* makeActionCommandV2({
+      const selfApproval = yield* approveActionV2({ ...approve, policy: { selfApproval: 'forbidden' } }).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(ApprovalRefusedError)(selfApproval)).toBe(true);
+      expect(selfApproval).toMatchObject({ code: 'self_approval_forbidden' });
+      const requesterLost = yield* approveActionV2({
+        ...approve,
+        currentRequesterAuthority: { ...requester.proof, questions: [requester.proof.questions[0]] },
+      }).pipe(Effect.flip);
+      expect(Schema.is(ApprovalRefusedError)(requesterLost)).toBe(true);
+      expect(requesterLost).toMatchObject({ code: 'requester_authority_lost' });
+      const changed = yield* resolveActionCommandV2({
         payload: { ...payload, salary: 26 },
         registration: actionFor(),
         scope,
       });
-      expect(yield* approveActionV2({ ...approve, command: changed }).pipe(Effect.flip)).toMatchObject({
-        _tag: 'ActionPermissionCheckError',
-      });
+      expect(
+        Schema.is(ActionPermissionCheckError)(
+          yield* approveActionV2({ ...approve, command: changed }).pipe(Effect.flip),
+        ),
+      ).toBe(true);
       const approved = yield* approveActionV2(approve);
-      expect(yield* approveActionV2({ ...approve, proposal: approved }).pipe(Effect.flip)).toMatchObject({
-        _tag: 'ApprovalRefusedError',
-        code: 'proposal_not_pending',
-      });
+      const notPending = yield* approveActionV2({ ...approve, proposal: approved }).pipe(Effect.flip);
+      expect(Schema.is(ApprovalRefusedError)(notPending)).toBe(true);
+      expect(notPending).toMatchObject({ code: 'proposal_not_pending' });
     }),
 );
 
@@ -376,7 +385,7 @@ it.effect('rejects copied, missing, reordered, foreign and legacy stored questio
       const exit = yield* Effect.exit(actionAuthorityQuestionsV2(command, invalid, expectation));
       expect(Exit.isFailure(exit)).toBe(true);
     }
-    const changed = yield* makeActionCommandV2({
+    const changed = yield* resolveActionCommandV2({
       payload: { ...payload, salary: 26 },
       registration: actionFor(),
       scope,
@@ -416,7 +425,9 @@ it.effect('keeps unavailable authority retryable and refuses a mixed, missing or
         phase: 'approver',
         principalId,
       }).pipe(Effect.flip);
-      expect(failure._tag).toBe(outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied');
+      expect(Schema.is(outcome === 'UNAVAILABLE' ? ActionPermissionCheckError : ActionPermissionDenied)(failure)).toBe(
+        true,
+      );
     }
     for (const invalid of [decisions.slice(1), decisions.map((decision) => ({ ...decision, evidence: [] }))]) {
       expect(
@@ -507,7 +518,7 @@ for (const phase of ['approver', 'requester'] as const) {
           prepared.recheck(now, transaction).pipe(insideDatabaseTransaction('stale-stored-forward-proof-writer')),
         )
         .pipe(Effect.flip);
-      expect(stale._tag).toBe('ActionPermissionCheckError');
+      expect(Predicate.isTagged(stale, 'ActionPermissionCheckError')).toBe(true);
       expect(fixture.remoteCalls()).toBe(remoteCalls);
     }),
   );
@@ -533,7 +544,7 @@ it.effect(
         proof: fixture.proof,
         scope,
       }).pipe(Effect.flip);
-      expect(failure._tag).toBe('ActionPermissionCheckError');
+      expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
       expect(fixture.remoteCalls()).toBeGreaterThan(before);
     }),
 );
@@ -555,7 +566,7 @@ it.effect('cannot prepare a lost saved incarnation even if a fresh canonical gat
       proof: fixture.proof,
       scope,
     }).pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
   }),
 );
 
@@ -581,7 +592,7 @@ it.effect('does not extend the saved proof deadline when current membership has 
           .pipe(insideDatabaseTransaction('expired-stored-proof')),
       )
       .pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
   }),
 );
 
@@ -654,7 +665,7 @@ for (const batchReads of [false, true]) {
           proof: fixture.proof,
           scope,
         }).pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
       }),
     );
   }
@@ -706,7 +717,7 @@ it.effect('a batched read that offers a live cell of another assignment never re
       proof: fixture.proof,
       scope,
     }).pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
   }),
 );
 
@@ -723,38 +734,48 @@ it.effect('distinguishes lost membership, expired deadlines, foreign scope and u
       scope,
     };
     const noMembership = { ...fixture.authority, readScope: () => Effect.succeed(Option.none()) };
-    expect((yield* recheckActionAuthorityV2({ ...base, authority: noMembership }).pipe(Effect.flip))._tag).toBe(
-      'ActionPermissionDenied',
-    );
+    expect(
+      Schema.is(ActionPermissionDenied)(
+        yield* recheckActionAuthorityV2({ ...base, authority: noMembership }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
     const unavailable = {
       ...fixture.authority,
       readCells: () => Effect.fail(accessDecisionUnavailable('Intent is unavailable')),
     };
-    expect((yield* recheckActionAuthorityV2({ ...base, authority: unavailable }).pipe(Effect.flip))._tag).toBe(
-      'ActionPermissionCheckError',
-    );
-    expect((yield* recheckActionAuthorityV2({ ...base, now: at('2028-01-01T00:00:00Z') }).pipe(Effect.flip))._tag).toBe(
-      'ActionPermissionDenied',
-    );
     expect(
-      (yield* recheckActionAuthorityV2({
-        ...base,
-        scope: { ...scope, legalEntityId: LegalEntityIdSchema.make('00000000-0000-4000-8000-000000000009') },
-      }).pipe(Effect.flip))._tag,
-    ).toBe('ActionPermissionCheckError');
+      Schema.is(ActionPermissionCheckError)(
+        yield* recheckActionAuthorityV2({ ...base, authority: unavailable }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
+    expect(
+      Schema.is(ActionPermissionDenied)(
+        yield* recheckActionAuthorityV2({ ...base, now: at('2028-01-01T00:00:00Z') }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
+    expect(
+      Schema.is(ActionPermissionCheckError)(
+        yield* recheckActionAuthorityV2({
+          ...base,
+          scope: { ...scope, legalEntityId: LegalEntityIdSchema.make('00000000-0000-4000-8000-000000000009') },
+        }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
     // The gate's company-of-tenant rule holds on re-check: a company the tenant no longer owns loses the proof, and
     // an ownership read that fails is unavailable, never a pass.
     const foreign = { ...fixture.authority, readCompanyOwnership: () => Effect.succeed(false) };
-    expect((yield* recheckActionAuthorityV2({ ...base, authority: foreign }).pipe(Effect.flip))._tag).toBe(
-      'ActionPermissionDenied',
-    );
+    expect(
+      Schema.is(ActionPermissionDenied)(yield* recheckActionAuthorityV2({ ...base, authority: foreign }).pipe(Effect.flip)),
+    ).toBe(true);
     const ownershipUnreadable = {
       ...fixture.authority,
       readCompanyOwnership: () => Effect.fail(accessDecisionUnavailable('Ownership is unavailable')),
     };
-    expect((yield* recheckActionAuthorityV2({ ...base, authority: ownershipUnreadable }).pipe(Effect.flip))._tag).toBe(
-      'ActionPermissionCheckError',
-    );
+    expect(
+      Schema.is(ActionPermissionCheckError)(
+        yield* recheckActionAuthorityV2({ ...base, authority: ownershipUnreadable }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
   }),
 );
 

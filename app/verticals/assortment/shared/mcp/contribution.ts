@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const assortmentMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -40,6 +40,8 @@ export const assortmentMcpContribution = defineOntosMcpContribution({
         en: 'End a closed assortment boundary',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
+    'import-symmy-rule': OntosMcpHidden,
     'issue-assortment-commitment-confirmation': 'hidden',
     'replace-applicability-binding': {
       title: {

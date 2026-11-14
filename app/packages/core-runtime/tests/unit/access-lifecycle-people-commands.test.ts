@@ -17,6 +17,7 @@ import {
   planRoleAssignment,
   planRoleUnassignment,
   planTeamMembership,
+  PeopleIntentWriteSchema,
 } from '../../src/access/lifecycle/people-commands.ts';
 import type { ManagerAuthority } from '../../src/access/lifecycle/delegation.ts';
 import type {
@@ -156,6 +157,7 @@ const tagOf = (write: PeopleIntentWrite): PeopleIntentWrite['_tag'] =>
   );
 
 const writeTags = (plan: PeopleChangePlan) => plan.writes.map(tagOf);
+const { 2: RequireDirectoryMember } = PeopleIntentWriteSchema.members;
 
 const membershipIn = (write: PeopleIntentWrite | undefined): Option.Option<AccessMembership> =>
   Match.value(write).pipe(
@@ -1348,12 +1350,9 @@ it.effect('admits a newcomer to the tenant and the company in one plan, behind t
     expect(fresh.scopeId).toBe(companyScope);
     // The precondition comes first, so the store checks the directory before any row lands.
     expect(writeTags(fresh)).toEqual(['RequireDirectoryMember', 'RecordMembership', 'RecordMembership']);
-    expect(fresh.writes[0]).toEqual({
-      _tag: 'RequireDirectoryMember',
-      legalEntityId: ADMITTED_COMPANY,
-      principalId: MEMBER,
-      principalKind: 'human',
-    });
+    expect(fresh.writes[0]).toEqual(
+      RequireDirectoryMember.make({ legalEntityId: ADMITTED_COMPANY, principalId: MEMBER, principalKind: 'human' }),
+    );
     expect(recordedIn(fresh)).toEqual([
       { id: membershipId(40), scopeId: tenantScope },
       { id: membershipId(41), scopeId: companyScope },

@@ -28,6 +28,8 @@ import { priceResultLookupRead } from './src/api/price-result-lookup.read.ts';
 import { priceScheduleRead } from './src/api/price-schedule.read.ts';
 import { quantityTierResultLookupRead } from './src/api/quantity-tier-result-lookup.read.ts';
 import { quotationResultLookupRead } from './src/api/quotation-result-lookup.read.ts';
+import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
+import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
@@ -66,8 +68,10 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
       'exact-price-resolution': () => import('./src/api/exact-price-resolution-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'price-definition': () => import('./src/api/price-definition-client.ts'),
+      'price-group-source-prices': () => import('./src/api/price-group-source-prices-client.ts'),
       'price-result-lookup': () => import('./src/api/price-result-lookup-client.ts'),
       'price-schedule': () => import('./src/api/price-schedule-client.ts'),
+      'price-source-result-lookup': () => import('./src/api/price-source-result-lookup-client.ts'),
       'quantity-tier-result-lookup': () => import('./src/api/quantity-tier-result-lookup-client.ts'),
       'quotation-result-lookup': () => import('./src/api/quotation-result-lookup-client.ts'),
       'quotation-verification': () => import('./src/api/quotation-verification-client.ts'),
@@ -113,6 +117,8 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
     priceScheduleRead,
     quantityTierResultLookupRead,
     quotationResultLookupRead,
+    priceGroupSourcePricesRead,
+    priceSourceResultLookupRead,
     quotationVerificationRead,
     zeroFloorAuthorizationResultLookupRead,
     // </generated-module-registration-reads>

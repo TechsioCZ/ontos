@@ -3,6 +3,7 @@
 // @ontos-action-http-slug ensure-retail-customer-profile
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,6 +12,8 @@ import {
 } from '../actions/ensure-retail-customer-profile.ts';
 
 export { EnsureRetailCustomerProfilePayloadSchema } from '../actions/ensure-retail-customer-profile.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 export const EnsureRetailCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EnsureRetailCustomerProfileActionInvalidProblem',
   400,
@@ -47,6 +50,8 @@ export const EnsureRetailCustomerProfileActionConflictProblemSchema = makeProble
       'action_invocation_state_invalid',
       'CURRENT_STATE_CONFLICT',
       'PROFILE_KIND_OR_SUBJECT_CONFLICT',
+      'SOURCE_CONFLICT',
+      'SOURCE_STALE',
     ]),
   },
 );
@@ -56,7 +61,9 @@ export const EnsureRetailCustomerProfileActionIneligibleProblemSchema = makeProb
   {
     code: Schema.Literals([
       'action_policy_denied',
+      'PRIVACY_DENIED',
       'PROFILE_RECONCILIATION_REQUIRED',
+      'SOURCE_AUTHORITY_DENIED',
       'SUBJECT_NOT_RESOLVED_OR_INVALID',
     ]),
   },

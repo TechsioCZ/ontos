@@ -30,7 +30,7 @@ import {
   PreviewAccessRoleEditResponseSchema,
   SaveAccessRoleEditResponseSchema,
 } from '../../shared/access-admin-api.ts';
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { accessAdminTemplateLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 

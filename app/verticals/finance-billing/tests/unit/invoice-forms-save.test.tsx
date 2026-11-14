@@ -2,7 +2,7 @@
 // The invoice extras (manual payment, reminder) and the accounting setup send their one command only from the shared
 // Save button ("Uložit"), last in the footer. Typing changes only the draft; an untouched form closes without asking.
 // Only the i18n runtime and the router blocker are replaced.
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { AccountingSetupForm } from '../../src/routes/[lang]/finance/accounting-setup-form.tsx';
@@ -109,7 +109,8 @@ describe('invoice extras and accounting setup save from Uložit only', () => {
       yield* clickNamed(REVIEW_CONFIRM);
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({ _tag: 'RecordManualPayment', amountMinor: 25_000 });
+      expect(Predicate.isTagged(sent[0], 'RecordManualPayment')).toBe(true);
+      expect(sent[0]).toMatchObject({ amountMinor: 25_000 });
     }),
   );
 
@@ -171,11 +172,8 @@ describe('invoice extras and accounting setup save from Uložit only', () => {
       yield* clickNamed(REMINDER_CONFIRM);
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'RecordReminder',
-        invoiceRef: invoice.ref,
-        recipient: 'fakturace@kavarna.cz',
-      });
+      expect(Predicate.isTagged(sent[0], 'RecordReminder')).toBe(true);
+      expect(sent[0]).toMatchObject({ invoiceRef: invoice.ref, recipient: 'fakturace@kavarna.cz' });
     }),
   );
 

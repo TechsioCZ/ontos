@@ -13,7 +13,7 @@ import type {
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
-import { searchUnavailable } from '../search/search-unavailable.ts';
+import { searchUnavailable } from './search-unavailable.ts';
 import { crmClientSearchTerms, crmContactRecordSearchTerms, SearchSource } from './search-source.service.ts';
 import type { SearchSnapshot } from './search-source.service.ts';
 

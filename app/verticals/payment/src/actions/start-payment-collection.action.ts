@@ -6,6 +6,7 @@ import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import {
+  PaymentPayerContactRefused,
   StartPaymentCollectionPayloadSchema,
   StartPaymentCollectionResultSchema,
 } from '../../shared/actions/start-payment-collection.ts';
@@ -19,9 +20,22 @@ import {
 } from '../../shared/domain/lifecycle-collection-refused.ts';
 import { PaymentLifecycleConflict, paymentLifecycleConflict } from '../../shared/domain/lifecycle-conflict.ts';
 import { PaymentConflict, paymentConflict } from '../../shared/domain/payment-conflict.ts';
+import {
+  isBankAccountingReceiptBinding,
+  PaymentGatewayAccountBindingSchema,
+  sameBankReceiptAuthority,
+} from '../../shared/domain/payment-execution-binding.ts';
+import type {
+  PaymentBankAccountingReceiptBinding,
+  PaymentBankReceiptAuthority,
+  PaymentExecutionBinding,
+  PaymentGatewayAccountBinding,
+} from '../../shared/domain/payment-execution-binding.ts';
+import { payerContactProblemFor } from '../../shared/domain/payment-payer-contact.ts';
+import type { PayerContactProblemCode, PaymentPayerContact } from '../../shared/domain/payment-payer-contact.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
-import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
+import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationRequestedPayloadSchema } from '../../shared/outbox/payment-core-operation-requested-v1.ts';
 import { collectionMaterialRequest, collectionMatchesPayment } from '../domain/lifecycle-intent.ts';
 import { requireReleasedPurchase } from '../domain/lifecycle-purchase-guard.ts';
@@ -32,13 +46,16 @@ import {
   computePaymentMaterialHash,
   paymentAggregatePersistenceForTransaction,
 } from '../persistence/payment-aggregate-persistence.ts';
-import type { PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
+import type { PaymentAggregateRecord, PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+import { selectBankReceiptAuthorities } from '../persistence/payment-source-persistence.ts';
+import { pspPayerContactPersistenceForTransaction } from '../persistence/psp-payer-contact-persistence.ts';
+import type { PspPayerContactPersistence } from '../persistence/psp-payer-contact-persistence.ts';
 import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
-import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
+import type { PaymentGatewayBindingEvidence } from '../ports/gateway-binding-port.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
 import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 import { createStartPaymentCollectionPaymentCoreOperationRequestedV1OutboxMessage } from './start-payment-collection-payment-core-operation-requested-v1.outbox-message.ts';
@@ -51,50 +68,119 @@ const ErrorSchema = Schema.Union([
   PaymentConflict,
   PaymentLifecycleConflict,
   PaymentOwnerEvidenceUnavailable,
+  PaymentPayerContactRefused,
   PaymentRejected,
   PaymentUnavailable,
 ]);
 const domainEvents = { [OPERATION_REQUESTED]: OperationRequestedPayloadSchema } as const;
+const isGatewayAccountBinding = Schema.is(PaymentGatewayAccountBindingSchema);
 
 /**
- * A new COLLECT executes under the Payment's original binding only. For a gateway binding the C17
- * owner must still Currently enable that exact account; disablement refuses the new operation and never
- * selects another provider, account or environment.
+ * A new COLLECT executes under the Payment's original binding only. The binding was chosen when the Payment
+ * intent was created, so Gateway Enablement changes since then (disablement, account replacement) do not
+ * apply (#1155); the C17 owner must still know that exact account and environment in this scope. An unknown
+ * binding refuses the new operation and never selects another provider, account or environment.
  */
 const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatewayBinding')(
-  function* verifyGatewayBinding(payment: PaymentRecord, binding: PaymentGatewayAccountBinding) {
-    const gateway = yield* GatewayBindingPort;
-    const verification = yield* gateway.verifySelectedBinding({
+  function* verifyGatewayBinding(
+    payment: PaymentRecord,
+    binding: PaymentGatewayAccountBinding,
+    gateways: PaymentGatewayBindingEvidence,
+  ) {
+    const original = yield* gateways.resolveOriginalBinding({
       binding,
-      customerConfigurationId: payment.customerConfigurationId,
       scope: { legalEntityId: payment.legalEntityId, tenantId: payment.tenantId },
     });
-    return yield* Match.valueTags(verification, {
-      ENABLED: () => Effect.void,
-      NOT_ENABLED: () =>
+    return yield* Option.match(original, {
+      onNone: () =>
         Effect.fail(
           paymentCollectionRefused(
             'payment_binding_not_enabled',
-            'The original gateway binding is not Currently enabled; no other binding is selected',
+            'The original gateway binding is unknown in this scope; no other binding is selected',
           ),
         ),
+      onSome: () => Effect.void,
     });
   },
 );
 
-const requireCurrentBinding = (payment: PaymentRecord) =>
-  Match.valueTags(payment.executionBinding, {
-    BANK_ACCOUNTING_RECEIPT: () => Effect.void,
-    COD_DELIVERY_OFFER: () => Effect.void,
-    GATEWAY_ACCOUNT: (binding) => verifyGatewayBinding(payment, binding),
-    PICKUP_CAPABILITY: () => Effect.void,
+/**
+ * Which payer contact the binding's provider family needs (plan D-P3). Only a gateway dispatch sends a
+ * contact; any other binding refuses one, so nothing is accepted that no provider call would use.
+ */
+export const payerContactProblemForBinding = (
+  binding: PaymentExecutionBinding,
+  contact: Option.Option<PaymentPayerContact>,
+): Option.Option<PayerContactProblemCode> => {
+  if (isGatewayAccountBinding(binding)) {
+    return payerContactProblemFor(binding.providerFamily, contact);
+  }
+  return Option.isSome(contact) ? Option.some('payment_payer_contact_not_applicable') : Option.none();
+};
+
+const payerContactReasons = {
+  payment_payer_contact_not_applicable: 'The binding of this Payment sends no such payer contact to its provider',
+  payment_payer_contact_required: 'The provider of this Payment needs a payer contact that the request lacks',
+} as const satisfies Record<PayerContactProblemCode, string>;
+
+interface StartCollectionServices extends PaymentLifecycleServices {
+  /** Gateway binding evidence bound to this one Action transaction. */
+  readonly gateways: PaymentGatewayBindingEvidence;
+  /** Insert-only transient payer contact of a new COLLECT, in this one Action transaction. */
+  readonly payerContacts: PspPayerContactPersistence;
+  readonly selectReceiptAuthorities: (
+    method: 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE',
+  ) => Effect.Effect<readonly PaymentBankReceiptAuthority[], PaymentUnavailable>;
+}
+
+type StartCollectionContext = ActionHandlerContext<typeof domainEvents, StartCollectionServices>;
+
+const resolveBankBinding = Effect.fn('StartPaymentCollectionAction.resolveBankBinding')(function* resolveBankBinding(
+  aggregate: PaymentAggregateRecord,
+  binding: PaymentBankAccountingReceiptBinding,
+  context: StartCollectionContext,
+) {
+  const { method, paymentId } = aggregate.payment;
+  if (method !== 'BANK_TRANSFER_ADVANCE' && method !== 'DEFERRED_INVOICE') {
+    return yield* paymentUnavailable('The Payment method has no bank receipt authority');
+  }
+  const priorCollect = aggregate.operations.find((operation) => operation.kind === 'COLLECT');
+  const original = priorCollect?.binding ?? binding;
+  if (
+    !isBankAccountingReceiptBinding(original) ||
+    (priorCollect !== undefined && original.receiptAuthority === undefined)
+  ) {
+    return yield* paymentUnavailable('The original collection has no provable bank receipt authority');
+  }
+  const candidates = yield* context.services.selectReceiptAuthorities(method);
+  yield* recordPaymentLookup(context, { paymentId, query: 'source-authorities', resultCount: candidates.length });
+  const { receiptAuthority } = original;
+  if (receiptAuthority !== undefined) {
+    return candidates.some((candidate) => sameBankReceiptAuthority(receiptAuthority, candidate))
+      ? original
+      : yield* paymentUnavailable('The original bank receipt authority is unavailable');
+  }
+  const [only] = candidates;
+  if (only === undefined || candidates.length !== 1) {
+    return yield* paymentUnavailable('The bank receipt authority could not be uniquely resolved');
+  }
+  return { ...binding, receiptAuthority: only };
+});
+
+const resolveCollectionBinding = (aggregate: PaymentAggregateRecord, context: StartCollectionContext) => {
+  const { payment } = aggregate;
+  const binding = payment.executionBinding;
+  return Match.valueTags(binding, {
+    BANK_ACCOUNTING_RECEIPT: (bank) => resolveBankBinding(aggregate, bank, context),
+    COD_DELIVERY_OFFER: (offer) => Effect.succeed(offer),
+    GATEWAY_ACCOUNT: (gateway) =>
+      verifyGatewayBinding(payment, gateway, context.services.gateways).pipe(Effect.as(gateway)),
+    PICKUP_CAPABILITY: (pickup) => Effect.succeed(pickup),
   });
+};
 
 export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAction.handle')(
-  function* startPaymentCollection(
-    payload: StartPaymentCollectionPayload,
-    context: ActionHandlerContext<typeof domainEvents, PaymentLifecycleServices>,
-  ) {
+  function* startPaymentCollection(payload: StartPaymentCollectionPayload, context: StartCollectionContext) {
     const { aggregate: persistence, lifecycle } = context.services;
     const provenance: PaymentExecutionProvenance = {
       actionInvocationId: context.actionInvocationId,
@@ -117,8 +203,10 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
     });
     yield* recordPaymentLookup(context, { query: 'purchase-intents', resultCount: purchasePaymentIds.length });
     yield* recordPaymentAggregateReads(context, [payment.paymentId]);
-    const materialRequest = collectionMaterialRequest(payment.paymentId, payload, payment.executionBinding);
-    const materialHash = yield* computePaymentMaterialHash(materialRequest);
+    const keyedOperation = aggregate.operations.find((operation) => operation.operationKey === payload.operationKey);
+    const materialHash = yield* computePaymentMaterialHash(
+      collectionMaterialRequest(payment.paymentId, payload, keyedOperation?.binding ?? payment.executionBinding),
+    );
     const admission = decideOperationAdmission(aggregate.operations, {
       kind: 'COLLECT',
       materialHash,
@@ -180,14 +268,23 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
       purchasePaymentIds.filter((paymentId) => paymentId !== payment.paymentId),
     );
     // 4. Operation-specific owner evidence (H1094-01=A): only the gateway branch needs C17 here.
-    yield* requireCurrentBinding(payment);
+    const binding = yield* resolveCollectionBinding(aggregate, context);
+    // The payer contact is checked against the original binding's family only; it never selects one.
+    const payerContact = Option.fromUndefinedOr(payload.payerContact);
+    const contactProblem = payerContactProblemForBinding(binding, payerContact);
+    if (Option.isSome(contactProblem)) {
+      return yield* new PaymentPayerContactRefused({
+        code: contactProblem.value,
+        reason: payerContactReasons[contactProblem.value],
+      });
+    }
     // 5. Insert under the same lock; the partial unique index is the database backstop.
     const inserted = yield* persistence.insertOperation({
       amount: payment.amount,
-      binding: payment.executionBinding,
+      binding,
       initialOutcome: 'PENDING',
       kind: 'COLLECT',
-      materialRequest,
+      materialRequest: collectionMaterialRequest(payment.paymentId, payload, binding),
       operationKey: payload.operationKey,
       paymentId: payment.paymentId,
       provenance,
@@ -200,6 +297,11 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
     } satisfies StartPaymentCollectionResult;
     if (!inserted.written) {
       return result;
+    }
+    // Only the invocation that created the COLLECT stores its contact; the dispatch that uses it deletes it.
+    // It is not operation material and stays out of the event and Outbox message below.
+    if (Option.isSome(payerContact)) {
+      yield* context.services.payerContacts.rememberForCollect(inserted.record.operationId, payerContact.value);
     }
     // 6. The durable execution request: the admitted work under this invocation's Composition revision.
     const requested = {
@@ -223,9 +325,12 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
       subjectResourceId: payment.paymentId,
       subjectResourceType: 'payment.core.payment',
     });
+    // Only a gateway dispatch is an actual effect-capable provider call: it is Core durable work of this
+    // invocation's revision until the executor completes it (#1158). Other bindings wait for owner evidence.
     yield* context.addOutboxMessage(
       event,
       createStartPaymentCollectionPaymentCoreOperationRequestedV1OutboxMessage(requested),
+      isGatewayAccountBinding(requested.binding) ? { consumerModuleKey: MODULE_KEY } : undefined,
     );
     return result;
   },
@@ -240,12 +345,17 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
           reason: 'Payment lifecycle operations require a verified Selling Legal Entity scope',
         }),
       )
-    : Effect.succeed<PaymentLifecycleServices>({
-        aggregate: paymentAggregatePersistenceForTransaction(transaction),
-        applicability: paymentApplicabilityPersistenceForTransaction(transaction),
-        lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
-        refunds: paymentRefundPersistenceForTransaction(transaction),
-      });
+    : GatewayBindingPort.pipe(
+        Effect.map((gatewayBindingFor): StartCollectionServices => ({
+          aggregate: paymentAggregatePersistenceForTransaction(transaction),
+          applicability: paymentApplicabilityPersistenceForTransaction(transaction),
+          gateways: gatewayBindingFor(transaction, scope),
+          lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+          payerContacts: pspPayerContactPersistenceForTransaction(transaction),
+          refunds: paymentRefundPersistenceForTransaction(transaction),
+          selectReceiptAuthorities: (method) => selectBankReceiptAuthorities(transaction, method),
+        })),
+      );
 
 export const startPaymentCollectionAction = defineAction(
   {

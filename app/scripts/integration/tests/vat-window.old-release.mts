@@ -34,7 +34,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Clock, Config, Crypto, Effect, Layer, Predicate, Redacted, Schema, Scope } from 'effect';
+import { Clock, Config, Crypto, Effect, Layer, Option, Predicate, Redacted, Schema, Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -145,7 +145,7 @@ const calendarDateOf = (millis: number) => new Date(millis).toISOString().slice(
 it.live('the old release keeps reading and writing whole while the new release migrated its database', () =>
   Effect.gen(function* oldReleaseWindow() {
     const report = yield* windowReport;
-    if (report._tag === 'None') {
+    if (Option.isNone(report)) {
       return yield* Effect.logWarning('Not run: the VAT deploy rehearsal sets ONTOS_VAT_WINDOW_REPORT');
     }
     const fixture = Schema.decodeUnknownSync(Schema.fromJsonString(FixtureSchema))(

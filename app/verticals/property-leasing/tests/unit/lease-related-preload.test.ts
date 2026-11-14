@@ -46,9 +46,13 @@ const { reads } = rstest.hoisted(() => ({
     work: rstest.fn(),
   },
 }));
-rstest.mock('@app/party-registry/api/client', () => ({
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
   executeCounterpartyRead: reads.counterparty,
+}));
+rstest.mock('@app/party-registry/apis/party-detail/client', () => ({
   executePartyDetail: reads.guest,
+}));
+rstest.mock('../../src/routes/[lang]/najmy/party-customers.ts', () => ({
   listCustomers: reads.directory,
 }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: reads.properties }));

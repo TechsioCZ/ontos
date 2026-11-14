@@ -179,20 +179,13 @@ export const MovementForm = ({
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
-    const movement: {
-      -readonly [Key in keyof Extract<MerchandiseCommand, { readonly _tag: 'RecordStockMovement' }>]: Extract<
-        MerchandiseCommand,
-        { readonly _tag: 'RecordStockMovement' }
-      >[Key];
-    } = {
-      _tag: 'RecordStockMovement' as const,
+    const stockMovement = {
+      _tag: 'RecordStockMovement',
       delta: signedDelta(reason, quantity),
       productId,
       reason,
-    };
-    if (variant !== undefined) {
-      movement.variantId = variant.id;
-    }
+    } satisfies MerchandiseCommand;
+    const movement = variant === undefined ? stockMovement : { ...stockMovement, variantId: variant.id };
     const expected = Math.max(revision, savedRevision.current);
     runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
       setBusy(false);

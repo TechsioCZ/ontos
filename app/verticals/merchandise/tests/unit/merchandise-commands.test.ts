@@ -657,7 +657,12 @@ it('Bulk native category fields retain the existing finite command bounds and wi
     ids: ['one'],
     patch: { additionalCategoryIds: ['s'], categoryId: 'r' },
   };
-  expect(Schema.encodeSync(MerchandiseCommandSchema)(decodeCommand(wire))).toEqual(wire);
+  expect(
+    Schema.toEquivalence(Schema.toEncoded(MerchandiseCommandSchema))(
+      Schema.encodeSync(MerchandiseCommandSchema)(decodeCommand(wire)),
+      wire,
+    ),
+  ).toBe(true);
   expect(Schema.is(MerchandiseCommandSchema)({ ...wire, ids: [] })).toBe(false);
   expect(Schema.is(MerchandiseCommandSchema)({ ...wire, ids: Array.from({ length: 500 }, () => 'one') })).toBe(true);
   expect(Schema.is(MerchandiseCommandSchema)({ ...wire, ids: Array.from({ length: 501 }, () => 'one') })).toBe(false);

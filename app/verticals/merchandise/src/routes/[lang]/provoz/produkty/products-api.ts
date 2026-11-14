@@ -445,17 +445,9 @@ export const detailInput = (
     return Option.none();
   }
   const scope = productScope(context);
-  const input: { -readonly [Key in keyof ProductDetailInput]: ProductDetailInput[Key] } = {
-    legalEntityId,
-    productId: routeId,
-  };
-  if (scope !== undefined) {
-    input.scope = scope;
-  }
-  if (revision !== undefined) {
-    input.revision = revision;
-  }
-  return Option.some(input);
+  const detail = { legalEntityId, productId: routeId } satisfies ProductDetailInput;
+  const scoped = scope === undefined ? detail : { ...detail, scope };
+  return Option.some<ProductDetailInput>(revision === undefined ? scoped : { ...scoped, revision });
 };
 
 const ProductRouteSearch = Schema.toCodecJson(

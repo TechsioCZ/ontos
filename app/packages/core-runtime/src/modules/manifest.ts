@@ -20,6 +20,8 @@ import type { BusinessPermissionDescriptor } from '../permissions/business-permi
 import { OntosExternalIdentityProviderSchema } from '../auth/external-identity-provider.ts';
 import type { OntosExternalIdentityProviderInput } from '../auth/external-identity-provider.ts';
 import { OntosMcpContributionSchema } from './mcp-contribution.ts';
+import { OntosRegisteredWorkloadCallsSchema } from './registered-workload-calls.ts';
+import type { OntosRegisteredWorkloadCallInput } from './registered-workload-calls.ts';
 import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
@@ -295,6 +297,12 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
    */
   originatorActions: Schema.optionalKey(Schema.Array(OntosModuleIdSchema)),
   publicSurface: OntosSerializedPublicSurfaceSchema,
+  /**
+   * The registered-workload calls this module's credential makes (absent: none, so the Shell refuses every one with
+   * `registered_workload_unmatched`). Upstream main has no production source for these rules (`[]` in
+   * `.env.example`); this is demo divergence exception 8, to be offered upstream.
+   */
+  registeredWorkloadCalls: Schema.optionalKey(OntosRegisteredWorkloadCallsSchema),
   requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
 }).check(
   Schema.makeFilter((manifest) => {
@@ -394,6 +402,8 @@ export interface OntosModuleManifestInput {
   /** See `OntosSerializedModuleManifestSchema.originatorActions`. */
   readonly originatorActions?: readonly string[];
   readonly publicSurface: OntosAuthoredPublicSurface;
+  /** See `OntosSerializedModuleManifestSchema.registeredWorkloadCalls`. */
+  readonly registeredWorkloadCalls?: readonly OntosRegisteredWorkloadCallInput[];
   readonly requirements?: OntosModuleRequirements;
 }
 
@@ -495,12 +505,28 @@ export const projectOntosModuleOperationContracts = (
     if (!Object.hasOwn(manifest.publicSurface.api, binding.apiKey)) {
       throw invalidManifest('public operation contract references an undeclared local API key');
     }
-    return exactDecode(OntosOperationContractSchema, {
+    const contract = {
       apiKey: canonicalOntosPublicApiKey(manifest.module.id, binding.apiKey),
       entrypoint: registration.descriptor.entrypoint,
       operationKey: binding.operationKey,
       schemaVersion: registration.descriptor.schemaVersion,
-    });
+    };
+    // Demo divergence exception 8: publish the workloads the operation admits, so the Shell can check a caller's
+    // declared registered-workload call against the installed receiver.
+    const carriers: {
+      readonly accessActor?: { readonly subjectWorkloads?: readonly string[] | undefined } | undefined;
+      readonly accessDeclaration?: { readonly key: string } | undefined;
+      readonly accessWorkload?: { readonly workloads: readonly string[] } | undefined;
+      readonly schemaVersion: string;
+    } = registration.descriptor;
+    const { accessActor, accessDeclaration, accessWorkload } = carriers;
+    const workloads = [...(accessWorkload?.workloads ?? []), ...(accessActor?.subjectWorkloads ?? [])];
+    if (accessDeclaration !== undefined && workloads.length > 0) {
+      Object.assign(contract, {
+        workloadCarrier: { declarationKey: accessDeclaration.key, workloads: [...new Set(workloads)] },
+      });
+    }
+    return exactDecode(OntosOperationContractSchema, contract);
   });
   const declarations = {
     api: Object.entries(manifest.publicSurface.api).map(([key, api]) => ({
@@ -547,7 +573,11 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
   input: Input,
   publicSurface: PublicSurface,
 ): void => {
-  assertExactKeys(input, ['activation', 'module', 'originatorActions', 'publicSurface', 'requirements'], 'manifest');
+  assertExactKeys(
+    input,
+    ['activation', 'module', 'originatorActions', 'publicSurface', 'registeredWorkloadCalls', 'requirements'],
+    'manifest',
+  );
   assertExactKeys(
     publicSurface,
     [
@@ -620,6 +650,18 @@ const validateSearchDescriptorReferences = (
   }
 };
 
+/** The default state is a supported one, supported states are distinct, and `installsWith` names other modules once. */
+const validateActivationDeclaration = (moduleId: string, activation: OntosModuleActivation): void => {
+  if (!activation.supportedStates.includes(activation.defaultState)) {
+    throw invalidManifest('activation defaultState must be included in supportedStates');
+  }
+  assertUnique(activation.supportedStates, 'activation state');
+  const installsWithProblem = installsWithIssue(moduleId, activation.installsWith);
+  if (installsWithProblem !== undefined) {
+    throw invalidManifest(installsWithProblem);
+  }
+};
+
 /**
  * Defines the owner-authored contract. Executable values remain direct references in this
  * in-process value and are never part of the serializable deployment contract.
@@ -633,16 +675,13 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   if (input.module.kind !== 'business_module') {
     throw invalidManifest('V0 MicroVertical deployments may define only one business_module');
   }
-  if (!input.activation.supportedStates.includes(input.activation.defaultState)) {
-    throw invalidManifest('activation defaultState must be included in supportedStates');
-  }
-  assertUnique(input.activation.supportedStates, 'activation state');
-  const installsWithProblem = installsWithIssue(input.module.id, input.activation.installsWith);
-  if (installsWithProblem !== undefined) {
-    throw invalidManifest(installsWithProblem);
-  }
+  validateActivationDeclaration(input.module.id, input.activation);
   const originatorActions = (input.originatorActions ?? []).map((key) => exactDecode(OntosModuleIdSchema, key));
   assertUnique(originatorActions, 'originator Action key');
+  const registeredWorkloadCalls =
+    input.registeredWorkloadCalls === undefined
+      ? undefined
+      : exactDecode(OntosRegisteredWorkloadCallsSchema, input.registeredWorkloadCalls);
 
   validateOntosModuleExecutableReferences(
     input.publicSurface.actions,
@@ -820,6 +859,11 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   };
   if (input.requirements !== undefined) {
     Object.assign(manifest, { requirements: copyOntosModuleRequirements(input.requirements) });
+  }
+  if (registeredWorkloadCalls !== undefined) {
+    Object.assign(manifest, {
+      registeredWorkloadCalls: Object.freeze(registeredWorkloadCalls.map((call) => freezePlain({ ...call }))),
+    });
   }
   return Object.freeze(manifest);
 };

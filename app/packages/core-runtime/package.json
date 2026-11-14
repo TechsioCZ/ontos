@@ -68,6 +68,7 @@
       "default": "./src/modules/active-application-composition-source.node.ts"
     },
     "./observability/runtime-jobs": "./src/observability/runtime-jobs.ts",
+    "./modules/manifest": "./src/modules/manifest.ts",
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
     "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",
@@ -88,10 +89,11 @@
     "./testing/reads": "./src/testing/reads.ts",
     "./testing/native-reads": "./src/testing/native-reads.ts",
     "./testing/native-action-v2": {
-      "types": "./tests/support/action-live-v2.ts",
       "node": "./tests/support/action-live-v2.ts"
     },
     "./testing/isolated-native-database": "./src/testing/isolated-native-database.ts",
+    "./testing/source-execution-fence-native": "./src/testing/source-execution-fence-native.ts",
+    "./testing/workload-binding-native": "./src/testing/workload-binding-native.ts",
     "./testing/scripted-pg-client": "./src/testing/scripted-pg-client.ts",
     "./testing/tenant-access": "./src/testing/tenant-access.ts",
     "./testing/module-contract": "./src/testing/module-contract.ts",
@@ -123,7 +125,6 @@
       "default": "./src/db/database-runtime.node.ts"
     },
     "#unit-service-fetch": {
-      "types": "./src/http/unit-service-fetch.ts",
       "workerd": "./src/http/unit-service-fetch.workerd.ts",
       "node": "./src/http/unit-service-fetch.node.ts"
     },

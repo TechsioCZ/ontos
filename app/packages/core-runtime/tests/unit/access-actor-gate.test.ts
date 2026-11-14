@@ -1,6 +1,7 @@
-import { Effect, Match, Option, Result, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionPermissionDenied } from '../../src/actions/errors.ts';
 import {
   preserveSystemPrincipalContextTrust,
   trustVerifiedGatewayPrincipalContext,
@@ -1018,10 +1019,7 @@ it.effect('runs the real workload-only Action lifecycle but rejects propose befo
         transport: { ...request.transport, idempotencyKey: 'workload-propose', intent: 'propose' },
       })
       .pipe(Effect.flip);
-    expect(refused).toMatchObject({
-      _tag: 'ActionPermissionDenied',
-      reason: 'This Action does not need an approval; execute it directly',
-    });
+    expect(Schema.is(ActionPermissionDenied)(refused)).toBe(true);
     expect(refused.reason).toBe('This Action does not need an approval; execute it directly');
     expect(handlers).toBe(1);
     expect(runtime.snapshot().committed).toHaveLength(1);
@@ -1039,7 +1037,7 @@ it.effect('runs the real workload-only Action lifecycle but rejects propose befo
         transport: { ...request.transport, idempotencyKey: 'stale-workload-run' },
       })
       .pipe(Effect.flip);
-    expect(stale._tag).toBe('ActionTransactionError');
+    expect(Predicate.isTagged(stale, 'ActionTransactionError')).toBe(true);
     expect(handlers).toBe(1);
     expect(runtime.snapshot().committed).toHaveLength(1);
   }),

@@ -1,4 +1,4 @@
 export {
   ResolveModuleTargetPayloadSchema as GovernedResolveModuleTargetPayloadSchema,
   ResolvedModuleTargetSchema as GovernedResolvedModuleTargetSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';

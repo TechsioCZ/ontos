@@ -2,7 +2,7 @@
 // @ontos-action-owner property.leasing
 // @ontos-action-slug apply-command
 import type { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   defineAction,
   defineTenantModuleEntrypoint,
@@ -14,8 +14,6 @@ import type {
   ActionServiceFactory,
   ActionServicePreflight,
   ActionServicePreparationContext,
-  OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import {
   ApplyCommandErrorSchema,
@@ -24,8 +22,11 @@ import {
   OccupancyConflict,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload, OccupancyError } from '../../shared/actions/apply-command.ts';
-import { persistenceService, transitionOccupancy, makeOccupancyValidators } from '../services/persistence.service.ts';
-import type { OccupancyValidators } from '../services/persistence.service.ts';
+import {
+  OccupancyReferenceValidators,
+  persistenceService,
+  transitionOccupancy,
+} from '../services/persistence.service.ts';
 
 import { OutboxPayloadSchema } from '../../shared/outbox/property-leasing-search-refresh-requested-v1.ts';
 import { createApplyCommandPropertyLeasingSearchRefreshRequestedV1OutboxMessage } from './apply-command-property-leasing-search-refresh-requested-v1.outbox-message.ts';
@@ -33,9 +34,6 @@ import { createApplyCommandPropertyLeasingSearchRefreshRequestedV1OutboxMessage 
 const domainEvents = { 'property.leasing.search-refresh-requested.v1': OutboxPayloadSchema } as const;
 const OWNER_MODULE_KEY = 'property.leasing';
 type Persistence = Effect.Success<ReturnType<typeof persistenceService>>;
-export class CommandReferenceValidators extends Context.Service<CommandReferenceValidators, OccupancyValidators>()(
-  '@app/property-leasing/actions/apply-command.action/CommandReferenceValidators',
-) {}
 export type ApplyCommandServices = Persistence & {
   readonly prepared: {
     readonly payload: ApplyCommandPayload;
@@ -100,11 +98,8 @@ export const prepareApplyCommandServices = Effect.fn('Occupancy.prepareApplyComm
   if (current.revision !== payload.expectedRevision) {
     return yield* new OccupancyConflict({ code: 'occupancy_conflict', reason: 'stale_revision' });
   }
-  const injected = yield* Effect.serviceOption(CommandReferenceValidators);
-  const validators = yield* Option.match(injected, {
-    onNone: () => makeOccupancyValidators(context.scope),
-    onSome: Effect.succeed,
-  });
+  const referenceValidators = yield* OccupancyReferenceValidators;
+  const validators = yield* referenceValidators.forScope(context.scope);
   const transition = yield* transitionOccupancy(
     current.snapshot,
     payload.command,
@@ -115,45 +110,47 @@ export const prepareApplyCommandServices = Effect.fn('Occupancy.prepareApplyComm
     },
     validators,
   );
-  return Effect.fn('Occupancy.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    compositionRevision: string,
-  ) {
-    const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-    if (
-      age < 0 ||
-      age >= 30_000 ||
-      !samePrincipal(scope, context.scope) ||
-      scope.tenantId !== context.scope.tenantId ||
-      scope.legalEntityId !== context.scope.legalEntityId ||
-      scope.correlationId !== context.scope.correlationId ||
-      compositionRevision !== context.compositionRevision
-    ) {
-      return yield* new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Prepared references expired or belong to another operation',
-      });
-    }
-    const persistence = yield* persistenceService(transaction, scope).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(
-          new OperationContextUnavailable({
-            code: 'operation_context_unavailable',
-            reason: 'Owner services are temporarily unavailable',
-          }),
-          'cause',
-          { configurable: false, enumerable: false, value: cause, writable: false },
+  const factory: ActionServiceFactory<
+    ApplyCommandServices,
+    Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
+  > = Effect.fn('Occupancy.revalidatePreparedCommand')(
+    function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
+      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+      if (
+        age < 0 ||
+        age >= 30_000 ||
+        !samePrincipal(scope, context.scope) ||
+        scope.tenantId !== context.scope.tenantId ||
+        scope.legalEntityId !== context.scope.legalEntityId ||
+        scope.correlationId !== context.scope.correlationId ||
+        compositionRevision !== context.compositionRevision
+      ) {
+        return yield* new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Prepared references expired or belong to another operation',
+        });
+      }
+      const persistence = yield* persistenceService(transaction, scope).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new OperationContextUnavailable({
+              code: 'operation_context_unavailable',
+              reason: 'Owner services are temporarily unavailable',
+            }),
+            'cause',
+            { configurable: false, enumerable: false, value: cause, writable: false },
+          ),
         ),
-      ),
-    );
-    return { ...persistence, prepared: { payload, transition } };
-  });
+      );
+      return { ...persistence, prepared: { payload, transition } };
+    },
+  );
+  return factory;
 }) satisfies ActionServicePreflight<
   ApplyCommandPayload,
   ApplyCommandServices,
   OccupancyError,
-  Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
+  OccupancyReferenceValidators | Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
 >;
 
 export const applyCommandAction = defineAction(

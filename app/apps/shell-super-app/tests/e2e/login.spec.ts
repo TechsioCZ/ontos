@@ -14,7 +14,7 @@ import {
   ShellReloadRequiredProblemSchema,
   ShellTargetForbiddenProblemSchema,
   shellAuthenticationApiContract,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import { createAuthenticationFixture } from './auth-fixture.ts';
 import type { AuthenticationFixture } from './auth-fixture.ts';
 

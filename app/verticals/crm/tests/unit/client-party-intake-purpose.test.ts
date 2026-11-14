@@ -8,7 +8,7 @@ import {
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import { AccessScopeIdSchema, LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
-import { DateTime, Effect, FileSystem, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Option, Predicate, Schema } from 'effect';
 import { HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { intakeClientPartyAction } from '../../src/actions/intake-client-party.action.ts';
@@ -190,7 +190,7 @@ it.layer(intakeTestLayer)('CRM native intake purpose', (suite) => {
         );
         expect(harness.snapshot().committed[0]?.evidence.outboxMessages).toHaveLength(1);
         const replay = yield* harness.runtime.runAction(input).pipe(Effect.flip);
-        expect(replay._tag).toBe('ActionAlreadyCommitted');
+        expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
         expect(ownerFixture.calls).toHaveLength(2);
         expect(harness.snapshot().preparationQueries).toHaveLength(1);
         expect(calls).toBe(1);
@@ -265,7 +265,7 @@ it.layer(intakeTestLayer)('CRM native intake purpose', (suite) => {
         invocationId: 'intake',
         principalId: serviceId,
       }).pipe(Effect.flip);
-      expect(unrelated._tag).toBe('CrmNotFound');
+      expect(Predicate.isTagged(unrelated, 'CrmNotFound')).toBe(true);
       const linked = yield* linkVerifiedIntakeParty(state, 'client-1', party, {
         invocationId: 'intake',
         principalId: serviceId,
@@ -276,7 +276,7 @@ it.layer(intakeTestLayer)('CRM native intake purpose', (suite) => {
         { ...party, partyId: EntityIdSchema.make('unrelated-party') },
         { invocationId: 'another', principalId: serviceId },
       ).pipe(Effect.flip);
-      expect(replacement._tag).toBe('CrmReferenceIneligible');
+      expect(Predicate.isTagged(replacement, 'CrmReferenceIneligible')).toBe(true);
       expect(state.clients.items[0]?.partyRef).toBeUndefined();
     }),
   );

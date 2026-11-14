@@ -6,8 +6,6 @@ import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared
 import { moneyInputText } from '../../../../form-number.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 
-type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
-
 export interface DraftLine {
   readonly key: string;
   readonly name: string;
@@ -60,7 +58,7 @@ export const parseQuantity = (text: string): number | null => {
 };
 
 const draftLineOf = (line: Order['lines'][number], index: number): DraftLine => {
-  const draft: Mutable<DraftLine> = {
+  const draft = {
     key: `existing-${index}`,
     name: line.productName,
     priceText: moneyInputText(line.unitPriceMinor / 100),
@@ -69,14 +67,9 @@ const draftLineOf = (line: Order['lines'][number], index: number): DraftLine => 
     sku: line.sku,
     taxClassificationCode: line.taxClassificationCode,
     vatRate: line.vatRate,
-  };
-  if (line.variantId !== undefined) {
-    draft.variantId = line.variantId;
-  }
-  if (line.variantName !== undefined) {
-    draft.variantName = line.variantName;
-  }
-  return draft;
+  } satisfies DraftLine;
+  const withVariant = line.variantId === undefined ? draft : { ...draft, variantId: line.variantId };
+  return line.variantName === undefined ? withVariant : { ...withVariant, variantName: line.variantName };
 };
 
 /** The draft of an existing order, read from the register. */
@@ -130,23 +123,13 @@ type EditCommand = Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>;
 type EditLine = NonNullable<EditCommand['lines']>[number];
 
 const editLineOf = (line: DraftLine): EditLine => {
-  const edit: Mutable<EditLine> = {
-    productId: line.productId,
-    quantity: parseQuantity(line.quantityText) ?? 1,
-  };
   const offered = line.offeredPriceText === undefined ? null : parseAmount(line.offeredPriceText);
   const price = parseAmount(line.priceText) ?? 0;
-  if (offered !== null) {
-    // An added line: the server prices it as new and refuses when the offered price is no longer the price.
-    edit.offeredUnitPriceMinor = offered;
-  }
-  if (offered === null || offered !== price) {
-    edit.unitPriceMinor = price;
-  }
-  if (line.variantId !== undefined) {
-    edit.variantId = line.variantId;
-  }
-  return edit;
+  const edit = { productId: line.productId, quantity: parseQuantity(line.quantityText) ?? 1 } satisfies EditLine;
+  // An added line: the server prices it as new and refuses when the offered price is no longer the price.
+  const withOffer = offered === null ? edit : { ...edit, offeredUnitPriceMinor: offered };
+  const withPrice = offered === null || offered !== price ? { ...withOffer, unitPriceMinor: price } : withOffer;
+  return line.variantId === undefined ? withPrice : { ...withPrice, variantId: line.variantId };
 };
 
 const addressOf = (draft: Draft) =>
@@ -177,23 +160,13 @@ export const contactIncomplete = (draft: Draft, base: Draft): boolean =>
   contactTouched(draft, base) && (draft.name.trim() === '' || !EMAIL.test(draft.email.trim()));
 
 const editAddress = (draft: Draft): NonNullable<EditCommand['deliveryAddress']> => {
-  const address: Mutable<NonNullable<EditCommand['deliveryAddress']>> = {
-    city: draft.city.trim(),
-    postalCode: draft.postalCode.trim(),
-    street: draft.street.trim(),
-  };
-  if (draft.country.trim() !== '') {
-    address.country = draft.country.trim();
-  }
-  return address;
+  const address = { city: draft.city.trim(), postalCode: draft.postalCode.trim(), street: draft.street.trim() };
+  return draft.country.trim() === '' ? address : { ...address, country: draft.country.trim() };
 };
 
 const editContact = (draft: Draft): NonNullable<EditCommand['contact']> => {
-  const contact: Mutable<NonNullable<EditCommand['contact']>> = { email: draft.email.trim(), name: draft.name.trim() };
-  if (draft.phone.trim() !== '') {
-    contact.phone = draft.phone.trim();
-  }
-  return contact;
+  const contact = { email: draft.email.trim(), name: draft.name.trim() };
+  return draft.phone.trim() === '' ? contact : { ...contact, phone: draft.phone.trim() };
 };
 
 /**
@@ -218,24 +191,15 @@ export const editCommandOf = (
   const contactChanged = contactTouched(draft, base);
   const noteChanged = draft.note.trim() !== base.note.trim();
   const reason = draft.reason.trim();
-  const command: Mutable<EditCommand> = { _tag: 'EditOrder', expectedUpdatedAt, id: order.id };
-  if (linesChanged) {
-    command.lines = draft.lines.map(editLineOf);
-  }
-  if (shippingChanged && draft.shippingMethod !== null && shippingPrice !== null) {
-    command.shipping = { method: draft.shippingMethod, priceMinor: shippingPrice };
-  }
-  if (addressChanged) {
-    command.deliveryAddress = editAddress(draft);
-  }
-  if (contactChanged) {
-    command.contact = editContact(draft);
-  }
-  if (noteChanged) {
-    command.note = draft.note.trim();
-  }
-  if (reason !== '') {
-    command.reason = reason;
-  }
+  const precondition = { _tag: 'EditOrder', expectedUpdatedAt, id: order.id } satisfies EditCommand;
+  const withLines = linesChanged ? { ...precondition, lines: draft.lines.map(editLineOf) } : precondition;
+  const withShipping =
+    shippingChanged && draft.shippingMethod !== null && shippingPrice !== null
+      ? { ...withLines, shipping: { method: draft.shippingMethod, priceMinor: shippingPrice } }
+      : withLines;
+  const withAddress = addressChanged ? { ...withShipping, deliveryAddress: editAddress(draft) } : withShipping;
+  const withContact = contactChanged ? { ...withAddress, contact: editContact(draft) } : withAddress;
+  const withNote = noteChanged ? { ...withContact, note: draft.note.trim() } : withContact;
+  const command: EditCommand = reason === '' ? withNote : { ...withNote, reason };
   return linesChanged || shippingChanged || addressChanged || contactChanged || noteChanged ? command : null;
 };

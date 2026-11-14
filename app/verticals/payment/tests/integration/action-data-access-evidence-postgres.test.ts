@@ -24,6 +24,7 @@ import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-e
 import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeLifecycleOwnerContractFixture } from '../support/lifecycle-owner-contract.fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
@@ -90,6 +91,8 @@ const makeRuntimes = Effect.fn('PaymentDataAccess.makeRuntimes')(function* makeR
 });
 
 const scenario = Effect.fn('PaymentDataAccess.scenario')(function* scenario() {
+  // Gateway dispatches admitted under R1 are completion-bound executor work of R1 (#1158).
+  yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
   const database = yield* nativeDatabase;
   const scope = yield* makeTestScope;
   yield* seedCoreScope(database, scope);

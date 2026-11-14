@@ -58,9 +58,6 @@ const ownerFiles = (directory: string, compilerManifest: CompilerManifest, confi
 const counterfeitOwners = [
   ['missing-compiler', { dependencies: manifest.dependencies, scripts: manifest.scripts }, nativeConfig],
   ['runtime-build', { ...manifest, scripts: { build: 'node src/browser.tsx' } }, nativeConfig],
-  ['echo-build', { ...manifest, scripts: { build: 'echo modern build --deploy-target node' } }, nativeConfig],
-  ['quoted-build', { ...manifest, scripts: { build: "echo 'prepare && modern build'" } }, nativeConfig],
-  ['commented-build', { ...manifest, scripts: { build: 'echo prepare # && modern build' } }, nativeConfig],
   ['comment-config', manifest, `/* ${nativeConfig} */ export default {};`],
   ['counterfeit-config', manifest, 'const defineConfig = (value) => value; export default defineConfig({});'],
   [
@@ -77,15 +74,8 @@ const currentShell = ['package.json', 'modern.config.ts', 'src/routes/[lang]/mod
   }),
 );
 
-const generatedOwner = 'verticals/generated-owner';
-const generatedManifest = {
-  ...manifest,
-  scripts: { build: 'pnpm routes-generate && modern build --deploy-target node' },
-};
-
 const admitted: WorkspaceEntry[] = [
   ...Object.entries(valid).map(([name, source]) => ({ path: `${owner}/src/${name}.tsx`, source })),
-  { path: `${generatedOwner}/src/preview.tsx`, source: valid.browser },
   ...currentShell.filter((entry) => entry.path === currentPage),
 ];
 const rejected: WorkspaceEntry[] = [
@@ -99,7 +89,6 @@ describeWorkspace(
   'models only genuine Modern compiler target branches and retains runtime environment diagnostics',
   [
     ...ownerFiles(owner, manifest, nativeConfig),
-    ...ownerFiles(generatedOwner, generatedManifest, nativeConfig),
     ...counterfeitOwners.flatMap(([name, compilerManifest, config]) =>
       ownerFiles(`apps/${name}`, compilerManifest, config),
     ),

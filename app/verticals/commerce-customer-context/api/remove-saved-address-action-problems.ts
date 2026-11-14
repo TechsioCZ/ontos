@@ -26,6 +26,27 @@ type ProblemOf<Tag extends RemoveSavedAddressActionProblem['_tag']> = Extract<
   RemoveSavedAddressActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'saved_address_conflict'
+        | 'saved_address_source_conflict'
+        | 'saved_address_source_stale'
+        | 'saved_address_source_target_already_bound';
+      readonly kind: 'conflict';
+    }
+  | {
+      readonly code:
+        | 'saved_address_invalid'
+        | 'saved_address_reconciliation_required'
+        | 'saved_address_source_authority_denied'
+        | 'saved_address_source_privacy_denied'
+        | 'saved_address_source_recovery_required'
+        | 'saved_address_source_transition_required';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'saved_address_not_found'; readonly kind: 'notFound' }
+  | { readonly code: 'address_book_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +61,18 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const savedAddressSourceRejectedProblemByCode = {
+  saved_address_source_authority_denied: { code: 'saved_address_source_authority_denied', kind: 'ineligible' },
+  saved_address_source_conflict: { code: 'saved_address_source_conflict', kind: 'conflict' },
+  saved_address_source_privacy_denied: { code: 'saved_address_source_privacy_denied', kind: 'ineligible' },
+  saved_address_source_recovery_required: { code: 'saved_address_source_recovery_required', kind: 'ineligible' },
+  saved_address_source_stale: { code: 'saved_address_source_stale', kind: 'conflict' },
+  saved_address_source_target_already_bound: { code: 'saved_address_source_target_already_bound', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'SavedAddressSourceRejected' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const removeSavedAddressActionProblem = {
   authentication: (): ProblemOf<'RemoveSavedAddressActionAuthenticationProblem'> =>
@@ -125,6 +158,17 @@ export const removeSavedAddressActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): RemoveSavedAddressActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) => removeSavedAddressActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'ineligible' as const }, (matched) => removeSavedAddressActionProblem.ineligible(matched.code)),
+    Match.when({ kind: 'notFound' as const }, (matched) => removeSavedAddressActionProblem.notFound(matched.code)),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      removeSavedAddressActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): RemoveSavedAddressActionProblem =>
   Match.value(error).pipe(
     Match.tags({
@@ -134,6 +178,7 @@ const mapDomainProblem = (error: DomainError): RemoveSavedAddressActionProblem =
       SavedAddressNotFound: () => removeSavedAddressActionProblem.notFound('saved_address_not_found'),
       SavedAddressReconciliationRequired: () =>
         removeSavedAddressActionProblem.ineligible('saved_address_reconciliation_required'),
+      SavedAddressSourceRejected: (failure) => mapDomainIdentity(savedAddressSourceRejectedProblemByCode[failure.code]),
       SavedAddressSourceTransitionRequired: () =>
         removeSavedAddressActionProblem.ineligible('saved_address_source_transition_required'),
     }),

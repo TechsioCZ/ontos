@@ -298,18 +298,15 @@ const variantsInvalid = (drafts: readonly VariantDraft[]) =>
 const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): ProductVariant[] => [
   ...drafts.map((draft): ProductVariant => {
     const original = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
-    const variant: { -readonly [Key in keyof ProductVariant]: ProductVariant[Key] } = {
+    const variant = {
       ...original,
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),
       priceMinor: parseCzk(draft.priceText) ?? 0,
       sku: draft.sku.trim(),
-    };
-    if (draft.id !== undefined) {
-      variant.id = draft.id;
-    }
-    return variant;
+    } satisfies ProductVariant;
+    return draft.id === undefined ? variant : { ...variant, id: draft.id };
   }),
   ...(product.variants ?? []).filter((variant) => !isRealVariant(variant)),
 ];

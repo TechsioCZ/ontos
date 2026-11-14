@@ -1,3 +1,14 @@
+import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import {
+  readVerifiedGatewayPrivacyDispatch,
+  readVerifiedGatewayOrganizationGovernanceRead,
+  readVerifiedGatewayWorkload,
+  decodeTrustedPrincipalContext,
+  readVerifiedGatewayRecovery,
+  isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
+} from '../auth/system-principal-context-provenance.ts';
+import { bindScopedWorkloadAdmission } from '../access/enforcement/workload-admission.ts';
 import {
   loadModuleOperationAdmission,
   captureShellSystemReadRegistrations,
@@ -33,11 +44,6 @@ import { bindLiveAccessGate } from '../operations/access-gate.ts';
 import type { ActionPolicyTarget } from '../actions/policy.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
 import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
-import {
-  decodeTrustedPrincipalContext,
-  isTrustedSupportRecoveryPrincipalContext,
-  readVerifiedGatewayCompositionRevision,
-} from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
@@ -681,23 +687,65 @@ type ReadEvidenceCaptureMode = ReadRegistration<
   unknown
 >['descriptor']['evidencePolicy']['captureMode'];
 
+const computeRequiredReadQueryHash = (decodedInput: unknown): Effect.Effect<string, ReadInputValidationError> =>
+  Effect.try({
+    catch: (normalizationDefect) =>
+      preserveFailureCause(
+        new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'The read input cannot be normalized safely',
+        }),
+        normalizationDefect,
+      ),
+    try: () => computeCanonicalValueHash(decodedInput),
+  });
+
+interface OrganizationProcessingReadValidationInput {
+  readonly decodedInput: unknown;
+  readonly entrypointKey: string;
+  readonly principal: TrustedPrincipalContext;
+  readonly requestPurpose: string | undefined;
+  readonly schemaVersion: string;
+}
+const requireOrganizationProcessingReadInput = Effect.fn('ReadRuntime.requireOrganizationProcessingRead')(
+  function* requireOrganizationProcessingReadInput(
+    input: OrganizationProcessingReadValidationInput,
+  ): Effect.fn.Return<void, ReadInputValidationError> {
+    const workload = readVerifiedGatewayWorkload(input.principal);
+    const processing = workload?.organizationProcessingRead;
+    if (processing === undefined) {
+      if (workload !== undefined && input.requestPurpose !== undefined) {
+        return yield* new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'The declared workload Read requires finite request authority',
+        });
+      }
+      return yield* Effect.void;
+    }
+    const hash = yield* computeRequiredReadQueryHash(input.decodedInput);
+    if (
+      input.requestPurpose === undefined ||
+      !Schema.is(Schema.Struct({ purpose: Schema.Literal(input.requestPurpose) }))(input.decodedInput) ||
+      workload?.entrypointKey !== input.entrypointKey ||
+      workload.schemaVersion !== input.schemaVersion ||
+      hash !== processing.requestHash
+    ) {
+      return yield* new ReadInputValidationError({
+        code: 'read_input_invalid',
+        reason: 'Finite workload authority does not match the declared purpose and exact Read request',
+      });
+    }
+    return yield* Effect.void;
+  },
+);
+
 /* oxlint-disable effect-native/no-nullable-service-outcome -- This private helper uses undefined as the intentional no-hash sentinel when the read evidence capture mode does not request hashing. */
 const computeReadQueryHash = (
   captureMode: ReadEvidenceCaptureMode,
   decodedInput: unknown,
 ): Effect.Effect<string | undefined, ReadInputValidationError> =>
   captureMode === 'hash_only'
-    ? Effect.try({
-        catch: (normalizationDefect) =>
-          preserveFailureCause(
-            new ReadInputValidationError({
-              code: 'read_input_invalid',
-              reason: 'The read input cannot be normalized safely',
-            }),
-            normalizationDefect,
-          ),
-        try: () => computeCanonicalValueHash(decodedInput),
-      })
+    ? computeRequiredReadQueryHash(decodedInput)
     : Effect.void.pipe(
         // oxlint-disable-next-line unicorn/no-useless-undefined -- Effect.as requires the explicit optional hash value.
         Effect.as(undefined),
@@ -1057,6 +1105,7 @@ interface ReadGateAuthorization {
   readonly deniedFieldPaths: readonly (readonly string[])[];
   /** Present exactly for a row-scoped read; the owner applies it inside its own query (D16, O25). */
   readonly listAccess?: ListAccessPredicate;
+  readonly mainAccessDecision?: AccessDecision;
 }
 
 /** A composition without the gate, and an unavailable gate, answer the same retryable 503 (O62). */
@@ -1250,6 +1299,54 @@ const readRuntimeFromDependencies = <
         ),
       ),
     );
+    yield* requireOrganizationProcessingReadInput({
+      decodedInput,
+      entrypointKey: input.registration.descriptor.entrypoint.entrypointKey,
+      principal,
+      requestPurpose: input.registration.descriptor.accessWorkload?.requestPurpose,
+      schemaVersion: input.registration.descriptor.schemaVersion,
+    });
+    const organizationRead = readVerifiedGatewayOrganizationGovernanceRead(principal);
+    if (organizationRead !== undefined) {
+      const expected = organizationRead.target;
+      const hash = yield* computeRequiredReadQueryHash(decodedInput);
+      if (
+        expected.entrypointKey !== input.registration.descriptor.entrypoint.entrypointKey ||
+        expected.schemaVersion !== input.registration.descriptor.schemaVersion ||
+        hash !== organizationRead.requestHash
+      ) {
+        return yield* new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'Organization governance authority does not match the exact Read request',
+        });
+      }
+    }
+    const privacyDispatch = readVerifiedGatewayPrivacyDispatch(principal);
+    if (privacyDispatch !== undefined) {
+      const expected = privacyDispatch.target;
+      const hash = yield* computeRequiredReadQueryHash(decodedInput);
+      if (
+        expected.access !== 'read' ||
+        expected.entrypointKey !== input.registration.descriptor.entrypoint.entrypointKey ||
+        expected.schemaVersion !== input.registration.descriptor.schemaVersion ||
+        hash !== privacyDispatch.requestHash
+      ) {
+        return yield* new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'Privacy dispatch authority does not match the exact Read request',
+        });
+      }
+    }
+    const recovery = readVerifiedGatewayRecovery(principal);
+    if (recovery !== undefined) {
+      const recoveryRequestHash = yield* computeRequiredReadQueryHash(decodedInput);
+      if (recoveryRequestHash !== recovery.requestHash) {
+        return yield* new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'Receipt recovery authority does not match the exact Read request',
+        });
+      }
+    }
     const compositionRevision = readVerifiedGatewayCompositionRevision(principal);
     const transport = yield* Schema.decodeUnknownEffect(ReadTransportSchema)(input.transport).pipe(
       Effect.mapError((parseIssue) =>
@@ -1274,7 +1371,11 @@ const readRuntimeFromDependencies = <
     // An absent carrier stays absent, so the gate sees exactly what the descriptor declares (O59, D5).
     const accessCarrier: GateInput['carrier'] = withOptional(
       withOptional(
-        withOptional({}, 'accessDeclaration', descriptor.accessDeclaration),
+        withOptional(
+          { entrypoint: descriptor.entrypoint, schemaVersion: descriptor.schemaVersion },
+          'accessDeclaration',
+          descriptor.accessDeclaration,
+        ),
         'accessWorkload',
         descriptor.accessWorkload,
       ),
@@ -1384,7 +1485,7 @@ const readRuntimeFromDependencies = <
       }
       const deniedFieldPaths = yield* decideReadFieldPaths(now, readScope, readTarget);
       return withOptionalProperty(
-        { decision: 'allowed' as const, deniedFieldPaths },
+        { decision: 'allowed' as const, deniedFieldPaths, mainAccessDecision: decision },
         listAccess !== undefined,
         'listAccess',
         listAccess,
@@ -1830,12 +1931,22 @@ const readRuntimeFromDependencies = <
         const loadWith = yield* Effect.suspend(() =>
           getReadStages(input.registration)(decodedInput, ownerStepsContext),
         ).pipe(sanitizeOwnerFailure);
+        let closeWorkloadAdmission: (() => void) | undefined;
         const readTransactionBody = Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBodyEffect(
           transaction: CoreTransaction,
         ) {
           yield* fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision);
-          const scoped = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
+          const installed = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
           stage('scope_installed');
+          // The gate's actual main decision selects the workload branches this transaction admits; the
+          // admission closes with the transaction, so the after-commit `finish` never observes it.
+          const workloadAdmission = bindScopedWorkloadAdmission(
+            installed,
+            { carrier: accessCarrier, scope },
+            gateAuthorization.mainAccessDecision,
+          );
+          closeWorkloadAdmission = workloadAdmission.close;
+          const scoped = workloadAdmission.transaction;
           const operationAt = yield* trustedTransactionTime(transaction);
           // Decoded through the closed owner contract: an answer outside it is unavailable (fail closed).
           const ownerAuthorizationExit = yield* Effect.exit(
@@ -1918,6 +2029,7 @@ const readRuntimeFromDependencies = <
             ),
           )
           .pipe(
+            Effect.ensuring(Effect.sync(() => closeWorkloadAdmission?.())),
             trustedSettlement.recover,
             Effect.tapError((failure) =>
               Schema.is(SqlError)(failure)

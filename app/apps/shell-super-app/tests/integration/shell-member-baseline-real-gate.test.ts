@@ -9,7 +9,7 @@ import {
 } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate-fixture.ts';
 import { installedReleaseComposition } from '../support/installed-release-composition.ts';
-import { EntrypointKeySchema, ModuleIdSchema } from '../../shared/api.ts';
+import { EntrypointKeySchema, ModuleIdSchema } from '../../shared/browser-api.ts';
 
 /*
  * Loading the product, end to end on a tenant shaped like stage: the shipped schema, no legacy relationship, and a

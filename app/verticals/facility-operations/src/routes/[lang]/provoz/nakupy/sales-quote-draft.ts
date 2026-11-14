@@ -1,5 +1,6 @@
 // The quote panel's values: a new quote is submitted once, an edit of an existing one is sent on Uložit.
 import { Option } from 'effect';
+import type { Types } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { IsoDateSchema } from '../../../../../shared/domain/common.ts';
 import type { SalesCustomer, SalesQuote } from '../../../../../shared/domain/purchasing.ts';
@@ -90,7 +91,7 @@ export const quoteUpdateCommandOf = (
     }
     lines.push(parsed);
   }
-  const command: { -readonly [Key in keyof UpdateCommand]: UpdateCommand[Key] } = {
+  const command: Types.Mutable<UpdateCommand> = {
     _tag: 'SalesQuoteUpdate',
     customer,
     date: draft.date,

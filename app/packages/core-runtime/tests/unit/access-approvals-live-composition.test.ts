@@ -453,13 +453,17 @@ const tripwired = (what: string): AccessTransactions => ({
 /** A statement the seam is never expected to send through the transaction it was handed. */
 const unexpectedStatement = (what: string) => () => Effect.die(new Error(`the seam ran a ${what} of its own`));
 
+const roleProbeSql = 'select current_user::text as role';
 const installAndReadScopeSql =
   "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+/** One transaction's scope statements: the connected role chooses the authority, then one install-and-read. */
+const scopeStatements = [roleProbeSql, installAndReadScopeSql];
 
 /**
  * A transaction that answers the operational scope installation and nothing else: the row it returns is
  * the scope the request installed, which is the only statement an access source issues before its body
- * (`installOperationalScope`: one statement installs the session settings and reads back the connected role).
+ * (`installOperationalScope`: the connected role is probed, then one statement installs the session settings and reads
+ * back the connected role).
  */
 const seamTransaction = (scope: OperationalScope, statements: string[]): CoreTransaction =>
   Object.assign(Object.create(null), {
@@ -467,6 +471,9 @@ const seamTransaction = (scope: OperationalScope, statements: string[]): CoreTra
     execute: (statement: SQL) => {
       const query = new PgDialect().sqlToQuery(statement);
       statements.push(query.sql);
+      if (query.sql === roleProbeSql) {
+        return Effect.succeed([{ role: 'ontos_runtime' }]);
+      }
       if (query.sql !== installAndReadScopeSql) {
         return Effect.die(new Error(`the seam ran an unexpected statement: ${query.sql}`));
       }
@@ -619,7 +626,7 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
       expect(read).toBe(pool.transaction);
       expect(pool.opened).toStrictEqual([undefined, { isolationLevel: 'repeatable read' }]);
       // Each call installed and verified the request's scope on its own transaction in one statement.
-      expect(pool.statements).toEqual([installAndReadScopeSql, installAndReadScopeSql]);
+      expect(pool.statements).toEqual([...scopeStatements, ...scopeStatements]);
       // A failure of the body reaches the caller unchanged, so a rolled-back read stays a failure.
       const refusal = intentUnavailable('The intent store refused this read');
       expect(yield* Effect.flip(transactions.scoped(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
@@ -647,7 +654,7 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
       expect(written).toBe(caller);
       expect(read).toBe(caller);
       // ...and neither opened, ended or partitioned it: the only statements are the scope's own, one per call.
-      expect(statements).toEqual([installAndReadScopeSql, installAndReadScopeSql]);
+      expect(statements).toEqual([...scopeStatements, ...scopeStatements]);
       const refusal = intentUnavailable('The owner transaction refused this read');
       expect(yield* Effect.flip(transactions.scopedRead(jana, new Set<string>(), () => Effect.fail(refusal)))).toBe(
         refusal,

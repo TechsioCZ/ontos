@@ -1,4 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
@@ -17,7 +18,7 @@ import {
 import type {
   SellerVatRegimeAtInstantRequestContract,
   SellerVatRegimeAtInstantResponseContract,
-  SellerVatRegimeTimelineContract,
+  SellerVatRegimeHistoryResponseContract,
 } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import { taxSellerVatRegimeDeclarations } from '../database/schema.ts';
 import {
@@ -81,7 +82,7 @@ export interface SellerVatRegimeDeclarations {
   readonly declare: (
     input: Invocation<DeclareSellerVatRegimePayload>,
   ) => Effect.Effect<SellerVatRegimeDeclarationOutcome | GovernanceConflict | GovernanceStale, PersistenceUnavailable>;
-  readonly history: Effect.Effect<Option.Option<SellerVatRegimeTimelineContract>, PersistenceUnavailable>;
+  readonly history: Effect.Effect<Option.Option<SellerVatRegimeHistoryResponseContract>, PersistenceUnavailable>;
   readonly importDeclarations: (
     input: Invocation<ImportSellerVatRegimeDeclarationsPayload>,
   ) => Effect.Effect<SellerVatRegimeImportOutcome | GovernanceConflict, PersistenceUnavailable>;
@@ -635,3 +636,14 @@ export const sellerVatRegimeDeclarationsForScope = (
 
 export const sellerVatRegimeDeclarationServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) =>
   Effect.succeed(sellerVatRegimeDeclarationsForScope(transaction, scope));
+
+export const symmySellerVatFixtureWorkload = 'commerce.tax.symmy-seller-vat-fixture-import';
+
+export const sellerVatRegimeImportServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) => {
+  const { importDeclarations } = sellerVatRegimeDeclarationsForScope(transaction, scope);
+  return Effect.succeed({
+    importDeclarations,
+    readFixtureWorkload: () =>
+      readScopedAdmittedWorkload(transaction, scope, symmySellerVatFixtureWorkload).pipe(Effect.mapError(unavailable)),
+  });
+};

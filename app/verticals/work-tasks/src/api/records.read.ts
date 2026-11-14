@@ -12,8 +12,6 @@ import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.
 import { finishWorkRecords, persistenceService, workRecordsGrants } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
-import { workRecordsReadDeclaration } from '../../shared/access-declarations.ts';
-
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const readFailure = (
@@ -64,7 +62,14 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
-    accessDeclaration: workRecordsReadDeclaration,
+    accessDeclaration: {
+      key: 'work.tasks.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'work-tasks', level: 'basic' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {

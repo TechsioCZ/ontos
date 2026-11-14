@@ -26,6 +26,24 @@ type ProblemOf<Tag extends UpdateCustomerGroupActionProblem['_tag']> = Extract<
   UpdateCustomerGroupActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'customer_group_source_conflict'
+        | 'customer_group_source_stale'
+        | 'customer_group_revision_conflict';
+      readonly kind: 'conflict';
+    }
+  | {
+      readonly code: 'customer_group_archived_correction_forbidden' | 'customer_group_scope_mismatch';
+      readonly kind: 'forbidden';
+    }
+  | {
+      readonly code: 'customer_group_definition_change_requires_new_group' | 'customer_group_source_authority_denied';
+      readonly kind: 'ineligible';
+    }
+  | { readonly code: 'customer_group_not_found'; readonly kind: 'notFound' }
+  | { readonly code: 'customer_group_persistence_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +58,15 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const customerGroupDefinitionSourceRejectedProblemByCode = {
+  customer_group_source_authority_denied: { code: 'customer_group_source_authority_denied', kind: 'ineligible' },
+  customer_group_source_conflict: { code: 'customer_group_source_conflict', kind: 'conflict' },
+  customer_group_source_stale: { code: 'customer_group_source_stale', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'CustomerGroupDefinitionSourceRejected' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const updateCustomerGroupActionProblem = {
   authentication: (): ProblemOf<'UpdateCustomerGroupActionAuthenticationProblem'> =>
@@ -125,6 +152,18 @@ export const updateCustomerGroupActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): UpdateCustomerGroupActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) => updateCustomerGroupActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'forbidden' as const }, (matched) => updateCustomerGroupActionProblem.forbidden(matched.code)),
+    Match.when({ kind: 'ineligible' as const }, (matched) => updateCustomerGroupActionProblem.ineligible(matched.code)),
+    Match.when({ kind: 'notFound' as const }, (matched) => updateCustomerGroupActionProblem.notFound(matched.code)),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      updateCustomerGroupActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): UpdateCustomerGroupActionProblem =>
   Match.value(error).pipe(
     Match.tags({
@@ -132,6 +171,8 @@ const mapDomainProblem = (error: DomainError): UpdateCustomerGroupActionProblem 
         updateCustomerGroupActionProblem.forbidden('customer_group_archived_correction_forbidden'),
       CustomerGroupDefinitionChangeRequiresNewGroup: () =>
         updateCustomerGroupActionProblem.ineligible('customer_group_definition_change_requires_new_group'),
+      CustomerGroupDefinitionSourceRejected: (failure) =>
+        mapDomainIdentity(customerGroupDefinitionSourceRejectedProblemByCode[failure.code]),
       CustomerGroupNotFound: () => updateCustomerGroupActionProblem.notFound('customer_group_not_found'),
       CustomerGroupPersistenceUnavailable: () =>
         updateCustomerGroupActionProblem.unavailable('customer_group_persistence_unavailable'),

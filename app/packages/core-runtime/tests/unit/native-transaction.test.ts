@@ -1,3 +1,4 @@
+import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
 import {
@@ -33,7 +34,10 @@ import type { OperationContextUnavailable } from '../../src/operations/errors.ts
 import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
 import { persistScopedReadEvidence } from '../../src/reads/repository.ts';
 import { makeTestDatabase } from '../support/database.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, FIXTURE_REQUEST_IDENTITY } from '../support/database-identities.ts';
+
+const makeGatewayTestDatabase = (execute: Parameters<typeof makeTestDatabase>[0]) =>
+  makeTestDatabase(execute, { currentRole: FIXTURE_REQUEST_IDENTITY.role });
 
 // Failures and defects a retained cause records, so a test can prove which SQL error recovery kept.
 const retainedFailures = (cause: Cause.Cause<never> | undefined): readonly unknown[] =>
@@ -132,14 +136,17 @@ for (const [audience, role, gatewayGrant] of [
         audience,
       });
       const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
-      const executor = yield* makeTestDatabase((statement, params) => {
-        statements.push({ params, sql: statement });
-        return Effect.succeed(
-          statement.includes('from "core"."tenants"')
-            ? []
-            : [{ legal_entity_id: '', role, tenant_id: principal.tenantId }],
-        );
-      });
+      const executor = yield* makeTestDatabase(
+        (statement, params) => {
+          statements.push({ params, sql: statement });
+          return Effect.succeed(
+            statement.includes('from "core"."tenants"')
+              ? []
+              : [{ legal_entity_id: '', role, tenant_id: principal.tenantId }],
+          );
+        },
+        { currentRole: role },
+      );
 
       yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
 
@@ -163,8 +170,12 @@ for (const [audience, role, gatewayGrant] of [
     }),
   );
 
+  // Main's design: the shared runtime login installs a genuine gateway context with its own session authority
+  // (scoped-transaction.test.ts), so only a foreign gateway login is a wrong authority role.
   for (const [refusal, installedRole, installedTenant, installedCompany] of [
-    ['wrong authority role', gatewayGrant ? 'ontos_runtime' : 'party_registry_runtime', scopedPrincipal.tenantId, ''],
+    ...(gatewayGrant
+      ? []
+      : [['wrong authority role', 'party_registry_runtime', scopedPrincipal.tenantId, ''] as const]),
     ['unknown role', 'unknown_runtime', scopedPrincipal.tenantId, ''],
     ['foreign tenant', role, '20000000-0000-4000-8000-000000000002', ''],
     ['unexpected company', role, scopedPrincipal.tenantId, '30000000-0000-4000-8000-000000000002'],
@@ -176,23 +187,26 @@ for (const [audience, role, gatewayGrant] of [
           audience,
         });
         const statements: string[] = [];
-        const executor = yield* makeTestDatabase((statement) => {
-          statements.push(statement);
-          return Effect.succeed([
-            { legal_entity_id: installedCompany, role: installedRole, tenant_id: installedTenant },
-          ]);
-        });
+        const executor = yield* makeTestDatabase(
+          (statement) => {
+            statements.push(statement);
+            return Effect.succeed([
+              { legal_entity_id: installedCompany, role: installedRole, tenant_id: installedTenant },
+            ]);
+          },
+          { currentRole: installedRole },
+        );
         const failure = yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
           .load(principal)
           .pipe(Effect.flip);
         expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
-        // The gateway grant refuses its verification read; the session-setting role refuses the row its one
+        // The connected role is probed first: a login with another authority is refused before any install. Past
+        // the probe, the gateway grant refuses its verification read; the session-setting role refuses the row its one
         // install-and-read statement answered.
-        expect(statements).toEqual(
-          gatewayGrant
-            ? ['BEGIN', establishGatewayScopeSql, readGatewayScopeSql, 'ROLLBACK']
-            : ['BEGIN', installAndReadScopeSql, 'ROLLBACK'],
-        );
+        const installStatements = gatewayGrant
+          ? [establishGatewayScopeSql, readGatewayScopeSql]
+          : [installAndReadScopeSql];
+        expect(statements).toEqual(['BEGIN', ...(installedRole === role ? installStatements : []), 'ROLLBACK']);
         expect(statements.some((statement) => statement.includes('from "core"."tenants"'))).toBe(false);
       }),
     );
@@ -229,7 +243,7 @@ for (const boundary of ['context', 'evidence'] as const) {
       Effect.gen(function* classifyScopedSettlement() {
         const failure = new SqlError({ reason: new ConnectionError({ cause: new Error(`${phase} failed`) }) });
         const events: string[] = [];
-        const executor = yield* makeTestDatabase((statement) => {
+        const executor = yield* makeGatewayTestDatabase((statement) => {
           events.push(statement);
           const failingControl = phase.includes('SAVEPOINT') ? statement.startsWith(phase) : statement === phase;
           const failingBody =
@@ -268,7 +282,7 @@ for (const boundary of ['context', 'evidence'] as const) {
   it.effect(`scoped ${boundary} preserves unrelated settlement defects`, () =>
     Effect.gen(function* preserveUnrelatedSettlementDefect() {
       const defect = new Error('unexpected settlement defect');
-      const executor = yield* makeTestDatabase((statement) =>
+      const executor = yield* makeGatewayTestDatabase((statement) =>
         statement === 'COMMIT'
           ? Effect.die(defect)
           : Effect.succeed(
@@ -297,7 +311,7 @@ for (const boundary of ['context', 'evidence'] as const) {
       const defect = new Error('unexpected rollback defect');
       const sqlFailure = new SqlError({ reason: new ConnectionError({ cause: new Error('body query failed') }) });
       const events: string[] = [];
-      const executor = yield* makeTestDatabase((statement) => {
+      const executor = yield* makeGatewayTestDatabase((statement) => {
         events.push(statement);
         if (statement === 'ROLLBACK') {
           return Effect.die(defect);
@@ -349,7 +363,7 @@ it.layer(NodeCrypto.layer)('Action transaction settlement', (suite) => {
             });
             const defect = new Error('unexpected rollback defect');
             const events: string[] = [];
-            const executor = yield* makeTestDatabase((statement) => {
+            const executor = yield* makeGatewayTestDatabase((statement) => {
               events.push(statement);
               if (statement === 'BEGIN') {
                 return Effect.succeed([]);
@@ -444,7 +458,7 @@ it.effect('scoped evidence recovers failed scope installation beside a failed ro
   Effect.gen(function* classifyScopeRollback() {
     const failure = new SqlError({ reason: new ConnectionError({ cause: new Error('scope and rollback failed') }) });
     const events: string[] = [];
-    const executor = yield* makeTestDatabase((statement) => {
+    const executor = yield* makeGatewayTestDatabase((statement) => {
       events.push(statement);
       return statement === 'BEGIN' ? Effect.succeed([]) : Effect.fail(failure);
     });
@@ -465,7 +479,7 @@ const harness = Effect.fn(function* makeHarness(
   settle: (statement: string) => Effect.Effect<void, SqlError> = () => Effect.void,
 ) {
   const events: string[] = [];
-  const executor = yield* makeTestDatabase((statement) =>
+  const executor = yield* makeGatewayTestDatabase((statement) =>
     Effect.gen(function* execute() {
       events.push(statement);
       yield* settle(statement);
@@ -663,3 +677,66 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
     2000,
   );
 }
+
+it.layer(NodeCrypto.layer)('Signed historical commit lookup', (suite) => {
+  suite.effect('queries every signed original command fact using the distinct reader scope without a write lock', () =>
+    Effect.gen(function* signedOriginalCommandLookup() {
+      const writerId = '40000000-0000-4000-8000-000000000009';
+      const invocationId = '60000000-0000-4000-8000-000000000004';
+      const reader = registeredGatewayRecoveryPrincipal({
+        declarationKey: 'core.shell.receipt.read',
+        entrypointKey: 'core.shell.receipt.read',
+        originalPrincipalId: writerId,
+        principalId: scopedPrincipal.principalId,
+        requestHash: 'a'.repeat(64),
+        tenantId: scopedPrincipal.tenantId,
+        workloadKey: 'core.shell.receipt-recovery',
+      });
+      const statements: string[] = [];
+      const parameters: (readonly unknown[])[] = [];
+      const executor = yield* makeGatewayTestDatabase((statement, values) => {
+        statements.push(statement);
+        if (statement.includes('action_invocations')) {
+          parameters.push(values);
+          return Effect.succeed([
+            { actionInvocationId: invocationId, completedAt: null, requestHash: 'b'.repeat(64), status: 'running' },
+          ]);
+        }
+        return Effect.succeed([]);
+      });
+      const repository = makeActionRepository(yield* Crypto.Crypto);
+      const row = yield* repository.resolveInvocation(executor, { invocationId, principal: reader });
+      expect(row.actionInvocationId).toBe(invocationId);
+      expect(parameters).toHaveLength(1);
+      expect(parameters[0]).toEqual([
+        invocationId,
+        reader.tenantId,
+        writerId,
+        'owner.source.apply',
+        'b'.repeat(64),
+        'exact-permanent-owner-command',
+        'job:receipt-recovery:run:60000000-0000-4000-8000-000000000002',
+        1,
+      ]);
+      const query = statements.find((statement) => statement.includes('action_invocations')) ?? '';
+      for (const column of [
+        'action_invocation_id',
+        'tenant_id',
+        'principal_id',
+        'action_key',
+        'request_hash',
+        'idempotency_key',
+        'auth_context_ref',
+      ]) {
+        expect(query).toContain(`"${column}" =`);
+      }
+      expect(query).not.toContain('for update');
+      expect(statements.filter((statement) => /^(?:update|insert|delete)/iu.test(statement))).toHaveLength(0);
+      const mismatch = yield* Effect.flip(
+        repository.resolveInvocation(executor, { invocationId: writerId, principal: reader }),
+      );
+      expect(Predicate.isTagged(mismatch, 'ActionInvocationNotFound')).toBe(true);
+      expect(parameters).toHaveLength(1);
+    }),
+  );
+});

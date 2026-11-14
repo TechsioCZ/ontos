@@ -51,7 +51,9 @@ import {
   DateTime,
   Effect,
   Layer,
+  Option,
   Order,
+  Predicate,
   Redacted,
   Schema,
 } from 'effect';
@@ -291,7 +293,7 @@ const seedCompany = Effect.fn('MerchandiseTaxRoots.seedCompany')(function* seedC
     [yield* uuid, yield* uuid, companyId, tenantId, workloadBindingId],
   );
   for (const scope of bootstrapScopesOf(TenantIdSchema.make(tenantId), [LegalEntityIdSchema.make(companyId)])) {
-    const legalEntityId = scope._tag === 'LegalEntity' ? scope.legalEntityId : null;
+    const legalEntityId = Predicate.isTagged(scope, 'LegalEntity') ? scope.legalEntityId : null;
     yield* admin.unsafe(
       'insert into core.access_scopes (scope_id, tenant_id, legal_entity_id, tenant_context_id) values ($1, $2, $3, $4) on conflict do nothing',
       [scope.scopeId, tenantId, legalEntityId, legalEntityId === null ? tenantId : null],
@@ -455,7 +457,7 @@ const delegationHandler = (input: {
     const payload = yield* request.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)),
     );
-    if (payload.subject._tag !== 'Assertion' || payload.audience !== taxMarker.appId) {
+    if (!Predicate.isTagged(payload.subject, 'Assertion') || payload.audience !== taxMarker.appId) {
       return forbidden();
     }
     const principal = yield* input.gateway.sourcePrincipal(Redacted.value(payload.subject.sourceAssertion));
@@ -726,7 +728,7 @@ it.live(
         const tea = yield* createProduct(seller, 'CAJ', 'cz.vat.reduced', 5000);
 
         const staffView = yield* records(seller, { ordersLimit: 0, summary: true });
-        expect(staffView.sellerVatRegime).toBe('VAT_PAYER');
+        expect(staffView.sellerVatRegime).toEqual(Option.some('VAT_PAYER'));
         expect(staffView.taxRates?.map((rate) => [rate.code, rate.ratePercent])).toEqual([['cz.vat.standard', 21]]);
         const staffCoffee = staffView.products.find((product) => product.id === coffee);
         expect(staffCoffee).toMatchObject({ grossPriceMinor: 12_100, taxClassificationCode: 'cz.vat.standard' });

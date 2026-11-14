@@ -314,10 +314,8 @@ it.effect('rejects a foreign retained draft before reading its company label or 
       }),
       Effect.flip,
     );
-    expect(failure).toMatchObject({
-      _tag: 'ConnectionUnavailable',
-      cause: 'Retained connection scope differs from original requester',
-    });
+    expect(failure).toBeInstanceOf(ConnectionUnavailable);
+    expect(failure).toMatchObject({ cause: 'Retained connection scope differs from original requester' });
   }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
 );
 

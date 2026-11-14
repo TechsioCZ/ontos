@@ -9,7 +9,7 @@ import { executeRecordsWithAuthorization as readAgreements } from '@app/legal-ag
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
 import { executeRecordsWithAuthorization as readProperty } from '@app/property-portfolio/clients/records';
 import { executeRecordsWithAuthorization as readWork } from '@app/work-tasks/clients/records';
-import { DateTime, Effect } from 'effect';
+import { Context, DateTime, Effect, Layer } from 'effect';
 import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
@@ -40,7 +40,7 @@ const unavailable = (cause?: ReferenceFailure | { readonly _tag: string }) =>
     { value: cause },
   );
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
-export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function* makeFinanceValidators(
+const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function* makeFinanceValidators(
   scope: OperationalScope,
 ) {
   if (scope.legalEntityId === undefined) {
@@ -314,3 +314,25 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
 });
 
 export type FinanceValidatorRequirements = Effect.Services<ReturnType<typeof makeFinanceValidators>>;
+
+/**
+ * Builds the command reference validators of one request from that request's operational scope (tenant and
+ * company). Every call returns new validators over a new reference credential source, so two requests never
+ * share a validator or what it looked up. Required by the apply-command Action; provided once in the API root.
+ */
+export class FinanceReferenceValidators extends Context.Service<
+  FinanceReferenceValidators,
+  {
+    readonly forScope: (
+      scope: OperationalScope,
+    ) => Effect.Effect<
+      FinanceValidators,
+      Effect.Error<ReturnType<typeof makeFinanceValidators>>,
+      FinanceValidatorRequirements
+    >;
+  }
+>()('@app/finance-billing/services/reference-validation/FinanceReferenceValidators') {}
+
+export const FinanceReferenceValidatorsLive = Layer.succeed(FinanceReferenceValidators, {
+  forScope: makeFinanceValidators,
+});

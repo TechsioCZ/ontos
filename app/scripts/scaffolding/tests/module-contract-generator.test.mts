@@ -11,13 +11,7 @@ import { expect, it } from 'effect-rstest';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
-import {
-  asJsonObject,
-  bindSharedRuntimeWorkerEntry,
-  discoverOntosModuleEffect,
-  readModuleRuntimeDeclarationEffect,
-} from '../shared.mts';
-import { initializeGovernedHttpHandlerRoot } from '../module-contract/scaffold.mts';
+import { asJsonObject, bindSharedRuntimeWorkerEntry, readModuleRuntimeDeclarationEffect } from '../shared.mts';
 import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
 import { snapshotTree, write } from './fixture-files.mts';
@@ -35,8 +29,6 @@ const PRODUCER_FLAG = '--producer';
 const OUTBOX_WORKER_COMMAND = 'outbox-worker';
 const RUNTIME_DECLARATION_FILE = 'vertical.runtime-declaration.ts';
 const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
-const SPLIT_RUNTIME_FLAG = '--split-runtime';
-const MICROVERTICAL_PAGE_COMMAND = 'microvertical-page';
 
 const { checkOntosModuleContracts, OntosModuleContractCheckError } = await import(
   /* webpackIgnore: true */
@@ -75,7 +67,6 @@ const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const PROPERTY_BUILD_MARKER = 'property-build';
 const PROPERTY_DIRECTORY = 'verticals/property-registry';
 const DOCUMENTS_DIRECTORY = 'verticals/documents-center';
-const PRESERVED_SCRIPT = 'preserve-me';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
@@ -152,12 +143,18 @@ const writePinnedEffectApi = (root: string, slug: string): Effect.Effect<void, u
     yield* write(
       root,
       `verticals/${slug}/shared/api.ts`,
-      `export const fixtureApi = HttpApi.make('FixtureApi').add(HttpApiGroup.make('fixture'));\n`,
+      `import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+export const fixtureApi = HttpApi.make('FixtureApi').add(HttpApiGroup.make('fixture'));
+`,
     );
     yield* write(
       root,
       `verticals/${slug}/api/index.ts`,
-      `const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
+      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+import { fixtureApi } from '../shared/api.ts';
+
+const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
 const layer = HttpApiBuilder.layer(fixtureApi).pipe(
   Layer.provide(fixtureLayer),
 ) satisfies EffectRuntimeLayer;
@@ -187,7 +184,7 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
         private: true,
         scripts: {
           build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-          existing: PRESERVED_SCRIPT,
+          existing: 'preserve-me',
         },
         type: 'module',
         version: '0.1.0',
@@ -294,6 +291,12 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
 
 const withFixture = withCreatedFixture(createFixture());
 
+const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, module = MODULE_ID) {
+  return yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
+    workspaceRoot: root,
+  }).pipe(Effect.provide(NodeServices.layer));
+});
+
 const sourceSpan = (node: Span, source: string): string => source.slice(node.start, node.end);
 const fixtureDeclaration = (source: Program, name: string) => {
   const statement = source.body.find(
@@ -321,12 +324,6 @@ const fixtureMember = (object: ObjectExpression, key: string) => {
   }
   return property;
 };
-const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, module = MODULE_ID) {
-  return yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
-    workspaceRoot: root,
-  }).pipe(Effect.provide(NodeServices.layer));
-});
-
 const splitFixtureOwner = Effect.fn('ModuleContractTest.splitOwner')(function* splitFixtureOwner(root: string) {
   const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
   const registrationPath = path.join(root, PROPERTY_DIRECTORY, MODULE_REGISTRATION_FILE);
@@ -408,43 +405,6 @@ manifest: propertyRegistryManifest,
   yield* write(root, `${PROPERTY_DIRECTORY}/vertical.registration.ts`, fullRegistration);
   return { backend, fullManifest, fullRegistration };
 });
-
-it.live(
-  'generates governed handler roots from the actual backend owner view without importing UI registration',
-  Effect.fn(function* backendHandlerRoot() {
-    yield* withFixture(
-      Effect.fn(function* verifyBackendHandlerRoot(root) {
-        yield* scaffold(root);
-        yield* splitFixtureOwner(root);
-        const vertical = yield* discoverOntosModuleEffect(root, APP_ID).pipe(Effect.provide(NodeServices.layer));
-        const generated = initializeGovernedHttpHandlerRoot(
-          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
-  Layer.provide(fixtureLayer),
-) satisfies EffectRuntimeLayer;
-export default defineEffectBff({ api: fixtureApi, layer });
-`,
-          vertical,
-        );
-        expect(generated).toContain(
-          "propertyRegistryBackendRegistration as governedOwnerRegistration } from '../vertical.runtime-declaration.ts'",
-        );
-        expect(generated).not.toContain("from '../vertical.registration.ts'");
-        const shared = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
-        const backendRegistration = 'propertyRegistryBackendRegistration';
-        expect(hasValidGovernedHttpCompositionRoot(shared, generated, backendRegistration)).toBe(true);
-        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(false);
-        expect(hasValidGovernedHttpCompositionRoot(shared, generated, 'foreignBackendRegistration')).toBe(false);
-        expect(
-          hasValidGovernedHttpCompositionRoot(
-            shared,
-            generated.replace('../vertical.runtime-declaration.ts', '../foreign/vertical.runtime-declaration.ts'),
-            backendRegistration,
-          ),
-        ).toBe(false);
-      }),
-    );
-  }),
-);
 
 it.live(
   'emits identical actual owner contracts across the shared backend split and routes new operations once',
@@ -530,27 +490,7 @@ it.live(
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         const originalDocument = yield* Effect.promise(() => readFile(before.path, 'utf-8'));
-        yield* runScaffoldEffect(
-          MODULE_CONTRACT_COMMAND,
-          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
-          { workspaceRoot: root },
-        ).pipe(Effect.provide(NodeServices.layer));
-        const split = {
-          backend: yield* Effect.promise(() =>
-            readFile(path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE), 'utf-8'),
-          ),
-          fullManifest: yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8')),
-          fullRegistration: yield* Effect.promise(() =>
-            readFile(path.join(root, PROPERTY_DIRECTORY, MODULE_REGISTRATION_FILE), 'utf-8'),
-          ),
-        };
-        const splitSnapshot = yield* snapshotTree(root);
-        yield* runScaffoldEffect(
-          MODULE_CONTRACT_COMMAND,
-          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
-          { workspaceRoot: root },
-        ).pipe(Effect.provide(NodeServices.layer));
-        expect(yield* snapshotTree(root)).toEqual(splitSnapshot);
+        const split = yield* splitFixtureOwner(root);
         const after = yield* generateOntosModuleContract({
           target: 'dist',
           vertical: APP_ID,
@@ -959,10 +899,7 @@ it.live(
             ],
           ],
           ['microvertical-action-boundary', [VERTICAL_FLAG, APP_ID]],
-          [
-            MICROVERTICAL_PAGE_COMMAND,
-            [VERTICAL_FLAG, APP_ID, '--page', 'properties', AUTHORIZATION_FLAG, 'protected'],
-          ],
+          ['microvertical-page', [VERTICAL_FLAG, APP_ID, '--page', 'properties', AUTHORIZATION_FLAG, 'protected']],
           ['outbox-message', [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created']],
           [
             OUTBOX_WORKER_COMMAND,
@@ -1062,9 +999,9 @@ it.live(
           zeta: '1.0.0',
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
-        expect(packageJson.scripts['existing']).toBe(PRESERVED_SCRIPT);
+        expect(packageJson.scripts['existing']).toBe('preserve-me');
         expect(packageJson.scripts['build'] ?? '').toMatch(/--vertical property-registry --target dist/u);
-        expect(packageJson.scripts['cloudflare:build']).toBe(undefined);
+        expect(Object.keys(packageJson.scripts).toSorted()).toEqual(['build', 'existing']);
         expect(packageJson.modernjs.ontosModule).toEqual({
           contractPath: '/.well-known/ontos-module-manifest.json',
           manifest: './vertical.manifest.ts',
@@ -1261,19 +1198,19 @@ it.live(
 );
 
 it.live(
-  'maps Cloudflare emission to the Modern output root and validates authored contracts',
+  'maps Node emission to the Modern output root and validates authored contracts',
   Effect.fn(function* scenario15() {
     yield* withFixture(
       Effect.fn(function* scenario16(root) {
         yield* scaffold(root);
         yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
         const emitted = yield* generateOntosModuleContract({
-          target: 'cloudflare-dist',
+          target: 'dist',
           vertical: APP_ID,
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         expect(emitted.path).toMatch(
-          /verticals\/property-registry\/dist-cloudflare\/public\/\.well-known\/ontos-module-manifest\.json$/u,
+          /verticals\/property-registry\/dist\/public\/\.well-known\/ontos-module-manifest\.json$/u,
         );
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
       }),
@@ -1335,7 +1272,8 @@ it.live(
   Effect.fn(function* mergedScenario5() {
     yield* withFixture(
       Effect.fn(function* mergedScenario4(root) {
-        const source = `// export const commentApi = HttpApi.make('Comment');
+        const source = `import { HttpApi } from '@modern-js/bff-effect/effect-client';
+// export const commentApi = HttpApi.make('Comment');
 const example = "export const stringApi = HttpApi.make('String');";
 export const fixtureApi = HttpApi.make('Fixture;Api')
   /* semicolon ; before the end of the expression */
@@ -1366,7 +1304,12 @@ it.live(
         yield* write(
           root,
           PROPERTY_RUNTIME_PATH,
-          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+          `import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+import { identity } from 'effect';
+import { fixtureApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(fixtureApi).pipe(
   identity,
 ) satisfies EffectRuntimeLayer;
 export default defineEffectBff({ api: fixtureApi, layer });
@@ -1464,8 +1407,6 @@ export default apiRuntime;
         expect(runtime).toContain(
           'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer))',
         );
-        expect(runtime).toContain('defineGovernedDatabaseIdentityEnrollment([])');
-        expect(runtime).toContain('GovernedReadLayer.provide(governedDatabaseIdentitiesLive)');
         expect(runtime).toContain('GovernedReadLayer.orDie');
         expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
         expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);
@@ -1484,7 +1425,9 @@ it.live(
       Effect.fn(function* invalidAssemblerFixture(root) {
         const sharedPath = PROPERTY_API_PATH;
         const runtimePath = PROPERTY_RUNTIME_PATH;
-        const shared = "export const fixtureApi = HttpApi.make('FixtureApi');\n";
+        const shared = `import { HttpApi } from '@modern-js/bff-effect/effect-client';
+export const fixtureApi = HttpApi.make('FixtureApi');
+`;
         const runtime = `
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -1522,18 +1465,15 @@ it.live(
         expect((yield* scaffold(root)).kind).toBe('generated');
         yield* scaffold(root, DOCUMENTS_APP_ID, DOCUMENTS_MODULE_ID);
         for (const vertical of [APP_ID, DOCUMENTS_APP_ID]) {
-          for (const target of ['dist', 'cloudflare-dist'] as const) {
-            const generated = yield* generateOntosModuleContract({ target, vertical, workspaceRoot: root }).pipe(
-              Effect.provide(NodeServices.layer),
-            );
-            const document = yield* decodeModuleContract(
-              yield* Effect.promise(() => readFile(generated.path, 'utf-8')),
-            );
-            expect(document.manifest.publicSurface.components).toEqual([]);
-          }
+          const generated = yield* generateOntosModuleContract({ target: 'dist', vertical, workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          );
+          const document = yield* decodeModuleContract(yield* Effect.promise(() => readFile(generated.path, 'utf-8')));
+          expect(document.manifest.publicSurface.components).toEqual([]);
         }
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
         const files = yield* snapshotTree(root, ['node_modules']);
+        expect(Object.keys(files).filter((file) => /cloudflare|wrangler/iu.test(file))).toEqual([]);
         expect(
           Object.keys(files).filter(
             (file) =>
@@ -1556,37 +1496,6 @@ const patchOwnerFixtureJson = Effect.fn(function* patchOwnerFixtureJson(
   const value = yield* Schema.decodeUnknownEffect(Schema.Json)(JSON.parse(content));
   yield* write(root, relativePath, json(patch(asJsonObject(value, relativePath))));
 });
-
-it.live(
-  'keeps Zerops-only fixture scripts and rejects malformed authored optional targets before writes',
-  Effect.fn(function* zeropsOnlyScriptContract() {
-    yield* withFixture(
-      Effect.fn(function* optionalTargetFixture(root) {
-        const original = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'));
-        for (const invalid of ['', 42, 'echo not-a-modern-build']) {
-          yield* patchOwnerFixtureJson(root, PROPERTY_PACKAGE_PATH, (value) => ({
-            ...value,
-            scripts: {
-              ...asJsonObject(value['scripts'], 'fixture scripts'),
-              'cloudflare:build': invalid,
-            },
-          }));
-          const before = yield* snapshotTree(root, ['node_modules']);
-          yield* expectFailure(scaffold(root), (error) => expect(String(error)).toContain('cloudflare:build'));
-          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
-          yield* write(root, PROPERTY_PACKAGE_PATH, original);
-        }
-        yield* scaffold(root);
-        const result = yield* decodeModulePackage(
-          yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8')),
-        );
-        expect(result.scripts['cloudflare:build']).toBeUndefined();
-        expect(result.scripts['build']).toContain('--target dist');
-        expect(result.scripts['existing']).toBe(PRESERVED_SCRIPT);
-      }),
-    );
-  }),
-);
 
 it.live(
   'API-only admission preserves exact generated owner identity and rejects contradictory surfaces without writes',
@@ -1772,83 +1681,6 @@ it.live(
           expect(String(error)).toMatch(/duplicate generated topology appId/u),
         );
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
-      }),
-    );
-  }),
-);
-
-it.live(
-  'explicitly splits an empty owner and preserves metadata authoring through page reruns',
-  Effect.fn(function* explicitSplitPageAuthoring() {
-    yield* withFixture(
-      Effect.fn(function* verifyExplicitSplitPageAuthoring(root) {
-        yield* scaffold(root);
-        yield* runScaffoldEffect(
-          MODULE_CONTRACT_COMMAND,
-          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
-          { workspaceRoot: root },
-        ).pipe(Effect.provide(NodeServices.layer));
-        const runtimePath = path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE);
-        const runtime = yield* Effect.promise(() => readFile(runtimePath, 'utf-8'));
-        const manifest = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'));
-        for (const helper of [
-          'navigationContribution',
-          'pageContribution',
-          'publicComponentContribution',
-          'reportContribution',
-          'searchContribution',
-        ]) {
-          expect(runtime).toContain(`const ${helper} =`);
-          expect(manifest).not.toContain(`const ${helper} =`);
-        }
-        expect(runtime).toContain('ShellPageContributionSchema');
-        expect(runtime).toContain('Schema.decodeUnknownResult');
-        expect(runtime).not.toContain('/src/routes/');
-        expect(runtime).not.toContain('/src/components/');
-        yield* patchOwnerFixtureJson(root, PROPERTY_PACKAGE_PATH, (value) => ({
-          ...value,
-          exports: {
-            ...asJsonObject(value['exports'], 'fixture package exports'),
-            './locales/cs': './locales/cs/property.json',
-            './locales/en': './locales/en/property.json',
-          },
-        }));
-        for (const locale of ['cs', 'en']) {
-          yield* write(root, `${PROPERTY_DIRECTORY}/locales/${locale}/property.json`, json({ property: {} }));
-        }
-        yield* write(
-          root,
-          `${PROPERTY_DIRECTORY}/src/i18n/resources.ts`,
-          'export const propertyRegistryI18nResources = {};\n',
-        );
-        yield* write(
-          root,
-          `${PROPERTY_DIRECTORY}/src/routes/ultramodern-route-head.tsx`,
-          'export const UltramodernRouteHead = () => null;\n',
-        );
-        yield* write(root, `${PROPERTY_DIRECTORY}/src/routes/index.css`, '/* Owner page fixture. */\n');
-        const pageFlags = [VERTICAL_FLAG, APP_ID, '--page', 'purchase-orders', AUTHORIZATION_FLAG, 'protected'];
-        yield* runScaffoldEffect(MICROVERTICAL_PAGE_COMMAND, pageFlags, {
-          routeRefresh: () => Effect.void,
-          workspaceRoot: root,
-        }).pipe(Effect.provide(NodeServices.layer));
-        const authored = yield* snapshotTree(root);
-        expect(authored[`${PROPERTY_DIRECTORY}/${RUNTIME_DECLARATION_FILE}`]).toContain(
-          'property.registry.page.purchase-orders',
-        );
-        expect(authored[`${PROPERTY_DIRECTORY}/${MODULE_REGISTRATION_FILE}`]).toContain('page-purchase-orders');
-        expect(authored[PROPERTY_MANIFEST_PATH]).not.toContain('// <generated-module-shell-pages>');
-        expect(authored[`${PROPERTY_DIRECTORY}/${RUNTIME_DECLARATION_FILE}`]).not.toContain('/src/routes/');
-        yield* runScaffoldEffect(MICROVERTICAL_PAGE_COMMAND, pageFlags, {
-          routeRefresh: () => Effect.void,
-          workspaceRoot: root,
-        }).pipe(Effect.provide(NodeServices.layer));
-        yield* runScaffoldEffect(
-          MODULE_CONTRACT_COMMAND,
-          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
-          { workspaceRoot: root },
-        ).pipe(Effect.provide(NodeServices.layer));
-        expect(yield* snapshotTree(root)).toEqual(authored);
       }),
     );
   }),

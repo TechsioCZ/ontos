@@ -8,7 +8,7 @@ import type { ConnectionDescription } from '@app/shared-contracts/oauth-connecti
 import { Context, Data, Effect, Option, Predicate, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 
-import { SHELL_SEARCH_MAX_RESOURCE_TYPES, ShellSearchPayloadSchema } from '../../shared/api.ts';
+import { SHELL_SEARCH_MAX_RESOURCE_TYPES, ShellSearchPayloadSchema } from '../../shared/browser-api.ts';
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 import { capturedShellCatalog } from '../modules/captured-shell-catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';

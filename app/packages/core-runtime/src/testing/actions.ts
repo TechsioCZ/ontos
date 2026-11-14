@@ -49,6 +49,10 @@ import type {
   OwnerPermissionAccessTarget,
 } from '../permissions/context-access.ts';
 import { failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import type { GateCarrier } from '../access/enforcement/contract.ts';
+import { bindScopedWorkloadAdmission } from '../access/enforcement/workload-admission.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
 import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
 import type { TestAccessOutcome } from './access-gate.ts';
@@ -422,6 +426,29 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         ),
     };
 
+    /**
+     * Models the grant Shell registered for this assertion: the database derives the scope from the
+     * redeemed assertion's principal claim, never from the request.
+     */
+    const establishTestGatewayScope = Effect.fn('ActionTestHarness.establishGatewayScope')(
+      function* establishTestGatewayScope(
+        scope: ActionTestConnectionScope,
+        [assertion]: typeof gatewayAssertionValuesSchema.Type,
+      ) {
+        const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+        const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
+        if (Option.isNone(role)) {
+          return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
+        }
+        scope.tenantId = principal.tenantId;
+        scope.legalEntityId = principal.legalEntityId ?? '';
+        scope.role = role.value;
+        return {
+          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
+        };
+      },
+    );
+
     const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(function* executeTestQueryEffect<
       Query,
       Values,
@@ -446,21 +473,13 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         }
       } else if (statement === 'rollback') {
         pendingCommit = [];
+      } else if (statement === 'select current_user::text as role') {
+        return { rows: [{ role: scope.role }] };
       } else if (statement === ESTABLISH_GATEWAY_SCOPE_SQL) {
-        // Models the grant Shell registered for this assertion: the database derives the scope
-        // from the redeemed assertion's principal claim, never from the request.
-        const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
-        const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
-        const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
-        if (Option.isNone(role)) {
-          return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
-        }
-        scope.tenantId = principal.tenantId;
-        scope.legalEntityId = principal.legalEntityId ?? '';
-        scope.role = role.value;
-        return {
-          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
-        };
+        return yield* establishTestGatewayScope(
+          scope,
+          yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values),
+        );
       } else if (SESSION_SCOPE_STATEMENTS.has(statement) || statement === READ_GATEWAY_SCOPE_SQL) {
         return yield* scopeStatementRows(scope, statement, values);
       } else if (statement === 'select transaction_timestamp() as operation_at') {
@@ -735,6 +754,27 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
 );
 
 export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
+
+/**
+ * The commit-phase owner transaction for a suite that drives an Action's prepared service factory and
+ * handler itself, over a routine-level fake `invoke` that carries the owner scope. It is bound exactly as
+ * the Action runtime binds its transaction after the in-transaction access recheck: to the invocation, the
+ * registration's carrier and the operation scope, with no admitted workload, so owner code reading its
+ * workload branch sees a caller without one. Close it when the owner phase ends, as the runtime does.
+ */
+export const bindActionTestCommitTransaction = (
+  routines: ScopedTransactionExecutor,
+  input: {
+    readonly actionInvocationId: string;
+    readonly registration: { readonly descriptor: GateCarrier };
+    readonly scope: OperationalScope;
+  },
+) =>
+  bindScopedWorkloadAdmission(routines, {
+    actionInvocationId: input.actionInvocationId,
+    carrier: input.registration.descriptor,
+    scope: input.scope,
+  });
 
 export {
   makeLiveOperationFixture,

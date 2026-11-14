@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Deferred, Effect, Layer, ManagedRuntime } from 'effect';
+import type { Types } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { SaveBar } from '../../src/save-bar.tsx';
 import { useRecordDraft } from '../../src/draft-save.ts';
@@ -31,7 +32,7 @@ interface NameFormProps {
 type NameFormOptions = UseRecordDraftOptions<string, never>;
 
 const NameForm = ({ held = false, revision = 1, server, takeServer, test }: NameFormProps) => {
-  const options: { -readonly [Key in keyof NameFormOptions]: NameFormOptions[Key] } = {
+  const options: Types.Mutable<NameFormOptions> = {
     isValid: (value: string) => value.trim() !== '' && !held,
     revision,
     runtime,

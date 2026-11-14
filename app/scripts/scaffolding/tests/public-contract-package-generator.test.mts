@@ -4,7 +4,10 @@ import { expect, it } from 'effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
+import {
+  hasCompleteGeneratedModuleApiSeam,
+  OWNER_ACTION_APPROVAL_PUBLICATION,
+} from '../../generated-governed-http-boundary.mts';
 import { planGovernedContributionScaffold } from '../governed-contribution/scaffold.mts';
 import { readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 
@@ -82,10 +85,6 @@ const loadCustomerContractSources = (): Promise<Map<string, string>> => {
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const manifestApiStart = '// <generated-module-manifest-apis>';
   const manifestApiEnd = '// </generated-module-manifest-apis>';
-  // The seam still proves the platform publication. The Core owner-approval mount shares the generated
-  // manifest and registration slots with the module APIs, so pruning its entry would fail the seam for a
-  // reason unrelated to the Customer-owned companion under test.
-  const retainedSlotEntries = ["'payment-term-affected-use-assessment'", "'owner-action-approvals'"];
   const focused = new Map(
     [...sources].filter(
       ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file === customerOwnerContractFile,
@@ -121,7 +120,11 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
           if (!insideSlot) {
             return true;
           }
-          if (retainedSlotEntries.some((entry) => line.includes(entry))) {
+          // Demo-only exception 1: the owner's approval API publication is proved with the seam, so it stays in focus.
+          if (
+            line.includes("'payment-term-affected-use-assessment'") ||
+            line.includes(`'${OWNER_ACTION_APPROVAL_PUBLICATION.key}'`)
+          ) {
             keepTargetEntry = !line.trimEnd().endsWith(',');
             return true;
           }

@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 import { PropertyStateSchema } from '../../shared/apis/records.ts';
 import { propertyState } from '../database/schema.ts';
-import { invalidSearchSource } from '../search/projection.ts';
+import { invalidSearchSource } from './search-projection.ts';
 
 interface SearchRow {
   readonly legalEntityId: string;

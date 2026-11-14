@@ -5,6 +5,9 @@ import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { priceDefinitionRead } from './src/api/price-definition.read.ts';
+import { DefinePriceActionApi } from './shared/apis/define-price-action.ts';
+import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
@@ -35,7 +38,8 @@ import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.act
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
 import { PriceDefinitionApi } from './shared/apis/price-definition.ts';
-import { priceDefinitionRead } from './src/api/price-definition.read.ts';
+import { PriceGroupSourcePricesApi } from './shared/apis/price-group-source-prices.ts';
+import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
 import { priceResourceDescriptor } from './shared/resources/price.ts';
 import { PriceResultLookupApi } from './shared/apis/price-result-lookup.ts';
 import { priceResultLookupRead } from './src/api/price-result-lookup.read.ts';
@@ -45,6 +49,8 @@ import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing
 import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
 import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
 import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
+import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lookup.ts';
+import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
 import { quantityTierResultLookupRead } from './src/api/quantity-tier-result-lookup.read.ts';
 import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
@@ -58,6 +64,7 @@ import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-
 import { zeroFloorAuthorizationResultLookupRead } from './src/api/zero-floor-authorization-result-lookup.read.ts';
 // </generated-module-manifest-imports>
 import { pricingMcpContribution } from './shared/mcp/contribution.ts';
+import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const catalogModuleId = 'commerce.catalog';
 const marketCatalogModuleId = 'commerce.market-catalog';
@@ -113,14 +120,18 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       'currency-support-result-lookup': CurrencySupportResultLookupApi,
       'current-pricing-decision': CurrentPricingDecisionApi,
       'current-supported-currencies': CurrentSupportedCurrenciesApi,
+      'define-price-action': DefinePriceActionApi,
       'exact-price-resolution': ExactPriceResolutionApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'price-definition': PriceDefinitionApi,
+      'price-group-source-prices': PriceGroupSourcePricesApi,
       'price-result-lookup': PriceResultLookupApi,
       'price-schedule': PriceScheduleApi,
+      'price-source-result-lookup': PriceSourceResultLookupApi,
       'quantity-tier-result-lookup': QuantityTierResultLookupApi,
       'quotation-result-lookup': QuotationResultLookupApi,
       'quotation-verification': QuotationVerificationApi,
+      'revise-price-action': RevisePriceActionApi,
       'zero-floor-authorization-result-lookup': ZeroFloorAuthorizationResultLookupApi,
       // </generated-module-manifest-apis>
     },
@@ -140,6 +151,9 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
     mcp: pricingMcpContribution,
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      { apiKey: 'price-definition', operationKey: 'priceDefinition.execute', registration: priceDefinitionRead },
+      { apiKey: 'define-price-action', operationKey: 'definePriceAction.execute', registration: definePriceAction },
+      { apiKey: 'revise-price-action', operationKey: 'revisePriceAction.execute', registration: revisePriceAction },
       {
         apiKey: 'commercial-fee-definition',
         operationKey: 'commercialFeeDefinition.execute',
@@ -185,7 +199,6 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
         operationKey: 'exactPriceResolution.execute',
         registration: exactPriceResolutionRead,
       },
-      { apiKey: 'price-definition', operationKey: 'priceDefinition.execute', registration: priceDefinitionRead },
       { apiKey: 'price-result-lookup', operationKey: 'priceResultLookup.execute', registration: priceResultLookupRead },
       { apiKey: 'price-schedule', operationKey: 'priceSchedule.execute', registration: priceScheduleRead },
       {
@@ -207,6 +220,16 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
         apiKey: 'zero-floor-authorization-result-lookup',
         operationKey: 'zeroFloorAuthorizationResultLookup.execute',
         registration: zeroFloorAuthorizationResultLookupRead,
+      },
+      {
+        apiKey: 'price-group-source-prices',
+        operationKey: 'priceGroupSourcePrices.execute',
+        registration: priceGroupSourcePricesRead,
+      },
+      {
+        apiKey: 'price-source-result-lookup',
+        operationKey: 'priceSourceResultLookup.execute',
+        registration: priceSourceResultLookupRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],
@@ -250,6 +273,8 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
+  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
+  registeredWorkloadCalls: pricingRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],

@@ -8,6 +8,7 @@ import { OAuthGrantOwners } from '../../../../packages/core-runtime/src/auth/oau
 import { preparePeopleSearch } from '../../../../packages/core-runtime/src/people/people-search.ts';
 import { CoreSearchQueryRuntime } from '../../../../packages/core-runtime/src/search/query-runtime.ts';
 import { connectedAppsAdministration, tenantReleaseHintAdmitted } from '../../api/auth/administration-access.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 import { requireAdministrator } from '../../api/auth/demo-accounts.ts';
 import {
   DECISION_AT,
@@ -115,7 +116,7 @@ const releaseHintFor = Effect.fn('CallSites.releaseHint')(function* releaseHintF
   persona: Persona,
 ) {
   const scope = yield* accessCase.scopeFor(persona);
-  return yield* tenantReleaseHintAdmitted({ ...scope, tenantId: accessCase.tenantId });
+  return yield* tenantReleaseHintAdmitted(tenantModuleTargetTestCarrier, { ...scope, tenantId: accessCase.tenantId });
 });
 
 /**

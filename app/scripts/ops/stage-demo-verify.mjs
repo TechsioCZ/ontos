@@ -10,7 +10,7 @@
 import { NodeRuntime } from '@effect/platform-node';
 import { Clock, Config, Console, Data, Duration, Effect, Option, Redacted, Ref, Schema } from 'effect';
 
-import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
+import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/browser-api.ts';
 
 const DEFAULT_PERSONA = 'management@najempark.demo';
 export const DEFAULT_PASSWORD = Redacted.make('password1234');

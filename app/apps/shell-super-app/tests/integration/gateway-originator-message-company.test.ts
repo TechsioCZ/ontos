@@ -4,7 +4,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Clock, Effect, Layer, Schema } from 'effect';
+import { Clock, Effect, Layer, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeAuthDatabase, AuthDatabase } from '../../api/auth/db/client.ts';
@@ -139,7 +139,10 @@ const originatorClaim = (claim: {
     subject: { _tag: 'Originator', ...claim },
   }).pipe(
     Effect.flatMap(({ subject }) =>
-      subject._tag === 'Originator' ? Effect.succeed(subject) : Effect.die('The claim must be an Originator'),
+      Match.value(subject).pipe(
+        Match.tag('Originator', (originator) => Effect.succeed(originator)),
+        Match.orElse(() => Effect.die('The claim must be an Originator')),
+      ),
     ),
   );
 

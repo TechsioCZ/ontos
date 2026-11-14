@@ -8,19 +8,12 @@ import {
   configureDatabasePool,
   openDatabaseClient,
 } from '@app/core-runtime';
-import type {
-  DatabasePoolDeadlines,
-  GatewayAssertionRedemption,
-  GatewayAssertionRedemptionInput,
-} from '@app/core-runtime';
+import type { GatewayAssertionRedemption, GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { PgClient } from '@effect/sql-pg';
 import { defineRelations, lt } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
-import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
-import { Reactivity } from 'effect/reactivity';
 
 import { gatewayAssertionRedemptions } from '../database/schema.ts';
 
@@ -100,44 +93,20 @@ const makeGatewayAssertionRedemption = (
   }),
 });
 
-type ContextServiceContract<Service> =
-  Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
-
-const makeGatewayAssertionRedemptionDatabase = Effect.fn('PrivacyGatewayAssertionRedemptionDatabase.make')(
-  function* makeGatewayAssertionRedemptionDatabaseEffect(
-    configuration: ContextServiceContract<typeof DatabaseConfig> & {
-      readonly maxConnections?: number;
-      readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
-    },
-  ): Effect.fn.Return<
-    ContextServiceContract<typeof PrivacyGatewayAssertionRedemptionDatabase>,
-    GatewayAssertionRedemptionUnavailableError,
-    Scope.Scope
-  > {
-    const poolConfiguration = yield* configureDatabasePool(
-      Redacted.make(configuration.connectionString),
-      configuration.poolDeadlines,
-      configuration.maxConnections,
-    ).pipe(Effect.mapError((error) => unavailableError(error)));
-    const reactivity = yield* Reactivity.make;
-    const client = yield* openDatabaseClient(poolConfiguration).pipe(
-      Effect.provideService(Reactivity.Reactivity, reactivity),
-      Effect.mapError(unavailableError),
-    );
-    return {
-      executor: yield* makeWithDefaults({ relations: privacyGatewayAssertionRedemptionRelations }).pipe(
-        Effect.provideService(PgClient.PgClient, client),
-      ),
-    };
-  },
-);
+/** Pool acquisition remains scoped and its dependencies are composed by api/index.ts. */
+export const gatewayAssertionRedemptionPgClient = Effect.gen(function* makeRedemptionPgClient() {
+  const configuration = yield* DatabaseConfig;
+  const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
+    Effect.mapError(unavailableError),
+  );
+  return yield* openDatabaseClient(poolConfiguration).pipe(Effect.mapError(unavailableError));
+});
 
 export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
   PrivacyGatewayAssertionRedemptionDatabase,
-  Effect.gen(function* makeGatewayAssertionRedemptionDatabaseService() {
-    const configuration = yield* DatabaseConfig;
-    return yield* makeGatewayAssertionRedemptionDatabase(configuration);
-  }),
+  makeWithDefaults({ relations: privacyGatewayAssertionRedemptionRelations }).pipe(
+    Effect.map((executor) => ({ executor })),
+  ),
 );
 
 export const GatewayAssertionRedemptionLive = Layer.effect(

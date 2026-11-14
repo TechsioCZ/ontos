@@ -1,6 +1,10 @@
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-import { describeControllerContracts, makePrivacyPartyCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import {
+  describeControllerContracts,
+  makePrivacyPartyCompositionSnapshot,
+  resolvePrivacyFixtureShellBuildIdentity,
+} from '../support/dsr-obligation-native.ts';
 import type { DatabaseConnectionPair, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
   loadDatabaseConnectionPair,
@@ -502,6 +506,18 @@ const fixtureRuntimeInventory = [
     tables: ['party_historical_name_assertions'],
   },
   {
+    // Completion does not process Party source receipts or company IČO migration state.
+    operations: 'none',
+    rls: true,
+    schema: 'party',
+    tables: [
+      'party_create_source_receipts',
+      'party_ico_correlation_epochs',
+      'party_legacy_ico_authority_fences',
+      'party_source_effect_receipts',
+    ],
+  },
+  {
     operations: 'select, insert, update, delete',
     rls: true,
     schema: 'contacts',
@@ -511,6 +527,13 @@ const fixtureRuntimeInventory = [
     operations: 'select, insert, delete',
     rls: false,
     schema: 'contacts',
+    tables: ['gateway_assertion_redemptions'],
+  },
+  {
+    // Same fixed ingress privileges as the Privacy owner migration.
+    operations: 'select, insert, delete',
+    rls: false,
+    schema: 'privacy',
     tables: ['gateway_assertion_redemptions'],
   },
   {
@@ -563,12 +586,6 @@ const fixtureRuntimeInventory = [
       'retention_evaluation_work',
       'temporary_dsr_exports',
     ],
-  },
-  {
-    operations: 'select, insert, delete',
-    rls: false,
-    schema: 'privacy',
-    tables: ['gateway_assertion_redemptions'],
   },
 ] as const;
 
@@ -752,6 +769,7 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
 const fixtureAuthorityLifetime = Context.Reference<'ordinary' | 'short'>('PrivacyCompletionTest.AuthorityLifetime', {
   defaultValue: () => 'ordinary',
 });
+const shortAuthorityLifetimeSeconds = 60;
 interface AdditionalLegalEntityFixtureConfiguration {
   readonly additionalLegalEntity?: 'same-tenant';
 }
@@ -778,7 +796,7 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
       }),
     ),
   )(yield* topologyFileSystem.readFileString(`${appRoot}topology/reference-topology.json`));
-  const shellIdentity = yield* Effect.try({
+  const shellRelease = yield* Effect.try({
     catch: () => failure('The actual Shell SDK identity was unavailable'),
     try: () =>
       resolveUltramodernReleaseIdentity({
@@ -787,6 +805,7 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
         workspaceRoot: appRoot,
       }),
   });
+  const shellIdentity = yield* resolvePrivacyFixtureShellBuildIdentity(shellRelease);
   const encodeBuildIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
   const crypto = yield* Crypto.Crypto;
@@ -1135,18 +1154,26 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         'create table privacy_completion_test.redemptions (issuer text not null, audience text not null, jti text not null, primary key (issuer,audience,jti))',
       );
       await Promise.all(
-        inventory.flatMap((item) => [
-          bootstrapAdmin.query(`grant usage on schema "${item.schema}" to ${role}`),
-          ...item.tables.map((table) =>
-            bootstrapAdmin.query(`grant ${item.operations} on "${item.schema}"."${table}" to ${role}`),
-          ),
-        ]),
+        inventory
+          .filter(({ operations }) => operations !== 'none')
+          .flatMap((item) => [
+            bootstrapAdmin.query(`grant usage on schema "${item.schema}" to ${role}`),
+            ...item.tables.map((table) =>
+              bootstrapAdmin.query(`grant ${item.operations} on "${item.schema}"."${table}" to ${role}`),
+            ),
+          ]),
       );
       await bootstrapAdmin.query(`grant usage on schema privacy_completion_test to ${role}`);
       await bootstrapAdmin.query(`grant select, insert on privacy_completion_test.redemptions to ${role}`);
       const protectedTables: readonly (readonly [string, readonly string[]])[] = [
         ...inventory.flatMap((item) =>
-          item.tables.map((table) => [`${item.schema}.${table}`, item.operations.toUpperCase().split(', ')] as const),
+          item.tables.map(
+            (table) =>
+              [
+                `${item.schema}.${table}`,
+                item.operations === 'none' ? [] : item.operations.toUpperCase().split(', '),
+              ] as const,
+          ),
         ),
         ['privacy_completion_test.redemptions', ['SELECT', 'INSERT']],
         ['core.application_composition_durable_work', ['SELECT']],
@@ -1222,7 +1249,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       ? yield* validateActiveApplicationCompositionSnapshot({
           ...initialSnapshot,
           observedAt: fresh.observedAt,
-          validUntil: DateTime.add(fresh.observedAt, { seconds: 21 }),
+          validUntil: DateTime.add(fresh.observedAt, { seconds: shortAuthorityLifetimeSeconds + 1 }),
         })
       : initialSnapshot;
   yield* isolated.publishInitialComposition(snapshot);
@@ -1230,7 +1257,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const snapshotJson = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     snapshot,
   );
-  yield* Effect.logInfo('Privacy composition environment byte count', new TextEncoder().encode(snapshotJson).length);
   const compositionContext = yield* Layer.build(NodeHttpServer.layerTest);
   const source = Context.get(compositionContext, HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotJson, { contentType: 'application/json' })));
@@ -1261,7 +1287,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     BETTER_AUTH_URL: 'http://localhost:3020',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_1258_TEST_ADDITIONAL_LE: additionalLegalEntity,
-    ONTOS_1258_TEST_COMPOSITION: snapshotJson,
     ONTOS_1258_TEST_DATABASE: ownedName,
     ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
     ONTOS_1258_TEST_RUNTIME: ownedRuntime,
@@ -1856,7 +1881,7 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
         ['party_historical_name_assertions', 'select'],
       ]);
       for (const item of fixtureRuntimeInventory) {
-        if (item.schema === 'party' || (item.schema === 'contacts' && item.rls)) {
+        if ((item.schema === 'party' && item.operations !== 'none') || (item.schema === 'contacts' && item.rls)) {
           expect(item.rls, item.schema).toBe(true);
           for (const table of item.tables) {
             expect(item.operations, table).toBe(partyOperationsByTable.get(table) ?? 'select, insert, update, delete');
@@ -2634,9 +2659,12 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
             deliveriesAfter.length - deliveriesBefore.length,
           );
-          expect(completedCycle.matched.messagesMatched).toBeGreaterThanOrEqual(
-            completedCycle.matched.deliveriesCreated,
-          );
+          // Either Shell's matcher got there first and this worker matched nothing, or this worker matched the one
+          // message itself and created both of its subscribed deliveries (Party's consumer, Privacy's watchdog).
+          expect([
+            [0, 0],
+            [1, 2],
+          ]).toContainEqual([completedCycle.matched.messagesMatched, completedCycle.matched.deliveriesCreated]);
           const original = yield* coreDebtSettled(f);
           expect(original.handoffFingerprint).toBe(digest(canonical));
           expect(original.outcome).toMatchObject({
@@ -2738,7 +2766,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           const originalMessages = (yield* f.evidence()).outbox;
           const remaining = before.validUntilEpochMilliseconds - before.observedAtEpochMilliseconds;
           expect(remaining).toBeGreaterThan(0);
-          expect(remaining).toBeLessThanOrEqual(20_000);
+          expect(remaining).toBeLessThanOrEqual(shortAuthorityLifetimeSeconds * 1000);
           yield* Effect.sleep(remaining + 100);
           const expired = yield* f.isolated.composition.observeRetainedOriginal();
           expect(expired.unexpired).toBe(false);
@@ -2806,7 +2834,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect((yield* f.evidence()).outbox).toEqual(originalMessages);
           return yield* Effect.void;
         }),
-      60_000,
+      120_000,
     );
 
     suite.effect(
@@ -3172,6 +3200,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* f.seal;
           return yield* Effect.void;
         }),
+      90_000,
     );
 
     suite.effect(

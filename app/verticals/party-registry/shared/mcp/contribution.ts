@@ -53,6 +53,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
         en: 'Execute a privacy measure',
       },
     },
+    // A critical legacy ICO migration fence is run, proposed and approved by people; never an agent tool.
+    'fence-legacy-ico-authority': OntosMcpHidden,
     'mark-duplicate-candidate-needs-evidence': {
       title: {
         cs: 'Vyžádat důkazy k možnému duplicitnímu subjektu',
@@ -113,6 +115,10 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
   page: '/contacts',
   reads: {
     'ares-lookup': { title: { cs: 'Vyhledání firmy v ARES', en: 'Company lookup in ARES' } },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'counterparty-migration-correlation': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'counterparty-organization-ico-facts': OntosMcpHidden,
     'counterparty-read': { title: { cs: 'Detail obchodního partnera', en: 'Counterparty details' } },
     'counterparty-role-history': {
       title: { cs: 'Historie rolí obchodního partnera', en: 'Counterparty role history' },
@@ -127,9 +133,17 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
       title: { cs: 'Seznam možných duplicitních subjektů', en: 'Duplicate candidate list' },
     },
     'guest-party-resolution': 'hidden',
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'legacy-ico-inventory': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-business-name-export': OntosMcpHidden,
     'organization-engagement-profile': {
       title: { cs: 'Profil spolupráce s firmou', en: 'Organization engagement profile' },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-ico-facts': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-record-facts': OntosMcpHidden,
     'party-contact-point-detail': { title: { cs: 'Detail kontaktu subjektu', en: 'Party contact details' } },
     'party-contact-points': { title: { cs: 'Kontakty subjektu', en: 'Party contacts' } },
     'party-correction': { title: { cs: 'Oprava údajů subjektu', en: 'Party fact corrections' } },
@@ -144,11 +158,19 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
       title: { cs: 'Historie úředních identifikátorů', en: 'Official identifier history' },
     },
     'party-relationship-detail': { title: { cs: 'Detail vztahu mezi subjekty', en: 'Party relationship details' } },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'party-source-effect-receipt': OntosMcpHidden,
     'person-engagement-profile': { title: { cs: 'Profil spolupráce s osobou', en: 'Person engagement profile' } },
     'privacy-measure-execution': {
       title: { cs: 'Stav opatření ochrany osobních údajů', en: 'Privacy measure execution status' },
     },
     // Search label projection for the Shell's Search provider, not an independently advertised agent operation.
     'search-labels': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'source-counterparty-admission': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'source-person-admission': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'source-profile-export': OntosMcpHidden,
   },
 });

@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ShellGatewayBaseUrlSchema } from '../../src/shell-gateway-url.ts';
@@ -19,7 +19,7 @@ it('admits HTTPS anywhere and plain HTTP only to a loopback host, never credenti
     plainHttp('https://localhost:3020/shell-super-app-api'),
     plainHttp('https://[::1]:3020/shell-super-app-api'),
   ]) {
-    expect(decode(address)._tag).toBe('Some');
+    expect(Option.isSome(decode(address))).toBe(true);
   }
   for (const address of [
     plainHttp('https://shell.internal.example/shell-super-app-api'),
@@ -29,7 +29,7 @@ it('admits HTTPS anywhere and plain HTTP only to a loopback host, never credenti
     'https://shell.example.test/shell-super-app-api#part',
     'ftp://shell.example.test/',
   ]) {
-    expect(decode(address)._tag).toBe('None');
+    expect(Option.isNone(decode(address))).toBe(true);
   }
   expect(admitted).toBeDefined();
 });
@@ -46,6 +46,6 @@ it('refuses plain HTTP to hosts that only look like loopback', () => {
     plainHttp('https://127.0.0.2:3020/shell-super-app-api'),
     plainHttp('https://0.0.0.0:3020/shell-super-app-api'),
   ]) {
-    expect(decode(address)._tag).toBe('None');
+    expect(Option.isNone(decode(address))).toBe(true);
   }
 });

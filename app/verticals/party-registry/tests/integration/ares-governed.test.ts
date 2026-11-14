@@ -1,26 +1,16 @@
+import { PgClient } from '@effect/sql-pg';
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
-import {
-  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '@app/party-registry-identity-contracts';
-import { PgClient } from '@effect/sql-pg';
-import {
-  GatewayScopeGrantRegistrar,
-  GatewayScopeGrantRegistrarLive,
-  loadDatabaseConnectionPair,
-  loadDatabaseConfig,
-  makeDatabaseConfigLive,
-  DatabaseIdentityEnrollmentContext,
-  SHARED_RUNTIME_IDENTITY,
-} from '@app/core-runtime';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
+import { DatabaseConfig } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeGatewayScopeGrantRegistrar, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { NodeCrypto } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import {
@@ -86,6 +76,7 @@ import {
   partyRelations,
 } from '../../src/db/schema.ts';
 import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
+import { preparePartyReconciliationNative } from '../support/party-reconciliation-native.fixture.ts';
 import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
 const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
@@ -121,33 +112,31 @@ const rawSubject = {
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
 const lookupIco = Schema.decodeSync(AresSubjectLookupIcoSchema)('27074358');
 
-it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layer),
+);
+
+it.layer(nativeServices, { excludeTestServices: true })((suite) => {
   suite.effect(
     'exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction',
     () =>
       Effect.gen(function* aresGovernedTestEffect() {
-        // The Party request identity serves every Action, Read and redemption in this test.
-        const connections = yield* loadDatabaseConnectionPair({
-          envPath: '/dev/null',
-          identity: PARTY_REGISTRY_REQUEST_IDENTITY,
-        });
-        // The dedicated request role serves every Action, Read and redemption but cannot install scope,
-        // so the scoped native writers take the same target's shared runtime credential.
-        const bootstrapConfiguration = yield* loadDatabaseConfig({
-          envPath: '/dev/null',
-          identity: SHARED_RUNTIME_IDENTITY,
-        });
-        const grantRegistrar = Context.get(
-          yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(
-            Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
-            Effect.orDie,
-          ),
-          GatewayScopeGrantRegistrar,
-        );
         const compositionSnapshot = yield* partyCompositionSnapshot;
+        const isolated = yield* makeIsolatedNativeDatabaseFixture({
+          compositionSnapshot,
+          mode: 'schema-only',
+          purpose: 'implementation-1096-address-source',
+        });
+        const native = yield* preparePartyReconciliationNative(isolated.connections);
+        // The Party request identity serves every Action, Read and redemption in this owned clone.
+        const connections = { ...isolated.connections, runtime: native.partyConfiguration };
+        const grantRegistrar = makeGatewayScopeGrantRegistrar(
+          native.issuer,
+          PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        );
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
-            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             access: 'allowed',
             actionKeys: [
               addContactPointAction,
@@ -156,13 +145,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               createPartyAction,
               updatePartyAction,
             ].map(({ descriptor }) => descriptor.actionKey),
-            // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
             adminConnectionString: Redacted.make(connections.admin.connectionString),
+            // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-            bootstrapConnectionString: Redacted.make(bootstrapConfiguration.connectionString),
             compositionRevision: compositionSnapshot.composition.revision,
             ownerRegistration: partyRegistryBackendRegistration,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+            bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
         );
@@ -248,7 +238,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const upstream = AresSubjectServiceLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)));
         const redemption = GatewayAssertionRedemptionLive.pipe(
           Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-          Layer.provide(makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY)),
+          Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
         );
         const api = HttpApi.make('PartyRegistryApi')
           .add(partyRegistryApi.groups.partyCommands)
@@ -657,5 +647,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
         assert.isOk(providerRequests >= 1);
       }),
+    120_000,
   );
 });

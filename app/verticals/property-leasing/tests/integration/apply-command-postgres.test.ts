@@ -18,9 +18,13 @@ import { Reactivity } from 'effect/reactivity';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, OccupancyConflict } from '../../shared/actions/apply-command.ts';
-import { CommandReferenceValidators, prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
+import { prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
 import { occupancyState } from '../../src/database/schema.ts';
-import { unavailableOccupancyValidators } from '../../src/services/persistence.service.ts';
+import {
+  OccupancyReferenceValidators,
+  unavailableOccupancyValidators,
+} from '../../src/services/persistence.service.ts';
+import type { OccupancyValidators } from '../../src/services/persistence.service.ts';
 
 const unused = () => Effect.die('Unexpected production reference transport');
 const nativeBoundary = Layer.mergeAll(
@@ -133,7 +137,7 @@ const nativePreparation = Effect.scoped(
       expect(snapshotCount).toBe(1);
       referenceChecks += 1;
     };
-    const validators: CommandReferenceValidators['Service'] = {
+    const validators: OccupancyValidators = {
       ...unavailableOccupancyValidators,
       counterparty: (ref) =>
         Effect.sync(() => {
@@ -147,7 +151,13 @@ const nativePreparation = Effect.scoped(
         }),
     };
     const factory = yield* prepareApplyCommandServices(payload, context).pipe(
-      Effect.provideService(CommandReferenceValidators, validators),
+      Effect.provideService(OccupancyReferenceValidators, {
+        forScope: (requested) =>
+          Effect.sync(() => {
+            expect(requested).toBe(context.scope);
+            return validators;
+          }),
+      }),
     );
     const preparedChecks = referenceChecks;
     expect(preparedChecks).toBeGreaterThan(0);

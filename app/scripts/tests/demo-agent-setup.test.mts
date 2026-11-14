@@ -34,6 +34,7 @@ import { AuthenticationService } from '../../apps/shell-super-app/api/auth/servi
 import { coreRelations } from '../../packages/core-runtime/src/db/schema.ts';
 import {
   AgentProfileReadDatabase,
+  AgentProfileSetupError,
   AgentProfileSetupInputSchema,
   explicitProfileInputs,
   reviewedProfileInputs,
@@ -80,7 +81,6 @@ const ConfiguredAgentPayloadSchema = Schema.Struct({
 });
 
 const configureAgentKey = 'core.identity.configure-agent';
-const profileSetupError = 'AgentProfileSetupError';
 const principalMembershipTable = '"principal_company_memberships"';
 const persistedAgentName = 'Persisted agent name';
 const source = createHash('sha256').update('reviewed-fixture').digest('hex');
@@ -396,7 +396,7 @@ it.effect('refuses a later administrator profile instead of overwriting it', () 
       Effect.provide(f.layer),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toEqual([]);
   }),
 );
@@ -408,7 +408,7 @@ it.effect('rechecks current audit evidence after an idempotent commit', () =>
       Effect.provide(f.layer),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toHaveLength(1);
   }),
 );
@@ -422,7 +422,7 @@ it.effect('preflights every company before any write and never accepts propose-o
       'apply',
       source,
     ).pipe(Effect.provide(f.layer), Effect.flip);
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toEqual([]);
     expect(f.selections).toEqual([companyId, secondCompanyId]);
   }),
@@ -571,7 +571,7 @@ it.effect('requires the exact native Action authority rather than an unrelated a
       Effect.provide(f.layer),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
   }),
 );
 
@@ -611,7 +611,7 @@ it.effect('does not accept an active directory label without live canonical comp
       ],
       'apply',
     ).pipe(Effect.provide(f.layer), Effect.flip);
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toEqual([]);
   }),
 );

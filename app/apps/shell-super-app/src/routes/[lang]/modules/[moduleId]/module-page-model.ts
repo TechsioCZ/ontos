@@ -1,12 +1,12 @@
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import type { Cause, Config } from 'effect';
 
-import { MODULE_TARGET_BATCH_LIMIT, ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
+import { MODULE_TARGET_BATCH_LIMIT, ResolveModuleTargetPayloadSchema } from '../../../../../shared/browser-api.ts';
 import type {
   ResolveModuleTargetPayload,
   ResolvedModuleTarget,
   SafeTenantIdentity,
-} from '../../../../../shared/api.ts';
+} from '../../../../../shared/browser-api.ts';
 import { resolveModuleTarget, resolveModuleTargets } from '../../../../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions, ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';

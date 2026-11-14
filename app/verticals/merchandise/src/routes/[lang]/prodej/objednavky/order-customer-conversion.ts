@@ -4,12 +4,12 @@ import {
   counterpartyCustomerOnboard,
   createParty,
   executeDuplicateCandidateDetail,
-  listCustomers,
   resolveDuplicateCandidateCreate,
   resolvePartyCommandCommit,
 } from '@app/party-registry/api/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { Effect } from 'effect';
+import { Effect, Random } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import { convertOrderCustomer } from '../../../../../shared/order-customer-conversion.ts';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
@@ -17,7 +17,12 @@ import { executeManageCatalog } from '../../../../api/manage-catalog-action-clie
 const owners = {
   contact: (...args: Parameters<typeof addContactPoint>) => addContactPoint(...args).pipe(Effect.asVoid),
   create: createParty,
-  customers: listCustomers({ limit: 500 }),
+  customers: Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) =>
+      executeCustomerList({ limit: 500 }, `party-registry:customer-list:${first}:${second}`),
+    ),
+    Effect.map(({ items }) => items),
+  ),
   detail: (payload: Parameters<typeof executeDuplicateCandidateDetail>[0]) =>
     executeDuplicateCandidateDetail(payload, 'merchandise-order-customer-review'),
   onboard: counterpartyCustomerOnboard,

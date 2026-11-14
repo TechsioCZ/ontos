@@ -4,7 +4,7 @@ import { waitFor } from '@testing-library/react';
 import { Clock, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 
-import { ResolvedModuleTargetSchema } from '../../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../../shared/browser-api.ts';
 import type { issueDocumentGatewayContexts as IssueDocumentGatewayContexts } from '../../../src/api/auth-client.ts';
 import { browserRuntime } from '../../../src/runtime/browser-effect-runtime.ts';
 import {

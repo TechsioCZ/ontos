@@ -1,9 +1,10 @@
 import { eq } from 'drizzle-orm';
 import { integer, pgTable, uuid } from 'drizzle-orm/pg-core';
-import { Effect, Exit, Schema } from 'effect';
+import { Effect, Exit, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
+import { ActionAlreadyCommitted, ActionTransactionError } from '../../src/actions/errors.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import type { ActionServiceFactory, ActionServicePreflight } from '../../src/actions/definition.ts';
 import { createActionTransactionErrorWithCause } from '../../src/actions/transaction-error.ts';
@@ -165,9 +166,9 @@ it.effect(
       expect(harness.snapshot().transactionCount).toBe(2);
       expect(harness.snapshot().preparationQueries).toHaveLength(1);
       expect(harness.snapshot().committed).toHaveLength(1);
-      expect((yield* harness.runtime.runAction(requestFor(action)).pipe(Effect.flip))._tag).toBe(
-        'ActionAlreadyCommitted',
-      );
+      expect(
+        Schema.is(ActionAlreadyCommitted)(yield* harness.runtime.runAction(requestFor(action)).pipe(Effect.flip)),
+      ).toBe(true);
       expect(queries).toBe(1);
     }),
 );
@@ -177,7 +178,7 @@ it.effect('keeps unlisted preparation SELECTs closed without an empty-row fallba
     const action = actionFor();
     const harness = yield* harnessFor(action);
     const failure = yield* harness.runtime.runAction(requestFor(action)).pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionHandlerExecutionError');
+    expect(Predicate.isTagged(failure, 'ActionHandlerExecutionError')).toBe(true);
     expect(harness.snapshot().preparationQueries.map(({ sql }) => sql)).toEqual([statement]);
     expect(harness.snapshot().committed).toEqual([]);
   }),
@@ -231,9 +232,9 @@ it.effect('keeps preparation SQL failure typed and retryable before any owner co
           : Effect.succeed([{ value: 7 }]);
       }),
     );
-    expect((yield* harness.runtime.runAction(requestFor(action)).pipe(Effect.flip))._tag).toBe(
-      'ActionTransactionError',
-    );
+    expect(
+      Schema.is(ActionTransactionError)(yield* harness.runtime.runAction(requestFor(action)).pipe(Effect.flip)),
+    ).toBe(true);
     expect(harness.snapshot().committed).toEqual([]);
     expect(yield* harness.runtime.runAction(requestFor(action))).toBe(7);
     expect(scripts).toBe(2);

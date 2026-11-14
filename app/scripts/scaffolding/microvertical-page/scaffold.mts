@@ -26,7 +26,6 @@ import {
   patchJsonObjectProperty,
   readJsonEffect as readSharedJson,
   readGeneratedSlotEntries,
-  readModuleRuntimeDeclarationEffect,
   renderAccessDeclaration,
   renderReadAuthorizationLiteral,
   requireCanonicalSlug,
@@ -35,7 +34,6 @@ import {
   toCamelCase,
   toPascalCase,
   toReadAccessDeclarationKey,
-  toTitle,
   updateMutation,
 } from '../shared.mts';
 import type {
@@ -418,7 +416,7 @@ const pageWiring = (
   const componentKey = `${vertical.moduleId}.page-${page}`;
   const contributionKey = `${vertical.moduleId}.page.${page}`;
   const entrypoint = `{ access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
-  // Protected page and navigation contributions carry the same declaration and entrypoint.
+  // Only a protected page carries a declaration; the navigation entry shares this entrypoint.
   const accessDeclaration =
     config.authorization === 'protected'
       ? `accessDeclaration: { key: '${toReadAccessDeclarationKey(vertical.moduleId, page, 'view')}', kind: 'read', modes: ['run'], placement: { group: '${page}', level: 'basic' }, risk: '${config.accessRisk ?? DEFAULT_ACCESS_RISK}', selectors: [] }, `
@@ -431,7 +429,7 @@ const pageWiring = (
     manifestImport: `import { ${componentName} } from './src/routes/[lang]/${route.relativePath}/page.tsx';`,
     manifestNavigation: route.isDynamic
       ? undefined
-      : `navigationContribution({ ${accessDeclaration}contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', icon: 'icon-[mdi--file-document-outline]', label: { cs: '${toTitle(page)}', en: '${toTitle(page)}' }, order: 100, pageKey: '${contributionKey}' }),`,
+      : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', icon: 'icon-[mdi--file-document-outline]', label: { cs: 'Nová stránka', en: 'New Page' }, order: 100, pageKey: '${contributionKey}' }),`,
     manifestPage: `pageContribution({ ${accessDeclaration}componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
   } as const;
@@ -439,7 +437,6 @@ const pageWiring = (
 
 interface PageOwnerWiring {
   readonly manifest: string;
-  readonly metadata: string;
   readonly registration: string;
 }
 
@@ -464,16 +461,16 @@ const patchPageWiring = (
     [wiring.manifestComponent],
     (candidate) => candidate.endsWith(','),
   );
-  let metadata = insertSortedSlot(
-    vertical.runtimeDeclaration?.content ?? manifest,
+  manifest = insertSortedSlot(
+    manifest,
     MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
     MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
     [wiring.manifestPage],
     (candidate) => candidate.endsWith(','),
   );
   if (wiring.manifestNavigation !== undefined) {
-    metadata = insertSortedSlot(
-      metadata,
+    manifest = insertSortedSlot(
+      manifest,
       MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
       MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
       [wiring.manifestNavigation],
@@ -487,7 +484,7 @@ const patchPageWiring = (
     [wiring.registrationPage],
     (candidate) => candidate.endsWith(','),
   );
-  return { manifest: vertical.runtimeDeclaration === undefined ? metadata : manifest, metadata, registration };
+  return { manifest, registration };
 };
 
 const renderRouteMetadata = (
@@ -633,19 +630,9 @@ const readOwnerRoutes = (
       return [];
     }
     const manifest = yield* readTextFile(manifestPath);
-    const registrationPath = resolveContainedPath(verticalRoot, owner, 'vertical.registration.ts');
-    const registration = (yield* fileExists(registrationPath)) ? yield* readTextFile(registrationPath) : '';
-    const runtimeDeclaration = yield* readModuleRuntimeDeclarationEffect(
-      resolveContainedPath(verticalRoot, owner),
-      owner,
-      manifest,
-      registration,
-    ).pipe(
-      Effect.mapError((cause) => pageScaffoldFailureFromUnknown(cause, `invalid owner ${owner} runtime declaration`)),
-    );
     return yield* Effect.all(
       readGeneratedSlotEntries(
-        runtimeDeclaration?.content ?? manifest,
+        manifest,
         MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
         MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
       ).map((candidate) => ownedPageRoute(owner, candidate)),
@@ -850,7 +837,7 @@ const generatedWiringContentMatches = (
   ) &&
   navigationMatches &&
   generatedWiringEntryMatches(
-    vertical.runtimeDeclaration?.content ?? vertical.manifestContent,
+    vertical.manifestContent,
     MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
     MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
     wiring.manifestPage,
@@ -882,7 +869,7 @@ const generatedWiringMatches = (
     const navigationMatches =
       wiring.manifestNavigation === undefined
         ? readGeneratedSlotEntries(
-            vertical.runtimeDeclaration?.content ?? vertical.manifestContent,
+            vertical.manifestContent,
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
           ).every(
@@ -892,7 +879,7 @@ const generatedWiringMatches = (
               ),
           )
         : generatedWiringEntryMatches(
-            vertical.runtimeDeclaration?.content ?? vertical.manifestContent,
+            vertical.manifestContent,
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
             MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
             wiring.manifestNavigation,
@@ -1015,8 +1002,7 @@ const planPageScaffold = (
     const pageContributionIdentity = new RegExp(`["']${escapedModuleId}\\.page\\.${page}["']`, 'u');
     if (
       pageComponentIdentity.test(vertical.manifestContent) ||
-      pageContributionIdentity.test(vertical.manifestContent) ||
-      pageContributionIdentity.test(vertical.runtimeDeclaration?.content ?? vertical.manifestContent)
+      pageContributionIdentity.test(vertical.manifestContent)
     ) {
       return yield* pageScaffoldFailure(`page identity ${identity} already exists at another URL`);
     }
@@ -1055,10 +1041,6 @@ const planPageScaffold = (
     );
     const wiring = patchPageWiring(vertical, page, route, config);
     const manifestMutation = updateMutation(vertical.manifestPath, vertical.manifestContent, wiring.manifest);
-    const metadataMutation =
-      vertical.runtimeDeclaration === undefined
-        ? undefined
-        : updateMutation(vertical.runtimeDeclaration.path, vertical.runtimeDeclaration.content, wiring.metadata);
     const registrationMutation = updateMutation(
       vertical.registrationPath,
       vertical.registrationContent,
@@ -1078,7 +1060,6 @@ const planPageScaffold = (
       routeMutation,
       ...localeMutations,
       manifestMutation,
-      metadataMutation,
       registrationMutation,
       federationMutation,
     ].filter((mutation) => mutation !== undefined);

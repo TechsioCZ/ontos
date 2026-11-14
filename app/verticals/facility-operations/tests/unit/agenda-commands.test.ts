@@ -2,7 +2,7 @@ import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref'
 import { Array as EffectArray, DateTime, Effect, Exit, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { AgendaCommandSchema, agendaCommandSchemas, evolveAgenda } from '../../shared/commands/agenda.ts';
-import { AgendaStateSchema, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
+import { AgendaStateSchema, CalendarEventIdSchema, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { seedAgendaState } from '../../scripts/seed/agenda.mts';
 import {
@@ -19,7 +19,7 @@ const [createEventSchema, updateEventSchema] = agendaCommandSchemas;
 
 it.effect('calendar dates keep their date-only wire form and reject impossible dates', () =>
   Effect.gen(function* calendarDateWire() {
-    const command = { _tag: 'AgendaEventCreate', date: '2028-02-29', kind: 'MEETING', title: 'Leap day' } as const;
+    const command = createEventSchema.make({ date: '2028-02-29', kind: 'MEETING', title: 'Leap day' });
     const decoded = yield* Schema.decodeUnknownEffect(AgendaCommandSchema)(command);
     expect(Schema.is(createEventSchema)(decoded)).toBe(true);
     if (Schema.is(createEventSchema)(decoded)) {
@@ -518,7 +518,9 @@ it('CSV neutralizes spreadsheet formulas without changing numeric amounts', () =
 it.effect('event update patches preserve omitted, removed and supplied references over the wire', () =>
   Effect.gen(function* agendaReferencePatches() {
     const related = { id: 'unit-1', kind: 'unit', label: 'Unit 1' } as const;
-    const base = { _tag: 'AgendaEventUpdate', eventId: 'e1', title: 'Updated' } as const;
+    const base = Schema.encodeSync(updateEventSchema)(
+      updateEventSchema.make({ eventId: CalendarEventIdSchema.make('e1'), title: 'Updated' }),
+    );
     const omitted = yield* Schema.decodeUnknownEffect(AgendaCommandSchema)(base);
     expect(Object.hasOwn(omitted, 'related')).toBe(false);
     expect(Object.hasOwn(omitted, 'assignee')).toBe(false);

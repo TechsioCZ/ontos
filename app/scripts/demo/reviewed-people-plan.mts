@@ -260,9 +260,48 @@ const sortedSlots = (rows: readonly ReviewedCell[]): string =>
     .toSorted((left, right) => left.localeCompare(right))
     .join('\n');
 
-const reviewedCells = (role: Parameters<typeof policyRoleCellRows>[0], localEntries: readonly CatalogSnapshotEntry[]) =>
+const customerContextReadsAfterReview = [
+  'commerce.customer-context.customer-group-definition-source.read',
+  'commerce.customer-context.customer-group-membership-source-receipt.read',
+  'commerce.customer-context.customer-price-group-assignment-receipt.read',
+  'commerce.customer-context.customer-profile-ico-migration.read',
+  'commerce.customer-context.customer-profile-ico.read',
+  'commerce.customer-context.customer-profile-organization-ico-facts.read',
+  'commerce.customer-context.customer-profile-source.read',
+  'commerce.customer-context.organization-customer-profile-ico-migration.read',
+  'commerce.customer-context.organization-customer-profile-ico.read',
+  'commerce.customer-context.saved-address-source-receipt.read',
+] as const;
+
+/**
+ * Capabilities the release declared after these roles were reviewed. No reviewed role gains them: they stay
+ * with full access only, which follows the release by additions. A key here the release no longer declares
+ * fails the plan, so the list cannot go stale silently.
+ */
+export const reviewedExclusions = {
+  accounting: customerContextReadsAfterReview,
+  [demoShellRoutingRoleKey]: [],
+  sales: [
+    ...customerContextReadsAfterReview,
+    'commerce.customer-context.customer-group-membership-snapshot.admit',
+    'commerce.customer-context.customer-group-membership-source.apply',
+    'commerce.customer-context.customer-profile-ico.change',
+    'commerce.customer-context.customer-profile-ico.migrate',
+    'commerce.customer-context.organization-customer-profile-ico.change',
+    'commerce.customer-context.organization-customer-profile-ico.migrate',
+  ],
+  warehouse: [],
+} as const satisfies Readonly<Record<ManagedRoleKey, readonly string[]>>;
+const excludedFrom = (key: ManagedRoleKey): ReadonlySet<string> => new Set(reviewedExclusions[key]);
+
+const reviewedCells = (
+  key: ManagedRoleKey,
+  role: Parameters<typeof policyRoleCellRows>[0],
+  localEntries: readonly CatalogSnapshotEntry[],
+) =>
   Result.map(policyRoleCellRows(role, localEntries, 'human'), (rows) =>
     rows
+      .filter(({ capabilityKey }) => !excludedFrom(key).has(capabilityKey))
       .map(({ capabilityKey, mode, selector }) => ({
         capabilityKey: AccessCapabilityKeySchema.make(capabilityKey),
         mode,
@@ -280,7 +319,11 @@ const compileRole = (
   entries: ReadonlyMap<string, CatalogSnapshotEntry>,
 ): Result.Result<DesiredRole, string> => {
   const held = ours.filter(({ roleKey }) => roleKey === key);
-  const compiled = held.map(({ role }) => reviewedCells(role, localEntries));
+  const undeclared = [...excludedFrom(key)].filter((capabilityKey) => !entries.has(capabilityKey));
+  if (undeclared.length > 0) {
+    return Result.fail(`role ${key} excludes ${undeclared.join(', ')}, which the release does not declare`);
+  }
+  const compiled = held.map(({ role }) => reviewedCells(key, role, localEntries));
   const [first] = held;
   const [firstCells] = compiled;
   if (first === undefined || firstCells === undefined || Result.isFailure(firstCells)) {

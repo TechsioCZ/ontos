@@ -38,6 +38,7 @@ import { expect, it } from 'effect-rstest';
 
 import type { AccessAdminProblem } from '../../shared/access-admin-api.ts';
 import {
+  AccessAdminUnavailableProblemSchema,
   AdmitAccessMemberPayloadSchema,
   AssignAccessRolePayloadSchema,
   CreateAccessDelegationPayloadSchema,
@@ -855,7 +856,11 @@ it.effect('refuses all eight writes with a retryable 503 while the write gate is
     for (const [name, write] of writes) {
       const problem = yield* failureOf(closed.run(write));
       // The unavailable problem is the retryable one: a closed gate is never a denial.
-      expect([name, problem.status, problem._tag]).toEqual([name, 503, 'AccessAdminUnavailable']);
+      expect([name, problem.status, Schema.is(AccessAdminUnavailableProblemSchema)(problem)]).toEqual([
+        name,
+        503,
+        true,
+      ]);
     }
     const options = yield* closed.run((bff) => bff.options(headers, { limit: 100 }));
     expect(Object.values(options.writeAvailability)).toEqual(Array.from({ length: 8 }, () => false));

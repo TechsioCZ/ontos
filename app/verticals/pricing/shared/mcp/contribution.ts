@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const pricingMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -121,6 +121,8 @@ export const pricingMcpContribution = defineOntosMcpContribution({
         en: 'Price definition',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'price-group-source-prices': OntosMcpHidden,
     'price-result-lookup': 'hidden',
     'price-schedule': {
       title: {
@@ -128,6 +130,8 @@ export const pricingMcpContribution = defineOntosMcpContribution({
         en: 'Price schedule',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'price-source-result-lookup': OntosMcpHidden,
     'quantity-tier-result-lookup': 'hidden',
     'quotation-result-lookup': 'hidden',
     'quotation-verification': 'hidden',

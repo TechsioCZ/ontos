@@ -245,3 +245,30 @@ export { executeProcessingPurposesWithAuthorization, executeProcessingPurposes }
 export { executePrivacySubjectsWithAuthorization, executePrivacySubjects } from './privacy-subjects-client.ts';
 export { executeNoticeVersionsWithAuthorization, executeNoticeVersions } from './notice-versions-client.ts';
 export { executeCurrentConsentWithAuthorization, executeCurrentConsent } from './current-consent-client.ts';
+export {
+  executeSourceProcessingEligibility,
+  executeSourceProcessingEligibilityWithAuthorization,
+} from './source-processing-eligibility-client.ts';
+export type { SourceProcessingEligibilityClientOptions } from './source-processing-eligibility-client.ts';
+
+export {
+  executeMeasureExecutionEligibility,
+  executeMeasureExecutionEligibilityWithAuthorization,
+} from './measure-execution-eligibility-client.ts';
+export type { MeasureExecutionEligibilityClientOptions } from './measure-execution-eligibility-client.ts';
+
+export {
+  executeOrganizationIcoApplicability,
+  executeOrganizationIcoApplicabilityWithAuthorization,
+} from './organization-ico-applicability-client.ts';
+export type { OrganizationIcoApplicabilityClientOptions } from './organization-ico-applicability-client.ts';
+export {
+  executeOrganizationProfileIcoApplicability,
+  executeOrganizationProfileIcoApplicabilityWithAuthorization,
+} from './organization-profile-ico-applicability-client.ts';
+export type { OrganizationProfileIcoApplicabilityClientOptions } from './organization-profile-ico-applicability-client.ts';
+export {
+  executeOrganizationBusinessApplicability,
+  executeOrganizationBusinessApplicabilityWithAuthorization,
+} from './organization-business-applicability-client.ts';
+export type { OrganizationBusinessApplicabilityClientOptions } from './organization-business-applicability-client.ts';

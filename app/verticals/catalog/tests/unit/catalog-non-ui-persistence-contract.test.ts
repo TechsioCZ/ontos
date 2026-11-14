@@ -121,6 +121,10 @@ const withOwnerSql = <Value, Failure, Requirements>(
         if (/^(?:BEGIN|COMMIT|ROLLBACK)$/u.test(statement)) {
           return Effect.succeed([]);
         }
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (statement === 'select current_user::text as role') {
+          return Effect.succeed([{ role: 'ontos_runtime' }]);
+        }
         // A session-setting role installs its scope and reads back the connected role in one statement.
         if (statement === installAndReadScopeSql) {
           expect(params).toEqual([tenantId, '']);

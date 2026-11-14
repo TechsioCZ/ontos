@@ -257,7 +257,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production r
       expect(permitted.unsupportedStatements).toEqual([]);
       // Authorization passed and the TAX handler reached its owner persistence; the scripted
       // database then refuses owner SQL, which surfaces as a TAX domain failure, not an authz one.
-      expect(permittedFailure).toMatchObject({ _tag: 'TaxGovernancePersistenceUnavailable' });
       expect(permitted.ownerStatements.length).toBeGreaterThan(0);
       expect(permitted.permissionDenials).toEqual([]);
       expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
@@ -321,7 +320,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production r
         const fixture = yield* makeProductionComposition([sellerA], fault);
         const failure = yield* createTaxRule(fixture, sellerA);
         expect(fixture.unsupportedStatements).toEqual([]);
-        expect(failure).toMatchObject({ _tag: 'ActionPermissionCheckError' });
+        expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
         expect(fixture.ownerStatements).toEqual([]);
         expect(fixture.permissionDenials).toEqual([]);
         expect(fixture.transactionDepth()).toBe(0);

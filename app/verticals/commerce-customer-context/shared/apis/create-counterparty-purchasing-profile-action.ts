@@ -3,6 +3,7 @@
 // @ontos-action-http-slug create-counterparty-purchasing-profile
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,6 +12,8 @@ import {
 } from '../actions/create-counterparty-purchasing-profile.ts';
 
 export { CreateCounterpartyPurchasingProfilePayloadSchema } from '../actions/create-counterparty-purchasing-profile.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 export const CreateCounterpartyPurchasingProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateCounterpartyPurchasingProfileActionInvalidProblem',
   400,
@@ -36,9 +39,7 @@ export const CreateCounterpartyPurchasingProfileActionForbiddenProblemSchema = m
 export const CreateCounterpartyPurchasingProfileActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'CreateCounterpartyPurchasingProfileActionNotFoundProblem',
   404,
-  {
-    code: Schema.Literal('action_invocation_not_found'),
-  },
+  { code: Schema.Literal('action_invocation_not_found') },
 );
 export const CreateCounterpartyPurchasingProfileActionConflictProblemSchema = makeProblemDetailsSchema(
   'CreateCounterpartyPurchasingProfileActionConflictProblem',
@@ -49,6 +50,8 @@ export const CreateCounterpartyPurchasingProfileActionConflictProblemSchema = ma
       'action_invocation_state_invalid',
       'CURRENT_STATE_CONFLICT',
       'PROFILE_KIND_OR_SUBJECT_CONFLICT',
+      'SOURCE_CONFLICT',
+      'SOURCE_STALE',
     ]),
   },
 );
@@ -59,7 +62,9 @@ export const CreateCounterpartyPurchasingProfileActionIneligibleProblemSchema = 
     code: Schema.Literals([
       'action_policy_denied',
       'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
+      'PRIVACY_DENIED',
       'PROFILE_RECONCILIATION_REQUIRED',
+      'SOURCE_AUTHORITY_DENIED',
       'SUBJECT_NOT_RESOLVED_OR_INVALID',
     ]),
   },

@@ -1,0 +1,117 @@
+diff --git a/dist/cjs/backend-federation-build/codegen.js b/dist/cjs/backend-federation-build/codegen.js
+index df0e4144f9b209b412214938cf4ceb13a4b99935..f467075b30a2388454dfb720b3bb90d79c846f8f 100644
+--- a/dist/cjs/backend-federation-build/codegen.js
++++ b/dist/cjs/backend-federation-build/codegen.js
+@@ -44,6 +44,7 @@ const external_node_path_namespaceObject = require("node:path");
+ var external_node_path_default = /*#__PURE__*/ __webpack_require__.n(external_node_path_namespaceObject);
+ const backend_federation_contracts_namespaceObject = require("@modern-js/backend-federation-contracts");
+ const external_esbuild_namespaceObject = require("esbuild");
++const external_node_fs_namespaceObject = require("node:fs");
+ const external_config_js_namespaceObject = require("./config.js");
+ const createRelativeImportSpecifier = (fromDirectory, toFile)=>{
+     const relativePath = (0, external_config_js_namespaceObject.normalizeRelativePath)(external_node_path_default().relative(fromDirectory, toFile));
+@@ -58,6 +59,18 @@ const createPublicPath = (containerEntry, fallbackPort)=>{
+         return `http://localhost:${fallbackPort}/`;
+     }
+ };
++/** OntOS: a unit opts in with package.json `modernjs.backendFederation.containerMinify: "whitespace-syntax"`.
++ * Whitespace and syntax only: identifiers are never mangled and function and class names are kept. */ const backendContainerMinification = (effectApiPath)=>{
++    const manifest = JSON.parse((0, external_node_fs_namespaceObject.readFileSync)(external_node_path_default().join(external_node_path_default().dirname(external_node_path_default().dirname(effectApiPath)), 'package.json'), 'utf8'));
++    const mode = manifest?.modernjs?.backendFederation?.containerMinify;
++    if (void 0 === mode) return {};
++    if ('whitespace-syntax' !== mode) throw new Error(`[backend-federation-build] Unsupported modernjs.backendFederation.containerMinify ${String(mode)}; only "whitespace-syntax" is allowed.`);
++    return {
++        keepNames: true,
++        minifySyntax: true,
++        minifyWhitespace: true
++    };
++};
+ const createBackendRemoteEntrySource = async (workspaceRoot, app, effectApiPath, entryPath)=>{
+     const effectApiSpecifier = createRelativeImportSpecifier(external_node_path_default().dirname(effectApiPath), effectApiPath);
+     const containerMetadata = {
+@@ -141,6 +154,7 @@ module.exports = { __modernjsBackendFederation, get, init };
+             sourcefile: external_node_path_default().basename(entryPath)
+         },
+         target: 'node20',
++        ...backendContainerMinification(effectApiPath),
+         write: false
+     });
+     const output = result.outputFiles[0];
+diff --git a/dist/esm/backend-federation-build/codegen.mjs b/dist/esm/backend-federation-build/codegen.mjs
+index e2f5946d3eaa0819c87c37a0bf97aa0ccade088c..839c929e03581799f7db9fe01e48b020ccb30648 100644
+--- a/dist/esm/backend-federation-build/codegen.mjs
++++ b/dist/esm/backend-federation-build/codegen.mjs
+@@ -1,6 +1,7 @@
+ import node_path from "node:path";
+ import { BACKEND_FEDERATION_CONTRACT_VERSION, BACKEND_FEDERATION_EFFECT_EXPOSE, BACKEND_FEDERATION_NODE_ADAPTER_VERSION, BACKEND_FEDERATION_REMOTE_ENTRY_FILE, formatBackendFederationValidationErrors, validateBackendFederationManifest } from "@modern-js/backend-federation-contracts";
+ import { build } from "esbuild";
++import { readFileSync } from "node:fs";
+ import { normalizeRelativePath } from "./config.mjs";
+ const createRelativeImportSpecifier = (fromDirectory, toFile)=>{
+     const relativePath = normalizeRelativePath(node_path.relative(fromDirectory, toFile));
+@@ -15,6 +16,18 @@ const createPublicPath = (containerEntry, fallbackPort)=>{
+         return `http://localhost:${fallbackPort}/`;
+     }
+ };
++/** OntOS: a unit opts in with package.json `modernjs.backendFederation.containerMinify: "whitespace-syntax"`.
++ * Whitespace and syntax only: identifiers are never mangled and function and class names are kept. */ const backendContainerMinification = (effectApiPath)=>{
++    const manifest = JSON.parse(readFileSync(node_path.join(node_path.dirname(node_path.dirname(effectApiPath)), 'package.json'), 'utf8'));
++    const mode = manifest?.modernjs?.backendFederation?.containerMinify;
++    if (void 0 === mode) return {};
++    if ('whitespace-syntax' !== mode) throw new Error(`[backend-federation-build] Unsupported modernjs.backendFederation.containerMinify ${String(mode)}; only "whitespace-syntax" is allowed.`);
++    return {
++        keepNames: true,
++        minifySyntax: true,
++        minifyWhitespace: true
++    };
++};
+ const createBackendRemoteEntrySource = async (workspaceRoot, app, effectApiPath, entryPath)=>{
+     const effectApiSpecifier = createRelativeImportSpecifier(node_path.dirname(effectApiPath), effectApiPath);
+     const containerMetadata = {
+@@ -98,6 +111,7 @@ module.exports = { __modernjsBackendFederation, get, init };
+             sourcefile: node_path.basename(entryPath)
+         },
+         target: 'node20',
++        ...backendContainerMinification(effectApiPath),
+         write: false
+     });
+     const output = result.outputFiles[0];
+diff --git a/dist/esm-node/backend-federation-build/codegen.mjs b/dist/esm-node/backend-federation-build/codegen.mjs
+index 5044182017076d65170ede4b6162b5bc3589a8e9..e04332f2506dbff5e3a9d6a52b1f0b5e0e6dce74 100644
+--- a/dist/esm-node/backend-federation-build/codegen.mjs
++++ b/dist/esm-node/backend-federation-build/codegen.mjs
+@@ -2,6 +2,7 @@ import "node:module";
+ import node_path from "node:path";
+ import { BACKEND_FEDERATION_CONTRACT_VERSION, BACKEND_FEDERATION_EFFECT_EXPOSE, BACKEND_FEDERATION_NODE_ADAPTER_VERSION, BACKEND_FEDERATION_REMOTE_ENTRY_FILE, formatBackendFederationValidationErrors, validateBackendFederationManifest } from "@modern-js/backend-federation-contracts";
+ import { build } from "esbuild";
++import { readFileSync } from "node:fs";
+ import { normalizeRelativePath } from "./config.mjs";
+ const createRelativeImportSpecifier = (fromDirectory, toFile)=>{
+     const relativePath = normalizeRelativePath(node_path.relative(fromDirectory, toFile));
+@@ -16,6 +17,18 @@ const createPublicPath = (containerEntry, fallbackPort)=>{
+         return `http://localhost:${fallbackPort}/`;
+     }
+ };
++/** OntOS: a unit opts in with package.json `modernjs.backendFederation.containerMinify: "whitespace-syntax"`.
++ * Whitespace and syntax only: identifiers are never mangled and function and class names are kept. */ const backendContainerMinification = (effectApiPath)=>{
++    const manifest = JSON.parse(readFileSync(node_path.join(node_path.dirname(node_path.dirname(effectApiPath)), 'package.json'), 'utf8'));
++    const mode = manifest?.modernjs?.backendFederation?.containerMinify;
++    if (void 0 === mode) return {};
++    if ('whitespace-syntax' !== mode) throw new Error(`[backend-federation-build] Unsupported modernjs.backendFederation.containerMinify ${String(mode)}; only "whitespace-syntax" is allowed.`);
++    return {
++        keepNames: true,
++        minifySyntax: true,
++        minifyWhitespace: true
++    };
++};
+ const createBackendRemoteEntrySource = async (workspaceRoot, app, effectApiPath, entryPath)=>{
+     const effectApiSpecifier = createRelativeImportSpecifier(node_path.dirname(effectApiPath), effectApiPath);
+     const containerMetadata = {
+@@ -99,6 +112,7 @@ module.exports = { __modernjsBackendFederation, get, init };
+             sourcefile: node_path.basename(entryPath)
+         },
+         target: 'node20',
++        ...backendContainerMinification(effectApiPath),
+         write: false
+     });
+     const output = result.outputFiles[0];

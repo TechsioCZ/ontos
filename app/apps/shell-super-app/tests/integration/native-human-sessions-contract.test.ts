@@ -1,10 +1,13 @@
 import { loadDatabaseIdentityConnections } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { validateNativeHumanSessionConnections } from '../support/native-human-sessions.ts';
+import {
+  NativeHumanSessionFixtureError,
+  validateNativeHumanSessionConnections,
+} from '../support/native-human-sessions.ts';
 
 const database = `action_live_v2_${'a'.repeat(32)}`;
 const connectionsFor = (host = '127.0.0.1', name = database) =>
@@ -40,9 +43,11 @@ it.layer(NodeServices.layer)('native human session connection contract', (suite)
     suite.effect(`refuses non-owned connection ${host}/${name} before any database acquisition`, () =>
       Effect.gen(function* refuseUnownedDatabase() {
         const connections = yield* connectionsFor(host, name);
-        expect((yield* Effect.flip(validateNativeHumanSessionConnections(connections)))._tag).toBe(
-          'NativeHumanSessionFixtureError',
-        );
+        expect(
+          Schema.is(NativeHumanSessionFixtureError)(
+            yield* Effect.flip(validateNativeHumanSessionConnections(connections)),
+          ),
+        ).toBe(true);
       }),
     );
   }
@@ -52,9 +57,10 @@ it.layer(NodeServices.layer)('native human session connection contract', (suite)
       const first = yield* connectionsFor();
       const second = yield* connectionsFor('127.0.0.1', `action_live_v2_${'b'.repeat(32)}`);
       expect(
-        (yield* Effect.flip(validateNativeHumanSessionConnections({ admin: first.admin, runtime: second.runtime })))
-          ._tag,
-      ).toBe('NativeHumanSessionFixtureError');
+        Schema.is(NativeHumanSessionFixtureError)(
+          yield* Effect.flip(validateNativeHumanSessionConnections({ admin: first.admin, runtime: second.runtime })),
+        ),
+      ).toBe(true);
     }),
   );
 });

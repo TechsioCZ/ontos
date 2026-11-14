@@ -35,7 +35,8 @@ import type {
 import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
 import { customerPriceGroupProfileValidationForTransaction } from '../persistence/price-group-persistence.ts';
 import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
-import type { PriceGroupActionServices } from './price-group-action-services.ts';
+import type { PriceGroupActionServices, PriceGroupAssignmentActionServices } from './price-group-action-services.ts';
+import { customerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
 
 const AssignmentPayloadSchema = Schema.Union([
   AssignCustomerPriceGroupPayloadSchema,
@@ -375,13 +376,13 @@ const migratePrepared = Effect.fn('PriceGroupAction.migratePrepared')(function* 
 const preparedServicesForTransaction = Effect.fn('PriceGroupAction.finalOwnerServices')(function* finalOwnerServices(
   prepared: PreparedPriceGroupMutation,
   transaction: ScopedTransactionExecutor,
-  actualScope: OperationalScope,
+  scope: OperationalScope,
   revision: string,
 ) {
-  if (!preparedPriceGroupScopeMatches(prepared.scope, actualScope, prepared.compositionRevision, revision)) {
+  if (!preparedPriceGroupScopeMatches(prepared.scope, scope, prepared.compositionRevision, revision)) {
     return yield* contextUnavailable();
   }
-  const services = yield* priceGroupActionServicesForTransaction(transaction, actualScope);
+  const services = yield* priceGroupActionServicesForTransaction(transaction, scope);
   const current = yield* inspectMutationProfiles(prepared.intent, services.profileValidation).pipe(
     Effect.mapError(profileContextUnavailable),
   );
@@ -466,6 +467,7 @@ const preparePriceGroupMutation = (requirement: PriceGroupCatalogRequirement) =>
     const { catalog, snapshot } = yield* Effect.all(
       {
         catalog: priceGroupCatalogPortFromEnvironment({
+          operationRequirementKey: requirement,
           requestCorrelation: scope.correlationId,
           subject: { _tag: 'Assertion', scope: context.scope },
         }),
@@ -523,11 +525,33 @@ const preparePriceGroupMutation = (requirement: PriceGroupCatalogRequirement) =>
     return factory;
   });
 
-export const prepareAssignCustomerPriceGroupServices = preparePriceGroupMutation(
+/** An assignment also captures its exact original-command receipt in the same owner transaction. */
+const preparePriceGroupAssignment = (
+  requirement: PriceGroupCatalogRequirement,
+  actionKey: Parameters<typeof customerPriceGroupAssignmentReceiptCapture>[2],
+) =>
+  Effect.fn('PriceGroupAction.prepareAssignmentServices')(function* prepareAssignmentServices(
+    payload: MutationPayload,
+    context: ActionServicePreparationContext,
+  ) {
+    const factory = yield* preparePriceGroupMutation(requirement)(payload, context);
+    const assignment: ActionServiceFactory<PriceGroupAssignmentActionServices> = (transaction, actualScope, revision) =>
+      factory(transaction, actualScope, revision).pipe(
+        Effect.map((services) => ({
+          ...services,
+          ...customerPriceGroupAssignmentReceiptCapture(transaction, actualScope, actionKey),
+        })),
+      );
+    return assignment;
+  });
+
+export const prepareAssignCustomerPriceGroupServices = preparePriceGroupAssignment(
   'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+  'commerce.customer-context.assign-customer-price-group',
 );
-export const prepareAssignCounterpartyPriceGroupServices = preparePriceGroupMutation(
+export const prepareAssignCounterpartyPriceGroupServices = preparePriceGroupAssignment(
   'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
+  'commerce.customer-context.assign-counterparty-price-group',
 );
 export const prepareMigrateCustomerPriceGroupServices = preparePriceGroupMutation(
   'commerce.customer-context.requirement.migrate-customer-price-group-catalog',

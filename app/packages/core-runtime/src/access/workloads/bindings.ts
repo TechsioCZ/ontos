@@ -1,4 +1,8 @@
-import { and, eq } from 'drizzle-orm';
+import {
+  readVerifiedGatewayActor,
+  readVerifiedGatewayWorkload,
+} from '../../auth/system-principal-context-provenance.ts';
+import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
@@ -44,6 +48,22 @@ const readUnavailable = (cause?: unknown): AccessDecisionUnavailable =>
 export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindingDatabase): AccessWorkloadBindings => ({
   readWorkloadAuthority: Effect.fn('AccessWorkloadBindings.readWorkloadAuthority')(
     function* readWorkloadAuthorityEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
+      // A verified gateway workload (a system workload acting for a source integration) holds exactly the one binding
+      // its assertion names; a historical delivery or an incomplete original admits nothing (source execution fence).
+      const workload = readVerifiedGatewayWorkload(query.scope);
+      const nothing = { activeCompanyIds: new Set<LegalEntityId>(), workloadKeys: new Set<string>() };
+      if (workload?.sourceMode === 'historical_delivery' && workload.recovery === undefined) {
+        return nothing;
+      }
+      if (
+        workload !== undefined &&
+        workload.recovery === undefined &&
+        (workload.originalWorkloadKey === undefined ||
+          workload.originalWorkloadBindingIncarnation === undefined ||
+          workload.originalOwnerBindingIncarnation === undefined)
+      ) {
+        return nothing;
+      }
       const read = (opened: CoreTransaction) =>
         // The registry forces tenant row security on `ontos_runtime`, so the request's own scope is
         // installed before the read: a principal id from another tenant answers nothing (O66).
@@ -81,6 +101,26 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                   eq(accessWorkloadBindings.tenantId, query.tenantId),
                   eq(accessWorkloadBindings.principalId, query.principalId),
                   eq(accessWorkloadBindings.status, 'active'),
+                  // A verified gateway workload reads only the binding its assertion names, of an active system
+                  // principal, for a delivery still running when it is a worker's, and only while the original
+                  // integration's own bindings stay active; its keys and its companies are that binding's alone.
+                  ...(workload === undefined
+                    ? []
+                    : [
+                        eq(accessWorkloadBindings.incarnation, workload.bindingIncarnation),
+                        eq(accessWorkloadBindings.workloadKey, workload.workloadKey),
+                        ...(workload.sourceMode === 'worker'
+                          ? [
+                              sql`trust.registered_workload_delivery_is_active(${workload.runReference}::uuid, ${workload.claimId ?? ''}, ${workload.workerKey ?? ''}, ${workload.workerModuleKey ?? ''}, ${query.tenantId}::uuid)`,
+                            ]
+                          : []),
+                        sql`exists (select 1 from core.principals s where s.tenant_id = ${query.tenantId}::uuid and s.principal_id = ${query.principalId}::uuid and s.kind = 'system' and s.status = 'active')`,
+                        ...(workload.recovery === undefined
+                          ? [
+                              sql`exists (select 1 from core.principals p join core.access_workload_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id join core.access_workload_bindings ob on ob.tenant_id = p.tenant_id and ob.principal_id = p.principal_id and ob.workload_key = ${workload.workloadKey} and ob.incarnation = ${workload.originalOwnerBindingIncarnation}::uuid and ob.status = 'active' where p.tenant_id = ${query.tenantId}::uuid and p.principal_id = ${workload.originalPrincipalId}::uuid and p.status = 'active' and p.kind = 'integration' and b.workload_key = ${workload.originalWorkloadKey} and b.incarnation = ${workload.originalWorkloadBindingIncarnation}::uuid and b.status = 'active')`,
+                            ]
+                          : []),
+                      ]),
                 ),
               ),
           ),
@@ -95,6 +135,17 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
         if (row.legalEntityId !== null && row.registrationStatus === 'active' && row.companyStatus === 'active') {
           activeCompanyIds.add(LegalEntityIdSchema.make(row.legalEntityId));
         }
+      }
+      // A system workload holds one tenant-local binding, so it registers no company of its own. As the subject of a
+      // module call it acts in exactly the one company its Shell-sealed context names, which the Shell signed only after
+      // admitting the original registered binding (and which the provenance pins to this request's company); never in
+      // any other, and never on a direct call, which still needs a registration.
+      if (
+        workload?.legalEntityId !== undefined &&
+        readVerifiedGatewayActor(query.scope) !== undefined &&
+        workloadKeys.size > 0
+      ) {
+        activeCompanyIds.add(LegalEntityIdSchema.make(workload.legalEntityId));
       }
       return { activeCompanyIds, workloadKeys };
     },

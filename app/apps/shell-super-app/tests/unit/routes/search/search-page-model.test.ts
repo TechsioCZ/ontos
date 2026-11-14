@@ -7,13 +7,13 @@ import {
   ResourceIdSchema,
   ShellTargetForbiddenProblemSchema,
   TenantIdSchema,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import type {
   ShellSearchPayload,
   ShellSearchPresentationInventory,
   ShellSearchResponse,
   ShellSearchResult,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import {
   loader,
   searchFailureModel,

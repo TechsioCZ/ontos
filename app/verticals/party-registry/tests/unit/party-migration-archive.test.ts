@@ -12,23 +12,57 @@ const folderPattern = /^\d{14}_[a-z0-9_-]+$/u;
 const quotedFolderPattern = /'(?<folder>\d{14}_[a-z0-9_-]+)'/gu;
 const createdTablePattern = /create table(?: if not exists)? "party"\."(?<table>[a-z_]+)"/giu;
 
-/** Rehearsals that must replay the archive whole, and the one that must stop at a historical prefix. */
+/** Rehearsals that pin the whole trunk chain, and the one that pins only a historical prefix. */
 const fullHistoryRehearsals = [
   'party-assertion-history-preparation.test.ts',
   'verification-removal-migration.test.ts',
 ] as const;
 const prefixRehearsal = 'official-identifier-original-input-migration.test.ts';
+/** Every rehearsal continues past its pinned folders through the canonical owner migration, as a deploy does. */
+const canonicalContinuation = "preparePartyReconciliationNative(isolated.connections, 'migrate')";
 
 /**
- * The demo history re-created the reviewed scope and legal-entity policy folders under later timestamps
- * and marked one equivalence point with a snapshot-only no-op. Every rehearsal pins the 20261020
- * originals, so these are the only archive folders a full rehearsal may leave out.
+ * The Party chain stage had applied from the demo trunk when main merged in (trunk e853a3db1; its Party
+ * folders are unchanged at eee67d0e4). The demo history re-created the reviewed scope and legal-entity
+ * policy folders under later timestamps; convergence applies exactly one naming lineage, and every
+ * rehearsal pins the 20261020 originals, so those twins are the only trunk folders a rehearsal leaves out.
  */
+const trunkChain = [
+  '20260903174425_yummy_glorian',
+  '20260904104109_nebulous_cardiac',
+  '20260914161805_marvelous_spirit',
+  '20261019115249_official_identifier_original_input',
+  '20261020063911_party-gateway-scope-rls',
+  '20261020113551_legal-entity-scope',
+  '20261024090300_party-gateway-scope-rls',
+  '20261024090400_legal-entity-scope',
+  '20261027230000_party-migration-equivalence',
+  '20261105082358_flashy_gravity',
+  '20261105154254_young_magik',
+  '20261105154619_left_vin_gonzales',
+  '20261106083603_aberrant_gauntlet',
+  '20261106120000_party-migration-convergence',
+  '20261109093237_party-fact-assertion-identities',
+] as const;
 const replayedByPinnedTwin = [
   ['20261024090300_party-gateway-scope-rls', '20261020063911_party-gateway-scope-rls'],
   ['20261024090400_legal-entity-scope', '20261020113551_legal-entity-scope'],
 ] as const;
-const snapshotOnlyFolders = ['20261027230000_party-migration-equivalence'] as const;
+/**
+ * Main's Party folders the trunk had not applied. Native Drizzle applies every folder its journal lacks,
+ * so the canonical migration appends these after the trunk chain even where they sort before its last
+ * folder, and the merge's snapshot-only leaf closes the convergence.
+ */
+const mainFolders = [
+  '20261106142207_party-create-source-receipts',
+  '20261107095844_party-source-effects-and-ico-fence',
+  '20261107100007_legacy-ico-authority-guards',
+  '20261107100251_party-source-receipt-reference',
+  '20261107104047_party-source-lifecycle-receipt-operations',
+  '20261110134527_ico-correlation-epochs',
+] as const;
+const convergenceLeaf = '20261112002651_main-c14-convergence';
+const snapshotOnlyFolders = ['20261027230000_party-migration-equivalence', convergenceLeaf] as const;
 
 const readText = (path: string) =>
   Effect.gen(function* readTextEffect() {
@@ -96,13 +130,19 @@ it.layer(NodeFileSystem.layer)('party migration archive', (suite) => {
     }),
   );
 
-  suite.effect('replays the whole archive in every full-history upgrade rehearsal', () =>
-    Effect.gen(function* rehearsalCoverage() {
+  suite.effect('pins the trunk chain stage has applied, then leaves main and the leaf to the canonical migration', () =>
+    Effect.gen(function* stageOrderCoverage() {
       const archive = yield* readArchive;
-      const expected = archive.filter(
-        (folder) =>
-          !replayedByPinnedTwin.some(([duplicate]) => duplicate === folder) &&
-          !snapshotOnlyFolders.some((marker) => marker === folder),
+      expect(
+        trunkChain.filter((folder) => !archive.includes(folder)),
+        'Every trunk folder stays archived',
+      ).toEqual([]);
+      expect(
+        archive.filter((folder) => folder <= convergenceLeaf && !trunkChain.some((trunk) => trunk === folder)),
+        'After the trunk chain, stage applies exactly main and then the convergence leaf',
+      ).toEqual([...mainFolders, convergenceLeaf]);
+      const pinnedTrunk = trunkChain.filter(
+        (folder) => !replayedByPinnedTwin.some(([duplicate]) => duplicate === folder),
       );
       for (const rehearsal of fullHistoryRehearsals) {
         const source = yield* readText(`${integrationDirectory}${rehearsal}`);
@@ -111,7 +151,11 @@ it.layer(NodeFileSystem.layer)('party migration archive', (suite) => {
           declaredFolder(source, 'structuredNamesFolder'),
           ...declaredFolders(source, 'forwardFolders'),
         ];
-        expect(pinned, `${rehearsal} must replay the archive in order`).toEqual(expected);
+        expect(pinned, `${rehearsal} must pin the trunk chain in order`).toEqual(pinnedTrunk);
+        expect(
+          source.indexOf(canonicalContinuation),
+          `${rehearsal} must continue through the canonical owner migration after its pinned folders`,
+        ).toBeGreaterThan(source.lastIndexOf('yield* migrate('));
       }
     }),
   );
@@ -120,11 +164,7 @@ it.layer(NodeFileSystem.layer)('party migration archive', (suite) => {
     Effect.gen(function* prefixCoverage() {
       const archive = yield* readArchive;
       const source = yield* readText(`${integrationDirectory}${prefixRehearsal}`);
-      const pinned = [
-        ...declaredFolders(source, 'baselineFolders'),
-        declaredFolder(source, 'forwardFolder'),
-        declaredFolder(source, 'currentNamesFolder'),
-      ];
+      const pinned = [...declaredFolders(source, 'baselineFolders'), declaredFolder(source, 'forwardFolder')];
       expect(pinned.length).toBeGreaterThan(0);
       expect(pinned.length).toBeLessThan(archive.length);
       expect(new Set(pinned).size, 'The pinned prefix repeats a folder').toBe(pinned.length);
@@ -147,6 +187,10 @@ it.layer(NodeFileSystem.layer)('party migration archive', (suite) => {
       expect(created).not.toContain('party_fact_assertion_identities');
       expect(created).not.toContain('party_historical_name_assertions');
       expect(created.length).toBeGreaterThan(0);
+      expect(
+        source.indexOf(canonicalContinuation),
+        'The prefix must continue through the canonical owner migration after its pinned folders',
+      ).toBeGreaterThan(source.lastIndexOf('yield* migrate('));
     }),
   );
 });

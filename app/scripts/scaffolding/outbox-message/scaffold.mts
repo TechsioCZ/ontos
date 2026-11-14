@@ -1,7 +1,5 @@
 import { Cause, Effect, FileSystem, Option, Predicate, Result, Schema } from 'effect';
 import type { PlatformError } from 'effect';
-import { parseSync, Visitor } from 'oxc-parser';
-import type { Expression, Program, Span } from 'oxc-parser';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
@@ -18,8 +16,6 @@ import {
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
   insertSortedSlot,
-  hasCanonicalMetadataImport,
-  metadataBindings,
   patchJsonObjectProperty,
   requireCanonicalSlug,
   requireCoreModuleKey,
@@ -45,9 +41,6 @@ const planningFailure = (reason: string, cause?: unknown): OutboxMessageScaffold
 
 const failureFromCause = (cause: unknown): OutboxMessageScaffoldError =>
   planningFailure(Predicate.isError(cause) ? cause.message : String(cause), cause);
-
-/** Every failure the existing message planner can surface from reads, formatting and validation. */
-type OutboxMessageScaffoldFailure = OutboxMessageScaffoldError | PlatformError.PlatformError | ScaffoldFailure;
 
 const fromLegacySync = <Value,>(operation: () => Value): Effect.Effect<Value, OutboxMessageScaffoldError> =>
   Effect.try({ catch: failureFromCause, try: operation });
@@ -272,147 +265,23 @@ const isMatchingCoreGeneratedContract = (content: string, moduleKey: string, top
   );
 };
 
-const actionProperty = (expression: Expression | undefined, name: string): Expression | undefined => {
-  if (
-    expression?.type !== 'ObjectExpression' ||
-    expression.properties.some(
-      (property) => property.type !== 'Property' || property.computed || property.method || property.kind !== 'init',
-    )
-  ) {
-    return undefined;
-  }
-  const matches = expression.properties.filter(
-    (property) =>
-      property.type === 'Property' &&
-      (property.key.type === 'Identifier'
-        ? property.key.name === name
-        : property.key.type === 'Literal' && property.key.value === name),
-  );
-  const [property] = matches;
-  return matches.length === 1 && property?.type === 'Property' ? property.value : undefined;
-};
-
-/** Resolve only immutable local strings, without importing or evaluating the business Action. */
-const actionString = (program: Program, expression: Expression | undefined): string | undefined => {
-  if (expression?.type === 'Literal') {
-    return Predicate.isString(expression.value) ? expression.value : undefined;
-  }
-  if (expression?.type === 'TSAsExpression') {
-    const annotation = expression.typeAnnotation;
-    return annotation.type === 'TSTypeReference' &&
-      annotation.typeName.type === 'Identifier' &&
-      annotation.typeName.name === 'const'
-      ? actionString(program, expression.expression)
-      : undefined;
-  }
-  if (expression?.type !== 'Identifier' || metadataBindings(program, expression.name).length !== 1) {
-    return undefined;
-  }
-  const { name } = expression;
-  const declarations = program.body.flatMap((statement) => {
-    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
-    return declaration?.type === 'VariableDeclaration' && declaration.kind === 'const'
-      ? declaration.declarations.filter((entry) => entry.id.type === 'Identifier' && entry.id.name === name)
-      : [];
-  });
-  const [declaration] = declarations;
-  if (
-    declarations.length !== 1 ||
-    declaration?.init === null ||
-    declaration?.init === undefined ||
-    declaration.end >= expression.start
-  ) {
-    return undefined;
-  }
-  const writes: Span[] = [];
-  const references: Span[] = [];
-  new Visitor({
-    AssignmentExpression: (assignment) => {
-      writes.push(assignment.left);
-    },
-    ForInStatement: (loop) => {
-      writes.push(loop.left);
-    },
-    ForOfStatement: (loop) => {
-      writes.push(loop.left);
-    },
-    Identifier: (identifier) => {
-      if (identifier.name === name) {
-        references.push(identifier);
-      }
-    },
-    UpdateExpression: (update) => {
-      writes.push(update.argument);
-    },
-  }).visit(program);
-  const mutated = references.some((reference) =>
-    writes.some((write) => write.start <= reference.start && reference.end <= write.end),
-  );
-  return mutated ? undefined : actionString(program, declaration.init);
-};
-
-const hasMatchingActionDescriptor = (source: string, moduleId: string, action: string): boolean => {
-  const parsed = parseSync('outbox-action.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const { program } = parsed;
-  if (
-    parsed.errors.length > 0 ||
-    !hasCanonicalMetadataImport(program, 'defineAction', '@app/core-runtime') ||
-    !hasCanonicalMetadataImport(program, 'defineTenantModuleEntrypoint', '@app/core-runtime')
-  ) {
-    return false;
-  }
-  const actions = program.body.flatMap((statement) =>
-    statement.type === 'ExportNamedDeclaration' &&
-    statement.declaration?.type === 'VariableDeclaration' &&
-    statement.declaration.kind === 'const'
-      ? statement.declaration.declarations.flatMap((declaration) =>
-          declaration.id.type === 'Identifier' &&
-          declaration.init?.type === 'CallExpression' &&
-          declaration.init.callee.type === 'Identifier' &&
-          declaration.init.callee.name === 'defineAction'
-            ? [declaration.init]
-            : [],
-        )
-      : [],
-  );
-  const [definition] = actions;
-  const descriptor = definition?.arguments[0];
-  if (actions.length !== 1 || descriptor?.type !== 'ObjectExpression') {
-    return false;
-  }
-  const entrypoint = actionProperty(descriptor, 'entrypoint');
-  if (
-    entrypoint?.type !== 'CallExpression' ||
-    entrypoint.callee.type !== 'Identifier' ||
-    entrypoint.callee.name !== 'defineTenantModuleEntrypoint' ||
-    entrypoint.arguments.length !== 1
-  ) {
-    return false;
-  }
-  const [entrypointDescriptor] = entrypoint.arguments;
-  if (entrypointDescriptor?.type !== 'ObjectExpression') {
-    return false;
-  }
-  const actionKey = `${moduleId}.${action}`;
-  return (
-    actionString(program, actionProperty(descriptor, 'actionKey')) === actionKey &&
-    actionString(program, actionProperty(descriptor, 'owningModuleKey')) === moduleId &&
-    actionString(program, actionProperty(entrypointDescriptor, 'access')) === 'write' &&
-    actionString(program, actionProperty(entrypointDescriptor, 'entrypointKey')) === actionKey &&
-    actionString(program, actionProperty(entrypointDescriptor, 'moduleKey')) === moduleId &&
-    actionString(program, actionProperty(entrypointDescriptor, 'role')) === 'action'
-  );
-};
-
 const isMatchingGeneratedAction = (actionContent: string, vertical: OntosVerticalMetadata, action: string): boolean => {
   const hasGeneratedActionPrefix =
     actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
     actionContent.startsWith(`${FORMATTED_ACTION_GENERATOR_PREFIX}${ACTION_GENERATOR_HEADER}\n`);
   return (
     hasGeneratedActionPrefix &&
-    actionContent.includes(`// @ontos-action-owner ${vertical.moduleId}\n`) &&
-    actionContent.includes(`// @ontos-action-slug ${action}\n`) &&
-    hasMatchingActionDescriptor(actionContent, vertical.moduleId, action)
+    [
+      `// @ontos-action-owner ${vertical.moduleId}\n`,
+      `// @ontos-action-slug ${action}\n`,
+      `actionKey: '${vertical.moduleId}.${action}',\n`,
+      `entrypoint: defineTenantModuleEntrypoint({\n`,
+      `      access: 'write',\n`,
+      `      entrypointKey: '${vertical.moduleId}.${action}',\n`,
+      `      moduleKey: '${vertical.moduleId}',\n`,
+      `      role: 'action',\n`,
+      `owningModuleKey: '${vertical.moduleId}',\n`,
+    ].every((fragment) => actionContent.includes(fragment))
   );
 };
 
@@ -655,7 +524,11 @@ const planCoreOutboxScaffold = (
   moduleKeyInput: string,
   action: string,
   topic: string,
-): Effect.Effect<ScaffoldPlan<OutboxScaffoldResult>, OutboxMessageScaffoldFailure, FileSystem.FileSystem> =>
+): Effect.Effect<
+  ScaffoldPlan<OutboxScaffoldResult>,
+  OutboxMessageScaffoldError | PlatformError.PlatformError | ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
   Effect.gen(function* planCoreOutboxScaffoldEffect() {
     const moduleKey = yield* fromLegacySync(() => requireCoreModuleKey(moduleKeyInput));
     const topicSlug = topicToSlug(topic);
@@ -721,7 +594,11 @@ const planCoreOutboxScaffold = (
 const planOutboxScaffold = (
   workspaceRoot: string,
   config: OutboxScaffoldConfig,
-): Effect.Effect<ScaffoldPlan<OutboxScaffoldResult>, OutboxMessageScaffoldFailure, FileSystem.FileSystem> =>
+): Effect.Effect<
+  ScaffoldPlan<OutboxScaffoldResult>,
+  OutboxMessageScaffoldError | PlatformError.PlatformError | ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
   Effect.gen(function* planOutboxScaffoldEffect() {
     const action = yield* fromLegacySync(() => requireCanonicalSlug(config.action, 'action'));
     const topic = yield* fromLegacySync(() => requireTopic(config.topic));
@@ -803,20 +680,4 @@ const planOutboxScaffold = (
     return { mutations, result: { contractPath, messagePath } };
   });
 
-/**
- * Read-only source planning for the existing business/Core Outbox Message generator.
- * Accepts the same OutboxScaffoldConfig as the default adapter and returns its validated
- * ScaffoldPlan<OutboxScaffoldResult>. The FileSystem requirement stays in the returned effect
- * and is satisfied by the caller's composition root: this program only reads generated metadata,
- * while rendered/formatted mutation contents stay in memory. No file or path is created,
- * formatted on disk, written, removed or applied, and a returned plan grants no authority to
- * materialize its mutations. The default Codesmith adapter below still applies that plan with
- * its original outer services.
- */
-export const planOutboxMessageScaffold = (
-  workspaceRoot: string,
-  config: OutboxScaffoldConfig,
-): Effect.Effect<ScaffoldPlan<OutboxScaffoldResult>, OutboxMessageScaffoldFailure, FileSystem.FileSystem> =>
-  planOutboxScaffold(workspaceRoot, config);
-
-export default createCodesmithGenerator(planOutboxMessageScaffold);
+export default createCodesmithGenerator(planOutboxScaffold);

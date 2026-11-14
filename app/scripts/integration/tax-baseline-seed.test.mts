@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Config, Context, Effect, Layer, Option, Schema } from 'effect';
+import { Config, Context, Effect, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -75,6 +75,7 @@ import { taxRegistration } from '../../verticals/tax/vertical.registration.ts';
 import {
   refused,
   runTaxBaseline,
+  TaxCallRefusalSchema,
   taxBaselineRights,
   toDeclareAnswer,
   toRegimeObservation,
@@ -88,6 +89,10 @@ import type {
 } from '../demo/seed-tax-baseline.mts';
 
 const TAX_MODULE = 'commerce.tax';
+/** A refused call whose refusal is "already committed" (the key's earlier write stands). */
+const AlreadyCommittedRefusalSchema = Schema.TaggedStruct('TaxCallRefused', {
+  refusal: TaxCallRefusalSchema.members[0],
+});
 const LocalHostSchema = Schema.Literals(['localhost', '127.0.0.1']);
 const services = Layer.mergeAll(NodeCrypto.layer, NodeServices.layer);
 const allowedPermission = { checkActionPermission: () => Effect.succeed('allowed' as const) };
@@ -519,36 +524,38 @@ it.layer(services, { excludeTestServices: true })('tax baseline seed on the loca
         // Re-sending the first run's writes under their keys answers "already committed" (created: false) from Core.
         for (const write of applied.plan.writes) {
           const port = test.companyPort(write.legalEntityId);
-          const resent =
-            write._tag === 'CreateRule'
-              ? port.createRule(
-                  {
-                    initialRevision: {
-                      compositionKind: 'EXCLUSIVE',
-                      effectiveFrom: write.effectiveFrom,
-                      jurisdiction: 'CZ_DOMESTIC',
-                      ratePercent: write.ratePercent,
-                      taxClassificationCode: write.classificationCode,
-                      treatmentCategory: 'TAXABLE',
-                    },
-                    meaningKind: 'VAT_RATE',
-                    provenanceRef: 'ontos-demo:tax-baseline:v1',
-                    reason: 'Výchozí sazba DPH ukázkových dat (sazby zákona o DPH od 1. 1. 2024)',
-                    stableCode: write.stableCode,
+          const resent = Match.valueTags(write, {
+            CreateRule: (rule) =>
+              port.createRule(
+                {
+                  initialRevision: {
+                    compositionKind: 'EXCLUSIVE',
+                    effectiveFrom: rule.effectiveFrom,
+                    jurisdiction: 'CZ_DOMESTIC',
+                    ratePercent: rule.ratePercent,
+                    taxClassificationCode: rule.classificationCode,
+                    treatmentCategory: 'TAXABLE',
                   },
-                  write.idempotencyKey,
-                )
-              : port.declareRegime(
-                  {
-                    effectiveFrom: write.effectiveFrom,
-                    expectedCurrentRevision: 0,
-                    reason: 'Výchozí stav ukázkových dat: plátce DPH od 1. 1. 2024',
-                    regime: write.regime,
-                  },
-                  write.idempotencyKey,
-                );
+                  meaningKind: 'VAT_RATE',
+                  provenanceRef: 'ontos-demo:tax-baseline:v1',
+                  reason: 'Výchozí sazba DPH ukázkových dat (sazby zákona o DPH od 1. 1. 2024)',
+                  stableCode: rule.stableCode,
+                },
+                rule.idempotencyKey,
+              ),
+            DeclareRegime: (regime) =>
+              port.declareRegime(
+                {
+                  effectiveFrom: regime.effectiveFrom,
+                  expectedCurrentRevision: 0,
+                  reason: 'Výchozí stav ukázkových dat: plátce DPH od 1. 1. 2024',
+                  regime: regime.regime,
+                },
+                regime.idempotencyKey,
+              ),
+          });
           const refusal = yield* resent.pipe(Effect.flip);
-          expect(refusal).toMatchObject({ _tag: 'TaxCallRefused', refusal: { _tag: 'AlreadyCommitted' } });
+          expect(Schema.is(AlreadyCommittedRefusalSchema)(refusal)).toBe(true);
         }
         expect({
           declarations: yield* test.count('tax_seller_vat_regime_declarations'),

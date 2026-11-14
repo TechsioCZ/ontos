@@ -4,14 +4,13 @@ import { expect, it } from 'effect-rstest';
 import { checkLintSuppressions, countLintSuppressions } from '../lint-suppression-ratchet.mts';
 
 const fixturePath = 'fixture.ts';
-const allRulesDirective = '/* oxlint-disable */';
 const source = [
   '// oxlint-disable-next-line sonarjs/no-duplicate-string -- fixture reason',
   "const first = 'a';",
   '/* eslint-disable effect-native/no-ambient-date, sonarjs/no-duplicate-string -- fixture reason */',
   "const directive = '// oxlint-disable-next-line effect-native/no-ambient-date';",
   '// A comment that mentions oxlint-disable later is not a directive.',
-  allRulesDirective,
+  '/* oxlint-disable */',
   '// oxlint-disable-next-line anti-slop/no-reflect-get effect-native/no-ambient-date -- whitespace-separated list',
   'void first;',
   'void directive;',
@@ -55,21 +54,13 @@ it.effect('fails when one disable is added', () =>
   }),
 );
 
-it.effect('accepts a removed disable without requiring a baseline rewrite', () =>
+it.effect('fails until the baseline is lowered after a disable is removed', () =>
   Effect.gen(function* removedSuppression() {
-    const current = countLintSuppressions([{ path: fixturePath, source: source.replace(allRulesDirective, '') }]);
+    const current = countLintSuppressions([{ path: fixturePath, source: source.replace('/* oxlint-disable */', '') }]);
     const result = yield* checkLintSuppressions(baseline, current).pipe(Effect.result);
-    expect(Result.isSuccess(result)).toBe(true);
-  }),
-);
-
-it.effect('still rejects an added rule when another rule has fewer suppressions', () =>
-  Effect.gen(function* mixedChanges() {
-    const reduced = countLintSuppressions([{ path: fixturePath, source: source.replace(allRulesDirective, '') }]);
-    const result = yield* checkLintSuppressions(baseline, { ...reduced, 'newly-disabled-rule': 1 }).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure.message).toContain('newly-disabled-rule 0 -> 1');
+      expect(result.failure.message).toMatch(/decreased: \* 1 -> 0\. Lower/u);
     }
   }),
 );

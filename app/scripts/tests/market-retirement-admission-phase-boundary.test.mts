@@ -4,17 +4,31 @@ import {
   ActiveApplicationCompositionService,
   InstalledModuleCatalogService,
   InstalledModuleCatalogServiceLive,
+  OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   scopedRoutineInvokerFromTransaction,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Redacted, Result, Schema } from 'effect';
+import {
+  Cause,
+  ConfigProvider,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { commerceCustomerContextRegistration } from '../../verticals/commerce-customer-context/vertical.registration.ts';
+import { MarketRetirementImpactAssessmentUnavailable } from '../../verticals/commerce-market-catalog/src/actions/market-retirement-impact-assessment-unavailable.ts';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
@@ -412,10 +426,10 @@ describe('Market retirement admission phase boundary', () => {
         compositionRevision: fixture.compositionRevision,
         legalEntityScope: 'subject',
       });
-      expect(delegated?.subject._tag).toBe('Assertion');
-      expect(delegated?.subject._tag === 'Assertion' ? Redacted.value(delegated.subject.sourceAssertion) : null).toBe(
-        'original-requester-assertion',
-      );
+      expect(Predicate.isTagged(delegated?.subject, 'Assertion')).toBe(true);
+      expect(
+        Predicate.isTagged(delegated?.subject, 'Assertion') ? Redacted.value(delegated.subject.sourceAssertion) : null,
+      ).toBe('original-requester-assertion');
       expect(assessmentRequests).toHaveLength(1);
       expect(assessmentRequests[0]?.authorization).toBe('Bearer delegated-original-requester-token');
       expect(assessmentRequests[0]?.correlation).toBe(requestCorrelation);
@@ -443,10 +457,8 @@ describe('Market retirement admission phase boundary', () => {
         const failure = yield* ownerServices(factory(transaction, candidate.scope, candidate.revision)).pipe(
           Effect.flip,
         );
-        expect(failure).toMatchObject({
-          _tag: 'OperationContextUnavailable',
-          reason: 'Prepared retirement basis belongs to another operation context',
-        });
+        expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason: 'Prepared retirement basis belongs to another operation context' });
       }
       expect(write.inserted).toEqual([]);
     }),
@@ -472,8 +484,8 @@ describe('Market retirement admission phase boundary', () => {
       expect(outcome.basisRead).toBe(false);
       expect(Result.isFailure(outcome.result)).toBe(true);
       if (Result.isFailure(outcome.result)) {
+        expect(Schema.is(MarketRetirementImpactAssessmentUnavailable)(outcome.result.failure)).toBe(true);
         expect(outcome.result.failure).toMatchObject({
-          _tag: 'MarketRetirementImpactAssessmentUnavailable',
           reason: 'The original retirement basis must be prepared before the owner transaction',
         });
       }

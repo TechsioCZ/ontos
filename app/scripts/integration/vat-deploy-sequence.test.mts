@@ -74,8 +74,10 @@ import {
   DateTime,
   Duration,
   Effect,
+  Exit,
   FileSystem,
   Layer,
+  Match,
   Option,
   Predicate,
   Redacted,
@@ -116,7 +118,7 @@ import {
   MerchandiseCommandPayloadSchema,
   StorefrontOrderResultSchema,
 } from '../../verticals/merchandise/shared/actions/apply-command.ts';
-import { recordsDeclaration } from '../../verticals/merchandise/shared/access-declarations.ts';
+import { recordsCarrier } from '../../verticals/merchandise/shared/access-declarations.ts';
 import { RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import type { RecordsRequestEncoded } from '../../verticals/merchandise/shared/apis/records.ts';
 import { ultramodernApiMarker as merchandiseMarker } from '../../verticals/merchandise/shared/ultramodern-build.ts';
@@ -365,13 +367,14 @@ const delegationHandler = (input: {
     const payload = yield* request.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)),
     );
-    if (payload.subject._tag !== 'Assertion' || payload.audience !== taxMarker.appId) {
+    const sourceAssertion = Match.value(payload.subject).pipe(
+      Match.tag('Assertion', (subject) => Option.some(subject.sourceAssertion)),
+      Match.orElse(() => Option.none()),
+    );
+    if (Option.isNone(sourceAssertion) || payload.audience !== taxMarker.appId) {
       return forbidden();
     }
-    const principal = yield* input.gateway.sourcePrincipal(
-      Redacted.value(payload.subject.sourceAssertion),
-      caller.module.appId,
-    );
+    const principal = yield* input.gateway.sourcePrincipal(Redacted.value(sourceAssertion.value), caller.module.appId);
     const installed = yield* input.admin.unsafe<{ readonly module_key: string }>(
       "select module_key from core.tenant_module_states where tenant_id = $1 and state = 'active'",
       [principal.tenantId],
@@ -719,7 +722,7 @@ const builtMerchandiseReadsTax = Effect.fn('VatDeploy.builtMerchandise')(functio
   expect(input.issued.slice(issuedBefore).length).toBeGreaterThan(0);
   expect(input.issued.slice(issuedBefore).every((app) => app === 'merchandise')).toBe(true);
   const records = yield* staffRead;
-  expect([records.sellerVatRegime, records.taxRatesSource]).toEqual(['VAT_PAYER', 'TAX']);
+  expect([records.sellerVatRegime, records.taxRatesSource]).toEqual([Option.some('VAT_PAYER'), Option.some('TAX')]);
   expect(records.taxRates?.map((rate) => [rate.code, rate.ratePercent])).toEqual([
     [STANDARD, 21],
     ['cz.vat.reduced', 12],
@@ -823,7 +826,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   yield* grantTestTenantRoleAccess({
     holders: [
       {
-        capabilityKeys: [...Object.values(taxBaselineRights), recordsDeclaration.key],
+        capabilityKeys: [...Object.values(taxBaselineRights), recordsCarrier.accessDeclaration.key],
         principalId: owner.principalId,
       },
     ],
@@ -876,9 +879,12 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
     );
     const order = Predicate.hasProperty(result, 'storefrontOrder') ? result.storefrontOrder : undefined;
     return {
-      order: Schema.encodeSync(Schema.UndefinedOr(StorefrontOrderResultSchema))(
-        Schema.decodeUnknownSync(Schema.UndefinedOr(StorefrontOrderResultSchema))(order),
-      ),
+      order:
+        order === undefined
+          ? undefined
+          : Schema.encodeSync(StorefrontOrderResultSchema)(
+              Schema.decodeUnknownSync(StorefrontOrderResultSchema)(order),
+            ),
       prepared,
     };
   });
@@ -949,7 +955,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   expect(report.modules.map(({ moduleKey, outcome }) => [moduleKey, outcome])).toEqual([[taxModuleKey, 'installed']]);
   expect(report.reconciles.map(({ failure }) => failure)).toEqual([undefined]);
   // Before the install the seed could not even read Tax for the company.
-  expect(seedBeforeInstall._tag).toBe('Failure');
+  expect(Exit.isFailure(seedBeforeInstall)).toBe(true);
   // Before the seed Finance's line is refused: the company has no declared regime in Tax.
   const line = { vatClassification: STANDARD, vatRate: 21 };
   expect(lineVatIssue(line, yield* financeChoices(today), OUTGOING)).toBe('vat_regime_not_declared');
@@ -982,7 +988,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
         .pipe(Effect.provide(native.layer), Effect.provideService(AccessDecisionGate, allowAll.accessDecision)),
     ),
   );
-  expect([synced.sellerVatRegime, synced.taxRatesSource]).toEqual(['VAT_PAYER', 'TAX']);
+  expect([synced.sellerVatRegime, synced.taxRatesSource]).toEqual([Option.some('VAT_PAYER'), Option.some('TAX')]);
   expect(synced.taxRates?.map((rate) => [rate.code, rate.ratePercent, DateTime.formatIso(rate.effectiveFrom)])).toEqual(
     [
       [STANDARD, 21, TAX_BASELINE_EFFECTIVE_FROM],

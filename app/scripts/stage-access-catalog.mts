@@ -17,7 +17,7 @@ import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/mod
 import {
   decodeCarrierActor,
   decodeTopologyCallerAppIds,
-  isAccessCatalogSourcePath,
+  isAccessCatalogContextSourcePath,
   ownerLocalImportTargets,
   scanAccessCatalogSource,
 } from './authorization-catalog.mts';
@@ -345,14 +345,12 @@ const readSources = (
     for (const segment of STAGE_ACCESS_CATALOG_ROOTS) {
       for (const file of yield* walk(path.join(root, segment))) {
         const relative = path.relative(root, file).replaceAll('\\', '/');
-        if (!isAccessCatalogSourcePath(relative)) {
+        if (!isAccessCatalogContextSourcePath(relative)) {
           continue;
         }
         const source = yield* fileSystem.readFileString(file, 'utf-8');
-        // The cheap prefilter the report uses keeps the scan off the bulk of the repository sources.
-        if (source.includes('entrypoint') || source.includes('accessDeclaration') || source.includes('accessActor')) {
-          sources.push({ file: relative, source });
-        }
+        // Mutation-only importers are custody evidence even when they declare no carrier themselves.
+        sources.push({ file: relative, source });
       }
     }
     return sources;

@@ -44,8 +44,6 @@ import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.t
 import type { CompanyVat, TaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import { DateTime, Effect, Option } from 'effect';
 
-type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
-
 /** A catalog CZK amount in the order's currency: market orders keep their own price list (as the server reprices). */
 const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number =>
   order.market === undefined ? czkMinor : convertGrossMinor(czkMinor, order.market);
@@ -206,7 +204,7 @@ const previewTotals = (
   shippingMethod: ShippingMethod | null,
   shippingPrice: number | null,
 ) => {
-  const input: Mutable<Parameters<typeof fullOrderTotals>[0]> = {
+  const totalsInput = {
     lines: parsedLines.flatMap(({ line, price, quantity }) =>
       price === null || quantity === null
         ? []
@@ -223,10 +221,11 @@ const previewTotals = (
     ),
     pricesIncludeVat: order.pricesIncludeVat,
   };
-  if (shippingMethod !== null && shippingPrice !== null) {
-    input.shipping = { label: '', method: shippingMethod, priceMinor: shippingPrice, vatRate: 21 };
-  }
-  return fullOrderTotals(input);
+  return fullOrderTotals(
+    shippingMethod !== null && shippingPrice !== null
+      ? { ...totalsInput, shipping: { label: '', method: shippingMethod, priceMinor: shippingPrice, vatRate: 21 } }
+      : totalsInput,
+  );
 };
 
 interface OrderEditFormProps {
@@ -432,7 +431,7 @@ const useOrderEditForm = ({
     );
     // A gross-priced order (storefront) takes the stored price including VAT, exactly as the server prices the line.
     const offered = moneyInputText(offerOf(unit) / 100);
-    const line: Mutable<DraftLine> = {
+    const added = {
       key: `new-${sequence.current}`,
       name: unit.name,
       offeredPriceText: offered,
@@ -442,13 +441,10 @@ const useOrderEditForm = ({
       sku: unit.sku,
       taxClassificationCode: unit.taxClassificationCode,
       vatRate: unit.vatRate,
-    };
-    if (unit.variantId !== undefined) {
-      line.variantId = unit.variantId;
-    }
-    if (unit.variantName !== undefined) {
-      line.variantName = unit.variantName;
-    }
+    } satisfies DraftLine;
+    const withVariant = unit.variantId === undefined ? added : { ...added, variantId: unit.variantId };
+    const line: DraftLine =
+      unit.variantName === undefined ? withVariant : { ...withVariant, variantName: unit.variantName };
     patch({ lines: [...draft.lines, line] });
     sequence.current += 1;
     clearPick();

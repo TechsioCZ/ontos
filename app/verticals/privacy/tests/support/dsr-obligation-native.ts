@@ -31,10 +31,11 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { Clock, Effect, Layer, Schema, Stream } from 'effect';
+import { Clock, Effect, Layer, Option, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Pool } from 'pg';
 import { HttpApi } from 'effect/http-api';
+import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { privacyManifest } from '../../vertical.manifest.ts';
@@ -86,6 +87,29 @@ export const readPrivacyFixtureShellObservation = Effect.fn('PrivacyTests.readSh
           : Effect.succeed({ packageName: entry.name, version: entry.requiredVersion }),
     );
     return { sharedSingletons, shellFederationDocument, shellRuntime, shellRuntimeDocument };
+  },
+);
+
+export const resolvePrivacyFixtureShellBuildIdentity = Effect.fn('PrivacyTests.resolveShellBuildIdentity')(
+  function* resolveShellBuildIdentity(release: { readonly buildMarker: string; readonly sourceRevision: string }) {
+    const { shellRuntime } = yield* readPrivacyFixtureShellObservation();
+    const expected = shellRuntime.deployment.buildMarker;
+    if (release.buildMarker === expected) {
+      return release;
+    }
+    if (release.sourceRevision !== 'workspace') {
+      return yield* compositionUnavailable('Published Shell runtime and source release identity differ');
+    }
+    const directory = new URL('../../../../apps/shell-super-app/', import.meta.url).pathname;
+    const compiled = yield* readCompiledNodeShellIdentity(directory).pipe(Effect.mapError(compositionUnavailable));
+    if (
+      Option.isNone(compiled) ||
+      compiled.value.sourceRevision !== release.sourceRevision ||
+      compiled.value.buildMarker !== expected
+    ) {
+      return yield* compositionUnavailable('Published Shell runtime does not match the compiled workspace identity');
+    }
+    return compiled.value;
   },
 );
 

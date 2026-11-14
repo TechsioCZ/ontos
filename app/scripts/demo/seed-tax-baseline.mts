@@ -49,7 +49,10 @@ import {
   ExplainAccessPayloadSchema,
   ExplainAccessResponseSchema,
 } from '../../apps/shell-super-app/shared/access-admin-api.ts';
-import { AvailableLegalEntitiesResponseSchema, SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
+import {
+  AvailableLegalEntitiesResponseSchema,
+  SignInPayloadSchema,
+} from '../../apps/shell-super-app/shared/browser-api.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 import { tenantServesPeople } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import type { CreateTaxRulePayload } from '../../verticals/tax/shared/actions/create-tax-rule.ts';

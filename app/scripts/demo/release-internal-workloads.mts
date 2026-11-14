@@ -22,9 +22,11 @@ import { Command, Flag } from 'effect/cli';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
+import { AccessWorkloadBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
+import { AccessWorkloadCompanyBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type { InternalWorkloadDeclaration } from '../../packages/core-runtime/src/install/internal-workload-plan.ts';
 import { registerReleaseInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import type { ReleaseInternalWorkloadTenantReport } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
@@ -87,9 +89,16 @@ const ReleaseRuntimeLive = Layer.unwrap(
     );
     const database = Layer.mergeAll(
       CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
-      makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
-    return Layer.mergeAll(database, AccessReleaseStoreLive.pipe(Layer.provide(database)));
+    return Layer.mergeAll(
+      database,
+      Layer.mergeAll(
+        AccessReleaseStoreLive,
+        AccessWorkloadBindingStoreLive,
+        AccessWorkloadCompanyBindingStoreLive,
+      ).pipe(Layer.provide(database)),
+    );
   }),
 );
 

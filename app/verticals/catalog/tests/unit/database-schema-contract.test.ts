@@ -87,7 +87,7 @@ import {
   variantLocalizedFacts,
 } from '../../src/database/schema.ts';
 
-it('owns eighty tenant-scoped Catalog tables plus the global gateway replay table, with RLS and immutable history', () => {
+it('owns eighty-one tenant-scoped Catalog tables plus the global gateway replay table, with RLS and immutable history', () => {
   const qualifiedNames = EffectArray.sort(
     CATALOG_TABLES.map((table) => {
       const config = getTableConfig(table);
@@ -113,6 +113,7 @@ it('owns eighty tenant-scoped Catalog tables plus the global gateway replay tabl
     'catalog_media_assignment_sets',
     'catalog_media_assignments',
     'catalog_result_snapshots',
+    'catalog_source_correlations',
     'commercial_gtin_assignment_revisions',
     'commercial_gtin_assignments',
     'commercial_sku_assignment_revisions',

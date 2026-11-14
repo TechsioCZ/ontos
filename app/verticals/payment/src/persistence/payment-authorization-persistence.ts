@@ -37,6 +37,7 @@ import { paymentAuthorizations } from '../database/schema.ts';
  * the satisfied condition. It never contains secrets or raw provider payloads.
  */
 const StoredProofEvidenceSchema = Schema.Struct({
+  commitmentAttemptEvidenceRef: PaymentAuthorizationProofSchema.fields.commitmentAttemptEvidenceRef,
   condition: PaymentAuthorizationConditionSchema,
   executionBinding: PaymentExecutionBindingSchema,
   orderCommitmentTime: PaymentAuthorizationBindingSchema.fields.orderCommitmentTime,
@@ -45,6 +46,7 @@ const StoredProofEvidenceSchema = Schema.Struct({
 
 export interface NewPaymentAuthorizationInput {
   readonly binding: PaymentAuthorizationBinding;
+  readonly commitmentAttemptEvidenceRef: string;
   readonly condition: PaymentAuthorizationCondition;
   readonly coverageRevision: number | undefined;
   readonly expiresAt: DateTime.Utc;
@@ -104,6 +106,10 @@ export const paymentAuthorizationProofOfRow = Effect.fn('PaymentAuthorizationPer
       row.paymentTermRef,
     );
     const coverage = row.coverageRevision === null ? {} : { coverageRevision: row.coverageRevision };
+    const attempt =
+      evidence.commitmentAttemptEvidenceRef === undefined
+        ? {}
+        : { commitmentAttemptEvidenceRef: evidence.commitmentAttemptEvidenceRef };
     return yield* Schema.decodeUnknownEffect(PaymentAuthorizationProofSchema)({
       authorizationId: row.authorizationId,
       binding: {
@@ -116,6 +122,7 @@ export const paymentAuthorizationProofOfRow = Effect.fn('PaymentAuthorizationPer
         paymentTermRef,
         purchaseCorrelationId: row.purchaseCorrelationId,
       },
+      ...attempt,
       condition: evidence.condition,
       ...coverage,
       expiresAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.expiresAt)),
@@ -195,6 +202,7 @@ export const paymentAuthorizationPersistenceForTransaction = (
     const [evidence, paymentTermRef] = yield* Effect.all(
       [
         Schema.encodeEffect(Schema.toCodecJson(StoredProofEvidenceSchema))({
+          commitmentAttemptEvidenceRef: input.commitmentAttemptEvidenceRef,
           condition: input.condition,
           executionBinding: input.binding.executionBinding,
           orderCommitmentTime: input.binding.orderCommitmentTime,

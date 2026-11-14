@@ -1,4 +1,4 @@
-import { DateTime, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 
 /**
  * The Czech VAT classifications a selling company's goods carry. The tax module holds the rate of each one as a
@@ -27,8 +27,8 @@ export const TaxRateViewSchema = Schema.Struct({
 export type TaxRateView = typeof TaxRateViewSchema.Type;
 export type TaxRateViewEncoded = typeof TaxRateViewSchema.Encoded;
 
-/** The VAT regime of the selling company in Tax; `null` when none is declared. */
-export const SellerVatRegimeSchema = Schema.NullOr(Schema.Literals(['VAT_PAYER', 'NON_PAYER']));
+/** The VAT regime of the selling company in Tax; `None` (`null` on the wire) when none is declared. */
+export const SellerVatRegimeSchema = Schema.OptionFromNullOr(Schema.Literals(['VAT_PAYER', 'NON_PAYER']));
 export type SellerVatRegime = typeof SellerVatRegimeSchema.Type;
 
 /** What a staff read carries about the selling company's VAT: its regime and its dated rates. */
@@ -47,10 +47,11 @@ export const vatRateAt = (
   code: CzVatClassificationCode | undefined,
   at: DateTime.Utc,
 ): number | undefined => {
-  if (seller.sellerVatRegime === 'NON_PAYER') {
+  const regime = Option.getOrUndefined(seller.sellerVatRegime ?? Option.none());
+  if (regime === 'NON_PAYER') {
     return 0;
   }
-  if (seller.sellerVatRegime !== 'VAT_PAYER' || code === undefined) {
+  if (regime !== 'VAT_PAYER' || code === undefined) {
     return undefined;
   }
   const rate = (seller.taxRates ?? []).find(

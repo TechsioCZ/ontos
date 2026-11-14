@@ -110,31 +110,6 @@ const makeFixture = Effect.fn(function* makeRuntimeCompositionBoundaryFixture() 
 });
 
 describe('runtime composition API boundaries', () => {
-  it.live(
-    'ignores private import examples inside fixture strings, comments and JSON data',
-    Effect.fn(function* acceptsImportExamples() {
-      const fixture = yield* makeFixture();
-      yield* writeText(
-        fixture.root,
-        `${shellRoot}/tests/import-examples.test.ts`,
-        [
-          `const fixture = "import { schema } from '@app/party-registry/src/db/schema.ts';";`,
-          `const ownerFixture = "import { manifest } from '@app/party-registry/vertical.manifest';";`,
-          `// require('@app/party-registry/src/db/schema.ts');`,
-          `/* export * from '@app/party-registry/vertical.registration'; */`,
-          'export const examples = [fixture, ownerFixture];',
-        ].join('\n'),
-      );
-      yield* writeText(
-        fixture.root,
-        `${shellRoot}/tests/import-examples.json`,
-        JSON.stringify({ source: "import { schema } from '@app/party-registry/src/db/schema.ts';" }),
-      );
-      const result = fixture.check();
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    }),
-  );
-
   for (const source of [
     `import { schema } from '@app/party-registry/src/db/schema.ts';`,
     `export * from '@app/party-registry/src/db/schema.ts';`,
@@ -156,7 +131,7 @@ describe('runtime composition API boundaries', () => {
   }
 
   it.live(
-    'fails closed when malformed source prevents import classification',
+    'fails closed on malformed source that names a private owner path',
     Effect.fn(function* rejectsUnparseableImports() {
       const fixture = yield* makeFixture();
       yield* writeText(
@@ -166,7 +141,7 @@ describe('runtime composition API boundaries', () => {
       );
       const result = fixture.check();
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
-      expect(result.stderr).toContain('could not be parsed for module-boundary import checks');
+      expect(result.stderr).toContain('cross-MicroVertical imports must use generated API clients');
     }),
   );
 

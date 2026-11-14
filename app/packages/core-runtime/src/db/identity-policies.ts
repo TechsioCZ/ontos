@@ -351,7 +351,7 @@ const sharedSearchPolicies = (
 };
 
 /** Builds migration-only policies; neither enrollment nor the stable runtime tables are mutated. */
-export const makeCoreIdentityPolicies = (
+export const coreIdentityPolicyDescriptors = (
   enrollment: DatabaseIdentityEnrollment,
 ): readonly CoreIdentityPolicyDescriptor[] => {
   const validated = defineDatabaseIdentityEnrollment(enrollment.owners);

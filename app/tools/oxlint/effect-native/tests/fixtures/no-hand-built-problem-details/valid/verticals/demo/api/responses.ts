@@ -1,4 +1,4 @@
-import { HttpServerResponse } from 'effect/http';
+import { HttpServerResponse } from 'effect/unstable/http';
 
 declare const body: string;
 declare const error: { readonly message: string };

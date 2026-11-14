@@ -2,13 +2,14 @@ import { Schema } from 'effect';
 
 import { PaymentLegalEntityIdSchema, PaymentTenantIdSchema } from '../../shared/domain/payment-identifiers.ts';
 
-/** The six cross-owner evidence ports (DESIGN §6). */
+/** Cross-owner evidence used by Payment operations. */
 export const PAYMENT_OWNER_PORTS = [
   'PAYMENT_TERM_EVIDENCE',
   'GATEWAY_BINDING',
   'DELIVERY_CAPABILITY',
   'PICKUP_CAPABILITY',
   'COMMITMENT_OUTCOME',
+  'COMMITMENT_ATTEMPT',
   'REFUNDABLE_ITEMS',
 ] as const;
 export const PaymentOwnerPortSchema = Schema.Literals(PAYMENT_OWNER_PORTS);

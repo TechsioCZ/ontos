@@ -1,4 +1,6 @@
 export { withPostgresSessionAdvisoryLock } from './db/session-advisory-lock.ts';
+export { readScopedCurrentActionInvocation } from './actions/current-invocation.ts';
+export type { ScopedCurrentActionInvocationFact } from './actions/current-invocation.ts';
 export {
   ACTION_PROVISIONING_INTENTS,
   ActionExecutionAuthorizationSchema,
@@ -154,9 +156,12 @@ export type {
 export {
   SystemPrincipalContextDeniedError,
   SystemPrincipalContextInvalidError,
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
   SystemPrincipalContextUnavailableError,
   makeSystemPrincipalContextResolver,
   registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
 } from './auth/system-principal-context.ts';
 export {
   SupportRecoveryPrincipalContextDeniedError,
@@ -296,6 +301,9 @@ export type {
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
 export { openDatabaseClient } from './db/database-client.ts';
+// Owner-local agent history pages are built through Core's public entry, never a Core `db/` subpath.
+export { agentHistoryPageSql } from './db/agent-history-page.ts';
+export type { AgentHistoryPageRequest } from './db/agent-history-page.ts';
 export { verifySessionRoleOnFirstUse } from './db/session-identity.ts';
 export { databaseRuntime } from '#database-runtime';
 export type { DatabaseConnectionPair } from './db/config.ts';
@@ -708,8 +716,8 @@ export type {
   ReadOwnerTransaction,
   ReadPrepareContext,
 } from './reads/context.ts';
-export { IoInsideDatabaseTransaction } from './db/transaction-io-guard.ts';
-export type { TransactionIo } from './db/transaction-io-guard.ts';
+export { IoInsideDatabaseTransaction, declaredEvidenceCallInsideTransaction } from './db/transaction-io-guard.ts';
+export type { DeclaredEvidenceCall, TransactionIo } from './db/transaction-io-guard.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
@@ -1061,6 +1069,16 @@ export {
 } from './modules/manifest.ts';
 export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
 export {
+  OntosRegisteredWorkloadCallSchema,
+  OntosRegisteredWorkloadCallsSchema,
+  registeredWorkloadCallReceiverIssue,
+} from './modules/registered-workload-calls.ts';
+export type {
+  OntosRegisteredWorkloadCall,
+  OntosRegisteredWorkloadCallInput,
+  RegisteredWorkloadCallReceiver,
+} from './modules/registered-workload-calls.ts';
+export {
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosMcpCommandActionsSchema,
   OntosMcpContributionSchema,
@@ -1378,6 +1396,35 @@ export { MediaStoreUnavailable } from './media/media-store-unavailable.ts';
 export { MediaUploadRejected } from './media/media-upload-rejected.ts';
 
 export { ModuleOperationRequirementError } from './modules/module-operation-requirement-error.ts';
-export { requireModuleOperation } from './modules/module-operation-requirement.ts';
+export { requireModuleOperation, readModuleOperationRequirement } from './modules/module-operation-requirement.ts';
+export type { ModuleOperationRequirementFact } from './modules/module-operation-requirement.ts';
 
 export type { ActionPostAttemptHook, ActionPostAttemptOutcome, ActionPostAttemptResult } from './actions/definition.ts';
+
+export { readWorkerModuleOperationRequirement } from './modules/module-operation-requirement.ts';
+export type { WorkerModuleOperationRequirementFact } from './modules/module-operation-requirement.ts';
+
+export {
+  RegisteredGatewayPrivacyDispatchSchema,
+  PrivacyDispatchOperationSchema,
+  readVerifiedGatewayPrivacyDispatch,
+} from './auth/system-principal-context-provenance.ts';
+export type {
+  RegisteredGatewayPrivacyDispatch,
+  PrivacyDispatchOperation,
+} from './auth/system-principal-context-provenance.ts';
+
+export { readWorkerExecutionContext } from './modules/module-operation-execution.ts';
+export type { WorkerExecutionContextFact } from './modules/module-operation-execution.ts';
+
+export {
+  RegisteredGatewayOrganizationGovernanceReadSchema,
+  readVerifiedGatewayOrganizationGovernanceRead,
+} from './auth/system-principal-context-provenance.ts';
+export type { RegisteredGatewayOrganizationGovernanceRead } from './auth/system-principal-context-provenance.ts';
+
+export {
+  RegisteredGatewayOrganizationProcessingReadSchema,
+  readVerifiedGatewayOrganizationProcessingRead,
+} from './auth/system-principal-context-provenance.ts';
+export type { RegisteredGatewayOrganizationProcessingRead } from './auth/system-principal-context-provenance.ts';

@@ -95,11 +95,9 @@ import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import {
   commerceMarketCatalogActionRuntimeDependenciesLive,
-  MarketRetirementActionRuntimeLive,
+  commerceMarketCatalogApiRuntimeFromContext,
   MarketRetirementRuntimeBindings,
 } from '../../api/index.ts';
-import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
-import { commerceMarketCatalogApiRuntimeFromContext } from './market-http-runtime-from-context.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
@@ -717,22 +715,6 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       ReadRuntime,
     );
     const crypto = yield* Crypto.Crypto;
-    const actionContext = yield* Layer.build(
-      MarketRetirementActionRuntimeLive.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(MarketRetirementRuntimeBindings, {
-              base,
-              coreFactory,
-              crypto,
-              readRuntime,
-              scopeResolver: Context.get(dependencies, OperationalScopeResolver),
-            }),
-            MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer)),
-          ),
-        ),
-      ),
-    );
     const searchContext = yield* Layer.build(
       CoreSearchQueryRuntimeLive.pipe(
         Layer.provide(CoreSearchProjectionStoreLive),
@@ -742,7 +724,13 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
     );
     const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
       Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(ActionRuntime, Context.get(actionContext, ActionRuntime)),
+      Effect.provideService(MarketRetirementRuntimeBindings, {
+        base,
+        coreFactory,
+        crypto,
+        readRuntime,
+        scopeResolver: Context.get(dependencies, OperationalScopeResolver),
+      }),
       Effect.provideService(OwnerActionApprovals, Context.get(ownerApprovalsContext, OwnerActionApprovals)),
       Effect.provideService(AccessDecisionGate, Context.get(accessEnforcementContext, AccessDecisionGate)),
       Effect.provideService(CoreSearchQueryRuntime, Context.get(searchContext, CoreSearchQueryRuntime)),

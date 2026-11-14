@@ -10,9 +10,26 @@ import {
 import type { PaymentReconciliationDebtRequest } from '../../shared/apis/payment-reconciliation-debt.ts';
 import type { PaymentOpenOperationView } from '../../shared/domain/evidence-contract.ts';
 import type { PaymentReconciliationDebtView } from '../../shared/domain/evidence-history.ts';
+import { computePaymentFunds, PaymentFundsLedger } from '../domain/coverage.ts';
 import { openOperationView, reconciliationCaseView } from '../domain/evidence-views.ts';
-import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
+import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
+import type { PaymentAggregatePersistence } from '../persistence/payment-aggregate-persistence.ts';
+import {
+  PAYMENT_EVIDENCE_PROJECTION_LIMIT,
+  paymentEvidencePersistenceForTransaction,
+} from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidencePersistence } from '../persistence/payment-evidence-persistence.ts';
+import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
+import type { PaymentLifecyclePersistence } from '../persistence/payment-lifecycle-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+import type { PaymentRefundPersistence } from '../persistence/payment-refund-persistence.ts';
+
+interface PaymentReconciliationDebtServices {
+  readonly aggregate: Pick<PaymentAggregatePersistence, 'loadAggregate'>;
+  readonly evidence: Pick<PaymentEvidencePersistence, 'listOpenCases' | 'listOpenOperations'>;
+  readonly lifecycle: Pick<PaymentLifecyclePersistence, 'listFundsConsistencyCandidateIds'>;
+  readonly refunds: Pick<PaymentRefundPersistence, 'selectFunds'>;
+}
 
 const paymentReconciliationDebtEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -33,18 +50,37 @@ const unavailable = (cause: unknown) => {
 
 /**
  * Current unresolved Payment reconciliation state (#1151): open cases (held, ambiguous or conflicting
- * evidence and operations) and INDETERMINATE/CONFLICT operations as debt. PENDING operations are listed
- * separately as business waiting: waiting for a bank receipt is neither debt nor a running task.
+ * evidence and operations), INDETERMINATE/CONFLICT operations, and inconsistent funds as debt.
+ * PENDING operations are listed separately as business waiting for qualified evidence.
  */
 export const readPaymentReconciliationDebt = Effect.fn('PaymentReconciliationDebtRead.read')(
   function* readPaymentReconciliationDebt(
     input: PaymentReconciliationDebtRequest,
-    services: PaymentEvidencePersistence,
+    services: PaymentReconciliationDebtServices,
   ) {
-    const [cases, operations] = yield* Effect.all(
-      [services.listOpenCases(input.paymentId), services.listOpenOperations(input.paymentId)],
+    const [cases, operations, candidates] = yield* Effect.all(
+      [
+        services.evidence.listOpenCases(input.paymentId),
+        services.evidence.listOpenOperations(input.paymentId),
+        services.lifecycle.listFundsConsistencyCandidateIds(input.paymentId, PAYMENT_EVIDENCE_PROJECTION_LIMIT + 1),
+      ],
       { concurrency: 1 },
     ).pipe(Effect.mapError(unavailable));
+    const candidateHolds = yield* Effect.forEach(
+      candidates.slice(0, PAYMENT_EVIDENCE_PROJECTION_LIMIT),
+      (paymentId) =>
+        services.aggregate.loadAggregate(paymentId, { lock: false }).pipe(
+          Effect.flatMap(services.refunds.selectFunds),
+          Effect.map(({ snapshot }) => {
+            const funds = computePaymentFunds(snapshot);
+            return PaymentFundsLedger.$is('Held')(funds) && funds.reason === 'INCONSISTENT_EVIDENCE'
+              ? [{ paymentId, reason: funds.reason }]
+              : [];
+          }),
+          Effect.mapError(unavailable),
+        ),
+      { concurrency: 1 },
+    );
     const awaitingEvidence: PaymentOpenOperationView[] = [];
     const unresolvedOperations: PaymentOpenOperationView[] = [];
     for (const operation of operations.rows) {
@@ -52,9 +88,10 @@ export const readPaymentReconciliationDebt = Effect.fn('PaymentReconciliationDeb
     }
     const result: PaymentReconciliationDebtView = {
       awaitingEvidence,
+      fundsHolds: candidateHolds.flat(),
       observedAt: yield* DateTime.now,
       openCases: cases.rows.map(reconciliationCaseView),
-      truncated: cases.truncated || operations.truncated,
+      truncated: cases.truncated || operations.truncated || candidates.length > PAYMENT_EVIDENCE_PROJECTION_LIMIT,
       unresolvedOperations,
     };
     return result;
@@ -85,14 +122,24 @@ export const paymentReconciliationDebtRead = defineRead(
     resultSchema: PaymentReconciliationDebtResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<PaymentEvidencePersistence>) =>
+  (input, context: ReadHandlerContext<PaymentReconciliationDebtServices>) =>
     readPaymentReconciliationDebt(input, context.services).pipe(
       Effect.map((result) => ({
         evidence: {
-          resultCount: result.openCases.length + result.unresolvedOperations.length + result.awaitingEvidence.length,
+          resultCount:
+            result.openCases.length +
+            result.unresolvedOperations.length +
+            result.awaitingEvidence.length +
+            result.fundsHolds.length,
         },
         result,
       })),
     ),
-  (transaction) => Effect.succeed(paymentEvidencePersistenceForTransaction(transaction)),
+  (transaction) =>
+    Effect.succeed<PaymentReconciliationDebtServices>({
+      aggregate: paymentAggregatePersistenceForTransaction(transaction),
+      evidence: paymentEvidencePersistenceForTransaction(transaction),
+      lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+      refunds: paymentRefundPersistenceForTransaction(transaction),
+    }),
 );

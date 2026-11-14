@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessTeamId, AuthorityCell, ResolvedAgentConnection } from '../../src/access/decision/authority.ts';
@@ -601,7 +601,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('access decision eng
       expect(answers.every(({ permissionship }) => permissionship === 'none')).toBe(true);
       // The same batch in one request is what SpiceDB refuses (more than 10,000 checks).
       const whole = yield* rpc.checkBulkPermissions(toCheckBulkRequest(batch)).pipe(Effect.flip);
-      expect(whole._tag).toBe('SpiceDbRpcError');
+      expect(Predicate.isTagged(whole, 'SpiceDbRpcError')).toBe(true);
     }).pipe(Effect.scoped),
   );
 });

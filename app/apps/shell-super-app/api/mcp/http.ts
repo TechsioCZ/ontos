@@ -12,13 +12,17 @@ import { HttpServerResponse } from 'effect/http';
 import type { DescriptionTiming } from './describe-timing.ts';
 import type { ToolSpec } from './types.ts';
 
+/** Bounds the one-time local load of the MCP SDK and server factory, as Core bounds its lazy health module. */
+const MCP_RUNTIME_LOAD_TIMEOUT = '30 seconds';
 /**
  * The MCP SDK and the server factory. Only an authenticated MCP request evaluates them (gateway, metadata, preflight,
  * landing-page and rejected requests do not need that runtime), or, under a Node process host, its boot warm-up first.
  * This is local module loading, not external I/O; its Promise stays at the Effect adapter boundary.
  */
 const loadMcpRuntime = Effect.suspend(() =>
-  Effect.promise(Fn.constant(Promise.all([import('@modelcontextprotocol/server'), import('./server-factory.ts')]))),
+  Effect.promise(
+    Fn.constant(Promise.all([import('@modelcontextprotocol/server'), import('./server-factory.ts')])),
+  ).pipe(Effect.timeout(MCP_RUNTIME_LOAD_TIMEOUT), Effect.orDie),
 );
 registerBootWarmUpImport(Effect.asVoid(loadMcpRuntime));
 

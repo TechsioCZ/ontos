@@ -3,7 +3,7 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
-import { readFinance } from '../../../../api/finance-reads.ts';
+import { readFinance } from '../../../../ui/finance-reads.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { usePurchasingT } from './purchasing-model.ts';

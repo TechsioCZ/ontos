@@ -17,6 +17,7 @@ import {
   CoreSearchProjectionStore,
   CoreSearchQueryRuntime,
   CoreSearchWorkerSnapshot,
+  ReadPermissionDenied,
   TrustedPrincipalContextSchema,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
@@ -960,7 +961,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
             ],
           },
         });
-        expect(denied.exit).toMatchObject({ _tag: 'Success' });
+        expect(Exit.isSuccess(denied.exit)).toBe(true);
         if (Exit.isSuccess(denied.exit)) {
           expect(denied.exit.value).toEqual([]);
         }
@@ -1202,7 +1203,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed search publication fence', (sui
               },
             },
           );
-          expect(denied.exit).toMatchObject({ _tag: 'Success' });
+          expect(Exit.isSuccess(denied.exit)).toBe(true);
           if (Exit.isSuccess(denied.exit)) {
             expect(denied.exit.value).toEqual([]);
           }
@@ -1316,7 +1317,7 @@ it.effect('both real search providers preserve AND/OR target intersections and r
 );
 it.effect('missing or malformed canonical search predicates never become all-in-scope', () =>
   Effect.gen(function* missingPredicate() {
-    expect(yield* prepareSearchPredicate().pipe(Effect.flip)).toMatchObject({ _tag: 'ReadPermissionDenied' });
+    expect(yield* prepareSearchPredicate().pipe(Effect.flip)).toBeInstanceOf(ReadPermissionDenied);
     expect(validSearchPredicate({ groups: [{ clauses: [] }] })).toBe(false);
     expect(validSearchPredicate({ groups: [{ clauses: [{ conditions: [] }] }] })).toBe(false);
     expect(validSearchPredicate({ groups: [{ clauses: [{ conditions: [{ _tag: 'Unsupported' }] }] }] })).toBe(false);

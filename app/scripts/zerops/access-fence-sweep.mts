@@ -1,13 +1,15 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Clock, Console, Context, Duration, Effect, Layer } from 'effect';
+import { Clock, Console, Context, Duration, Effect, Layer, Ref } from 'effect';
 
 import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import {
   ACCESS_FENCE_SWEEP_INTERVAL,
-  makeAccessFenceSweepBackoffs,
   sweepLapsedAccessFences,
 } from '../../packages/core-runtime/src/access/lifecycle/fence-sweeper.ts';
-import type { AccessFenceSweepReport } from '../../packages/core-runtime/src/access/lifecycle/fence-sweeper.ts';
+import type {
+  AccessFenceSweepReport,
+  Backoff,
+} from '../../packages/core-runtime/src/access/lifecycle/fence-sweeper.ts';
 import { CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfigLive } from '../../packages/core-runtime/src/db/config.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
@@ -96,7 +98,8 @@ const reportFailure = (message: string) =>
 export const startAccessFenceSweep = () =>
   Effect.gen(function* runAccessFenceSweeps() {
     const context = yield* Layer.build(AccessFenceSweepLive);
-    const backoffs = yield* makeAccessFenceSweepBackoffs;
+    // The host's own backoff record: empty at start, kept for the life of the loop.
+    const backoffs = yield* Ref.make<ReadonlyMap<string, Backoff>>(new Map());
     const delay = yield* AccessFenceSweepDelay;
     let tick = 0;
     for (;;) {

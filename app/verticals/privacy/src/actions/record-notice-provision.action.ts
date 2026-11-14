@@ -3,10 +3,10 @@
 // @ontos-action-slug record-notice-provision
 import type {
   ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreparationContext,
   DataAccessEventInput,
   OperationalScope,
-  ActionServicePreparationContext,
-  ActionServiceFactory,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
@@ -218,9 +218,9 @@ const preparedNoticeFailure = (cause: unknown) =>
 const noticeProvisionServicesWithPreparation = Effect.fn('RecordNoticeProvision.services')(
   function* noticeProvisionServices(
     transaction: ScopedTransactionExecutor,
-    input: { readonly prepared?: PreparedNoticeProvision; readonly scope: OperationalScope },
+    scope: OperationalScope,
+    prepared?: PreparedNoticeProvision,
   ) {
-    const { prepared, scope } = input;
     const preparationReads = prepared?.admission.readEvidence ?? [];
     const authority = yield* NoticeChannelDeliveryAuthority;
     const repository = yield* noticeProvisionRepositoryForScope(transaction, scope);
@@ -319,7 +319,7 @@ const noticeProvisionServicesWithPreparation = Effect.fn('RecordNoticeProvision.
   },
 );
 const noticeProvisionServicesForScope = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
-  noticeProvisionServicesWithPreparation(transaction, { scope });
+  noticeProvisionServicesWithPreparation(transaction, scope);
 
 const preparedProvisionFactory = (
   prepared: PreparedNoticeProvision,
@@ -331,7 +331,7 @@ const preparedProvisionFactory = (
         reason: 'Prepared Notice provision belongs to another composition or scope',
       });
     }
-    return yield* noticeProvisionServicesWithPreparation(transaction, { prepared, scope });
+    return yield* noticeProvisionServicesWithPreparation(transaction, scope, prepared);
   });
 
 const prepareNoticeProvisionServices = Effect.fn('RecordNoticeProvision.prepareServices')(function* prepareServices(

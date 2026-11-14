@@ -12,7 +12,8 @@ import { assert, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from '../../api/modules/shell-document-home.ts';
 import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ResolvedModuleTargetSchema, ShellCompositionSchema } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema, ShellCompositionSchema } from '../../shared/browser-api.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 const decodedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -78,7 +79,9 @@ const runRead = rstest.fn((_request: CoreReadRequest) =>
 );
 const loadHome = (overrides: Partial<typeof composition> = {}) =>
   resolveDocumentHome({ canManagePeople: false, composition: { ...composition, ...overrides }, principal }).pipe(
-    Effect.provide(Layer.mock(ShellGovernedReads, { moduleTarget })),
+    Effect.provide(
+      Layer.mock(ShellGovernedReads, { moduleTarget, tenantModuleTargetCarrier: tenantModuleTargetTestCarrier }),
+    ),
     Effect.provide(Layer.mock(ReadRuntime, { runRead })),
     Effect.provideService(DocumentHomeCorrelationId, 'home-correlation'),
   );

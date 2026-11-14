@@ -1,11 +1,11 @@
 import { administersOAuthConnections, decodeAccessDeclarationOrThrow, peopleDirectoryRead } from '@app/core-runtime';
 import type { AccessDeclaration, OperationalScope, TrustedPrincipalContext } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import type { GateCarrier } from '@app/core-runtime/access/enforcement';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { DateTime, Effect } from 'effect';
 
 import { routeMeta as agentsRouteMeta } from '../../src/routes/[lang]/access/agents/route.meta.ts';
-import { TENANT_MODULE_TARGET_ACCESS_DECLARATION } from '../modules/shell-governed-reads.ts';
 import { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 
 /*
@@ -86,13 +86,14 @@ export const connectedAppsAdministration = Effect.fn('AdministrationAccess.conne
 
 /**
  * Whether the caller gets the tenant release hint. It serves only tenant-context page dispatch, so it goes to exactly
- * the people that dispatch admits: `core.shell.tenant-module-target.resolve`, asked in the tenant context (O28).
+ * the people that dispatch admits: the dispatch Read's own carrier (`core.shell.tenant-module-target.resolve`, which
+ * production takes from the registered Read's descriptor), asked in the tenant context (O28).
  */
 export const tenantReleaseHintAdmitted = Effect.fn('AdministrationAccess.tenantReleaseHint')(
-  function* tenantReleaseHintAdmitted(scope: OperationalScope) {
+  function* tenantReleaseHintAdmitted(tenantModuleTargetCarrier: GateCarrier, scope: OperationalScope) {
     const gate = yield* AccessDecisionGate;
     const decision = yield* gate.decide({
-      carrier: { accessDeclaration: TENANT_MODULE_TARGET_ACCESS_DECLARATION },
+      carrier: tenantModuleTargetCarrier,
       legalEntityScope: 'optional',
       now: yield* DateTime.nowAsDate,
       scope,

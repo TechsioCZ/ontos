@@ -7,7 +7,7 @@ import { Clock, Config, Console, Data, Duration, Effect, Layer, Redacted, Ref, S
 
 import { Command, Flag } from 'effect/cli';
 
-import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
+import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/browser-api.ts';
 import { DOCUMENT_ACCEPTANCE_MS } from './stage-demo-verify.mjs';
 
 /** @typedef {{id: string, path: string, persona: string, primaryText?: readonly string[], route: string, surface: string}} ReadinessRow */

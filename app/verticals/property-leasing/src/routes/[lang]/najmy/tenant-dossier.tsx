@@ -8,7 +8,7 @@ import {
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -27,8 +27,6 @@ import { TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
 import { contactCountLabel } from './contact-count.ts';
 import { DossierCommunication } from './dossier-communication.tsx';
 import type { DossierLog } from './dossier-communication.tsx';
-import { NewCounterpartyForm } from './new-counterparty-form.tsx';
-import type { NewCounterpartyInput } from './new-counterparty-form.tsx';
 import {
   caseChangesOf,
   caseDraftOf,
@@ -65,7 +63,6 @@ const fold = (value: string) =>
     .replaceAll(/\p{Diacritic}/gu, '')
     .toLowerCase();
 export type { DossierChanges } from './leasing-save.ts';
-export type { NewCounterpartyInput } from './new-counterparty-form.tsx';
 
 /** The Save button of a dossier section: one save against the revision its draft builds on. */
 export type DossierSave = (
@@ -568,40 +565,25 @@ const relationshipLabel = (
 };
 
 export const TenantDirectory = ({
-  busy,
-  canCreate,
-  createError,
   directory,
   language,
-  onCreate,
   snapshot,
   unitName,
 }: {
-  readonly busy: boolean;
-  readonly canCreate: boolean;
-  readonly createError: string | undefined;
   readonly directory: readonly TenantDirectoryEntry[];
   readonly language: string;
-  /** Creates the counterparty once; the page opens it after a save. */
-  readonly onCreate: (input: NewCounterpartyInput) => Effect.Effect<SaveOutcome>;
   readonly snapshot: RecordsResponse;
   readonly unitName: (id: string) => string;
 }) => {
   const { t } = useModernI18n();
   const [query, setQuery] = useState('');
   const [archived, setArchived] = useState(false);
-  const [creating, setCreating] = useState(false);
   const leasesOf = (counterpartyId: string): readonly Occupancy[] =>
     snapshot.occupancies.filter((record) => record.customerCounterpartyRef?.resourceId === counterpartyId);
   const dossierOf = (counterpartyId: string) =>
     snapshot.tenantDossiers?.find((item) => item.counterpartyId === counterpartyId);
   // Every counterparty of the company: tenants, prospects with a dossier and firms entered in the registry.
   const dossierHref = (id: string) => `/${language}/najmy?counterpartyId=${id}#tenant`;
-  const existingHref = (name: string) => {
-    const wanted = fold(name.trim());
-    const match = directory.find((entry) => entry.status === 'ACTIVE' && fold(entry.displayName ?? '') === wanted);
-    return wanted === '' || match === undefined ? undefined : dossierHref(match.counterpartyRef.resourceId);
-  };
   const visible = directory.filter((entry) => {
     const dossier = dossierOf(entry.counterpartyRef.resourceId);
     return (
@@ -621,36 +603,17 @@ export const TenantDirectory = ({
     <section className="sp-tenant" id="tenants">
       <SectionCard
         actions={
-          <div className="sp-tenant-actions">
-            {canCreate && !creating && (
-              <Button disabled={busy} onClick={() => setCreating(true)} size="sm" variant="primary">
-                Nová protistrana
-              </Button>
-            )}
-            <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" theme="outlined" variant="secondary">
-              Firemní registr zákazníků →
-            </LinkButton>
-          </div>
+          <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" theme="outlined" variant="secondary">
+            Firemní registr zákazníků →
+          </LinkButton>
         }
         title={t('property-leasing.dossier.directoryTitle')}
       >
         <p className="sp-tenant-muted">
           Najděte firmu nebo osobu podle názvu, IČO, e-mailu, telefonu nebo jména kontaktní osoby. Seznam obsahuje
-          nájemce i firmy z registru zákazníků; nového zájemce založíte tlačítkem Nová protistrana.
+          nájemce i firmy z registru zákazníků; nového zájemce založíte ve firemním registru zákazníků tlačítkem Nový
+          zákazník.
         </p>
-        {creating && (
-          <NewCounterpartyForm
-            error={createError}
-            existingHref={existingHref}
-            onCancel={() => setCreating(false)}
-            onCreate={(input) =>
-              onCreate(input).pipe(
-                // A created counterparty is opened by the page: the form goes away first, so leaving does not ask.
-                Effect.tap((outcome) => Effect.sync(() => setCreating(outcome !== 'saved'))),
-              )
-            }
-          />
-        )}
         <FormInput
           label={t('property-leasing.dossier.search')}
           onChange={(event) => setQuery(event.target.value)}

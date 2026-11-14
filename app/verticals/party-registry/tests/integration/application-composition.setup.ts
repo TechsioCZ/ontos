@@ -9,7 +9,10 @@ import {
   OntosShellRuntimeContractSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makePublishedApplicationCompositionSnapshotFixture,
+} from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Array as EffectArray, Crypto, DateTime, Effect, FileSystem, Layer, Schema, Semaphore } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -201,34 +204,49 @@ const sourceComposition = Effect.scoped(
     const federationSha256 = yield* digest(fixtureFederationDocument);
     const shellSha256 = yield* digest(shellDocument);
     const shellFederationSha256 = yield* digest(shellFederationDocument);
+    const privacyContract = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+    )(
+      yield* fs.readFileString(
+        new URL('../../../privacy/dist/public/.well-known/ontos-module-manifest.json', import.meta.url).pathname,
+      ),
+    );
+    const published = yield* makePublishedApplicationCompositionSnapshotFixture({
+      contractInputs: [contract, privacyContract],
+      publishedShellRuntime: { document: shellDocument, receiverDeployment: shell.deployment },
+      validityMs: 3_600_000,
+    });
     const composition = {
       ...base.composition,
-      modules: base.composition.modules.map((module) => ({
-        ...module,
-        allowedContributions: Object.values(owner.shellContributions).flatMap((items) =>
-          items.map(({ contributionKey }) => contributionKey),
-        ),
-        contract: { ...module.contract, sha256 },
-        contractDocument,
-        dependencies: EffectArray.sort(
-          (owner.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId),
-          compareKeys,
-        ),
-        deployment: contract.deployment,
-        federation: {
-          execution: 'browser' as const,
-          exposes: components.map(({ expose }) => expose),
-          manifest: {
-            sha256: federationSha256,
-            url: `https://party-source-fixture.example/releases/${ultramodernApiMarker.buildMarker}/mf-manifest.json`,
+      modules: [
+        ...base.composition.modules.map((module) => ({
+          ...module,
+          allowedContributions: Object.values(owner.shellContributions).flatMap((items) =>
+            items.map(({ contributionKey }) => contributionKey),
+          ),
+          contract: { ...module.contract, sha256 },
+          contractDocument,
+          dependencies: EffectArray.sort(
+            (owner.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId),
+            compareKeys,
+          ),
+          deployment: contract.deployment,
+          federation: {
+            execution: 'browser' as const,
+            exposes: components.map(({ expose }) => expose),
+            manifest: {
+              sha256: federationSha256,
+              url: `https://party-source-fixture.example/releases/${ultramodernApiMarker.buildMarker}/mf-manifest.json`,
+            },
+            remoteName: federation.name,
           },
-          remoteName: federation.name,
-        },
-        moduleId: contract.manifest.module.id,
-        publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
-        requiredCoreCapabilities: owner.requirements?.coreCapabilities ?? [],
-        requiredShellAbi: shell.contributionAbi,
-      })),
+          moduleId: contract.manifest.module.id,
+          publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
+          requiredCoreCapabilities: owner.requirements?.coreCapabilities ?? [],
+          requiredShellAbi: shell.contributionAbi,
+        })),
+        ...published.composition.modules.filter((module) => module.moduleId === 'privacy.core'),
+      ],
       revision: '0'.repeat(64),
       shell: {
         ...base.composition.shell,

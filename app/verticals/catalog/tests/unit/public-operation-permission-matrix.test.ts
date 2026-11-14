@@ -2,6 +2,7 @@ import { catalogRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   OperationContextDenied,
+  extractVerticalRuntimeSafeDescriptors,
   ReadHandlerNotFound,
   ReadInputValidationError,
   ReadPermissionDenied,
@@ -137,7 +138,13 @@ import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-
 import { setCompositionCurrentRead } from '../../src/api/set-composition-current.read.ts';
 import { setCompositionHistoryRead } from '../../src/api/set-composition-history.read.ts';
 
+import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
+
+import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
+
 const reads = [
+  bindInitialVariantSourceRecoveryRead,
+  catalogSourceProductsRead,
   activateLocalOverrideRecoveryRead,
   activatePackageDefinitionRecoveryRead,
   activatePackageOptionRecoveryRead,
@@ -267,7 +274,14 @@ it('maps every published Action and governed read to one explicit atomic permiss
   expect(apiEntries.filter(([, api]) => api === OwnerActionApprovalApi)).toEqual([
     ['owner-action-approvals', OwnerActionApprovalApi],
   ]);
-  const ownerReads = apiEntries.filter(([, api]) => api !== OwnerActionApprovalApi);
+  const actionApiKeys = new Set(
+    extractVerticalRuntimeSafeDescriptors(catalogRegistration)
+      .operationContracts.filter((operation) => operation.entrypoint.role === 'action')
+      .map((operation) => operation.apiKey),
+  );
+  const ownerReads = apiEntries.filter(
+    ([name, api]) => api !== OwnerActionApprovalApi && !actionApiKeys.has(`commerce.catalog.${name}`),
+  );
   expect(new Set(readKeys)).toEqual(new Set(ownerReads.map(([name]) => `commerce.catalog.api.${name}`)));
   const published = [...actionKeys, ...readKeys];
   expect(new Set(published).size).toBe(published.length);

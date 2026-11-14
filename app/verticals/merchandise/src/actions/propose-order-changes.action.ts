@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug propose-order-changes
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { proposeOrderChangesDeclaration } from '../../shared/access-declarations.ts';
 import {
   ProposeOrderChangesPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const proposeOrderChangesAction = defineAction(
   {
-    accessDeclaration: proposeOrderChangesDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.order-changes.propose',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order-changes', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.propose-order-changes.access.v1',

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -862,86 +862,6 @@ const materializeDependencyWorker = (root: string) =>
     yield* Effect.tryPromise((signal) => once(child, 'exit', { signal }));
     return { diagnostics, status: child.exitCode };
   });
-
-it.live('starts bundled message codecs with the unpatched registry SDK outside the workspace', () =>
-  Effect.gen(function* portableAuthzedCodecs() {
-    const root = yield* makeReleaseMarkerFixture();
-    yield* Effect.tryPromise(() =>
-      symlink(new URL('../../node_modules', import.meta.url).pathname, path.join(root, 'node_modules'), 'dir'),
-    );
-    yield* Effect.tryPromise(() =>
-      writeFile(
-        path.join(root, WORKSPACE_LOCKFILE),
-        "lockfileVersion: '9.0'\npackages:\n  '@authzed/authzed-node@1.6.1': {}\n",
-      ),
-    );
-    yield* Effect.tryPromise(() =>
-      writeFile(
-        path.join(root, LEDGER_PATH, PACKAGE_MANIFEST),
-        JSON.stringify({
-          dependencies: { '@authzed/authzed-node': '1.6.1' },
-          exports: { './outbox-worker-host': `./${WORKER_ENTRY}` },
-          name: LEDGER_PACKAGE,
-          scripts: { 'worker:start': `node --experimental-strip-types ./${WORKER_HOST_ENTRY}` },
-          type: 'module',
-        }),
-      ),
-    );
-    yield* Effect.tryPromise(() =>
-      writeFile(
-        path.join(root, LEDGER_PATH, WORKER_ENTRY),
-        [
-          GENERATED_WORKER_HOST,
-          "import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';",
-          "import { ObjectReference } from '@authzed/authzed-node/v1/core';",
-          "import { CheckPermissionRequest } from '@authzed/authzed-node/v1/permissions';",
-          "import { WriteSchemaRequest } from '@authzed/authzed-node/v1/schema';",
-          "import { v1 } from '@authzed/authzed-node';",
-          "const reference = ObjectReference.fromBinary(ObjectReference.toBinary(ObjectReference.create({ objectType: 'legal_entity', objectId: 'verification' })));",
-          "const check = CheckPermissionRequest.create({ resource: reference, permission: 'access' });",
-          "const write = WriteSchemaRequest.create({ schema: 'definition principal {}' });",
-          'console.log(JSON.stringify({ objectId: check.resource.objectId, schema: write.schema, transport: typeof v1.NewClient }));',
-          'export const outboxWorkerEntry = { expectedDeployment: ultramodernApiMarker };',
-        ].join('\n'),
-      ),
-    );
-    const result = yield* materializeDependencyWorker(root);
-    expect(result.status, result.diagnostics).toBe(0);
-    const runtimeDir = path.join(root, HOST_RUNTIME_DIR);
-    const manifest = yield* Schema.decodeUnknownEffect(RuntimeManifestSchema)(
-      yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, PACKAGE_MANIFEST), 'utf-8')),
-    );
-    expect(manifest.dependencies).toEqual({ '@authzed/authzed-node': '1.6.1' });
-    const installed = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(Schema.Struct({ exports: Schema.Record(Schema.String, Schema.Json) })),
-    )(
-      yield* Effect.tryPromise(() =>
-        readFile(path.join(runtimeDir, 'node_modules/@authzed/authzed-node', PACKAGE_MANIFEST), 'utf-8'),
-      ),
-    );
-    for (const subpath of ['./v1/core', './v1/permissions', './v1/schema']) {
-      expect(Object.keys(installed.exports)).not.toContain(subpath);
-    }
-    const bundle = yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, WORKER_BUNDLE), 'utf-8'));
-    expect(bundle).not.toMatch(/from\s+['"]@authzed\/authzed-node\/v1\//u);
-    const relocatedDir = yield* Effect.acquireRelease(
-      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-relocated-authzed-worker-'))),
-      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-    );
-    yield* Effect.tryPromise(() => rename(runtimeDir, relocatedDir));
-    const runtime = yield* scopedChild(() =>
-      spawn(process.execPath, [WORKER_BUNDLE], {
-        cwd: relocatedDir,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
-    );
-    expect(yield* readWorkerOutput(runtime)).toContain(
-      '{"objectId":"verification","schema":"definition principal {}","transport":"function"}',
-    );
-    yield* waitForExit(runtime);
-    expect(runtime.exitCode).toBe(0);
-  }),
-);
 
 for (const worker of [false, true]) {
   it.live(`delegates ${worker ? 'prepared Outbox' : 'HTTP'} runtime materialization to the published command`, () =>

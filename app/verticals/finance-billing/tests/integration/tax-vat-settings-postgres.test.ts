@@ -37,11 +37,24 @@ import {
   executeSellerVatRegimeHistoryWithAuthorization,
   executeTaxRuleHistoryWithAuthorization,
 } from '@app/tax/api/client';
+import { executeVatChangeRightsWithAuthorization } from '@app/tax/apis/vat-change-rights/client';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import { Config, ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
@@ -251,7 +264,7 @@ const seedRealm = Effect.fn('FinanceVatSettings.seedRealm')(function* seedRealm(
     LegalEntityIdSchema.make(realm.nonPayerCompanyId),
   ]);
   for (const scope of scopes) {
-    const legalEntityId = scope._tag === 'LegalEntity' ? scope.legalEntityId : null;
+    const legalEntityId = Predicate.isTagged(scope, 'LegalEntity') ? scope.legalEntityId : null;
     yield* admin.unsafe(
       'insert into core.access_scopes (scope_id, tenant_id, legal_entity_id, tenant_context_id) values ($1, $2, $3, $4) on conflict do nothing',
       [scope.scopeId, tenantId, legalEntityId, legalEntityId === null ? tenantId : null],
@@ -388,16 +401,18 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
           'commerce.tax.seller-vat-regime.read-at-instant',
           'commerce.tax.seller-vat-regime-declaration.declare',
           'commerce.tax.seller-vat-regime-declaration.read-history',
+          'commerce.tax.vat-change-rights.read',
         ],
         principalId: realm.author.principalId,
       },
       {
-        // The accountant preset: the DPH page's four Tax reads and no Tax change.
+        // The accountant preset: the DPH page's five Tax reads and no Tax change.
         capabilityKeys: [
           'commerce.tax.seller-vat-regime-declaration.read-history',
           'commerce.tax.seller-vat-regime.read-at-instant',
           'commerce.tax.tax-rule-set.read',
           'commerce.tax.tax-rule.read-history',
+          'commerce.tax.vat-change-rights.read',
         ],
         principalId: realm.reader.principalId,
       },
@@ -464,7 +479,7 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
       yield* write,
     ),
   );
-  expect(declared._tag).toBe('DECLARED');
+  expect(Predicate.isTagged(declared, 'DECLARED')).toBe(true);
   const now = yield* databaseNow(admin);
   const ruleSet = Effect.fn('FinanceVatSettings.ruleSet')(function* ruleSet(code: string, credential: string) {
     return yield* throughTax(
@@ -484,10 +499,14 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
   const regimeHistory = Effect.fn('FinanceVatSettings.regimeHistory')(function* regimeHistory(credential: string) {
     return yield* throughTax(executeSellerVatRegimeHistoryWithAuthorization({}, credential, yield* correlation, read));
   });
+  const changeRights = Effect.fn('FinanceVatSettings.changeRights')(function* changeRights(credential: string) {
+    return yield* throughTax(executeVatChangeRightsWithAuthorization({}, credential, yield* correlation, read));
+  });
   return {
     asAccountant,
     asClerk,
     asReader,
+    changeRights,
     correlation,
     financeForClerk,
     now,
@@ -578,7 +597,7 @@ it.live(
             yield* write,
           ),
         ).pipe(Effect.flip);
-        expect(stale._tag).toBe('EndTaxRuleRevisionActionConflictProblem');
+        expect(Predicate.isTagged(stale, 'EndTaxRuleRevisionActionConflictProblem')).toBe(true);
 
         // The page lists 21 % as the current rate and 23 % from 1. 1. 2027 as planned.
         const after = classificationView(CZ_VAT_STANDARD, yield* ruleHistory(yield* asAccountant), now, false);
@@ -592,7 +611,7 @@ it.live(
 
         // The clerk holds no Tax right: Tax refuses the read the DPH page makes, and the page shows "no access".
         const refused = yield* scenario.ruleSet(CZ_VAT_STANDARD, yield* asClerk).pipe(Effect.flip);
-        expect(refused._tag).toBe('ApplicableTaxRuleSetForbiddenProblem');
+        expect(Predicate.isTagged(refused, 'ApplicableTaxRuleSetForbiddenProblem')).toBe(true);
         const refusedAction = yield* throughTax(
           executeEndTaxRuleRevisionWithAuthorization(
             {
@@ -607,7 +626,7 @@ it.live(
             yield* write,
           ),
         ).pipe(Effect.flip);
-        expect(refusedAction._tag).toBe('EndTaxRuleRevisionActionForbiddenProblem');
+        expect(Predicate.isTagged(refusedAction, 'EndTaxRuleRevisionActionForbiddenProblem')).toBe(true);
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(live)),
@@ -635,12 +654,13 @@ it.live(
             read,
           ),
         );
-        expect(regime.selection).toMatchObject({ _tag: 'DECLARED', regime: 'VAT_PAYER' });
+        expect(Predicate.isTagged(regime.selection, 'DECLARED')).toBe(true);
+        expect(regime.selection).toMatchObject({ regime: 'VAT_PAYER' });
         // A module Tax does not name cannot act for the clerk.
         const undeclared = yield* ruleSet(CZ_VAT_STANDARD, yield* financeForClerk(scenario.undeclaredModule)).pipe(
           Effect.flip,
         );
-        expect(undeclared._tag).toBe('ApplicableTaxRuleSetForbiddenProblem');
+        expect(Predicate.isTagged(undeclared, 'ApplicableTaxRuleSetForbiddenProblem')).toBe(true);
       }),
     ).pipe(Effect.provide(live)),
   120_000,
@@ -652,8 +672,18 @@ it.live(
     Effect.scoped(
       Effect.gen(function* readOnlyAccountant() {
         const scenario = yield* setUp();
-        const { asAccountant, asReader, correlation, now, regimeHistory, ruleHistory, ruleSet, standard, write } =
-          scenario;
+        const {
+          asAccountant,
+          asReader,
+          changeRights,
+          correlation,
+          now,
+          regimeHistory,
+          ruleHistory,
+          ruleSet,
+          standard,
+          write,
+        } = scenario;
         // What the DPH page reads as her: the rate, its history and the regime with its history.
         const applicable = yield* ruleSet(CZ_VAT_STANDARD, yield* asReader);
         expect(applicable.applicable.length).toBe(1);
@@ -662,13 +692,13 @@ it.live(
         const history = yield* regimeHistory(yield* asReader);
         expect(history.revisions.map(({ regime }) => regime)).toEqual(['VAT_PAYER']);
         // Tax tells the page she may make no change, and the author, who holds the rights, every one.
-        expect(history.changeRights).toEqual({
+        expect(yield* changeRights(yield* asReader)).toEqual({
           createRevision: false,
           createRule: false,
           declareRegime: false,
           endRevision: false,
         });
-        expect((yield* regimeHistory(yield* asAccountant)).changeRights).toEqual({
+        expect(yield* changeRights(yield* asAccountant)).toEqual({
           createRevision: true,
           createRule: true,
           declareRegime: true,
@@ -699,7 +729,7 @@ it.live(
             ),
           )
           .pipe(Effect.flip);
-        expect(created._tag).toBe('CreateTaxRuleRevisionActionForbiddenProblem');
+        expect(Predicate.isTagged(created, 'CreateTaxRuleRevisionActionForbiddenProblem')).toBe(true);
         const [current] = (yield* ruleHistory(yield* asReader)).revisions;
         if (current === undefined) {
           return yield* Effect.die('The standard rate has a revision');
@@ -720,7 +750,7 @@ it.live(
             ),
           )
           .pipe(Effect.flip);
-        expect(ended._tag).toBe('EndTaxRuleRevisionActionForbiddenProblem');
+        expect(Predicate.isTagged(ended, 'EndTaxRuleRevisionActionForbiddenProblem')).toBe(true);
         const declared = yield* scenario
           .throughTax(
             executeDeclareSellerVatRegimeWithAuthorization(
@@ -731,7 +761,7 @@ it.live(
             ),
           )
           .pipe(Effect.flip);
-        expect(declared._tag).toBe('DeclareSellerVatRegimeActionForbiddenProblem');
+        expect(Predicate.isTagged(declared, 'DeclareSellerVatRegimeActionForbiddenProblem')).toBe(true);
         // Nothing changed.
         expect((yield* regimeHistory(yield* asReader)).revisions.length).toBe(1);
         expect((yield* ruleHistory(yield* asReader)).revisions.length).toBe(1);

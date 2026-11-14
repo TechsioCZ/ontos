@@ -94,8 +94,8 @@ import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/perm
 import { spiceDbTransport } from '../../../../packages/core-runtime/src/permissions/spicedb-transport.node.ts';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
-import { callerModuleAccess } from '../../api/agent-platform/caller.ts';
-import type { AgentPlatformCaller } from '../../api/agent-platform/caller.ts';
+import { callerModuleAccess, moduleCarriers } from '../../api/agent-platform/caller.ts';
+import type { AgentPlatformCaller, ModuleCarrier } from '../../api/agent-platform/caller.ts';
 import {
   claimForApproval,
   listCompanyProposalPage,
@@ -110,7 +110,10 @@ import { AgentActionRequestIdentity } from '../../api/auth/agent-action-request-
 import { AgentReadRequestIdentity } from '../../api/auth/agent-request-identity.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
+import {
+  ShellInstalledModuleCatalog,
+  ShellInstalledModuleCatalogLive,
+} from '../../api/modules/installed-module-catalog.ts';
 import { ShellPeopleSystemSearchLive, ShellSystemSearch } from '../../api/modules/shell-system-search.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
@@ -307,7 +310,7 @@ const isStatementSpan = (name: string) =>
 const acquiringSpans = (span: Option.Option<Tracer.AnySpan>) => {
   const names: string[] = [];
   let current = Option.getOrUndefined(span);
-  while (current !== undefined && current._tag === 'Span' && names.length < 3) {
+  while (current !== undefined && Predicate.isTagged(current, 'Span') && names.length < 3) {
     if (!isStatementSpan(current.name)) {
       names.push(current.name);
     }
@@ -356,9 +359,11 @@ const recordingPoolRegistry = (registry: (typeof DatabasePools)['Service']): (ty
         Effect.map(
           (pool): PgClient.PgClient =>
             new Proxy(pool, {
-              get: (target, property, receiver) => {
-                const member: unknown =
-                  property === 'reserve' ? recordedReserve(target, leases) : Reflect.get(target, property, receiver);
+              get: (target, property) => {
+                if (property === 'reserve') {
+                  return recordedReserve(target, leases);
+                }
+                const member: unknown = Predicate.hasProperty(target, property) ? target[property] : undefined;
                 return member;
               },
             }),
@@ -999,6 +1004,34 @@ const stepReport = (input: {
 
 type StepReport = ReturnType<typeof stepReport>;
 
+const connectedRoleFingerprint = fingerprintOf('select current_user::text as role');
+// installActualRole uses this split installation; installOperationalScopeAt includes operation_at and checks the
+// role in its existing statement instead, so it must not earn an allowance for a separate role query.
+const splitScopeInstallationFingerprint = fingerprintOf(
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id",
+);
+const countFingerprint = (steps: readonly StepReport[], statement: string) =>
+  steps
+    .flatMap((step) => step.fingerprints)
+    .reduce((sum, entry) => sum + (entry.statement === statement ? entry.count : 0), 0);
+const assertOriginalStatementBudget = Effect.fn('test.assertOriginalStatementBudget')(
+  function* assertOriginalStatementBudget(label: string, steps: readonly StepReport[], originalBudget: number) {
+    const roleQueries = countFingerprint(steps, connectedRoleFingerprint);
+    const splitScopeInstallations = countFingerprint(steps, splitScopeInstallationFingerprint);
+    const statements = steps.reduce((sum, step) => sum + step.statements, 0);
+    yield* Effect.logInfo('Stage-shape scope cost', {
+      label,
+      originalBudget,
+      roleQueries,
+      splitScopeInstallations,
+      statements,
+    });
+    expect({ label, roleQueries }).toEqual({ label, roleQueries: splitScopeInstallations });
+    expect(statements - roleQueries).toBeLessThanOrEqual(originalBudget);
+    return roleQueries;
+  },
+);
+
 const measureStep = <A, E, R>(input: {
   readonly admin: PgClient.PgClient;
   readonly authorityCalls: Ref.Ref<readonly AuthorityCall[]>;
@@ -1085,6 +1118,13 @@ const totalOf = (
   count: 'evidenceRows' | 'statements' | 'transactions',
 ) => steps.reduce((sum, step) => sum + step[count], 0);
 
+/** A module the N1 owner's catalog admits: Core's own and the six installed ones. */
+const admittedModule = (moduleId: string) => moduleId.startsWith('core.') || N1_MODULES.includes(moduleId);
+
+/** The owner is allowed in run mode. Routine allows leave no row; a mode refusal still does. */
+const leavesEvidence = (declaration: ModuleCarrier['declaration']) =>
+  declaration !== undefined && (declaration.risk !== 'routine' || !declaration.modes.includes('run'));
+
 const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* measureApprovalPath(stageCase: StageCase) {
   const crypto = yield* Crypto.Crypto;
   const snapshot = yield* installedComposition;
@@ -1131,11 +1171,10 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   const batches = yield* Effect.forEach(['warm-up', 'reject', 'approve'], (name) => seedPendingBatch(stageCase, name), {
     concurrency: 1,
   });
-  const [warmUp, rejected, approved] = yield* Effect.all([
-    present(batches[0]),
-    present(batches[1]),
-    present(batches[2]),
-  ]);
+  const [warmUp, rejected, approved] = yield* Effect.all(
+    [present(batches[0]), present(batches[1]), present(batches[2])],
+    { concurrency: 1 },
+  );
 
   // Warm-up, measured as the first use in this process (pools, the SpiceDB channel, the composition cache and code
   // never run before): the queue's three reads once, then one reject (its batch read and the reject Action).
@@ -1143,11 +1182,14 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   const coldQueue = yield* measure(
     'cold queue',
     'warm-up',
-    Effect.all([
-      callerModuleAccess(warm),
-      principalNames(warm.principal, readTransport('warm-up')),
-      listCompanyProposalPage(warm.principal, {}),
-    ]).pipe(Effect.provideService(AgentReadRequestIdentity, readTransport('warm-up'))),
+    Effect.all(
+      [
+        callerModuleAccess(warm),
+        principalNames(warm.principal, readTransport('warm-up')),
+        listCompanyProposalPage(warm.principal, {}),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.provideService(AgentReadRequestIdentity, readTransport('warm-up'))),
   );
   const warmReject = yield* actionTransport('warm-up-reject');
   const coldReject = yield* measure(
@@ -1212,7 +1254,7 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
       Effect.flip,
     ),
   );
-  expect(refused._tag).toBe('ReadPermissionDenied');
+  expect(Predicate.isTagged(refused, 'ReadPermissionDenied')).toBe(true);
 
   // A proposal the module owner's review hides stays hidden, even from the owner who may run its Action.
   const hidden = yield* inShell(
@@ -1313,16 +1355,33 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
     );
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers.
-  // Each transaction installs and checks the request's scope in one statement, never two, and the queue asks only
-  // the Actions of modules the tenant runs: the same transactions, SpiceDB calls and reject/approve evidence as before;
-  // queue was 220 statements and 487 evidence rows, reject 274 statements, approve's Core parts 576.
+  // Count the actual role queries, not transactions: one transaction may install scope more than once.
+  // After removing only those queries, every route must still meet its original cost fence.
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
-  expect(totalOf(queue, 'evidenceRows')).toBe(374);
-  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(184);
-  expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220);
-  expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463);
+  const installed = yield* inShell(
+    Effect.gen(function* admittedCatalog() {
+      return yield* (yield* ShellInstalledModuleCatalog).load;
+    }),
+  );
+  const carrierRows = moduleCarriers(installed).filter(
+    ({ declaration, moduleId }) => admittedModule(moduleId) && leavesEvidence(declaration),
+  ).length;
+  const actionRows = installed.contracts.flatMap(({ manifest }) =>
+    manifest.publicSurface.actions.filter(
+      (action) =>
+        admittedModule(action.owningModuleId) &&
+        action.legalEntityScope !== 'forbidden' &&
+        leavesEvidence(action.accessDeclaration),
+    ),
+  ).length;
+  // Q1 asks each carrier and each Action; Q3 asks the Actions again. Q2 is authenticated-only.
+  // The merge adds six Customer Context Actions and Party's legacy-IČO fence: 7 × 3 = 21 extra rows.
+  expect(totalOf(queue, 'evidenceRows')).toBe(carrierRows + 2 * actionRows);
+  yield* assertOriginalStatementBudget('queue', queue, 184);
+  yield* assertOriginalStatementBudget('decide', decide, 220);
+  yield* assertOriginalStatementBudget('approve', approve, 463);
   // Every step checks a connection out only for its statements: none is held while the request waits on SpiceDB, a
   // module owner or the composition source, and no request holds more than two at once (the gate reads two scopes of
   // a batch side by side, never more), so six connections queue only behind other requests.
@@ -1378,6 +1437,7 @@ const seedPeople = Effect.fn('test.seedPeople')(function* seedPeople(stageCase: 
           tenantId,
         })),
       ),
+    { concurrency: 1 },
   );
   yield* admin.unsafe(
     `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -1514,14 +1574,14 @@ const measurePeopleSearch = Effect.fn('test.measurePeopleSearch')(function* meas
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers. One People search for one
   // surname: three gate decisions (the Shell's admission, the read's list right, the People list right), each with
-  // its own evidence row, two scope resolutions, the index query, the read and its evidence: 24 checkouts, 115
-  // messages to PostgreSQL, every connection back in the pool before each SpiceDB call.
+  // its own evidence row, two scope resolutions, the index query, the read and its evidence. Only the observed
+  // connected-role queries are excluded from the original 71 statements and 115 PostgreSQL messages.
   expect(warm.report.pool.heldAcrossRemoteCalls).toEqual([]);
   expect(warm.report.pool.maxConcurrent).toBe(1);
   expect([warm.report.transactions, warm.report.spicedb.calls, warm.report.evidenceRows]).toEqual([22, 5, 3]);
-  expect(warm.report.statements).toBeLessThanOrEqual(71);
+  const connectedRoleQueries = yield* assertOriginalStatementBudget('people', [warm.report], 71);
   expect(warm.report.pool.leases).toBeLessThanOrEqual(24);
-  expect(warm.report.pool.roundTrips).toBeLessThanOrEqual(115);
+  expect(warm.report.pool.roundTrips - connectedRoleQueries).toBeLessThanOrEqual(115);
   // Ten times the hits, the same work: no question is asked, and no row read, per person found.
   expect([
     many.report.statements,

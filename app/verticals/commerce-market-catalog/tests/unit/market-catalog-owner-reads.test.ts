@@ -1,11 +1,26 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { ReadHandlerNotFound, ReadHandlerUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
+import type { AccessPrincipalKind } from '@app/core-runtime/access/enforcement';
+import {
+  LegalEntityIdSchema,
+  AccessScopeIdSchema,
+  AssignmentIncarnationIdSchema,
+  GrantIncarnationIdSchema,
+  PrincipalIdSchema,
+  RoleIdSchema,
+  RoleRevisionIdSchema,
+} from '@app/core-runtime/access/ids';
+import {
+  preserveSystemPrincipalContextTrust,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CurrentMarketCatalogRequestSchema } from '../../shared/apis/current-market-catalog.ts';
 import { MarketHistoryRequestSchema } from '../../shared/apis/market-history.ts';
-import { handleCurrentMarketCatalog } from '../../src/api/current-market-catalog.read.ts';
+import { currentMarketCatalogRead, handleCurrentMarketCatalog } from '../../src/api/current-market-catalog.read.ts';
 import { handleMarketHistory } from '../../src/api/market-history.read.ts';
 import { marketCatalogReadPersistenceForScope } from '../../src/persistence/market-catalog-read-persistence.ts';
 import { MarketCatalogReadPersistenceUnavailable } from '../../src/persistence/market-history-routine.ts';
@@ -230,6 +245,162 @@ describe('Commerce Market Catalog owner reads', () => {
       });
       const historyError = yield* handleMarketHistory(foreignHistory, context).pipe(Effect.flip);
       expect(Schema.is(ReadHandlerNotFound)(historyError)).toBe(true);
+    }),
+  );
+});
+
+const marketReadWorkload = 'commerce.market-catalog.source-read';
+const unboundSellerId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-07T12:00:00Z'));
+const actorScope = (caller?: string, selectedLegalEntity: string | null = sellerId): OperationalScope => {
+  const identity = {
+    authBindingId: '55555555-5555-4555-8555-555555555555',
+    authContextRef: 'market-current-session',
+    authMethod: 'session',
+    principalId,
+    tenantId,
+  };
+  const context = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
+    selectedLegalEntity === null ? identity : { ...identity, legalEntityId: selectedLegalEntity },
+  );
+  const trusted = trustVerifiedGatewayPrincipalContext(
+    context,
+    'c'.repeat(64),
+    undefined,
+    caller === undefined
+      ? undefined
+      : {
+          appId: caller,
+          buildMarker: 'market-current-caller-build',
+          principalId: '66666666-6666-4666-8666-666666666666',
+        },
+  );
+  return preserveSystemPrincipalContextTrust(trusted, { ...trusted, correlationId: 'market-current-gate-test' });
+};
+const marketReadGate = (input: {
+  readonly boundKeys?: readonly string[];
+  readonly grants?: boolean;
+  readonly kind: AccessPrincipalKind;
+}) =>
+  makeAccessDecisionService({
+    authorityFor: () => ({
+      readCells: (query) =>
+        Effect.succeed(
+          input.grants === false
+            ? []
+            : [
+                {
+                  assignedAt: operationTime,
+                  assignedBy: PrincipalIdSchema.make(principalId),
+                  assignmentIncarnationId: AssignmentIncarnationIdSchema.make('77777777-7777-4777-8777-777777777777'),
+                  capabilityKey: query.capabilityKey,
+                  grantIncarnationId: GrantIncarnationIdSchema.make('88888888-8888-4888-8888-888888888888'),
+                  holder: query.holder,
+                  mode: query.mode,
+                  roleId: RoleIdSchema.make('99999999-9999-4999-8999-999999999999'),
+                  roleRevisionId: RoleRevisionIdSchema.make('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+                  selector: { _tag: 'all' },
+                },
+              ],
+        ),
+      readConnection: () => Effect.succeed(Option.none()),
+      readScope: (query) =>
+        Effect.succeed(
+          Option.some({
+            deadlines: [],
+            holderDeadlines: [],
+            scope:
+              query.legalEntityId === undefined
+                ? { _tag: 'TenantContext', tenantId: query.tenantId }
+                : { _tag: 'LegalEntity', legalEntityId: query.legalEntityId, tenantId: query.tenantId },
+            scopeId: AccessScopeIdSchema.make('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+            tenantId: query.tenantId,
+          }),
+        ),
+      readTeamIds: () => Effect.succeed([]),
+    }),
+    check: { checkBulk: (items) => Effect.succeed(items.map(() => ({ permissionship: 'has' }))) },
+    decisionLog: { record: () => Effect.void },
+    legalEntities: { listCandidateIds: () => Effect.succeed([]) },
+    principalKinds: { readKind: () => Effect.succeed(Option.some(input.kind)) },
+    workloadBindings: {
+      // The keys are bound for the seller only; the workload is registered for the company it is asked in (D6).
+      readWorkloadAuthority: (query) =>
+        Effect.succeed({
+          activeCompanyIds: new Set(
+            query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
+          ),
+          workloadKeys: new Set(
+            query.principalId === principalId && query.tenantId === tenantId && query.scope.legalEntityId === sellerId
+              ? (input.boundKeys ?? [])
+              : [],
+          ),
+        }),
+    },
+  });
+const decideMarketRead = (gate: ReturnType<typeof marketReadGate>, operationScope: OperationalScope) =>
+  gate.decide({
+    carrier: currentMarketCatalogRead.descriptor,
+    legalEntityScope: currentMarketCatalogRead.descriptor.legalEntityScope,
+    now: operationTime,
+    scope: operationScope,
+  });
+
+describe('Market current-read exact workload authorization', () => {
+  it.effect('requires the native selected legal entity for the Pricing Integration read', () =>
+    Effect.gen(function* selectedLegalEntityRequired() {
+      const result = yield* decideMarketRead(
+        marketReadGate({ boundKeys: [marketReadWorkload], kind: 'integration' }),
+        actorScope('pricing', null),
+      );
+      const foreignLegalEntity = yield* decideMarketRead(
+        marketReadGate({ boundKeys: [marketReadWorkload], kind: 'integration' }),
+        actorScope('pricing', unboundSellerId),
+      );
+      expect(result.outcome).toBe('DENIED');
+      expect(foreignLegalEntity.outcome).toBe('DENIED');
+      expect(result.reasons.map(({ code }) => code)).toContain('deny.scope_mismatch');
+    }),
+  );
+  it.effect('retains direct human declaration grants and refuses a human without that grant', () =>
+    Effect.gen(function* humanReadAuthorization() {
+      const allowed = yield* decideMarketRead(marketReadGate({ kind: 'human' }), actorScope());
+      const denied = yield* decideMarketRead(marketReadGate({ grants: false, kind: 'human' }), actorScope());
+      expect(allowed.outcome).toBe('ALLOWED');
+      expect(denied.outcome).toBe('DENIED');
+      expect(currentMarketCatalogRead.descriptor.accessDeclaration?.key).toBe(
+        'commerce.market-catalog.market-catalog.read',
+      );
+      expect(currentMarketCatalogRead.descriptor.legalEntityScope).toBe('required');
+    }),
+  );
+  it.effect('retains the existing Pricing actor identity path for a current human', () =>
+    Effect.gen(function* pricingHumanIdentity() {
+      const result = yield* decideMarketRead(marketReadGate({ grants: false, kind: 'human' }), actorScope('pricing'));
+      expect(result.outcome).toBe('ALLOWED');
+      expect(result.reasons.map(({ code }) => code)).toEqual(['allow.actor_identity']);
+    }),
+  );
+  it.effect('admits only the bound Market read workload through the exact Pricing actor', () =>
+    Effect.gen(function* pricingIntegrationRead() {
+      const gate = marketReadGate({ boundKeys: [marketReadWorkload], grants: false, kind: 'integration' });
+      const allowed = yield* decideMarketRead(gate, actorScope('pricing'));
+      const foreign = yield* decideMarketRead(gate, actorScope('foreign-module'));
+      const revoked = yield* decideMarketRead(
+        marketReadGate({ boundKeys: [], kind: 'integration' }),
+        actorScope('pricing'),
+      );
+      expect(allowed.outcome).toBe('ALLOWED');
+      expect(foreign.outcome).toBe('DENIED');
+      expect(foreign.reasons.map(({ code }) => code)).toContain('deny.actor_unbound');
+      const missing = yield* decideMarketRead(marketReadGate({ kind: 'integration' }), actorScope('pricing'));
+      const writeOnly = yield* decideMarketRead(
+        marketReadGate({ boundKeys: ['commerce.pricing.source-write'], kind: 'integration' }),
+        actorScope('pricing'),
+      );
+      expect(missing.outcome).toBe('DENIED');
+      expect(writeOnly.outcome).toBe('DENIED');
+      expect(revoked.outcome).toBe('DENIED');
     }),
   );
 });

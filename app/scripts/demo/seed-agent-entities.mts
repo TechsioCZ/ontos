@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { Cause, Config, Console, Effect, Exit, Option, Predicate, Redacted, Runtime, Schema } from 'effect';
 import { CliConfig, Command, Flag } from 'effect/cli';
+import { SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import {
   AgentEntityOverviewSchema,
@@ -39,7 +40,6 @@ Environment: ONTOS_DEMO_SEED_URL (default http://localhost:3020), ONTOS_DEMO_PAS
 const LIST = '/shell-super-app-api/auth/identity/agent-entities/list';
 const MANAGE = '/shell-super-app-api/auth/identity/agent-entities';
 const OPERATORS = '/shell-super-app-api/auth/identity/agent-entities/operators';
-const SECURE_COOKIE_PREFIX = '__Secure-';
 const principalNamespace = 'core.principal';
 
 interface SeedAgent {

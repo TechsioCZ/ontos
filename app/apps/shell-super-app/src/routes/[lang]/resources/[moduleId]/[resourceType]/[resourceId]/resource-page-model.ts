@@ -2,8 +2,11 @@ import { throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import { UrlParams } from 'effect/http';
 
-import { ShellResourceRequestSchema, ShellSearchPresentationInventorySchema } from '../../../../../../../shared/api.ts';
-import type { ShellResourceDetailResponse, ShellResourceResponse } from '../../../../../../../shared/api.ts';
+import {
+  ShellResourceRequestSchema,
+  ShellSearchPresentationInventorySchema,
+} from '../../../../../../../shared/browser-api.ts';
+import type { ShellResourceDetailResponse, ShellResourceResponse } from '../../../../../../../shared/browser-api.ts';
 import { resourceDetail } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../../../shell-authentication-client-options.ts';

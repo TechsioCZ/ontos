@@ -31,7 +31,6 @@
 --color-surface
 --database-check-outline
 --database-import-outline
---database-plus-outline
 --download
 --email-outline
 --file-delimited-outline
@@ -148,7 +147,6 @@ icon-[mdi--clipboard-text-outline]
 icon-[mdi--close]
 icon-[mdi--database-check-outline]
 icon-[mdi--database-import-outline]
-icon-[mdi--database-plus-outline]
 icon-[mdi--download]
 icon-[mdi--email-outline]
 icon-[mdi--file-delimited-outline]

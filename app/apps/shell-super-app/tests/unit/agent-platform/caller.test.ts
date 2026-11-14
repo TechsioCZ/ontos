@@ -284,10 +284,8 @@ it.effect(
         Effect.provide(inspection.layer),
         Effect.flip,
       );
-      expect(failure).toMatchObject({
-        _tag: 'ConnectionUnavailable',
-        cause: { _tag: 'SubjectInspectionUnavailable' },
-      });
+      expect(Predicate.isTagged(failure, 'ConnectionUnavailable')).toBe(true);
+      expect(failure).toMatchObject({ cause: expect.any(SubjectInspectionUnavailable) });
       expect(inspection.requesterScopes).toEqual([]);
     }),
 );
@@ -494,7 +492,7 @@ it.effect('fails closed as unavailable when the tenant module states cannot be r
       ),
       Effect.flip,
     );
-    expect(failure._tag).toBe('AgentStoreUnavailable');
+    expect(Predicate.isTagged(failure, 'AgentStoreUnavailable')).toBe(true);
   }),
 );
 
@@ -1724,11 +1722,12 @@ it.effect('a request that goes away mid-description still lets every started evi
     const reference = yield* referenceWrites;
     const { installed, snapshot } = yield* refusedTwoBatchCatalog;
     const writesStarted = { count: 0 };
+    const releaseWrites = yield* Deferred.make<null>();
     const inspection = subjectInspectionFixture({
       onEvidenceWrite: () =>
         Effect.sync(() => {
           writesStarted.count += 1;
-        }).pipe(Effect.andThen(Effect.sleep('50 millis'))),
+        }).pipe(Effect.andThen(Deferred.await(releaseWrites))),
       snapshot,
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
@@ -1737,12 +1736,19 @@ it.effect('a request that goes away mid-description still lets every started evi
       Effect.provide(inspection.layer),
       Effect.forkChild,
     );
-    // Both batches have run and their writes are in flight when the request is cut off. The interruption waits for
-    // the started writes, which settle once their 50 ms have passed.
-    yield* advanceUntil(() => inspection.writtenRows.size === 0 && writesStarted.count === 2);
-    const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
-    yield* advanceUntilDone(interruption);
-    yield* Fiber.join(interruption);
+    yield* Effect.gen(function* interruptAfterBothWritesStart() {
+      // Hold both writes until the handshake proves they started; a polling timeout must fail before interruption.
+      yield* advanceUntil(() => writesStarted.count === 2);
+      expect({ settled: inspection.writtenRows.size, started: writesStarted.count }).toEqual({
+        settled: 0,
+        started: 2,
+      });
+      const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseWrites, null);
+      yield* advanceUntilDone(interruption);
+      yield* Fiber.join(interruption);
+    }).pipe(Effect.ensuring(Deferred.succeed(releaseWrites, null)));
     // No answer is returned, but every started write committed: both batches' rows are there.
     expect([...inspection.writtenRows]).toEqual([
       [1, reference.first],

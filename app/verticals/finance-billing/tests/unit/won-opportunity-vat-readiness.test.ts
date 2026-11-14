@@ -8,7 +8,7 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { Cause, DateTime, Duration, Effect, Exit, Fiber, Logger, Option, Schema } from 'effect';
+import { Cause, DateTime, Duration, Effect, Exit, Fiber, Logger, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
@@ -786,7 +786,7 @@ it.layer(NodeCrypto.layer)("A won opportunity is drafted only in the opportunity
         choices: () => Effect.die('The worker asks Tax for the originator only'),
         choicesFor: (call, on) =>
           Effect.sync(() => {
-            asked.push(call.subject._tag === 'Originator' ? call.subject.legalEntityId : undefined);
+            asked.push(Predicate.isTagged(call.subject, 'Originator') ? call.subject.legalEntityId : undefined);
             return baselineVatChoices(tenantId, on);
           }),
       });

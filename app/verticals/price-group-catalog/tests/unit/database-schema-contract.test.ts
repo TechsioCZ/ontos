@@ -34,6 +34,8 @@ it('owns the exact tenant-scoped Price Group Catalog schema', () => {
     'price_group_definition_effective_intervals',
     'price_group_definition_revisions',
     'price_group_retirements',
+    'price_group_source_correlations',
+    'price_group_source_operation_receipts',
     'price_groups',
   ]);
   expect(qualifiedNames).toEqual(

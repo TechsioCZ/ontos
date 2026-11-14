@@ -267,6 +267,9 @@ const scriptOwner = (state: AgentState, options: ReplayOptions) => (sql: string,
     if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/iu.test(sql.trim())) {
       return [];
     }
+    if (sql.trim() === 'select current_user::text as role') {
+      return [{ role: SHARED_RUNTIME_IDENTITY.role }];
+    }
     if (sql.includes('set_config')) {
       expect(params).toEqual([principal.tenantId, principal.legalEntityId]);
       return [

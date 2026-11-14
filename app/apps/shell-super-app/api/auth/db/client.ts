@@ -111,6 +111,13 @@ export const AuthDatabaseLive = Layer.effect(
 );
 
 /**
+ * Opens the authentication database for one caller-named connection and the session role it must verify on first
+ * use, for composition roots that already hold a validated runtime connection instead of `AuthConfig`.
+ */
+export const AuthDatabaseForExpectedRoleLive = (configuration: RuntimeDatabaseConfigValue) =>
+  Layer.effect(AuthDatabase, makeAuthDatabase(configuration));
+
+/**
  * Opens the authentication database from the runtime role's `DatabaseConfig` alone, for operator
  * tools such as the schema verifier that never sign sessions and so hold no Better Auth secret.
  */

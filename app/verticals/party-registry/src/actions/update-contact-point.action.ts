@@ -2,6 +2,8 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug update-contact-point
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { requireAdmittedPartySourceReference } from '../services/party-client-source-evidence.service.ts';
+import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
@@ -31,10 +33,15 @@ import type {
   ContactPointInput,
   ContactPointPrivacyClassification,
   ContactPointProvenance,
-  PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
-import { updateContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
+import { updateContactPointSourceRecord } from '../services/party-source-lifecycle.service.ts';
+import type { SourceContactPoint } from '../services/party-source-lifecycle.service.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import type {
+  PartyEvidenceInsufficientError,
+  PartyPersistenceUnavailableError,
+} from '../../shared/domain/identity-contracts.ts';
 import { createUpdateContactPointPartyRegistryContactPointUpdatedV1OutboxMessage } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
 
 export { UpdateContactPointPayloadSchema } from '../../shared/actions/update-contact-point.ts';
@@ -43,6 +50,8 @@ export type { UpdateContactPointPayload } from '../../shared/actions/update-cont
 const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
 
 const UpdateContactPointErrorSchema = Schema.Union([
+  PartyEvidenceInsufficient,
+  PartyPersistenceUnavailable,
   PartyAliasWriteRejected,
   PartyContactPointNotFound,
   PartyContactPointAlreadyExists,
@@ -61,6 +70,7 @@ const ContactPointUpdatedEventSchema = Schema.Struct({
 });
 
 export interface UpdateContactPointCommand {
+  readonly sourceReference?: UpdateContactPointPayload['sourceReference'];
   readonly acceptedByActionInvocationId: string;
   readonly acceptedByPrincipalId: string;
   readonly change:
@@ -99,6 +109,8 @@ export interface UpdateContactPointCommand {
 }
 
 type UpdateError =
+  | PartyEvidenceInsufficientError
+  | PartyPersistenceUnavailableError
   | PartyAliasWriteRejected
   | PartyContactPointAlreadyExists
   | PartyContactPointCorrectionRequired
@@ -110,7 +122,7 @@ type UpdateError =
   | PartyContactPointRevisionConflict;
 
 interface Services {
-  readonly update: (command: UpdateContactPointCommand) => Effect.Effect<PartyContactPoint, UpdateError>;
+  readonly update: (command: UpdateContactPointCommand) => Effect.Effect<SourceContactPoint, UpdateError>;
 }
 
 const invalidContactPoint = (reason: string, cause: unknown) =>
@@ -118,16 +130,6 @@ const invalidContactPoint = (reason: string, cause: unknown) =>
     new PartyContactPointInvalid({
       code: 'party_contact_point_invalid',
       reason,
-    }),
-    'cause',
-    { configurable: true, value: cause },
-  );
-
-const persistenceUnavailable = (cause: unknown) =>
-  Object.defineProperty(
-    new PartyContactPointPersistenceUnavailable({
-      code: 'party_contact_point_persistence_unavailable',
-      reason: 'The stored Party Contact Point could not be decoded',
     }),
     'cause',
     { configurable: true, value: cause },
@@ -180,12 +182,15 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
         },
       });
     }
-    const contactPoint = yield* context.services.update({
+    const { sourceReplayed, sourceUnchanged, ...contactPoint } = yield* context.services.update({
       ...payload,
       acceptedByActionInvocationId: context.actionInvocationId,
       acceptedByPrincipalId: context.scope.principalId,
       change: persistenceChange(payload.change),
     });
+    if (sourceReplayed === true || sourceUnchanged === true) {
+      return contactPoint;
+    }
     const eventContactPointRef =
       payload.change.type === 'CORRECT_CONTACT_POINT' ? payload.contactPointRef : contactPoint.contactPointRef;
     const eventRevision =
@@ -215,6 +220,10 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
 
 export const updateContactPointAction = defineAction(
   {
+    accessWorkload: {
+      workloads: ['party.registry.source-write'],
+      reason: 'Execute the enrolled client source occurrence through the native Contact Point lifecycle.',
+    },
     accessDeclaration: {
       key: 'party.registry.contact-point.update',
       kind: 'action',
@@ -253,12 +262,9 @@ export const updateContactPointAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       update: (command: UpdateContactPointCommand) =>
-        updateContactPointRecord(transaction, scope, command).pipe(
-          Effect.filterOrElse(Schema.is(PartyContactPointSchema), (contactPoint) =>
-            Schema.decodeUnknownEffect(PartyContactPointSchema)(contactPoint).pipe(
-              Effect.mapError(persistenceUnavailable),
-            ),
-          ),
+        requireAdmittedPartySourceReference(transaction, scope, command.sourceReference).pipe(
+          Effect.andThen(updateContactPointSourceRecord(transaction, scope, command)),
+          withPartyClientSourcePrivacyRequirement('party.registry.update-contact-point'),
         ),
     }),
 );

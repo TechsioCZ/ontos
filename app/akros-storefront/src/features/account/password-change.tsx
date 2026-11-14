@@ -13,7 +13,20 @@ export interface PasswordChangeRequest {
 export type ChangePassword = (request: PasswordChangeRequest) => Promise<void>;
 
 /** A refusal the server explains in the customer's language; any other failure shows the generic message. */
-export class PasswordChangeRefused extends Error {}
+export class PasswordChangeRefused extends Error {
+  override readonly name = "PasswordChangeRefused";
+}
+
+/** The server's own explanation of a refusal, read by the error's name; empty for any other failure. */
+const refusalExplanation = (cause: unknown): string =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "name" in cause &&
+  cause.name === "PasswordChangeRefused" &&
+  "message" in cause &&
+  typeof cause.message === "string"
+    ? cause.message
+    : "";
 
 /** Submits the signed-in customer's change; the storefront route verifies the current password in OntOS. */
 export async function requestPasswordChange(request: PasswordChangeRequest): Promise<void> {
@@ -70,9 +83,7 @@ export function PasswordChange({ changePassword }: { changePassword: ChangePassw
       setAttempted(false);
       setMessage(cs.changed);
     } catch (cause) {
-      setMessage(
-        cause instanceof PasswordChangeRefused && cause.message ? cause.message : cs.failed,
-      );
+      setMessage(refusalExplanation(cause) || cs.failed);
     } finally {
       busy.current = false;
       setPending(false);

@@ -9,7 +9,7 @@ import { aiActivityData } from '../../src/routes/[lang]/prodej/zamestnanci/emplo
 
 const { records } = rstest.hoisted(() => ({ records: rstest.fn() }));
 
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({ useModernI18n: () => ({ language: 'cs', t: String }) }));
 
 beforeEach(() => {

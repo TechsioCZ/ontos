@@ -1,9 +1,9 @@
 // @rstest-environment happy-dom
-// The typed forms around a lease as a person uses them: logging communication, a new counterparty, a registration
-// sheet and a prepared notice save once from the shared Uložit only; typing and Enter change only the draft; leaving
-// with typed input asks first and an untouched form leaves at once. Only the i18n runtime and the router are replaced.
+// The typed forms around a lease as a person uses them: logging communication, a registration sheet and a prepared
+// notice save once from the shared Uložit only; typing and Enter change only the draft; leaving with typed input asks
+// first and an untouched form leaves at once. Only the i18n runtime and the router are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import type { OccupancyCommand } from '../../shared/actions/apply-command.ts';
 import { DossierCommunication } from '../../src/routes/[lang]/najmy/dossier-communication.tsx';
@@ -14,8 +14,6 @@ import {
   SavedOutcomeSchema,
 } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
 import type { OccupancyOutcome } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
-import { NewCounterpartyForm } from '../../src/routes/[lang]/najmy/new-counterparty-form.tsx';
-import type { NewCounterpartyInput } from '../../src/routes/[lang]/najmy/new-counterparty-form.tsx';
 import { NoticeEditor } from '../../src/routes/[lang]/najmy/notice-editor.tsx';
 import type { NoticeContext } from '../../src/routes/[lang]/najmy/notice-templates.ts';
 import { RegistrationSheetForm } from '../../src/routes/[lang]/najmy/registration-sheet-form.tsx';
@@ -56,14 +54,6 @@ const onClose = () => {
 };
 
 const saved = SavedOutcomeSchema.make({ resourceRef: null, revision: 8 });
-/** A save that records what it was given and answers `saved`. */
-const recording =
-  <A,>(into: A[]) =>
-  (value: A) =>
-    Effect.sync(() => {
-      into.push(value);
-      return 'saved' as const;
-    });
 /** An addition that records what it was given and answers each outcome in turn, the last one from then on. */
 const answering =
   <A,>(into: A[], outcomes: readonly OccupancyOutcome[]) =>
@@ -73,8 +63,6 @@ const answering =
       return outcomes[Math.min(into.length, outcomes.length) - 1] ?? saved;
     });
 const feedback = (reason: string) => `property-leasing.demo.feedback.${reason}`;
-/** No registry customer has the typed name. */
-const noMatch = (): string | undefined => Option.getOrUndefined(Option.none<string>());
 
 /** Enter in a field: the browser submits the field's form. */
 const pressEnter = (id: string) =>
@@ -110,58 +98,6 @@ describe('dossier and stay forms save from Uložit only', () => {
     }),
   );
 
-  it.effect('new counterparty: an untouched form closes at once; Uložit creates once; typed input asks first', () =>
-    Effect.gen(function* counterparty() {
-      const created: NewCounterpartyInput[] = [];
-      const onCreate = recording(created);
-      const form = (
-        <NewCounterpartyForm error={undefined} existingHref={noMatch} onCancel={onClose} onCreate={onCreate} />
-      );
-      yield* mount(form);
-      yield* click(buttons(CANCEL).at(-1));
-      expect(left).toEqual(['closed']);
-
-      unmountAll();
-      left.length = 0;
-      yield* mount(form);
-      yield* type('counterparty-name', 'Pekárna U Mlýna');
-      yield* type('counterparty-ico', '12345678');
-      yield* pressEnter('counterparty-name');
-      expect(created).toEqual([]);
-      yield* click(buttons(CANCEL).at(-1));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      yield* click(button(labels.stay));
-
-      yield* click(buttons(labels.save)[0]);
-      yield* waitUntil(() => created.length === 1);
-      expect(created[0]).toMatchObject({
-        companyId: '12345678',
-        displayName: 'Pekárna U Mlýna',
-        partyType: 'ORGANIZATION',
-      });
-      expect(navigation.shouldBlock()).toBe(false);
-    }),
-  );
-
-  it.effect('new counterparty: a name already in the registry is never created', () =>
-    Effect.gen(function* duplicate() {
-      const created: NewCounterpartyInput[] = [];
-      const onCreate = recording(created);
-      yield* mount(
-        <NewCounterpartyForm
-          error={undefined}
-          existingHref={() => '#existing'}
-          onCancel={onClose}
-          onCreate={onCreate}
-        />,
-      );
-      yield* type('counterparty-name', 'Kavárna Dolce');
-      expect(button(labels.save).disabled).toBe(true);
-      expect(document.querySelector('a[href="#existing"]')).not.toBeNull();
-      expect(created).toEqual([]);
-    }),
-  );
-
   it.effect('registration sheet: the suggested sheet closes untouched; Uložit creates it once and closes', () =>
     Effect.gen(function* sheet() {
       const sent: OccupancyCommand[] = [];
@@ -183,8 +119,8 @@ describe('dossier and stay forms save from Uložit only', () => {
       yield* click(button(labels.save));
       yield* waitUntil(() => left.length === 1);
       expect(sent).toHaveLength(1);
+      expect(Predicate.isTagged(sent[0], 'CreateRegistrationSheet')).toBe(true);
       expect(sent[0]).toMatchObject({
-        _tag: 'CreateRegistrationSheet',
         note: '',
         occupants: [{ identityDocument: 'OP 123456', name: 'Jana Nováková' }],
         purpose: 'Podnikání – nájem',
@@ -214,12 +150,8 @@ describe('dossier and stay forms save from Uložit only', () => {
 
       yield* click(button(labels.save));
       yield* waitUntil(() => sent.length === 1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'PrepareNotice',
-        channel: 'EMAIL',
-        recipient: 'najemce@dolce.cz',
-        subject: 'Předání kanceláře',
-      });
+      expect(Predicate.isTagged(sent[0], 'PrepareNotice')).toBe(true);
+      expect(sent[0]).toMatchObject({ channel: 'EMAIL', recipient: 'najemce@dolce.cz', subject: 'Předání kanceláře' });
       yield* waitUntil(() => !navigation.shouldBlock());
       expect(text()).not.toContain(labels.unsaved);
     }),

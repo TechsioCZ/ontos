@@ -2,12 +2,12 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
-import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../../src/db/identity-policies.ts';
 import { searchIndexEntries, searchProjectionGenerations, searchProjectionRebuilds } from '../../src/db/schema.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const config = getTableConfig(searchIndexEntries);
-const identityPolicies = makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+const identityPolicies = coreIdentityPolicyDescriptors(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
 const policiesFor = (table: PgTable) => [
   ...getTableConfig(table).policies,
   ...identityPolicies.filter((descriptor) => descriptor.table === table).map(({ policy }) => policy),

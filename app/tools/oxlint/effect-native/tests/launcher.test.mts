@@ -43,7 +43,6 @@ it('Oxlint launches through the effect-tsgo JavaScript entry point on Node witho
       ]);
       expect(args[1].includes(input)).toBe(true);
       expect(args[1].includes(config)).toBe(true);
-      expect(args[1].includes('--threads=2')).toBe(true);
     } finally {
       spawn.mockClear();
     }

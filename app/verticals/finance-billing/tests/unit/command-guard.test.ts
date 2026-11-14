@@ -18,9 +18,11 @@ import { Reactivity } from 'effect/reactivity';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
-import { applyCommandAction, CommandReferenceValidators } from '../../src/actions/apply-command.action.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 
 import { transitionFinance } from '../../src/services/persistence.service.ts';
+import type { FinanceValidators } from '../../src/services/persistence.service.ts';
+import { FinanceReferenceValidators } from '../../src/services/reference-validation.ts';
 import { financeBillingRegistration } from '../../vertical.registration.ts';
 import { financeStates } from '../../src/database/schema.ts';
 import { FinanceTaxRatesBaseline } from '../support/finance-tax-rates.ts';
@@ -76,6 +78,8 @@ const unusedProductionServices = Layer.mergeAll(
     HttpServerRequest.fromWeb(new Request('https://ontos.test/actions')),
   ),
   Layer.succeed(ReadRuntime, { runRead: unused }),
+  // Tests that reach reference preparation provide their own per-request validators.
+  Layer.succeed(FinanceReferenceValidators, { forScope: unused }),
 );
 const profileActionGrants = (writePolicy: AgentGrantWritePolicy) =>
   agentGrantRelationships({
@@ -156,14 +160,22 @@ it.layer(Layer.mergeAll(unusedProductionServices, NodeCrypto.layer, queryCompila
         });
 
         let referenceChecks = 0;
+        const validators: FinanceValidators = {
+          invoice: (invoice) =>
+            Effect.sync(() => {
+              expect(invoice.counterpartyRef).toEqual(counterpartyRef);
+              expect(harness.snapshot().transactionCount).toBe(1);
+              expect(saved).toEqual([]);
+              referenceChecks += 1;
+            }),
+        };
         const result = yield* harness.runtime.runAction(request).pipe(
-          Effect.provideService(CommandReferenceValidators, {
-            invoice: (invoice) =>
+          Effect.provideService(FinanceReferenceValidators, {
+            forScope: (scope) =>
               Effect.sync(() => {
-                expect(invoice.counterpartyRef).toEqual(counterpartyRef);
-                expect(harness.snapshot().transactionCount).toBe(1);
-                expect(saved).toEqual([]);
-                referenceChecks += 1;
+                expect(scope.legalEntityId).toBe(principal.legalEntityId);
+                expect(scope.tenantId).toBe(principal.tenantId);
+                return validators;
               }),
           }),
         );
@@ -194,16 +206,13 @@ it.layer(Layer.mergeAll(unusedProductionServices, NodeCrypto.layer, queryCompila
           access: 'allowed',
           ownerRegistration: financeBillingRegistration,
         });
-        const failure = yield* harness.runtime
-          .runAction(request)
-          .pipe(
-            Effect.provideService(CommandReferenceValidators, { invoice: () => Effect.void }),
-            Effect.provideService(
-              Crypto.Crypto,
-              Crypto.Crypto.of({ ...crypto, randomUUIDv4: () => Effect.fail(cause) }),
-            ),
-            Effect.flip,
-          );
+        const failure = yield* harness.runtime.runAction(request).pipe(
+          Effect.provideService(FinanceReferenceValidators, {
+            forScope: () => Effect.succeed<FinanceValidators>({ invoice: () => Effect.void }),
+          }),
+          Effect.provideService(Crypto.Crypto, Crypto.Crypto.of({ ...crypto, randomUUIDv4: () => Effect.fail(cause) })),
+          Effect.flip,
+        );
         expect(Schema.is(FinancePersistenceUnavailable)(failure)).toBe(true);
         expect(failure).toMatchObject({
           code: 'finance_persistence_unavailable',

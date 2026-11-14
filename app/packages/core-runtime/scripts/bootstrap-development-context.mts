@@ -8,11 +8,7 @@ import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig, parseDatabaseConnectionPair } from '../src/db/config.ts';
 import type { DatabaseConfigError, DatabaseConfigValue } from '../src/db/config.ts';
 import type { DatabaseConnectionError } from '../src/db/connection-error.ts';
-import {
-  DatabaseIdentityEnrollmentContext,
-  defineDatabaseIdentityEnrollment,
-  makeDatabaseIdentityEnrollmentLive,
-} from '../src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../src/db/database-identities.ts';
 import {
   tenants,
   legalEntities,
@@ -63,18 +59,14 @@ import { stableUuid } from '../src/access/catalog/stable-id.ts';
 import { WorkloadKeySchema } from '../src/authorization/access-declaration.ts';
 import type { OperationalScope } from '../src/operations/context.ts';
 import { AccessChangesStoreLive } from '../src/access/changes/persistence/drizzle-store.ts';
-import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../src/access/compiler/spice-db-compiler.ts';
+import { CoreAuthorizationProjectionCompilerLive } from '../src/access/compiler/spice-db-compiler.ts';
 import { AccessPeopleStoreLive } from '../src/access/intent/people-store.ts';
-import { AccessProjectionCompiler } from '../src/access/intent/projection-compiler.ts';
 import { AccessTeamStoreLive } from '../src/access/intent/teams.ts';
 import { TenantIntentLoaderLive } from '../src/access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../src/access/lifecycle/persistence/journal-store.ts';
 import { installedModuleKeysOf } from '../src/install/installation-runtime.ts';
 import type { InstallationRuntime } from '../src/install/installation-runtime.ts';
-import { parseSpiceDbConfig } from '../src/permissions/config.ts';
+import { SpiceDbConfig, parseSpiceDbConfig } from '../src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../src/permissions/config.ts';
 
 import { stageScopeOf } from '../src/install/stage-context-bootstrap.ts';
@@ -404,14 +396,9 @@ const developmentInstallationRuntime = (
   spiceDb: SpiceDbConfigValue,
   database: Layer.Layer<CoreDatabase, DatabaseConnectionError>,
 ): Layer.Layer<DevelopmentAccessRuntime, DatabaseConnectionError, Crypto.Crypto> => {
-  const engine = Layer.effect(
-    AccessProjectionCompiler,
-    Effect.acquireRelease(
-      Effect.sync(() => makeAccessProjectionTransport(spiceDb)),
-      (transport) => Effect.sync(() => transport.close()),
-    ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
-  );
-  const enrollment = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+  // The engine connection opens on the first projection call and closes with the runtime's scope.
+  const engine = CoreAuthorizationProjectionCompilerLive.pipe(Layer.provide(Layer.succeed(SpiceDbConfig, spiceDb)));
+  const enrollment = Layer.succeed(DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment([]));
   const platform = Layer.mergeAll(database, engine, enrollment);
   const stores = Layer.mergeAll(
     TenantIntentLoaderLive,

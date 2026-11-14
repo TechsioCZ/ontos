@@ -2,12 +2,7 @@
  * Legacy company membership of an agent principal, read from its `legal_entity#member` grants. Its one remaining reader
  * is the OAuth connection live check for agent-acting grants; v2 tenants carry no such grant, so it answers no company.
  */
-import {
-  Consistency,
-  ReadRelationshipsRequest,
-  RelationshipFilter,
-  SubjectFilter,
-} from '@authzed/authzed-node/v1/permissions';
+import { v1 } from '@authzed/authzed-node';
 import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
 import { Effect, Option, Schema } from 'effect';
 
@@ -43,16 +38,16 @@ export const demoAccountObjectIdParts = (objectId: string): readonly string[] =>
   return Option.getOrElse(decoded, () => []);
 };
 
-const fullyConsistent = Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
+const fullyConsistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 
 const companiesOf = (rpc: SpiceDbRpc, principalId: string) =>
   rpc
     .readRelationships(
-      ReadRelationshipsRequest.create({
+      v1.ReadRelationshipsRequest.create({
         consistency: fullyConsistent,
-        relationshipFilter: RelationshipFilter.create({
+        relationshipFilter: v1.RelationshipFilter.create({
           optionalRelation: 'member',
-          optionalSubjectFilter: SubjectFilter.create({ optionalSubjectId: principalId, subjectType: 'principal' }),
+          optionalSubjectFilter: v1.SubjectFilter.create({ optionalSubjectId: principalId, subjectType: 'principal' }),
           resourceType: 'legal_entity',
         }),
       }),

@@ -154,7 +154,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, AGENT_ADMINISTRATOR))('identity-admini
               ),
               Effect.flip,
             );
-          expect(failure._tag).toBe(refusal);
+          expect(Predicate.isTagged(failure, refusal)).toBe(true);
           expect(harness.snapshot().ownerQueries).toEqual([]);
         }
       }),

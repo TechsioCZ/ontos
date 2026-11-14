@@ -5,8 +5,8 @@ import { TestClock } from 'effect/testing';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
-import type { ShellDocumentTarget } from '../../../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../../../shared/browser-api.ts';
+import type { ShellDocumentTarget } from '../../../../shared/browser-api.ts';
 import {
   BrowserModuleRevisionConflict,
   pinBrowserModuleTarget,

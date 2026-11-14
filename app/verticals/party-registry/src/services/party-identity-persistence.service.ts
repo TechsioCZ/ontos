@@ -1,3 +1,4 @@
+import { PartySourceUpdateReceiptResultSchema } from '../../shared/apis/party-source-effect-receipt.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
@@ -11,6 +12,8 @@ import type { AresAppliedEvidence } from '../../shared/domain/ares-application.t
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type { Party, PartyCandidate, PartySubjectEvidence, PartyType } from '../../shared/domain/identity-contracts.ts';
 import {
+  PartyEvidenceEvaluationSchema,
+  makePartyRef,
   PartyPersistenceUnavailable,
   PartySchema,
   isPartyTypeEnrichment,
@@ -31,7 +34,14 @@ import {
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolution.service.ts';
 import { requirePartySubjectEvidence } from '../policies/create-party-without-strong-identifier.policy.ts';
+import type { PartyClientSourceScope } from './party-client-source-evidence.service.ts';
+import { preparePartySourceEffect, recordPartySourceEffect } from './party-source-effect.service.ts';
+import type { UpdatePartyPayload } from '../../shared/actions/update-party.ts';
+import { UpdatePartyPayloadSchema } from '../../shared/actions/update-party.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
+import { endedPartyFactTransition } from '../../shared/domain/fact-lifecycle.ts';
+import { OrganizationBusinessUpdateInputSchema } from '../../shared/apis/organization-record-facts.ts';
+import { updateOrganizationBusinessRecord } from './organization-business-update.service.ts';
 
 const PartyFoundSchema = Schema.TaggedStruct('found', { value: PartySchema });
 const PartyNotFoundSchema = Schema.TaggedStruct('not_found', {});
@@ -77,10 +87,7 @@ const instantAsDate = (instant: string | DateTime.Utc): Date => DateTime.toDateU
 const JsonCodec = Schema.fromJsonString(Schema.Any);
 const encodeJson = <Value>(value: Value): string => Result.getOrThrow(Schema.encodeResult(JsonCodec)(value));
 
-export const endedPartyFactTransition = {
-  isCurrent: false,
-  state: 'ENDED' as const,
-};
+export { endedPartyFactTransition } from '../../shared/domain/fact-lifecycle.ts';
 
 const unavailable = (cause?: unknown) => {
   const error = new PartyPersistenceUnavailable({
@@ -134,7 +141,10 @@ export const insertPartyRecord = Effect.fn('PartyIdentityPersistenceService.inse
   },
 ) {
   yield* lockTenantIdentityWrites(transaction, tenantId);
-  const evaluation = yield* requirePartySubjectEvidence(candidate);
+  const evaluation = yield* requirePartySubjectEvidence(candidate).pipe(
+    Effect.flatMap(Schema.encodeEffect(PartyEvidenceEvaluationSchema)),
+    Effect.catchTag('SchemaError', (cause) => Effect.fail(unavailable(cause))),
+  );
   const externalEvidence =
     candidate.provenance.externalEvidence === undefined
       ? null
@@ -182,6 +192,7 @@ export const insertPartyRecord = Effect.fn('PartyIdentityPersistenceService.inse
                 acceptedByActionInvocationId: acceptance.actionInvocationId,
                 acceptedByPrincipalId: acceptance.principalId,
                 externalEvidence,
+                evidenceEvaluation: evaluation,
                 factKind,
                 normalizedValue: value,
                 partyId: party.partyId,
@@ -200,6 +211,7 @@ export const insertPartyRecord = Effect.fn('PartyIdentityPersistenceService.inse
 
 interface UpdatePartyIdentityInput {
   readonly actionInvocationId: string;
+  readonly sourceScope?: PartyClientSourceScope | undefined;
   readonly firstName?: string | undefined;
   readonly lastName?: string | undefined;
   readonly businessName?: string | undefined;
@@ -215,13 +227,22 @@ interface UpdatePartyIdentityInput {
 }
 
 const evaluateTypeEnrichment = (current: PartyRecord, input: UpdatePartyIdentityInput) => {
-  if (input.partyType === undefined || input.partyType === current.currentType) {
+  if (
+    (input.partyType === undefined || input.partyType === current.currentType) &&
+    input.subjectEvidence?.some((item) => item.kind !== 'ACTOR_ATTESTATION') !== true
+  ) {
     return Effect.succeed(null);
   }
   return requirePartySubjectEvidence({
-    partyType: input.partyType,
+    firstName: input.firstName ?? current.firstName,
+    lastName: input.lastName ?? current.lastName,
+    businessName: input.businessName ?? current.businessName,
+    partyType: input.partyType ?? partyDto(current).partyType,
     subjectEvidence: input.subjectEvidence ?? [],
-  });
+  }).pipe(
+    Effect.flatMap(Schema.encodeEffect(PartyEvidenceEvaluationSchema)),
+    Effect.catchTag('SchemaError', (cause) => Effect.fail(unavailable(cause))),
+  );
 };
 
 const identityUpdateConflicts = (current: PartyRecord, input: UpdatePartyIdentityInput, now: Date): boolean =>
@@ -279,6 +300,7 @@ const identityUpdateAssertions = (
       assertions.push({
         acceptedByActionInvocationId: input.actionInvocationId,
         acceptedByPrincipalId: input.principalId,
+        evidenceEvaluation: evaluation,
         externalEvidence,
         factKind,
         normalizedValue: value,
@@ -317,6 +339,68 @@ export const updatePartyIdentityRecord = Effect.fn('PartyIdentityPersistenceServ
     input: UpdatePartyIdentityInput,
   ) {
     yield* lockTenantIdentityWrites(transaction, tenantId);
+    const requestInput: UpdatePartyPayload = {
+      partyRef: makePartyRef(tenantId, input.partyId),
+      expectedRevision: input.expectedRevision,
+      validFrom: DateTime.makeUnsafe(input.validFrom),
+      provenanceMethod: input.provenanceMethod,
+      provenanceSource: input.provenanceSource,
+    };
+    for (const key of [
+      'firstName',
+      'lastName',
+      'businessName',
+      'partyType',
+      'externalEvidence',
+      'subjectEvidence',
+    ] as const) {
+      if (input[key] !== undefined) {
+        Object.assign(requestInput, { [key]: input[key] });
+      }
+    }
+    const request = yield* Schema.encodeEffect(UpdatePartyPayloadSchema)(requestInput).pipe(
+      Effect.mapError(unavailable),
+    );
+    const sourceInput = { ...input, tenantId, operation: 'UPDATE' as const, request };
+    const prepared = yield* preparePartySourceEffect(transaction, sourceInput);
+    if (prepared?.organizationBusiness === true) {
+      const payload = yield* Schema.decodeUnknownEffect(OrganizationBusinessUpdateInputSchema, {
+        onExcessProperty: 'error',
+      })(request).pipe(Effect.mapError(unavailable));
+      if (input.sourceScope === undefined) {
+        return yield* unavailable();
+      }
+      return yield* updateOrganizationBusinessRecord(
+        transaction,
+        {
+          payload,
+          tenantId,
+          principalId: input.principalId,
+          actionInvocationId: input.actionInvocationId,
+          sourceScope: input.sourceScope,
+          request,
+        },
+        prepared,
+      );
+    }
+    if (prepared?.receipt !== undefined) {
+      const [current] = yield* transaction
+        .select()
+        .from(parties)
+        .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, input.partyId)))
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+      if (current === undefined) {
+        return yield* unavailable();
+      }
+      const original = yield* Schema.decodeUnknownEffect(PartySourceUpdateReceiptResultSchema)(
+        prepared.receipt.result,
+      ).pipe(Effect.mapError(unavailable));
+      if (current.revision !== original.revision) {
+        return { _tag: 'conflict', value: partyDto(current) } as const;
+      }
+      return { _tag: 'found', value: partyDto(current), replayed: true } as const;
+    }
     const [current] = yield* transaction
       .select()
       .from(parties)
@@ -396,7 +480,15 @@ export const updatePartyIdentityRecord = Effect.fn('PartyIdentityPersistenceServ
     if (assertions.length > 0) {
       yield* transaction.insert(partyFactAssertions).values(assertions).pipe(Effect.mapError(unavailable));
     }
-    return { _tag: 'found', value: partyDto(updated) } as const;
+    const value = partyDto(updated);
+    if (prepared !== undefined) {
+      const result = yield* Schema.encodeEffect(PartySourceUpdateReceiptResultSchema)({
+        partyRef: value.partyRef,
+        revision: value.revision,
+      }).pipe(Effect.mapError(unavailable));
+      yield* recordPartySourceEffect(transaction, sourceInput, prepared, result);
+    }
+    return { _tag: 'found', value } as const;
   },
 );
 

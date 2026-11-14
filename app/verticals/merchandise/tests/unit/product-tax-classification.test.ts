@@ -2,7 +2,7 @@
 // has no rule for, and a company Tax gives no rate at all. Labels come from the real Czech and English locales.
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import {
   choiceAvailable,
@@ -167,16 +167,21 @@ describe('how current the company rates are', () => {
 
   it('tells the migrated rates from none at all, as the staff read states their source', () => {
     const migrated = companyVatOf({
-      sellerVatRegime: 'VAT_PAYER',
+      sellerVatRegime: Option.some('VAT_PAYER'),
       taxRates: [standardNow],
-      taxRatesConfirmedAt: null,
-      taxRatesSource: 'MIGRATION',
+      taxRatesConfirmedAt: Option.none(),
+      taxRatesSource: Option.some('MIGRATION'),
     });
     expect(cs.confirmation(migrated, now)).toBe(
       'Sazby DPH zatím nepotvrdil modul Daně; platí sazby převzaté z dosud uložených cen.',
     );
     // Nothing stored: no rates to call unconfirmed; the form says instead that the company has no rate.
-    const none = companyVatOf({ sellerVatRegime: null, taxRates: [], taxRatesConfirmedAt: null, taxRatesSource: null });
+    const none = companyVatOf({
+      sellerVatRegime: Option.none(),
+      taxRates: [],
+      taxRatesConfirmedAt: Option.none(),
+      taxRatesSource: Option.none(),
+    });
     expect(cs.confirmation(none, now)).toBeUndefined();
   });
 });

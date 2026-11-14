@@ -9,6 +9,7 @@ import { validateActiveApplicationCompositionSnapshot } from '../modules/active-
 import { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 import {
   ApplicationCompositionCloudflareWorkerBackendSchema,
+  ApplicationCompositionSchema,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
@@ -16,7 +17,7 @@ import {
 } from '../modules/application-composition.ts';
 import type { ApplicationComposition, ApplicationCompositionModule } from '../modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../modules/manifest.ts';
-import type { OntosModuleActivation } from '../modules/manifest.ts';
+import type { OntosModuleActivation, OntosModuleDeploymentContract } from '../modules/manifest.ts';
 import { extractVerticalRuntimeSafeDescriptors } from '../modules/runtime-registration.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
@@ -83,7 +84,7 @@ export const makeModuleContractFixture = <Subscription extends object = never>({
   schemaVersion: '2' as const,
 });
 
-const digest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
+export const compositionFixtureContentDigest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
 const contractJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const shellRuntimeJsonSchema = Schema.fromJsonString(OntosShellRuntimeContractSchema);
 const fixtureShellOrigin = 'https://shell-fixture.example';
@@ -158,7 +159,7 @@ const buildCompositionSnapshotFixture = Effect.fn('CoreTesting.buildCompositionS
               };
         const document = yield* Schema.decodeEffect(OntosModuleDeploymentContractSchema)(authored);
         const contractDocument = yield* Schema.encodeEffect(contractJsonSchema)(document);
-        const contractSha256 = digest(contractDocument);
+        const contractSha256 = compositionFixtureContentDigest(contractDocument);
         const workerName = yield* moduleReleaseWorkerName(appId, document.deployment.buildMarker);
         const versionId = yield* Schema.decodeEffect(
           ApplicationCompositionCloudflareWorkerBackendSchema.fields.versionId,
@@ -204,11 +205,11 @@ const buildCompositionSnapshotFixture = Effect.fn('CoreTesting.buildCompositionS
         coreCapabilities,
         deployment: shellDeployment,
         federationManifest: {
-          sha256: digest(fixtureShellFederationDocument),
+          sha256: compositionFixtureContentDigest(fixtureShellFederationDocument),
           url: `${fixtureShellOrigin}/mf-manifest.json`,
         },
         runtimeContract: {
-          sha256: digest(runtimeContractDocument),
+          sha256: compositionFixtureContentDigest(runtimeContractDocument),
           url: `${fixtureShellOrigin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`,
         },
         sharedSingletons: [],
@@ -216,7 +217,10 @@ const buildCompositionSnapshotFixture = Effect.fn('CoreTesting.buildCompositionS
     };
     const now = yield* Clock.currentTimeMillis;
     return yield* validateActiveApplicationCompositionSnapshot({
-      composition: { ...composition, revision: digest(canonicalizeApplicationComposition(composition)) },
+      composition: {
+        ...composition,
+        revision: compositionFixtureContentDigest(canonicalizeApplicationComposition(composition)),
+      },
       observedAt: DateTime.makeUnsafe(now - 1000),
       validUntil: DateTime.makeUnsafe(now + 3_600_000),
     });
@@ -277,3 +281,125 @@ export const makeOwnerApplicationCompositionFixture = Effect.fn('CoreTesting.mak
     });
   },
 );
+
+/** A deterministic TEST fixture seal over typed composition data. */
+export const sealApplicationCompositionFixture = (composition: ApplicationComposition): ApplicationComposition => ({
+  ...composition,
+  revision: compositionFixtureContentDigest(
+    canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) }),
+  ),
+});
+
+const publishedFixtureModule = (
+  contract: OntosModuleDeploymentContract,
+  contractDocument: string,
+): ApplicationCompositionModule => {
+  const contractSha256 = compositionFixtureContentDigest(contractDocument);
+  const { components, shellContributions } = contract.manifest.publicSurface;
+  const [component] = components;
+  return {
+    allowedContributions: Object.values(shellContributions).flatMap((items) =>
+      items.map(({ contributionKey }) => contributionKey),
+    ),
+    backend: { baseUrl: `https://${contract.deployment.appId}.example.test/`, transport: 'node-http' },
+    contract: {
+      sha256: contractSha256,
+      url: `https://${contract.deployment.appId}.example.test/.well-known/ontos-module-manifest.json`,
+    },
+    contractDocument,
+    dependencies: (contract.manifest.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId).toSorted(),
+    deployment: contract.deployment,
+    federation:
+      component === undefined
+        ? { execution: 'server' }
+        : {
+            execution: 'browser',
+            exposes: components.map(({ expose }) => expose),
+            manifest: {
+              sha256: compositionFixtureContentDigest(`${contract.deployment.buildMarker}-manifest`),
+              url: `https://${contract.deployment.appId}.example.test/releases/${contract.deployment.buildMarker}/mf-manifest.json`,
+            },
+            remoteName: component.mfBoundaryId,
+          },
+    moduleId: contract.manifest.module.id,
+    publicContract: { id: contract.manifest.module.id, sha256: contractSha256, version: contract.schemaVersion },
+    requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
+    requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+    sharedSingletons: [],
+  };
+};
+
+/** Build TEST composition DTOs from exact published contracts and an explicit receiving Shell release. */
+export const makePublishedApplicationCompositionSnapshotFixture = Effect.fn(
+  'CoreTesting.makePublishedApplicationCompositionSnapshotFixture',
+)(function* makePublishedSnapshot(input: {
+  readonly contractInputs: readonly unknown[];
+  readonly publishedShellRuntime: {
+    readonly document: string;
+    readonly receiverDeployment: ApplicationComposition['shell']['deployment'];
+  };
+  readonly validityMs: number;
+}) {
+  const { contractInputs, publishedShellRuntime, validityMs } = input;
+  if (!Number.isFinite(validityMs) || validityMs <= 0) {
+    return yield* fixtureUnavailable('The fixture validity must be a positive finite duration');
+  }
+  const modules = yield* Effect.forEach(
+    contractInputs,
+    Effect.fnUntraced(function* publishedModule(contractInput) {
+      if (Schema.is(Schema.String)(contractInput)) {
+        const contract = yield* Schema.decodeUnknownEffect(contractJsonSchema)(contractInput).pipe(
+          Effect.mapError(fixtureUnavailable),
+        );
+        return publishedFixtureModule(contract, contractInput);
+      }
+      const contract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(contractInput).pipe(
+        Effect.mapError(fixtureUnavailable),
+      );
+      const document = yield* Schema.encodeEffect(contractJsonSchema)(contract).pipe(
+        Effect.mapError(fixtureUnavailable),
+      );
+      return publishedFixtureModule(contract, document);
+    }),
+    { concurrency: 8 },
+  );
+  const { document: runtimeDocument, receiverDeployment } = publishedShellRuntime;
+  const runtimeContract = yield* Schema.decodeUnknownEffect(shellRuntimeJsonSchema)(runtimeDocument).pipe(
+    Effect.mapError(fixtureUnavailable),
+  );
+  if (
+    runtimeContract.deployment.appId !== receiverDeployment.appId ||
+    runtimeContract.deployment.buildMarker !== receiverDeployment.buildMarker
+  ) {
+    return yield* new ActiveApplicationCompositionUnavailableError({
+      reason: 'The actual Shell runtime document must match the compiled fixture receiver',
+    });
+  }
+  const receiverReleaseUrl = `https://${receiverDeployment.appId}.example.test/releases/${receiverDeployment.buildMarker}/`;
+  const shellFederationManifestDocument = '{"exposes":[],"name":"shellSuperApp","shared":[]}';
+  const composition = yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema)({
+    modules,
+    revision: '0'.repeat(64),
+    schemaVersion: '2',
+    shell: {
+      contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+      coreCapabilities: runtimeContract.coreCapabilities,
+      deployment: receiverDeployment,
+      federationManifest: {
+        sha256: compositionFixtureContentDigest(shellFederationManifestDocument),
+        url: new URL('mf-manifest.json', receiverReleaseUrl).href,
+      },
+      runtimeContract: {
+        sha256: compositionFixtureContentDigest(runtimeDocument),
+        url: new URL(ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1), receiverReleaseUrl).href,
+      },
+      sharedSingletons: [],
+    },
+  }).pipe(Effect.mapError(fixtureUnavailable));
+  const observedAt = yield* DateTime.now;
+  const validUntil = yield* Effect.try({
+    catch: fixtureUnavailable,
+    try: () => DateTime.add(observedAt, { milliseconds: validityMs }),
+  });
+  return { composition: sealApplicationCompositionFixture(composition), observedAt, validUntil };
+});

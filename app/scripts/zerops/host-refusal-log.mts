@@ -13,7 +13,7 @@
  * token or body: some routes keep a secret in the path (a password-reset link carries its token as a segment).
  * Every value is capped at 200 characters.
  */
-import { Clock, Console, Duration, Effect, Option, Schema } from 'effect';
+import { Clock, Console, Context, Duration, Effect, Layer, Option, Schema } from 'effect';
 
 export const HOST_REFUSAL_LOG_WINDOW = Duration.seconds(10);
 const WINDOW_MILLIS = Duration.toMillis(HOST_REFUSAL_LOG_WINDOW);
@@ -184,3 +184,12 @@ export class RelayFailure extends Schema.TaggedError<RelayFailure>()('RelayFailu
   code: Schema.String,
   stage: Schema.Literals(['request', 'response body']),
 }) {}
+
+interface HostRefusalsId {
+  readonly HostRefusals: never;
+}
+/** The host's one refusal log, shared by its control and public ports. */
+export const HostRefusals = Context.Service<HostRefusalsId, HostRefusalLog>('@app/scripts/zerops/HostRefusals');
+
+/** A fresh refusal log for one host process. */
+export const HostRefusalsLive = Layer.sync(HostRefusals, makeHostRefusalLog);

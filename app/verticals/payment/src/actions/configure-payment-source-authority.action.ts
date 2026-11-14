@@ -13,12 +13,7 @@ import type {
   ConfigurePaymentSourceAuthorityResult,
 } from '../../shared/actions/configure-payment-source-authority.ts';
 import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
-import {
-  PaymentSourceAuditEvidenceSchema,
-  PaymentSourceRejected,
-  paymentSourceRejected,
-} from '../../shared/domain/source-statement.ts';
-import { sourceAuthorityConfigurationProblem } from '../domain/source-qualification.ts';
+import { PaymentSourceAuditEvidenceSchema, PaymentSourceRejected } from '../../shared/domain/source-statement.ts';
 import { paymentSourceServicesForTransaction } from '../persistence/payment-source-persistence.ts';
 import type { PaymentSourceServices } from '../persistence/payment-source-persistence.ts';
 import { recordPaymentLookup } from './payment-data-access.ts';
@@ -37,19 +32,11 @@ export const handleConfigurePaymentSourceAuthority = Effect.fn('ConfigurePayment
     payload: ConfigurePaymentSourceAuthorityPayload,
     context: ActionHandlerContext<typeof domainEvents, PaymentSourceServices>,
   ) {
-    const problem = sourceAuthorityConfigurationProblem({
-      factFamily: payload.factFamily,
-      method: payload.method,
-      refundRoute: payload.refundRoute,
-      sourceKind: payload.source.sourceKind,
-    });
-    if (problem !== undefined) {
-      return yield* paymentSourceRejected('payment_source_configuration_invalid', problem);
-    }
     const configured = yield* context.services.source.configureAuthority({
       expectedRevision: payload.expectedRevision,
       factFamily: payload.factFamily,
       method: payload.method,
+      pickupCapabilityRef: payload.pickupCapabilityRef,
       provenance: {
         actionInvocationId: context.actionInvocationId,
         actorPrincipalId: context.scope.principalId,
@@ -73,6 +60,7 @@ export const handleConfigurePaymentSourceAuthority = Effect.fn('ConfigurePayment
       changed: configured.written,
       factFamily: authority.factFamily,
       method: authority.method,
+      pickupCapabilityRef: authority.pickupCapabilityRef,
       refundRoute: authority.refundRoute,
       revision: authority.revision,
       source: {

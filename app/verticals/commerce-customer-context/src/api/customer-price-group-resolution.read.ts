@@ -248,6 +248,7 @@ const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
 export const customerPriceGroupCatalogForScope = Effect.fn('CustomerPriceGroupResolution.catalogForScope')(
   function* requiredCatalogPort(scope: OperationalScope) {
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
+      operationRequirementKey: 'commerce.customer-context.requirement.price-group-single-assignment',
       requestCorrelation: scope.correlationId,
       subject: { _tag: 'Assertion', scope },
     });

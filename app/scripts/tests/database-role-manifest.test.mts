@@ -45,13 +45,36 @@ it('keeps Shell runtime composition inside its declaration root and uses package
   }
 });
 
-it('pins least-privilege shared exceptions for Promotion, the Market retirement fence and the serving VAT release', () => {
+it('keeps every shared runtime exception within its exact owner privileges', () => {
   const entry = manifestEntryForRole('ontos_runtime');
   expect(entry?.kind).toBe('legacy_shared');
   if (entry?.kind !== 'legacy_shared') {
     return;
   }
   expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
+    { privileges: [], table: 'core.source_execution_fences' },
+    { privileges: [], table: 'core.source_execution_gate_actions' },
+    { privileges: [], table: 'core.source_execution_gates' },
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'assortment.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'inventory.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'privacy.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert', 'delete'],
+      table: 'tax.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert'],
+      table: 'symmy_integration.job_effects',
+    },
     { privileges: ['select'], table: 'demo_merchandise.tax_classification_live' },
     { privileges: ['select', 'insert'], table: 'promotion.policy_changes' },
     { privileges: ['select', 'insert', 'update'], table: 'promotion.tenant_generations' },
@@ -67,6 +90,18 @@ it('pins least-privilege shared exceptions for Promotion, the Market retirement 
     {
       privileges: ['select', 'insert', 'update'],
       table: 'commerce_market_catalog.market_retirement_admissions',
+    },
+    {
+      privileges: ['select', 'insert'],
+      table: 'symmy_integration.gateway_assertion_redemptions',
+    },
+    {
+      privileges: ['select', 'insert'],
+      table: 'symmy_integration.import_jobs',
+    },
+    {
+      privileges: ['select'],
+      table: 'symmy_integration.job_routes',
     },
   ]);
   for (const exception of entry.tableGrantExceptions ?? []) {
@@ -282,6 +317,19 @@ it('derives trust routine executors from the identity flags', () => {
     ['trust.current_legal_entity_id()', gatewayGrantRoles],
     ['trust.auth_binding_issuing_legal_entity(uuid,uuid)', gatewayGrantRoles],
     ['trust.lock_access_scope_fence(uuid,uuid)', actionRunners],
+    // The neutral source execution fence: the shared runtime opens and cancels it, Action runners lock and read it,
+    // and only the migration owner administers its gates.
+    ['trust.open_source_execution_fence(uuid,uuid)', [SHARED_RUNTIME_IDENTITY.role]],
+    ['trust.open_source_execution_fence(uuid,uuid,uuid,text,text)', [SHARED_RUNTIME_IDENTITY.role]],
+    ['trust.register_source_execution_gated_action(text,text)', []],
+    ['trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)', []],
+    ['trust.cancel_source_execution_fence(uuid,uuid)', [SHARED_RUNTIME_IDENTITY.role]],
+    ['trust.lock_source_execution_fence(uuid,uuid)', actionRunners],
+    ['trust.read_source_execution_fence(uuid,uuid)', actionRunners],
+    [
+      'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
+      EffectArray.sort([SHARED_RUNTIME_IDENTITY.role, ...gatewayGrantRoles], Order.String),
+    ],
     ...readOnlyHelpers.map((signature): readonly [string, readonly string[]] => [signature, []]),
   ]);
   for (const routine of TRUST_ROUTINES) {

@@ -39,6 +39,7 @@ import {
   Effect,
   Layer,
   Option,
+  Predicate,
   Redacted,
   Schema,
 } from 'effect';
@@ -255,7 +256,7 @@ const seedRealm = Effect.fn('TaxMerchandiseDelegation.seedRealm')(function* seed
     LegalEntityIdSchema.make(realm.nonPayerCompanyId),
   ]);
   for (const scope of scopes) {
-    const legalEntityId = scope._tag === 'LegalEntity' ? scope.legalEntityId : null;
+    const legalEntityId = Predicate.isTagged(scope, 'LegalEntity') ? scope.legalEntityId : null;
     yield* admin.unsafe(
       'insert into core.access_scopes (scope_id, tenant_id, legal_entity_id, tenant_context_id) values ($1, $2, $3, $4) on conflict do nothing',
       [scope.scopeId, tenantId, legalEntityId, legalEntityId === null ? tenantId : null],
@@ -476,8 +477,8 @@ it.live(
             ),
           );
         });
-        expect((yield* declare(realm.payerCompanyId, 'VAT_PAYER'))._tag).toBe('DECLARED');
-        expect((yield* declare(realm.nonPayerCompanyId, 'NON_PAYER'))._tag).toBe('DECLARED');
+        expect(Predicate.isTagged(yield* declare(realm.payerCompanyId, 'VAT_PAYER'), 'DECLARED')).toBe(true);
+        expect(Predicate.isTagged(yield* declare(realm.nonPayerCompanyId, 'NON_PAYER'), 'DECLARED')).toBe(true);
 
         const now = yield* databaseNow(admin);
         const ruleSet = Effect.fn('TaxMerchandiseDelegation.ruleSet')(function* ruleSet(
@@ -509,10 +510,9 @@ it.live(
         expect(standardSet.applicable[0]?.taxRuleRevisionRef).toEqual(standard.initialRevisionRef);
         expect(standardSet.completeness.setFingerprint).toMatch(/^[0-9a-f]{64}$/u);
         expect(reducedSet.applicable.map((rule) => rule.ratePercent)).toEqual(['12']);
-        expect((yield* regimeAt(yield* viaModule(realm.payerCompanyId))).selection).toMatchObject({
-          _tag: 'DECLARED',
-          regime: 'VAT_PAYER',
-        });
+        const payerSelection = (yield* regimeAt(yield* viaModule(realm.payerCompanyId))).selection;
+        expect(Predicate.isTagged(payerSelection, 'DECLARED')).toBe(true);
+        expect(payerSelection).toMatchObject({ regime: 'VAT_PAYER' });
         const history = yield* throughTax(
           executeTaxRuleHistoryWithAuthorization(
             { taxRuleRef: standard.taxRuleRef },
@@ -528,10 +528,9 @@ it.live(
           applicable: [],
           outcome: 'TAX_RULE_MISSING',
         });
-        expect((yield* regimeAt(yield* viaModule(realm.nonPayerCompanyId))).selection).toMatchObject({
-          _tag: 'DECLARED',
-          regime: 'NON_PAYER',
-        });
+        const nonPayerSelection = (yield* regimeAt(yield* viaModule(realm.nonPayerCompanyId))).selection;
+        expect(Predicate.isTagged(nonPayerSelection, 'DECLARED')).toBe(true);
+        expect(nonPayerSelection).toMatchObject({ regime: 'NON_PAYER' });
 
         // The staff member alone holds no Tax right, and a module Tax does not name cannot act for them.
         expect(yield* statusOf(ruleSet(STANDARD, yield* asStaff(realm.payerCompanyId)))).toBe(403);

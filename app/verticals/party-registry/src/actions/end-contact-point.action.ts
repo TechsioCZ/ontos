@@ -2,6 +2,8 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug end-contact-point
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { requireAdmittedPartySourceReference } from '../services/party-client-source-evidence.service.ts';
+import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
@@ -20,7 +22,12 @@ import type {
   ContactPointProvenance,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
-import { endContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
+import { endContactPointSourceRecord } from '../services/party-source-lifecycle.service.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import type {
+  PartyEvidenceInsufficientError,
+  PartyPersistenceUnavailableError,
+} from '../../shared/domain/identity-contracts.ts';
 import { createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
 
 export { EndContactPointPayloadSchema } from '../../shared/actions/end-contact-point.ts';
@@ -29,6 +36,8 @@ export type { EndContactPointPayload } from '../../shared/actions/end-contact-po
 const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
 
 const EndContactPointErrorSchema = Schema.Union([
+  PartyEvidenceInsufficient,
+  PartyPersistenceUnavailable,
   PartyContactPointNotFound,
   PartyContactPointInvalid,
   PartyContactPointLifecycleConflict,
@@ -44,6 +53,7 @@ const ContactPointEndedEventSchema = Schema.Struct({
 });
 
 export interface EndContactPointCommand {
+  readonly sourceReference?: EndContactPointPayload['sourceReference'];
   readonly acceptedByActionInvocationId: string;
   readonly acceptedByPrincipalId: string;
   readonly contactPointRef: EndContactPointPayload['contactPointRef'];
@@ -59,6 +69,8 @@ export interface EndContactPointCommand {
 }
 
 type EndError =
+  | PartyEvidenceInsufficientError
+  | PartyPersistenceUnavailableError
   | PartyContactPointCorrectionRequired
   | PartyContactPointInvalid
   | PartyContactPointLifecycleConflict
@@ -115,6 +127,10 @@ const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactP
 
 export const endContactPointAction = defineAction(
   {
+    accessWorkload: {
+      workloads: ['party.registry.source-write'],
+      reason: 'Execute the enrolled client source occurrence through the native Contact Point lifecycle.',
+    },
     accessDeclaration: {
       key: 'party.registry.contact-point.end',
       kind: 'action',
@@ -152,6 +168,10 @@ export const endContactPointAction = defineAction(
   handleEndContactPoint,
   (transaction, scope) =>
     Effect.succeed<Services>({
-      end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),
+      end: (command: EndContactPointCommand) =>
+        requireAdmittedPartySourceReference(transaction, scope, command.sourceReference).pipe(
+          Effect.andThen(endContactPointSourceRecord(transaction, scope, command)),
+          withPartyClientSourcePrivacyRequirement('party.registry.end-contact-point'),
+        ),
     }),
 );

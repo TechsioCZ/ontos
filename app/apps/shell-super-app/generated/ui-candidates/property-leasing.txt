@@ -29,7 +29,6 @@ icon-[mdi--home-city-outline]
 icon-[mdi--key-chain-variant]
 icon-[mdi--office-building-outline]
 icon-[mdi--receipt-text-outline]
-inline
 outline
 table
 transition

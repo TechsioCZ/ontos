@@ -6,6 +6,7 @@ import { AccessDecisionGate, capabilityPolicyOf } from '@app/core-runtime/access
 import type { GateCarrier } from '@app/core-runtime/access/enforcement';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
+import type { Types } from 'effect';
 
 import {
   FacilityOperationsPermissionDenied,
@@ -343,7 +344,7 @@ export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords
     }
   }
   // The read definition validates the result against RecordsResponseSchema (agenda states are typed values).
-  const response: { -readonly [K in keyof RecordsResponse]: RecordsResponse[K] } = {
+  const response: Types.Mutable<RecordsResponse> = {
     access: accessList,
     actorPrincipalRef: actorRef,
     agendas,
@@ -380,7 +381,7 @@ export const finishFacilityOverview = Effect.fn('FacilityOperations.finishOvervi
       ),
   );
   // The read definition validates the result against OverviewResponseSchema.
-  const response: { -readonly [K in keyof OverviewResponse]: OverviewResponse[K] } = {
+  const response: Types.Mutable<OverviewResponse> = {
     access: recordsAccessList(granted),
     actorPrincipalRef: actorRef,
     ...opsOverviewOf(overviewStates, request.includeSearch === true),

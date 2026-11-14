@@ -23,8 +23,8 @@ import {
   ShellSearchRelevanceSchema,
   ShellSearchResponseSchema,
   SHELL_SEARCH_MAX_RESOURCE_TYPES,
-} from '../../shared/api.ts';
-import type { ShellSearchResult } from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
+import type { ShellSearchResult } from '../../shared/browser-api.ts';
 import {
   shellSearchFamilies,
   shellSearchPresentationIndex,

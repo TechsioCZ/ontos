@@ -4,7 +4,7 @@
 // i18n runtime and the router blocker are replaced.
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -330,7 +330,7 @@ const sentPatches = () =>
   rstest
     .mocked(executeManageCatalog)
     .mock.calls.map(([payload]) => payload.command)
-    .flatMap((command) => (command._tag === 'UpdateProduct' ? [command.patch] : []));
+    .flatMap((command) => (Predicate.isTagged(command, 'UpdateProduct') ? [command.patch] : []));
 
 describe('VAT classification on the product editor', () => {
   it.effect("names both classifications with today's rate and hints a scheduled change", () =>

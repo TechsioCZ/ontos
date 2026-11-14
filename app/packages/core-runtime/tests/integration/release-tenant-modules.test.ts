@@ -20,6 +20,7 @@ import {
   deriveReleaseTenantModules,
   installReleaseTenantModules,
   installUnderLock,
+  LockedInstallSchema,
 } from '../../src/install/release-tenant-modules.ts';
 import type { ReleaseTenantModule } from '../../src/install/release-tenant-modules.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -481,7 +482,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
             installUnderLock(transaction, { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }, [], RUN),
           )
           .pipe(Effect.orDie);
-        expect(locked).toEqual({ _tag: 'NotSelling' });
+        expect(locked).toEqual(LockedInstallSchema.members[2].make({}));
         expect(yield* historyOf(admin, tenantId)).toEqual([]);
       }),
     ),

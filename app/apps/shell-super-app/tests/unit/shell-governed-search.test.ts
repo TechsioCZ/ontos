@@ -1,5 +1,5 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
-import { Effect, Fiber, Schema } from 'effect';
+import { Effect, Exit, Fiber, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -101,6 +101,6 @@ it.effect('caller cancellation stays interruption, not a successful placeholder'
   Effect.gen(function* callerCancellation() {
     const pending = yield* withShellSearchRequestBudget(Effect.never, unavailable).pipe(Effect.forkChild);
     yield* Fiber.interrupt(pending);
-    expect(yield* Fiber.join(pending).pipe(Effect.exit)).toMatchObject({ _tag: 'Failure' });
+    expect(Exit.isFailure(yield* Fiber.join(pending).pipe(Effect.exit))).toBe(true);
   }),
 );

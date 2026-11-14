@@ -441,7 +441,7 @@ for (const state of ['Ready', 'Changing', 'missing'] as const) {
       expect(locking[0]?.sql).toContain('"legal_entity_id" is null');
       expect(locking[0]?.params).toEqual([tenant]);
       if (Result.isFailure(result)) {
-        expect(result.failure._tag).toBe('AccessIntentUnavailableError');
+        expect(Predicate.isTagged(result.failure, 'AccessIntentUnavailableError')).toBe(true);
       }
     }),
   );

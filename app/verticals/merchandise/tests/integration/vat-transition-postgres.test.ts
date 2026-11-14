@@ -18,7 +18,7 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { Clock, DateTime, Duration, Effect, FileSystem, Layer, Predicate, Redacted, Ref, Schema } from 'effect';
+import { Clock, DateTime, Duration, Effect, FileSystem, Layer, Option, Predicate, Redacted, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -194,9 +194,9 @@ const placeOrder = Effect.fn('VatTransition.placeOrder')(function* placeOrder(
     ),
   );
   const order = Predicate.hasProperty(result, 'storefrontOrder') ? result.storefrontOrder : undefined;
-  return Schema.encodeSync(Schema.UndefinedOr(StorefrontOrderResultSchema))(
-    Schema.decodeUnknownSync(Schema.UndefinedOr(StorefrontOrderResultSchema))(order),
-  );
+  return order === undefined
+    ? undefined
+    : Schema.encodeSync(StorefrontOrderResultSchema)(Schema.decodeUnknownSync(StorefrontOrderResultSchema)(order));
 });
 
 /** How far {@link laterClock} runs ahead of the real clock. */
@@ -363,8 +363,8 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         yield* Ref.set(clockShift, Duration.sum(TAX_RATE_FRESHNESS, Duration.seconds(1)));
         const staffView = { view: { limit: 0, ordersLimit: 0, summary: true } };
         const staff = yield* read(staffView);
-        expect(staff.taxRatesConfirmedAt).not.toBeNull();
-        expect(staff.sellerVatRegime).toBe('VAT_PAYER');
+        expect(Option.isSome(staff.taxRatesConfirmedAt ?? Option.none())).toBe(true);
+        expect(staff.sellerVatRegime).toEqual(Option.some('VAT_PAYER'));
         expect(staff.taxRates?.map((rate) => [rate.code, rate.ratePercent])).toEqual([
           ['cz.vat.standard', 21],
           ['cz.vat.reduced', 12],

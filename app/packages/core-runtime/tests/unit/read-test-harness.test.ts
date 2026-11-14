@@ -19,7 +19,7 @@ import {
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadServiceFactory } from '../../src/reads/definition.ts';
 import type { ReadHandlerContext, ReadLoadContext } from '../../src/reads/context.ts';
-import { ReadHandlerUnavailable, ReadPermissionDenied } from '../../src/reads/errors.ts';
+import { ReadHandlerUnavailable, ReadPermissionDenied, ReadPermissionUnavailable } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 
@@ -241,13 +241,13 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
           expect(harness.snapshot().evidenceWrites).toBe(1);
         } else {
           const failure = yield* result.pipe(Effect.flip);
-          let expectedFailure = 'ReadHandlerUnavailable';
+          let expectedFailure: Schema.Schema<unknown> = ReadHandlerUnavailable;
           if (control === 'denied') {
-            expectedFailure = 'ReadPermissionDenied';
+            expectedFailure = ReadPermissionDenied;
           } else if (control === 'unavailable') {
-            expectedFailure = 'ReadPermissionUnavailable';
+            expectedFailure = ReadPermissionUnavailable;
           }
-          expect(failure._tag).toBe(expectedFailure);
+          expect(Schema.is(expectedFailure)(failure)).toBe(true);
           expect(calls).toBe(0);
         }
         expect(harness.snapshot().ownerQueries).toEqual([]);

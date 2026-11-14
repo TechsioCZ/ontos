@@ -21,6 +21,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
+import { SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { hashPassword } from 'better-auth/crypto';
 import {
   additionalDemoCompanies,
@@ -130,7 +131,6 @@ const unlimitedKeyNames = [
   storefrontPrincipal.displayName,
   akrosStorefrontPrincipal.displayName,
 ];
-const SECURE_COOKIE_PREFIX = '__Secure-';
 const [headOfSales] = demoHumanAccounts;
 
 const workspaceRoot = new URL('../..', import.meta.url);
@@ -305,7 +305,7 @@ const ContextFixtureSchema = Schema.Struct({
  * with that exact key instead of publishing a Role that grants less than the reviewed policy says.
  */
 const membershipKey = Schema.encodeResult(
-  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.NullOr(Schema.String), Schema.String])),
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.OptionFromNullOr(Schema.String), Schema.String])),
 );
 
 const reviewedDemoAccess = (
@@ -363,7 +363,11 @@ const reviewedDemoAccess = (
   ];
   const membershipsByKey = new Map<string, PolicyMembershipRow>();
   for (const membership of reviewedMemberships) {
-    const key = membershipKey([membership.kind, membership.legalEntityId ?? null, membership.principalId]);
+    const key = membershipKey([
+      membership.kind,
+      Option.fromNullishOr(membership.legalEntityId),
+      membership.principalId,
+    ]);
     if (Result.isFailure(key)) {
       return Result.fail(key.failure.message);
     }

@@ -10,7 +10,7 @@ import { expect, it } from 'effect-rstest';
 import { AssetRefSchema } from '../../shared/resources/asset.ts';
 import { DeviceRefSchema } from '../../shared/resources/device.ts';
 import { DocumentRefSchema } from '../../shared/resources/document.ts';
-import { loadFacilitySearch } from '../../src/search/search-read.ts';
+import { loadFacilitySearch } from '../../src/services/facility-search-read.ts';
 import { buildFacilitySearchDocuments, publishFacilitySearch } from '../../src/services/facility-search-projection.ts';
 import type { FacilitySearchSnapshot } from '../../src/services/facility-search-source.ts';
 import { company, otherCompany, scope, snapshot, tenantId, workerContext } from './facility-search-fixtures.ts';

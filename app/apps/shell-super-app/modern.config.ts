@@ -1,25 +1,36 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { PAYMENT_GATEWAY_RELAY_PATH_PREFIX } from '@app/payment/payment-gateway-relay';
+import { SYMMY_REST_PREFIX } from '@app/shared-contracts/symmy/route-catalog';
 import { defineConfig, presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
+import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { getOrThrow as getResultOrThrow } from 'effect/Result';
 import {
   Array as SchemaArray,
+  Literal,
   NonEmptyString,
   Struct,
   check,
   decodeUnknownResult,
   fromJsonString,
+  is,
   makeFilter,
 } from 'effect/Schema';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'shell-super-app';
+const shellBffPrefix = '/shell-super-app-api';
+// PSP notifications and the Payment reconciliation driver reach Shell at the relay's own path on every deployment.
+// The relay contract module loads Effect, which the config loader must not evaluate, so only its type is imported.
+const paymentGatewayRelayPrefix = '/api/payment/v1' satisfies typeof PAYMENT_GATEWAY_RELAY_PATH_PREFIX;
+const internalSymmyIngress =
+  is(Literal('1'))(getBuildConfigEnvironment('ONTOS_INTERNAL_SYMMY_INGRESS')) &&
+  resolveDeployTarget().target === 'node';
 
 const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
 // This is a build check of the native BFF convention, never a runtime module registry.
@@ -56,7 +67,7 @@ export default defineConfig(
           openapi: { path: '/openapi.json' },
           strictEffectApproach: true,
         },
-        prefix: '/shell-super-app-api',
+        prefix: [shellBffPrefix, paymentGatewayRelayPrefix, ...(internalSymmyIngress ? [SYMMY_REST_PREFIX] : [])],
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
@@ -79,7 +90,9 @@ export default defineConfig(
               '/assets',
               '/bundles',
               '/favicon.ico',
-              '/shell-super-app-api',
+              shellBffPrefix,
+              paymentGatewayRelayPrefix,
+              ...(internalSymmyIngress ? [SYMMY_REST_PREFIX] : []),
               '/locales',
               '/mf-manifest.json',
               '/mf-stats.json',

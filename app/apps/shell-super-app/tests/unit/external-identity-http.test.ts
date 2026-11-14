@@ -138,7 +138,7 @@ it.effect('refuses a key of an internal workload principal the platform did not 
         ),
       ),
     );
-    expect(failure._tag).toBe('ExternalIdentityWorkloadForbiddenError');
+    expect(Predicate.isTagged(failure, 'ExternalIdentityWorkloadForbiddenError')).toBe(true);
   }),
 );
 
@@ -169,10 +169,10 @@ it.effect('refuses a platform module credential as a workload and answers an unr
     const moduleKey = yield* attemptWorkload(
       enrolledModuleCredentials([{ appId: 'commerce-customer-context', providerKeyId: 'better-auth-workload-key' }]),
     );
-    expect(moduleKey.error._tag).toBe('ExternalIdentityWorkloadForbiddenError');
+    expect(Predicate.isTagged(moduleKey.error, 'ExternalIdentityWorkloadForbiddenError')).toBe(true);
     expect(moduleKey.resolutions).toBe(0);
     const unreadable = yield* attemptWorkload(unreadableModuleCredentialEnrolment);
-    expect(unreadable.error._tag).toBe('ExternalIdentityWorkloadUnavailableError');
+    expect(Predicate.isTagged(unreadable.error, 'ExternalIdentityWorkloadUnavailableError')).toBe(true);
     expect(unreadable.resolutions).toBe(0);
   }),
 );

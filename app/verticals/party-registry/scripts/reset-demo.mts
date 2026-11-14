@@ -20,7 +20,11 @@ import { Config, Console, DateTime, Effect, FileSystem, Layer, Path, Redacted, S
 import { Command, Flag } from 'effect/cli';
 
 import { normalizeEmail, normalizePhone } from '../shared/domain/contact-point.ts';
-import { derivePartyDisplayName, partySubjectKeyFromString } from '../shared/domain/identity-contracts.ts';
+import {
+  derivePartyDisplayName,
+  PartyEvidenceEvaluationSchema,
+  partySubjectKeyFromString,
+} from '../shared/domain/identity-contracts.ts';
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import {
   counterparties,
@@ -89,15 +93,15 @@ export const salesDemoOrganizationParty = (input: {
 });
 
 /** Identity facts a synthetic organization customer asserts: its type, then its business name. */
-export const salesDemoOrganizationIdentityFacts = (input: {
-  readonly customer: SalesDemoCustomerFixture;
-  readonly ids: Pick<SalesDemoSeedIds, 'businessName' | 'partyType'>;
-  readonly reference: string;
-}) =>
-  [
-    {
-      assertionId: input.ids.partyType,
-      evidenceEvaluation: evaluatePartySubjectEvidence({
+export const salesDemoOrganizationIdentityFacts = Effect.fn('PartyRegistrySalesDemo.organizationIdentityFacts')(
+  function* salesDemoOrganizationIdentityFacts(input: {
+    readonly customer: SalesDemoCustomerFixture;
+    readonly ids: Pick<SalesDemoSeedIds, 'businessName' | 'partyType'>;
+    readonly reference: string;
+  }) {
+    // The stored evaluation is the schema's encoded form, exactly as the owner writes it.
+    const evidenceEvaluation = yield* Schema.encodeEffect(PartyEvidenceEvaluationSchema)(
+      evaluatePartySubjectEvidence({
         partyType: 'ORGANIZATION',
         subjectEvidence: [
           {
@@ -110,15 +114,22 @@ export const salesDemoOrganizationIdentityFacts = (input: {
           },
         ],
       }),
-      factKind: 'PARTY_TYPE',
-      normalizedValue: 'ORGANIZATION',
-    },
-    {
-      assertionId: input.ids.businessName,
-      factKind: 'BUSINESS_NAME',
-      normalizedValue: input.customer.name,
-    },
-  ] as const;
+    );
+    return [
+      {
+        assertionId: input.ids.partyType,
+        evidenceEvaluation,
+        factKind: 'PARTY_TYPE',
+        normalizedValue: 'ORGANIZATION',
+      },
+      {
+        assertionId: input.ids.businessName,
+        factKind: 'BUSINESS_NAME',
+        normalizedValue: input.customer.name,
+      },
+    ] as const;
+  },
+);
 
 const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function* seedCustomers(
   fixturePath: string,
@@ -290,7 +301,7 @@ const seedCustomers = Effect.fn('PartyRegistrySalesDemo.seedCustomers')(function
       validFrom: since,
       validTo: null,
     };
-    const assertions = salesDemoOrganizationIdentityFacts({ customer, ids, reference }).map((fact) => ({
+    const assertions = (yield* salesDemoOrganizationIdentityFacts({ customer, ids, reference })).map((fact) => ({
       ...assertionBase,
       ...fact,
     }));

@@ -355,22 +355,6 @@ it('adds intent to a client whose options have only ordinary named properties', 
   expect(upgradeClient(upgraded)).toBe(upgraded);
 });
 
-it('places proposal intent before reference credentials and repairs only its own earlier documented member', () => {
-  const source = clientSource().replace(
-    '  readonly [traceIdOption]?: string;',
-    '  readonly referenceCredentials?: string;\n  readonly [traceIdOption]?: string;',
-  );
-  const updated = upgradeClient(source);
-  expect(updated).toContain(`${PROPOSAL_INTENT_DOC}\n  readonly referenceCredentials?: string;`);
-  expect(upgradeClient(updated)).toBe(updated);
-  const unsorted = updated.replace(
-    `${PROPOSAL_INTENT_DOC}\n  readonly referenceCredentials?: string;`,
-    `  readonly referenceCredentials?: string;\n${PROPOSAL_INTENT_DOC}`,
-  );
-  expect(upgradeClient(unsorted)).toBe(updated);
-  expect(() => upgradeClient(unsorted.replace(' * O80:', ' * Owner note:'))).toThrow();
-});
-
 it('rejects an existing success array with extra or duplicate proposal arms', () => {
   for (const arms of [
     'ActionProposalAcceptedSchema, AssertSizeEquivalenceResultSchema, Schema.String',
@@ -523,7 +507,6 @@ ${declaration}  actionKey: '${MODULE_ID}.${ACTION}',
   idempotency: 'required',
   owningModuleKey: '${MODULE_ID}',
   payloadSchema: Schema.Struct({ rate: Schema.Number }),
-  resultSchema: Schema.Struct({}),
 };
 
 const registered = { descriptor };

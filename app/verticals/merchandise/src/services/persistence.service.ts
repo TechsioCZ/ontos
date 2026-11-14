@@ -492,7 +492,7 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
   if (product.currentPriceMinor === priceMinor) {
     return product;
   }
-  const updated: Mutable<Product> = {
+  const updated = {
     ...withEnteredGross(product, priceMinor, enteredRateOf(input.tax, product)),
     currentPriceMinor: priceMinor,
     priceHistory: [
@@ -505,16 +505,18 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
       },
     ],
     updatedAt: input.now,
-  };
-  if (product.priceTiers !== undefined) {
-    updated.priceTiers = repriceTiers(
-      product.priceTiers,
-      product.currentPriceMinor,
-      priceMinor,
-      enteredRateOf(input.tax, product),
-    );
-  }
-  return updated;
+  } satisfies Product;
+  return product.priceTiers === undefined
+    ? updated
+    : {
+        ...updated,
+        priceTiers: repriceTiers(
+          product.priceTiers,
+          product.currentPriceMinor,
+          priceMinor,
+          enteredRateOf(input.tax, product),
+        ),
+      };
 };
 
 /** The storefront finds a product by slug, so two products with one slug would hide one of them. */
@@ -562,14 +564,13 @@ const nextVariantPriceHistory = (
   if (previous?.priceMinor === variant.priceMinor) {
     return Option.some(previous.priceHistory ?? variant.priceHistory ?? []);
   }
-  const entry: Mutable<VariantPriceEntry> = {
+  const change = {
     changedBy: input.actor,
     effectiveFrom: input.now,
     priceMinor: variant.priceMinor,
-  };
-  if (previous?.priceMinor !== undefined) {
-    entry.previousPriceMinor = previous.priceMinor;
-  }
+  } satisfies VariantPriceEntry;
+  const entry: VariantPriceEntry =
+    previous?.priceMinor === undefined ? change : { ...change, previousPriceMinor: previous.priceMinor };
   return Option.some([...(previous?.priceHistory ?? variant.priceHistory ?? []), entry]);
 };
 const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
@@ -612,27 +613,27 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
       const kept =
         previous !== undefined && previous.priceMinor === variant.priceMinor ? previous.grossPriceMinor : undefined;
       const rate = enteredRateOf(input.tax, product);
-      const updated: Mutable<ProductVariant> = { ...rest };
-      if (kept !== undefined) {
-        updated.grossPriceMinor = kept;
-      } else if (variant.priceMinor !== undefined && rate !== undefined) {
-        updated.grossPriceMinor = grossUnitPriceMinor(variant.priceMinor, rate);
-      }
-      if (variant.priceTiers === undefined && previous?.priceTiers !== undefined) {
-        updated.priceTiers = repriceTiers(
-          previous.priceTiers,
-          previous.priceMinor,
-          variant.priceMinor,
-          enteredRateOf(input.tax, product),
-        );
-      }
-      if (id !== undefined) {
-        updated.id = id;
-      }
-      if (Option.isSome(history)) {
-        updated.priceHistory = history.value;
-      }
-      return updated;
+      const enteredGross =
+        variant.priceMinor !== undefined && rate !== undefined
+          ? grossUnitPriceMinor(variant.priceMinor, rate)
+          : undefined;
+      const gross = kept ?? enteredGross;
+      const withGross = gross === undefined ? rest : { ...rest, grossPriceMinor: gross };
+      const withTiers =
+        variant.priceTiers === undefined && previous?.priceTiers !== undefined
+          ? {
+              ...withGross,
+              priceTiers: repriceTiers(
+                previous.priceTiers,
+                previous.priceMinor,
+                variant.priceMinor,
+                enteredRateOf(input.tax, product),
+              ),
+            }
+          : withGross;
+      const withId = id === undefined ? withTiers : { ...withTiers, id };
+      const normalized: ProductVariant = Option.isSome(history) ? { ...withId, priceHistory: history.value } : withId;
+      return normalized;
     }),
     { concurrency: 1 },
   );
@@ -668,20 +669,18 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
     slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
     updatedAt: input.now,
   };
-  let product: Mutable<Product> = pricedByVariants
-    ? base
-    : { ...withEnteredGross(base, priceMinor, enteredRateOf(input.tax, base)) };
-  if (additionalCategoryIds !== undefined) {
-    if (value.categoryId === undefined) {
-      return yield* conflict(missingPrimaryCategoryReason);
-    }
-    product = {
-      ...(yield* assignCategoryMemberships(product, value.categoryId, additionalCategoryIds, state.categories)),
-    };
+  const priced: Product = pricedByVariants ? base : withEnteredGross(base, priceMinor, enteredRateOf(input.tax, base));
+  if (additionalCategoryIds !== undefined && value.categoryId === undefined) {
+    return yield* conflict(missingPrimaryCategoryReason);
   }
-  if (variants !== undefined) {
-    product.variants = yield* normalizeVariants(product, variants, input);
-  }
+  const categorized: Product =
+    additionalCategoryIds === undefined || value.categoryId === undefined
+      ? priced
+      : yield* assignCategoryMemberships(priced, value.categoryId, additionalCategoryIds, state.categories);
+  const product: Product =
+    variants === undefined
+      ? categorized
+      : { ...categorized, variants: yield* normalizeVariants(categorized, variants, input) };
   const entity = yield* entityIdOf(id);
   return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
 });
@@ -716,14 +715,8 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   void _clientPath;
   const variants =
     patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
-  const merged: Mutable<Product> = {
-    ...product,
-    ...patch,
-    updatedAt: input.now,
-  };
-  if (patch.images !== undefined) {
-    merged.imageSrc = patch.images[0] ?? '';
-  }
+  const patched = { ...product, ...patch, updatedAt: input.now } satisfies Product;
+  const merged: Product = patch.images === undefined ? patched : { ...patched, imageSrc: patch.images[0] ?? '' };
   let categorized: Product = merged;
   if (patchAdditionalCategoryIds !== undefined) {
     const primaryCategoryId = patchCategoryId ?? product.categoryId;
@@ -771,7 +764,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
     if (entry.id !== variant.id) {
       return entry;
     }
-    const updated: Mutable<ProductVariant> = {
+    const repricedVariant = {
       ...withEnteredGross(entry, value.priceMinor, enteredRateOf(input.tax, product)),
       priceHistory: [
         ...(entry.priceHistory ?? []),
@@ -783,16 +776,18 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
         },
       ],
       priceMinor: value.priceMinor,
-    };
-    if (entry.priceTiers !== undefined) {
-      updated.priceTiers = repriceTiers(
-        entry.priceTiers,
-        entry.priceMinor,
-        value.priceMinor,
-        enteredRateOf(input.tax, product),
-      );
-    }
-    return updated;
+    } satisfies ProductVariant;
+    return entry.priceTiers === undefined
+      ? repricedVariant
+      : {
+          ...repricedVariant,
+          priceTiers: repriceTiers(
+            entry.priceTiers,
+            entry.priceMinor,
+            value.priceMinor,
+            enteredRateOf(input.tax, product),
+          ),
+        };
   });
   return { entityIds: [entity], state: withProduct(state, { ...product, updatedAt: input.now, variants }) };
 });
@@ -1096,7 +1091,7 @@ const storefrontLines = (order: Pick<Order, 'lines' | 'pricesIncludeVat'>): Stor
     ...variantFields(line.variantId, line.variantName),
   }));
 const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): StorefrontOrderResult => {
-  const result: Mutable<StorefrontOrderResult> = {
+  const result = {
     issues: [],
     lines: storefrontLines(order),
     orderId: order.id,
@@ -1105,14 +1100,9 @@ const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): Store
     status: order.status,
     totalMinor: order.totalMinor,
     totalVatMinor: order.totalVatMinor,
-  };
-  if (order.shipping !== undefined) {
-    result.shippingPriceMinor = order.shipping.priceMinor;
-  }
-  if (order.market !== undefined) {
-    result.market = storefrontMarketOf(order.market);
-  }
-  return result;
+  } satisfies StorefrontOrderResult;
+  const shipped = order.shipping === undefined ? result : { ...result, shippingPriceMinor: order.shipping.priceMinor };
+  return order.market === undefined ? shipped : { ...shipped, market: storefrontMarketOf(order.market) };
 };
 
 interface PricedUnit {
@@ -1427,21 +1417,19 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
         return;
       }
       const { product, tax, unit } = resolved;
-      const snapshot: Mutable<OrderLine> = {
+      const priced = {
         productId: product.id,
         productName: product.name,
         quantity: line.quantity,
         sku: unit.sku,
         unitPriceMinor: unit.grossPriceMinor,
         ...tax,
-      };
-      if (unit.variantId !== undefined) {
-        snapshot.variantId = yield* mintId(VariantIdSchema, unit.variantId);
-      }
-      if (unit.variantName !== undefined) {
-        snapshot.variantName = unit.variantName;
-      }
-      lines.push(snapshot);
+      } satisfies OrderLine;
+      const withVariant =
+        unit.variantId === undefined
+          ? priced
+          : { ...priced, variantId: yield* mintId(VariantIdSchema, unit.variantId) };
+      lines.push(unit.variantName === undefined ? withVariant : { ...withVariant, variantName: unit.variantName });
     }),
     { concurrency: 1, discard: true },
   );
@@ -1467,7 +1455,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     return yield* conflict('Order id already exists');
   }
   const number = nextOrderNumberOf(state);
-  const order: Mutable<Order> = {
+  const placed = {
     channel: 'STOREFRONT',
     clientRequestId: value.clientRequestId,
     contact: value.contact,
@@ -1491,22 +1479,17 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     status: 'NEW',
     ...draftTotals,
     updatedAt: input.now,
-  };
-  if (value.billingAddress !== undefined) {
-    order.billingAddress = value.billingAddress;
-  }
-  if (market !== undefined) {
-    order.market = market;
-  }
-  if (value.customerAccountId !== undefined) {
-    order.customerAccountId = value.customerAccountId;
-  }
-  if (value.deliveryRecipient !== undefined) {
-    order.deliveryRecipient = value.deliveryRecipient;
-  }
-  if (value.note !== undefined && value.note !== '') {
-    order.note = value.note;
-  }
+  } satisfies Order;
+  const billed = value.billingAddress === undefined ? placed : { ...placed, billingAddress: value.billingAddress };
+  const inMarket = market === undefined ? billed : { ...billed, market };
+  const withAccount =
+    value.customerAccountId === undefined ? inMarket : { ...inMarket, customerAccountId: value.customerAccountId };
+  const withRecipient =
+    value.deliveryRecipient === undefined
+      ? withAccount
+      : { ...withAccount, deliveryRecipient: value.deliveryRecipient };
+  const order: Order =
+    value.note === undefined || value.note === '' ? withRecipient : { ...withRecipient, note: value.note };
   const entity = yield* entityIdOf(order.id);
   // Atomic with the order: the same save writes one ORDER movement per line; cancelling returns it.
   const placedMovements = yield* Effect.forEach(
@@ -2111,22 +2094,25 @@ export const workingSetRequestOf = (
   Match.value(command).pipe(
     Match.tagsExhaustive({
       ArchiveDemoProduct: (value): WorkingSetRequest => ({ productIds: [value.id] }),
-      BulkUpdateProducts: (value): WorkingSetRequest => {
-        const request: Mutable<WorkingSetRequest> = { productIds: value.ids };
-        if (value.patch.categoryId !== undefined || value.patch.additionalCategoryIds !== undefined) {
-          request.categoryIds = [
-            ...(value.patch.categoryId === undefined ? [] : [value.patch.categoryId]),
-            ...(value.patch.additionalCategoryIds ?? []),
-          ];
-          request.productCategoryMemberships = true;
-        }
-        return request;
-      },
+      BulkUpdateProducts: (value): WorkingSetRequest =>
+        value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined
+          ? { productIds: value.ids }
+          : {
+              categoryIds: [
+                ...(value.patch.categoryId === undefined ? [] : [value.patch.categoryId]),
+                ...(value.patch.additionalCategoryIds ?? []),
+              ],
+              productCategoryMemberships: true,
+              productIds: value.ids,
+            },
       ChangeOrderStatus: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       CreateCategory: (value): WorkingSetRequest => ({
-        categoryIds: value.parentId === null ? [value.id] : [value.id, value.parentId],
+        categoryIds: Option.match(value.parentId, {
+          onNone: () => [value.id],
+          onSome: (parentId) => [value.id, parentId],
+        }),
       }),
       CreateOrder: (value): WorkingSetRequest => ({
         lastOrderNumber: true,
@@ -2135,7 +2121,7 @@ export const workingSetRequestOf = (
         productIds: value.lines.map((line) => line.productId),
       }),
       CreateProduct: (value): WorkingSetRequest => {
-        const request: Mutable<WorkingSetRequest> = {
+        const request = {
           productIds: [resourceId],
           productKeys: {
             sku: value.sku,
@@ -2143,14 +2129,16 @@ export const workingSetRequestOf = (
               ? { slugPrefix: productSlugBase(value.name, value.sku) }
               : { slug: value.slug }),
           },
-        };
-        if (value.additionalCategoryIds !== undefined) {
-          request.categoryIds = [
-            ...(value.categoryId === undefined ? [] : [value.categoryId]),
-            ...value.additionalCategoryIds,
-          ];
-        }
-        return request;
+        } satisfies WorkingSetRequest;
+        return value.additionalCategoryIds === undefined
+          ? request
+          : {
+              ...request,
+              categoryIds: [
+                ...(value.categoryId === undefined ? [] : [value.categoryId]),
+                ...value.additionalCategoryIds,
+              ],
+            };
       },
       EditOrder: (value): WorkingSetRequest => ({
         movements: true,
@@ -2173,18 +2161,19 @@ export const workingSetRequestOf = (
       SyncTaxRates: (): WorkingSetRequest => ({}),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
       UpdateProduct: (value): WorkingSetRequest => {
-        const request: Mutable<WorkingSetRequest> = { productIds: [value.id] };
-        if (value.patch.slug !== undefined) {
-          request.productKeys = { slug: value.patch.slug };
-        }
-        if (value.patch.categoryId !== undefined || value.patch.additionalCategoryIds !== undefined) {
-          request.categoryIds = [
-            ...(value.patch.categoryId === undefined ? [] : [value.patch.categoryId]),
-            ...(value.patch.additionalCategoryIds ?? []),
-          ];
-          request.productCategoryMemberships = true;
-        }
-        return request;
+        const request = { productIds: [value.id] } satisfies WorkingSetRequest;
+        const keyed =
+          value.patch.slug === undefined ? request : { ...request, productKeys: { slug: value.patch.slug } };
+        return value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined
+          ? keyed
+          : {
+              ...keyed,
+              categoryIds: [
+                ...(value.patch.categoryId === undefined ? [] : [value.patch.categoryId]),
+                ...(value.patch.additionalCategoryIds ?? []),
+              ],
+              productCategoryMemberships: true,
+            };
       },
     }),
   );
@@ -2458,10 +2447,11 @@ const revisionMatches = (
 
 /** The staff response's view of the company's VAT: its current and scheduled rates and its declared regime. */
 export const staffTaxFields = (state: CompanyTaxRates | undefined, now: DateTime.Utc) => ({
-  sellerVatRegime: state === undefined || state.book.regime === 'NOT_DECLARED' ? null : state.book.regime,
+  sellerVatRegime:
+    state === undefined || state.book.regime === 'NOT_DECLARED' ? Option.none() : Option.some(state.book.regime),
   taxRates: state === undefined ? [] : taxRateViews(state.book, now),
-  taxRatesConfirmedAt: state?.source === 'TAX' ? state.syncedAt : null,
-  taxRatesSource: state?.source ?? null,
+  taxRatesConfirmedAt: state?.source === 'TAX' ? Option.some(state.syncedAt) : Option.none(),
+  taxRatesSource: Option.fromNullishOr(state?.source),
 });
 
 /** What the records read prepares outside its transaction: the caller's rights and, for staff reads, Tax's answer. */
@@ -2725,14 +2715,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               command.lines.map((line) => line.productId),
             ).pipe(Effect.mapError(unavailable))
           : undefined;
-      const commandInput: Mutable<MerchandiseCommandInput> = { actor, now, resourceId, tax };
-      if (market !== undefined) {
-        commandInput.market = market;
-      }
       const storefrontBrand = storefrontBrandOf(legalEntityId);
-      if (storefrontBrand !== undefined) {
-        commandInput.storefrontBrand = storefrontBrand;
-      }
+      const baseInput = { actor, now, resourceId, tax } satisfies MerchandiseCommandInput;
+      const marketInput = market === undefined ? baseInput : { ...baseInput, market };
+      const commandInput: MerchandiseCommandInput =
+        storefrontBrand === undefined ? marketInput : { ...marketInput, storefrontBrand };
       const change = yield* evolveMerchandiseState(working.state, command, commandInput);
       const revision = yield* persist(working, change.state, now, tax, synced);
       return change.storefrontOrder === undefined
@@ -2853,7 +2840,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? undefined
           : yield* storefrontCustomerOrders(transaction, store, view.storefrontCustomerOrders);
       const pageProducts = page?.products ?? [];
-      const response: Mutable<RecordsResponse> = {
+      const storefrontResponse = {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canCleanupDemo: false,
         canEditOrders: false,
@@ -2871,30 +2858,36 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         orders: customerOrders?.orders ?? [],
         products: [...pageProducts],
         revision,
-      };
-      if (customerOrders !== undefined) {
-        response.totalOrders = customerOrders.total;
-      }
-      if (view.storefrontCheckout === true) {
-        response.checkout = {
-          carrierTrackingAvailable: false,
-          paymentAvailable: false,
-          shippingMethods: checkoutShippingMethods(market.scope.pricing),
-        };
-      }
-      if (page !== undefined) {
-        response.homepageFeaturedProductIds = featuredIds.map((id) => ProductIdReferenceSchema.make(id));
-        response.page = page.page;
-        response.pageSize = page.pageSize;
-        response.total = page.total;
-        response.totalProducts = page.total;
-      }
-      if (tree !== undefined) {
-        response.categories = [...tree];
-      }
-      if (status !== undefined) {
-        response.orderStatus = Option.fromNullishOr(status);
-      }
+      } satisfies RecordsResponse;
+      const withCustomerOrders =
+        customerOrders === undefined
+          ? storefrontResponse
+          : { ...storefrontResponse, totalOrders: customerOrders.total };
+      const withCheckout =
+        view.storefrontCheckout === true
+          ? {
+              ...withCustomerOrders,
+              checkout: {
+                carrierTrackingAvailable: false,
+                paymentAvailable: false,
+                shippingMethods: checkoutShippingMethods(market.scope.pricing),
+              },
+            }
+          : withCustomerOrders;
+      const withPage =
+        page === undefined
+          ? withCheckout
+          : {
+              ...withCheckout,
+              homepageFeaturedProductIds: featuredIds.map((id) => ProductIdReferenceSchema.make(id)),
+              page: page.page,
+              pageSize: page.pageSize,
+              total: page.total,
+              totalProducts: page.total,
+            };
+      const withCategories = tree === undefined ? withPage : { ...withPage, categories: [...tree] };
+      const response: RecordsResponse =
+        status === undefined ? withCategories : { ...withCategories, orderStatus: Option.fromNullishOr(status) };
       return { ...response, ...market.field };
     });
     const readOrderPage = Effect.fn('Merchandise.readOrderPage')(function* readOrderPage(
@@ -3086,13 +3079,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       // A read-only or approval-only MCP connection cannot change the catalog directly.
       const canWrite = grants.writeAll;
       const canRead = staff && grants.readAll;
-      const headOptions: Mutable<HeadReadOptions> = { aiChanges: canRead };
-      if (request.agentHistory !== undefined) {
-        headOptions.history = request.agentHistory;
-      }
+      const headOptions: HeadReadOptions =
+        request.agentHistory === undefined
+          ? { aiChanges: canRead }
+          : { aiChanges: canRead, history: request.agentHistory };
       const { head, synced } = yield* readHead(headOptions, staff ? tax : undefined);
       if (request.agentHistory !== undefined) {
-        const response: Mutable<RecordsResponse> = {
+        const history = {
           actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
           canWrite,
           indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
@@ -3100,10 +3093,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           orders: [],
           products: [],
           revision: head.revision,
-        };
-        if (canRead && head.aiChanges !== undefined) {
-          response.aiChanges = head.aiChanges;
-        }
+        } satisfies RecordsResponse;
+        const response: RecordsResponse =
+          canRead && head.aiChanges !== undefined ? { ...history, aiChanges: head.aiChanges } : history;
         return response;
       }
       const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(
@@ -3132,7 +3124,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             stockValueMinor: 0,
           };
       const storefrontOrigin = storefrontOriginOf(legalEntityId);
-      const response: Mutable<RecordsResponse> = {
+      const staffResponse = {
         ...catalogMetadata,
         ...marketMetadata,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
@@ -3144,16 +3136,15 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         products: [...page.products],
         revision: head.revision,
         totalProducts: page.total,
-      };
-      if (canRead && head.aiChanges !== undefined) {
-        response.aiChanges = head.aiChanges;
-      }
-      if (orderList.total !== undefined) {
-        response.totalOrders = orderList.total;
-      }
-      if (synced !== undefined) {
-        Object.assign(response, staffTaxFields(synced.shown, yield* DateTime.now));
-      }
+      } satisfies RecordsResponse;
+      const withAiChanges =
+        canRead && head.aiChanges !== undefined ? { ...staffResponse, aiChanges: head.aiChanges } : staffResponse;
+      const withTotalOrders =
+        orderList.total === undefined ? withAiChanges : { ...withAiChanges, totalOrders: orderList.total };
+      const response: RecordsResponse =
+        synced === undefined
+          ? withTotalOrders
+          : { ...withTotalOrders, ...staffTaxFields(synced.shown, yield* DateTime.now) };
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });
     /** One rendition of a product gallery image for the governed media read. */

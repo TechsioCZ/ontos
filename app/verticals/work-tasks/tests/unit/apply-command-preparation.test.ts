@@ -1,3 +1,4 @@
+import { ActionPermissionCheckError, ActionPermissionDenied } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -32,7 +33,9 @@ for (const access of ['denied', 'unavailable'] as const) {
             transport: { correlationId: 'work-command', idempotencyKey: `work-command-${access}` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe(access === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError');
+        expect(Schema.is(access === 'denied' ? ActionPermissionDenied : ActionPermissionCheckError)(failure)).toBe(
+          true,
+        );
         expect(harness.snapshot().committed).toEqual([]);
         expect(harness.snapshot().transactionCount).toBe(0);
       }),

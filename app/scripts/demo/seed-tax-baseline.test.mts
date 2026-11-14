@@ -12,6 +12,8 @@ import { demoTenantId } from './fixture-ids.mts';
 import {
   CZ_VAT_REDUCED,
   CZ_VAT_STANDARD,
+  CreateRuleWriteSchema,
+  DeclareRegimeWriteSchema,
   refusalOfProblem,
   refused,
   regimeIdempotencyKey,
@@ -22,6 +24,7 @@ import {
   TAX_BASELINE_EFFECTIVE_FROM,
   czechCalendarDate,
   TaxBaselineFailure,
+  TaxCallRefusalSchema,
   taxBaselineRights,
   validateSeedOrigin,
   waitForRightsOf,
@@ -246,21 +249,12 @@ it.effect('plans the regime and both rules for an empty company, with fixed keys
       ruleIdempotencyKey(tenantId, shopId, CZ_VAT_STANDARD),
       ruleIdempotencyKey(tenantId, shopId, CZ_VAT_REDUCED),
     ]);
-    expect(first.plan.writes[1]).toMatchObject({
-      _tag: 'CreateRule',
-      classificationCode: CZ_VAT_STANDARD,
-      ratePercent: '21',
-    });
-    expect(first.plan.writes[2]).toMatchObject({
-      _tag: 'CreateRule',
-      classificationCode: CZ_VAT_REDUCED,
-      ratePercent: '12',
-    });
-    expect(first.plan.writes[0]).toMatchObject({
-      _tag: 'DeclareRegime',
-      expectedCurrentRevision: 0,
-      regime: 'VAT_PAYER',
-    });
+    expect(Schema.is(DeclareRegimeWriteSchema)(first.plan.writes[0])).toBe(true);
+    expect(Schema.is(CreateRuleWriteSchema)(first.plan.writes[1])).toBe(true);
+    expect(Schema.is(CreateRuleWriteSchema)(first.plan.writes[2])).toBe(true);
+    expect(first.plan.writes[1]).toMatchObject({ classificationCode: CZ_VAT_STANDARD, ratePercent: '21' });
+    expect(first.plan.writes[2]).toMatchObject({ classificationCode: CZ_VAT_REDUCED, ratePercent: '12' });
+    expect(first.plan.writes[0]).toMatchObject({ expectedCurrentRevision: 0, regime: 'VAT_PAYER' });
     // Every write starts on the Prague day start of 1 January 2024, and the fingerprint covers that instant.
     expect(first.plan.writes.map(({ effectiveFrom }) => DateTime.formatIso(effectiveFrom))).toEqual(
       Array.from({ length: 6 }, () => '2023-12-31T23:00:00.000Z'),
@@ -482,19 +476,17 @@ it.effect(
 const problem = (status: number, code?: string) =>
   refusalOfProblem(Option.some(code === undefined ? { detail: 'x', status } : { code, detail: 'x', status }));
 
+const [AlreadyCommitted, Conflict, MissingRight, Unavailable] = TaxCallRefusalSchema.members;
+
 it('maps tax Problem Details onto the seed refusals and compares exact decimal rates', () => {
-  expect(problem(409, 'action_already_committed')).toEqual({ _tag: 'AlreadyCommitted' });
-  expect(problem(403, 'action_permission_denied')).toEqual({
-    _tag: 'MissingRight',
-    detail: 'action_permission_denied',
-  });
-  expect(problem(403)).toEqual({ _tag: 'MissingRight', detail: 'x' });
-  expect(problem(409, 'tax_governance_conflict')).toEqual({ _tag: 'Conflict', detail: 'tax_governance_conflict' });
-  expect(problem(503, 'module_state_check_unavailable')).toEqual({
-    _tag: 'Unavailable',
-    detail: 'module_state_check_unavailable',
-  });
-  expect(refusalOfProblem(Option.none())).toEqual({ _tag: 'Unavailable', detail: 'transport failure' });
+  expect(problem(409, 'action_already_committed')).toEqual(AlreadyCommitted.make({}));
+  expect(problem(403, 'action_permission_denied')).toEqual(MissingRight.make({ detail: 'action_permission_denied' }));
+  expect(problem(403)).toEqual(MissingRight.make({ detail: 'x' }));
+  expect(problem(409, 'tax_governance_conflict')).toEqual(Conflict.make({ detail: 'tax_governance_conflict' }));
+  expect(problem(503, 'module_state_check_unavailable')).toEqual(
+    Unavailable.make({ detail: 'module_state_check_unavailable' }),
+  );
+  expect(refusalOfProblem(Option.none())).toEqual(Unavailable.make({ detail: 'transport failure' }));
   expect(sameRate('21', '21.00')).toBe(true);
   expect(sameRate('12.0', '12')).toBe(true);
   expect(sameRate('21', '2.1')).toBe(false);

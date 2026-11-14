@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ConstraintError } from 'effect/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { makeTestPgSession } from '../../packages/core-runtime/tests/support/database.ts';
@@ -109,7 +110,7 @@ it.live('finds lapsed fences of every tenant for the runtime role, which itself 
           `update core.access_scope_fences set owning_operation_id = '${MISSING_OPERATION}' where scope_id = '${scopeOf(1)}'`,
         )
         .pipe(Effect.flip);
-      expect(orphan.cause._tag).toBe('ConstraintError');
+      expect(Schema.is(ConstraintError)(orphan.cause)).toBe(true);
       expect(Schema.decodeUnknownOption(ConstraintSchema)(orphan.cause.cause)).toEqual(
         Option.some({ constraint: 'access_scope_fences_operation_fk' }),
       );

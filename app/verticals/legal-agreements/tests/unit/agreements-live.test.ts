@@ -10,8 +10,10 @@ import { RecordsPage, preloadPage } from '../../src/routes/[lang]/smlouvy/page.t
 const { customers, records } = rstest.hoisted(() => ({ customers: rstest.fn(), records: rstest.fn() }));
 
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-rstest.mock('@app/party-registry/api/client', () => ({
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
   executeCounterpartyRead: rstest.fn(),
+}));
+rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
   listCustomers: customers,
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useNavigate: () => () => {}, useRouterState: () => '' }));

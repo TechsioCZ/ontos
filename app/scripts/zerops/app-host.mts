@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import {
   TenantIntentLoader,
@@ -20,7 +20,8 @@ import {
   HOST_REFUSAL_LOG_WINDOW,
   RelayFailure,
   decodeRelayCause,
-  makeHostRefusalLog,
+  HostRefusals,
+  HostRefusalsLive,
   relayFailureCode,
   requestPathOnly,
   loggableRoute,
@@ -35,11 +36,12 @@ import {
   SUPERSEDED_DRAIN,
   containerBoot,
   drainSupersededHost,
-  makeSupersedeDrain,
   platformDrainPeers,
   publicationAllowed,
   renewWhileHolding,
   restartMayPublish,
+  SupersedeDrains,
+  SupersedeDrainsLive,
 } from './supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
@@ -336,6 +338,9 @@ export const derivedEnvironment = (
     ONTOS_EMAIL_FROM: `noreply@${new URL(origin).hostname}`,
     ONTOS_GATEWAY_ISSUER: origin,
     ONTOS_OAUTH_ISSUER: `${origin}/shell-super-app-api/oauth`,
+    // Payment composes each provider binding's notification URL from the public Shell origin (an https origin only;
+    // anything else refuses binding creation and leaves the rest of Payment running).
+    ONTOS_PAYMENT_NOTIFICATION_BASE_URL: origin,
     ONTOS_PUBLIC_URL: origin,
     ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway,
     // Where the Shell's server rendering reads its own API: this host's loopback port, never a public address.
@@ -1413,7 +1418,7 @@ const hostControlResponse = <Failure, Requirements>(
 export const hostControlApplication = <Failure, Requirements>(
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
-  refusals: HostRefusalLog = makeHostRefusalLog(),
+  refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* routeControlRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -1641,8 +1646,8 @@ export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
-  refusals: HostRefusalLog = makeHostRefusalLog(),
-  drain: SupersedeDrain = makeSupersedeDrain(),
+  refusals: HostRefusalLog,
+  drain: SupersedeDrain,
 ) => {
   const forwardDispatcher = new Agent({
     bodyTimeout: 0,
@@ -1913,9 +1918,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // The provided server is the loopback control port. The public port opens below, once this host can serve, and
   // closes when a newer release takes the authority: from then on this host refuses every governed request.
   // One refusal log for the control and the public port; it writes the counts it held back every 10 seconds.
-  const refusals = makeHostRefusalLog();
+  const refusals = yield* HostRefusals;
   // Superseded, this host keeps its public port open as a relay to the new release (supersede-drain.mts).
-  const drain = makeSupersedeDrain();
+  const drain = yield* SupersedeDrains;
   yield* refusals.flush.pipe(Effect.repeat(Schedule.spaced(HOST_REFUSAL_LOG_WINDOW)), Effect.forkScoped);
   yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
   const publicScope = yield* Scope.make();
@@ -2359,11 +2364,12 @@ if (import.meta.main) {
     Effect.raceFirst(stopSignal),
     Effect.provide(NodeHttpServer.layer(withKeepAlive(createServer), { host: '127.0.0.1', port: CONTROL_PORT })),
     Effect.provide(ReleaseAccessIntentReaderLive),
+    Effect.provide(Layer.merge(HostRefusalsLive, SupersedeDrainsLive)),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.
     Effect.provide(
       Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
     ),
-    Effect.provide(makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT)),
+    Effect.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT)),
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
     Effect.provide(ProcessDatabasePoolsLive),

@@ -77,14 +77,8 @@ const linesOf = (value: Draft) =>
     if (line.picked === null) {
       return [];
     }
-    const next: { -readonly [Key in keyof NewOrderLine]: NewOrderLine[Key] } = {
-      productId: line.picked.id,
-      quantity: line.quantity,
-    };
-    if (line.variantId !== null) {
-      next.variantId = line.variantId;
-    }
-    return [next];
+    const next = { productId: line.picked.id, quantity: line.quantity } satisfies NewOrderLine;
+    return [line.variantId === null ? next : { ...next, variantId: line.variantId }];
   });
 
 interface OrderCreateDialogProps {

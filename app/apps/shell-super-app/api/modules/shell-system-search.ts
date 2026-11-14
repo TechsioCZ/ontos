@@ -6,8 +6,8 @@ import {
 } from '@app/core-runtime/people/search';
 import type { PeopleSearchResponse, PeopleSearchRequirements } from '@app/core-runtime/people/search';
 import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
-import { ShellSearchResponseSchema } from '../../shared/api.ts';
-import type { ShellSearchPresentationInventory, ShellSearchResponse } from '../../shared/api.ts';
+import { ShellSearchResponseSchema } from '../../shared/browser-api.ts';
+import type { ShellSearchPresentationInventory, ShellSearchResponse } from '../../shared/browser-api.ts';
 import { withShellSearchRequestBudget } from './shell-governed-search.ts';
 import { ShellProviderUnavailableError, sortShellSearchResults } from './shell-resources.ts';
 import type { ShellResourceContext } from './shell-resources.ts';

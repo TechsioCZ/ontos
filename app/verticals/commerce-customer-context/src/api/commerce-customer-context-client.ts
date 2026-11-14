@@ -17,6 +17,8 @@ import type { OperationContext, CommerceCustomerContextReadiness } from '../../s
 export { Effect } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>
 export * from './add-saved-address-action-client.ts';
+export * from './admit-customer-group-membership-snapshot-action-client.ts';
+export * from './apply-customer-group-membership-source-action-client.ts';
 export * from './archive-customer-group-action-client.ts';
 export * from './archive-customer-profile-action-client.ts';
 export * from './assign-counterparty-price-group-action-client.ts';
@@ -27,6 +29,8 @@ export * from './bind-retail-portal-profile-action-client.ts';
 export * from './bootstrap-counterparty-access-administrator-action-client.ts';
 export * from './change-counterparty-purchase-limit-action-client.ts';
 export * from './change-customer-payment-terms-action-client.ts';
+export * from './change-customer-profile-ico-action-client.ts';
+export * from './change-organization-customer-profile-ico-action-client.ts';
 export * from './change-principal-purchase-limit-override-action-client.ts';
 export * from './change-retail-payment-term-preference-action-client.ts';
 export * from './claim-counterparty-access-invitation-action-client.ts';
@@ -47,6 +51,8 @@ export * from './execute-privacy-measure-action-client.ts';
 export * from './grant-counterparty-commerce-access-action-client.ts';
 export * from './migrate-counterparty-price-group-action-client.ts';
 export * from './migrate-customer-price-group-action-client.ts';
+export * from './migrate-customer-profile-ico-action-client.ts';
+export * from './migrate-organization-customer-profile-ico-action-client.ts';
 export * from './open-profile-reconciliation-action-client.ts';
 export * from './prepare-purchase-proposal-basis-action-client.ts';
 export * from './reactivate-customer-group-action-client.ts';

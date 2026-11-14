@@ -17,11 +17,6 @@ import {
   mapApplyCommandActionProblem,
 } from './apply-command-action-problems.ts';
 
-const actionProblems = {
-  authentication: applyCommandActionProblem.authentication,
-  unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
-};
-
 const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(function* reconcileClients(
   request: HttpServerRequest.HttpServerRequest,
   verified: Option.Option<TrustedPrincipalContext>,
@@ -60,7 +55,13 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   );
   // The post-commit intake acts in exactly the scope this request's authentication verified (and redeemed).
   const verified = yield* Ref.make(Option.none<TrustedPrincipalContext>());
-  const runActionHttp = bindActionHttpRunner({ ...actionProblems }, verified);
+  const runActionHttp = bindActionHttpRunner(
+    {
+      authentication: applyCommandActionProblem.authentication,
+      unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
+    },
+    (principal) => Ref.set(verified, Option.some(principal)),
+  );
   const result = yield* runActionHttp({
     endpointHeaders,
     internalProblem: applyCommandActionProblem.internal,

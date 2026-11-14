@@ -44,14 +44,12 @@ const priceSchedule = 'price-schedule';
 const priceResultLookup = 'price-result-lookup';
 const exactPriceResolution = 'exact-price-resolution';
 const quotationVerification = 'quotation-verification';
+const zeroFloorResultLookup = 'zero-floor-authorization-result-lookup';
+const trustedCompany = 'legalEntityId: context.scope.legalEntityId';
+const callerCompany = 'legalEntityId: input.legalEntityId';
 
 const mutations = [
-  [
-    priceDefinition,
-    'a caller-authored company',
-    'legalEntityId: context.scope.legalEntityId',
-    'legalEntityId: input.legalEntityId',
-  ],
+  [priceDefinition, 'a caller-authored company', trustedCompany, callerCompany],
   [
     priceDefinition,
     'the opposite tenant guard',
@@ -91,11 +89,24 @@ const mutations = [
     'actingPrincipalId: input.principalId',
   ],
   [
-    'zero-floor-authorization-result-lookup',
+    priceResultLookup,
+    'a foreign prepare phase',
+    'prepare: (input, context) => preparePriceResultCommit(input, context)',
+    'prepare: (input, context) => foreignPrepare(input, context)',
+  ],
+  [
+    priceResultLookup,
+    'a foreign service factory',
+    '  priceResultLookupServicesForScope,\n);',
+    '  foreignServices,\n);',
+  ],
+  [
+    zeroFloorResultLookup,
     'a missing company guard',
     'trusted.legalEntityId === undefined',
     'trusted.legalEntityId !== undefined',
   ],
+  [zeroFloorResultLookup, 'a caller-authored company in the single handler', trustedCompany, callerCompany],
   [
     priceResultLookup,
     'caller scope in commit resolution',
@@ -112,8 +123,40 @@ const mutations = [
   [
     priceResultLookup,
     'caller state in load',
-    'readPriceResult(input, context.prepared, context.services)',
-    'readPriceResult(input, input.state, context.services)',
+    "? (context.prepared ?? 'UNAVAILABLE')",
+    "? (input.state ?? 'UNAVAILABLE')",
+  ],
+  [
+    priceResultLookup,
+    'a caller-authored company in prepare',
+    'resolvePriceResultCommit(input, { legalEntityId: context.scope.legalEntityId }, resolveCommit)',
+    'resolvePriceResultCommit(input, { legalEntityId: input.legalEntityId }, resolveCommit)',
+  ],
+  [
+    priceResultLookup,
+    'caller scope in the recovery check of prepare',
+    'return readVerifiedGatewayRecovery(context.scope) === undefined',
+    'return readVerifiedGatewayRecovery(input.scope) === undefined',
+  ],
+  [priceResultLookup, 'a foreign recovery-branch prepare result', ': undefined;\n});', ': yield* foreign;\n});'],
+  [
+    priceResultLookup,
+    'a caller-authored company in the recovery load',
+    '{ legalEntityId: context.scope.legalEntityId },\n              recovery.resolveCommit',
+    '{ legalEntityId: input.legalEntityId },\n              recovery.resolveCommit',
+  ],
+  [priceResultLookup, 'a foreign recovery resolver in load', 'recovery.resolveCommit,', 'foreign.resolveCommit,'],
+  [
+    priceResultLookup,
+    'caller scope in the persistence factory',
+    'yield* pricePersistenceForScope(transaction, scope) }',
+    'yield* pricePersistenceForScope(transaction, input.scope) }',
+  ],
+  [
+    priceResultLookup,
+    'a foreign recovery service member',
+    'return { persistence: recovered, recovery: recovered }',
+    'return { persistence: recovered, recovery: foreign }',
   ],
   [
     exactPriceResolution,

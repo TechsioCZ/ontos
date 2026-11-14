@@ -1,6 +1,6 @@
 import { Config, Effect, Option, Schema } from 'effect';
 
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import type { ShellAuthenticationClientOptions } from '../api/auth-client.ts';
 
 /** Server rendering has no browser document; its BFF reads carry the visitor's cookie and share no browser cache. */

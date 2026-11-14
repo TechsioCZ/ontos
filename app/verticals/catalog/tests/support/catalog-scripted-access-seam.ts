@@ -15,12 +15,22 @@ import { Context, Effect, Layer } from 'effect';
  * receiver never declared. Binding is the receiver's own explicit port. It weakens nothing in the
  * production refusal, which still refuses any gate that cannot rebind to the caller's transaction.
  */
-export const makeCatalogScriptedAccess = Effect.fn('Catalog.scriptedAccess')(function* makeCatalogScriptedAccess(
-  script: TestAccessGateScript,
-) {
-  const services = yield* Layer.build(makeTestAccessGateLayers(script));
-  return Object.freeze({
-    bound: bindAccessGate(Context.get(services, AccessDecisionGate), inertAccessEnforcementPorts()),
-    services,
-  });
-});
+export class CatalogScriptedAccess extends Context.Service<
+  CatalogScriptedAccess,
+  {
+    readonly bound: ReturnType<typeof bindAccessGate>;
+    readonly services: Context.Context<Layer.Success<ReturnType<typeof makeTestAccessGateLayers>>>;
+  }
+>()('@app/catalog/tests/support/catalog-scripted-access-seam/CatalogScriptedAccess') {}
+
+export const catalogScriptedAccessLayer = (script: TestAccessGateScript) =>
+  Layer.effect(
+    CatalogScriptedAccess,
+    Effect.gen(function* catalogScriptedAccess() {
+      const services = yield* Layer.build(makeTestAccessGateLayers(script));
+      return Object.freeze({
+        bound: bindAccessGate(Context.get(services, AccessDecisionGate), inertAccessEnforcementPorts()),
+        services,
+      });
+    }),
+  );
