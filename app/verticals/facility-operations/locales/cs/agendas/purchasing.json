@@ -350,6 +350,8 @@
     "editQuote": "Upravit nabídku {{number}}",
     "quoteTitle": "Nabídka {{number}}",
     "orderTitle": "Prodejní objednávka {{number}}",
+    "invoicePendingLink": "Faktura {{number}} již ve Financích vznikla, ale s objednávkou zatím není propojená. Zvolte „Vystavit fakturu“ a Uložit ji propojí; novou fakturu nevytvoří.",
+    "invoiceAlreadyLinked": "Objednávka je již vyfakturována ({{numbers}}). Další faktura na celou objednávku se nevystavuje.",
     "ordersTitle": "Prodejní objednávky ({{count}}, nevyřízené {{open}})",
     "quotesTitle": "Nabídky zákazníkům ({{count}})",
     "noOrders": "Zatím žádná prodejní objednávka.",
@@ -442,7 +444,10 @@
       "remainingHelp": "Zbývá dodat: {{count}}",
       "dueDate": "Splatnost nemůže být před datem vystavení.",
       "invoiceIntro": "Finance založí návrh vydané faktury pro {{customer}} s kopií řádků a cen této objednávky. Faktura odkazuje na objednávku a objednávka na fakturu.",
-      "invoiceFailed": "Návrh faktury se nepodařilo vytvořit. Obnovte stránku a zkuste to znovu."
+      "invoiceFailed": "Návrh faktury se nepodařilo vytvořit nebo propojit. Před dalším vystavením ověřte doklad ve Financích.",
+      "invoiceLinkFailed": "Faktura již ve Financích vznikla, ale propojení s objednávkou selhalo. Uložit zopakuje jen propojení a novou fakturu nevytvoří. Propojení dokončete dřív, než stránku opustíte.",
+      "invoiceRetained": "Faktura {{number}} již ve Financích vznikla. Uložit ji pouze propojí s touto objednávkou; datum vystavení a splatnost zůstávají podle faktury.",
+      "invoiceVatUnresolved": "DPH objednávky nelze jednoznačně ověřit pro datum vystavení. Ověřte nastavení DPH a připravte fakturu ve Financích s odpovídajícím daňovým režimem."
     },
     "messages": {
       "rejected": "Nabídka zamítnuta.",

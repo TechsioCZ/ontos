@@ -1,7 +1,8 @@
 // @rstest-environment happy-dom
 // The forms on a purchase or sales order (receipt, invoice link, incoming invoice draft, new sales quote, delivery,
 // close with remainder, sales invoice) send on the shared Uložit only, once, with the same payload as before.
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -15,7 +16,7 @@ import {
   SalesInvoiceForm,
 } from '../../src/routes/[lang]/provoz/nakupy/sales-order-forms.tsx';
 import { click, labels, mountPanel, typeInto, unmountPanels } from './draft-base-fixture.ts';
-import { leaveQuestionOpen, pick, recordingRunner, saveButton, saveSent } from './form-save-fixture.ts';
+import { leaveQuestionOpen, pick, recordingRunner, saveButton, saveSent, settleUntil } from './form-save-fixture.ts';
 
 const financeCommands: unknown[] = [];
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -37,6 +38,24 @@ rstest.mock('@app/finance-billing/clients/apply-command', () => ({
 }));
 rstest.mock('../../src/ui/finance-reads.ts', () => ({
   readFinance: () => Effect.succeed({ canWrite: true, revision: 7 }),
+  readFinanceVatChoices: (on: string) =>
+    Effect.succeed({
+      on,
+      rates: [
+        {
+          code: CZ_VAT_STANDARD,
+          effectiveFrom: DateTime.makeUnsafe('2026-01-01T00:00:00Z'),
+          ratePercent: 21,
+          taxRuleRevisionRef: {
+            moduleId: 'commerce.tax',
+            resourceId: 'revision-1',
+            resourceType: 'commerce.tax.tax-rule-revision',
+            tenantId: '70000000-0000-4000-8000-000000000020',
+          },
+        },
+      ],
+      regime: 'VAT_PAYER',
+    }),
 }));
 
 const copy = {
@@ -145,16 +164,32 @@ describe('purchase order forms', () => {
     }),
   );
 
-  it.live('the incoming invoice draft is created once after the VAT rate is picked', () =>
+  it.live('the incoming invoice requires the actual document number and a published VAT choice', () =>
     Effect.gen(function* scenario() {
       yield* mountPanel(
         createElement(InvoiceDraftForm, { onCancel: page('cancel'), onCreated: page('created'), order, supplier }),
       );
       expect(saveButton().disabled).toBe(true);
-      yield* pick('invoice-vat-rate', '21');
+      yield* settleUntil(
+        () => document.querySelector(`select[name="invoice-vat-rate"] option[value="${CZ_VAT_STANDARD}"]`) !== null,
+      );
+      yield* pick('invoice-vat-rate', CZ_VAT_STANDARD);
+      expect(saveButton().disabled).toBe(true);
+      yield* typeInto('#draft-invoice-number', 'SUP-2026-118');
       yield* click(labels.save);
       expect(financeCommands).toEqual([
-        expect.objectContaining({ _tag: 'RecordIncomingInvoice', sourceOrder: { id: order.id, number: order.number } }),
+        expect.objectContaining({
+          _tag: 'RecordIncomingInvoice',
+          documentNumber: 'SUP-2026-118',
+          lines: [
+            expect.objectContaining({
+              taxRuleRevisionRef: expect.objectContaining({ resourceId: 'revision-1' }),
+              vatClassification: CZ_VAT_STANDARD,
+              vatRate: 21,
+            }),
+          ],
+          sourceOrder: { id: order.id, number: order.number },
+        }),
       ]);
       expect(calls).toEqual(['created']);
     }),

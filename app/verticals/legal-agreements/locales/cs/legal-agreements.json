@@ -45,6 +45,8 @@
       "choose": "Vyberte záznam",
       "startDate": "Začátek",
       "endDate": "Konec",
+      "renewalStartHelp": "Obnova začíná nejdříve {{date}}, navazuje na předchozí smlouvu.",
+      "renewalEndInvalid": "Konec musí být po začátku obnovené smlouvy.",
       "all": "Vše",
       "expiring": "Brzy končící",
       "lifecycle": "Životní cyklus",
