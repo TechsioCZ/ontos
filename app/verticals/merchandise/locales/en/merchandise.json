@@ -411,6 +411,7 @@
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
+          "stockReconciliationRequired": "Reconcile the product stock before adding its first sellable variant. Reconcile a variant’s stock with a stock movement before removing it.",
           "rejected": "The action is not possible in the current state, for example because of insufficient stock. Check the values you entered.",
           "saving": "Saving changes…",
           "updated": "Product saved",

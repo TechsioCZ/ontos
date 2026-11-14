@@ -306,7 +306,6 @@ it.effect('a line added back with the same quantity and price still takes the VA
   }),
 );
 
-
 it.effect('replaces a same-named variant at the same price and reconciles its own stock', () =>
   Effect.gen(function* sameDescriptionReplacement() {
     const current = yield* seeded;

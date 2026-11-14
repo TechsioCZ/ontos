@@ -765,3 +765,58 @@ it.effect('Bulk native assignment rejects mixed display fields and any invalid p
     expect(Schema.encodeSync(MerchandiseStateSchema)(bulkMembershipState)).toEqual(before);
   }),
 );
+
+it.effect('requires product stock reconciliation before adding the first sellable variant', () =>
+  Effect.gen(function* firstVariantWithStock() {
+    const created = yield* addProduct(empty, 'stocked-parent', 'PARENT', 100);
+    const stocked = yield* receive(created.state, 'stocked-parent', 3, 'parent-stock');
+    const command: CommandInput = {
+      _tag: 'UpdateProduct',
+      id: 'stocked-parent',
+      patch: { variants: [{ attributes: '', id: 'new-variant', name: 'New', priceMinor: 100 }] },
+    };
+    const refused = yield* apply(stocked.state, command, 'add-first-variant').pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    expect(onHand(stocked.state, 'stocked-parent')).toBe(3);
+    const reconciled = yield* apply(
+      stocked.state,
+      { _tag: 'RecordStockMovement', delta: -3, productId: 'stocked-parent', reason: 'ADJUSTMENT' },
+      'reconcile-parent',
+    );
+    const accepted = yield* apply(reconciled.state, command, 'add-after-reconciliation');
+    expect(accepted.state.products[0]?.variants?.[0]?.id).toBe('new-variant');
+  }),
+);
+
+it.effect('refuses to remove a stocked variant even while another variant remains', () =>
+  Effect.gen(function* removingStockedVariant() {
+    const created = yield* addProduct(empty, 'variant-stock', 'VARIANT-STOCK', 100);
+    const first = { attributes: '', id: 'stocked-variant', name: 'Stocked', priceMinor: 100 };
+    const second = { attributes: '', id: 'empty-variant', name: 'Empty', priceMinor: 200 };
+    const variants = yield* apply(
+      created.state,
+      { _tag: 'UpdateProduct', id: 'variant-stock', patch: { variants: [first, second] } },
+      'add-variants',
+    );
+    const stocked = yield* apply(
+      variants.state,
+      { _tag: 'RecordStockMovement', delta: 3, productId: 'variant-stock', reason: 'RECEIPT', variantId: first.id },
+      'stock-variant',
+    );
+    for (const remaining of [[], [second], [{ attributes: '', id: first.id, name: first.name }]]) {
+      const refused = yield* apply(
+        stocked.state,
+        { _tag: 'UpdateProduct', id: 'variant-stock', patch: { variants: remaining } },
+        'remove-stocked',
+      ).pipe(Effect.flip);
+      expect(isConflict(refused)).toBe(true);
+    }
+    const accepted = yield* apply(
+      stocked.state,
+      { _tag: 'UpdateProduct', id: 'variant-stock', patch: { variants: [first] } },
+      'remove-empty',
+    );
+    expect(accepted.state.products[0]?.variants).toHaveLength(1);
+    expect(accepted.state.movements).toBe(stocked.state.movements);
+  }),
+);

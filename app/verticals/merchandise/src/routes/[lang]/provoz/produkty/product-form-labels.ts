@@ -23,6 +23,9 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'stock-reconciliation-required') {
+      return label('messages.stockReconciliationRequired');
+    }
     if (reason === 'rejected') {
       return label('messages.rejected');
     }

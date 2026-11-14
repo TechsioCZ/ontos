@@ -52,6 +52,7 @@ const FailureReasonSchema = Schema.Literals([
   'invalid',
   'not-found',
   'rejected',
+  'stock-reconciliation-required',
   RELOAD_REQUIRED,
   'unavailable',
 ]);
@@ -112,7 +113,12 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'CleanupDemoActionConflictProblem',
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
-      (problem): FailureReason => (problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict'),
+      (problem): FailureReason => {
+        if (problem.code === 'merchandise_stock_reconciliation_required') {
+          return 'stock-reconciliation-required';
+        }
+        return problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict';
+      },
     ),
     Match.tag(
       'ApplyCommandActionIneligibleProblem',

@@ -686,6 +686,30 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
 });
 
+const requireReconciledVariantStock = Effect.fn('Merchandise.requireReconciledVariantStock')(
+  function* requireReconciledVariantStock(
+    state: MerchandiseState,
+    product: Product,
+    variants: readonly ProductVariant[],
+  ) {
+    const previous = realVariantsOf(product);
+    const next = realVariantsOf({ ...product, variants });
+    const levels = stockLevelsOf(state.movements, product.id);
+    const strandsBaseStock = previous.length === 0 && next.length > 0 && levels.total !== 0;
+    const keptIds = new Set(next.map((variant) => variant.id));
+    const strandsVariantStock = previous.some(
+      (variant) => !keptIds.has(variant.id) && (levels.variants.get(variant.id) ?? 0) !== 0,
+    );
+    if (strandsBaseStock || strandsVariantStock) {
+      return yield* new MerchandiseLifecycleConflict({
+        code: 'merchandise_stock_reconciliation_required',
+        reason: 'Před přidáním první prodejní varianty nebo odebráním varianty vyrovnejte její skladovou zásobu.',
+      });
+    }
+    return yield* Effect.void;
+  },
+);
+
 const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
   state: MerchandiseState,
   value: CommandOf<'UpdateProduct'>,
@@ -716,6 +740,9 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   void _clientPath;
   const variants =
     patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
+  if (patchVariants !== undefined && variants !== undefined) {
+    yield* requireReconciledVariantStock(state, product, variants);
+  }
   const patched = { ...product, ...patch, updatedAt: input.now } satisfies Product;
   const merged: Product = patch.images === undefined ? patched : { ...patched, imageSrc: patch.images[0] ?? '' };
   let categorized: Product = merged;
@@ -2164,7 +2191,10 @@ export const workingSetRequestOf = (
       SyncTaxRates: (): WorkingSetRequest => ({}),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
       UpdateProduct: (value): WorkingSetRequest => {
-        const request = { productIds: [value.id] } satisfies WorkingSetRequest;
+        const request = {
+          movements: value.patch.variants !== undefined,
+          productIds: [value.id],
+        } satisfies WorkingSetRequest;
         const keyed =
           value.patch.slug === undefined ? request : { ...request, productKeys: { slug: value.patch.slug } };
         return value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined

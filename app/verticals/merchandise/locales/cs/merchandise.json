@@ -415,6 +415,7 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
+          "stockReconciliationRequired": "Před přidáním první prodejní varianty vyrovnejte zásobu produktu. Před odebráním varianty vyrovnejte její zásobu skladovým pohybem.",
           "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
           "saving": "Ukládám změny…",
           "updated": "Produkt uložen",

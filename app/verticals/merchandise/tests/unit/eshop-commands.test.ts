@@ -509,7 +509,6 @@ it.effect('UpdateProduct and CreateProduct refuse a storefront slug another prod
   }),
 );
 
-
 it.effect('refuses a removed variant even after the final variant disappears', () =>
   Effect.gen(function* removedVariant() {
     const current = yield* seeded;
