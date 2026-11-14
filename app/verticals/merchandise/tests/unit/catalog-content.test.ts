@@ -3,7 +3,12 @@ import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
 import { merchandiseRelations } from '../../src/database/schema.ts';
-import { persistChange } from '../../src/services/merchandise-store.ts';
+import {
+  categoryRowOf,
+  EMPTY_CATALOG_HEAD,
+  loadWorkingSet,
+  persistChange,
+} from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -380,6 +385,49 @@ it.effect('a category-only working set already renames all stored primary-catego
       expect(productUpdates[0]?.params).toEqual(
         expect.arrayContaining([scope.tenantId, scope.legalEntityId, 'c', 'Renamed without loading products']),
       );
+      return yield* Effect.void;
+    }),
+  ),
+);
+
+it.effect('loads a scoped slug collision even when its category id is absent from the create request', () =>
+  Effect.scoped(
+    Effect.gen(function* scopedCategoryCollisionRead() {
+      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
+      const stored = yield* categoryRowOf(scope, rootCategory);
+      const services = yield* Layer.build(
+        scriptedPgClientLayer(
+          Effect.succeed(
+            testSqlConnection((sql, params) => {
+              expect(params).toEqual(expect.arrayContaining([scope.tenantId, scope.legalEntityId]));
+              if (sql.includes('"slug" =')) {
+                expect(params).toContain(rootCategory.slug);
+                return Effect.succeed([{ id: rootCategory.id }]);
+              }
+              return Effect.succeed(params.includes(rootCategory.id) ? [{ ...stored, ordinal: 1 }] : []);
+            }),
+          ),
+        ).pipe(Layer.provide(Reactivity.layer)),
+      );
+      const db = yield* makeWithDefaults({ relations: merchandiseRelations }).pipe(
+        Effect.provideService(PgClient.PgClient, Context.get(services, PgClient.PgClient)),
+      );
+      const command = {
+        _tag: 'CreateCategory',
+        id: categoryId('new-collision-id'),
+        name: 'Different category',
+        parentId: Option.none(),
+        slug: rootCategory.slug,
+      } as const;
+      const working = yield* loadWorkingSet(
+        db,
+        scope,
+        EMPTY_CATALOG_HEAD,
+        workingSetRequestOf(command, 'scoped-category'),
+      );
+      expect(working.state.categories?.map((category) => category.id)).toEqual([rootCategory.id]);
+      const refused = yield* createCategoryCommand(working.state, command).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
       return yield* Effect.void;
     }),
   ),
