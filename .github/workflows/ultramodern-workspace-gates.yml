@@ -812,8 +812,9 @@ jobs:
           git diff --exit-code HEAD
 
       # The hook's lint job over every tracked file: the same files its globs select (`pnpm lint:oxlint` names them),
-      # in one Oxlint run. Through the hook, lefthook splits a file list that long into seven command lines run one
-      # after another, and each loaded the type programs again: 970 s of linting instead of one pass.
+      # in two Oxlint runs, the verticals and the rest. Through the hook, lefthook split a file list that long into seven
+      # command lines run one after another, each loading the type programs again (970 s); one run over every file
+      # held them all at once and the runner was shut down. Each half peaks below 9 GB (measured locally: 7.2 and 8.6).
       - name: Lint every file in one run
         working-directory: app
         run: mise exec -- pnpm lint:oxlint

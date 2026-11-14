@@ -1052,8 +1052,9 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   expect(lint.steps.some((candidate) => candidate.run === 'mise exec -- pnpm lint:oxlint')).toBe(true);
   const lintGlobs = hook['pre-commit'].jobs.find(({ name }) => name === 'lint')?.glob ?? [];
   expect(lintGlobs).toContain('app/{apps,verticals,packages,scripts}/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}');
+  // Two runs, so each loads about half the type programs: one run over every file needed more memory than a runner has.
   expect(readRootScripts().scripts['lint:oxlint']).toBe(
-    'effect-tsgo oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts',
+    'effect-tsgo oxlint verticals && effect-tsgo oxlint apps packages scripts tools/oxlint/effect-native/tests/*.test.mts',
   );
   const select = run.slice(0, run.indexOf('mise exec'));
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
