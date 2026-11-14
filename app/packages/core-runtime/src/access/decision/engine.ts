@@ -25,6 +25,7 @@ import type {
   ActorResolution,
   AuthorityCell,
   AuthorityCellQuery,
+  CompanyOwnershipQuery,
   ConnectionQuery,
   DecisionAuthorityPort,
   ResolvedActor,
@@ -47,7 +48,7 @@ import type { AccessDecisionUnavailable } from './errors.ts';
 import { buildListAccessPredicate } from './list-access.ts';
 import type { ListAccessPredicate, ListAuthorityCell, ListAuthoritySide } from './list-access.ts';
 import { withOptional } from './optional.ts';
-import { capabilitySlotRelation } from '../compiler/object-id.ts';
+import { capabilitySlotRelation, scopeObjectId } from '../compiler/object-id.ts';
 import {
   assignmentObjectIdOf,
   capabilityObjectIdOf,
@@ -659,7 +660,12 @@ const unavailableDecision = (): AccessDecision =>
 
 const SENSITIVE_READ_KINDS: ReadonlySet<AccessKind> = new Set(['export', 'field_read', 'read'] as const);
 
-const agentTier = (
+/**
+ * What an agent may do with one capability in one requested mode: never administration, never approval, never a
+ * sensitive read, and a non-routine run only as a proposal a person decides. Exported so a surface that SHOWS an
+ * agent's usable rights applies this very rule instead of restating it; the decision itself is still `decideAccess`.
+ */
+export const agentTier = (
   policy: DecisionCapabilityPolicy,
   requestedMode: AccessMode,
 ): { readonly approvalRequired: boolean } | { readonly reason: DecisionReason } => {
@@ -931,6 +937,80 @@ const adminSurfaceAnyDecision = (
     }),
   );
 };
+
+/**
+ * A baseline capability as the decision sees it: the flag AND the only shape a baseline may have, the Shell frame's
+ * routine, unselected read. The declaration decoder already refuses anything else; this holds even for a release row
+ * that carries the flag on another capability.
+ */
+const isFrameBaseline = (capability: DecisionCapabilityPolicy): boolean =>
+  capability.baseline === true &&
+  capability.capabilityKey.startsWith('core.shell.') &&
+  capability.kind === 'read' &&
+  capability.risk === 'routine' &&
+  capability.selectors.length === 0 &&
+  capability.modes.length === 1 &&
+  capability.modes[0] === RUN_MODE;
+
+/**
+ * Baseline access (the Shell frame): a person whose Roles do not grant a baseline capability is still a member of the
+ * company or tenant they ask in, and a member may load the product. It is a fallback after the Roles answered, so a
+ * holder of the cell never pays for it, and it applies only to a person (never an agent or workload) refused for want
+ * of a grant. The graph proves the membership itself (`access_scope#access`) in its own snapshot; an engine failure is
+ * UNAVAILABLE, never an admission. Every page, contribution and record stays decided by its own right.
+ */
+const needsMemberBaseline = (
+  resolved: ResolvedActor,
+  request: Pick<AccessDecisionRequest, 'capability'>,
+  decided: AccessDecision,
+): boolean =>
+  isFrameBaseline(request.capability) &&
+  decided.outcome === 'DENIED' &&
+  decided.reasons.every(({ code }) => code === INSUFFICIENT_GRANT.code) &&
+  Option.isSome(principalIdOf(resolved.actor));
+
+const memberBaselineItem = (resolved: ResolvedActor): AccessCheckItem => ({
+  permission: 'access',
+  resource: { id: scopeObjectId(resolved.scope.tenantId, resolved.scope.scopeId), type: 'access_scope' },
+  subject: subjectOf(resolved.principalHolder),
+});
+
+const memberBaselineDecision = (resolved: ResolvedActor): AccessDecision =>
+  makeDecision({
+    admissionDeadline: earliestDeadline(actorDeadlines(resolved)),
+    evidence: [],
+    outcome: 'ALLOWED',
+    reasons: [decisionReason('structural.member_baseline')],
+    structuralEvidence: { basis: 'member_baseline', scopeId: resolved.scope.scopeId },
+  });
+
+/** The member's answer for one membership check result: admitted, refused as the Roles said, or unavailable. */
+const memberBaselineVerdict = (
+  resolved: ResolvedActor,
+  decided: AccessDecision,
+  result: AccessCheckResult | undefined,
+): AccessDecision => {
+  if (result?.permissionship === 'has') {
+    return memberBaselineDecision(resolved);
+  }
+  return result?.permissionship === 'none' ? decided : unavailableDecision();
+};
+
+const withMemberBaseline = Effect.fn('AccessDecision.memberBaseline')(function* withMemberBaselineProgram(
+  check: DecisionCheckPort,
+  resolved: ResolvedActor,
+  request: AccessDecisionRequest,
+  decided: AccessDecision,
+) {
+  if (!needsMemberBaseline(resolved, request, decided)) {
+    return decided;
+  }
+  const answer = yield* check.checkBulk([memberBaselineItem(resolved)]).pipe(Effect.option);
+  return Option.match(answer, {
+    onNone: () => unavailableDecision(),
+    onSome: ([result]) => memberBaselineVerdict(resolved, decided, result),
+  });
+});
 
 /** A structural admin path is an independent branch of this same gate, never a role cell (O81). */
 const structuralAdminDecision = Effect.fn('AccessDecision.structuralAdmin')(function* structuralAdminProgram(
@@ -1235,7 +1315,12 @@ const decideAccessEffect: (
   if (engineFailed || evaluation === undefined) {
     return unavailableDecision();
   }
-  return decisionFromSnapshot({ evaluation, modes: guard.modes, plans, request, resolved });
+  return yield* withMemberBaseline(
+    check,
+    resolved,
+    request,
+    decisionFromSnapshot({ evaluation, modes: guard.modes, plans, request, resolved }),
+  );
 });
 
 /**
@@ -1370,6 +1455,8 @@ const permittedReads = (authority: DecisionAuthorityPort, permits: Semaphore.Sem
     withOptional(
       {
         readCells: (query: AuthorityCellQuery) => permits.withPermit(authority.readCells(query)),
+        readCompanyOwnership: (query: CompanyOwnershipQuery) =>
+          permits.withPermit(authority.readCompanyOwnership(query)),
         readConnection: (query: ConnectionQuery) => permits.withPermit(authority.readConnection(query)),
         readScope: (query: ScopeQuery) => permits.withPermit(authority.readScope(query)),
         readTeamIds: (query: TeamMembershipQuery) => permits.withPermit(authority.readTeamIds(query)),
@@ -1481,6 +1568,7 @@ const preloadedAuthority = (
       ? Effect.succeed(read.cells)
       : Effect.fail(accessDecisionUnavailable('The access intent of this request could not be read'));
   },
+  readCompanyOwnership: authority.readCompanyOwnership,
   readConnection: authority.readConnection,
   readScope: authority.readScope,
   readTeamIds: authority.readTeamIds,
@@ -1674,21 +1762,42 @@ const decideAccessManyEffect: (
       check,
       plannedGroups.flatMap(({ plans }) => plans),
     );
-    return plannedGroups.map(({ entries }) =>
-      entries.map((entry): AccessDecision => {
+    const decided = plannedGroups.map(({ entries }) =>
+      entries.map((entry) => {
         if (entry.decision !== undefined) {
-          return entry.decision;
+          return { decision: entry.decision };
         }
         if (engineFailed || evaluation === undefined || entry.snapshot === undefined) {
-          return unavailableDecision();
+          return { decision: unavailableDecision() };
         }
-        return decisionFromSnapshot({
+        const { snapshot } = entry;
+        const decision = decisionFromSnapshot({
           evaluation,
-          modes: entry.snapshot.modes,
-          plans: entry.snapshot.plans,
-          request: entry.snapshot.request,
-          resolved: entry.snapshot.resolved,
+          modes: snapshot.modes,
+          plans: snapshot.plans,
+          request: snapshot.request,
+          resolved: snapshot.resolved,
         });
+        return needsMemberBaseline(snapshot.resolved, snapshot.request, decision)
+          ? { baseline: snapshot.resolved, decision }
+          : { decision };
+      }),
+    );
+    // The baseline fallback of every answer that needs it, proven together in one more snapshot (none when none does).
+    const fallbacks = decided.flat().flatMap(({ baseline }) => (baseline === undefined ? [] : [baseline]));
+    const answers =
+      fallbacks.length === 0
+        ? Option.some<readonly AccessCheckResult[]>([])
+        : yield* check.checkBulk(fallbacks.map(memberBaselineItem)).pipe(Effect.option);
+    let next = 0;
+    return decided.map((group) =>
+      group.map(({ baseline, decision }): AccessDecision => {
+        if (baseline === undefined) {
+          return decision;
+        }
+        const result = Option.isSome(answers) ? answers.value[next] : undefined;
+        next += 1;
+        return Option.isNone(answers) ? unavailableDecision() : memberBaselineVerdict(baseline, decision, result);
       }),
     );
   },
@@ -2177,6 +2286,38 @@ const finishList = (
   return listResolutionFrom({ modes: ready.modes, plannedSides, resolved: ready.resolved, resolvedCells });
 };
 
+/**
+ * The baseline fallback of LISTs (the Shell frame): a member refused for want of a grant reads the whole scope of a
+ * baseline capability, which has no record selectors. All of a batch's fallbacks are proven in one more snapshot.
+ */
+const withListMemberBaseline = Effect.fn('AccessDecision.listMemberBaseline')(function* withListMemberBaselineProgram(
+  check: DecisionCheckPort,
+  lists: readonly { readonly ready: ReadyList | null; readonly resolution: ListAccessResolution }[],
+) {
+  const needing = lists.flatMap(({ ready, resolution }, index) =>
+    ready !== null && needsMemberBaseline(ready.resolved, ready.input, resolution.decision) ? [{ index, ready }] : [],
+  );
+  if (needing.length === 0) {
+    return lists.map(({ resolution }) => resolution);
+  }
+  const answers = yield* check
+    .checkBulk(needing.map(({ ready }) => memberBaselineItem(ready.resolved)))
+    .pipe(Effect.option);
+  const verdicts = new Map(
+    needing.map(({ index, ready }, position): readonly [number, ListAccessResolution] => {
+      const decided = lists[index]?.resolution.decision ?? unavailableDecision();
+      const verdict = Option.isNone(answers)
+        ? unavailableDecision()
+        : memberBaselineVerdict(ready.resolved, decided, answers.value[position]);
+      return [
+        index,
+        verdict.outcome === 'ALLOWED' ? { decision: verdict, predicate: { groups: [] } } : { decision: verdict },
+      ];
+    }),
+  );
+  return lists.map(({ resolution }, index) => verdicts.get(index) ?? resolution);
+});
+
 const resolveListAccessEffect: (
   authority: DecisionAuthorityPort,
   check: DecisionCheckPort,
@@ -2195,7 +2336,10 @@ const resolveListAccessEffect: (
     return { decision: unavailableIntentDecision() };
   }
   const snapshot = yield* listSnapshot(check, plannedSides, projectionScopeOf(prepared.resolved.scope));
-  return finishList(prepared, plannedSides, snapshot);
+  const [answered] = yield* withListMemberBaseline(check, [
+    { ready: prepared, resolution: finishList(prepared, plannedSides, snapshot) },
+  ]);
+  return answered ?? { decision: unavailableDecision() };
 });
 
 /** One LIST of a batch: answered early, unreadable, or planned with its sides and its checks. */
@@ -2263,9 +2407,9 @@ export const resolveListAccessMany: (
       items.length === 0 ? Option.some<readonly AccessCheckResult[]>([]) : yield* Effect.option(check.checkBulk(items));
     const complete = answers.pipe(Option.filter((results) => results.length === items.length));
     let offset = 0;
-    return planned.map((list): ListAccessResolution => {
+    const resolutions = planned.map((list) => {
       if (list.kind === 'answered') {
-        return { decision: list.decision };
+        return { ready: null, resolution: { decision: list.decision } };
       }
       const from = offset;
       offset += list.plan.listItems.length;
@@ -2274,8 +2418,12 @@ export const resolveListAccessMany: (
         list.plan.listItems.length === 0
           ? Option.some<readonly AccessCheckResult[]>([])
           : complete.pipe(Option.map((results) => results.slice(from, offset)));
-      return finishList(list.ready, list.plannedSides, listSnapshotFrom(list.plan, own));
+      return {
+        ready: list.ready,
+        resolution: finishList(list.ready, list.plannedSides, listSnapshotFrom(list.plan, own)),
+      };
     });
+    return yield* withListMemberBaseline(check, resolutions);
   },
 );
 

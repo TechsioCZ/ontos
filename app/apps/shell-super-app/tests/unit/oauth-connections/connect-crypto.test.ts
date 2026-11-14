@@ -13,6 +13,7 @@ import type { ConnectSession } from '../../../api/oauth-connections/connect-serv
 import { ConnectionUnavailable } from '../../../api/oauth-connections/errors.ts';
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
+import { agentConnectionStoreDouble, unusedPeopleCommandsLayer } from '../../support/agent-connection-store-double.ts';
 
 const cryptoFailure = PlatformError.systemError({
   _tag: 'Unknown',
@@ -78,6 +79,8 @@ const fixture = (previousProfileId: Option.Option<string>, failCrypto = false) =
     });
     const dependencies = Layer.mergeAll(
       inspection.layer,
+      agentConnectionStoreDouble().layer,
+      unusedPeopleCommandsLayer,
       Layer.succeed(Crypto.Crypto, crypto),
       makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
       Layer.mock(ContextAccess, { modules: () => Effect.succeed([]) }),

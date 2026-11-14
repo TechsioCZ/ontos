@@ -354,13 +354,10 @@ const verifyStep = Effect.fn('StageWorkloads.verify')(function* verify(resolved:
   const { scope, step } = resolved;
   const reader = yield* AccessWorkloadBindingSource;
   const query = { principalId: step.principalId, scope, tenantId: step.tenantId };
-  const active = yield* reader
-    .readActiveWorkloadKeys(query)
+  const authority = yield* reader
+    .readWorkloadAuthority(query)
     .pipe(Effect.mapError(() => fail('The registered workloads could not be read back')));
-  const declaration = yield* reader
-    .readCompanyDeclaration(query)
-    .pipe(Effect.mapError(() => fail('The registered companies could not be read back')));
-  const verified = active.has(step.workloadKey) && declaration.activeCompanyIds.has(step.legalEntityId);
+  const verified = authority.workloadKeys.has(step.workloadKey) && authority.activeCompanyIds.has(step.legalEntityId);
   yield* Console.log({ principalId: step.principalId, verified, workloadKey: step.workloadKey });
   if (!verified) {
     return yield* fail(`Principal ${step.principalId} is not admitted for ${step.workloadKey} in its company`);

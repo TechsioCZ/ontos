@@ -23,7 +23,7 @@ import {
   whySearchFromRequest,
 } from '../../src/routes/[lang]/access/why/why-page-model.ts';
 import { WhySubjectPicker } from '../../src/routes/access-admin/why/why-subject-picker.tsx';
-import { AgentsUnavailable, WhyResult, WhyView } from '../../src/routes/access-admin/why/why-view.tsx';
+import { WhyResult, WhyView } from '../../src/routes/access-admin/why/why-view.tsx';
 import {
   completeWhyCheck,
   emptyWhySearch,
@@ -167,17 +167,12 @@ test('never renders raw unknown reason codes or diagnostics', () => {
   }
 });
 
-test('request access remains disabled and agents have no create, enable or execute affordance', () => {
+test('request access remains disabled', () => {
   render(<WhyView draft={query} onCheck={noop} onRetry={noop} pending={false} result={{ state: 'idle' }} />);
   const request = screen.getByRole('button', { name: en.shell.accessAdmin.why.requestAccess });
   expect(request.hasAttribute('disabled')).toBe(true);
   expect(request.getAttribute('aria-describedby')).toBe('why-request-unavailable');
   expect(screen.getByText(en.shell.accessAdmin.why.requestAccessUnavailable)).toBeTruthy();
-  cleanup();
-  render(<AgentsUnavailable />);
-  expect(screen.queryByRole('button')).toBeNull();
-  expect(screen.queryByRole('link')).toBeNull();
-  expect(screen.getByText(en.shell.accessAdmin.agents.unavailable)).toBeTruthy();
 });
 
 test('pending checks hide the previous decision and authority metadata', () => {

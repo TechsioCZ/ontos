@@ -1167,3 +1167,45 @@ it('accepts the administration surface marker on an admin page and on no other c
   }
   expect(Result.isSuccess(decodeAccessDeclaration(adminSurface(), adminPageOwner))).toBe(true);
 });
+
+/** The Shell frame's own read, the one kind of carrier that may be baseline. */
+const shellFrameOwner = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'protected' },
+  entrypointKey: 'core.shell.composition',
+  moduleKey: 'core.shell',
+  role: 'api',
+});
+const frameRead = (overrides: Partial<AccessDeclarationInput> = {}): AccessDeclarationInput => ({
+  baseline: true,
+  key: 'core.shell.composition.read',
+  kind: 'read',
+  modes: ['run'],
+  placement: { group: 'shell', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+  ...overrides,
+});
+
+it('lets only a routine, basic, unselected read of the Shell frame be baseline, so it grants no business data', () => {
+  expect(decode(frameRead(), shellFrameOwner).baseline).toBe(true);
+  const narrower = 'only a routine, basic read without record selectors may be baseline';
+  expect(surfaceRefusal(frameRead({ placement: { group: 'shell', level: 'extended' } }), shellFrameOwner)).toContain(
+    narrower,
+  );
+  expect(surfaceRefusal(frameRead({ risk: 'sensitive' }), shellFrameOwner)).toContain(narrower);
+  expect(surfaceRefusal(frameRead({ selectors: ['assigned'] }), shellFrameOwner)).toContain(narrower);
+  expect(
+    surfaceRefusal(
+      frameRead({ key: 'core.shell.composition.export', kind: 'export', risk: 'sensitive' }),
+      shellFrameOwner,
+    ),
+  ).toContain(narrower);
+  // Another module's read may never be baseline, however harmless it looks.
+  expect(surfaceRefusal(frameRead({ key: 'party-registry.party.list' }), protectedReadOwner)).toContain(
+    'only the Shell frame (core.shell) declares baseline access',
+  );
+  for (const baseline of [false, 'true', 1, null]) {
+    expect(Result.isFailure(decodeAccessDeclaration({ ...frameRead(), baseline }, shellFrameOwner))).toBe(true);
+  }
+});

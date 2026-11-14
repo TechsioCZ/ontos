@@ -163,6 +163,7 @@ import {
 import { CommercePortalAuthRecoveryServiceLive } from './portal-auth/provider/recovery/service.ts';
 import { CommercePortalAuthVerificationWorkloadGrantConfigurationLive } from './portal-auth/verification-http/workload-grants.ts';
 import { CommercePortalAuthSessionReaderLive } from '../src/portal-auth/persistence/portal-auth-session-reader.ts';
+import { CommercePortalSessionLivenessLive } from '../src/portal-auth/persistence/portal-auth-session-liveness.ts';
 import { portalAuthStepUpApiLive } from './portal-auth/provider/step-up/http.ts';
 import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './portal-auth/provider/step-up/http-provider-unavailable.ts';
 import { CommercePortalAuthStepUpLive } from './portal-auth/provider/step-up/step-up.ts';
@@ -681,8 +682,29 @@ const productionOwnerRuntimeServicesLive = commerceCustomerContextOwnerRuntimeSe
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
   Layer.provide(profileReconfirmationPolicyUnavailableLive),
 );
+/**
+ * The portal session rule re-proves the admitted session is live through the portal realm's own sessions; a
+ * deployment without the realm has none, and its portal operations are then unavailable, never allowed.
+ */
+const deploymentPortalSessionLivenessLive = Layer.unwrap(
+  portalAuthRealmConfigured.pipe(
+    Effect.map((configured) =>
+      configured
+        ? CommercePortalSessionLivenessLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                CommercePortalAuthDatabaseLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+                commercePortalAuthPlatformCryptoLive,
+              ),
+            ),
+          )
+        : Layer.empty,
+    ),
+  ),
+);
 const productionOwnerAuthorizationOverlayLive = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
   Layer.provide(productionOwnerRuntimeServicesLive),
+  Layer.provide(deploymentPortalSessionLivenessLive),
 );
 const productionPurchaseLimitPersistenceLive = purchaseLimitPersistenceLayer.pipe(
   Layer.provide(
@@ -1241,6 +1263,17 @@ export const makeCommerceCustomerContextApiRuntime = (
     Layer.provide(governedActionRuntimeLive),
   );
   /**
+   * The v2 gate the handler groups preflight on, over the database configuration this deployment passes rather than
+   * the process configuration, so building the root never reads a database URL the deployment did not give it.
+   */
+  const handlerAccessEnforcementLive = AccessDecisionLive.pipe(
+    Layer.provideMerge(AccessEnforcementPortsLive),
+    Layer.provide(TenantIntentLoaderLive),
+    Layer.provide(CorePersistenceLive),
+    Layer.provide(databaseConfiguration),
+    Layer.provide(commercePortalAuthPlatformCryptoLive),
+  );
+  /**
    * Owner services the portal groups read beside the realm: enrollment convergence, continuation and
    * account lookup, the customer authority, and the owner transaction runner the invitation claim and
    * enrollment start dispatch their governed Actions through.
@@ -1294,10 +1327,14 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthEnrollmentApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     enrollmentCommandRecoveryLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     commercePortalAuthVerificationCommerceApiLive.pipe(GovernedReadLayer.provide(verificationRouteServicesLive)),
-    customerOwnConsentReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnConsentReadApiLive.pipe(
+      GovernedReadLayer.provide(Layer.mergeAll(portalOwnerServicesLive, governedReadRuntimeLive)),
+    ),
     customerOwnConsentUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     customerOwnPasswordChangeApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
-    customerOwnProfileReadApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    customerOwnProfileReadApiLive.pipe(
+      GovernedReadLayer.provide(Layer.mergeAll(portalOwnerServicesLive, governedReadRuntimeLive)),
+    ),
     customerOwnProfileUpdateApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
     HttpApiBuilder.group(commerceCustomerContextApi, 'ownerActionApprovals', (handlers) =>
       handlers
@@ -1464,6 +1501,12 @@ export const makeCommerceCustomerContextApiRuntime = (
         CommerceAuthenticationNamespaceRegistryLive,
         actionPrincipalVerifierLive,
         gatewayAssertionRedemption,
+        // The portal enrolment routes and the `start-portal-enrollment` and
+        // `claim-portal-enrollment-transition` Actions preflight on the v2 gate (D6), so the gate is
+        // on every handler group's composition path. It is provided here, once, so the generated
+        // Action mounts keep their exact generated shape, and over the deployment's own database
+        // configuration, so a root whose deployment configures none still builds.
+        handlerAccessEnforcementLive,
       ),
     ),
   );

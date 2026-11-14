@@ -753,6 +753,8 @@ const inFlightCounted = (port: ReturnType<typeof makeAuthority>['port'], counter
     withOptional(
       {
         readCells: (query: Parameters<typeof port.readCells>[0]) => counted(port.readCells(query)),
+        readCompanyOwnership: (query: Parameters<typeof port.readCompanyOwnership>[0]) =>
+          counted(port.readCompanyOwnership(query)),
         readConnection: (query: Parameters<typeof port.readConnection>[0]) => counted(port.readConnection(query)),
         readScope: (query: Parameters<typeof port.readScope>[0]) => counted(port.readScope(query)),
         readTeamIds: (query: Parameters<typeof port.readTeamIds>[0]) => counted(port.readTeamIds(query)),

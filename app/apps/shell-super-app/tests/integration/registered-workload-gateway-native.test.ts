@@ -868,10 +868,17 @@ const replaceIdentity = (connectionString: string, role: string) => {
 };
 const unavailableHumanPort = () => Effect.die('A workload decision must not ask human intent or the tuple engine');
 
-const nativeMachineGate = (database: Effect.Success<ReturnType<typeof makeCoreDatabase>>) =>
+const nativeMachineGate = (
+  database: Effect.Success<ReturnType<typeof makeCoreDatabase>>,
+  companyTenants: ReadonlyMap<string, string>,
+) =>
   makeAccessDecisionService({
     authorityFor: () => ({
       readCells: unavailableHumanPort,
+      // A company is owned exactly by the Tenant this fixture inserted it for (core.legal_entities), so the foreign
+      // company stays foreign to the gate as it is to the database.
+      readCompanyOwnership: ({ legalEntityId, tenantId }) =>
+        Effect.succeed(companyTenants.get(legalEntityId) === tenantId),
       readConnection: unavailableHumanPort,
       readScope: unavailableHumanPort,
       readTeamIds: unavailableHumanPort,
@@ -954,6 +961,10 @@ it.live(
         const legalEntityId = yield* crypto.randomUUIDv4();
         const otherTenantId = yield* crypto.randomUUIDv4();
         const foreignLegalEntityId = yield* crypto.randomUUIDv4();
+        const companyTenants: ReadonlyMap<string, string> = new Map([
+          [legalEntityId, tenantId],
+          [foreignLegalEntityId, otherTenantId],
+        ]);
         const originalPrincipal = yield* crypto.randomUUIDv4();
         const machinePrincipal = yield* crypto.randomUUIDv4();
         const modulePrincipal = yield* crypto.randomUUIDv4();
@@ -1124,7 +1135,7 @@ it.live(
         );
         const services = Layer.mergeAll(
           Layer.succeed(CoreDatabase, runtime),
-          Layer.succeed(AccessDecisionGate, nativeMachineGate(runtime)),
+          Layer.succeed(AccessDecisionGate, nativeMachineGate(runtime, companyTenants)),
           Layer.succeed(AuthDatabase, auth),
           Layer.succeed(PrincipalResolver, makePrincipalResolver(runtime, { authenticationNamespaceId })),
           Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),
@@ -1392,7 +1403,7 @@ it.live(
         expect(readVerifiedGatewayWorkload(nestedScope)?.originalPrincipalId).toBe(originalPrincipal);
         expect(readVerifiedGatewayWorkload(nestedScope)?.workloadKey).toBe(privacyWorkload);
         const decideNested = () =>
-          nativeMachineGate(runtime).decide({
+          nativeMachineGate(runtime, companyTenants).decide({
             carrier: {
               accessDeclaration: privacyDeclaration,
               accessWorkload: privacyAccessWorkload,
@@ -1454,7 +1465,7 @@ it.live(
         });
         expect(projectedTenantScope.legalEntityId).toBeUndefined();
         expect(
-          (yield* nativeMachineGate(runtime).decide({
+          (yield* nativeMachineGate(runtime, companyTenants).decide({
             carrier: {
               accessDeclaration: privacyTenantDeclaration,
               accessWorkload: privacyAccessWorkload,
@@ -1475,7 +1486,7 @@ it.live(
             ),
           ),
         ).toBe(true);
-        const gate = nativeMachineGate(party);
+        const gate = nativeMachineGate(party, companyTenants);
         const decide = (requestScope: typeof scope, operation = targetOperation) =>
           gate.decide({
             carrier: {
@@ -1900,7 +1911,7 @@ it.live(
           });
           const exactProcessingOperation = { entrypointKey: sourceFactsKey, schemaVersion: sourceFactsVersion };
           const decideProcessing = (operation = exactProcessingOperation) =>
-            nativeMachineGate(runtime).decide({
+            nativeMachineGate(runtime, companyTenants).decide({
               carrier: {
                 accessDeclaration: processingDeclaration,
                 accessWorkload: processingAccessWorkload,
@@ -2357,7 +2368,7 @@ it.live(
           principal: recoveryPrivacyPrincipal,
         });
         expect(
-          (yield* nativeMachineGate(runtime).decide({
+          (yield* nativeMachineGate(runtime, companyTenants).decide({
             carrier: {
               accessDeclaration: privacyDeclaration,
               accessWorkload: privacyAccessWorkload,

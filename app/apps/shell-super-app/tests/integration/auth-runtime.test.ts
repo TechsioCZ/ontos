@@ -732,6 +732,20 @@ it.live(
     );
     expect(anonymousModulesResponse.status).toBe(401);
     expect(headerValue(anonymousModulesResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
+    // The frame (admitted to members by the baseline) reads the Shell session only: an OAuth connection's bearer
+    // token or an API key is no session (`enableSessionForAPIKeys: false`), so it gets no frame either.
+    const credentialOnlyResponse = yield* Effect.tryPromise(() =>
+      unavailableHandler.handler(
+        new Request(`${configuration.baseUrl}/shell/composition`, {
+          headers: {
+            authorization: 'Bearer connection-access-token-is-not-a-session',
+            origin: configuration.baseUrl,
+            'x-api-key': 'an-api-key-is-not-a-session',
+          },
+        }),
+      ),
+    );
+    expect(credentialOnlyResponse.status).toBe(401);
     const anonymousPageResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/module-target`, {

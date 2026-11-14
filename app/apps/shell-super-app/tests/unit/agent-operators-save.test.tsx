@@ -63,12 +63,13 @@ const agentWith = (operators: readonly (typeof jana)[], operatorsRevision: numbe
     description: null,
     displayName: 'Asistent',
     hasProfile: true,
-    modules: [],
     operators,
     operatorsRevision,
     owner: null,
     principalId: '00000000-0000-4000-8000-000000000004',
+    roles: [],
     status: 'active',
+    usable: [],
     writePolicy: 'approval',
   });
 const block = (operators: readonly (typeof jana)[], onChanged: () => void = () => {}, operatorsRevision = 0) => (

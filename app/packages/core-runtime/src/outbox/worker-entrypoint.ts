@@ -8,7 +8,9 @@ export {
 export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 export { databaseRuntime } from '#database-runtime';
 export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
-export { ActionPermissionCheckError, ActionResultValidationError } from '../actions/errors.ts';
+// `ActionPermissionDenied` is a refusal an Action itself raises when its own preflight denies the caller, so a worker
+// that runs Actions needs it exactly as it needs `ActionPermissionCheckError`.
+export { ActionPermissionCheckError, ActionPermissionDenied, ActionResultValidationError } from '../actions/errors.ts';
 export { commitActionThenReject, TrustedPrincipalContextSchema } from '../actions/context.ts';
 export { ActionRuntime } from '../actions/runtime.ts';
 export {

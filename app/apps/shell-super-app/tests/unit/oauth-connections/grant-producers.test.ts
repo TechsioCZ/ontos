@@ -18,6 +18,7 @@ import {
 } from '../../../api/oauth-connections/grant-store.ts';
 import type { OAuthRefreshGuardRow } from '../../../api/oauth-connections/types.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
+import { agentConnectionStoreDouble } from '../../support/agent-connection-store-double.ts';
 
 const token = {
   clientId: retainedGrant.clientId,
@@ -39,7 +40,13 @@ const credentials = (
 });
 const dataLayer = (registry: (typeof OAuthGrantRegistry)['Service'], auth = credentials()) =>
   OAuthEndpointGuardDataLive.pipe(
-    Layer.provide(Layer.merge(Layer.succeed(OAuthGrantRegistry, registry), Layer.succeed(OAuthCredentials, auth))),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(OAuthGrantRegistry, registry),
+        Layer.succeed(OAuthCredentials, auth),
+        agentConnectionStoreDouble().layer,
+      ),
+    ),
   );
 
 it.effect(

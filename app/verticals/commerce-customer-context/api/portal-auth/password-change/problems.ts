@@ -7,6 +7,9 @@ import {
   PasswordChangeUnavailableProblemSchema,
 } from '../../../shared/portal-auth/password-change-api.ts';
 
+import { outcomeUnknownTexts } from './outcome-unknown-texts.ts';
+import type { OutcomeUnknownLanguage } from './outcome-unknown-texts.ts';
+
 const PASSWORD_CHANGE_TYPE = 'https://ontos.dev/problems/customer-password-change-';
 
 export const passwordChangeInvalid = () =>
@@ -58,3 +61,18 @@ export const passwordChangeUnavailable = () =>
     title: 'Password change unavailable',
     type: `${PASSWORD_CHANGE_TYPE}unavailable`,
   });
+/**
+ * The provider did not answer in time and the change may still complete: the same 503 shape as `unavailable`, but
+ * saying so, in the customer's language. Its eventual outcome is recorded under the same invocation.
+ */
+export const passwordChangeOutcomeUnknown = (language: OutcomeUnknownLanguage) => {
+  const texts = outcomeUnknownTexts(language);
+  return PasswordChangeUnavailableProblemSchema.make({
+    code: 'password_change_unavailable',
+    detail: texts.detail,
+    retryable: true,
+    status: 503,
+    title: texts.title,
+    type: `${PASSWORD_CHANGE_TYPE}outcome-unknown`,
+  });
+};

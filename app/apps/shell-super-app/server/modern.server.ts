@@ -7,7 +7,7 @@ import { Data, Effect, Function as Fn, Option } from 'effect';
 import type { Schema } from 'effect';
 import { Literal, String as SchemaString, TaggedStruct } from 'effect/Schema';
 
-import { oauthPageSecurityHeaders, serveRootMetadataAlias, serveRootRoute, viaModule } from './root-routes.ts';
+import { documentSecurityHeaders, serveRootMetadataAlias, serveRootRoute, viaModule } from './root-routes.ts';
 import type { MiddlewareContext } from './root-routes.ts';
 import { guardCredentialSubmission } from './credential-submission.ts';
 import { symmyRouteNotFoundPayload } from '../shared/symmy-route-not-found.ts';
@@ -161,16 +161,16 @@ export default {
       handler: Fn.flow(
         (context: MiddlewareContext, next: () => Promise<void>) =>
           (shellServerRuntime.runPromise<
-            Effect.Success<ReturnType<typeof oauthPageSecurityHeaders>>,
-            Effect.Error<ReturnType<typeof oauthPageSecurityHeaders>>
+            Effect.Success<ReturnType<typeof documentSecurityHeaders>>,
+            Effect.Error<ReturnType<typeof documentSecurityHeaders>>
           >).bind(
             shellServerRuntime,
-            oauthPageSecurityHeaders(context, Effect.promise(next).pipe(Effect.timeout(SHELL_HTTP_BUDGET))),
+            documentSecurityHeaders(context, Effect.promise(next).pipe(Effect.timeout(SHELL_HTTP_BUDGET))),
             { signal: context.req.raw?.signal },
           ),
         Fn.apply({}),
       ),
-      name: 'ontos-oauth-page-headers',
+      name: 'ontos-document-headers',
       order: 'pre',
     },
   ],

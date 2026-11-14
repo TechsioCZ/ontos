@@ -1,62 +1,58 @@
+import { ActionRuntime } from '@app/core-runtime';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { isAPIError } from 'better-auth/api';
-import { DateTime, Duration, Effect, Result, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/http';
 
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
-import { CustomerOwnPasswordChangeSchemaError } from '../../../shared/portal-auth/password-change-api.ts';
+import { ChangeOwnCustomerPasswordPayloadSchema } from '../../../shared/portal-auth/own-session.ts';
+import {
+  CustomerOwnPasswordChangeSchemaError,
+  PasswordChangeCurrentInvalidProblemSchema,
+  PasswordChangeInvalidProblemSchema,
+  PasswordChangeRateLimitedProblemSchema,
+  PasswordChangeUnavailableProblemSchema,
+} from '../../../shared/portal-auth/password-change-api.ts';
 import type { UpdateCustomerPassword } from '../../../shared/portal-auth/password-change-api.ts';
-import { customerCredentialChangeOwnEntrypoint } from '../../../shared/portal-auth/password-change-entrypoints.ts';
-import { CommercePortalAuthAudit } from '../../../src/portal-auth/audit/audit.ts';
-import { authorizeCustomerProfile } from '../profile/http.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
+import { changeOwnCustomerPasswordAction } from '../../../src/actions/change-own-customer-password.action.ts';
 import { noStoreHeaders, requestHeaders, requireTrustedOrigin } from '../http-transport.ts';
-import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
-import { consumeRateLimitBudget } from '../rate-limit-service.ts';
-import { admitCustomerAccount, CommercePortalAuthService } from '../session/http.ts';
+import {
+  OWN_PORTAL_AUDIENCE,
+  isOwnPortalRefusal,
+  ownPortalTransport,
+  ownSessionOf,
+} from '../own/own-portal-invocation.ts';
+import { withPasswordChangeExchange } from '../own/own-portal-exchange.ts';
+import { admitCustomerAccount } from '../session/http.ts';
 import {
   passwordChangeAuthentication,
-  passwordChangeCurrentInvalid,
   passwordChangeForbidden,
   passwordChangeInvalid,
-  passwordChangeRateLimited,
   passwordChangeUnavailable,
 } from './problems.ts';
 
-const ROUTE = '/change-password';
-/** A stolen session may guess the current password only this often per account. */
-const passwordChangeRateLimit: CommercePortalAuthRecoveryRateLimitRule = { max: 5, windowSeconds: 900 };
-const providerTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.accountCreation.providerCallTimeoutMilliseconds);
-
-const CURRENT_INVALID = 'current-invalid';
-const INVALID = 'invalid';
-const UNAVAILABLE = 'unavailable';
-export const PasswordChangeFailureClass = Schema.Literals([CURRENT_INVALID, INVALID, UNAVAILABLE]);
-export type PasswordChangeFailureKind = typeof PasswordChangeFailureClass.Type;
-
-/** The provider did not answer inside the call budget; the change is then reported as unavailable. */
-class PasswordChangeProviderTimeout extends Schema.TaggedError<PasswordChangeProviderTimeout>()(
-  'PasswordChangeProviderTimeout',
-  {},
-) {}
-
-const WRONG_CURRENT_CODE = 'INVALID_PASSWORD';
-const REJECTED_NEW_CODES = new Set(['PASSWORD_TOO_LONG', 'PASSWORD_TOO_SHORT']);
-
-/**
- * Better Auth's own verdict on a failed `changePassword`. A wrong current password is the only
- * answer that tells the customer something; a too-short or too-long new password is a request error;
- * every other failure (including an unreachable provider) is unavailable and changes nothing.
+/*
+ * The storefront customer's own password change: the same portal route, method and response body as before, served
+ * by one Action of the registered storefront client, invoked in-process for exactly the admitted session's own
+ * account. The gate and the owner overlay decide; the unchanged password routine (`changeOwnPassword`) runs once the
+ * Action committed. The passwords are wrapped as redacted values the moment the request is decoded and travel only in
+ * this request's own exchange: never in the Action's payload, its request hash, its invocation, its evidence or a log.
  */
-export const classifyPasswordChangeFailure = (cause: unknown): PasswordChangeFailureKind => {
-  const code = isAPIError(cause) ? cause.body?.code : undefined;
-  if (code === WRONG_CURRENT_CODE) {
-    return CURRENT_INVALID;
+
+const isPasswordProblem = Schema.is(
+  Schema.Union([
+    PasswordChangeCurrentInvalidProblemSchema,
+    PasswordChangeInvalidProblemSchema,
+    PasswordChangeRateLimitedProblemSchema,
+    PasswordChangeUnavailableProblemSchema,
+  ]),
+);
+
+/** A governed refusal is the route's 403; the routine's own problems pass as they are; anything else is 503. */
+const passwordProblemOf = (error: { readonly _tag: string }) => {
+  if (isPasswordProblem(error)) {
+    return error;
   }
-  if (code !== undefined && REJECTED_NEW_CODES.has(code)) {
-    return INVALID;
-  }
-  return UNAVAILABLE;
+  return isOwnPortalRefusal(error) ? passwordChangeForbidden() : passwordChangeUnavailable();
 };
 
 const admissionProblem = (problem: { readonly status?: number }) => {
@@ -69,92 +65,39 @@ const admissionProblem = (problem: { readonly status?: number }) => {
   return passwordChangeUnavailable();
 };
 
-/**
- * Changes the password of the admitted session's own account. Better Auth verifies the current
- * password and revokes the account's other sessions; the owner only admits, authorizes, rate-limits
- * and records evidence. The new password is never logged, stored or returned.
- */
-const changePassword = Effect.fn('CustomerPasswordChange.change')(function* changePasswordEffect(
+const changePassword = Effect.fn('CustomerPasswordChange.route')(function* changePasswordRoute(
   request: HttpServerRequest.HttpServerRequest,
   input: UpdateCustomerPassword,
 ) {
+  const currentPassword = Redacted.make(input.currentPassword);
+  const newPassword = Redacted.make(input.newPassword);
   yield* noStoreHeaders;
   yield* requireTrustedOrigin(request.headers, passwordChangeForbidden);
   const current = yield* admitCustomerAccount(request).pipe(Effect.mapError(admissionProblem));
   if (current.state !== 'authenticated') {
     return yield* Effect.fail(passwordChangeAuthentication());
   }
-  yield* authorizeCustomerProfile(current.workloadPrincipal, customerCredentialChangeOwnEntrypoint).pipe(
-    Effect.mapError((problem) => (problem.status === 403 ? passwordChangeForbidden() : passwordChangeUnavailable())),
-  );
-  const allowed = yield* consumeRateLimitBudget(
-    `password-change|${current.session.providerSubjectId}`,
-    passwordChangeRateLimit,
-    { route: ROUTE, unavailable: passwordChangeUnavailable },
-  );
-  if (!allowed) {
-    return yield* Effect.fail(passwordChangeRateLimited());
-  }
-  const audit = yield* CommercePortalAuthAudit;
-  const event = {
-    operation: 'customer-password-change',
-    providerSubjectId: current.session.providerSubjectId,
-    sessionRef: current.session.sessionRef,
-  };
-  // The intent row is strict: no password is changed unless the attempt is evidenced first.
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.password-change-requested.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'requested',
+  const payload = yield* Schema.encodeEffect(ChangeOwnCustomerPasswordPayloadSchema)({
+    session: yield* ownSessionOf(current, passwordChangeUnavailable),
+  }).pipe(Effect.mapError(passwordChangeInvalid));
+  const transport = yield* ownPortalTransport(passwordChangeUnavailable);
+  yield* (yield* ActionRuntime)
+    .runAction({
+      audience: OWN_PORTAL_AUDIENCE,
+      payload,
+      principal: current.workloadPrincipal,
+      registration: changeOwnCustomerPasswordAction,
+      transport,
     })
-    .pipe(Effect.mapError(passwordChangeUnavailable));
-  const service = yield* CommercePortalAuthService;
-  const attempt = yield* Effect.result(
-    Effect.tryPromise({
-      catch: classifyPasswordChangeFailure,
-      try: service.api.changePassword.bind(service.api, {
-        body: {
-          currentPassword: input.currentPassword,
-          newPassword: input.newPassword,
-          revokeOtherSessions: true,
-        },
-        headers: requestHeaders(request.headers),
+    .pipe(
+      withPasswordChangeExchange({
+        currentPassword,
+        newPassword,
+        requestHeaders: requestHeaders(request.headers),
+        sessionRef: current.session.sessionRef,
       }),
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: providerTimeout,
-        orElse: () => Effect.fail(new PasswordChangeProviderTimeout()),
-      }),
-    ),
-  );
-  if (Result.isFailure(attempt)) {
-    const failure = Schema.is(PasswordChangeFailureClass)(attempt.failure) ? attempt.failure : UNAVAILABLE;
-    yield* audit
-      .record({
-        ...event,
-        eventType: 'commerce.portal-auth.password-change-failed.v1',
-        occurredAt: yield* DateTime.nowAsDate,
-        outcome: failure === CURRENT_INVALID ? 'authentication_failed' : 'unavailable',
-      })
-      .pipe(Effect.mapError(passwordChangeUnavailable));
-    if (failure === CURRENT_INVALID) {
-      return yield* Effect.fail(passwordChangeCurrentInvalid());
-    }
-    if (failure === INVALID) {
-      return yield* Effect.fail(passwordChangeInvalid());
-    }
-    return yield* Effect.fail(passwordChangeUnavailable());
-  }
-  yield* audit
-    .record({
-      ...event,
-      eventType: 'commerce.portal-auth.password-changed.v1',
-      occurredAt: yield* DateTime.nowAsDate,
-      outcome: 'success',
-    })
-    .pipe(Effect.mapError(passwordChangeUnavailable));
+      Effect.mapError(passwordProblemOf),
+    );
   return { outcome: 'PASSWORD_CHANGED' as const };
 });
 

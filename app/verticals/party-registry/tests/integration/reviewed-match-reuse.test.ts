@@ -829,6 +829,7 @@ it.layer(
         ),
       );
       expect(sourceCreateReceipt).toMatchObject({ outcome: 'COMMITTED', operation: 'CREATE', result: sourceCreated });
+      yield* Effect.logInfo('1316 stage source-receipt-missing');
       const missingSourceReceipt = yield* runHttp(
         executePartySourceEffectReceiptWithAuthorization(
           {
@@ -855,6 +856,7 @@ it.layer(
         receipt.actionInvocationId,
       );
       const sourceReadOptions = { baseUrl, compositionRevision: composition.composition.revision };
+      yield* Effect.logInfo('1316 stage source-decision');
       const exactDecision = yield* runHttp(
         executePartyMatchDecisionWithAuthorization(
           { actionInvocationId: initialSourceInvocationId },
@@ -877,9 +879,11 @@ it.layer(
       expect((yield* readDecision(sourceCreated.decisionRef)).evidenceEvaluation?.evidence[0]?.kind).toBe(
         'CLIENT_SOURCE_ASSERTION',
       );
+      yield* Effect.logInfo('1316 stage source-conflict');
       expect(
         yield* createSource({ ...sourceCandidate, businessName: 'Conflicting intent' }).pipe(Effect.flip),
       ).toMatchObject({ status: 409 });
+      yield* Effect.logInfo('1316 stage source-denied-create');
       targetAllowed.PARTY = false;
       expect(yield* createSource().pipe(Effect.flip)).toMatchObject({ status: 403 });
       const nextOccurrence = {
@@ -895,11 +899,13 @@ it.layer(
           matchPartyWithAuthorization({ candidate: nextOccurrence }, yield* authorization(), yield* options),
         ).pipe(Effect.flip),
       ).toMatchObject({ status: 403 });
+      yield* Effect.logInfo('1316 stage source-denied-recovery');
       for (const { actionInvocationId } of sourceReceipts) {
         expect(yield* recoverSource(actionInvocationId).pipe(Effect.flip)).toMatchObject({ status: 503 });
       }
       expect(yield* ownerSnapshot()).toEqual(afterSource);
       targetAllowed.PARTY = true;
+      yield* Effect.logInfo('1316 stage source-lost-ack');
       fixture.faultNextTransaction('lost-ack');
       const lostAcknowledgement = yield* createSource().pipe(Effect.flip);
       assert.isOk(Predicate.isTagged(lostAcknowledgement, 'PartyCommandCommitIndeterminateProblem'));

@@ -70,6 +70,7 @@ const inertPortAnswer = () => Effect.fail(accessDecisionUnavailable('The scripte
 /** The one authority the inert source answers with; it reads nothing, so every answer is the same. */
 const inertAuthority = Object.freeze({
   readCells: inertPortAnswer,
+  readCompanyOwnership: inertPortAnswer,
   readConnection: inertPortAnswer,
   readScope: inertPortAnswer,
   readTeamIds: inertPortAnswer,
@@ -88,8 +89,7 @@ export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
     }),
     principalKinds: Object.freeze({ readKind: inertPortAnswer }),
     workloadBindings: Object.freeze({
-      readActiveWorkloadKeys: inertPortAnswer,
-      readCompanyDeclaration: inertPortAnswer,
+      readWorkloadAuthority: inertPortAnswer,
     }),
   });
 
@@ -339,3 +339,6 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     Layer.succeed(LegalEntityCandidates, ports.candidates),
   );
 };
+
+/** The agent lifecycle question over a scripted gate, re-asked on re-check (see `AgentLifecycleAuthority`). */
+export { makeTestAgentLifecycleAuthority } from '../auth/agent-lifecycle-authority.ts';

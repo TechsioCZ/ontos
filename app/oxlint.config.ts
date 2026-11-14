@@ -96,6 +96,9 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
         'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
         'apps/shell-super-app/api/auth/db/client.ts',
+        // The customer portal routes bind each request's own exchange (session reference, result cell, redacted
+        // passwords) to the one Action that request invokes.
+        'verticals/commerce-customer-context/api/portal-auth/own/own-portal-exchange.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.
@@ -1506,7 +1509,11 @@ export default defineConfig({
     {
       // Test doubles: the routine-only scoped executor and the operation-requirement catalog fake expose just
       // the members Price Group persistence and the requirement check read, as main's Assortment owner tests do.
-      files: ['verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts'],
+      // Party's Create recovery requirement test uses the same catalog fake.
+      files: [
+        'verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts',
+        'verticals/party-registry/tests/unit/party-command-result-source-privacy-requirement.test.ts',
+      ],
       rules: {
         'anti-slop/no-chained-type-assertions': 'off',
         'typescript/no-unsafe-type-assertion': 'off',

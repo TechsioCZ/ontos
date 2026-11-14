@@ -1,10 +1,19 @@
+import { createRequire } from 'node:module';
+
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { ConfigProvider, Effect } from 'effect';
 import { beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loadHomePageModel, resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
+import {
+  loadHomePageModel,
+  loadServerModuleDocument,
+  primeBrowserReads,
+  resetBrowserSessionCache,
+} from '../../../../src/routes/[lang]/home-page-model.ts';
+import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { endBrowserSession } from '../../../../src/routes/session-scope.ts';
 
 const {
@@ -598,6 +607,51 @@ const withoutLegalEntities = <Context extends { readonly legalEntities: unknown 
 
 const serverModel = (url?: string) => asServerRender(loadModel({ request: serverRequest(url) }));
 
+/** The serializer TanStack's server rendering embeds every loader's data with, as its router core loads it. */
+interface EmbeddingSerializer {
+  readonly crossSerialize: (value: HomePageModel) => string;
+  readonly deserialize: (source: string) => HomePageModel;
+  readonly serialize: (value: HomePageModel) => string;
+}
+const embeddingSerializer = (): EmbeddingSerializer => {
+  const fromShell = createRequire(`${process.cwd()}/package.json`);
+  const fromRouter = createRequire(fromShell.resolve('@tanstack/react-router'));
+  return createRequire(fromRouter.resolve('@tanstack/router-core'))('seroval');
+};
+
+/** Names a person controls (their company, their name, a role) written to escape the document's script. */
+const HOSTILE = '</script><script>alert(1)</script><!-- \u2028\u2029 ]]> "\'`';
+
+it.effect('the server model cannot break out of the document script, whatever the names it carries', () =>
+  Effect.gen(function* hostileNames() {
+    const hostileIdentity = { ...identity, displayName: HOSTILE, legalName: HOSTILE };
+    documentContextMock.mockReturnValue(
+      Effect.succeed(
+        documentContextOf({
+          legalEntities: {
+            legalEntities: [{ legalEntityId: 'legal-1', legalName: HOSTILE }],
+            selectedLegalEntityId: 'legal-1',
+            state: 'authenticated',
+            tenantContextAvailable: false,
+          },
+          session: { identity: hostileIdentity, state: 'authenticated' as const },
+          tenants: { state: 'available', tenants: [{ name: HOSTILE, tenantId: 'tenant-1' }] },
+        }),
+      ),
+    );
+    const model = yield* serverModel();
+    const serializer = embeddingSerializer();
+    const embedded = serializer.crossSerialize(model);
+    expect(embedded).toContain('alert(1)');
+    expect(embedded).not.toMatch(/<\/script/iu);
+    expect(embedded).not.toContain('<!--');
+    expect(embedded).not.toMatch(/[\u2028\u2029]/u);
+    expect(embedded).not.toContain('<');
+    // The browser reads back exactly the names the server rendered, the hostile ones included.
+    expect(serializer.deserialize(serializer.serialize(model))).toEqual(model);
+  }),
+);
+
 it.effect('server rendering reads the whole document context in one request', () =>
   Effect.gen(function* serverReadsOnce() {
     documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
@@ -622,6 +676,18 @@ it.effect('server rendering reads the whole document context in one request', ()
       selectedLegalEntityId: 'legal-1',
       state: 'authenticated',
       tenants: { items: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }], state: 'available' },
+      // Exactly the separate endpoints' answers to this person here, and nothing else (no token, no assertion).
+      browserReads: {
+        canManagePeople: false,
+        composition: availableComposition({}),
+        legalEntities: {
+          legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+          selectedLegalEntityId: 'legal-1',
+          state: 'authenticated',
+          tenantContextAvailable: false,
+        },
+        tenants: { tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+      },
     });
     expect(documentContextMock).toHaveBeenCalledTimes(1);
     expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ home: true });
@@ -636,6 +702,156 @@ it.effect('server rendering reads the whole document context in one request', ()
     ]) {
       expect(separateRead).not.toHaveBeenCalled();
     }
+  }),
+);
+
+it.effect('a document whose hint checks could not answer primes nothing, so the browser asks again', () =>
+  Effect.gen(function* unansweredHints() {
+    const { canManagePeople: _unanswered, ...withoutPeopleHint } = documentContextOf({});
+    for (const context of [withoutPeopleHint, documentContextOf({ tenantContextUnavailable: true })]) {
+      documentContextMock.mockReturnValueOnce(Effect.succeed(context));
+      const model = yield* serverModel();
+      // The page still shows the hint as "no"; only nothing is kept as an answer.
+      expect(model).toMatchObject({ state: 'authenticated' });
+      expect(model).not.toHaveProperty('browserReads');
+    }
+  }),
+);
+
+/** The server-rendered model's own reads, primed in the browser as hydration does. */
+const hydrateServerModel = Effect.gen(function* hydrate() {
+  documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
+  const model = yield* serverModel();
+  if (model.state !== 'authenticated' || model.browserReads === undefined) {
+    throw new Error('Expected a server-rendered model with its browser reads');
+  }
+  yield* resetBrowserSessionCache;
+  yield* primeBrowserReads(model.identity, model.browserReads, 'https://shell.example.test/en');
+  return model;
+});
+
+/** The reads the server-rendered model answers; the session is always read fresh. */
+const primedShellReads = () => [
+  shellCompositionMock,
+  availableTenantsMock,
+  availableLegalEntitiesMock,
+  canManageDemoAccountsMock,
+];
+
+const separateShellReads = () => [
+  currentSessionMock,
+  shellCompositionMock,
+  availableTenantsMock,
+  availableLegalEntitiesMock,
+  canManageDemoAccountsMock,
+];
+
+it.effect('the first browser loader after hydration reuses the server-rendered Shell reads', () =>
+  inNewDocument(
+    Effect.gen(function* hydratedReads() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+        throw new Error('Expected an authenticated server model');
+      }
+      yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      const browser = yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      expect(browser).toMatchObject({
+        compositionRevision,
+        legalEntities: server.legalEntities,
+        navigation: server.navigation,
+        tenants: server.tenants,
+      });
+      // The session is read fresh, so the person and company the browser holds now choose the primed answers.
+      expect(currentSessionMock).toHaveBeenCalledTimes(1);
+      for (const primedRead of primedShellReads()) {
+        expect(primedRead).not.toHaveBeenCalled();
+      }
+    }),
+  ),
+);
+
+/** Who the browser's session names after the render, through each way the identity can change under a document. */
+const changedIdentities = [
+  ['another company of the same person (company switch)', { ...identity, legalEntityId: 'legal-2', legalName: 'Beta' }],
+  ['another tenant (tenant switch)', { ...identity, tenantId: 'tenant-2' }],
+  ['another person signed in in this browser', { ...identity, displayName: 'Grace', principalId: 'principal-2' }],
+  ['a support session acting as another person', { ...identity, displayName: 'Support', principalId: 'principal-3' }],
+] as const;
+
+for (const [change, nowSignedIn] of changedIdentities) {
+  it.effect(`never answers primed reads after the identity changed: ${change}`, () =>
+    inNewDocument(
+      Effect.gen(function* changedIdentity() {
+        const server = yield* hydrateServerModel;
+        if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+          throw new Error('Expected an authenticated server model');
+        }
+        yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+        currentSessionMock.mockReturnValue(Effect.succeed({ identity: nowSignedIn, state: 'authenticated' as const }));
+        const browser = yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+        expect(browser).toMatchObject({ identity: nowSignedIn, state: 'authenticated' });
+        // Every read the render primed is asked again, for the identity the session names now.
+        for (const primedRead of primedShellReads()) {
+          expect(primedRead).toHaveBeenCalledTimes(1);
+        }
+      }),
+    ),
+  );
+}
+
+it.effect('primes a document model once: a session boundary is never undone by a later render', () =>
+  inNewDocument(
+    Effect.gen(function* primedOnce() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.browserReads === undefined) {
+        throw new Error('Expected a server-rendered model with its browser reads');
+      }
+      if (server.compositionRevision !== undefined) {
+        yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      }
+      yield* endBrowserSession;
+      // The Shell renders again from the same server model after the boundary.
+      yield* primeBrowserReads(server.identity, server.browserReads, 'https://shell.example.test/en');
+      yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      for (const primedRead of primedShellReads()) {
+        expect(primedRead).toHaveBeenCalledTimes(1);
+      }
+    }),
+  ),
+);
+
+it.effect('a session boundary drops the primed reads, so the next loader asks the Shell again', () =>
+  inNewDocument(
+    Effect.gen(function* primedReadsEndWithSession() {
+      const server = yield* hydrateServerModel;
+      if (server.state !== 'authenticated' || server.compositionRevision === undefined) {
+        throw new Error('Expected an authenticated server model');
+      }
+      yield* pinDocumentCompositionRevision(server.compositionRevision, globalThis.document);
+      yield* endBrowserSession;
+      yield* loadHomePageModel(new Request('https://shell.example.test/en/ukoly'));
+      for (const separateRead of separateShellReads()) {
+        expect(separateRead).toHaveBeenCalled();
+      }
+    }),
+  ),
+);
+
+it.effect('a module page document reads its target in the same document-context request', () =>
+  Effect.gen(function* moduleDocument() {
+    const target = { state: 'selection_required' as const };
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ target })));
+    const document = yield* asServerRender(
+      loadServerModuleDocument(serverRequest('https://shell.example.test/en/contacts'), {
+        canonicalPath: '/contacts',
+      }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({}))),
+    );
+    expect(document.target).toEqual(target);
+    expect(document.shell).toMatchObject({ compositionRevision, state: 'authenticated' });
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ target: { canonicalPath: '/contacts' } });
+    expect(documentContextMock.mock.calls[0]?.[1]).toMatchObject({ targetSource: 'server_render' });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   }),
 );
 
@@ -770,46 +986,18 @@ it.effect('server rendering preserves the company welcome and unavailable Home o
   }),
 );
 
-const gatewayAssertion = {
-  apiBaseUrl: '/shell-super-app-api/module-api/future-generated/build/future-generated-api',
-  audience: 'future-generated',
-  compositionRevision,
-  expiresAt: 1_700_000_300,
-  token: 'assertion-token',
-};
-
 const audienceComposition = () => availableComposition({ gatewayAudiences: ['future-generated'] });
 
-const withGatewayAudiences = () =>
-  documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ composition: audienceComposition() })));
-
-const withSignedGatewayAssertions = () =>
-  documentContextMock.mockReturnValue(
-    Effect.succeed(documentContextOf({ composition: audienceComposition(), gatewayAssertions: [gatewayAssertion] })),
-  );
-
-it.effect('server rendering embeds the gateway assertions the document context signed, with no second call', () =>
-  Effect.gen(function* serverEmbedsAssertions() {
-    withSignedGatewayAssertions();
-    expect(yield* serverModel('https://shell.example.test/en/ukoly')).toMatchObject({
-      gatewayAssertions: [gatewayAssertion],
-      gatewayAudiences: ['future-generated'],
-    });
+it.effect('server rendering embeds no gateway assertions and leaves them to the browser batch', () =>
+  Effect.gen(function* serverWithoutAssertions() {
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ composition: audienceComposition() })));
+    const model = yield* serverModel('https://shell.example.test/en/ukoly');
+    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
+    expect(model).not.toHaveProperty('gatewayAssertions');
     expect(documentContextMock).toHaveBeenCalledTimes(1);
     expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
   }),
 );
-
-it.effect('server rendering without signed assertions leaves them to the browser batch', () =>
-  Effect.gen(function* serverWithoutAssertions() {
-    withGatewayAudiences();
-    const model = yield* serverModel('https://shell.example.test/en/ukoly');
-    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
-    expect(model).not.toHaveProperty('gatewayAssertions');
-    expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
-  }),
-);
-
 it.effect('reconstructs explicit tenant scope on browser reload without company navigation', () =>
   Effect.gen(function* browserTenantScope() {
     const { legalEntityId, legalName, ...tenantIdentity } = identity;

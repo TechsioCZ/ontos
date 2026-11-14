@@ -33,6 +33,7 @@ const translations = new Map(
     'shell.search.groups.product': 'Products',
     'shell.search.groups.task': 'Tasks',
     'shell.search.label': 'Search',
+    'shell.search.notGranted': "Search isn't part of your access. Ask your administrator for it.",
     'shell.search.partial': 'Some providers are unavailable.',
     'shell.search.placeholder': 'Search clients, tasks, invoices, contracts…',
     'shell.search.suggestions.all': 'Show all results for “{{query}}”',
@@ -389,6 +390,41 @@ test.effect('missing trusted principal refuses header search', () =>
     expect(searchResourcesMock).not.toHaveBeenCalled();
   }),
 );
+
+test.effect('a person whose Roles exclude search is told so once, and typing asks nothing more', () =>
+  Effect.gen(function* searchNotGranted() {
+    searchResourcesMock.mockReturnValue(
+      Effect.fail({ _tag: 'ShellTargetForbiddenProblem', status: 403, title: 'Forbidden', type: 'about:blank' }),
+    );
+    const { result } = renderHook(() => useShellSearchSuggestions('a'.repeat(64), 'scope-1'));
+    act(() => result.current.handleQueryChange('dvorak'));
+    yield* settle();
+    expect(result.current.state.status).toBe('forbidden');
+    act(() => result.current.handleQueryChange('dvorakova'));
+    yield* settle();
+    expect({ calls: searchResourcesMock.mock.calls.length, status: result.current.state.status }).toEqual({
+      calls: 1,
+      status: 'forbidden',
+    });
+  }),
+);
+
+test('the header bar says plainly that search is not granted, not that it is unavailable', () => {
+  render(
+    <ShellSearchBar
+      onDismissSuggestions={noop}
+      onFamiliesChange={noop}
+      onSearch={noop}
+      onValueChange={noop}
+      SuggestionLink={() => null}
+      suggestions={{ filters: { availableFamilies: [], selectedFamilies: [] }, query: 'dvorak', status: 'forbidden' }}
+      value="dvorak"
+    />,
+  );
+  fireEvent.focus(screen.getByRole('searchbox', { name: 'Search' }));
+  expect(screen.getByText("Search isn't part of your access. Ask your administrator for it.")).toBeTruthy();
+  expect(screen.queryByText('Search is temporarily unavailable. Try again.')).toBeNull();
+});
 
 test('a header suggestion shows the matched variant name/SKU under the parent product title', () => {
   const result = variantProductHit();

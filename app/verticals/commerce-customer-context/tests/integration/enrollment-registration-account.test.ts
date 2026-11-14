@@ -36,17 +36,16 @@ import {
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import { commerceCustomerAuthorityLive } from '../../api/portal-auth/session/customer-authority.ts';
-import { CommercePortalAuthService, portalAuthSessionApiLive } from '../../api/portal-auth/session/http.ts';
+import { portalAuthSessionApiLive } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import {
   CommercePortalAuthSessionLifecycle,
   makeCommercePortalAuthSessionLifecycle,
 } from '../../api/portal-auth/session/lifecycle.ts';
 import { makeCommercePortalAuthSessionProvider } from '../../api/portal-auth/session/provider.ts';
 import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
-import {
-  makeCommercePortalAuthDatabase,
-  CommercePortalAuthDatabase,
-} from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';

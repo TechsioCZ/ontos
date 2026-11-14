@@ -811,9 +811,11 @@ const validateActionAccessBinding = <Policy>(
     if (!Predicate.isFunction(accessOwnerFacts)) {
       return failActionDefinition('Action access owner facts must be a resolver function');
     }
-    if (declaration === undefined) {
+    // Facts serve a carrier the gate decides: the descriptor's own declaration, or its own workload. The overlay they
+    // feed can only refuse, so a workload's owner rule (an end customer's session, say) narrows and never widens.
+    if (declaration === undefined && descriptor.accessWorkload === undefined) {
       return failActionDefinition(
-        'Action accessOwnerFacts requires the descriptor to declare its own accessDeclaration',
+        'Action accessOwnerFacts requires the descriptor to declare its own accessDeclaration or accessWorkload',
       );
     }
   }

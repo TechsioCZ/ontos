@@ -16,7 +16,8 @@ import type {
   CommercePortalAuthSessionSignInResult,
   CommercePortalAuthSessionSnapshot,
 } from '../../api/portal-auth/session/contracts.ts';
-import { CommercePortalAuthService, portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
+import { portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import {
   CommercePortalAuthSessionEvidenceRejected,
   CommercePortalAuthSessionUnavailable,

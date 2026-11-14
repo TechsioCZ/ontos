@@ -29,8 +29,11 @@ export type SearchPageModel =
   | {
       readonly query: string;
       readonly shell: HomePageModel;
-      /** The server render sends the page without results; the browser runs the search after hydration. */
-      readonly state: 'pending' | 'reload_required' | 'selection_required' | 'unavailable';
+      /**
+       * The server render sends the page without results; the browser runs the search after hydration. `notGranted`:
+       * search is a right of its own, and this person's Roles do not include it here.
+       */
+      readonly state: 'notGranted' | 'pending' | 'reload_required' | 'selection_required' | 'unavailable';
     }
   | {
       readonly filters: SearchFilterPlan;
@@ -170,6 +173,7 @@ export const searchFailureModel = (
       'ShellSelectionRequiredProblem',
       () => 'selection_required' as const,
     ),
+    Match.tag('ShellTargetForbiddenProblem', () => 'notGranted' as const),
     Match.tag(
       'ConfigError',
       'HttpClientError',
@@ -181,7 +185,6 @@ export const searchFailureModel = (
       'ShellPolicyUnprocessableProblem',
       'ShellPreconditionRequiredProblem',
       'ShellRateLimitedProblem',
-      'ShellTargetForbiddenProblem',
       'ShellTargetNotFoundProblem',
       () => 'unavailable' as const,
     ),

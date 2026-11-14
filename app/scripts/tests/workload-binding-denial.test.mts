@@ -138,6 +138,8 @@ const ports: AccessDecisionPorts = {
   authorityFor: () => ({
     readCells: () => Effect.succeed([]),
     readConnection: () => Effect.succeed(Option.none()),
+    // The company the workload names is the tenant's: its binding, not ownership, decides these cases.
+    readCompanyOwnership: () => Effect.succeed(true),
     readScope: () => Effect.succeed(Option.none()),
     readTeamIds: () => Effect.succeed([]),
   }),
@@ -146,14 +148,15 @@ const ports: AccessDecisionPorts = {
   legalEntities: { listCandidateIds: () => Effect.succeed([]) },
   principalKinds: { readKind: (query) => Effect.succeed(kindOf(query.principalId)) },
   workloadBindings: {
-    readActiveWorkloadKeys: (query) => Effect.succeed(boundKeysOf(query.tenantId, query.principalId)),
-    readCompanyDeclaration: (query) => {
-      const companies = registeredCompaniesOf(query.tenantId, query.principalId);
-      return Effect.succeed({
-        activeCompanyIds: new Set([...companies].map((company) => LegalEntityIdSchema.make(company))),
-        pinned: companies.size > 0,
-      });
-    },
+    readWorkloadAuthority: (query) =>
+      Effect.succeed({
+        activeCompanyIds: new Set(
+          [...registeredCompaniesOf(query.tenantId, query.principalId)].map((company) =>
+            LegalEntityIdSchema.make(company),
+          ),
+        ),
+        workloadKeys: boundKeysOf(query.tenantId, query.principalId),
+      }),
   },
 };
 

@@ -109,13 +109,20 @@ const startupFailureCodes = [
   'ERR_UNSUPPORTED_DIR_IMPORT',
   'ERR_REQUIRE_ESM',
   'ERR_DLOPEN_FAILED',
+  'EADDRINUSE',
+  'ServeUnitsError',
+  'HANDOVER CHANNEL LOST',
+  'ERR_UNHANDLED_REJECTION',
+  'IoInsideDatabaseTransaction',
 ] as const;
 
 /** Report only fixed public error codes; child output can contain credentials and stays redacted. */
-export const packagedStartupFailureReason = (exitCode: number, diagnostics: readonly Redacted.Redacted[]): string => {
-  const codes = startupFailureCodes.filter((code) => diagnostics.some((line) => Redacted.value(line).includes(code)));
-  return `Packaged application exited before readiness (exit=${String(exitCode)}; diagnostic codes=${codes.join(', ') || 'not reported'})`;
-};
+const reportedCodes = (diagnostics: readonly Redacted.Redacted[]) =>
+  startupFailureCodes.filter((code) => diagnostics.some((line) => Redacted.value(line).includes(code))).join(', ') ||
+  'not reported';
+
+export const packagedStartupFailureReason = (exitCode: number, diagnostics: readonly Redacted.Redacted[]): string =>
+  `Packaged application exited before readiness (exit=${String(exitCode)}; diagnostic codes=${reportedCodes(diagnostics)})`;
 
 interface PackagedApplicationInput {
   readonly appId:
@@ -328,7 +335,22 @@ export const startHostedOwnerWithHandover = Effect.fn('ServerOwnerRelayNative.st
       ),
     );
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.get(`${origin}${ONTOS_MODULE_CONTRACT_PATH}`);
+    // An owner that announced its address and then stops answering says why only in its own output: wait briefly for
+    // its exit and report the fixed codes it printed, never the lines themselves.
+    const announcedButUnreachable = Effect.fn('ServerOwnerRelayNative.announcedButUnreachable')(
+      function* unreachable() {
+        const exited = yield* child.exitCode.pipe(Effect.timeoutOption('2 seconds'));
+        return yield* new PackagedOwnerStartupError({
+          reason: `Hosted owner announced ${origin} but refused its contract read (exit=${Option.match(exited, {
+            onNone: () => 'still running',
+            onSome: String,
+          })}; diagnostic codes=${reportedCodes(diagnostics)})`,
+        });
+      },
+    );
+    const response = yield* client
+      .get(`${origin}${ONTOS_MODULE_CONTRACT_PATH}`)
+      .pipe(Effect.catchTag('HttpClientError', () => announcedButUnreachable()));
     if (response.status !== 200) {
       return yield* new PackagedOwnerStartupError({ reason: 'Hosted owner contract endpoint is unavailable' });
     }

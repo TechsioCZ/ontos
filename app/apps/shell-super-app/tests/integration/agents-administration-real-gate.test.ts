@@ -1,7 +1,6 @@
-import { NodeServices } from '@effect/platform-node';
-import { OntosDeploymentAppIdSchema, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
+import { installedReleaseComposition } from '../support/installed-release-composition.ts';
 import { AgentEntityOverviewSchema } from '@app/shared-contracts/agent-access';
-import { Effect, FileSystem, Path, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,10 +10,6 @@ import {
   withAccessAdminCase,
 } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate-fixture.ts';
-import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
-import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
-import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 /*
  * The Agents administration page, end to end on a v2-only tenant (real SpiceDB, no legacy tuples): its list endpoint
@@ -23,36 +18,6 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
  * not define, so every caller got 503. Now each person gets exactly the page gate's decision: 200 when it admits them,
  * a refusal otherwise, and never 503.
  */
-
-const releaseIntentPath = new URL('../../../../topology/application-release-intent.json', import.meta.url);
-const ReleaseIntentSchema = Schema.fromJsonString(
-  Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })) }),
-);
-
-/**
- * The approved composition of every module the release installs, with this Shell as its receiver: what a deployed
- * Shell loads as its installed module catalog. Built from the release intent and each module's derived contract.
- */
-const installedReleaseComposition = Effect.gen(function* installedReleaseComposition() {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const intent = yield* Schema.decodeUnknownEffect(ReleaseIntentSchema)(
-    yield* fileSystem.readFileString(yield* path.fromFileUrl(releaseIntentPath)),
-  );
-  const contracts = yield* Effect.forEach(
-    intent.modules,
-    ({ appId }) => deriveOntosModuleDeploymentContract({ vertical: appId }),
-    { concurrency: 4 },
-  );
-  const receiverDeployment = { appId: 'shell-super-app', buildMarker: ultramodernDeliveryUnit.buildMarker } as const;
-  const document = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-    contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
-    deployment: receiverDeployment,
-    schemaVersion: '2',
-  });
-  return yield* makeCompositionSnapshot(contracts, 600_000, { document, receiverDeployment });
-}).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
 
 const AGENTS_DECLARATION = 'shell-super-app.access-admin.agents';
 const LIST_PATH = '/auth/identity/agent-entities/list';
@@ -177,7 +142,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               // the tenant's v2 roles, and no legacy SpiceDB tuple anywhere (the fixture's SpiceDB carries exactly the
               // schema stage serves). Trunk read the company's members and each agent's operators from legacy
               // `legal_entity#member` / `principal#operator` relations: empty on a v2 tenant, unknown to its schema.
-              const [ours = ''] = accessCase.companies;
+              const [ours = '', other = ''] = accessCase.companies;
               const agentId = accessCase.ids.get('agent')?.principalId ?? '';
               const memberId = accessCase.ids.get('member')?.principalId ?? '';
               yield* accessCase.admin
@@ -221,18 +186,103 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
               expect(overview.members.map(({ principalId }) => principalId)).toContain(memberId);
               // The member's refused attempt is in the agent administration audit.
               expect(overview.audit.length).toBeGreaterThan(0);
-              // The presets are exactly the tenant's v2 roles offered in this company: tenant-wide and its own.
+              // The roles offered are the company's own v2 roles (a tenant-wide role lives in the tenant context, never
+              // in a company assignment), and only those an agent may hold.
               const roles = yield* accessCase.admin
-                .unsafe<{ readonly name: string; readonly role_id: string }>(
-                  `select role_id, name from core.access_roles
-                    where tenant_id = $1 and (legal_entity_id is null or legal_entity_id = $2)`,
+                .unsafe<{ readonly role_id: string }>(
+                  `select role_id from core.access_roles where tenant_id = $1 and legal_entity_id = $2`,
                   [accessCase.tenantId, ours],
                 )
                 .pipe(Effect.orDie);
-              expect(roles.length).toBeGreaterThan(0);
-              expect(overview.presets.map(({ key, label }) => `${key}:${label}`).toSorted()).toEqual(
-                roles.map(({ name, role_id }) => `${role_id}:${name}`).toSorted(),
-              );
+              const companyRoleIds = new Set(roles.map(({ role_id }) => role_id));
+              expect(overview.roles.every(({ roleId }) => companyRoleIds.has(roleId))).toBe(true);
+              // Every role the agent holds is named on the page; nothing technical is shown instead.
+              expect((agent?.roles ?? []).every(({ name }) => name !== '')).toBe(true);
+              // The owner gives the agent an assignable company role through the People Action family, and takes it away.
+              const heldRoleIds = new Set((agent?.roles ?? []).map(({ roleId }) => roleId));
+              const offeredRole = overview.roles.find(({ roleId }) => !heldRoleIds.has(roleId));
+              const offered = yield* Effect.fromOption(Option.fromUndefinedOr(offeredRole)).pipe(Effect.orDie);
+              const assigned = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-assign-role',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedRevision: overview.rolesRevision,
+                  expectedRoleRevisionId: offered.roleRevisionId,
+                  operation: 'assign-role',
+                  principalId: agentId,
+                  roleId: offered.roleId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(assigned.status, assigned.text).toBe(200);
+              const after = yield* shell
+                .post({ legalEntityId: ours, path: LIST_PATH, payload: {}, persona: 'owner' })
+                .pipe(
+                  Effect.flatMap(({ text }) =>
+                    Schema.decodeUnknownEffect(Schema.fromJsonString(AgentEntityOverviewSchema))(text),
+                  ),
+                  Effect.orDie,
+                );
+              const holding = after.agents
+                .find(({ principalId }) => principalId === agentId)
+                ?.roles.find(({ roleId }) => roleId === offered.roleId);
+              expect(holding?.name).toBe(offered.name);
+              const heldAssignmentId = holding?.assignmentId ?? '';
+              // A member may not assign roles: the People rule refuses them here too.
+              const memberAssign = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-member-assign',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  expectedRevision: after.rolesRevision,
+                  expectedRoleRevisionId: offered.roleRevisionId,
+                  operation: 'assign-role',
+                  principalId: agentId,
+                  roleId: offered.roleId,
+                },
+                persona: 'member',
+                sameOrigin: true,
+              });
+              expect(memberAssign.status).toBe(403);
+              // The agent is also an agent of the other company: removing its role held here from the other company's
+              // agents page is refused, as the page only ends assignments in its own company.
+              yield* accessCase.admin
+                .unsafe(
+                  `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+                   values ($1, $2, $3, null, 'active')`,
+                  [accessCase.tenantId, other, agentId],
+                )
+                .pipe(Effect.orDie);
+              const elsewhere = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-remove-role-elsewhere',
+                legalEntityId: other,
+                path: MANAGE_PATH,
+                payload: {
+                  assignmentId: heldAssignmentId,
+                  expectedRevision: after.rolesRevision,
+                  operation: 'remove-role',
+                  principalId: agentId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(elsewhere.status, elsewhere.text).toBe(403);
+              const removed = yield* shell.post({
+                idempotencyKey: 'agents-real-gate-remove-role',
+                legalEntityId: ours,
+                path: MANAGE_PATH,
+                payload: {
+                  assignmentId: heldAssignmentId,
+                  expectedRevision: after.rolesRevision,
+                  operation: 'remove-role',
+                  principalId: agentId,
+                },
+                persona: 'owner',
+                sameOrigin: true,
+              });
+              expect(removed.status, removed.text).toBe(200);
               const refused = yield* shell.post({
                 legalEntityId: ours,
                 path: LIST_PATH,
@@ -240,7 +290,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                 persona: 'member',
               });
               expect(refused.status).toBe(403);
-              // Creating and configuring agents is not in this release: a clean refusal, never a 503.
+              // Creating and configuring agents is still not in this release: a clean refusal, never a 503.
               for (const request of [
                 { operation: 'create', operatorPrincipalIds: [memberId] },
                 { operation: 'configure', principalId: agentId },
@@ -252,8 +302,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
                   payload: {
                     ...request,
                     description: null,
-                    displayName: 'Agent',
-                    modules: [{ access: 'read', moduleId: 'work.tasks' }],
+                    displayName: `Agent ${request.operation}`,
                     ownerPrincipalId: memberId,
                     writePolicy: 'approval',
                   },

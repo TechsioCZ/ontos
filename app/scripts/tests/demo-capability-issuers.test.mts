@@ -30,9 +30,9 @@ const workspace = new Map(
 );
 const withSource = (file: (typeof files)[number], change: (source: string) => string) =>
   new Map([...workspace, [file, change(workspace.get(file) ?? '')]]);
-const [relay, documentGateway, documentContext] = demoGatewayIssuerBindings;
+const [relay, documentGateway] = demoGatewayIssuerBindings;
 
-it('classifies exactly the relay and the two Shell document session issuers apart from main’s three', () => {
+it('classifies exactly the relay and the Shell document gateway batch issuer apart from main’s three', () => {
   expect(gatewayContextAuthorizationEntrypoints).toHaveLength(3);
   expect(hasClassifiedDemoIssuers(demoCapabilityIssuerEntrypoints)).toBe(true);
   expect(demoCapabilityIssuerEntrypoints.map(({ entrypointKey }) => entrypointKey)).toEqual(
@@ -41,19 +41,19 @@ it('classifies exactly the relay and the two Shell document session issuers apar
 });
 
 it('rejects a missing, duplicated, foreign or reclassified demo issuer', () => {
-  const [first, second, third] = demoCapabilityIssuerEntrypoints;
-  expect(hasClassifiedDemoIssuers([first, second])).toBe(false);
-  expect(hasClassifiedDemoIssuers([first, second, second])).toBe(false);
-  expect(hasClassifiedDemoIssuers([first, second, gatewayContextAuthorizationEntrypoints[0]])).toBe(false);
+  // The Shell document context issues no assertion any more (the browser batch does), so two demo issuers remain.
+  const [first, second] = demoCapabilityIssuerEntrypoints;
+  expect(hasClassifiedDemoIssuers([first])).toBe(false);
+  expect(hasClassifiedDemoIssuers([first, first])).toBe(false);
+  expect(hasClassifiedDemoIssuers([first, gatewayContextAuthorizationEntrypoints[0]])).toBe(false);
   expect(
     hasClassifiedDemoIssuers([
       { ...first, authorization: { credential: 'session', kind: 'capability_issuance' } },
       second,
-      third,
     ]),
   ).toBe(false);
-  expect(hasClassifiedDemoIssuers([{ ...first, path: '/shell-super-app-api/auth/other' }, second, third])).toBe(false);
-  expect(hasClassifiedDemoIssuers([{ ...first, owner: 'crm' }, second, third])).toBe(false);
+  expect(hasClassifiedDemoIssuers([{ ...first, path: '/shell-super-app-api/auth/other' }, second])).toBe(false);
+  expect(hasClassifiedDemoIssuers([{ ...first, owner: 'crm' }, second])).toBe(false);
 });
 
 it('proves every demo issuer is declared, added to the Shell API and mounted in this workspace', () => {
@@ -63,8 +63,8 @@ it('proves every demo issuer is declared, added to the Shell API and mounted in 
 });
 
 it('rejects a relay whose endpoint, Shell API membership or runtime handler group is missing', () => {
-  if (relay === undefined || documentGateway === undefined || documentContext === undefined) {
-    throw new Error('expected three demo issuer bindings');
+  if (relay === undefined || documentGateway === undefined) {
+    throw new Error('expected two demo issuer bindings');
   }
   expect(
     hasMountedDemoIssuer(
@@ -114,10 +114,10 @@ it('rejects a relay whose endpoint, Shell API membership or runtime handler grou
   ).toBe(false);
   expect(
     hasMountedDemoIssuer(
-      withSource('apps/shell-super-app/shared/browser-api.ts', (source) =>
-        source.replace("HttpApiGroup.make('documentContext')", "HttpApiGroup.make('documentContextV2')"),
+      withSource('apps/shell-super-app/shared/document-gateway-api.ts', (source) =>
+        source.replace("HttpApiGroup.make('documentGateway')", "HttpApiGroup.make('documentGatewayV2')"),
       ),
-      documentContext,
+      documentGateway,
     ),
   ).toBe(false);
 });
@@ -129,7 +129,6 @@ it.effect('records every demo issuer in the protected entrypoint inventory', () 
     expect(inventory.map(({ entrypointKey }) => entrypointKey)).toEqual([
       'shell.gateway-read.issue.api-key',
       'shell.gateway-contexts.issue.session',
-      'shell.document-context.issue.session',
     ]);
   }),
 );

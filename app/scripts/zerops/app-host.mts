@@ -221,6 +221,7 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
   'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
   'ONTOS_GATEWAY_ISSUER',
   'ONTOS_SHELL_GATEWAY_BASE_URL',
+  'ONTOS_SHELL_RENDER_API_URL',
   'PORT',
   'SPICEDB_CA_CERT',
   'SPICEDB_ENDPOINT',
@@ -342,6 +343,8 @@ export const derivedEnvironment = (
     ONTOS_PAYMENT_NOTIFICATION_BASE_URL: origin,
     ONTOS_PUBLIC_URL: origin,
     ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway,
+    // Where the Shell's server rendering reads its own API: this host's loopback port, never a public address.
+    ONTOS_SHELL_RENDER_API_URL: shellGateway,
   };
 };
 

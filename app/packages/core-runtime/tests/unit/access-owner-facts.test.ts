@@ -223,17 +223,24 @@ it('binds owner facts to a declared capability and to a resolver function (O5, O
   expect(bound.descriptor.accessOwnerFacts).toBe(ownerFacts);
   expect(actionWithoutFacts().descriptor.accessOwnerFacts).toBeUndefined();
 
+  // A workload's own owner rule (an end customer's session, say) may name its records too: the overlay can only refuse.
+  expect(() =>
+    validateActionDescriptorInput({
+      ...fixtureDescriptor(WORKLOAD_KEY),
+      accessOwnerFacts: ownerFacts,
+      accessWorkload: { reason: 'Trusted machine provisioning only', workloads: ['core.machine-provisioner'] },
+    }),
+  ).not.toThrow();
+
+  // Facts serve a carrier the gate decides; a descriptor that declares neither a capability nor a workload has none.
+  expect(() =>
+    validateActionDescriptorInput({
+      ...fixtureDescriptor(WORKLOAD_KEY),
+      accessOwnerFacts: ownerFacts,
+    }),
+  ).toThrow();
+
   const negativeControls: readonly [() => void, RegExp][] = [
-    // Facts name the records of a capability; a workload carrier declares no capability at all.
-    [
-      () =>
-        validateActionDescriptorInput({
-          ...fixtureDescriptor(WORKLOAD_KEY),
-          accessOwnerFacts: ownerFacts,
-          accessWorkload: { reason: 'Trusted machine provisioning only', workloads: ['core.machine-provisioner'] },
-        }),
-      /accessOwnerFacts requires the descriptor to declare its own accessDeclaration/u,
-    ],
     // A resolver is a function, never an already-evaluated map (O5).
     [
       () =>

@@ -47,12 +47,13 @@ const agent = Schema.decodeUnknownSync(AgentEntitySchema)({
   description: null,
   displayName: 'Agent',
   hasProfile: true,
-  modules: [],
   operators: [],
   operatorsRevision: 0,
   owner: null,
   principalId,
+  roles: [],
   status: 'active',
+  usable: [],
   writePolicy: 'approval',
 });
 

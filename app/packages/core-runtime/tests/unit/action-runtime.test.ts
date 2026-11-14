@@ -11,7 +11,7 @@ import { makeAccessDecisionService } from '../../src/access/enforcement/service.
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { inertAccessEnforcementPorts, makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
-import { PrincipalIdSchema } from '../../src/access/ids.ts';
+import { LegalEntityIdSchema, PrincipalIdSchema } from '../../src/access/ids.ts';
 import { cell, makeAuthority, makeCheck, principalHolder } from './access-decision-support.ts';
 import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
@@ -32,7 +32,7 @@ import {
 import type { ActiveApplicationCompositionServiceContract } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
-import { withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
+import { isGenuineCoreAction, withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
 import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
@@ -114,6 +114,7 @@ import {
 } from '../../src/auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
+import { mutateAgentProposalsAction } from '../../src/modules/actions/mutate-agent-proposals.action.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -5752,6 +5753,56 @@ it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', 
       expect(recreatedCalls).toBe(0);
     }),
   );
+
+  suite.effect('hands the prepared-access re-check to a genuine Core Action only, never to another owner', () =>
+    Effect.gen(function* recheckOnlyForCore() {
+      const seen: boolean[] = [];
+      // The one consumer of the re-check is Core's own; a re-created copy of a Core descriptor is not Core's.
+      expect(isGenuineCoreAction(mutateAgentProposalsAction)).toBe(true);
+      expect(
+        isGenuineCoreAction(defineAction({ ...mutateAgentProposalsAction.descriptor }, () => Effect.die('unused'))),
+      ).toBe(false);
+      const vertical = defineAction(
+        {
+          accessDeclaration: fixtureActionAccess('commerce.fixture'),
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.recheck.v1' },
+          actionKey: 'commerce.fixture.recheck-probe',
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+            entrypointKey: 'commerce.fixture.recheck-probe',
+            moduleKey: 'commerce.fixture',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'required',
+          owningModuleKey: 'commerce.fixture',
+          payloadSchema: Schema.Struct({ value: Schema.String }),
+          policies: [],
+          resultSchema: Schema.Void,
+          schemaVersion: '1',
+        },
+        () => Effect.void,
+        (transaction) => {
+          seen.push(transaction.recheckPreparedAccess !== undefined);
+          return Effect.succeed({});
+        },
+      );
+      const owner = yield* makeHarness({
+        createRecord: { actionInvocationId: 'recheck-probe', completedAt: null, requestHash: '', status: 'received' },
+      });
+      yield* owner.runtime.runAction({
+        payload: { value: 'probe' },
+        principal,
+        registration: vertical,
+        transport: transport('recheck-probe'),
+      });
+      expect(seen).toEqual([false]);
+    }),
+  );
 });
 
 it.effect('rejects signed receipt recovery authority before creating or executing any Action', () =>
@@ -5975,9 +6026,13 @@ it.effect('exposes only the actual gate-selected workload branch to the exact li
         check: check.port,
         intent: { authorityFor: () => authority.port },
         principalKinds: { readKind: () => Effect.succeed(Option.some(row.kind)) },
+        // The workload is registered for the company it acts in (D6), so only its keys choose the branch.
         workloadBindings: {
-          readActiveWorkloadKeys: () => Effect.succeed(new Set(row.keys)),
-          readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set<never>(), pinned: false }),
+          readWorkloadAuthority: () =>
+            Effect.succeed({
+              activeCompanyIds: new Set([LegalEntityIdSchema.make(principalLegalEntityId)]),
+              workloadKeys: new Set<string>(row.keys),
+            }),
         },
       };
       const gate = makeAccessDecisionService({
@@ -6030,8 +6085,8 @@ it.effect('exposes only the actual gate-selected workload branch to the exact li
       ...inertAccessEnforcementPorts(),
       principalKinds: { readKind: () => Effect.succeed(Option.some('integration' as const)) },
       workloadBindings: {
-        readActiveWorkloadKeys: () => Effect.succeed(new Set<string>()),
-        readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set<never>(), pinned: false }),
+        readWorkloadAuthority: () =>
+          Effect.succeed({ activeCompanyIds: new Set<never>(), workloadKeys: new Set<string>() }),
       },
     };
     const deniedGate = makeAccessDecisionService({

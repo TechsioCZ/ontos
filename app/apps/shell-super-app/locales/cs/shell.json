@@ -120,7 +120,8 @@
           "owner": "Jste vlastník této organizace",
           "access_admin": "Spravujete přístup v této firmě",
           "delegation": "Máte delegovanou správu přístupu",
-          "access_admin_any": "Spravujete přístup alespoň v jedné firmě"
+          "access_admin_any": "Spravujete přístup alespoň v jedné firmě",
+          "member_baseline": "Jste členem této firmy, proto smíte otevřít aplikaci; vše ostatní rozhodují vaše role"
         }
       },
       "role": {
@@ -454,12 +455,10 @@
       "agents": {
         "title": "Agenti",
         "seo": {
-          "description": "Agenti nejsou v tomto vydání dostupní.",
+          "description": "Správa AI agentů firmy: role, operátoři a připojení.",
           "title": "Agenti – správa oprávnění"
         },
-        "unavailable": "Správa agentů není v tomto vydání dostupná.",
-        "executionUnavailable": "Agent v tomto vydání nesmí spouštět žádné akce ani schválené příkazy.",
-        "readOnly": "Agenta v tomto vydání vytvořit ani zapnout nelze."
+        "companyRequired": "Pro správu agentů vyberte firmu."
       },
       "accessible": {
         "navigation": "Správa oprávnění",
@@ -829,6 +828,7 @@
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
       "title": "Výsledky hledání",
       "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu.",
+      "notGranted": "Vyhledávání není součástí vašich oprávnění. Požádejte o něj správce.",
       "clear": "Vymazat hledání",
       "placeholder": "Hledat klienty, úkoly, faktury, smlouvy…"
     },
@@ -1023,18 +1023,10 @@
       "editor": {
         "createTitle": "Nový agent",
         "editTitle": "Upravit agenta {{name}}",
-        "createDescription": "Agent jedná jen v modulech a s oprávněními, které mu tu dáte. Připojit ho smí jen lidé, které vyberete.",
+        "createDescription": "Agent jedná jen podle rolí, které mu přidělíte. Připojit ho smí jen lidé, které vyberete.",
         "name": "Název agenta",
         "description": "K čemu agent slouží",
         "owner": "Kdo za agenta odpovídá",
-        "modulesTitle": "Oprávnění v modulech",
-        "modulesHint": "Stejná oprávnění jako u lidí: čtení, nebo čtení a zápis.",
-        "preset": "Převzít oprávnění z role",
-        "choice": {
-          "none": "Bez přístupu",
-          "read": "Čtení",
-          "write": "Čtení a zápis"
-        },
         "policyTitle": "Jak smí agent zapisovat",
         "policy": {
           "read_only": {
@@ -1050,15 +1042,13 @@
             "description": "Agent zapisuje sám v modulech se zápisem. Každá změna je v auditu."
           }
         },
-        "readOnlyIgnoresWrite": "V režimu Jen čtení agent nic nezapíše, ani v modulech se zápisem.",
         "operatorsTitle": "Kdo smí agenta připojit",
         "operatorsHint": "Tito lidé ho mohou připojit k ChatGPT nebo Claude volbou „Za agenta“. Žádné klíče se nekopírují.",
         "errors": {
           "nameRequired": "Vyplňte název agenta.",
           "nameTooLong": "Název může mít nejvýš 200 znaků.",
           "descriptionTooLong": "Popis může mít nejvýš 500 znaků.",
-          "ownerRequired": "Vyberte, kdo za agenta odpovídá.",
-          "modulesRequired": "Vyberte aspoň jeden modul."
+          "ownerRequired": "Vyberte, kdo za agenta odpovídá."
         },
         "cancel": "Zrušit",
         "create": "Vytvořit agenta",
@@ -1067,7 +1057,8 @@
         "toast": {
           "created": "Agent {{name}} je vytvořený",
           "saved": "Změny agenta {{name}} jsou uložené"
-        }
+        },
+        "rightsFromRoles": "Oprávnění agent dostává jen z rolí, které mu přidělíte v jeho kartě."
       },
       "section": {
         "title": "Agentní entity",
@@ -1079,12 +1070,7 @@
         "emptyHint": "Vytvořte agenta tlačítkem Nový agent a nastavte mu oprávnění.",
         "owner": "Odpovídá: {{name}}",
         "noOwner": "Odpovídá: nikdo",
-        "reads": "Čte: {{modules}}",
-        "writes": "Zapisuje přímo: {{modules}}",
-        "proposes": "Navrhuje ke schválení: {{modules}}",
         "noProfile": "Bez profilu",
-        "noProfileDescription": "Agent dosud nemá auditovaný profil oprávnění. Nastavte jej pomocí Upravit.",
-        "noWrites": "Nic nezapisuje",
         "disabledNotice": "Agent je deaktivovaný. Jeho připojení byla odpojena; po aktivaci ho je potřeba připojit znovu.",
         "edit": "Upravit",
         "deactivate": "Deaktivovat",
@@ -1152,7 +1138,25 @@
         "signedOut": "Relace vypršela, přihlaste se znovu."
       },
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku.",
-      "selectPlaceholder": "Vyberte…"
+      "selectPlaceholder": "Vyberte…",
+      "roles": {
+        "title": "Role a skutečná oprávnění",
+        "none": "Agent nemá žádnou roli, takže nesmí nic. Přidělte mu roli.",
+        "badgeNone": "bez rolí",
+        "add": "Přidat roli",
+        "assign": "Přidělit",
+        "remove": "Odebrat",
+        "assigned": "Agent {{name}} má roli {{role}}",
+        "removed": "Agentovi {{name}} byla odebrána role {{role}}",
+        "usableTitle": "Co agent skutečně smí",
+        "usableHint": "Agent nikdy nespravuje oprávnění ani nic neschvaluje; citlivé změny jen navrhuje a rozhodne člověk.",
+        "usableNone": "Zatím nic.",
+        "reads": "čte",
+        "writes": {
+          "direct": "zapisuje přímo",
+          "approval": "navrhuje ke schválení"
+        }
+      }
     },
     "invitation": {
       "title": "Nastavení hesla",

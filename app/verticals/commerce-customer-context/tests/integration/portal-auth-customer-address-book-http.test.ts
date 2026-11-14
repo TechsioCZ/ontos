@@ -24,7 +24,8 @@ import {
 } from '../../api/portal-auth/session/customer-authority.ts';
 import type { CustomerAuthorityInput } from '../../api/portal-auth/session/customer-authority.ts';
 import { CommercePortalAuthSessionEvidenceRejected } from '../../api/portal-auth/session/errors.ts';
-import { CommercePortalAuthService, portalAuthSessionApiLive } from '../../api/portal-auth/session/http.ts';
+import { portalAuthSessionApiLive } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
 import type { CommercePortalAuthSessionLifecycleService } from '../../api/portal-auth/session/lifecycle.ts';
 import { CommercePortalAuthProviderSubjectIdSchema } from '../../api/portal-auth/session/contracts.ts';

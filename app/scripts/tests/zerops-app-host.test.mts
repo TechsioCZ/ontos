@@ -94,6 +94,18 @@ it.live('a host notices the release that replaced it, ignoring failed reads and 
 );
 
 describe('relayResponseHeaders', () => {
+  it('keeps a Shell document private: no-store stays no-store, and an HTML answer is never kept for good', () => {
+    const html = 'text/html; charset=utf-8';
+    const document = { 'cache-control': 'no-store', 'content-type': html };
+    for (const url of ['/cs/prodej/objednavky', '/static/js/main.0123abcd.js', '/static/main.0123abcd.html']) {
+      expect(relayResponseHeaders(200, document, url)).toStrictEqual(document);
+    }
+    // Even an HTML answer that names no caching of its own at a hashed path is not made cacheable by the host.
+    expect(relayResponseHeaders(200, { 'content-type': html }, '/static/main.0123abcd.html')).toStrictEqual({
+      'content-type': html,
+    });
+  });
+
   it('closes the caller connection on an unavailable owner answer so its retry can reach another container', () => {
     const upstream = { connection: 'keep-alive', 'content-type': 'application/json', 'keep-alive': 'timeout=5' };
     expect(relayResponseHeaders(503, upstream)).toStrictEqual({
@@ -439,6 +451,8 @@ describe('derivedEnvironment', () => {
       'http://127.0.0.1:4103/commerce-customer-context-api',
     );
     expect(derivedValues.ONTOS_SHELL_GATEWAY_BASE_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
+    // Server rendering reads its own API over this host's loopback port only.
+    expect(derivedValues.ONTOS_SHELL_RENDER_API_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
     // An owner this environment does not serve gets no base, so a stored owner secret cannot point elsewhere.
     expect(new Map(Object.entries(derivedValues)).has('ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBe(true);
     expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBeUndefined();
@@ -457,10 +471,11 @@ describe('derivedEnvironment', () => {
 
 describe('ownerEntrySource', () => {
   const createUnitServer = '  const app = await createProdServer(prodServerOptions);';
+  const nodeModuleImport = "import { createRequire } from 'node:module';";
   const generated = [
     "import app from '/abs/app/node_modules/x/y.js';",
     "import { thing } from 'pkg/sub';",
-    "import { createRequire } from 'node:module';",
+    nodeModuleImport,
     'async function main() {',
     createUnitServer,
     '  const port = process.env.PORT || 8080;',
@@ -488,7 +503,7 @@ describe('ownerEntrySource', () => {
     const source = ownerEntrySource(generated, DIST, resolvePackage);
     expect(source).toContain("import app from '../node_modules/x/y.js';");
     expect(source).toContain("import { thing } from '../node_modules/pkg/sub/index.js';");
-    expect(source).toContain("import { createRequire } from 'node:module';");
+    expect(source).toContain(nodeModuleImport);
   });
 
   it('hands the unit server to configureServer before it listens', () => {
@@ -498,10 +513,36 @@ describe('ownerEntrySource', () => {
     expect(configured).toBeLessThan(source.indexOf('app.listen('));
   });
 
+  it('resolves start only once the server listens, and fails it when listening fails', () => {
+    const source = ownerEntrySource(generated, DIST, resolvePackage) ?? '';
+    const listen = source.indexOf('app.listen(');
+    // Both outcomes are observed before listen is called, and start awaits them after it.
+    expect(source.indexOf('app.once("listening", onListening);')).toBeGreaterThan(
+      source.indexOf('configureServer(app);'),
+    );
+    expect(source.indexOf('app.once("error", onError);')).toBeLessThan(listen);
+    expect(source.indexOf('await listening;')).toBeGreaterThan(listen);
+    expect(source.trimEnd().endsWith('await listening;\n}')).toBe(true);
+    // A server that listened keeps its later errors: the start-time error listener leaves on listening.
+    expect(source).toContain('app.off("error", onError);');
+  });
+
+  it('keeps the CommonJS export after the awaited listen', () => {
+    const commonJs = generated.replace(
+      nodeModuleImport,
+      "const { createProdServer } = require('@modern-js/prod-server');",
+    );
+    const source = ownerEntrySource(commonJs, DIST, resolvePackage) ?? '';
+    expect(source).toContain('async function start(port, configureServer) {');
+    expect(source.trimEnd().endsWith('await listening;\n}\nmodule.exports = { start };')).toBe(true);
+  });
+
   it('returns undefined for an unexpected entry shape', () => {
     expect(ownerEntrySource('export const unrelated = 1;\n', DIST, resolvePackage)).toBeUndefined();
     // Without the server construction the host could not configure its keep-alive.
     expect(ownerEntrySource(generated.replace(`${createUnitServer}\n`, ''), DIST, resolvePackage)).toBeUndefined();
+    // Without main's closing brace right before its call, start could not wait for the listen.
+    expect(ownerEntrySource(generated.replace('}\nmain();', '}\n\nmain();'), DIST, resolvePackage)).toBeUndefined();
   });
 });
 

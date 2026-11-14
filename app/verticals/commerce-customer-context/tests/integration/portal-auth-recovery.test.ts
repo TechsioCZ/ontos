@@ -22,7 +22,7 @@ import type { Scope } from 'effect';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import {
   rateLimit,

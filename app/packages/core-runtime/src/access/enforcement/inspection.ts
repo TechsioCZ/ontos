@@ -28,7 +28,9 @@ import { AgentConnectionIdSchema, AgentIdSchema, PrincipalIdSchema, TenantIdSche
 import type { AccessMode, ActorContext } from '../model.ts';
 import { AccessPrincipalKindSource } from './actor.ts';
 import type { AccessPrincipalKinds } from './actor.ts';
-import { capabilityPolicyOf, gateScopeOf } from './capability.ts';
+import { capabilityPolicyOf, gateScopeKeyOf, gateScopeOf } from './capability.ts';
+import { checkedScopeAnswersUnchecked, scopeReadKey } from './checked-scope-reads.ts';
+import type { GateScope } from './capability.ts';
 import type { AccessDecisionPorts } from './contract.ts';
 import { shouldRecordDecision } from './decision-log.ts';
 import { AccessDecisionLogBatch } from './decision-log-batch.ts';
@@ -89,10 +91,16 @@ interface InspectionActor {
 
 /** A batch question before resolution: its seam answer, or the context and capability it is decided in. */
 type StagedQuestion =
-  | { readonly answer: SubjectCapabilityAnswer; readonly legalEntityId?: undefined }
+  | {
+      readonly answer: SubjectCapabilityAnswer;
+      readonly checkedCompany?: undefined;
+      readonly legalEntityId?: undefined;
+    }
   | {
       readonly answer?: undefined;
       readonly capability: DecisionCapabilityPolicy;
+      /** A tenant-context question that names a company: the company is checked to be the tenant's (O66, O88). */
+      readonly checkedCompany?: LegalEntityId;
       readonly legalEntityId?: LegalEntityId;
       readonly listing: boolean;
       readonly question: SubjectCapabilityInspectionInput;
@@ -131,6 +139,12 @@ type ContextResolution =
       readonly resolved: ResolvedActor;
     };
 
+/** The context a question is decided in: a company, or the tenant context with the company it names. */
+type InspectionContext = Pick<GateScope, 'checkedCompany' | 'legalEntityId'>;
+
+/** One key per decision context, exactly as the gate keys its own scope reads. */
+const contextKeyOf = (context: InspectionContext): string => gateScopeKeyOf(context);
+
 /** What one inspection's questions share; see `sessionOf`. */
 interface InspectionSession {
   /** Starts a read a later stage will ask for without waiting on it; a plain inspection starts nothing. */
@@ -138,9 +152,7 @@ interface InspectionSession {
   readonly authority: DecisionAuthorityPort;
   /** Writes one batch's evidence rows (in one transaction); a staged inspection waits for every write at its end. */
   readonly record: (rows: readonly AccessDecisionLogEntry[]) => Effect.Effect<void, SubjectInspectionUnavailable>;
-  readonly resolveIn: (
-    legalEntityId: LegalEntityId | undefined,
-  ) => Effect.Effect<ContextResolution, SubjectInspectionUnavailable>;
+  readonly resolveIn: (context: InspectionContext) => Effect.Effect<ContextResolution, SubjectInspectionUnavailable>;
 }
 
 /** Runs `effect` (interruptibly) and always completes `deferred` with its exit, an interruption included. */
@@ -180,8 +192,7 @@ const sharedPerKey = <Query, Value, Failure>(
     );
 };
 
-const scopeQueryKey = (query: ScopeQuery): string =>
-  [query.tenantId, query.legalEntityId ?? '', ...query.holders.map(holderIdOf)].join('\u0000');
+const scopeQueryKey = (query: ScopeQuery): string => scopeReadKey(query, query.checkedCompany ?? '');
 
 /**
  * The intent port of ONE batch: the same port, but a question its questions share — the scope, the cells of one
@@ -199,8 +210,11 @@ const batchAuthorityOf = (authority: DecisionAuthorityPort, scope: Scope.Scope):
             authority.readCells,
             scope,
           ),
+          readCompanyOwnership: authority.readCompanyOwnership,
           readConnection: authority.readConnection,
-          readScope: sharedPerKey(scopeQueryKey, authority.readScope, scope),
+          // A checked read that resolved answers the same holders' unchecked read of a later stage (as the gate's own
+          // listMany does), so naming the company in the scope read costs no second read.
+          readScope: checkedScopeAnswersUnchecked(sharedPerKey(scopeQueryKey, authority.readScope, scope)),
           readTeamIds: authority.readTeamIds,
         },
         // The engine reads one batch's cell sets in one call; each set is still read once per batch.
@@ -250,9 +264,13 @@ const stageOf = (question: SubjectCapabilityInspectionInput, listing: boolean): 
     return { answer: { decision: seamDenial(scope.refusal) } };
   }
   return withOptional(
-    { capability: capabilityPolicyOf(carrier.accessDeclaration), listing, question },
-    'legalEntityId',
-    scope.legalEntityId,
+    withOptional(
+      { capability: capabilityPolicyOf(carrier.accessDeclaration), listing, question },
+      'legalEntityId',
+      scope.legalEntityId,
+    ),
+    'checkedCompany',
+    scope.checkedCompany,
   );
 };
 
@@ -279,11 +297,16 @@ const entryOf = (pending: PendingQuestion, decision: AccessDecision): AccessDeci
   );
 
 /** The distinct company contexts the decided questions of a batch are asked in, keyed by company ('' = tenant). */
-const contextsOf = (staged: readonly StagedQuestion[]): readonly (readonly [string, LegalEntityId | undefined])[] => {
-  const distinct = new Map<string, LegalEntityId | undefined>();
+const contextsOf = (staged: readonly StagedQuestion[]): readonly (readonly [string, InspectionContext])[] => {
+  const distinct = new Map<string, InspectionContext>();
   for (const entry of staged) {
     if (entry.answer === undefined) {
-      distinct.set(entry.legalEntityId ?? '', entry.legalEntityId);
+      const context = withOptional(
+        withOptional({}, 'legalEntityId', entry.legalEntityId),
+        'checkedCompany',
+        entry.checkedCompany,
+      );
+      distinct.set(contextKeyOf(context), context);
     }
   }
   return [...distinct.entries()];
@@ -419,14 +442,31 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     input: SubjectInspectionInput,
     authority: DecisionAuthorityPort,
     instant: Effect.Effect<Date>,
-    legalEntityId?: LegalEntityId,
+    context: InspectionContext,
   ) {
+    const { checkedCompany, legalEntityId } = context;
     const selected = yield* actorFor(input, legalEntityId);
     if (selected.actor === undefined) {
+      // A subject unseen in its named company is refused either way; when that company is not the tenant's own, the
+      // refusal is the gate's own company-of-tenant answer. Read only on this refusal path, never on an admitted one.
+      if (legalEntityId !== undefined && selected.decision?.reasons[0]?.code === PRINCIPAL_FORBIDDEN) {
+        const owned = yield* authority
+          .readCompanyOwnership({ legalEntityId, tenantId: TenantIdSchema.make(input.requesterScope.tenantId) })
+          .pipe(Effect.mapError(unavailable));
+        if (!owned) {
+          return { authority, decision: seamRefusal(SCOPE_MISMATCH) };
+        }
+      }
       return { authority, decision: selected.decision ?? seamRefusal(PRINCIPAL_FORBIDDEN) };
     }
     const now = yield* instant;
-    const resolution = yield* resolveActorContext(authority, selected.actor, now);
+    // The gate's one company-of-tenant rule (O66, O88): a tenant-context question naming a company is checked by the
+    // actor's own scope read, which resolves nothing for another tenant's company. No read of its own.
+    const resolution = yield* resolveActorContext(
+      authority,
+      withOptional(selected.actor, 'checkedCompany', checkedCompany),
+      now,
+    );
     if (resolution.unavailable !== undefined) {
       return yield* unavailable();
     }
@@ -487,8 +527,8 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
       authority,
       record: staged?.record ?? recordNow,
       resolveIn: sharedPerKey(
-        (legalEntityId: LegalEntityId | undefined) => legalEntityId ?? '',
-        (legalEntityId: LegalEntityId | undefined) => resolve(input, authority, instant('now'), legalEntityId),
+        contextKeyOf,
+        (context: InspectionContext) => resolve(input, authority, instant('now'), context),
         scope,
       ),
     };
@@ -507,7 +547,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
   ) {
     const entries = contextsOf(staged);
     // Distinct contexts are independent reads: two at a time, the same bound the engine keeps on the shared pool.
-    const resolved = yield* Effect.forEach(entries, ([, legalEntityId]) => session.resolveIn(legalEntityId), {
+    const resolved = yield* Effect.forEach(entries, ([, context]) => session.resolveIn(context), {
       concurrency: 2,
     });
     return new Map(
@@ -587,7 +627,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
       if (entry.answer !== undefined) {
         return { answer: entry.answer };
       }
-      const prepared = contexts.get(entry.legalEntityId ?? '');
+      const prepared = contexts.get(contextKeyOf(entry));
       if (prepared?.resolved === undefined || prepared.actor === undefined) {
         return { answer: { decision: prepared?.decision ?? seamRefusal(SCOPE_MISMATCH) } };
       }
@@ -668,7 +708,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
       input.requesterScope.legalEntityId === undefined ? 'optional' : 'required',
       input.requesterScope,
     );
-    const prepared = yield* session.resolveIn(selected.legalEntityId);
+    const prepared = yield* session.resolveIn(selected);
     if (prepared.resolved === undefined || prepared.actor === undefined) {
       return {
         decision: 'denied' as const,
@@ -766,8 +806,8 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     // waits for the same shared resolution), so preparing never fails or cancels anything itself.
     const prepared = yield* Effect.forEach(
       contextsOf(staged),
-      ([key, legalEntityId]) =>
-        session.resolveIn(legalEntityId).pipe(
+      ([key, context]) =>
+        session.resolveIn(context).pipe(
           Effect.exit,
           Effect.map((exit) => [key, exit] as const),
         ),
@@ -780,7 +820,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     // same read a later batch asks, started now so that batch does not wait on it (the batch port shares it).
     const adminContexts = new Set(
       staged.flatMap((entry) =>
-        entry.answer === undefined && entry.capability.kind === 'admin' ? [entry.legalEntityId ?? ''] : [],
+        entry.answer === undefined && entry.capability.kind === 'admin' ? [contextKeyOf(entry)] : [],
       ),
     );
     const { readConfigureBases } = session.authority;

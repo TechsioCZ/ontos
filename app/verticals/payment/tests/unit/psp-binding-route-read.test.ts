@@ -134,6 +134,8 @@ describe('#1157 provider binding route Read handler', () => {
 /** An intent source that resolves every request to its Tenant scope and holds no grant cells. */
 const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
   readCells: () => Effect.succeed([]),
+  // Every company these fixtures name is the fixture Tenant's own.
+  readCompanyOwnership: () => Effect.succeed(true),
   readConnection: () => Effect.succeed(Option.none()),
   readScope: (query) =>
     Effect.succeed(
@@ -155,14 +157,13 @@ const decide = (kind: AccessPrincipalKind, boundKeys: readonly string[]) => {
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
     workloadBindings: {
-      readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)),
       // The workload is registered for the company the call runs in (D6).
-      readCompanyDeclaration: (query) =>
+      readWorkloadAuthority: (query) =>
         Effect.succeed({
           activeCompanyIds: new Set(
             query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
           ),
-          pinned: true,
+          workloadKeys: new Set(boundKeys),
         }),
     },
   };

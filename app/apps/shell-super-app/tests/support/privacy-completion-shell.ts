@@ -43,6 +43,7 @@ import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-gu
 import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
+import { testAgentConnectionStoreLive } from './shell-authentication.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
 import type { ModuleCredentialRelease } from '../../api/auth/module-credential-attestation.ts';
@@ -247,7 +248,10 @@ const serve = Effect.scoped(
       OAuthAuthenticationAuditLive,
       OAuthEndpointGuardDataLive,
       OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
-    ).pipe(Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)), Layer.provide(persistence));
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive, testAgentConnectionStoreLive)),
+      Layer.provide(persistence),
+    );
     const authenticationGuards = OAuthEndpointGuardsLive.pipe(
       Layer.provideMerge(BetterAuthFrameworkLive({ allowFixtureSignUp: true })),
       Layer.provideMerge(oauthAuthentication),

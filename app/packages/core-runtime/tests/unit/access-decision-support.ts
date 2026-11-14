@@ -149,6 +149,7 @@ export interface AuthoritySpec {
 export interface AuthorityCalls {
   readCells: number;
   readCellsMany: number;
+  readCompanyOwnership: number;
   readConfigureBases: number;
   readConnection: number;
   readScope: number;
@@ -161,6 +162,7 @@ export const makeAuthority = (spec: AuthoritySpec) => {
   const calls: AuthorityCalls = {
     readCells: 0,
     readCellsMany: 0,
+    readCompanyOwnership: 0,
     readConfigureBases: 0,
     readConnection: 0,
     readScope: 0,
@@ -177,6 +179,11 @@ export const makeAuthority = (spec: AuthoritySpec) => {
     readCells: (query: AuthorityCellQuery) => {
       calls.readCells += 1;
       return Effect.succeed(cellsOf(query));
+    },
+    // The fixture models one tenant whose every named company is its own.
+    readCompanyOwnership: () => {
+      calls.readCompanyOwnership += 1;
+      return Effect.succeed(true);
     },
     readConfigureBases: () => {
       calls.readConfigureBases += 1;

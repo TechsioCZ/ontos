@@ -4,6 +4,7 @@ import { stableUuid } from '@app/core-runtime/access/catalog';
 import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   AccessScopeIdSchema,
+  AgentIdSchema,
   AssignmentIncarnationIdSchema,
   CapabilityKeySchema,
   DelegationIdSchema,
@@ -20,7 +21,12 @@ import type {
   AccessDirectoryScopeLabels,
 } from '@app/core-runtime/access/intent/people-directory';
 import { AccessTeamMemberIdSchema } from '@app/core-runtime/access/intent/teams';
-import { membershipIsLive, soleAdministrationScopeIds } from '@app/core-runtime/access/lifecycle/people-commands';
+import {
+  assignmentIsLive,
+  membershipIsLive,
+  roleRevisionIsAgentAssignable,
+  soleAdministrationScopeIds,
+} from '@app/core-runtime/access/lifecycle/people-commands';
 import { AccessPeopleCommands } from '@app/core-runtime/access/lifecycle/people-service';
 import type {
   AccessPeopleView,
@@ -291,6 +297,10 @@ const scopeIdOfTarget = (view: View, target: ScopeTarget): Option.Option<string>
 
 const principalOfHolder = (holder: ViewAssignment['holder']): string | undefined =>
   Predicate.isTagged(holder, 'Principal') ? String(holder.principalId) : undefined;
+
+/** The principal id a holder stands for: a person's own, an agent's agent id (agents are principals too). */
+const holderIdOf = (holder: ViewAssignment['holder']): string =>
+  Predicate.isTagged(holder, 'Principal') ? String(holder.principalId) : String(holder.agentId);
 
 /** A role is readable where it lives: a company's role in its company, a tenant role in the tenant context. */
 const roleIsReachable = (reach: PeopleReach, legalEntityId: string | undefined): boolean =>
@@ -607,6 +617,12 @@ const scopeLabelOf = (labels: AccessDirectoryScopeLabels, view: View, scopeId: s
   );
 };
 
+/**
+ * How many of the options' independent reads run at once. The process shares a small database pool among
+ * every owner it serves (six connections per identity on stage), so one request never holds more than two.
+ */
+const OPTIONS_READ_CONCURRENCY = 2;
+
 /** The writes the options report on, each decided by its own declaration. */
 const OPTION_WRITES = [
   'assign',
@@ -621,19 +637,19 @@ const OPTION_WRITES = [
 type OptionWrite = (typeof OPTION_WRITES)[number];
 
 /**
- * What each write's own declaration reaches right now, or nothing while the Lidé gate is closed (which
- * asks nothing at all). Every write is asked exactly as `reachFor` asks it, but all of them in one gate
- * batch: asked one decision at a time, a tenant owner's options were 8 writes x every scope single
- * decisions, each its own run of pooled transactions, which held the request for tens of seconds.
+ * The options read's admission, then what each write's own declaration reaches right now. The read's own
+ * declaration is asked first, in the tenant context and every company's own scope like every Lidé read, and a
+ * read that covers no scope is refused before any write is asked: a refused reader leaves only the read's own
+ * evidence. Then, while the Lidé gate is open, all eight writes travel in ONE gate batch, each asked exactly as
+ * `reachFor` asks it (asked one decision at a time, a tenant owner's options were 8 writes x every scope single
+ * decisions, each its own run of pooled transactions, which held the request for tens of seconds). A closed gate
+ * asks no write and offers none; one unreadable answer refuses the whole request (503).
  */
-const writeReaches = Effect.fn('AccessAdminPeople.writeReaches')(function* writeReachesNow(
-  scope: OperationalScope,
-  view: View,
-  now: Date,
-) {
+const admitOptions = Effect.fn('AccessAdminPeople.admitOptions')(function* admitOptionsRead(headers: Headers) {
+  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
   const gate = yield* AccessPeopleWriteAvailability;
   if (!gate.available) {
-    return Option.none<ReadonlyMap<OptionWrite, PeopleReach>>();
+    return { reach, reaches: Option.none<ReadonlyMap<OptionWrite, PeopleReach>>(), scope, view };
   }
   const readable = yield* roleReadScopes({
     companies: companiesOf(view),
@@ -647,7 +663,7 @@ const writeReaches = Effect.fn('AccessAdminPeople.writeReaches')(function* write
       return one === undefined ? [] : [[write, reachOf(view, one)] as const];
     }),
   );
-  return Option.some(reaches);
+  return { reach, reaches: Option.some(reaches), scope, view };
 });
 
 /** Whether this person may run one write anywhere its reach shows; a closed gate offers none. */
@@ -763,8 +779,9 @@ const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admission
       ? [{ legalEntityId, scopeId: String(scopeId) }]
       : [],
   );
+  // One directory read per company, two at a time; each company's candidates keep their own order.
   const candidates = yield* Effect.forEach(companies, (company) => companyCandidates(scope, view, company), {
-    concurrency: 1,
+    concurrency: OPTIONS_READ_CONCURRENCY,
   });
   return { allowed: companies.length > 0, candidates: candidates.flat() };
 });
@@ -823,20 +840,20 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
   headers: Headers,
   payload: ListAccessPeoplePayload,
 ) {
-  const { now, reach, scope, view } = yield* admitRead(headers, accessPeopleDeclarations.options);
+  const { reach, reaches, scope, view } = yield* admitOptions(headers);
   const directory = yield* AccessPeopleDirectory;
   const commands = yield* AccessPeopleCommands;
+  // Three independent reads, each one short transaction: two at a time, never more of the shared pool.
   const [people, labels, catalog] = yield* Effect.all(
     [
       visiblePeople(scope, view, reach),
       directory.scopeLabels(scope).pipe(Effect.mapError(directoryUnavailable)),
       commands.readCatalog(scope).pipe(Effect.mapError(accessPeopleFailureProblem)),
     ],
-    { concurrency: 1 },
+    { concurrency: OPTIONS_READ_CONCURRENCY },
   );
-  // One gate answer per write and scope, so a control shows exactly what the server would admit right
-  // now; all of them travel in one gate batch.
-  const reaches = yield* writeReaches(scope, view, now);
+  // One gate answer per write and scope (asked with the read's own admission), so a control shows exactly
+  // what the server would admit right now.
   const admission = yield* admissionOf(scope, view, reach, reaches);
   const roles = view.roles.filter(({ role }) => roleIsReachable(reach, role.legalEntityId));
   const entryOf = new Map(catalog.map((entry) => [String(entry.key), entry] as const));
@@ -1019,8 +1036,8 @@ const assign = Effect.fn('AccessAdminPeople.assign')(function* assignRole({
   }
   const commands = yield* AccessPeopleCommands;
   const command = {
+    holder: { _tag: 'Principal' as const, principalId: PrincipalIdSchema.make(payload.principalId) },
     incarnationId: AssignmentIncarnationIdSchema.make(mintedId(admitted.scope, 'assignment', idempotencyKey)),
-    principalId: PrincipalIdSchema.make(payload.principalId),
     roleId: RoleIdSchema.make(payload.roleId),
     roleRevisionId: RoleRevisionIdSchema.make(payload.expectedRoleRevisionId),
     scopeId,
@@ -1185,7 +1202,7 @@ const plainMembershipChange = (view: View, membership: PeopleCommandReceipt['mem
   membership === undefined
     ? undefined
     : {
-        principalId: String(membership.principalId),
+        principalId: holderIdOf(membership.holder),
         scope: scopeTargetOf(view, membership.scopeId),
         status: membership.status,
       };
@@ -1227,8 +1244,8 @@ const admitMember = Effect.fn('AccessAdminPeople.admitMember')(function* admitMe
       companyMembershipId: AccessMembershipIdSchema.make(
         mintedId(admitted.scope, 'membership', idempotencyKey, scopeId),
       ),
+      holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(payload.principalId) },
       legalEntityId,
-      principalId: PrincipalIdSchema.make(payload.principalId),
       tenantMembershipId: AccessMembershipIdSchema.make(
         mintedId(admitted.scope, 'membership', idempotencyKey, admitted.view.tenantScopeId),
       ),
@@ -1250,7 +1267,7 @@ const endMembership = Effect.fn('AccessAdminPeople.endMembership')(function* end
   const commands = yield* AccessPeopleCommands;
   const receipt = yield* commands
     .endMembership(admitted.scope, {
-      principalId: PrincipalIdSchema.make(payload.principalId),
+      holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(payload.principalId) },
       reason: payload.reason,
       scopeId,
     })
@@ -1261,14 +1278,218 @@ const endMembership = Effect.fn('AccessAdminPeople.endMembership')(function* end
   );
 });
 
+/* ------------------------------------------------------------------------------------------------
+ * Agents: the same role assignment, admission and authority rules, with an agent as the holder
+ * ---------------------------------------------------------------------------------------------- */
+
+/** The input of an agent role write: the agent of the screen's company, and the People revision it was read at. */
+export interface AgentRoleWrite<Payload> {
+  readonly headers: Headers;
+  readonly idempotencyKey: string;
+  readonly payload: Payload & { readonly expectedRevision: string };
+}
+
+/** One company's agent roles as the administrator sees them: what they may assign and what each agent holds. */
+export interface AgentRolesView {
+  /** Each listed agent's live assignments in the company, with the cells they carry. */
+  readonly agents: ReadonlyMap<
+    string,
+    {
+      readonly assignments: readonly {
+        readonly incarnationId: string;
+        readonly roleId: string;
+        readonly roleName: string;
+      }[];
+      readonly cells: readonly ViewAssignmentCells[number][];
+    }
+  >;
+  /** The published release the role cells are read against. */
+  readonly catalog: Effect.Success<ReturnType<Effect.Success<typeof AccessPeopleCommands>['readCatalog']>>;
+  /** The People revision of this read: a write sends it back, exactly like the People page does. */
+  readonly revision: string;
+  /** The company roles the person may read where they live; assigning still asks the assign right. */
+  readonly roles: readonly { readonly name: string; readonly revisionId: string; readonly roleId: string }[];
+}
+
+type ViewAssignmentCells = View['roles'][number]['revision']['cells'];
+
+const agentHolderOf = (agentPrincipalId: string) => ({
+  _tag: 'Agent' as const,
+  agentId: AgentIdSchema.make(agentPrincipalId),
+});
+
+const companyScopeOf = (view: View, legalEntityId: string) =>
+  Option.fromUndefinedOr(view.scopes.find((row) => row.legalEntityId === legalEntityId));
+
+/**
+ * The agents' roles in one company. The caller is an agent administrator of the company (the agents page decided that
+ * before this read): which roles its agents hold is agent administration and is answered for them. The roles OFFERED
+ * for assignment are the People page's: only a caller whose People reach covers the company is offered any, and the
+ * assignment itself still asks the People assign right.
+ */
+const agentRoles = Effect.fn('AccessAdminPeople.agentRoles')(function* agentRolesOf(
+  headers: Headers,
+  input: { readonly agentPrincipalIds: readonly string[]; readonly legalEntityId: string },
+) {
+  const scope = yield* requireScope(headers);
+  const view = yield* readView(scope);
+  const now = yield* coreInstant;
+  const reach = yield* reachFor(scope, view, accessPeopleDeclarations.list, now);
+  const company = companyScopeOf(view, input.legalEntityId);
+  if (Option.isNone(company)) {
+    return yield* Effect.fail(forbidden(SCOPE_NOT_AVAILABLE));
+  }
+  const { scopeId } = company.value;
+  const offersRoles = reach.scopeIds.has(scopeId);
+  const catalog = yield* (yield* AccessPeopleCommands)
+    .readCatalog(scope)
+    .pipe(Effect.mapError(accessPeopleFailureProblem));
+  // Only roles an agent may hold are offered: one that runs a sensitive or administrative capability never is.
+  const roles = view.roles.flatMap((entry) =>
+    offersRoles &&
+    entry.role.legalEntityId === input.legalEntityId &&
+    roleRevisionIsAgentAssignable(entry.revision, catalog)
+      ? [{ name: entry.role.name, revisionId: entry.revision.id, roleId: entry.role.id }]
+      : [],
+  );
+  const agents = new Map(
+    input.agentPrincipalIds.map((agentPrincipalId) => {
+      const holder = agentHolderOf(agentPrincipalId);
+      const live = view.assignments.filter(
+        (assignment) =>
+          assignment.scopeId === scopeId &&
+          Predicate.isTagged(assignment.holder, 'Agent') &&
+          assignment.holder.agentId === holder.agentId &&
+          assignmentIsLive(assignment, view.at),
+      );
+      return [
+        agentPrincipalId,
+        {
+          assignments: live.map((assignment) => ({
+            incarnationId: assignment.incarnationId,
+            roleId: assignment.roleId,
+            roleName: view.roles.find((entry) => entry.role.id === assignment.roleId)?.role.name ?? '',
+          })),
+          cells: live.flatMap(
+            (assignment) =>
+              view.roles.find((entry) => entry.revision.id === assignment.roleRevisionId)?.revision.cells ?? [],
+          ),
+        },
+      ] as const;
+    }),
+  );
+  return { agents, catalog, revision: revisionOf(view, reach), roles } satisfies AgentRolesView;
+});
+
+/**
+ * Assigns a company role to an agent: the People page's own assign right and checks (the role must be readable where
+ * it lives, the revision current, the screen not stale). An agent not yet a member of the company is admitted first,
+ * under the People page's own admission right; whoever may not admit there cannot give an agent its first role.
+ */
+const assignAgentRole = Effect.fn('AccessAdminPeople.assignAgentRole')(function* assignAgentRoleWrite({
+  headers,
+  idempotencyKey,
+  payload,
+}: AgentRoleWrite<{
+  readonly agentPrincipalId: string;
+  readonly expectedRoleRevisionId: string;
+  readonly legalEntityId: string;
+  readonly roleId: string;
+}>) {
+  const admitted = yield* admitWrite(headers, accessPeopleDeclarations.assign, payload.expectedRevision);
+  const scopeId = yield* requireScopeTarget(admitted, { kind: 'company', legalEntityId: payload.legalEntityId });
+  const role = admitted.view.roles.find((entry) => entry.role.id === payload.roleId);
+  if (
+    role === undefined ||
+    role.role.legalEntityId !== payload.legalEntityId ||
+    !roleIsReachable(admitted.reach, role.role.legalEntityId)
+  ) {
+    return yield* Effect.fail(forbidden(ROLE_NOT_AVAILABLE));
+  }
+  if (role.revision.id !== payload.expectedRoleRevisionId) {
+    return yield* Effect.fail(conflict('the role changed since this screen was read; reload the agents'));
+  }
+  const commands = yield* AccessPeopleCommands;
+  const holder = agentHolderOf(payload.agentPrincipalId);
+  const member = admitted.view.memberships.some(
+    (membership) =>
+      membership.scopeId === scopeId &&
+      membership.kind === 'member' &&
+      Predicate.isTagged(membership.holder, 'Agent') &&
+      membership.holder.agentId === holder.agentId &&
+      membershipIsLive(membership, admitted.view.at),
+  );
+  if (!member) {
+    // Admission is the People page's own write, decided by its own right in its own reach.
+    yield* requireReach(admitted.scope, admitted.view, accessPeopleDeclarations.admitMember, yield* coreInstant).pipe(
+      Effect.flatMap((reach) =>
+        reach.scopeIds.has(scopeId) ? Effect.void : Effect.fail(forbidden(SCOPE_NOT_AVAILABLE)),
+      ),
+    );
+    yield* commands
+      .admitMember(admitted.scope, {
+        companyMembershipId: AccessMembershipIdSchema.make(
+          mintedId(admitted.scope, 'membership', idempotencyKey, scopeId),
+        ),
+        holder,
+        legalEntityId: LegalEntityIdSchema.make(payload.legalEntityId),
+        tenantMembershipId: AccessMembershipIdSchema.make(
+          mintedId(admitted.scope, 'membership', idempotencyKey, admitted.view.tenantScopeId),
+        ),
+      })
+      .pipe(Effect.mapError(accessPeopleFailureProblem));
+  }
+  return yield* commands
+    .assignRole(admitted.scope, {
+      holder,
+      incarnationId: AssignmentIncarnationIdSchema.make(mintedId(admitted.scope, 'assignment', idempotencyKey)),
+      roleId: RoleIdSchema.make(payload.roleId),
+      roleRevisionId: RoleRevisionIdSchema.make(payload.expectedRoleRevisionId),
+      scopeId,
+    })
+    .pipe(Effect.mapError(accessPeopleFailureProblem), Effect.asVoid);
+});
+
+/** Ends one of an agent's role assignments: the People page's own revoke right and checks. */
+const revokeAgentAssignment = Effect.fn('AccessAdminPeople.revokeAgentAssignment')(
+  function* revokeAgentAssignmentWrite({
+    headers,
+    payload,
+  }: AgentRoleWrite<{
+    readonly agentPrincipalId: string;
+    readonly incarnationId: string;
+    readonly legalEntityId: string;
+  }>) {
+    const admitted = yield* admitWrite(headers, accessPeopleDeclarations.revokeAssignment, payload.expectedRevision);
+    // Only an assignment in the agent administrator's own company: the agents page never reaches another company's.
+    const scopeId = yield* requireScopeTarget(admitted, { kind: 'company', legalEntityId: payload.legalEntityId });
+    const assignment = admitted.view.assignments.find((candidate) => candidate.incarnationId === payload.incarnationId);
+    if (
+      assignment === undefined ||
+      assignment.scopeId !== scopeId ||
+      !Predicate.isTagged(assignment.holder, 'Agent') ||
+      assignment.holder.agentId !== payload.agentPrincipalId ||
+      !admitted.reach.scopeIds.has(assignment.scopeId)
+    ) {
+      return yield* Effect.fail(forbidden(ASSIGNMENT_NOT_AVAILABLE));
+    }
+    return yield* (yield* AccessPeopleCommands)
+      .unassignRole(admitted.scope, { incarnationId: assignment.incarnationId })
+      .pipe(Effect.mapError(accessPeopleFailureProblem), Effect.asVoid);
+  },
+);
+
 const accessPeopleOperations = {
   admitMember,
+  agentRoles,
   assign,
+  assignAgentRole,
   assignments,
   createDelegation,
   endMembership,
   list,
   options,
+  revokeAgentAssignment,
   revokeAssignment,
   revokeDelegation,
   setTeamMembership,
@@ -1291,9 +1512,21 @@ export interface AccessPeopleBffService {
   readonly admitMember: (
     input: AccessPeopleWrite<AdmitAccessMemberPayload>,
   ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
+  readonly agentRoles: (
+    headers: Headers,
+    input: { readonly agentPrincipalIds: readonly string[]; readonly legalEntityId: string },
+  ) => Effect.Effect<AgentRolesView, AccessAdminProblem>;
   readonly assign: (
     input: AccessPeopleWrite<AssignAccessRolePayload>,
   ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
+  readonly assignAgentRole: (
+    input: AgentRoleWrite<{
+      readonly agentPrincipalId: string;
+      readonly expectedRoleRevisionId: string;
+      readonly legalEntityId: string;
+      readonly roleId: string;
+    }>,
+  ) => Effect.Effect<void, AccessAdminProblem>;
   readonly assignments: (
     headers: Headers,
     payload: ListAccessAssignmentsPayload,
@@ -1312,6 +1545,13 @@ export interface AccessPeopleBffService {
     headers: Headers,
     payload: ListAccessPeoplePayload,
   ) => Effect.Effect<ListAccessPeopleOptionsResponse, AccessAdminProblem>;
+  readonly revokeAgentAssignment: (
+    input: AgentRoleWrite<{
+      readonly agentPrincipalId: string;
+      readonly incarnationId: string;
+      readonly legalEntityId: string;
+    }>,
+  ) => Effect.Effect<void, AccessAdminProblem>;
   readonly revokeAssignment: (
     input: AccessPeopleWrite<RevokeAccessAssignmentPayload>,
   ) => Effect.Effect<AccessPeopleMutationResponse, AccessAdminProblem>;
@@ -1339,13 +1579,16 @@ export const AccessPeopleBffLive: Layer.Layer<AccessPeopleBff, never, AccessPeop
       const operations = yield* Effect.succeed(accessPeopleOperations);
       return {
         admitMember: (input) => operations.admitMember(input).pipe(Effect.provideContext(context)),
+        agentRoles: (headers, input) => operations.agentRoles(headers, input).pipe(Effect.provideContext(context)),
         assign: (input) => operations.assign(input).pipe(Effect.provideContext(context)),
+        assignAgentRole: (input) => operations.assignAgentRole(input).pipe(Effect.provideContext(context)),
         assignments: (headers, payload) =>
           operations.assignments(headers, payload).pipe(Effect.provideContext(context)),
         createDelegation: (input) => operations.createDelegation(input).pipe(Effect.provideContext(context)),
         endMembership: (input) => operations.endMembership(input).pipe(Effect.provideContext(context)),
         list: (headers, payload) => operations.list(headers, payload).pipe(Effect.provideContext(context)),
         options: (headers, payload) => operations.options(headers, payload).pipe(Effect.provideContext(context)),
+        revokeAgentAssignment: (input) => operations.revokeAgentAssignment(input).pipe(Effect.provideContext(context)),
         revokeAssignment: (input) => operations.revokeAssignment(input).pipe(Effect.provideContext(context)),
         revokeDelegation: (input) => operations.revokeDelegation(input).pipe(Effect.provideContext(context)),
         setTeamMembership: (input) => operations.setTeamMembership(input).pipe(Effect.provideContext(context)),

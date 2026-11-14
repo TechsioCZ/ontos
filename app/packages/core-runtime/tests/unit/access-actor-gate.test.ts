@@ -22,6 +22,7 @@ import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
 import type { AccessPrincipalKinds, AccessPrincipalKind } from '../../src/access/enforcement/actor.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import type { DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
+import type { DecisionCheckPort } from '../../src/access/decision/engine.ts';
 import type { GateCarrier, GateInput, ListGateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import type { AccessDecisionLogEntry, AccessDecisionLogWriter } from '../../src/access/enforcement/decision-log.ts';
@@ -29,6 +30,7 @@ import type { AccessLegalEntityCandidates } from '../../src/access/enforcement/l
 import type { AccessWorkloadBindings } from '../../src/access/enforcement/workload-port.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { LegalEntityIdSchema } from '../../src/access/ids.ts';
+import type { LegalEntityId } from '../../src/access/ids.ts';
 import { at, cell, makeAuthority, makeCheck, person, tenant } from './access-decision-support.ts';
 import type { AuthoritySpec } from './access-decision-support.ts';
 
@@ -85,16 +87,22 @@ const workloadActorDeclaration = (overrides: Partial<AccessActorInput> = {}) =>
   actorDeclaration({ subjectWorkloads: [storefront], ...overrides });
 
 /** A registry that binds `keys` to one principal; any other principal holds no binding. */
-const workloadRegistry = (keys: readonly string[], principal: string = workloadPrincipal): AccessWorkloadBindings => ({
-  readActiveWorkloadKeys: (query) =>
-    Effect.succeed(new Set(query.principalId === principal && query.tenantId === tenant ? keys : [])),
-  // This registry declares no company, so a standalone workload keeps the tenant-wide rule (D6).
-  readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+const workloadRegistry = (
+  keys: readonly string[],
+  principal: string = workloadPrincipal,
+  companies: readonly LegalEntityId[] = [],
+): AccessWorkloadBindings => ({
+  readWorkloadAuthority: (query) => {
+    const bound = query.principalId === principal && query.tenantId === tenant;
+    return Effect.succeed({
+      activeCompanyIds: new Set(bound ? companies : []),
+      workloadKeys: new Set(bound ? keys : []),
+    });
+  },
 });
 
 const unreadableRegistry: AccessWorkloadBindings = {
-  readActiveWorkloadKeys: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
-  readCompanyDeclaration: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
+  readWorkloadAuthority: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
 };
 
 /**
@@ -170,10 +178,14 @@ const membersOnly = (port: DecisionAuthorityPort, members: readonly string[] | u
 const harness = (
   options: {
     readonly authority?: AuthoritySpec;
+    /** Companies the asked tenant does not own: every gate path refuses a request naming one. */
+    readonly foreignCompanies?: readonly string[];
     readonly kinds?: AccessPrincipalKinds;
     readonly legalEntities?: AccessLegalEntityCandidates;
     readonly logFails?: boolean;
     readonly members?: readonly string[];
+    /** The graph proves every asked `access_scope#access` membership (the Shell frame's baseline). */
+    readonly scopeMember?: boolean;
     readonly workloads?: AccessWorkloadBindings;
   } = {},
 ) => {
@@ -182,11 +194,35 @@ const harness = (
   };
   const authority = makeAuthority(authoritySpec);
   const check = makeCheck({ authority: authoritySpec });
-  const port: DecisionAuthorityPort = membersOnly(authority.port, options.members);
+  const checkPort: DecisionCheckPort =
+    options.scopeMember === true
+      ? {
+          checkBulk: (items) =>
+            check.port
+              .checkBulk(items)
+              .pipe(
+                Effect.map((results) =>
+                  results.map((result, index) =>
+                    items[index]?.resource.type === 'access_scope' ? { permissionship: 'has' as const } : result,
+                  ),
+                ),
+              ),
+        }
+      : check.port;
+  const members = membersOnly(authority.port, options.members);
+  const foreign = (company: string | undefined): boolean =>
+    company !== undefined && options.foreignCompanies?.includes(company) === true;
+  const port: DecisionAuthorityPort = {
+    ...members,
+    readCompanyOwnership: (query) => Effect.succeed(!foreign(query.legalEntityId)),
+    // As the loader answers: a scope read naming a company the tenant does not own resolves nothing.
+    readScope: (query) =>
+      foreign(query.legalEntityId ?? query.checkedCompany) ? Effect.succeed(Option.none()) : members.readScope(query),
+  };
   const { log, state } = logWriter(options.logFails === true);
   const gate = makeAccessDecisionService({
     authorityFor: () => port,
-    check: check.port,
+    check: checkPort,
     decisionLog: log,
     legalEntities: options.legalEntities ?? noLegalEntities,
     principalKinds: options.kinds ?? kindSource('human'),
@@ -532,7 +568,8 @@ it.effect('admits a bound workload subject on a company carrier although it hold
       authority: { cells: [] },
       kinds: kindSource('service'),
       members: [person],
-      workloads: workloadRegistry([storefront]),
+      // The storefront client is registered for the company the module names (D6).
+      workloads: workloadRegistry([storefront], workloadPrincipal, [LegalEntityIdSchema.make(uid(60))]),
     });
     const carrier: GateCarrier = {
       accessActor: workloadActorDeclaration({ callers: ['commerce-customer-context'] }),
@@ -555,6 +592,44 @@ it.effect('admits a bound workload subject on a company carrier although it hold
     });
     expect(listed.decision.outcome).toBe('ALLOWED');
     expect(listed.predicate).toEqual({ groups: [] });
+  }),
+);
+
+it.effect('refuses a workload or person subject of a module call in a company its tenant does not own', () =>
+  Effect.gen(function* refusesForeignSubjectCompany() {
+    const caller = callerOf('commerce-customer-context');
+    const ours = uid(61);
+    const foreignCompany = uid(62);
+    const carrier: GateCarrier = {
+      accessActor: workloadActorDeclaration({ callers: ['commerce-customer-context'] }),
+      accessDeclaration: declarationOf(),
+    };
+    const ask = (principal: string, company: string, legalEntityScope: GateInput['legalEntityScope']): GateInput => ({
+      carrier,
+      legalEntityScope,
+      now,
+      scope: delegatedScopeOf(caller, principal, company),
+    });
+    const machine = harness({
+      authority: { cells: [] },
+      foreignCompanies: [foreignCompany],
+      kinds: kindSource('service'),
+      // The workload is registered for the tenant's own company, so the company it is refused in below is
+      // refused for the ownership alone and not for want of a registration (O88 beside D6).
+      workloads: workloadRegistry([storefront], workloadPrincipal, [LegalEntityIdSchema.make(ours)]),
+    });
+    const single = yield* machine.gate.decide(ask(workloadPrincipal, foreignCompany, 'required'));
+    expect(codesOf(single)).toEqual(['deny.scope_mismatch']);
+    const batched = yield* machine.gate.decideMany([
+      ask(workloadPrincipal, ours, 'required'),
+      ask(workloadPrincipal, foreignCompany, 'required'),
+    ]);
+    expect(batched.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED']);
+    expect(codesOf(batched[1] ?? single)).toEqual(['deny.scope_mismatch']);
+    // A person subject asked in the tenant context that names a foreign company is refused the same way.
+    const human = harness({ foreignCompanies: [foreignCompany], members: [person] });
+    const tenantContext = yield* human.gate.decide(ask(person, foreignCompany, 'optional'));
+    expect(codesOf(tenantContext)).toEqual(['deny.scope_mismatch']);
   }),
 );
 
@@ -973,20 +1048,24 @@ const twoCompanies: AccessLegalEntityCandidates = {
   listCandidateIds: () => Effect.succeed([uid(60), uid(61)].map((id) => LegalEntityIdSchema.make(id))),
 };
 
-it.effect('lets a bound workload subject of a module call select every company of its tenant', () =>
+it.effect('lets a bound workload subject of a module call select only the companies it is registered for', () =>
   Effect.gen(function* selectsCompaniesForWorkloadSubject() {
-    const { check, gate } = harness({
+    const scope = delegatedScopeOf(callerOf('commerce-customer-context'), workloadPrincipal);
+    const registered = harness({
+      kinds: kindSource('service'),
+      legalEntities: twoCompanies,
+      workloads: workloadRegistry([storefront], workloadPrincipal, [LegalEntityIdSchema.make(uid(60))]),
+    });
+    expect(yield* registered.gate.selectableLegalEntities({ now, scope })).toEqual([uid(60)]);
+    // The registration is the workload's company authority: the engine holds no tuple for it.
+    expect(registered.check.calls.checkBulk).toBe(0);
+    // A bound workload with no registration selects no company, never the tenant's whole list (D6).
+    const unregistered = harness({
       kinds: kindSource('service'),
       legalEntities: twoCompanies,
       workloads: workloadRegistry([storefront]),
     });
-    const selectable = yield* gate.selectableLegalEntities({
-      now,
-      scope: delegatedScopeOf(callerOf('commerce-customer-context'), workloadPrincipal),
-    });
-    expect(selectable).toEqual([uid(60), uid(61)]);
-    // The tenant-wide binding is the workload's company authority: the engine holds no tuple for it.
-    expect(check.calls.checkBulk).toBe(0);
+    expect(yield* unregistered.gate.selectableLegalEntities({ now, scope })).toEqual([]);
   }),
 );
 
@@ -1088,4 +1167,81 @@ it.effect('records a refused company of a delegated batch in the tenant scope, r
     expect(workload.singleRows).toEqual([]);
     expect(workload.batchedRows).toEqual([]);
   }),
+);
+
+/** The Shell frame's composition read: the one shape a baseline capability may have. */
+const frameCarrier = {
+  accessDeclaration: decodeAccessDeclarationOrThrow(
+    {
+      baseline: true,
+      key: 'core.shell.composition.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'shell', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    } satisfies AccessDeclarationInput,
+    { access: 'read', authorization: { kind: 'protected' }, moduleKey: 'core.shell', role: 'api' },
+  ),
+} satisfies GateCarrier;
+
+const directPersonScope: OperationalScope = {
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: uid(70),
+    authContextRef: 'session-frame',
+    authMethod: 'session',
+    principalId: person,
+    tenantId: tenant,
+  }),
+  correlationId: 'frame-direct-person',
+};
+
+it.effect(
+  'admits the Shell frame by membership only to a person asking directly: no agent, workload or module call',
+  () =>
+    Effect.gen(function* frameOnlyForPeople() {
+      const scopeChecks = (h: ReturnType<typeof harness>) =>
+        h.check.sent.filter(({ resource }) => resource.type === 'access_scope').length;
+      // The control: a member whose Roles hold no frame cell, on their own session, is admitted and evidenced.
+      const member = harness({ authority: { cells: [] }, scopeMember: true });
+      expect(codesOf(yield* member.gate.decide(gateOf(frameCarrier, directPersonScope)))).toEqual([
+        'structural.member_baseline',
+      ]);
+      expect(member.state.entries.length).toBe(1);
+      // An agent or a workload on the same direct call never borrows a membership.
+      for (const kind of ['agent', 'integration', 'service', 'system'] as const) {
+        const h = harness({ authority: { cells: [] }, kinds: kindSource(kind), scopeMember: true });
+        const decision = yield* h.gate.decide(
+          gateOf(frameCarrier, kind === 'agent' ? directPersonScope : directWorkloadScope),
+        );
+        expect({ kind, outcome: decision.outcome, scopeChecks: scopeChecks(h) }).toEqual({
+          kind,
+          outcome: 'DENIED',
+          scopeChecks: 0,
+        });
+      }
+      // A module call for a person: the frame declares no accessActor, so it is refused before any membership.
+      const delegated = harness({ authority: { cells: [] }, scopeMember: true });
+      const forPerson = yield* delegated.gate.decide(
+        gateOf(frameCarrier, delegatedScopeOf(callerOf('commerce-order'))),
+      );
+      expect({ codes: codesOf(forPerson), scopeChecks: scopeChecks(delegated) }).toEqual({
+        codes: ['deny.actor_forbidden'],
+        scopeChecks: 0,
+      });
+      // A module call whose subject is a bound workload: refused too.
+      const machine = harness({
+        authority: { cells: [] },
+        kinds: kindSource('service'),
+        scopeMember: true,
+        workloads: workloadRegistry([storefront]),
+      });
+      const forWorkload = yield* machine.gate.decide(
+        gateOf(frameCarrier, delegatedScopeOf(callerOf('commerce-order'), workloadPrincipal)),
+      );
+      expect({ outcome: forWorkload.outcome, scopeChecks: scopeChecks(machine) }).toEqual({
+        outcome: 'DENIED',
+        scopeChecks: 0,
+      });
+    }),
 );

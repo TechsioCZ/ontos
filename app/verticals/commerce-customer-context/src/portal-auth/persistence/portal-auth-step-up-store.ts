@@ -11,7 +11,7 @@ import { COMMERCE_PORTAL_AUTH_POLICY } from '../../../api/portal-auth/provider/c
 import type { CommercePortalAuthAuditEvent } from '../audit/audit-contracts.ts';
 import { CommercePortalAuthAuditUnavailable } from '../audit/audit-unavailable.ts';
 import { writeCommercePortalAuthAuditRow } from '../audit/audit-transaction.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { stepUpChallenge, stepUpChallengeAttempt } from './portal-auth-tables.ts';
 

@@ -41,10 +41,8 @@ import type {
 import { providerObservationFor } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../src/enrollment/orchestration/provider-owner-effect.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
-import {
-  CommercePortalAuthDatabase,
-  makeCommercePortalAuthDatabase,
-} from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   expireEnrollmentAcceptanceLeases,

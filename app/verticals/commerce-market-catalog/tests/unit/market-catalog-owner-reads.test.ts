@@ -303,6 +303,8 @@ const marketReadGate = (input: {
                 },
               ],
         ),
+      // Every company these fixtures name is the fixture Tenant's own.
+      readCompanyOwnership: () => Effect.succeed(true),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: (query) =>
         Effect.succeed(
@@ -324,20 +326,17 @@ const marketReadGate = (input: {
     legalEntities: { listCandidateIds: () => Effect.succeed([]) },
     principalKinds: { readKind: () => Effect.succeed(Option.some(input.kind)) },
     workloadBindings: {
-      readActiveWorkloadKeys: (query) =>
-        Effect.succeed(
-          new Set(
-            query.principalId === principalId && query.tenantId === tenantId && query.scope.legalEntityId === sellerId
-              ? (input.boundKeys ?? [])
-              : [],
-          ),
-        ),
-      readCompanyDeclaration: (query) =>
+      // The keys are bound for the seller only; the workload is registered for the company it is asked in (D6).
+      readWorkloadAuthority: (query) =>
         Effect.succeed({
           activeCompanyIds: new Set(
             query.scope.legalEntityId === undefined ? [] : [LegalEntityIdSchema.make(query.scope.legalEntityId)],
           ),
-          pinned: true,
+          workloadKeys: new Set(
+            query.principalId === principalId && query.tenantId === tenantId && query.scope.legalEntityId === sellerId
+              ? (input.boundKeys ?? [])
+              : [],
+          ),
         }),
     },
   });

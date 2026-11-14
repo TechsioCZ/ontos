@@ -32,6 +32,7 @@ const rental: DemoCompanyRecord = {
 const fixture = (initial: readonly DemoCompanyRecord[]) => {
   const rows = [...initial];
   const calls: string[] = [];
+  const scoped: string[][] = [];
   const modules = new Map([['legal.agreements', 'disabled']]);
   const persistence: DemoCompanyConfigurationPersistence = {
     createCompany: ({ legalEntityId, legalName, registrationNumber }) =>
@@ -50,6 +51,11 @@ const fixture = (initial: readonly DemoCompanyRecord[]) => {
       calls.push('create');
       rows.push(rental);
     }),
+    ensureCompanyScopes: (legalEntityIds: readonly string[]) =>
+      Effect.sync(() => {
+        calls.push('scopes');
+        scoped.push([...legalEntityIds]);
+      }),
     ensureModules: Effect.sync(() => {
       calls.push('modules');
       for (const moduleId of ['property.portfolio', 'property.leasing', 'legal.agreements']) {
@@ -84,7 +90,7 @@ const fixture = (initial: readonly DemoCompanyRecord[]) => {
       }
     }),
   };
-  return { calls, modules, persistence, rows };
+  return { calls, modules, persistence, rows, scoped };
 };
 
 it.effect('rejects other tenants before loading or mutating company state', () =>
@@ -144,10 +150,10 @@ it.effect('renames the exact legacy rental once at the same UUID and leaves cano
       legalName: 'Nájempark',
     });
     expect(state.rows).toEqual([canonicalCommercial, rental, ...additionalRows]);
-    expect(state.calls).toEqual(['load', 'rename-rental', 'modules']);
+    expect(state.calls).toEqual(['load', 'rename-rental', 'scopes', 'modules']);
     const second = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
     expect(state.rows).toEqual([canonicalCommercial, rental, ...additionalRows]);
-    expect(state.calls).toEqual(['load', 'rename-rental', 'modules', 'load', 'modules']);
+    expect(state.calls).toEqual(['load', 'rename-rental', 'scopes', 'modules', 'load', 'scopes', 'modules']);
     expect(first.previousCompanyCount).toBe(5);
     expect(second.previousCompanyCount).toBe(5);
     expect(second.companies).toEqual(first.companies);
@@ -196,7 +202,15 @@ it.effect('pseudonymizes only the exact synthetic company once; rejects partial 
       legalName: akrosDemoCompany.legalName,
       registrationNumber: 'DEMO-SROUBARNA',
     });
-    expect(state.calls).toEqual(['load', 'pseudonymize-screw-seller', 'modules', 'load', 'modules']);
+    expect(state.calls).toEqual([
+      'load',
+      'pseudonymize-screw-seller',
+      'scopes',
+      'modules',
+      'load',
+      'scopes',
+      'modules',
+    ]);
   }),
 );
 
@@ -222,12 +236,31 @@ it.effect(
         'create:DEMO-HANAK-CRM',
         'create:DEMO-KAVARNA-ESHOP',
         'create:DEMO-SROUBARNA',
+        'scopes',
         'modules',
         'load',
+        'scopes',
         'modules',
       ]);
       expect(state.modules.get('legal.agreements')).toBe('disabled');
       expect(state.modules.get('property.portfolio')).toBe('active');
       expect(second.companies).toEqual(first.companies);
     }),
+);
+
+it.effect('gives every company it creates or keeps an access scope, in the same configuration, on every run', () =>
+  Effect.gen(function* companyScopesWithCompanies() {
+    const state = fixture([commercial]);
+    yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
+    const everyCompany = [
+      commercialDemoCompany.legalEntityId,
+      rentalDemoCompany.legalEntityId,
+      ...additionalDemoCompanies.map((company) => company.legalEntityId),
+    ].toSorted();
+    expect(state.scoped.map((ids) => ids.toSorted())).toEqual([everyCompany]);
+    // The scopes follow the companies it created, never precede them.
+    expect(state.calls.indexOf('scopes')).toBeGreaterThan(state.calls.lastIndexOf('create:DEMO-SROUBARNA'));
+    yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
+    expect(state.scoped).toHaveLength(2);
+  }),
 );

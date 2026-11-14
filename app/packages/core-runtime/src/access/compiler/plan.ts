@@ -69,6 +69,14 @@ export interface ProjectionFenceScope {
   readonly tenantId: string;
 }
 
+/** An agent's assignment the plan leaves out because its role revision runs a non-routine capability (O48a). */
+export interface WithheldAgentAssignment {
+  readonly agentId: string;
+  readonly reason: string;
+  readonly roleId: string;
+  readonly tenantId: string;
+}
+
 export interface ProjectionPlan {
   /** Intent the graph must never carry, kept so the decision lane reads it fresh (D22). */
   readonly connectionCeilings: readonly ProjectedConnectionCeiling[];
@@ -77,6 +85,11 @@ export interface ProjectionPlan {
   /** Canonical text of the whole intended projection: what a plan fingerprint is computed over. */
   readonly lines: readonly string[];
   readonly units: readonly ProjectionUnit[];
+  /**
+   * Agent assignments left out of the graph: their role revision runs a capability an agent may only propose. The
+   * agent then simply lacks that role (fail closed for the agent); the tenant's projection is never refused for it.
+   */
+  readonly withheldAgentAssignments: readonly WithheldAgentAssignment[];
 }
 
 const SECONDS_PER_MILLISECOND = 1000;
@@ -760,44 +773,49 @@ const connectionCeilingsOf = (
   );
 
 /**
- * An agent may propose a sensitive or critical capability but never run it (O48a): the graph cannot
- * express that difference in one cell, so Core refuses to write the cell instead.
+ * An agent may propose a sensitive or critical capability but never run it (O48a), and the graph cannot express that
+ * difference inside one role binding: an agent member of a binding gets every cell of it. So an agent assignment whose
+ * pinned revision runs a non-routine capability (or one the release declares no risk for) is withheld whole: the
+ * agent lacks that role and nothing else changes. The People planner and the role-revision writer refuse to create
+ * this state; it can still arise when a later release raises a capability's risk, and it must never stop the tenant.
  */
-const validateAgentRunCells = (
+const agentIdOf = (holder: Holder): string | undefined =>
+  Match.value(holder).pipe(
+    Match.tag('Agent', ({ agentId }): string | undefined => agentId),
+    Match.orElse((): string | undefined => undefined),
+  );
+
+const withheldAgentAssignmentsOf = (
+  tenantId: string,
   activeAssignments: ScopeProjectionIntent['assignments'],
   revisionByRole: ReadonlyMap<string, RoleRevision>,
   entries: CatalogEntries,
-  fail: Failure,
-): void => {
-  const agentHeldRoles = new Set<string>(
-    activeAssignments
-      .filter((assignment) => principalIdOf(assignment.holder) === undefined)
-      .map((assignment) => assignment.roleId),
-  );
-  for (const roleId of agentHeldRoles) {
-    for (const cell of revisionByRole.get(roleId)?.cells ?? []) {
-      if (cell.mode !== 'run') {
-        continue;
-      }
-      const risk = entries.get(cell.capabilityKey)?.risk;
-      if (risk === undefined) {
-        fail(
-          'access_projection_agent_sensitive_run',
-          `${cell.capabilityKey} declares no risk, so an agent run cell cannot be shown to be routine`,
-        );
-      } else if (risk !== 'routine') {
-        fail(
-          'access_projection_agent_sensitive_run',
-          `${cell.capabilityKey} is ${risk}, and an agent may only propose it`,
-        );
-      }
+): ReadonlyMap<string, WithheldAgentAssignment> => {
+  const withheld = new Map<string, WithheldAgentAssignment>();
+  for (const assignment of activeAssignments) {
+    const agentId = agentIdOf(assignment.holder);
+    const sensitive =
+      agentId === undefined
+        ? undefined
+        : (revisionByRole.get(assignment.roleId)?.cells ?? []).find(
+            (cell) => cell.mode === 'run' && entries.get(cell.capabilityKey)?.risk !== 'routine',
+          );
+    if (agentId !== undefined && sensitive !== undefined) {
+      withheld.set(assignment.incarnationId, {
+        agentId,
+        reason: `${sensitive.capabilityKey} is ${entries.get(sensitive.capabilityKey)?.risk ?? 'undeclared'}, and an agent may only propose it`,
+        roleId: assignment.roleId,
+        tenantId,
+      });
     }
   }
+  return withheld;
 };
 
 interface PlannedScope {
   readonly connections: readonly ProjectedConnectionCeiling[];
   readonly relationshipUnits: readonly ProjectionUnit[];
+  readonly withheld: readonly WithheldAgentAssignment[];
 }
 
 const planScopeUnit = (
@@ -832,7 +850,8 @@ const planScopeUnit = (
     validateDelegatedAssignment(assignment, liveDelegationsById, revisionByRole, entries, fail);
   }
   const moduleKeys = new Set<string>();
-  validateAgentRunCells(activeAssignments, revisionByRole, entries, fail);
+  const withheld = withheldAgentAssignmentsOf(tenantId, activeAssignments, revisionByRole, entries);
+  const projectedAssignments = activeAssignments.filter((assignment) => !withheld.has(assignment.incarnationId));
 
   for (const installation of intent.installations) {
     if (moduleKeys.has(installation.moduleKey)) {
@@ -844,13 +863,14 @@ const planScopeUnit = (
     ...scopeRelationships(scopeObject, tenantObject, legalEntityObject),
     ...installationRelationships(tenantId, scopeId, scopeObject, moduleKeys),
     ...delegationRelationships(tenantId, scopeId, scopeObject, liveDelegations),
-    ...assignmentRelationships(tenantId, scopeId, scopeObject, activeAssignments, revisionById),
+    ...assignmentRelationships(tenantId, scopeId, scopeObject, projectedAssignments, revisionById),
     ...grantRelationships(tenantId, scopeId, revisionByRole),
     ...capabilityRelationships(tenantId, scopeId, scopeObject, moduleKeys, entries, liveDelegations, revisionByRole),
   ];
   return {
     connections: connectionCeilingsOf(tenantId, scopeId, intent.connections),
     relationshipUnits: [unit('scope', scopeObject, relationships, fail)],
+    withheld: [...withheld.values()],
   };
 };
 
@@ -868,6 +888,7 @@ export const planAccessProjection = (
   const violations: AccessProjectionError[] = [];
   const units: ProjectionUnit[] = [];
   const connectionCeilings: ProjectedConnectionCeiling[] = [];
+  const withheldAgentAssignments: WithheldAgentAssignment[] = [];
   const fences: ProjectionFenceScope[] = [];
   const seenTenants = new Set<string>();
 
@@ -941,6 +962,7 @@ export const planAccessProjection = (
       const planned = planScopeUnit(tenantId, tenantObject, scopeIntent, legalEntityObjects, entries, violations);
       units.push(...planned.relationshipUnits);
       connectionCeilings.push(...planned.connections);
+      withheldAgentAssignments.push(...planned.withheld);
     }
 
     for (const plannedUnit of units.slice(firstUnitIndex)) {
@@ -961,5 +983,6 @@ export const planAccessProjection = (
           planned.relationships.map((relationship) => `${planned.key}|${relationshipKey(relationship)}`),
         ),
         units,
+        withheldAgentAssignments,
       });
 };

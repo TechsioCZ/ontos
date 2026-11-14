@@ -41,6 +41,15 @@ export const accessAdminAuthenticationRequiredProblem = (): AccessAdminProblem =
     type: 'https://ontos.dev/problems/access-admin-authentication-required',
   });
 
+/**
+ * What the person reads. `access_changes_write_refused` is the refusal Core writes as a sentence for a person: the
+ * writer proved the rule under the role's lock and says what to do about it, so it is shown exactly as it stands. A
+ * technical code is never part of a message a person reads (it stays in the server's log). Every other code is a
+ * diagnostic for a client that must tell two refusals apart, and keeps its prefix.
+ */
+export const accessAdminFailureDetail = (failure: { readonly code: string; readonly reason: string }): string =>
+  failure.code === 'access_changes_write_refused' ? failure.reason : `${failure.code}: ${failure.reason}`;
+
 export const accessAdminForbiddenProblem = (detail: string): AccessAdminProblem =>
   AccessAdminForbiddenProblemSchema.make({
     _tag: 'AccessAdminForbidden',

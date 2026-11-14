@@ -15305,6 +15305,7 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "baseline": true,
             "key": "core.shell.composition.read",
             "kind": "read",
             "modes": [
@@ -15331,6 +15332,7 @@
         },
         {
           "accessDeclaration": {
+            "baseline": true,
             "key": "core.shell.module-target.resolve",
             "kind": "read",
             "modes": [
@@ -15409,6 +15411,7 @@
         },
         {
           "accessDeclaration": {
+            "baseline": true,
             "key": "core.shell.tenant-module-target.resolve",
             "kind": "read",
             "modes": [

@@ -5,8 +5,9 @@ const PrincipalId = Uuid.pipe(Schema.brand('PrincipalId'));
 const optionalDetail = Schema.optionalKey(Schema.OptionFromNullOr(Schema.String));
 const optionalPrincipal = Schema.optionalKey(Schema.OptionFromNullOr(PrincipalId));
 
+/** The agent administration audit of the selected company (the only audit the Agents page reads). */
 export const IdentityAdministrationAuditInputSchema = Schema.Struct({
-  subjects: Schema.Literals(['agents', 'people']),
+  subjects: Schema.Literal('agents'),
 });
 
 /** Finite scalar display evidence only; profile objects, operator sets and credentials never leave Core. */
@@ -39,12 +40,7 @@ export const IdentityAdministrationAuditEntrySchema = Schema.Struct({
   actorName: Schema.OptionFromNullOr(Schema.String),
   auditEventId: Uuid.pipe(Schema.brand('AuditEventId')),
   details: IdentityAdministrationAuditDetailsSchema,
-  eventType: Schema.Literals([
-    'action.executed',
-    'action.rejected',
-    'identity.agent_operators_changed',
-    'authn.rejected',
-  ]),
+  eventType: Schema.Literals(['action.executed', 'action.rejected', 'identity.agent_operators_changed']),
   occurredAt: Schema.DateTimeUtcFromString,
   outcome: Schema.Literals(['allowed', 'denied', 'succeeded', 'failed']),
   outcomeCode: Schema.String,
@@ -89,11 +85,7 @@ export const IdentityAdministrationAuditEvidenceSchema = Schema.Struct({
 });
 
 /** Persisted rows may contain richer native evidence. Decode a whitelist, not a generic JSON capability. */
-export const identityAdministrationAuditDetails = (
-  evidence: typeof IdentityAdministrationAuditEvidenceSchema.Type,
-  eventType: string,
-  principalId: string | null,
-) => {
+export const identityAdministrationAuditDetails = (evidence: typeof IdentityAdministrationAuditEvidenceSchema.Type) => {
   const details = new Map<string, string | null>();
   const isDetail = Schema.is(Schema.Union([Schema.String, Schema.Null]));
   for (const [key, value] of Object.entries(evidence)) {
@@ -106,9 +98,6 @@ export const identityAdministrationAuditDetails = (
     if (Schema.is(Schema.Finite)(evidence.revokedConnections)) {
       details.set('revokedConnections', String(evidence.revokedConnections));
     }
-  }
-  if (eventType === 'authn.rejected' && principalId !== null) {
-    details.set('targetPrincipalId', principalId);
   }
   if (
     !Schema.is(Schema.String)(details.get('targetPrincipalId')) &&

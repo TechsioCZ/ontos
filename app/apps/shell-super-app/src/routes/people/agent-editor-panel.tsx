@@ -7,13 +7,7 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
-import type {
-  AgentEntity,
-  AgentModuleOption,
-  AgentRolePreset,
-  AgentWritePolicy,
-  PrincipalRef,
-} from '@app/shared-contracts/agent-access';
+import type { AgentEntity, AgentWritePolicy, PrincipalRef } from '@app/shared-contracts/agent-access';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
@@ -21,33 +15,21 @@ import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Option, Schema } from 'effect';
+import { Effect } from 'effect';
 import type { HttpClient } from 'effect/http';
 import { useState } from 'react';
 import { AgentApiKeys } from './agent-api-keys.tsx';
 import { runAgentCommand } from './agent-entities-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { newRequestToken } from './people-client.ts';
-import {
-  ModuleChoiceSchema,
-  configureRequest,
-  createRequest,
-  draftErrors,
-  draftFromAgent,
-  emptyAgentDraft,
-  withModuleChoice,
-  withPreset,
-  writeIgnored,
-} from './agent-editor-model.ts';
-import type { AgentDraft, AgentDraftError, ModuleChoice } from './agent-editor-model.ts';
+import { configureRequest, createRequest, draftErrors, draftFromAgent, emptyAgentDraft } from './agent-editor-model.ts';
+import type { AgentDraft, AgentDraftError } from './agent-editor-model.ts';
 
 export interface AgentEditorPanelProps {
   readonly agent: AgentEntity | null;
   readonly members: readonly PrincipalRef[];
-  readonly modules: readonly AgentModuleOption[];
   readonly onClose: () => void;
   readonly onSaved: (message: string) => void;
-  readonly presets: readonly AgentRolePreset[];
 }
 
 const key = 'shell.agents.editor';
@@ -56,19 +38,17 @@ const selectLabelProps = { className: 'text-label-md' };
 const policies: readonly AgentWritePolicy[] = ['read_only', 'approval', 'direct'];
 
 export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
-  const { agent, members, modules, onClose, onSaved, presets } = props;
+  const { agent, members, onClose, onSaved } = props;
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const [draft, setDraft] = useState<AgentDraft>(() => (agent === null ? emptyAgentDraft : draftFromAgent(agent)));
-  const [presetKey, setPresetKey] = useState<string | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   // Nothing is sent until Uložit: the one save writes the whole draft once.
   const record = useDraftSave<AgentDraft, HttpClient.HttpClient>({
-    isValid: (value) => draftErrors(value, modules).length === 0,
+    isValid: (value) => draftErrors(value).length === 0,
     runtime: browserRuntime,
     save: (value) => {
-      const request =
-        agent === null ? createRequest(value, modules) : configureRequest(value, modules, agent.principalId);
+      const request = agent === null ? createRequest(value) : configureRequest(value, agent.principalId);
       const name = value.displayName.trim();
       return newRequestToken.pipe(
         Effect.flatMap((token) => runAgentCommand(request, `agent-${token}`)),
@@ -87,12 +67,11 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
   });
   // Field messages show once the draft is changed and invalid, the same moment the save bar says so.
   const showErrors = record.status === 'invalid';
-  const errors = draftErrors(draft, modules);
+  const errors = draftErrors(draft);
   const operatorIds = new Set(draft.operatorPrincipalIds);
   const nameError = errors.find((error) => error === 'nameRequired' || error === 'nameTooLong');
   const descriptionError = errors.includes('descriptionTooLong') ? 'descriptionTooLong' : undefined;
   const ownerError = errors.includes('ownerRequired');
-  const modulesError = errors.includes('modulesRequired');
   const fieldStatus = (error: AgentDraftError | undefined) =>
     showErrors && error !== undefined
       ? { helpText: t(`${key}.errors.${error}`), validateStatus: 'error' as const }
@@ -188,77 +167,7 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
               {t(`${key}.errors.ownerRequired`)}
             </StatusText>
           )}
-          <section className="flex flex-col gap-150">
-            <h3 className="font-semibold text-sm">{t(`${key}.modulesTitle`)}</h3>
-            <p className="text-fg-secondary text-xs">{t(`${key}.modulesHint`)}</p>
-            {presets.length > 0 && (
-              <SelectTemplate
-                id="agent-preset"
-                items={presets.map((preset) => ({
-                  displayValue: preset.label,
-                  label: preset.label,
-                  value: preset.key,
-                }))}
-                label={t(`${key}.preset`)}
-                labelProps={selectLabelProps}
-                name="preset"
-                onValueChange={(details) => {
-                  const preset = presets.find((candidate) => candidate.key === details.value[0]);
-                  if (preset !== undefined) {
-                    setPresetKey(preset.key);
-                    setDraft(withPreset(draft, preset, modules));
-                  }
-                }}
-                placeholder={t('shell.agents.selectPlaceholder')}
-                size="sm"
-                value={presetKey === null ? [] : [presetKey]}
-              />
-            )}
-            <ul className="flex flex-col">
-              {modules.map((option) => {
-                const choices: readonly ModuleChoice[] =
-                  option.maxAccess === 'write' ? ['none', 'read', 'write'] : ['none', 'read'];
-                return (
-                  <li
-                    className="grid grid-cols-1 gap-100 border-border-primary/60 border-b py-150 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-center"
-                    key={option.moduleId}
-                  >
-                    <span className="text-sm">{option.label}</span>
-                    <SelectTemplate
-                      id={`agent-module-${option.moduleId}`}
-                      items={choices.map((choice) => ({
-                        displayValue: t(`${key}.choice.${choice}`),
-                        label: t(`${key}.choice.${choice}`),
-                        value: choice,
-                      }))}
-                      label={option.label}
-                      labelProps={{ className: 'sr-only' }}
-                      name={`module-${option.moduleId}`}
-                      onValueChange={(details) =>
-                        setDraft(
-                          withModuleChoice(
-                            draft,
-                            option.moduleId,
-                            Option.getOrElse(
-                              Schema.decodeUnknownOption(ModuleChoiceSchema)(details.value[0]),
-                              () => 'none',
-                            ),
-                          ),
-                        )
-                      }
-                      size="sm"
-                      value={[draft.modules[option.moduleId] ?? 'none']}
-                    />
-                  </li>
-                );
-              })}
-            </ul>
-            {showErrors && modulesError && (
-              <StatusText showIcon status="error">
-                {t(`${key}.errors.modulesRequired`)}
-              </StatusText>
-            )}
-          </section>
+          <p className="text-fg-secondary text-xs">{t(`${key}.rightsFromRoles`)}</p>
           <section className="flex flex-col gap-150">
             <h3 className="font-semibold text-sm">{t(`${key}.policyTitle`)}</h3>
             {policies.map((policy) => (
@@ -281,7 +190,6 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
                 </span>
               </label>
             ))}
-            {writeIgnored(draft) && <p className="text-fg-secondary text-xs">{t(`${key}.readOnlyIgnoresWrite`)}</p>}
           </section>
           {agent === null && (
             <section className="flex flex-col gap-150">
