@@ -3,6 +3,7 @@ import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  BOOT_COMPILE_CACHE,
   awaitSupersedingRevision,
   CONTROL_PORT,
   derivedEnvironment,
@@ -266,8 +267,16 @@ describe('finiteProcessEnvironment', () => {
   it('overrides inherited sharing without changing other operator settings', () => {
     expect(finiteProcessEnvironment({ MIGRATOR_ONCE: 'true' })).toEqual({
       MIGRATOR_ONCE: 'true',
+      NODE_COMPILE_CACHE: BOOT_COMPILE_CACHE,
       ONTOS_DATABASE_POOL_SHARED: 'false',
     });
+  });
+
+  it('shares one compile cache across the boot children, keeping a cache the operator chose', () => {
+    expect(finiteProcessEnvironment({}).NODE_COMPILE_CACHE).toBe(BOOT_COMPILE_CACHE);
+    expect(finiteProcessEnvironment({ NODE_COMPILE_CACHE: '/var/cache/node' }).NODE_COMPILE_CACHE).toBe(
+      '/var/cache/node',
+    );
   });
 });
 

@@ -89,7 +89,7 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
@@ -526,9 +526,17 @@ export const workloadKeysDiffer = (
   return wanted.size !== holding.size || [...wanted].some((entry) => !holding.has(entry));
 };
 
+/**
+ * One V8 compile cache for every finite child of this boot and the children they start (the migrator's ~40 Node
+ * processes load the same Effect, Drizzle and Core modules). Node validates each entry against its source, so a stale,
+ * torn or foreign entry is recompiled, never run; an unwritable directory only turns the cache off.
+ */
+export const BOOT_COMPILE_CACHE = path.join(tmpdir(), 'ontos-boot-compile-cache');
+
 /** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
 export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
   ...environment,
+  NODE_COMPILE_CACHE: environment.NODE_COMPILE_CACHE ?? BOOT_COMPILE_CACHE,
   ONTOS_DATABASE_POOL_SHARED: 'false',
 });
 
