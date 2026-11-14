@@ -848,6 +848,14 @@ it.layer(NodeCrypto.layer)('Business outcomes complete the delivery; only system
           yield* wonPayload(10),
         ],
         [
+          // A free-text line is not in the message, so its lines bill less than the won amount: nothing is drafted.
+          'OPPORTUNITY_LINES_INCOMPLETE',
+          'WARN',
+          makeLedger().scope,
+          taxNeverAsked().tax,
+          { ...(yield* wonPayload(21)), amountMinor: 150_000 },
+        ],
+        [
           'OPPORTUNITY_COMPANY_WITHOUT_LEDGER',
           'WARN',
           [makeLedger(otherLegalEntityId).scope, makeLedger(legalEntityId, false).scope],
