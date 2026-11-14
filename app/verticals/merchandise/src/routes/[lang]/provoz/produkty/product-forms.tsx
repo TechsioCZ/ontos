@@ -17,7 +17,7 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
@@ -57,6 +57,7 @@ export interface FormDialogProps {
 }
 
 const RESIZE_LABEL_KEY = 'merchandise.sidePanel.resize';
+const LOADING_KEY = 'merchandise.loading';
 const REQUIRED_KEY = 'validation.required';
 
 const DialogActions = ({
@@ -439,54 +440,67 @@ export const CreateProductDialog = ({
   );
 };
 
-/** A receipt always resolves the full selected product before it can choose a stock identity. */
+/** The picked product's read, shown under the product field: loading, or a failure the retry button answers. */
+const receiptReadStatus = (
+  read: { readonly failed: boolean; readonly loading: boolean },
+  k: ReturnType<typeof useProductLabel>,
+) => {
+  if (read.failed) {
+    return { helpText: k('receipt.productFailed'), validateStatus: 'error' as const };
+  }
+  return read.loading ? { helpText: k('states.loading') } : {};
+};
+
+interface ReceiptPick {
+  readonly product: ProductRecord;
+  readonly record: ProductRecordState;
+}
+
+/**
+ * The picked product with its full record (variants), read when it is picked or retried. A record that arrives after
+ * another pick is dropped, so a receipt never takes its variants from the previously picked product.
+ */
 const useReceiptSelection = () => {
-  const [product, setProduct] = useState<ProductRecord | null>(null);
-  const productId = product?.id ?? null;
+  const [pick, setPick] = useState<ReceiptPick | null>(null);
   const [variantId, setVariantId] = useState('');
-  const [readAttempt, setReadAttempt] = useState(0);
-  const [record, setRecord] = useState<{ readonly productId: string; readonly state: ProductRecordState } | null>(null);
-  useEffect(() => {
-    if (productId === null) {
+  const read = (product: ProductRecord) => {
+    setPick({ product, record: { status: 'loading' } });
+    loadProductRecord(product.id, (record) =>
+      setPick((current) => (current?.product.id === product.id ? { ...current, record } : current)),
+    );
+  };
+  const handleProductSelect = (picked: ProductRecord | null) => {
+    setVariantId('');
+    if (picked === null) {
+      setPick(null);
       return;
     }
-    let active = true;
-    setRecord({ productId, state: { status: 'loading' } });
-    loadProductRecord(productId, (loaded) => {
-      if (active) {
-        setRecord({ productId, state: loaded });
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [productId, readAttempt]);
-  const loaded = record?.productId === productId ? record.state : undefined;
-  const fullProduct = loaded?.status === 'ready' ? loaded.product : undefined;
+    read(picked);
+  };
+  const handleRetry = () => {
+    if (pick !== null) {
+      read(pick.product);
+    }
+  };
+  const clearSelection = () => {
+    setPick(null);
+    setVariantId('');
+  };
+  const fullProduct = pick?.record.status === 'ready' ? pick.record.product : undefined;
   const variants = fullProduct?.variantRecords ?? [];
   const variant = variants.find((entry) => entry.id === variantId);
-  const variantMissing = variants.length > 0 && variant === undefined;
-  const clearSelection = () => {
-    setProduct(null);
-    setRecord(null);
-    setVariantId('');
-  };
-  const selectProduct = (picked: ProductRecord | null) => {
-    setProduct(picked);
-    setVariantId('');
-  };
   return {
     clearSelection,
-    failed: loaded?.status === 'error',
+    failed: pick?.record.status === 'error',
     fullProduct,
-    product,
-    productId,
-    retry: () => setReadAttempt((attempt) => attempt + 1),
-    selectProduct,
-    selectVariant: setVariantId,
+    handleProductSelect,
+    handleRetry,
+    handleVariantSelect: setVariantId,
+    loading: pick?.record.status === 'loading',
+    product: pick?.product ?? null,
     variant,
     variantId,
-    variantMissing,
+    variantMissing: variants.length > 0 && variant === undefined,
     variants,
   };
 };
@@ -497,7 +511,8 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const selection = useReceiptSelection();
-  const { product, productId, fullProduct, variants, variant, variantId, variantMissing } = selection;
+  const { fullProduct, product, variant, variantId, variantMissing, variants } = selection;
+  const productId = product?.id ?? null;
   const [quantity, setQuantity] = useState(1);
   const [quantityText, setQuantityText] = useState('1');
   const [note, setNote] = useState('');
@@ -544,13 +559,8 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
-    const receipt = {
-      _tag: 'RecordStockMovement' as const,
-      delta: quantity,
-      productId,
-      reason: 'RECEIPT' as const,
-      ...(variant === undefined ? {} : { variantId: variant.id }),
-    };
+    const movement = { _tag: 'RecordStockMovement' as const, delta: quantity, productId, reason: 'RECEIPT' as const };
+    const receipt = variant === undefined ? movement : { ...movement, variantId: variant.id };
     runCommand(trimmed === '' ? receipt : { ...receipt, note: trimmed }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
@@ -599,23 +609,20 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
             errorMessage={k('states.error')}
             id="receipt-product"
             label={k('fields.product')}
-            loadingMessage={t('merchandise.loading')}
+            loadingMessage={t(LOADING_KEY)}
             noResultsMessage={k('states.noResults')}
-            onSelect={selection.selectProduct}
+            onSelect={selection.handleProductSelect}
             placeholder={k('filters.search')}
             retryLabel={k('common.retry')}
             selected={product}
-            {...fieldError(submitted, productError)}
+            {...(productId === null ? fieldError(submitted, productError) : receiptReadStatus(selection, k))}
           />
-          {productId !== null && fullProduct === undefined && (
-            <StatusText status={selection.failed ? 'error' : 'info'}>
-              {selection.failed ? k('states.error') : t('merchandise.loading')}
-            </StatusText>
-          )}
           {selection.failed && (
-            <Button onClick={selection.retry} type="button">
-              {k('common.retry')}
-            </Button>
+            <div>
+              <Button onClick={selection.handleRetry} size="sm" theme="outlined" type="button" variant="secondary">
+                {k('common.retry')}
+              </Button>
+            </div>
           )}
           {variants.length > 0 && (
             <SelectTemplate
@@ -623,7 +630,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
               items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
               label={t('merchandise.ui.variant')}
               name="receiptVariant"
-              onValueChange={(details) => selection.selectVariant(details.value[0] ?? '')}
+              onValueChange={(details) => selection.handleVariantSelect(details.value[0] ?? '')}
               placeholder={t('merchandise.ui.selectVariant')}
               required
               value={variantId === '' ? [] : [variantId]}
@@ -643,7 +650,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
               setQuantity(details.valueAsNumber);
               setQuantityText(details.value);
             }}
-            step={MIN_STOCK_QUANTITY}
+            step={1}
             value={quantityText}
             {...fieldError(submitted, quantityError)}
           >
@@ -683,7 +690,11 @@ const openingPercent: PercentDraft = { percent: 5, percentText: '5' };
 const validPercent = (percent: number) =>
   Number.isInteger(percent) && percent >= PERCENT_MIN && percent <= PERCENT_MAX && percent !== 0;
 
-/** Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. */
+/**
+ * Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. Products priced by their
+ * variants cannot take it (each variant has its own price); the selected ones the list shows are named before
+ * anything is typed, and the server refuses any others.
+ */
 export const PriceChangeDialog = ({
   ids,
   onCommitted,
@@ -691,7 +702,12 @@ export const PriceChangeDialog = ({
   onReload,
   open,
   revision,
-}: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
+  variantProducts,
+}: FormDialogProps & {
+  readonly ids: readonly ProductRecord['id'][];
+  /** Selected products the list knows to be priced by sellable variants. */
+  readonly variantProducts: readonly Pick<ProductRecord, 'id' | 'name'>[];
+}) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<PercentDraft>(openingPercent);
@@ -699,7 +715,7 @@ export const PriceChangeDialog = ({
     command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { priceChangePercent: value.percent } }),
     equals: (left, right) => left.percentText === right.percentText,
     initial: noPercent,
-    isValid: (value) => validPercent(value.percent) && ids.length > 0,
+    isValid: (value) => validPercent(value.percent) && ids.length > 0 && variantProducts.length === 0,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.priceChanged')),
@@ -731,6 +747,13 @@ export const PriceChangeDialog = ({
           <p className="text-fg-secondary text-sm tabular-nums">
             {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
           </p>
+          {variantProducts.length > 0 && (
+            <StatusText showIcon status="error">
+              {t('merchandise.pages.products.priceDialog.variantProducts', {
+                names: variantProducts.map((product) => product.name).join(', '),
+              })}
+            </StatusText>
+          )}
           {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}
           <FormNumericInput
             clampValueOnBlur={false}
@@ -761,41 +784,56 @@ export const PriceChangeDialog = ({
 };
 
 interface CategoryDraft {
+  /** The picked storefront tree category (a company with a tree). */
   readonly category: CategoryTrail | null;
+  /** The typed category label (a company without a tree). */
+  readonly label: string;
 }
 
-const noCategory: CategoryDraft = { category: null };
+const noCategory: CategoryDraft = { category: null, label: '' };
 
-/** Bulk category change. Sends BulkUpdateProducts with the new category. */
+/**
+ * Bulk category change. A company with a storefront tree picks a tree category and sends its identity, so the server
+ * derives each product's category path; a company without a tree types the category label as before.
+ */
 export const CategoryDialog = ({
+  hasTree,
   ids,
   onCommitted,
   onOpenChange,
   onReload,
   open,
   revision,
-}: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
+}: FormDialogProps & { readonly hasTree: boolean; readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<CategoryDraft>(noCategory);
-  const errorOf = (value: CategoryDraft) => (value.category === null ? k(REQUIRED_KEY) : undefined);
+  const errorOf = (value: CategoryDraft) => {
+    if (hasTree) {
+      return value.category === null ? k(REQUIRED_KEY) : undefined;
+    }
+    return value.label.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.label, PRODUCT_LIMITS.category);
+  };
   const form = useFormSave<CategoryDraft>({
     command: (value) => ({
       _tag: 'BulkUpdateProducts',
       ids: [...ids],
-      patch: value.category === null ? {} : { categoryId: value.category.id },
+      patch: hasTree && value.category !== null ? { categoryId: value.category.id } : { category: value.label.trim() },
     }),
-    equals: (left, right) => left.category?.id === right.category?.id,
+    equals: (left, right) => left.category?.id === right.category?.id && left.label === right.label,
     initial: noCategory,
     isValid: (value) => errorOf(value) === undefined && ids.length > 0,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.bulkUpdated')),
     open,
+    // With a tree the only business refusal is a category that no longer exists (deleted or moved meanwhile).
+    refused: (outcome) => (hasTree && outcome.reason === 'rejected' ? k('category.missing') : null),
     reset: setDraft,
     revision,
     value: draft,
   });
+  const fieldState = fieldError(form.record.status === 'invalid', errorOf(draft));
 
   return (
     <>
@@ -813,20 +851,33 @@ export const CategoryDialog = ({
         title={k('category.title')}
       >
         <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
-          <CategorySearchCombobox
-            errorMessage={k('filters.categoryError')}
-            id="bulk-category"
-            label={k('category.field')}
-            loadingMessage={t('merchandise.loading')}
-            moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
-            noResultsMessage={k('filters.categoryNoResults')}
-            onSelect={(category) => setDraft({ category })}
-            placeholder={k('filters.categorySearch')}
-            required
-            retryLabel={k('filters.categoryRetry')}
-            selected={draft.category}
-            validateStatus={form.record.status === 'invalid' && draft.category === null ? 'error' : 'default'}
-          />
+          {hasTree ? (
+            <CategorySearchCombobox
+              errorMessage={k('filters.categoryError')}
+              id="bulk-category"
+              label={k('category.field')}
+              loadingMessage={t(LOADING_KEY)}
+              moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
+              noResultsMessage={k('filters.categoryNoResults')}
+              onSelect={(category) => setDraft({ ...draft, category })}
+              placeholder={k('filters.categorySearch')}
+              required
+              retryLabel={k('filters.categoryRetry')}
+              selected={draft.category}
+              {...fieldState}
+            />
+          ) : (
+            <FormInput
+              autoComplete="off"
+              id="bulk-category"
+              label={k('category.field')}
+              name="category"
+              onChange={(event) => setDraft({ ...draft, label: event.target.value })}
+              required
+              value={draft.label}
+              {...fieldState}
+            />
+          )}
         </form>
       </SidePanel>
       <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />

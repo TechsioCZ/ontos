@@ -17,9 +17,9 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
+  loadProductRecord: rstest.fn(),
   SEARCH_DEBOUNCE: '0 millis',
   searchCategoryTrails: rstest.fn(),
-  loadProductRecord: rstest.fn(),
 }));
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -30,7 +30,8 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 const labels = saveLabelsFor('cs');
-const ids = [Schema.decodeUnknownSync(ProductIdSchema)('product-1')];
+const productId = Schema.decodeUnknownSync(ProductIdSchema)('product-1');
+const ids = [productId];
 const category = { id: Schema.decodeSync(CatalogCategoryIdSchema)('category-tools'), trail: 'Nářadí' };
 
 const sent = () => rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => payload.command);
@@ -55,6 +56,8 @@ const dialogProps = {
   open: true,
   revision: 4,
 };
+const categoryProps = { ...dialogProps, hasTree: true };
+const priceProps = { ...dialogProps, variantProducts: [] };
 
 /** Mounts `element` and returns how to render it again with other props. */
 const mount = async (element: ReactElement) => {
@@ -146,7 +149,7 @@ afterEach(() => {
 
 it.effect('the category change is sent once, from Uložit only, never on Enter', () =>
   Effect.gen(function* categorySave() {
-    yield* Effect.promise(() => mount(<CategoryDialog {...dialogProps} />));
+    yield* Effect.promise(() => mount(<CategoryDialog {...categoryProps} />));
     expect(saveButton().disabled).toBe(true);
     expect(footerButtons().at(-1)).toBe(saveButton());
 
@@ -169,7 +172,7 @@ it.effect('the category change is sent once, from Uložit only, never on Enter',
 
 it.effect('the price change it opens with is sent by the first Uložit', () =>
   Effect.gen(function* priceSave() {
-    yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} />));
+    yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} />));
     expect(saveButton().disabled).toBe(false);
     expect(sent()).toEqual([]);
 
@@ -200,8 +203,8 @@ const unloadAsks = (): boolean => {
 it.effect('the price change becomes savable when rows are selected after the page mounted it', () =>
   Effect.gen(function* lateSelection() {
     // The products page mounts the dialog before anything is selected.
-    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} ids={[]} open={false} />));
-    yield* rerender(<PriceChangeDialog {...dialogProps} open />);
+    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} ids={[]} open={false} />));
+    yield* rerender(<PriceChangeDialog {...priceProps} open />);
     expect(saveButton().disabled).toBe(false);
 
     yield* click(saveButton());
@@ -212,9 +215,9 @@ it.effect('the price change becomes savable when rows are selected after the pag
 
 it.effect('the price change asks before leaving only for a percent the user typed in the open panel', () =>
   Effect.gen(function* untouchedPrice() {
-    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} ids={[]} open={false} />));
+    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} ids={[]} open={false} />));
     expect(unloadAsks()).toBe(false);
-    yield* rerender(<PriceChangeDialog {...dialogProps} open />);
+    yield* rerender(<PriceChangeDialog {...priceProps} open />);
     // The 5 % it opens with is not typed input.
     expect(unloadAsks()).toBe(false);
     yield* typeInto('price-percent', '7');
@@ -225,7 +228,7 @@ it.effect('the price change asks before leaving only for a percent the user type
 it.effect('the price change it opens with asks before leaving once its save failed', () =>
   Effect.gen(function* failedOpeningPrice() {
     rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.fail(forbidden));
-    yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} />));
+    yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} />));
     expect(unloadAsks()).toBe(false);
     yield* click(saveButton());
     yield* Effect.promise(() => waitUntil(() => sent().length === 1));
@@ -236,7 +239,7 @@ it.effect('the price change it opens with asks before leaving once its save fail
 
 it.effect('reads the required text of a required field in Czech', () =>
   Effect.gen(function* requiredText() {
-    yield* Effect.promise(() => mount(<CategoryDialog {...dialogProps} />));
+    yield* Effect.promise(() => mount(<CategoryDialog {...categoryProps} />));
     const label = Option.getOrThrow(
       Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="bulk-category-input"]')),
     );
@@ -256,12 +259,57 @@ it.effect('a refused variant bulk price edit shows its actionable message instea
       type: 'https://ontos.dev/problems/action-conflict',
     };
     rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(refused));
-    yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} />));
+    yield* Effect.promise(() => mount(<PriceChangeDialog {...priceProps} />));
     yield* click(saveButton());
     const message = 'merchandise.pages.products.messages.variantBulkPriceUnsupported';
-    yield* Effect.promise(() => waitUntil(() => document.body.textContent?.includes(message) === true));
+    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(message)));
     expect(document.body.textContent).not.toContain('merchandise.pages.products.messages.conflict');
     expect(committed).toEqual([]);
     return yield* Effect.void;
+  }),
+);
+
+it.effect('names the selected products priced by variants before anything is typed and keeps Uložit disabled', () =>
+  Effect.gen(function* variantProductsNamed() {
+    yield* Effect.promise(() =>
+      mount(<PriceChangeDialog {...priceProps} variantProducts={[{ id: productId, name: 'Šroub M8' }]} />),
+    );
+    expect(document.body.textContent).toContain('merchandise.pages.products.priceDialog.variantProducts');
+    expect(saveButton().disabled).toBe(true);
+    expect(sent()).toEqual([]);
+  }),
+);
+
+it.effect('a company without a storefront tree types the category label as before', () =>
+  Effect.gen(function* labelCategory() {
+    yield* Effect.promise(() => mount(<CategoryDialog {...dialogProps} hasTree={false} />));
+    expect(document.querySelector('[id="bulk-category-input"]')).toBeNull();
+    yield* typeInto('bulk-category', '  Nářadí  ');
+    yield* click(saveButton());
+    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { category: 'Nářadí' } }]);
+  }),
+);
+
+it.effect('a tree category deleted meanwhile says so instead of a stock refusal', () =>
+  Effect.gen(function* deletedCategory() {
+    const refused: Extract<ManageCatalogFailure, { readonly _tag: 'ManageCatalogActionConflictProblem' }> = {
+      _tag: 'ManageCatalogActionConflictProblem',
+      code: 'merchandise_lifecycle_conflict',
+      detail: 'The Action conflicts with current state.',
+      status: 409,
+      title: 'Action conflict',
+      type: 'https://ontos.dev/problems/action-conflict',
+    };
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.fail(refused));
+    yield* Effect.promise(() => mount(<CategoryDialog {...categoryProps} />));
+    yield* click(field('bulk-category-input'));
+    yield* Effect.promise(() => waitUntil(() => document.querySelector('[role="option"]') !== null));
+    const option = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="option"]')));
+    yield* click(option);
+    yield* click(saveButton());
+    const message = 'merchandise.pages.products.category.missing';
+    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(message)));
+    expect(committed).toEqual([]);
   }),
 );
