@@ -170,8 +170,25 @@ export const assertDatabaseEvidence = (expected: DatabaseEvidence, actual: Datab
 };
 
 /** pg_dump adds random restrict keys; everything else, including owners/ACLs/policies, is hashed. */
-/** The schema dump as fingerprinted: pg_dump's per-run `\\restrict` keys removed. */
-export const normalizedSchema = (dump: string) => dump.replaceAll(/^\\(?:un)?restrict .*\n/gmu, '');
+/**
+ * A policy's role list in the order its roles were created: pg_dump lists `TO a, b` by role OID, and a restore
+ * creates the roles in another order. The set is what the policy grants, so it is compared sorted.
+ */
+const POLICY_ROLES = /^(?<head>CREATE POLICY .+? TO )(?<roles>[^;]+?)(?<tail> USING \(.*| WITH CHECK \(.*|;)$/u;
+const sortedPolicyRoles = (dump: string) =>
+  dump
+    .split('\n')
+    .map((line) => {
+      const groups = POLICY_ROLES.exec(line)?.groups;
+      if (groups?.head === undefined || groups.roles === undefined || groups.tail === undefined) {
+        return line;
+      }
+      return `${groups.head}${EffectArray.sort(groups.roles.split(', '), Order.String).join(', ')}${groups.tail}`;
+    })
+    .join('\n');
+
+/** The schema dump as fingerprinted: pg_dump's per-run `\\restrict` keys removed, policy role lists sorted. */
+export const normalizedSchema = (dump: string) => sortedPolicyRoles(dump.replaceAll(/^\\(?:un)?restrict .*\n/gmu, ''));
 /**
  * The fingerprint of a schema dump: every line, pg_dump's per-run `\\restrict` keys left out, in sorted order. Any
  * object, column, constraint, index, policy, grant or owner that differs changes it; the order pg_dump happens to

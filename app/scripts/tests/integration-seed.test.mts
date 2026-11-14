@@ -162,3 +162,19 @@ it('fingerprints a schema regardless of the order pg_dump emits it and of its pe
   expect(schemaFingerprint(first.replace('TO r', 'TO s'))).not.toBe(schemaFingerprint(first));
   expect(schemaFingerprint(first.replace('b (id int)', 'b (id bigint)'))).not.toBe(schemaFingerprint(first));
 });
+
+const selectPolicy = (roles: string) =>
+  `CREATE POLICY p ON s.t FOR SELECT TO ${roles} USING ((tenant_id = (current_setting('ontos.tenant_id'::text))::uuid));\n`;
+const insertPolicy = (roles: string) => `CREATE POLICY p ON s.t FOR INSERT TO ${roles} WITH CHECK (true);\n`;
+const deletePolicy = (roles: string) => `CREATE POLICY p ON s.t FOR DELETE TO ${roles} USING (false);\n`;
+
+it('fingerprints a policy by the set of roles it applies to, not the order their OIDs list them in', () => {
+  expect(schemaFingerprint(selectPolicy('writer, ontos_runtime'))).toBe(
+    schemaFingerprint(selectPolicy('ontos_runtime, writer')),
+  );
+  expect(schemaFingerprint(selectPolicy('writer, ontos_runtime'))).not.toBe(
+    schemaFingerprint(selectPolicy('ontos_runtime')),
+  );
+  expect(schemaFingerprint(insertPolicy('b, a'))).toBe(schemaFingerprint(insertPolicy('a, b')));
+  expect(schemaFingerprint(deletePolicy('b, a'))).toBe(schemaFingerprint(deletePolicy('a, b')));
+});
