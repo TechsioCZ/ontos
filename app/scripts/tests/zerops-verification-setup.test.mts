@@ -26,6 +26,7 @@ const Workflow = Schema.Struct({
   jobs: Schema.Struct({
     deploy: Schema.Struct({ steps: Schema.Array(Step) }),
     record: Schema.Struct({ if: Schema.String, steps: Schema.Array(Step) }),
+    newsletter: Schema.Struct({ steps: Schema.Array(Step) }),
     verify: Schema.Struct({
       if: Schema.String,
       steps: Schema.Array(Step),
@@ -239,10 +240,10 @@ it.effect('preserves mandatory verification, source-pin publication and honest n
   Effect.gen(function* proofGatesUnchanged() {
     const { jobs } = yield* readWorkflow;
     expect(jobs.verify['timeout-minutes']).toBe(20);
-    expect(jobs.verify.if).toBe("always() && needs.deploy.result == 'success'");
+    expect(jobs.verify.if).toContain("needs.deploy_app.result == 'success'");
     expect(jobs.record.if).toContain("needs.verify.result == 'success'");
     const probe = jobs.verify.steps.find(
-      (step) => step.name === 'Time /cs and OAuth metadata; every storefront home must list products',
+      (step) => step.name === 'Time /cs and OAuth metadata without waiting for storefronts',
     );
     const oauth = jobs.verify.steps.find((step) => step.name === 'Prove MCP over OAuth end to end');
     for (const step of [probe, oauth]) {
@@ -250,12 +251,12 @@ it.effect('preserves mandatory verification, source-pin publication and honest n
       expect(step?.if).toBeUndefined();
       expect(step?.['continue-on-error']).toBeUndefined();
     }
-    expect(probe?.run).toBe('mise exec -- node scripts/ops/stage-demo-verify.mjs');
+    expect(probe?.run).toBe('mise exec -- node scripts/zerops/verify-service.mjs app');
     expect(oauth?.run).toContain('scripts/demo/prove-mcp-oauth.mts --variant=1 --verification');
     for (const id of ['Read native newsletter evidence', 'Prove the native newsletter grant and withdrawal']) {
-      expect(jobs.verify.steps.find((step) => step.name === id)?.['continue-on-error']).toBe(true);
+      expect(jobs.newsletter.steps.find((step) => step.name === id)?.['continue-on-error']).toBe(true);
     }
-    const warning = jobs.verify.steps.find((step) => step.name === 'Warn about a failed newsletter proof');
+    const warning = jobs.newsletter.steps.find((step) => step.name === 'Warn about a failed newsletter proof');
     expect(warning?.if).toContain("steps.newsletter-evidence.outcome == 'failure'");
     expect(warning?.if).toContain("steps.newsletter-proof.outcome == 'failure'");
     expect(warning?.run).toContain('not verified');

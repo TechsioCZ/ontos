@@ -196,7 +196,21 @@ const digest = Command.make('digest', { directory: Argument.String('unit-directo
     );
   }),
 );
-const command = Command.make('delivery-plan').pipe(Command.withSubcommands([plan, digest]));
+const digests = Command.make('digests', {}, () =>
+  Effect.gen(function* printAllDigests() {
+    const head = (yield* git(['rev-parse', 'HEAD'])).trim();
+    const workspace = yield* readWorkspace(head);
+    const origins = yield* Effect.forEach(
+      ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
+      (name) => Config.String(name),
+    );
+    for (const unit of workspace.units) {
+      const value = yield* unitInputDigest(unit.directory, workspace.packages, workspace.units, workspace.entries, origins);
+      yield* Console.log(`${unit.id}\t${value}`);
+    }
+  }),
+);
+const command = Command.make('delivery-plan').pipe(Command.withSubcommands([plan, digest, digests]));
 if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.build(

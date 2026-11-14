@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Uploads only planned services. Uploads serialize, builds overlap, and readiness remains push-service.sh's gate.
+# Uploads only planned services, longest build first. Uploads serialize, builds overlap.
+# One upload owns runner bandwidth at a time so the per-service 25s truncation guard remains useful.
 # This is a rolling service deployment, not an atomic cross-service swap.
 set -euo pipefail
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
@@ -10,7 +11,7 @@ services="$(jq -er --arg head "$GITHUB_SHA" '
   if .sourceRevision == $head and (.services | type == "array") and
      (.services | length > 0) and (.services | unique | length) == (.services | length) and
      (.services | all(. == "app" or . == "storefront" or . == "shop" or . == "n1"))
-  then .services | join(" ") else error("invalid delivery plan") end' "$plan")"
+  then .services | sort_by(if . == "n1" then 0 elif . == "app" then 1 elif . == "storefront" then 2 else 3 end) | join(" ") else error("invalid delivery plan") end' "$plan")"
 # Validate every selected target before starting the first remote mutation.
 for service in $services; do
   case "$service" in
