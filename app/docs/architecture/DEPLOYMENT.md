@@ -708,7 +708,10 @@ enter-draining fence refuses, a quiescence check after draining fails, a promote
 also an interruption (the platform's SIGTERM after its readiness timeout, an outer deadline) or a defect. A failure
 message ends with `The authority was returned to active with durable admission open (drain abandonment …)`; an
 interruption is recorded in the ledger as one. The restore is bounded by the database (`lock_timeout` 5 s,
-`statement_timeout` 10 s) and commits whole or not at all.
+`statement_timeout` 10 s) and commits whole or not at all. When it fails only because a lock was not available in time
+(SQLSTATE `55P03`), it tries the whole transaction again, up to four more times with a doubling backoff from 250 ms
+(about 30 s at most, lock waits included); a rolled-back attempt leaves no ledger row, so a restore that succeeds is
+recorded once, and one that never succeeds reports that the authority could not be returned.
 
 What it cannot cover is a process that never runs its exit hook: a `SIGKILL`, an out-of-memory kill, a lost
 container, or a database the publisher can no longer reach. Then the authority stays `draining` and an operator
@@ -741,21 +744,63 @@ mise exec -- pnpm composition:abandon-drain --revision <the revision the old rel
 - It refuses unless the authority row is exactly `--revision`, `draining` and unexpired, writes exactly one ledger
   row, and prints the abandonment's id, who recorded it, when, and the lease — never a payload.
 
-Without the command — an image or checkout that predates it — the same transition is one insert, run with the
-administrative identity in a session that first proves no publisher is alive:
+### Plain-SQL fallback
+
+Use this only when no publisher is alive and the command is unavailable (an image or checkout that predates it). It is
+the same transition, through the same audited ledger insert: the database refuses a direct `UPDATE` of the authority
+row, so there is no shorter route. Run the whole block in ONE `psql` session with the administrative identity
+(`psql "$DATABASE_ADMIN_URL"`); the publication lock it takes is held by that session and released at the end.
+
+Preconditions, all checked by the block before it writes, and all of which must hold:
+
+- **No publisher is alive**: the session takes the environment-wide publication lock without waiting. `false` means a
+  publisher holds it; it restores the authority itself when it fails, so stop and let it finish.
+- **The running revision**: the authority row names the revision the OLD release serves — the one the last successful
+  deploy published, still running in the old app container — never the revision of the image that just failed.
+- **Phase `draining`**: an `active` row needs nothing; a `sealed` or `migrated` row is never returned (its seal precedes
+  the schema migration), so stop and read the deploy log instead.
+- **A valid lease**: `unexpired` must be `true`. If it is `false`, renew first (below), then run the block again.
+- **The stuck delivery is known**: step 2 lists the Outbox work that kept the drain from finishing — usually one
+  delivery no consumer can claim. Put its ids in the reason, and resolve it (see
+  [Outbox work that cannot drain](#outbox-work-that-cannot-drain-and-cores-own-work-that-crosses-the-boundary)) before
+  the next deploy, whose pre-flight would otherwise refuse on the same row.
 
 ```sql
-select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0)); -- must be true
+\set ON_ERROR_STOP on
+-- 0. Prove no publisher is alive; this session holds the lock until step 4.
+select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0)) as no_publisher \gset
+\if :no_publisher
+-- 1. The authority: must be the old release's revision, 'draining', unexpired = true.
+select revision, phase, durable_work_admission, valid_until, valid_until > clock_timestamp() as unexpired
+  from core.application_composition_authority where authority_key = 'active';
+-- 2. The work the drain was waiting for; name the stuck delivery in the reason below.
+select d.outbox_delivery_id, m.tenant_id, d.outbox_message_id, d.worker_key, d.consumer_module_key, d.status,
+       d.attempts_count, d.available_at, d.claim_expires_at
+  from core.outbox_deliveries d join core.outbox_messages m on m.outbox_message_id = d.outbox_message_id
+  where d.status not in ('done', 'released') order by d.available_at limit 20;
+-- 3. The guarded transition: one ledger row only while every precondition still holds, otherwise none.
 insert into core.application_composition_drain_abandonments
   (revision, initiated_by, operator_name, reason, lease_valid_until)
-values ('<the revision the old release serves>', 'operator', '<who>', '<why>', clock_timestamp());
+select a.revision, 'operator', '<who>', '<why, naming the stuck delivery id>', a.valid_until
+  from core.application_composition_authority a
+  where a.authority_key = 'active'
+    and a.revision = '<the revision the old release serves>'
+    and a.phase = 'draining'
+    and a.valid_until > clock_timestamp()
+returning drain_abandonment_id, revision, recorded_by, recorded_at, lease_valid_until;
+-- 4. Confirm phase = 'active' and durable_work_admission = 'open', then release the lock.
+select revision, phase, durable_work_admission from core.application_composition_authority where authority_key = 'active';
 select pg_advisory_unlock(hashtextextended('ontos.application-composition-publication', 0));
+\else
+\echo 'A publisher is alive: stop and let it finish.'
+\endif
 ```
 
-The insert's triggers lock the authority, refuse anything but that revision while `draining` and unexpired, stamp
-the session user, transaction, time and the real lease (the `lease_valid_until` value given is replaced), and return
-the revision to `active` with durable admission open in the same statement. If `pg_try_advisory_lock` returns
-`false`, a publisher is alive: stop and let it finish.
+Step 3 must return exactly one row. No row means a precondition no longer held when it ran: nothing was written, so
+read the authority row again before doing anything else. The insert's triggers re-check the same rules under the
+exclusive authority lock, stamp the session user, transaction, time and the real lease (the `lease_valid_until` given
+is replaced), and return the revision to `active` with durable admission open in the same statement; any refusal
+there aborts the block with nothing written.
 
 If it refuses because the lease has expired, **renew first, then run the command again**:
 
