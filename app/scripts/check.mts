@@ -29,7 +29,7 @@ const parallelLanes = [
   ['action:test:unit'],
   ['skills:check'],
   ['performance:readiness'],
-  ['typecheck:lint-rules', 'test:lint-rules'],
+  ['test:lint-rules'],
   ['lint:repository-policy'],
 ];
 

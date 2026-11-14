@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.node-tooling.json",
+  "include": [
+    "anti-slop/**/*.ts",
+    "anti-slop/**/*.mts",
+    "anti-slop/**/*.tsx"
+  ],
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/tools__oxlint__tsconfig.tsbuildinfo"
+  }
+}

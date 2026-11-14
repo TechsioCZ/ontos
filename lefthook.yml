@@ -1,6 +1,7 @@
 # Git hooks for the application under app/. Installing app dependencies installs them through the
 # lefthook package's own postinstall. Never bypass them with --no-verify.
 pre-commit:
+  parallel: false
   jobs:
     - name: shell-ui-candidates
       root: "app/"
@@ -21,13 +22,16 @@ pre-commit:
         - "app/tools/oxlint/effect-native/tests/fixtures/*"
       run: pnpm exec effect-tsgo --tsrs-lint oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
+    - name: typecheck
+      root: "app/"
+      run: ULTRAMODERN_TYPECHECK_BUILDERS=1 ULTRAMODERN_TYPECHECK_CHECKERS=1 pnpm typecheck
 
 pre-push:
   parallel: false
   jobs:
     - name: typecheck
       root: "app/"
-      run: GOMAXPROCS=9 ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
+      run: ULTRAMODERN_TYPECHECK_BUILDERS=1 ULTRAMODERN_TYPECHECK_CHECKERS=1 pnpm typecheck
     - name: contract
       root: "app/"
       run: GOMAXPROCS=9 GOMEMLIMIT=12GiB pnpm contract:check

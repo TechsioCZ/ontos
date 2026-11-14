@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.node-tooling.json",
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "*.mts"
+  ],
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsrs/tsconfig.tooling.tsbuildinfo"
+  }
+}

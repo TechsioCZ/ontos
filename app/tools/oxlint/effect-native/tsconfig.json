@@ -7,8 +7,18 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "incremental": true,
+    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/tools__oxlint__effect-native.tsbuildinfo"
   },
-  "include": ["*.ts", "*.mts", "rules/**/*.ts", "shared/**/*.ts", "tests/*.mts", "tests/*.ts"],
-  "exclude": ["tests/fixtures"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.mts"
+  ],
+  "exclude": [
+    "tests/fixtures"
+  ]
 }

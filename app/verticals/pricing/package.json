@@ -24,7 +24,7 @@
     "./testing/c14-source-authority": "./tests/support/c14-source-authority.fixture.ts"
   },
   "scripts": {
-    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical pricing --target dist && ultramodern-create ultramodern public-surface --app pricing --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical pricing --target dist && ultramodern-create ultramodern public-surface --app pricing --target dist && modern deploy --skip-build --deploy-target node",
     "db:check": "drizzle-kit check --dialect postgresql --out ./drizzle --output text",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -32,7 +32,7 @@
     "db:verify": "node scripts/verify-db-schema.mts",
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json"
   },
   "dependencies": {
     "@app/catalog": "workspace:*",

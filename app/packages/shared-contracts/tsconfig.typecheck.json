@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__shared-contracts__typecheck.tsbuildinfo",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "*.mts",
+    "*.ts",
+    "*.tsx",
+    "scripts",
+    "tests"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".output",
+    ".modern",
+    ".modernjs"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    }
+  ]
+}

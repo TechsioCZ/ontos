@@ -103,10 +103,6 @@ for unit in $units; do
 done
 
 if [ -n "$pending" ]; then
-  # The shared contract and design-token declarations every unit's declaration build references (as `pnpm build`).
-  for project in packages/shared-contracts packages/shared-design-tokens; do
-    pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
-  done
   # xargs bounds the parallel builds (a POSIX shell cannot count its own background jobs from a subshell).
   # shellcheck disable=SC2086
   if ! printf '%s\n' $pending | xargs -P "$jobs_limit" -n 1 sh "$root/scripts/zerops/build-app.sh" --unit; then

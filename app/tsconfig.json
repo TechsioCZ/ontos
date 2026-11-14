@@ -144,6 +144,171 @@
     },
     {
       "path": "verticals/symmy-integration"
+    },
+    {
+      "path": "apps/shell-super-app/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/assortment/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/availability/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/catalog/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/commerce-cart/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/commerce-customer-context/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/commerce-market-catalog/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/commerce-order/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/crm/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/crm-activities/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/facility-operations/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/finance-billing/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/inventory/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/legal-agreements/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/merchandise/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/party-registry/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/payment/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/payment-term-catalog/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/price-group-catalog/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/pricing/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/privacy/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/projects/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/promotion/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/property-leasing/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/property-portfolio/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/sales-insights/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/sales-pipeline/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/storefront-registry/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/symmy-integration/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/tagging/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/tax/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/work-tasks/tsconfig.typecheck.json"
+    },
+    {
+      "path": "verticals/workforce/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/admin-ui/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/consent-authority-contracts"
+    },
+    {
+      "path": "packages/core-runtime/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/customer-market-retirement-contracts"
+    },
+    {
+      "path": "packages/customer-market-retirement-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/customer-payment-term-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/email-delivery/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/gateway-principal-verifier/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/payment-term-catalog-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/price-group-catalog-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/pricing-contracts"
+    },
+    {
+      "path": "packages/pricing-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/shared-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "packages/storefront-registry-contracts"
+    },
+    {
+      "path": "packages/storefront-registry-contracts/tsconfig.typecheck.json"
+    },
+    {
+      "path": "scripts"
+    },
+    {
+      "path": "tools/oxlint/effect-native"
+    },
+    {
+      "path": "tools/oxlint"
+    },
+    {
+      "path": "./tsconfig.tooling.json"
+    },
+    {
+      "path": "scripts/scaffolding"
+    },
+    {
+      "path": "scripts/demo/email-dispatcher"
+    },
+    {
+      "path": "packages/shared-contracts/tooling"
     }
   ]
 }

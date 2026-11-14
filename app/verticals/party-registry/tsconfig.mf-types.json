@@ -6,6 +6,7 @@
     "shared/api.ts"
   ],
   "compilerOptions": {
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noCheck": true
   }
 }

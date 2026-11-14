@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/verticals__commerce-customer-context__typecheck.tsbuildinfo",
+    "types": [
+      "node",
+      "bun-types/sqlite"
+    ]
+  },
+  "include": [
+    "*.mts",
+    "*.ts",
+    "*.tsx",
+    "scripts",
+    "tests"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".output",
+    ".modern",
+    ".modernjs"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    }
+  ]
+}

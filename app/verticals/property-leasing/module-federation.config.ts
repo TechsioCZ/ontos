@@ -4,8 +4,9 @@ import runtimeVersionMetadata from '@modern-js/runtime/package.json' with { type
 import pluginTanstackVersionMetadata from '@modern-js/plugin-tanstack/package.json' with { type: 'json' };
 import pluginI18nVersionMetadata from '@modern-js/plugin-i18n/package.json' with { type: 'json' };
 
-import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
+
+import { resolveTsrsCompiler } from '../../scripts/typecheck-compiler.mjs';
 
 import { dependencies } from './package.json';
 
@@ -15,7 +16,7 @@ const runtimeVersion = runtimeVersionMetadata.version;
 const reactVersion = reactVersionMetadata.version;
 const reactDomVersion = reactDomVersionMetadata.version;
 
-const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+const tsgoCompilerInstance = resolveTsrsCompiler({ from: import.meta.url });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {

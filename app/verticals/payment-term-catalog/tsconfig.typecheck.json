@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/verticals__payment-term-catalog__typecheck.tsbuildinfo"
+  },
+  "include": [
+    "*.mts",
+    "*.ts",
+    "*.tsx",
+    "scripts",
+    "tests"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".output",
+    ".modern",
+    ".modernjs"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    }
+  ]
+}

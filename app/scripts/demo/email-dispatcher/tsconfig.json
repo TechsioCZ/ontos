@@ -2,7 +2,15 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "incremental": true,
+    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/scripts__demo__email-dispatcher__tsconfig.tsbuildinfo"
   },
-  "include": ["*.ts", "*.mts", "../../../packages/email-delivery/src/smtp.ts"]
+  "include": [
+    "*.ts",
+    "*.mts",
+    "../../../packages/email-delivery/src/smtp.ts"
+  ]
 }

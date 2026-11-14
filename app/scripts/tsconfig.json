@@ -2,11 +2,16 @@
   "extends": "../tsconfig.node-tooling.json",
   "include": [
     "**/*.ts",
+    "**/*.tsx",
     "**/*.mts"
   ],
   "exclude": [
     "scaffolding",
     "demo/email-dispatcher",
     "integration/tests/*.old-release.mts"
-  ]
+  ],
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "../node_modules/.cache/tsrs/scripts.tsbuildinfo"
+  }
 }

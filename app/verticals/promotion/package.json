@@ -10,9 +10,9 @@
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts promotion && ultramodern dev",
-    "build": "ultramodern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app promotion --target dist && ultramodern deploy --skip-build --deploy-target node",
+    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 ultramodern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app promotion --target dist && ultramodern deploy --skip-build --deploy-target node",
     "serve": "ultramodern serve",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
     "test:unit": "rstest --project unit",
     "test:integration": "node ../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist && rstest --project integration",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
