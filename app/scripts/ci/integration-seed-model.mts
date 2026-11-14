@@ -218,8 +218,17 @@ export const schemaDifference = (expected: string, actual: string, limit = 30): 
   const after = lineCounts(actual);
   const removed = linesOnlyIn(before, after, '-');
   const added = linesOnlyIn(after, before, '+');
+  // Which kinds of statement differ, so one report shows every class of difference, not only the first 30 lines.
+  const kinds = new Map<string, number>();
+  for (const line of removed) {
+    const kind =
+      /^- +(?<kind>(?:CREATE|ALTER|GRANT|REVOKE|COMMENT|SET|SELECT)\b(?: [A-Z]+)?|CONSTRAINT)/u.exec(line)?.groups
+        ?.kind ?? 'other';
+    kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+  }
   return [
     `${String(removed.length)} line(s) only in the seed, ${String(added.length)} only after restore`,
+    `by kind: ${[...kinds].map(([kind, times]) => [kind, String(times)].join(' ')).join(', ')}`,
     ...removed.slice(0, limit),
     ...added.slice(0, limit),
   ].join('\n');

@@ -145,10 +145,11 @@ it('restores a seed from another run or revision under the same key, never one a
 it('names the schema lines a restored database lacks or gained, without the per-run restrict keys', () => {
   const seed = '\\restrict aaa\nCREATE TABLE a ();\nGRANT SELECT ON a TO r;\n\\unrestrict aaa\n';
   const restored = '\\restrict bbb\nCREATE TABLE a ();\nGRANT SELECT ON a TO s;\n\\unrestrict bbb\n';
-  expect(schemaDifference(seed, seed)).toBe('0 line(s) only in the seed, 0 only after restore');
+  expect(schemaDifference(seed, seed)).toBe('0 line(s) only in the seed, 0 only after restore\nby kind: ');
   const difference = schemaDifference(seed, restored);
   expect(difference).toContain('- GRANT SELECT ON a TO r;');
   expect(difference).toContain('+ GRANT SELECT ON a TO s;');
+  expect(difference).toContain('by kind: GRANT SELECT 1');
   expect(difference).not.toContain('restrict');
 });
 
