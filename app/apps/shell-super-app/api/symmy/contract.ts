@@ -124,10 +124,8 @@ export const SymmyInternalReadQuerySchema = Schema.Struct({
   contractVersion: Schema.optionalKey(Schema.Literal('INTERNAL_C14')),
   limit: Schema.optionalKey(symmyReadLimitSchema),
   offset: Schema.optionalKey(symmyReadOffsetSchema),
-  priceLimit: Schema.optionalKey(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
-  ),
-  priceOffset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
+  priceLimit: Schema.optionalKey(symmyReadLimitSchema),
+  priceOffset: Schema.optionalKey(symmyReadOffsetSchema),
   sourceRecordId: Schema.optionalKey(Schema.toEncoded(SymmySourceRecordKeySchema.fields.sourceRecordId)),
 });
 /** The public `GET /price-lists` query. Neither `code` nor `contractVersion` is a parameter. */

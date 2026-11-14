@@ -32,7 +32,7 @@ type SymmyPriceListsResponse = typeof SymmyPriceListsResponseSchema.Type;
 
 const mapPriceList = (list: SymmyInternalPriceListsProjection['price_lists'][number]) => {
   const base = {
-    ...Struct.omit(list, ['ends_at', 'id', 'source_record_id', 'starts_at']),
+    ...Struct.pick(list, ['description', 'name', 'priceGroupRef', 'prices']),
     code: list.source_record_id,
     startsAt: list.starts_at,
   };
