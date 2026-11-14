@@ -1,5 +1,5 @@
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   MerchandiseCommandSchema,
@@ -283,6 +283,9 @@ it.effect('CreateProduct derives primary category ancestry without additional ca
       taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
     });
+    if (!Predicate.isTagged(command, 'CreateProduct')) {
+      return yield* Effect.die('Expected a product creation command');
+    }
     expect(workingSetRequestOf(command, 'category-product').categoryIds).toEqual(['c']);
     const created = yield* evolveMerchandiseState(state, command, { ...input, resourceId: 'category-product' });
     expect(created.state.products.at(-1)).toMatchObject({
@@ -297,3 +300,24 @@ it.effect('CreateProduct derives primary category ancestry without additional ca
     expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
   }),
 );
+
+it('loads products by primary category for a rename, but not for an unrelated category edit', () => {
+  const renamed = workingSetRequestOf(
+    {
+      _tag: 'UpdateCategory',
+      id: categoryId('c'),
+      patch: { name: 'Renamed category' },
+    },
+    'rename-category',
+  );
+  expect(renamed.productPrimaryCategoryIds).toEqual(['c']);
+  const repositioned = workingSetRequestOf(
+    {
+      _tag: 'UpdateCategory',
+      id: categoryId('c'),
+      patch: { position: 3 },
+    },
+    'move-category',
+  );
+  expect(repositioned.productPrimaryCategoryIds).toBeUndefined();
+});
