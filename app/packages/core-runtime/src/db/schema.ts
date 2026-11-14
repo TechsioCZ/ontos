@@ -120,6 +120,58 @@ export const applicationCompositionAuthority = enableCoreGovernedRls(
   ),
 );
 
+export const DrainAbandonmentInitiatorSchema = Schema.Literals(['publisher', 'operator']);
+export type DrainAbandonmentInitiator = typeof DrainAbandonmentInitiatorSchema.Type;
+
+/**
+ * Append-only record of every return of a `draining` authority to `active` for the same revision: the failing
+ * publisher's automatic abort, or the operator command when no publisher is alive. Only the migration administrator
+ * writes it; its triggers stamp the session identity, transaction, time and the lease it found, and apply the
+ * transition in the same statement, refusing unless the row is exactly that revision, `draining` and unexpired. No
+ * other path may move a revision from `draining` back to `active`.
+ */
+export const applicationCompositionDrainAbandonments = enableCoreGovernedRls(
+  coreSchema.table(
+    'application_composition_drain_abandonments',
+    {
+      drainAbandonmentId: uuid('drain_abandonment_id').defaultRandom().primaryKey(),
+      revision: text('revision').notNull(),
+      initiatedBy: text('initiated_by').$type<DrainAbandonmentInitiator>().notNull(),
+      operatorName: text('operator_name').notNull(),
+      reason: text('reason').notNull(),
+      leaseValidUntil: timestamp('lease_valid_until', { withTimezone: true }).notNull(),
+      recordedBy: text('recorded_by')
+        .default(sql`session_user`)
+        .notNull(),
+      recordedTransactionId: text('recorded_transaction_id')
+        .default(sql`(pg_current_xact_id())::text`)
+        .notNull(),
+      recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+    },
+    (table) => [
+      index('core_application_composition_drain_abandonments_revision_idx').on(table.revision, table.recordedAt),
+      check('core_application_composition_drain_abandonments_revision_ck', sql`${table.revision} ~ '^[a-f0-9]{64}$'`),
+      check(
+        'core_application_composition_drain_abandonments_initiator_ck',
+        sql`${table.initiatedBy} in ('publisher', 'operator')`,
+      ),
+      check(
+        'core_application_composition_drain_abandonments_operator_ck',
+        sql`length(btrim(${table.operatorName})) between 1 and 200`,
+      ),
+      check(
+        'core_application_composition_drain_abandonments_reason_ck',
+        sql`length(btrim(${table.reason})) between 1 and 2000`,
+      ),
+      pgPolicy('core_application_composition_drain_abandonments_select', {
+        for: 'select',
+        to: SHARED_RUNTIME_ROLE,
+        using: sql`true`,
+      }),
+    ],
+  ),
+);
+
 /** Durable owner workflows participate until their trusted journal transition reaches a terminal state. */
 export const applicationCompositionDurableWork = enableCoreGovernedRls(
   coreSchema.table(
@@ -1583,6 +1635,7 @@ export const ACCESS_TABLES = accessTables.all;
 
 export const CORE_TABLE_INVENTORY = [
   'application_composition_authority',
+  'application_composition_drain_abandonments',
   'application_composition_durable_work',
   'tenants',
   'legal_entities',
@@ -1623,6 +1676,7 @@ export const CORE_TABLE_INVENTORY = [
 export const coreDatabaseSchema = {
   ...accessDatabaseSchema,
   applicationCompositionAuthority,
+  applicationCompositionDrainAbandonments,
   applicationCompositionDurableWork,
   actionInvocations,
   agentProposals,
@@ -1661,6 +1715,7 @@ export const coreDatabaseSchema = {
 
 export const CORE_TABLES = [
   applicationCompositionAuthority,
+  applicationCompositionDrainAbandonments,
   applicationCompositionDurableWork,
   tenants,
   legalEntities,

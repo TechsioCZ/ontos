@@ -1,10 +1,11 @@
 import { Context, Effect, Layer } from 'effect';
 
-import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
+import { AccessProjectionWriter, isFenceBusy } from '../access/intent/projection-writer.ts';
 import type { TenantProjectionWrite } from '../access/intent/projection-writer.ts';
 import type { AgentOperatorCommand } from '../modules/actions/agent-operator-command.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { ActionAuthorizationLifecycleError } from './action-authorization-lifecycle-error.ts';
+import { TenantProjectionBusyError } from './tenant-projection-busy-error.ts';
 
 interface CurrentAgentOperatorState {
   readonly activeHumanIds: readonly string[];
@@ -53,7 +54,7 @@ export interface ActionAuthorizationLifecycleService {
    */
   readonly reconcileTenant: (
     scope: OperationalScope,
-  ) => Effect.Effect<TenantProjectionWrite, ActionAuthorizationLifecycleError>;
+  ) => Effect.Effect<TenantProjectionWrite, ActionAuthorizationLifecycleError | TenantProjectionBusyError>;
 }
 
 export class ActionAuthorizationLifecycle extends Context.Service<
@@ -78,7 +79,15 @@ export const ActionAuthorizationLifecycleLive: Layer.Layer<
     Effect.map((writer): ActionAuthorizationLifecycleService =>
       Object.freeze({
         reconcileTenant: (scope: OperationalScope) =>
-          writer.reconcileTenant({ scope }).pipe(Effect.mapError(reconcileFailed)),
+          writer.reconcileTenant({ scope }).pipe(
+            // A busy fence is translated once, here at the writer's edge, so a caller can wait for the other writer
+            // by its tag instead of inspecting the writer's failure.
+            Effect.mapError((refusal) =>
+              isFenceBusy(refusal)
+                ? new TenantProjectionBusyError({ reason: refusal.reason })
+                : reconcileFailed(refusal),
+            ),
+          ),
       }),
     ),
   ),

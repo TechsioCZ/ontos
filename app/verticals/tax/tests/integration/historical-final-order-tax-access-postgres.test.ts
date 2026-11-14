@@ -581,13 +581,18 @@ it.layer(services, { excludeTestServices: true })('historical final Order Tax ac
               test.query("UPDATE core.application_composition_authority SET phase='draining' WHERE revision=$1", [
                 test.compositionRevision,
               ]),
+              // A draining revision returns to active only through a recorded drain abandonment.
               () =>
-                test
-                  .query('UPDATE core.application_composition_authority SET phase=$1 WHERE revision=$2', [
-                    authority.phase,
-                    test.compositionRevision,
-                  ])
-                  .pipe(Effect.orDie),
+                (authority.phase === 'active'
+                  ? test.query(
+                      "INSERT INTO core.application_composition_drain_abandonments (revision,initiated_by,operator_name,reason,lease_valid_until) VALUES ($1,'operator','historical-tax-test','Restore the fixture authority after the draining case',clock_timestamp())",
+                      [test.compositionRevision],
+                    )
+                  : test.query('UPDATE core.application_composition_authority SET phase=$1 WHERE revision=$2', [
+                      authority.phase,
+                      test.compositionRevision,
+                    ])
+                ).pipe(Effect.orDie),
             );
             const failure = yield* test.readFinal().pipe(Effect.flip);
             expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);

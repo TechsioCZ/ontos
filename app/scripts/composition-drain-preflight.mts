@@ -16,7 +16,10 @@ import { Command, Flag } from 'effect/cli';
 
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
 import { applicationCompositionAuthority } from '../packages/core-runtime/src/db/schema.ts';
-import { carriedOverCoreSystemWorkerKeys } from '../packages/core-runtime/src/modules/application-composition-authority.ts';
+import {
+  carriedOverCoreSystemWorkerKeys,
+  countDrainBlockers,
+} from '../packages/core-runtime/src/modules/application-composition-authority.ts';
 import {
   classifyDrainWork,
   countDrainWork,
@@ -24,8 +27,10 @@ import {
   countUnmatchedMessages,
   describeWorkerKeyIdentity,
   listDrainWork,
+  publicationVerdict,
 } from '../packages/core-runtime/src/outbox/drain-preflight.ts';
 import {
+  countStalledUnmatchedMessages,
   describeUndrainableOutboxWork,
   listUndrainableOutboxWork,
 } from '../packages/core-runtime/src/outbox/undrainable-work.ts';
@@ -72,7 +77,7 @@ const preflight = (budgetMs: number, limit: number) =>
         listDrainWork(database.executor, {
           budgetMs,
           carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-          coreSystemConsumers: sets.coreSystemConsumers,
+          coreSystemConsumers: sets.liveCoreSystemConsumers,
           limit,
         }),
       ],
@@ -108,41 +113,29 @@ const preflight = (budgetMs: number, limit: number) =>
     const undrainable = yield* listUndrainableOutboxWork(database.executor, {
       budgetMs,
       carriedOverWorkerKeys: sets.carriedOverWorkerKeys,
-      coreSystemConsumers: sets.coreSystemConsumers,
+      coreSystemConsumers: sets.liveCoreSystemConsumers,
     });
     const described = describeUndrainableOutboxWork(undrainable.filter((delivery) => delivery.reason !== 'dead'));
-    // The pre-flight only ever runs for an `active` authority. Say what the publisher would really do otherwise,
-    // and count unmatched messages, which the drain and every seal block on just as hard.
-    const blockers = [
-      ...(undrainable.length === 0 ? [] : [`${String(undrainable.length)} delivery(ies) would be refused`]),
-      ...(unmatched === 0 ? [] : [`${String(unmatched)} unmatched message(s) would block the drain`]),
-    ];
-    if (authority.phase === 'draining') {
-      yield* Console.log(
-        'this authority is draining: the running release already refuses reads, and a publication would resume its Outbox drain rather than run this pre-flight. Follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md.',
-      );
-      return false;
+    // Each phase takes a different publication path; the verdict asks what that path itself checks.
+    const verdict = publicationVerdict({
+      deliveriesRefused: undrainable.length,
+      // The migrated promotion's own `requireDrainedWork` count, not a re-derivation of it.
+      drainBlockers: yield* database.executor.transaction((transaction) => countDrainBlockers(transaction)),
+      phase: authority.phase,
+      stalledMessages: yield* countStalledUnmatchedMessages(database.executor, budgetMs),
+      unmatched,
+    });
+    yield* Console.log(verdict.line);
+    if (authority.phase !== 'active') {
+      return verdict.proceeds;
     }
-    if (authority.phase === 'sealed') {
-      yield* Console.log(
-        'this authority is sealed: a replacement publication is refused outright until a migration completes.',
-      );
-      return false;
-    }
-    const starts = blockers.length === 0;
-    const skipsDrain = authority.phase === 'migrated';
-    yield* Console.log(
-      `a publication of this release would ${skipsDrain ? 'promote without a drain (the authority is migrated), and its promotion check' : 'start its drain'}: ${
-        starts ? 'yes' : `no (${blockers.join('; ')})`
-      }`,
-    );
     if (described !== '') {
       yield* Console.log(described);
     }
     if (undrainable.some((delivery) => delivery.reason === 'dead')) {
       yield* Console.log('Dead deliveries must be redriven or released first: `pnpm outbox:dead-delivery list`.');
     }
-    return starts;
+    return verdict.proceeds;
   });
 
 const command = Command.make(

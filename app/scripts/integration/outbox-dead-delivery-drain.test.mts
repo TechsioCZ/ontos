@@ -262,7 +262,7 @@ it.layer(services, { excludeTestServices: true })('composition drain with a dead
         // A short freshness lease bounds the drain wait at about ten seconds.
         yield* f.admin.executor
           .update(applicationCompositionAuthority)
-          .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+          .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
         const failure = yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(
           Effect.provide(f.layer),
           Effect.flip,
