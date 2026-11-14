@@ -113,13 +113,22 @@ interface Value {
   /** Own properties excluded by an actual rest projection, including on an open record. */
   readonly omittedFields?: ReadonlySet<string>;
   readonly validationInputs?: readonly Value[];
-  /** Opaque data known to be a string: the payload of a native string schema or of a closed template literal. */
+  /**
+   * `true`: data a native String/Trim/NonEmptyString schema or a closed template literal decodes to, and combinators
+   * that keep the decoded value (brand, filters, decodeTo onto such a target, a one-member Union, fromJsonString)
+   * carry it unchanged. `false`: a nullable or optional wrapper may yield null or undefined, which vetoes any string
+   * evidence, a string literal included. Only `isClosedString` reads it.
+   */
   readonly stringData?: boolean;
 }
 type Completion = 'bad' | 'falls' | 'returns';
 /** Closed string data: a string literal, or data a native string schema or closed template literal produced. */
 const isClosedString = (value: Value): boolean =>
-  !metadataOnly(value) && value.kind === 'data' && (value.stringData === true || ('literal' in value && typeof value.literal === 'string'));
+  !metadataOnly(value) && value.kind === 'data' && value.stringData !== false &&
+  (value.stringData === true || ('literal' in value && typeof value.literal === 'string'));
+/** The same data without string evidence: a nullable or optional wrapper may yield null or undefined instead. */
+const possiblyAbsentString = (value: Value | undefined): Value | undefined =>
+  value !== undefined && isClosedString(value) ? { ...value, stringData: false } : value;
 /** A schema whose decoded and encoded values are both closed strings. */
 const isClosedStringSchema = (value: Value): boolean =>
   value.kind === 'schema' && isClosedString(value.payload ?? BAD) && isClosedString(value.encoded ?? value.payload ?? BAD);
@@ -3350,22 +3359,20 @@ class DataFactoryProof {
     if (this.defaultStructEquivalence && operation === 'optionalKey' && args.length === 1 && args[0]?.kind === 'schema')
       return {...args[0], defaultEquivalenceOptional: true};
     if (
-      [
-        'fromJsonString',
-        'optionalKey',
-        ...(this.publicCodecs ? ['requiredKey'] : []),
-        'optional',
-        'NullOr',
-        'OptionFromNullOr',
-        'OptionFromOptionalNullOr',
-        'UndefinedOr',
-        'toEncoded',
-        'toType',
-      ].includes(operation) &&
+      ['fromJsonString', ...(this.publicCodecs ? ['requiredKey'] : []), 'toEncoded', 'toType'].includes(operation) &&
       args.length === 1 &&
       args[0]?.kind === 'schema'
     )
       return args[0];
+    if (
+      ['optionalKey', 'optional', 'NullOr', 'OptionFromNullOr', 'OptionFromOptionalNullOr', 'UndefinedOr'].includes(operation) &&
+      args.length === 1 &&
+      args[0]?.kind === 'schema'
+    ) {
+      const payload = possiblyAbsentString(args[0].payload);
+      const encoded = possiblyAbsentString(args[0].encoded);
+      return payload === args[0].payload && encoded === args[0].encoded ? args[0] : { ...args[0], payload, encoded };
+    }
     if (this.coreHashDepth > 0 && operation === 'fromJsonString' && args.length === 1 && args[0].native === 'encoder-only-schema') return args[0];
     if (this.defaultStructEquivalence && operation === 'brand')
       return args.length === 1 && typeof args[0]?.literal === 'string'

@@ -720,6 +720,9 @@ it('proves a Record only when its key is a closed string schema and its value is
       decodedEntriesFactory('Schema.Record(Schema.Symbol, Schema.String)', ...stringEntry),
       decodedEntriesFactory('Schema.Record(Schema.Unknown, Schema.String)', ...stringEntry),
       decodedEntriesFactory('Schema.Record(Schema.Json, Schema.String)', ...stringEntry),
+      // A nullable or optional string is not string data.
+      decodedEntriesFactory('Schema.Record(Schema.NullOr(Schema.String), Schema.String)', ...stringEntry),
+      decodedEntriesFactory('Schema.Record(Schema.UndefinedOr(Schema.Literal("key")), Schema.String)', ...stringEntry),
     ],
   );
 });
@@ -770,6 +773,8 @@ it('proves a TemplateLiteral only when every part is a string literal or a close
       iconFactory('["icon-[", Schema.Number, "]"]'),
       iconFactory('["icon-[", Schema.Struct({ id: Schema.String }), "]"]'),
       iconFactory('["icon-[", Schema.Json, "]"]'),
+      iconFactory('["icon-[", Schema.NullOr(Schema.String), "]"]'),
+      iconFactory('["icon-[", Schema.UndefinedOr(Schema.String), "]"]'),
       'import { Schema } from "effect"; const parts = ["icon-[", Schema.String, "]"] as const; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral([...parts, Schema.Unknown]) })); export const makeData = (value: string) => decode({ icon: value });',
       // A spread has no per-part fields, so even closed parts are not modelled.
       'import { Schema } from "effect"; const parts = ["icon-[", Schema.String, "]"] as const; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral([...parts]) })); export const makeData = (value: string) => decode({ icon: value });',
