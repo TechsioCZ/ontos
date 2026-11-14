@@ -103,13 +103,17 @@ it('owns the complete Party Registry operational catalog in the party schema', (
     'party_contact_point_purposes',
     'party_contact_points',
     'party_corrections',
+    'party_create_source_receipts',
     'party_fact_assertion_identities',
     'party_fact_assertions',
     'party_historical_name_assertions',
+    'party_ico_correlation_epochs',
+    'party_legacy_ico_authority_fences',
     'party_match_decisions',
     'party_merges',
     'party_official_identifiers',
     'party_relationships',
+    'party_source_effect_receipts',
     'privacy_measure_executions',
   ]);
   expect(qualifiedNames).toEqual(PARTY_TABLE_INVENTORY.map((name) => `party.${name}`));

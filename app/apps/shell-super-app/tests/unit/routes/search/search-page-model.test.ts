@@ -2,13 +2,13 @@ import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contr
 import { Effect, Schema } from 'effect';
 import { expect, it, rstest, test } from 'effect-rstest';
 
-import { ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../../shared/api.ts';
+import { ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../../shared/browser-api.ts';
 import type {
   ShellSearchPayload,
   ShellSearchPresentationInventory,
   ShellSearchResponse,
   ShellSearchResult,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import {
   loader,
   searchFamiliesFromValue,

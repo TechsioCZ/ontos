@@ -30,6 +30,8 @@ export const AssignCustomerPriceGroupActionForbiddenProblemSchema = makeProblemD
       'operation_context_denied',
       'operation_context_invalid',
       'customer_price_group_scope_mismatch',
+      'customer_price_group_source_authority_denied',
+      'customer_price_group_source_privacy_denied',
     ]),
     reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },

@@ -4,15 +4,12 @@ import { parseSync } from "oxc-parser";
 
 import { defineRule } from "@oxlint/plugins";
 
-import type { Context, ESTree, Variable } from "@oxlint/plugins";
+import type { Context, ESTree } from "@oxlint/plugins";
 
-import { provenDataImportLiteral, provesDataFactoryImport } from "./data-factory-proof.ts";
+import { provesDataFactoryImport } from "./data-factory-proof.ts";
+import { registeredToolingRoot } from "./registered-tooling-root-proof.ts";
 import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
-import {
-  isInsideNativeServiceFactoryCallback,
-  isNativeServiceFactoryAcquisition,
-  isNativeServiceFactoryArgument,
-} from "../../../effect-native/shared/native-service-factory.ts";
+import { isInsideNativeServiceFactoryCallback, isNativeServiceFactoryAcquisition } from "../../../effect-native/shared/native-service-factory.ts";
 
 const SERVICE_CONSTRUCTOR_NAME = /^make[A-Z]/u;
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
@@ -155,7 +152,7 @@ function addImport(model: Model, declaration: Syntax): boolean {
   for (const entry of declaration.specifiers) {
     const specifier = asNode(entry);
     if (specifier?.importKind === "type") continue;
-    if (specifier === null || kind(specifier) !== "ImportSpecifier") return false;
+    if (kind(specifier) !== "ImportSpecifier") return false;
     const imported = nameOf(asNode(specifier.imported)) ?? stringOf(asNode(specifier.imported));
     const local = nameOf(asNode(specifier.local));
     if (imported === null || local === null || !SAFE_IMPORTS.get(source)?.has(imported)) return false;
@@ -347,7 +344,7 @@ function functionScope(info: FunctionInfo): FunctionScope {
   if (kind(info.body) === "BlockStatement") {
     for (const statement of info.body.body ?? []) {
       const node = asNode(statement);
-      if (node === null || kind(node) !== "VariableDeclaration") continue;
+      if (kind(node) !== "VariableDeclaration") continue;
       if (node.kind !== "const") valid = false;
       for (const entry of node.declarations ?? []) {
         const declarator = asNode(entry);
@@ -593,15 +590,14 @@ function isPureDataFactoryImport(
     try {
       const sourceText = readFileSync(resolved, "utf8");
       const parsed = parseSync(resolved, sourceText, { sourceType: "module" });
-      const program = asNode(parsed.program);
-      cache.set(resolved, parsed.errors.length === 0 && program?.type === "Program" ? buildModel(program) : null);
+      cache.set(resolved, parsed.errors.length === 0 ? buildModel(parsed.program as ESTree.Program) : null);
     } catch {
       cache.set(resolved, null);
     }
   }
   const model = cache.get(resolved);
   const exported = model?.exports.get(importedName);
-  return model !== null && model !== undefined && exported !== undefined &&
+  return model !== null && exported !== undefined &&
     (prove(exported, model, { visiting: new Set(), proven: new Set() }) || proveLiteralDataFactory(exported, model));
 }
 
@@ -636,13 +632,11 @@ const REFLECTIVE_MEMBERS = new Set([
 const OBJECT_DATA_CALLS = new Set(["assign", "freeze", "keys", "values", "entries", "fromEntries", "is", "hasOwn"]);
 const EFFECT_PROCESS_CALLS = new Set([
   "acquireRelease", "addFinalizer", "all", "andThen", "catch", "catchCause", "catchTag", "context", "fail", "filterOrFail", "forEach",
-  "flatMap", "fn", "gen", "map", "mapError", "promise", "provide", "provideContext", "provideService",
-  "runPromise", "runPromiseWith", "scoped", "succeed", "suspend", "sync", "tap", "tapCause", "tapError", "tapErrorTag", "timeoutOrElse", "try", "tryPromise",
+  "flatMap", "fn", "gen", "map", "mapError", "orElseSucceed", "promise", "provide", "provideContext", "provideService",
+  "runPromise", "runPromiseWith", "scoped", "succeed", "suspend", "sync", "tap", "tapCause", "tapDefect", "tapError", "tapErrorTag", "timeoutOrElse", "try", "tryPromise",
 ]);
 const EFFECT_PROCESS_VALUES = new Set(["void", "never"]);
-/** Pure combinators admitted as values; `option` and `result` only as a direct `.pipe` step. */
-const EFFECT_PIPE_TRANSFORMS = new Set(["asVoid", "option", "orDie", "result"]);
-const EFFECT_PIPE_ONLY_TRANSFORMS = new Set(["option", "result"]);
+const EFFECT_PIPE_TRANSFORMS = new Set(["asVoid", "orDie", "result"]);
 
 function processChildren(node: Syntax): Syntax[] {
   return Object.entries(node).flatMap(([key, value]) => {
@@ -686,7 +680,7 @@ function processSource(program: ESTree.Program): ProcessSource {
     if (ERASED_PROCESS_SYNTAX.has(node.type) || node.declare === true) return;
     if (node.type.startsWith("JSX") || UNSUPPORTED_PROCESS_SYNTAX.has(node.type)) { valid = false; return; }
     if (node.type === "ImportDeclaration") {
-      if (node.importKind !== "type") for (const specifier of node.specifiers as Syntax[]) {
+      if (node.importKind !== "type") for (const specifier of node.specifiers) {
         if (specifier.importKind !== "type") {
           parents.set(specifier as Syntax, node);
           parents.set(specifier.local as Syntax, specifier as Syntax);
@@ -858,8 +852,7 @@ function ordinaryProcessUse(node: Syntax, source: ProcessSource): boolean {
     const parent = source.parents.get(liftedProcessNode(member, source));
     const value = asNode(parent?.right);
     return parent?.type === "AssignmentExpression" && parent.operator === "=" && parent.left === liftedProcessNode(member, source) &&
-      value?.type === "Literal" && typeof value.value === "number" && Number.isInteger(value.value) &&
-      value.value >= 0 && value.value <= 255;
+      value?.type === "Literal" && Number.isInteger(value.value) && value.value >= 0 && value.value <= 255;
   }
   if (writtenProcessNode(member, source)) return false;
   if (slot === "stdin") return ordinaryStdinUse(member, source);
@@ -886,16 +879,12 @@ function effectProcessUse(node: Syntax, source: ProcessSource): boolean {
   const member = processMember(node, source);
   const slot = staticProcessMember(member ?? undefined);
   if (member === null || slot === null || writtenProcessNode(member, source)) return false;
-  if (slot === "serviceOption") {
-    const call = directProcessCall(member, source);
-    return call !== null && call.arguments.length === 1 && call.arguments[0].type !== "SpreadElement";
-  }
   if (EFFECT_PROCESS_CALLS.has(slot)) return directProcessCall(member, source) !== null;
   if (EFFECT_PROCESS_VALUES.has(slot)) return true;
   if (EFFECT_PIPE_TRANSFORMS.has(slot)) {
     const parent = source.parents.get(liftedProcessNode(member, source));
-    if (parent?.type !== "CallExpression" || !(parent.arguments as Syntax[]).includes(liftedProcessNode(member, source))) return false;
-    if (!EFFECT_PIPE_ONLY_TRANSFORMS.has(slot)) return true;
+    if (parent?.type !== "CallExpression" || !parent.arguments.includes(liftedProcessNode(member, source))) return false;
+    if (slot !== "result") return true;
     const callee = asNode(parent.callee);
     return !parent.optional && callee?.type === "MemberExpression" && !callee.optional && !callee.computed &&
       nameOf(asNode(callee.property)) === "pipe";
@@ -936,7 +925,7 @@ function localErrorCauseMetadata(member: Syntax, source: ProcessSource): boolean
   const descriptor = asNode(call.arguments[2]);
   if (descriptor?.type !== "ObjectExpression") return false;
   const keys = new Set<string>();
-  for (const property of descriptor.properties as Syntax[]) {
+  for (const property of descriptor.properties) {
     const key = property.computed ? null : nameOf(asNode(property.key)) ?? stringOf(asNode(property.key));
     if (property.type !== "Property" || property.kind !== "init" || property.method || key === null || keys.has(key) ||
       !["value", "configurable", "enumerable", "writable"].includes(key)) return false;
@@ -1095,7 +1084,7 @@ function ownsConstructor(program: ESTree.Program, importedName: string): boolean
     const declaration = statement.declaration as Syntax;
     const entries = declaration.type === "FunctionDeclaration" ? [{ id: declaration.id, init: declaration }] :
       declaration.type === "VariableDeclaration" && declaration.kind === "const" ? declaration.declarations : [];
-    return (entries as Syntax[]).some((entry) => {
+    return entries.some((entry: Syntax) => {
       const binding = asNode(entry.id);
       const initializer = asNode(entry.init);
       if (nameOf(binding) !== importedName || initializer === null ||
@@ -1137,12 +1126,12 @@ function closedTestControlExport(statement: Syntax, source: ProcessSource): bool
   const methods = new Set<Syntax>();
   const parameters = new Set<Syntax>();
   const callbacks = new Set<Syntax>();
-  for (const property of returned.argument.properties as Syntax[]) {
+  for (const property of returned.argument.properties) {
     const method = asNode(property.value);
     if (property.type !== "Property" || property.computed || property.method || property.kind !== "init" ||
       method?.type !== "ArrowFunctionExpression" || method.async || method.params.some((param: Syntax) => param.type !== "Identifier")) return false;
     methods.add(method);
-    for (const parameter of method.params as Syntax[]) {
+    for (const parameter of method.params) {
       const type = parameter.typeAnnotation?.typeAnnotation;
       if (type?.type === "TSFunctionType" && type.params.length === 0 && type.returnType?.typeAnnotation?.type === "TSVoidKeyword") callbacks.add(parameter);
       else if (!["TSStringKeyword", "TSNumberKeyword", "TSBooleanKeyword"].includes(type?.type ?? "")) return false;
@@ -1234,8 +1223,8 @@ function bffBindingWritten(reference: Syntax, source: ProcessSource): boolean {
   let parent = source.parents.get(current);
   while (parent !== undefined) {
     const patternProperty = parent.type === "Property" && parent.value === current && source.parents.get(parent)?.type === "ObjectPattern";
-    const pattern = (parent.type === "ObjectPattern" && (parent.properties as Syntax[]).includes(current)) ||
-      (parent.type === "ArrayPattern" && (parent.elements as (Syntax | null)[]).includes(current)) ||
+    const pattern = (parent.type === "ObjectPattern" && parent.properties.includes(current)) ||
+      (parent.type === "ArrayPattern" && parent.elements.includes(current)) ||
       (parent.type === "RestElement" && parent.argument === current) ||
       (parent.type === "AssignmentPattern" && parent.left === current);
     if (!patternProperty && !pattern && !(parent.type === "MemberExpression" && parent.object === current)) break;
@@ -1273,23 +1262,14 @@ function bffImmutable(binding: Syntax, source: ProcessSource, imports: readonly 
   return !bffReferences(binding, source).some((reference) => bffBindingWritten(reference, source)) &&
     (bffConst(binding, source) !== null || imports.some((entry) => entry.binding === binding && !entry.typeOnly));
 }
-function bffKeyValues(node: Syntax, source: ProcessSource, filename: string, seen = new Set<Syntax>()): readonly (string | number)[] | null {
+function bffKeyValues(node: Syntax, source: ProcessSource, seen = new Set<Syntax>()): readonly (string | number)[] | null {
   const value = unwrap(node);
   if (value.type === "Literal" && (typeof value.value === "string" || typeof value.value === "number")) return [value.value];
   const binding = bffBinding(value, source);
   if (binding === null || seen.has(binding)) return null;
   const next = new Set(seen).add(binding);
   const initializer = bffConst(binding, source);
-  if (initializer !== null) return bffKeyValues(initializer, source, filename, next);
-  const specifier = source.parents.get(binding);
-  const imported = specifier === undefined ? undefined : source.parents.get(specifier);
-  if (specifier?.type === "ImportSpecifier" && specifier.importKind !== "type" &&
-    imported?.type === "ImportDeclaration" && imported.importKind !== "type" &&
-    !bffReferences(binding, source).some((reference) => bffBindingWritten(reference, source))) {
-    const name = nameOf(asNode(specifier.imported)) ?? stringOf(asNode(specifier.imported));
-    const literal = name === null ? null : provenDataImportLiteral(filename, imported.source.value, name);
-    return literal === null ? null : [literal];
-  }
+  if (initializer !== null) return bffKeyValues(initializer, source, next);
   // Only an exact, non-default simple parameter with every direct caller closed can acquire finite keys.
   const owner = source.parents.get(binding);
   if (owner === undefined || !isFunction(owner) || owner.async || owner.generator || !owner.params.includes(binding)) return null;
@@ -1311,7 +1291,7 @@ function bffKeyValues(node: Syntax, source: ProcessSource, filename: string, see
     for (let parent = source.parents.get(call); parent !== undefined; parent = source.parents.get(parent)) if (parent === owner) return null;
     const argument = asNode(call.arguments[index]);
     if (argument === null) return null;
-    const values = bffKeyValues(argument, source, filename, new Set(next).add(functionBinding));
+    const values = bffKeyValues(argument, source, new Set(next).add(functionBinding));
     if (values === null) return null;
     keys.push(...values);
   }
@@ -1347,7 +1327,7 @@ function bffKnownFunction(node: Syntax, source: ProcessSource, seen = new Set<Sy
   const initializer = bffConst(binding, source);
   return initializer !== null && bffKnownFunction(initializer, source, new Set(seen).add(binding));
 }
-function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabilities: ProcessCapabilities, filename: string): boolean {
+function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabilities: ProcessCapabilities): boolean {
   if (!source.valid || !capabilities.valid) return false;
   const inspect = (node: Syntax): boolean => {
     if (ERASED_PROCESS_SYNTAX.has(node.type) || node.declare === true || node.type === "ImportDeclaration" ||
@@ -1365,7 +1345,7 @@ function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabil
         const property = asNode(node.property);
         const object = asNode(node.object);
         if (node.optional || property === null || object === null) return false;
-        const keys = bffKeyValues(property, source, filename);
+        const keys = bffKeyValues(property, source);
         if (keys !== null) {
           if (keys.some((candidate) => typeof candidate === "string" && REFLECTIVE_MEMBERS.has(candidate))) return false;
         } else if (bffKnownFunction(object, source) || !bffObservedOnly(node, source)) return false;
@@ -1386,16 +1366,24 @@ function bffOriginClosed(program: ESTree.Program, source: ProcessSource, capabil
     if (capability === "effect") {
       const member = processMember(reference, source);
       // Assembly classification permits direct public calls, not capability aliases or mutation.
+      const observedSpan = member !== null && staticProcessMember(member) === "currentSpan" && (() => {
+        const observed = liftedProcessNode(member, source);
+        const call = source.parents.get(observed);
+        const callee = call?.type === "CallExpression" ? asNode(call.callee) : null;
+        const effect = callee?.type === "MemberExpression" ? bffBinding(callee.object, source) : null;
+        return call?.type === "CallExpression" && !call.optional && call.arguments.length === 1 && call.arguments[0] === observed &&
+          callee?.type === "MemberExpression" && !callee.computed && !callee.optional && callee.property.name === "option" &&
+          effect !== null && capabilities.bindings.get(effect) === "effect";
+      })();
       if (member === null || writtenProcessNode(member, source) ||
-        (directProcessCall(member, source) === null && !effectProcessUse(reference, source))) return false;
+        (directProcessCall(member, source) === null && !effectProcessUse(reference, source) && !observedSpan)) return false;
     }
   }
   return true;
 }
 function bffImportedType(node: Syntax, imported: string, imports: readonly BffImport[], api: Syntax, program: ESTree.Program): boolean {
-  const typeName = node.type === "TSTypeReference" ? asNode(node.typeName) : null;
-  if (typeName?.type !== "Identifier") return false;
-  const origin = imports.find((entry) => entry.binding.name === typeName.name && entry.imported === imported &&
+  if (node.type !== "TSTypeReference" || node.typeName.type !== "Identifier") return false;
+  const origin = imports.find((entry) => entry.binding.name === node.typeName.name && entry.imported === imported &&
     entry.source === "@modern-js/bff-effect/effect-edge");
   if (origin === undefined) return false;
   // Type annotations are identity evidence only when no local type declaration can replace the import.
@@ -1449,6 +1437,14 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
     const binding = object === null ? null : bffBinding(object, source);
     return value.type === "MemberExpression" && !value.computed && !value.optional && value.property.name === name && binding !== null && layers.has(binding);
   };
+  const closedLocalPipelineUse = (reference: Syntax): boolean => {
+    const member = processMember(reference, source);
+    const call = member === null ? null : directProcessCall(member, source);
+    return member !== null && staticProcessMember(member) === "pipe" && call !== null &&
+      !call.optional && call.arguments.length > 0 &&
+      call.arguments.every((argument: Syntax) => transform(unwrap(argument))) &&
+      bffLayerValueUse(call, source, layers);
+  };
   const immutableArgument = (argument: Syntax, depth = 0): boolean => {
     if (depth > 32) return false;
     const value = unwrap(argument);
@@ -1461,10 +1457,27 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
       const handler = bffBinding(callee.object, source);
       const origin = imports.find((entry) => entry.binding === handler && !entry.typeOnly && entry.source.startsWith("."));
       const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
-      try {
-        if (handler === null || resolved === null || !bffImmutable(handler, source, imports) ||
-          nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
-      } catch { return false; }
+      if (handler === null || !bffImmutable(handler, source, imports)) return false;
+      if (origin !== undefined) {
+        try {
+          if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
+        } catch { return false; }
+      } else {
+        // A local pipeline must begin at a genuine immutable native Layer constructor, not an
+        // arbitrary make* call or an injected capability. Its only use is this composition edge.
+        const initializer = bffConst(handler, source);
+        const declaration = source.parents.get(handler);
+        const statement = declaration === undefined ? undefined : source.parents.get(declaration);
+        const wrapper = statement === undefined ? undefined : source.parents.get(statement);
+        if (wrapper?.type.startsWith("Export")) return false;
+        const native = initializer === null ? null : unwrap(initializer);
+        const constructor = native?.type === "CallExpression" ? asNode(native.callee) : null;
+        if (native?.type !== "CallExpression" || native.optional || constructor === null ||
+          !["effect", "succeed", "merge", "mergeAll"].some((method) => layerMember(constructor, method)) ||
+          (!layerMember(constructor, "mergeAll") && native.arguments.length !== 2) ||
+          native.arguments.some((entry: Syntax) => entry.type === "SpreadElement") ||
+          bffReferences(handler, source).some((reference) => !closedLocalPipelineUse(reference))) return false;
+      }
       return value.arguments.length > 0 && value.arguments.every((entry: Syntax) => transform(unwrap(entry), depth + 1));
     }
     const merge = layerMember(callee, "merge");
@@ -1485,16 +1498,50 @@ function bffLayerExpression(node: Syntax, source: ProcessSource, imports: readon
     if (!base.arguments.every((argument: Syntax) => transform(unwrap(argument)))) return false;
     base = unwrap(base.callee.object);
   }
-  const callee = asNode(base.callee);
   if (mode === "transport") {
-    const localImport = (value: Syntax): boolean => {
+    const transportTree = (node: Syntax, seen = new Set<Syntax>(), depth = 0): boolean => {
+      if (depth > 32) return false;
+      const value = unwrap(node);
+      if (value.type === "CallExpression") {
+        if (value.optional || value.arguments.some((entry: Syntax) => entry.type === "SpreadElement")) return false;
+        const callee = asNode(value.callee);
+        if (callee === null) return false;
+        if (callee.type === "MemberExpression" && !callee.computed && !callee.optional && callee.property.name === "pipe") {
+          return value.arguments.every((entry: Syntax) => transform(unwrap(entry), depth + 1)) &&
+            transportTree(callee.object, seen, depth + 1);
+        }
+        return ((layerMember(callee, "mergeAll") && value.arguments.length > 0) ||
+          (layerMember(callee, "merge") && value.arguments.length === 2)) &&
+          value.arguments.every((entry: Syntax) => transportTree(entry, seen, depth + 1));
+      }
       const binding = bffBinding(value, source);
+      if (binding === null || seen.has(binding) || !bffImmutable(binding, source, imports) ||
+        bffReferences(binding, source).some((reference) => reference !== value)) return false;
       const origin = imports.find((entry) => entry.binding === binding && !entry.typeOnly && entry.source.startsWith("."));
-      return origin !== undefined && bffImmutable(origin.binding, source, imports);
+      if (origin === undefined) {
+        const initializer = bffConst(binding, source);
+        const declaration = source.parents.get(binding);
+        const statement = declaration === undefined ? undefined : source.parents.get(declaration);
+        const wrapper = statement === undefined ? undefined : source.parents.get(statement);
+        return initializer !== null && !wrapper?.type.startsWith("Export") &&
+          transportTree(initializer, new Set(seen).add(binding), depth + 1);
+      }
+      if (["default", "*"].includes(origin.imported)) return false;
+      const resolved = resolveModule(filename, origin.source);
+      try {
+        if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..")) return false;
+        // Every alias of an imported transport retains the original single-use custody proof.
+        return imports.filter((entry) => !entry.typeOnly && entry.source.startsWith(".")).every((entry) => {
+          const alternative = resolveModule(filename, entry.source);
+          if (alternative === null || realpathSync(alternative) !== realpathSync(resolved)) return true;
+          return !["default", "*"].includes(entry.imported) && (entry.imported !== origin.imported ||
+            bffReferences(entry.binding, source).every((reference) => reference === value));
+        });
+      } catch { return false; }
     };
-    return localImport(base) || (base.type === "CallExpression" && !base.optional && callee !== null &&
-      layerMember(callee, "mergeAll") && base.arguments.length > 0 && base.arguments.every(localImport));
+    return transportTree(base);
   }
+  const callee = asNode(base.callee);
   return base.type === "CallExpression" && !base.optional && callee !== null && layerMember(callee, "mergeAll") &&
     base.arguments.length > 0 && base.arguments.every((argument: Syntax) => immutableArgument(argument));
 }
@@ -1511,7 +1558,7 @@ function bffLayerValueUse(node: Syntax, source: ProcessSource, layers: ReadonlyS
     return references.length > 0 && references.every((reference) => bffLayerValueUse(reference, source, layers, new Set(seen).add(binding)));
   }
   const callee = parent?.type === "CallExpression" ? asNode(parent.callee) : null;
-  return parent?.type === "CallExpression" && !parent.optional && (parent.arguments as Syntax[]).includes(value) &&
+  return parent?.type === "CallExpression" && !parent.optional && parent.arguments.includes(value) &&
     callee?.type === "MemberExpression" && !callee.computed && !callee.optional &&
     ["mergeAll", "provide", "provideMerge"].includes(callee.property.name) && layers.has(bffBinding(callee.object, source)!);
 }
@@ -1521,7 +1568,7 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   const source = processSource(program);
   const capabilities = processCapabilities(program);
   const imports = bffImports(program);
-  if (!bffOriginClosed(program, source, capabilities, filename)) return false;
+  if (!bffOriginClosed(program, source, capabilities)) return false;
   const assemblers = imports.filter((entry) => entry.source === "@modern-js/bff-effect/assembly" && !entry.typeOnly);
   if (assemblers.length === 0 || assemblers.some((entry) => entry.imported !== "assembleEffectBffRuntime") ||
     imports.some((entry) => !entry.typeOnly && entry.source.startsWith("@modern-js/bff-effect/assembly/"))) return false;
@@ -1567,7 +1614,7 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   const argument = asNode(call.arguments[0]);
   if (argument?.type !== "ObjectExpression" || argument.properties.length < 2 || argument.properties.length > 3) return false;
   const properties = new Map<string, Syntax>();
-  for (const property of argument.properties as Syntax[]) {
+  for (const property of argument.properties) {
     const key = property.computed ? null : nameOf(asNode(property.key)) ?? stringOf(asNode(property.key));
     if (property.type !== "Property" || property.kind !== "init" || property.method || key === null ||
       !["api", "handlers", "transport"].includes(key) || properties.has(key)) return false;
@@ -1613,25 +1660,7 @@ function ownsGovernedBff(program: ESTree.Program, importedName: string, filename
   const transport = properties.get("transport");
   if (transport !== undefined) {
     if (!bffLayerExpression(transport, source, imports, layers, "transport", filename, owner)) return false;
-    const inspectTransport = unwrap(transport);
-    const base = inspectTransport.type === "CallExpression" && inspectTransport.callee.type === "MemberExpression" &&
-      inspectTransport.callee.property.name === "pipe" ? unwrap(inspectTransport.callee.object) : inspectTransport;
-    const bases: Syntax[] = base.type === "CallExpression" ? base.arguments : [base];
-    for (const value of bases) {
-      const binding = bffBinding(value, source);
-      const origin = imports.find((entry) => entry.binding === binding);
-      const resolved = origin === undefined ? null : resolveModule(filename, origin.source);
-      try {
-        if (resolved === null || nodePath.relative(realpathSync(owner), realpathSync(resolved)).startsWith("..") ||
-          binding === null || bffReferences(binding, source).some((reference) => reference !== value)) return false;
-        for (const candidate of imports.filter((entry) => !entry.typeOnly && entry.source.startsWith("."))) {
-          const alternative = resolveModule(filename, candidate.source);
-          if (alternative === null || realpathSync(alternative) !== realpathSync(resolved)) continue;
-          if (["default", "*"].includes(candidate.imported)) return false;
-          if (candidate.imported === origin!.imported && bffReferences(candidate.binding, source).some((reference) => reference !== value)) return false;
-        }
-      } catch { return false; }
-    }
+
   }
   return true;
 }
@@ -1643,203 +1672,11 @@ function isOwnerLocalConstructor(filename: string, source: string, owner: string
     const relative = nodePath.relative(realpathSync(owner), realpathSync(resolved));
     if (relative === "" || relative === ".." || relative.startsWith(`..${nodePath.sep}`) || nodePath.isAbsolute(relative)) return false;
     const parsed = parseSync(resolved, readFileSync(resolved, "utf8"), { sourceType: "module" });
-    const program = asNode(parsed.program);
-    return parsed.errors.length === 0 && program?.type === "Program" && (ownsConstructor(program, importedName) ||
-      ownsGovernedBff(program, importedName, resolved, realpathSync(owner)));
+    return parsed.errors.length === 0 && (ownsConstructor(parsed.program as ESTree.Program, importedName) ||
+      ownsGovernedBff(parsed.program as ESTree.Program, importedName, resolved, realpathSync(owner)));
   } catch {
     return false;
   }
-}
-
-function writesMember(identifier: ESTree.Node): boolean {
-  let current = identifier;
-  while (current.parent?.type === "MemberExpression" && current.parent.object === current) current = current.parent;
-  const parent = current.parent;
-  return (parent?.type === "AssignmentExpression" && parent.left === current) ||
-    (parent?.type === "UpdateExpression" && parent.argument === current) ||
-    (parent?.type === "UnaryExpression" && parent.operator === "delete" && parent.argument === current);
-}
-
-function unchanged(variable: Variable): boolean {
-  return !variable.references.some((reference) =>
-    (reference.isWrite() && !reference.init) || writesMember(reference.identifier));
-}
-
-function nativeImport(context: Context, node: Syntax | null, source: string, name: string): boolean {
-  if (node?.type !== "Identifier") return false;
-  const variable = lookupVariable(context, node);
-  if (variable?.defs.length !== 1 || !unchanged(variable)) return false;
-  const [definition] = variable.defs;
-  const declaration = definition?.parent;
-  const specifier = definition?.node;
-  return definition?.type === "ImportBinding" && declaration?.type === "ImportDeclaration" &&
-    declaration.source.value === source && declaration.importKind !== "type" &&
-    specifier?.type === "ImportSpecifier" && specifier.importKind !== "type" &&
-    getImportedName(specifier) === name &&
-    (!["Layer", "Effect"].includes(name) || variable.references.every((reference) => {
-      const parent = reference.identifier.parent;
-      return (parent?.type === "MemberExpression" && parent.object === reference.identifier) ||
-        (parent?.type === "TSQualifiedName" && parent.left === reference.identifier);
-    }));
-}
-
-function nativeMethod(context: Context, expression: Syntax, namespace: string, method: string): boolean {
-  const node = unwrap(expression);
-  return node.type === "MemberExpression" && !node.computed &&
-    nameOf(asNode(node.property)) === method &&
-    nativeImport(context, node.object, "effect", namespace);
-}
-
-function intactNamespaces(program: ESTree.Program, namespaces: ReadonlyMap<string, string>): boolean {
-  const pending = [program as Syntax];
-  while (pending.length > 0) {
-    const node = pending.pop()!;
-    let target = asNode(node.type === "AssignmentExpression" ? node.left :
-      node.type === "UpdateExpression" || (node.type === "UnaryExpression" && node.operator === "delete")
-        ? node.argument : null);
-    while (target?.type === "MemberExpression") target = asNode(target.object);
-    if (target?.type === "Identifier" && namespaces.has(target.name)) return false;
-    if (node.type === "VariableDeclarator" && node.init?.type === "Identifier" &&
-      namespaces.has(node.init.name)) return false;
-    if (node.type === "CallExpression" && node.arguments.some((argument: Syntax) =>
-      argument.type === "Identifier" && namespaces.has(argument.name))) return false;
-    if (node.type === "Property" && node.value?.type === "Identifier" && namespaces.has(node.value.name)) return false;
-    pending.push(...children(node));
-  }
-  return true;
-}
-
-/** Verify the imported implementation defers its work in a native Layer, not an eager constructor. */
-function isNativeLayerFactoryImport(filename: string, source: string, name: string): boolean {
-  const resolved = resolveModule(filename, source);
-  if (resolved === null) return false;
-  try {
-    const parsed = parseSync(resolved, readFileSync(resolved, "utf8"), { sourceType: "module" });
-    if (parsed.errors.length !== 0) return false;
-    const program = asNode(parsed.program);
-    if (program?.type !== "Program") return false;
-    const namespaces = new Map<string, string>();
-    for (const statement of program.body) {
-      if (statement.type !== "ImportDeclaration" || statement.source.value !== "effect" ||
-        statement.importKind === "type") continue;
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type") {
-          const imported = getImportedName(specifier);
-          if (imported === "Effect" || imported === "Layer") namespaces.set(specifier.local.name, imported);
-        }
-      }
-    }
-    if (!intactNamespaces(program, namespaces)) return false;
-    const method = (expression: Syntax, namespace: string, member: string): boolean =>
-      expression.type === "MemberExpression" && !expression.computed &&
-      namespaces.get(nameOf(asNode(expression.object)) ?? "") === namespace &&
-      nameOf(asNode(expression.property)) === member;
-    for (const statement of program.body) {
-      if (statement.type !== "ExportNamedDeclaration" || statement.declaration?.type !== "VariableDeclaration" ||
-        statement.declaration.kind !== "const") continue;
-      for (const declaration of statement.declaration.declarations) {
-        if (declaration.id.type !== "Identifier" || declaration.id.name !== name || declaration.init === null) continue;
-        const factory = unwrap(declaration.init as Syntax);
-        // The deployment is the one required parameter. Later parameters must be plain optional
-        // identifiers: a proven composition passes only the deployment, so they stay undefined and
-        // no default initializer runs.
-        if (factory.type !== "ArrowFunctionExpression" || factory.async || factory.params.length === 0 ||
-          factory.params.some((parameter, index) => parameter.type !== "Identifier" ||
-            namespaces.has(parameter.name) || (index === 0) === (parameter.optional === true))) return false;
-        const layer = unwrap(factory.body);
-        if (layer.type !== "CallExpression" || !method(layer.callee, "Layer", "effect") ||
-          layer.arguments.length !== 2) return false;
-        const tag = asNode(layer.arguments[0]);
-        if (tag?.type !== "Identifier" ||
-          factory.params.some((parameter) => parameter.type === "Identifier" && parameter.name === tag.name)) return false;
-        const effect = asNode(layer.arguments[1]);
-        if (effect?.type !== "CallExpression" || !method(effect.callee, "Effect", "gen") ||
-          effect.arguments.length !== 1) return false;
-        const callback = asNode(effect.arguments[0]);
-        return callback?.type === "FunctionExpression" && callback.generator === true &&
-          callback.async !== true && callback.params.length === 0;
-      }
-    }
-  } catch {
-    // Unreadable or unsupported owner implementations remain constructor diagnostics.
-  }
-  return false;
-}
-
-function layerPipeline(context: Context, expression: Syntax): Syntax | null {
-  let current = expression;
-  while (current.parent?.type === "MemberExpression" && current.parent.object === current &&
-    !current.parent.computed && nameOf(asNode(current.parent.property)) === "pipe") {
-    const call = current.parent.parent;
-    if (call?.type !== "CallExpression" || call.callee !== current.parent || call.arguments.length === 0 ||
-      !call.arguments.every((argument) => argument.type === "CallExpression" &&
-        (nativeMethod(context, argument.callee as Syntax, "Layer", "provide") ||
-          nativeMethod(context, argument.callee as Syntax, "Layer", "provideMerge")))) return null;
-    current = call as Syntax;
-  }
-  return current;
-}
-
-function shellDeploymentRoot(node: Syntax): Syntax | null {
-  let current = node;
-  for (const member of ["deployment", "shell", "composition"]) {
-    if (current.type !== "MemberExpression" || current.computed ||
-      nameOf(asNode(current.property)) !== member) return null;
-    current = current.object;
-  }
-  return current.type === "Identifier" ? current : null;
-}
-
-function loadedDeployment(context: Context, argument: Syntax, factory: Variable): boolean {
-  const root = shellDeploymentRoot(argument);
-  const variable = root === null ? null : lookupVariable(context, root);
-  if (variable?.defs.length !== 1 || !unchanged(variable)) return false;
-  const definition = variable.defs[0]?.node;
-  if (definition?.type !== "VariableDeclarator" || definition.parent?.type !== "VariableDeclaration" ||
-    definition.parent.kind !== "const") return false;
-  const loaded = asNode(definition.init);
-  const load = loaded?.type === "YieldExpression" && loaded.delegate ? asNode(loaded.argument) : null;
-  const service = load?.type === "MemberExpression" && !load.computed &&
-    nameOf(asNode(load.property)) === "load" ? asNode(load.object) : null;
-  if (service?.type !== "YieldExpression" || !service.delegate ||
-    !nativeImport(context, service.argument, "@app/core-runtime/modules/active-application-composition",
-      "ActiveApplicationCompositionService")) return false;
-  // A loaded snapshot may only supply this exact deployment slot; mutation and escapes stay rejected.
-  return variable.references.every((reference) => {
-    if (!reference.isRead()) return true;
-    let value = reference.identifier as Syntax;
-    while (value.parent?.type === "MemberExpression" && value.parent.object === value) value = value.parent;
-    const call = value.parent;
-    return shellDeploymentRoot(value) !== null && call?.type === "CallExpression" &&
-      call.arguments.length === 1 && call.arguments[0] === value &&
-      lookupVariable(context, call.callee) === factory;
-  });
-}
-
-/** Only a returned Layer in a module-level unwrap may bind the deployment loaded from Core. */
-function isDeploymentLayerComposition(context: Context, identifier: ESTree.Node, factory: Variable): boolean {
-  const call = identifier.parent;
-  if (call?.type !== "CallExpression" || call.callee !== identifier || call.arguments.length !== 1) return false;
-  const argument = asNode(call.arguments[0]);
-  if (argument === null || !loadedDeployment(context, argument, factory)) return false;
-  const returned = layerPipeline(context, call as Syntax);
-  const statement = returned?.parent;
-  const body = statement?.type === "ReturnStatement" && statement.argument === returned ? statement.parent : null;
-  const callback = body?.type === "BlockStatement" ? body.parent : null;
-  if (callback?.type !== "FunctionExpression" || !callback.generator || callback.async ||
-    callback.params.length !== 0) return false;
-  const gen = callback.parent;
-  if (gen?.type !== "CallExpression" || gen.arguments.length !== 1 || gen.arguments[0] !== callback ||
-    !nativeMethod(context, gen.callee as Syntax, "Effect", "gen")) return false;
-  const unwrapCall = gen.parent;
-  if (unwrapCall?.type !== "CallExpression" || unwrapCall.arguments.length !== 1 ||
-    unwrapCall.arguments[0] !== gen || !nativeMethod(context, unwrapCall.callee as Syntax, "Layer", "unwrap")) return false;
-  const pipeline = layerPipeline(context, unwrapCall as Syntax);
-  const declaration = pipeline?.parent;
-  const binding = declaration?.type === "VariableDeclarator" && declaration.init === pipeline ? declaration.parent : null;
-  const parent = binding?.type === "VariableDeclaration" && binding.kind === "const" ? binding.parent : null;
-  return parent?.type === "Program" ||
-    (parent?.type === "ExportNamedDeclaration" && parent.parent?.type === "Program");
 }
 
 /** Keep dependency-bearing Effect service constructors local to their owning capability modules. */
@@ -1858,27 +1695,19 @@ export const noServiceConstructorImportsRule = defineRule({
     const pending: { readonly node: ESTree.ImportSpecifier; readonly source: string; readonly name: string }[] = [];
     return {
       ImportDeclaration(node) {
-        if (isTestFile || (!node.source.value.startsWith("./") && !node.source.value.startsWith("../"))) return;
+        if (isTestFile || node.importKind === "type" || (!node.source.value.startsWith("./") && !node.source.value.startsWith("../"))) return;
         for (const specifier of node.specifiers) {
-          if (specifier.type !== "ImportSpecifier") continue;
+          if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
           const importedName = getImportedName(specifier);
           if (!SERVICE_CONSTRUCTOR_NAME.test(importedName)) continue;
           const variable = lookupVariable(context, specifier.local);
-          // Core invokes this exact argument with its transaction/scope/revision. Passing the
-          // factory is not eager construction; every other reference must still prove its owner.
           if (variable !== null && variable.references.length > 0 && variable.references.every((reference) => {
             const identifier = reference.identifier;
             const parent = identifier.parent;
-            return isNativeServiceFactoryArgument(context, identifier) ||
-              (parent?.type === "CallExpression" && parent.callee === identifier &&
-                isInsideNativeServiceFactoryCallback(context, identifier)) ||
+            return (parent?.type === "CallExpression" && parent.callee === identifier &&
+              isInsideNativeServiceFactoryCallback(context, identifier)) ||
               isNativeServiceFactoryAcquisition(context, identifier);
           })) continue;
-          if (variable !== null && variable.references.length > 0 &&
-            variable.references.every((reference) => isDeploymentLayerComposition(context, reference.identifier, variable)) &&
-            isNativeLayerFactoryImport(context.filename, node.source.value, importedName)) continue;
-          // DTO and native migration-metadata construction share the binding-aware proof;
-          // Drizzle imports alone never exempt a constructor or one of its runtime operations.
           if (isPureDataFactoryImport(context.filename, node.source.value, importedName, cache) ||
             provesDataFactoryImport(context.filename, node.source.value, importedName)) continue;
           pending.push({ node: specifier, source: node.source.value, name: importedName });
@@ -1886,8 +1715,10 @@ export const noServiceConstructorImportsRule = defineRule({
       },
       "Program:exit"(program) {
         const owner = testProcessOwner(context, program);
+        const tooling = pending.length === 0 ? null : registeredToolingRoot(context, program);
         for (const entry of pending) {
           if (owner !== null && isOwnerLocalConstructor(context.filename, entry.source, owner, entry.name)) continue;
+          if (tooling?.ownsImport(entry.node, entry.source, entry.name)) continue;
           context.report({ node: entry.node, messageId: "serviceConstructorImport", data: { name: entry.name } });
         }
       },

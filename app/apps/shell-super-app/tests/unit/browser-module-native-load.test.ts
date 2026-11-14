@@ -5,7 +5,7 @@ import {
   BrowserModuleRevisionConflict,
   loadBrowserModuleEntrypoint,
 } from '../../src/routes/module-entrypoint-loader.ts';
-import { ResolvedModuleTargetSchema } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../shared/browser-api.ts';
 
 const View = () => null;
 /** What a remote expose resolves to in these cases: the page component, or a value that is not one. */

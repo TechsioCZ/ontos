@@ -36,13 +36,8 @@ export const eshopCommandsOf = (
     value.slug !== confirmed.slug ||
     value.stockTracked !== confirmed.stockTracked;
   if (settingsChanged) {
-    const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {
-      published: value.published,
-      stockTracked: value.stockTracked,
-    };
-    if (value.slug.trim() !== '') {
-      patch.slug = value.slug.trim();
-    }
+    const settings = { published: value.published, stockTracked: value.stockTracked } satisfies ProductPatch;
+    const patch: ProductPatch = value.slug.trim() === '' ? settings : { ...settings, slug: value.slug.trim() };
     commands.push({ _tag: 'UpdateProduct', id: productId, patch });
   }
   if (!sameImages(value.images, confirmed.images)) {

@@ -23,6 +23,8 @@ import type { PrivacyOperationRepositoryService } from '../persistence/privacy-o
 import { processingPurposeRepositoryForScope } from '../persistence/processing-purpose-postgres-repository.ts';
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
 import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
+import { organizationBusinessSourceAuthorityForScope } from '../services/organization-business-applicability.service.ts';
+import type { OrganizationBusinessSourceAuthority } from '../services/organization-business-applicability.service.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
   PrivacyActionErrorSchema,
@@ -41,6 +43,7 @@ type Services = Pick<
   readonly getPurpose: (
     ...args: Parameters<ProcessingPurposeRepositoryService['get']>
   ) => Effect.Effect<Option.Option<ProcessingPurpose>, PrivacyOperationPersistenceError>;
+  readonly sourceAuthority?: OrganizationBusinessSourceAuthority;
 };
 type ApplicabilityScope = RecordPrivacyApplicabilityPayload['scope'];
 type ResponsibilityAssignment = typeof PrivacyResponsibilityAssignmentSchema.Type;
@@ -98,15 +101,24 @@ export const handleRecordPrivacyApplicability = Effect.fn('RecordPrivacyApplicab
     const authorityService = context.services.authority;
     const evaluatedAt = DateTime.formatIso(yield* DateTime.now);
     const authorityResult = yield* authorityService
-      .resolve({
-        asOf: evaluatedAt,
-        legalEntityId: scope.legalEntityId,
-        scope: payload.scope,
-        tenantId: scope.tenantId,
-      })
+      .resolve(
+        {
+          asOf: evaluatedAt,
+          legalEntityId: scope.legalEntityId,
+          scope: payload.scope,
+          tenantId: scope.tenantId,
+        },
+        context.scope,
+        context.services.sourceAuthority,
+      )
       .pipe(
-        Effect.mapError(
-          (error) => new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: error.reason }),
+        Effect.mapError((error) =>
+          error.code === 'AUTHORITY_UNAVAILABLE'
+            ? new PrivacyOperationPersistenceError({
+                code: 'privacy_operation_persistence_unavailable',
+                reason: error.reason,
+              })
+            : new PrivacyActionRejected({ code: 'privacy_action_rejected', reason: error.reason }),
         ),
       );
     const { authority } = authorityResult;
@@ -239,6 +251,7 @@ export const recordPrivacyApplicabilityAction = defineAction(
       listApplicabilityPolicies: operations.listApplicabilityPolicies,
       listResponsibilities: operations.listResponsibilities,
       recordApplicability: operations.recordApplicability,
+      sourceAuthority: organizationBusinessSourceAuthorityForScope(transaction, scope),
     };
   }),
 );

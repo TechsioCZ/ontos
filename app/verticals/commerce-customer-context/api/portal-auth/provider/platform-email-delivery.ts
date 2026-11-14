@@ -1,7 +1,7 @@
 import { EmailDeliveryService } from '@app/email-delivery/server';
 import type { EmailDeliveryError, EmailDeliveryMessage, EmailDeliveryReceipt } from '@app/email-delivery/server';
 import { emailEnvironment, emailTransport } from '@app/email-delivery/transport';
-import { Config, ConfigProvider, Crypto, Effect, Layer, Option, Schema, String as EffectString } from 'effect';
+import { Config, ConfigProvider, Effect, Layer, Option, Schema, String as EffectString } from 'effect';
 
 /** Portal mail goes out as the deployment's own sender: `ONTOS_EMAIL_FROM` on a Worker, the SMTP sender on Node. */
 const portalSenderSettings = Config.all({
@@ -19,26 +19,25 @@ const portalSenderSettings = Config.all({
 /**
  * The platform's installed email transport: the Cloudflare Email Service `EMAIL` binding on a Worker and SMTP
  * (Mailpit locally) on Node. One submission per message; an unconfigured transport answers unavailable.
+ * The composition root closes the submission over its platform Crypto.
  */
 export type CommercePortalAuthPlatformEmailSubmit = (
   transport: Effect.Success<typeof emailTransport>,
   from: string,
   message: EmailDeliveryMessage,
-) => Effect.Effect<EmailDeliveryReceipt, EmailDeliveryError, Crypto.Crypto>;
+) => Effect.Effect<EmailDeliveryReceipt, EmailDeliveryError>;
 
 export const CommercePortalAuthPlatformEmailDeliveryLive = (submit: CommercePortalAuthPlatformEmailSubmit) =>
   Layer.effect(
     EmailDeliveryService,
     Effect.gen(function* platformEmailDelivery() {
-      const crypto = yield* Crypto.Crypto;
       const environment = yield* emailEnvironment;
       const transport = yield* emailTransport;
       const from = yield* portalSenderSettings.parse(
         ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
       );
       return {
-        send: (message: EmailDeliveryMessage) =>
-          submit(transport, from, message).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        send: (message: EmailDeliveryMessage) => submit(transport, from, message),
       };
     }),
   );

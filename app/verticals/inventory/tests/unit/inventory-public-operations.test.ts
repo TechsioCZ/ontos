@@ -46,6 +46,7 @@ const expectedReadSchemas = {
   'commerce.inventory.api.inventory-reconciliation-evidence': 'InventoryReconciliationEvidenceResponseSchema',
   'commerce.inventory.api.inventory-reservation-detail': 'InventoryReservationDetailResponseSchema',
   'commerce.inventory.api.inventory-source-conflict-detail': 'InventorySourceConflictDetailResponseSchema',
+  'commerce.inventory.api.inventory-source-import-receipt': 'InventorySourceImportReceiptResponseSchema',
   'commerce.inventory.api.reservation-confirmation-verification': 'ReservationConfirmationVerificationResponseSchema',
   'commerce.inventory.api.stock-sharing-eligibility-resolution': 'StockSharingEligibilityResolutionResponseSchema',
 } as const;
@@ -87,11 +88,11 @@ describe('Inventory public owner contracts', () => {
     }
   });
 
-  it('publishes the ten distinct governed reads with their exact stable key and response vocabulary', () => {
+  it('publishes the eleven distinct governed reads with their exact stable key and response vocabulary', () => {
     expect(
       Object.fromEntries(inventoryGovernedReadContracts.map(({ key, outcomes }) => [key, outcomes.sourceSchemaName])),
     ).toEqual(expectedReadSchemas);
-    expect(new Set(inventoryGovernedReadContracts.map(({ key }) => key)).size).toBe(10);
+    expect(new Set(inventoryGovernedReadContracts.map(({ key }) => key)).size).toBe(11);
 
     for (const operation of inventoryGovernedReadContracts) {
       expect(operation).toMatchObject({ kind: 'GOVERNED_READ', owner: 'commerce.inventory' });
@@ -119,8 +120,8 @@ describe('Inventory public owner contracts', () => {
       'NO_AVAILABILITY_CONTRACT',
     ]);
 
-    expect(inventoryPublicOperations).toHaveLength(30);
-    expect(new Set(inventoryPublicOperations.map(({ key }) => key))).toHaveLength(30);
+    expect(inventoryPublicOperations).toHaveLength(31);
+    expect(new Set(inventoryPublicOperations.map(({ key }) => key))).toHaveLength(31);
     const publicKeys = inventoryPublicOperations.map(({ key }) => key);
     expect(publicKeys.some((key) => key.includes('update-inventory'))).toBe(false);
     expect(publicKeys.some((key) => key.includes('provider'))).toBe(false);
@@ -133,9 +134,9 @@ describe('Inventory public owner contracts', () => {
     const actualOperationClientExports = Object.keys(inventoryPublicClient).filter((key) => key.startsWith('execute'));
 
     expect(inventoryPublicActionContracts).toHaveLength(20);
-    expect(inventoryGovernedReadContracts).toHaveLength(10);
+    expect(inventoryGovernedReadContracts).toHaveLength(11);
     expect(new Set(actualOperationClientExports)).toEqual(new Set(expectedOperationClientExports));
-    expect(actualOperationClientExports).toHaveLength(62);
+    expect(actualOperationClientExports).toHaveLength(64);
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSet).toBe(executeCurrentRelevantStockPositionSet);
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSetWithAuthorization).toBe(
       executeCurrentRelevantStockPositionSetWithAuthorization,

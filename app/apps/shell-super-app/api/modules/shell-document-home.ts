@@ -2,7 +2,7 @@ import { legalEntityDetailRead, ReadRuntime } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { Context, Effect, Match, Option } from 'effect';
 
-import type { ShellComposition, ShellDocumentHome, ShellHomeContribution } from '../../shared/api.ts';
+import type { ShellComposition, ShellDocumentHome, ShellHomeContribution } from '../../shared/browser-api.ts';
 import { presentedShellNavigationItems } from '../../shared/shell-platform-navigation.ts';
 import { ShellGovernedReads } from './shell-governed-reads.ts';
 

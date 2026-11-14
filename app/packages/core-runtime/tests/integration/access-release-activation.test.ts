@@ -4,6 +4,7 @@ import type { PgClient } from '@effect/sql-pg';
 import { Crypto, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { CatalogReleaseOrderingSchema } from '../../src/access/catalog/release-ordering.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { AccessEnforcementPortsLive } from '../../src/actions/runtime-wiring.ts';
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
@@ -67,6 +68,8 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
  * company where it is held and its holder is ALLOWED the new Action; a custom role's holder is not, and sees a
  * Novinky item instead. A repeated activation writes nothing, and an older deployment changes nothing.
  */
+const [PublishOrdering, CurrentOrdering, PublishedBeforeOrdering, NotASuccessorOrdering] =
+  CatalogReleaseOrderingSchema.members;
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 
 const MODULE = 'billing.invoices';
@@ -360,7 +363,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
 
         // The dry run shows the same decision and plan, and writes nothing: the activation after it still publishes.
         const preview = yield* planCatalogRelease({ modules: newerDeployment }).pipe(Effect.orDie);
-        expect(preview.ordering).toEqual({ _tag: 'Publish' });
+        expect(preview.ordering).toEqual(PublishOrdering.make({}));
         expect(preview.tenants.find((entry) => entry.tenantId === tenantId)).toMatchObject({
           items: 1,
           outcome: 'planned',
@@ -377,7 +380,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         expect(unwritten).toEqual([{ actors: 0, items: 0, releases: 1 }]);
 
         const { report, tenant } = yield* activate(newerDeployment, tenantId);
-        expect(report.ordering).toEqual({ _tag: 'Publish' });
+        expect(report.ordering).toEqual(PublishOrdering.make({}));
         expect(report.entries).toBe(2);
         expect(report.previousEntries).toBe(1);
         // The approval Action declares run and propose: two new cells, in one successor of the preset.
@@ -472,13 +475,13 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         const bootstrapped = yield* tenantOnOlderRelease(tenantId, admin);
         const first = yield* activate(newerDeployment, tenantId);
         const repeated = yield* activate(newerDeployment, tenantId);
-        expect(repeated.report.ordering).toEqual({ _tag: 'Current' });
+        expect(repeated.report.ordering).toEqual(CurrentOrdering.make({}));
         expect(repeated.report.releaseId).toBe(first.report.releaseId);
         expect(repeated.tenant).toMatchObject({ items: 0, outcome: 'unchanged', presetCellsAdded: 0 });
 
         // An older deployment starting again while the newer one serves: published before, superseded.
         const older = yield* activate(olderDeployment, tenantId);
-        expect(older.report.ordering).toEqual({ _tag: 'PublishedBefore' });
+        expect(older.report.ordering).toEqual(PublishedBeforeOrdering.make({}));
         expect(older.report.releaseId).toBe(first.report.releaseId);
         expect(older.report.tenants).toEqual([]);
 
@@ -575,7 +578,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
           },
         ];
         const renamed = yield* activate(renamedDeployment, tenantId);
-        expect(renamed.report.ordering).toEqual({ _tag: 'Publish' });
+        expect(renamed.report.ordering).toEqual(PublishOrdering.make({}));
         // An older deployment that never published still declares the old key and lacks the new one.
         const olderNeverPublished: readonly AccessCatalogModule[] = [
           {
@@ -588,12 +591,14 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
           },
         ];
         const older = yield* activate(olderNeverPublished, tenantId);
-        expect(older.report.ordering).toEqual({ _tag: 'NotASuccessor', uncoveredKeys: [AUTHORIZE] });
+        expect(older.report.ordering).toEqual(
+          NotASuccessorOrdering.make({ uncoveredKeys: [CapabilityKeySchema.make(AUTHORIZE)] }),
+        );
         expect(older.report.releaseId).toBe(renamed.report.releaseId);
         expect(older.report.tenants).toEqual([]);
         // The newer deployment restarting finds its own release current.
         const restarted = yield* activate(renamedDeployment, tenantId);
-        expect(restarted.report.ordering).toEqual({ _tag: 'Current' });
+        expect(restarted.report.ordering).toEqual(CurrentOrdering.make({}));
         // A follow planned against a release that is no longer the newest writes nothing.
         const releases = yield* AccessReleaseStore;
         const stale = yield* Effect.flip(

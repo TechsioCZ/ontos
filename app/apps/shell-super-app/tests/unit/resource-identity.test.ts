@@ -1,7 +1,7 @@
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { ResourceIdSchema } from '../../shared/api.ts';
+import { ResourceIdSchema } from '../../shared/browser-api.ts';
 
 const companyId = '20000000-0000-4000-8000-000000000001';
 const localId = 'x'.repeat(300);

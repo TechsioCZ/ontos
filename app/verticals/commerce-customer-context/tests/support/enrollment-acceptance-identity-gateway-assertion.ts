@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
-import { Effect } from 'effect';
-import type { Layer } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, KeyObject } from 'jose';
 
@@ -52,6 +51,16 @@ export const makeAcceptanceGatewayIssuer = Effect.fnUntraced(function* makeAccep
       ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
     }),
   } satisfies AcceptanceGatewayIssuer;
+});
+
+/** Fresh suite-owned delegated issuers: one Ed25519 key pair and verifier configuration per call. */
+export class AcceptanceGatewayIssuers extends Context.Service<
+  AcceptanceGatewayIssuers,
+  { readonly make: typeof makeAcceptanceGatewayIssuer }
+>()('@app/commerce-customer-context/tests/support/AcceptanceGatewayIssuers') {}
+
+export const AcceptanceGatewayIssuersLive = Layer.succeed(AcceptanceGatewayIssuers, {
+  make: makeAcceptanceGatewayIssuer,
 });
 
 export interface AcceptanceGatewayPrincipal {

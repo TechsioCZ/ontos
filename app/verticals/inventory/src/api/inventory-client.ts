@@ -9,8 +9,8 @@ import type {
   Schema,
 } from '@modern-js/bff-effect/effect-client';
 
-import { inventoryApiContract, inventoryApi, inventoryOperationContexts } from '../../shared/api';
-import type { InventoryReadiness, OperationContext } from '../../shared/api';
+import { inventoryApiContract, inventoryApi, inventoryOperationContexts } from '../../shared/api.ts';
+import type { InventoryReadiness, OperationContext } from '../../shared/api.ts';
 
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- Generated compatibility surface retained for existing callers.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
@@ -51,6 +51,7 @@ export * from './catalog-to-stock-binding-resolution-client.ts';
 export * from './commitment-protection-verification-client.ts';
 export * from './inventory-backend-configuration-current-client.ts';
 export * from './inventory-effect-outcome-client.ts';
+export * from './inventory-source-import-receipt-client.ts';
 export * from './inventory-reconciliation-evidence-client.ts';
 export * from './inventory-reservation-detail-client.ts';
 export * from './inventory-source-conflict-detail-client.ts';

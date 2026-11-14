@@ -1,4 +1,5 @@
 import { Layer } from 'effect';
+import { PrivacyDispatchLivenessSourceLive } from '../access/enforcement/privacy-dispatch-liveness.ts';
 
 import { AccessPrincipalKindSourceLive as principalKindSourceLive } from '../access/enforcement/actor.ts';
 import { AccessDecisionLogBatchLive as decisionLogBatchLive } from '../access/enforcement/decision-log-batch.ts';
@@ -41,6 +42,7 @@ export const AccessEnforcementPortsLive = Layer.mergeAll(
   legalEntityCandidatesLive,
   decisionCheckLive,
   workloadBindingSourceLive,
+  PrivacyDispatchLivenessSourceLive,
 );
 
 export { AccessPrincipalKindSourceLive } from '../access/enforcement/actor.ts';

@@ -12,13 +12,13 @@ import {
   PrincipalIdSchema,
   ResourceIdSchema,
   TenantIdSchema,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import type {
   ShellSearchPayload,
   ShellSearchPresentationInventory,
   ShellSearchResponse,
   ShellSearchResult,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import type { SearchFilterPlan, SearchPageModel } from '../../../../src/routes/[lang]/search/search-page-model.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';

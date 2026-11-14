@@ -15,14 +15,17 @@ import {
 } from '@app/core-runtime';
 import type { ResolvedPrincipalIdentity } from '@app/core-runtime';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { ModuleAppIdSchema } from '@app/core-runtime/auth/hosted-module-credentials';
-import { Cause, DateTime, Effect, Exit, Layer, Logger, Option, Predicate, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Layer, Logger, Match, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/reactivity';
 import { SqlClient } from 'effect/sql';
@@ -115,6 +118,11 @@ interface DelegationCase {
   readonly originatorLegalEntityId?: string;
   readonly principal?: Partial<typeof GatewayTrustedPrincipalContextSchema.Type>;
   readonly providerKeyId?: string;
+  /**
+   * A subject of main's registered and finite delegation instead of `Assertion`/`Originator`: a registered workload
+   * assertion, an admission, a Privacy dispatch or an Organization governance Read.
+   */
+  readonly registered?: 'assertion' | 'admission' | 'privacy-dispatch' | 'governance-read';
   readonly signerUnavailable?: boolean;
   readonly source?: Omit<Partial<typeof GatewayContextV2ClaimsSchema.Encoded>, 'ver'> & {
     readonly act?: unknown;
@@ -147,6 +155,7 @@ const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originat
     }
     return Effect.succeed({ principal: delegationUnitPrincipal, workload: false });
   },
+  loadPrivacyDispatchHuman: () => Effect.fail(delegationForbidden('originator_not_admitted')()),
   messageCompanyRecorded: () => Effect.succeed(messageRecorded),
 });
 
@@ -234,7 +243,42 @@ const statesHeld = (
 };
 
 /** The subject of a case: the requester's own live assertion, or the recorded requester of asynchronous work. */
+const registeredSubjectFor = (token: string, registered: NonNullable<DelegationCase['registered']>) =>
+  Match.value(registered).pipe(
+    Match.when('assertion', () => ({
+      _tag: 'RegisteredAssertion',
+      declarationKey: 'party.registry.read',
+      sourceAssertion: token,
+    })),
+    Match.when('admission', () => ({
+      _tag: 'RegisteredAdmission',
+      actionInvocationId: subjectInvocationId,
+      declarationKey: 'party.registry.read',
+      sourceActionKey: 'commerce.catalog.create-product',
+      tenantId: delegationUnitPrincipal.tenantId,
+    })),
+    Match.when('privacy-dispatch', () => ({
+      _tag: 'PrivacyDispatch',
+      operation: { _tag: 'SymmyRetention' },
+      source: {
+        _tag: 'Dispatch',
+        dispatchInvocationId: subjectInvocationId,
+        legalEntityId: delegationUnitPrincipal.legalEntityId,
+        tenantId: delegationUnitPrincipal.tenantId,
+      },
+    })),
+    Match.when('governance-read', () => ({
+      _tag: 'OrganizationGovernanceRead',
+      requestHash: 'c'.repeat(64),
+      sourceAssertion: token,
+    })),
+    Match.exhaustive,
+  );
+
 const subjectFor = (token: string, input: DelegationCase) => {
+  if (input.registered !== undefined) {
+    return registeredSubjectFor(token, input.registered);
+  }
   if (input.originator === undefined) {
     return { _tag: 'Assertion', sourceAssertion: token };
   }
@@ -337,6 +381,24 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     Effect.provideService(PgClient.PgClient, controlledPgClient(sql)),
   );
   const adapter = yield* makeEffectDrizzleAuthAdapter(executor, authDatabaseSchema);
+  let coreQueries = 0;
+  // These fixtures exercise live Assertion/Originator delegation. Registered-workload evidence
+  // must never be consulted or synthesized for either legacy mode.
+  const coreDatabase = Layer.effect(
+    CoreDatabase,
+    testCoreDatabase.pipe(Effect.map((coreExecutor) => ({ executor: coreExecutor }))),
+  ).pipe(
+    Layer.provide(
+      scriptedPgClientLayer(
+        Effect.succeed(
+          testSqlConnection(() => {
+            coreQueries += 1;
+            return Effect.die('Assertion/Originator delegation unexpectedly queried registered-workload evidence');
+          }),
+        ),
+      ).pipe(Layer.provide(Reactivity.layer)),
+    ),
+  );
   let ledgerAttempts = 0;
   let ledgerClaims = 0;
   let signingAttempts = 0;
@@ -379,6 +441,12 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       verifiedProviderKeyId: callerKeyId,
     }).pipe(
       Effect.provide(signer),
+      Effect.provide(coreDatabase),
+      Effect.provide(
+        Layer.mock(AccessDecisionGate, {
+          decide: () => Effect.die('Legacy delegation unexpectedly requested Privacy dispatch authority'),
+        }),
+      ),
       // The Shell verifies its own assertion with its own signing configuration; it holds no separate public key set.
       Effect.provide(
         makeGatewayDelegationVerificationLayer(
@@ -458,6 +526,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     ),
   );
   return {
+    coreQueries,
     ledgerAttempts,
     ledgerClaims,
     publicKey,
@@ -483,6 +552,7 @@ const assertDenied = (
       expect(failure.code).toBe(code);
     }
   }
+  expect(result.coreQueries).toBe(0);
   expect(result.ledgerAttempts).toBe(ledgerAttempts);
   expect(result.ledgerClaims).toBe(0);
   expect(result.signingAttempts).toBe(0);
@@ -496,6 +566,7 @@ it.effect(
       const result = yield* delegationCase();
       const exit = result.result;
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(result.coreQueries).toBe(0);
       if (!Exit.isSuccess(exit)) {
         return;
       }
@@ -941,6 +1012,16 @@ const refusalReasons: readonly (readonly [string, DelegationCase, GatewayRefusal
   ['originator-unavailable', { originator: 'unavailable' }, 'originator_evidence_unavailable'],
   ['late-ledger-replay', { ledgerFailure: 'replay' }, 'exchange_replayed'],
   ['late-ledger-unavailable', { ledgerFailure: 'unavailable' }, 'exchange_ledger_unavailable'],
+  // Main's registered and finite delegation names its own steps in the same scheme.
+  ['person-assertion-as-registered-workload', { registered: 'assertion' }, 'subject_assertion_kind_mismatch'],
+  [
+    'registered-assertion-in-stale-release',
+    { catalogRevision: 'b'.repeat(64), registered: 'assertion' },
+    'release_changed',
+  ],
+  ['admission-without-registered-workload', { registered: 'admission' }, 'registered_workload_unmatched'],
+  ['privacy-dispatch-to-another-module', { registered: 'privacy-dispatch' }, 'finite_target_mismatch'],
+  ['governance-read-not-from-privacy', { registered: 'governance-read' }, 'finite_target_mismatch'],
 ];
 for (const [label, input, reason] of refusalReasons) {
   it.effect(`names ${reason} when it refuses ${label}`, () =>

@@ -3,7 +3,7 @@
 // test, so what starts before it returns is visible. A remembered "may edit orders" answer starts the directory with
 // the page; without one the directory waits for the read, as it always did. The tab's sessionStorage carries the
 // answer to the next document.
-import { listCustomers } from '@app/party-registry/api/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Schema } from 'effect';
@@ -19,7 +19,7 @@ import {
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
-rstest.mock('@app/party-registry/api/client');
+rstest.mock('@app/party-registry/apis/customer-list/client');
 
 const PAGE_SIZE = 50;
 const TENANT = 'tenant-1';
@@ -80,7 +80,7 @@ const serveRecords = () => {
   });
 };
 
-const directoryRequests = () => rstest.mocked(listCustomers).mock.calls.length;
+const directoryRequests = () => rstest.mocked(executeCustomerList).mock.calls.length;
 
 /**
  * One document's preload with the first read held open. Returns how many directory requests had started while that
@@ -94,7 +94,7 @@ const preloadWhileReadOpen = Effect.fn('orders-directory-test.preload')(function
   ordersPageData.invalidate();
   orderCountsData.invalidate();
   customerDirectoryData.invalidate();
-  rstest.mocked(listCustomers).mockClear();
+  rstest.mocked(executeCustomerList).mockClear();
   const opened = yield* Deferred.make<boolean>();
   gate = opened;
   const done = browserRuntime.runPromise(preloadOrdersPage(who.legalEntityId, PAGE_SIZE, who));
@@ -109,7 +109,7 @@ const preloadWhileReadOpen = Effect.fn('orders-directory-test.preload')(function
 });
 
 const setUp = Effect.sync(() => {
-  rstest.mocked(listCustomers).mockImplementation(() => Effect.succeed([]));
+  rstest.mocked(executeCustomerList).mockImplementation(() => Effect.succeed({ items: [] }));
   serveRecords();
 });
 
@@ -172,7 +172,7 @@ it.effect('a customer list that fails at once is asked for once, not again when 
     yield* setUp;
     const who = contextOf(FAILING_DIRECTORY_PERSON);
     expect(yield* preloadWhileReadOpen(who, true)).toBe(0);
-    rstest.mocked(listCustomers).mockImplementation(() => Effect.die('The customer list is down'));
+    rstest.mocked(executeCustomerList).mockImplementation(() => Effect.die('The customer list is down'));
 
     expect(yield* preloadWhileReadOpen(who, true)).toBe(1);
     expect(directoryRequests()).toBe(1);

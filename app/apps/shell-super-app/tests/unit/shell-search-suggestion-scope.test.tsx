@@ -2,8 +2,8 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it as test, rstest } from 'effect-rstest';
 
-import type { ShellSearchResponse } from '../../shared/api.ts';
-import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/api.ts';
+import type { ShellSearchResponse } from '../../shared/browser-api.ts';
+import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/browser-api.ts';
 import { useShellSearchSuggestions } from '../../src/routes/shell-search-suggestions.ts';
 
 const { languageState, searchResourcesMock } = rstest.hoisted(() => ({

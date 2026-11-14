@@ -6,7 +6,7 @@
 import { saveLabelsFor } from '@app/admin-ui';
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
@@ -208,8 +208,8 @@ it.effect('customer first, then a product whose record loads later: Uložit enab
     await click(labels.save);
     await waitUntil(() => created.length === 1);
     expect(sent()).toHaveLength(1);
+    expect(Predicate.isTagged(sent()[0], 'CreateOrder')).toBe(true);
     expect(sent()[0]).toMatchObject({
-      _tag: 'CreateOrder',
       lines: [{ productId: 'product-1', quantity: 1 }],
       partyId: 'party-1',
     });

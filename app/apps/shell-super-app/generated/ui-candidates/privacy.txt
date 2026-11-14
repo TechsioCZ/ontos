@@ -1,5 +1,6 @@
 block
 fixed
 inline
+table
 transition
 visible

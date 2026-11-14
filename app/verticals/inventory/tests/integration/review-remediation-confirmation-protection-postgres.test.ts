@@ -1484,6 +1484,7 @@ const principalScopedAccessGate = (
   return bindAccessGate(
     {
       decide,
+      decideMany: (inputs) => Effect.forEach(inputs, decide, { concurrency: 1 }),
       list: scripted.list,
       selectableLegalEntities: scripted.selectableLegalEntities,
     },

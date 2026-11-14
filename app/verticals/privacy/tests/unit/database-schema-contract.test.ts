@@ -8,6 +8,8 @@ import {
   PRIVACY_SCHEMA_NAME,
   PRIVACY_TABLE_INVENTORY,
   PRIVACY_TABLES,
+  PRIVACY_GOVERNED_TABLES,
+  PRIVACY_INGRESS_TABLE_INVENTORY,
   antiResurrectionProtections,
   applicabilityDecisions,
   consentDecisions,
@@ -123,13 +125,10 @@ it('owns the complete Privacy persistence inventory in one schema', () => {
   expect(qualifiedNames).toEqual(PRIVACY_TABLE_INVENTORY.map((name) => `privacy.${name}`));
 });
 
-it('enables tenant and legal-entity RLS on every Privacy business table', () => {
+it('enables tenant and legal-entity RLS on every governed Privacy table', () => {
   /* jscpd:ignore-start -- Every owner schema must independently prove the same mandatory tenant and Legal Entity RLS contract. */
   // fallow-ignore-next-line code-duplication -- Mandatory owner-local RLS acceptance loop mirrors the repository contract by design.
-  for (const table of PRIVACY_TABLES) {
-    if (table === gatewayAssertionRedemptions) {
-      continue;
-    }
+  for (const table of PRIVACY_GOVERNED_TABLES) {
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -140,6 +139,24 @@ it('enables tenant and legal-entity RLS on every Privacy business table', () => 
     }
   }
   /* jscpd:ignore-end */
+});
+
+it('keeps pre-tenant redemption evidence separate from governed personal records', () => {
+  const config = getTableConfig(gatewayAssertionRedemptions);
+  expect(PRIVACY_INGRESS_TABLE_INVENTORY).toEqual(['gateway_assertion_redemptions']);
+  expect(config.enableRLS).toBe(false);
+  expect(
+    EffectArray.sort(
+      config.columns.map(({ name }) => name),
+      Order.String,
+    ),
+  ).toEqual(['audience', 'expires_at', 'issuer', 'jti', 'redeemed_at']);
+  expect(config.uniqueConstraints.map(({ columns }) => columns.map(({ name }) => name))).toEqual([
+    ['issuer', 'audience', 'jti'],
+  ]);
+  expect(config.checks.map(({ name }) => name)).toContain('privacy_gateway_redemptions_audience_ck');
+  expect(migrationSql()).toContain('GRANT SELECT, INSERT, DELETE ON TABLE "privacy"."gateway_assertion_redemptions"');
+  expect(migrationSql()).not.toContain('DROP TABLE "privacy"."gateway_assertion_redemptions"');
 });
 
 it('matches the typed Action repository row contracts', () => {
@@ -474,10 +491,9 @@ it('retains existing identities and Action idempotency constraints', () => {
 
 it('checks in non-destructive generated migrations with forced RLS and exact immutable guards', () => {
   const sql = migrationSql();
-  for (const table of PRIVACY_TABLE_INVENTORY) {
-    if (table === 'gateway_assertion_redemptions') {
-      continue;
-    }
+  for (const table of PRIVACY_TABLE_INVENTORY.filter(
+    (name) => !new Set<string>(PRIVACY_INGRESS_TABLE_INVENTORY).has(name),
+  )) {
     expect(sql).toContain(`ALTER TABLE "privacy"."${table}" FORCE ROW LEVEL SECURITY`);
     expect(sql).not.toContain(`DROP TABLE "privacy"."${table}"`);
   }

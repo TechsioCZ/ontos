@@ -2,7 +2,7 @@
 // The client card's inline forms send their one command only from the shared Save button ("Uložit"): typing and
 // Enter change only the draft, an untouched form closes without asking, and a refused save keeps the input. The i18n
 // runtime, the router blocker and the select template (by a native select) are replaced.
-import { Effect, Option } from 'effect';
+import { Effect, Option, Predicate } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -135,7 +135,8 @@ describe('client card forms save from Uložit only', () => {
 
       yield* click(saveButton());
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({ _tag: 'RecordVisit', clientId: akros.id, result: copy.result });
+      expect(Predicate.isTagged(sent[0], 'RecordVisit')).toBe(true);
+      expect(sent[0]).toMatchObject({ clientId: akros.id, result: copy.result });
       expect(closed).toEqual(['closed']);
     }),
   );

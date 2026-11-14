@@ -1,14 +1,28 @@
 import { readFileSync } from 'node:fs';
 import nodePath from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
-import { pluginDirectory } from './oxlint.mts';
+import { appRoot, pluginDirectory } from './oxlint.mts';
 
 const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
+// The production config is typed against oxlint's own definitions; only the fields this suite
+// asserts on are decoded here, at the module boundary.
+const ProductionConfigModule = Schema.Struct({
+  default: Schema.Struct({
+    overrides: Schema.Array(
+      Schema.Struct({
+        excludeFiles: Schema.optional(Schema.Array(Schema.String)),
+        files: Schema.Array(Schema.String),
+        rules: Schema.Record(Schema.String, RuleSetting),
+      }),
+    ),
+  }),
+});
 const FixtureConfig = Schema.fromJsonString(
   Schema.Struct({
     ignorePatterns: Schema.optional(Schema.Array(Schema.String)),
@@ -16,6 +30,9 @@ const FixtureConfig = Schema.fromJsonString(
   }),
 );
 const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
+const { default: config } = Schema.decodeUnknownSync(ProductionConfigModule)(
+  await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href),
+);
 const rules = listRuleNames();
 
 it('every rule is reporting-only and declares diagnostic metadata', () => {
@@ -40,4 +57,9 @@ it('fixture configs enable only their owned rule without file-ignore shortcuts',
     expect(Array.isArray(setting) ? setting[0] : setting).toBe('error');
     expect((fixture.ignorePatterns ?? []).length === 0, `${rule} must exercise fixtures, not ignore them`).toBe(true);
   }
+});
+
+it('production test import policy is owned by exactly one override', () => {
+  // production-config.test.mts proves through Oxlint that the override applies to tests but not e2e adapters.
+  expect(config.overrides.filter((override) => 'eslint/no-restricted-imports' in override.rules)).toHaveLength(1);
 });

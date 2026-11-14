@@ -127,6 +127,7 @@ const mapDomainProblem = (error: DomainError): AssignCustomerPriceGroupActionPro
         assignCustomerPriceGroupActionProblem.conflict('customer_price_group_revision_conflict'),
       CustomerPriceGroupScopeMismatch: () =>
         assignCustomerPriceGroupActionProblem.forbidden('customer_price_group_scope_mismatch'),
+      CustomerPriceGroupSourceRejected: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
     }),
     Match.exhaustive,
   );

@@ -14,7 +14,9 @@ rstest.mock('@app/legal-agreements/clients/records', () => ({
 rstest.mock('@app/property-portfolio/clients/records', () => ({
   executeRecords: () => Effect.succeed({ properties: [], units: [] }),
 }));
-rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: () => Effect.succeed([]) }));
+rstest.mock('../../src/routes/[lang]/najmy/party-customers.ts', () => ({
+  listCustomers: () => Effect.succeed([]),
+}));
 
 // The store only works in a document; Node gets the few window members it uses.
 const events = new EventTarget();

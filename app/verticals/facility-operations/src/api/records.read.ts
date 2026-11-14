@@ -14,10 +14,6 @@ import {
   persistenceService,
 } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import {
-  facilityOperationsRecordsReadDeclaration,
-  facilityOperationsRecordsRestrictedGroup,
-} from '../../shared/domain/access-declarations.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -66,8 +62,38 @@ export const recordsRead = defineRead(
   {
     // The parent read is the operational reach; the restricted field group is what a full reader is
     // granted on top. Without it, only assigned calendar events and safe meter fields leave the owner.
-    accessDeclaration: facilityOperationsRecordsReadDeclaration,
-    accessFieldGroups: [facilityOperationsRecordsRestrictedGroup],
+    accessDeclaration: {
+      key: 'facility.operations.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'facility-operations', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: [
+          'agendas.assets',
+          'agendas.documents',
+          'agendas.meters.state.meters.consumer',
+          'agendas.meters.state.meters.contract',
+          'agendas.meters.state.meters.note',
+          'agendas.meters.state.meters.supplier',
+          'agendas.meters.state.meters.readings.costMinor',
+          'agendas.meters.state.meters.readings.note',
+          'agendas.meters.state.meters.readings.photo',
+          'agendas.purchasing',
+          'agendas.security',
+        ],
+        key: 'facility.operations.records-restricted.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'facility-operations', level: 'basic' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {

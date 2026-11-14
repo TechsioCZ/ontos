@@ -1,7 +1,7 @@
 import { recoverSqlTransactionError } from '@app/core-runtime';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { eq, sql } from 'drizzle-orm';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -16,7 +16,7 @@ const refused = delegationForbidden('workload_key_not_platform_issued', 'workloa
 
 const WorkloadPrincipalRowSchema = Schema.Struct({
   internalBound: Schema.Boolean,
-  platformRole: Schema.NullOr(Schema.String),
+  platformRole: Schema.OptionFromNullOr(Schema.String),
 });
 
 type CoreExecutor = (typeof CoreDatabase)['Service']['executor'];
@@ -61,7 +61,9 @@ const readWorkloadPrincipal = (core: CoreExecutor, input: PlatformWorkloadKeyInp
       Effect.mapError(unavailable),
       Effect.flatMap((rows) => Schema.decodeUnknownEffect(Schema.Array(WorkloadPrincipalRowSchema))(rows)),
       Effect.mapError(unavailable),
-      Effect.map(([row]) => row !== undefined && (row.platformRole === 'internal_workload' || row.internalBound)),
+      Effect.map(
+        ([row]) => row !== undefined && (Option.contains(row.platformRole, 'internal_workload') || row.internalBound),
+      ),
     );
 
 const readKeyRecord = (auth: AuthExecutor, providerKeyId: string) =>

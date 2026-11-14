@@ -9,6 +9,7 @@ import {
   PAYMENT_TABLES,
   paymentRelations,
 } from '../src/database/schema.ts';
+import { PSP_WORKER_ROUTINES } from '../src/persistence/psp-worker-routines.ts';
 
 class PaymentSchemaVerificationFailed extends Schema.TaggedError<PaymentSchemaVerificationFailed>()(
   'PaymentSchemaVerificationFailed',
@@ -20,6 +21,19 @@ const failure = (reason: string, cause?: unknown) => {
 };
 const sortedTableInventory = EffectArray.sort(PAYMENT_TABLE_INVENTORY, Order.String);
 const redemptionTable = 'gateway_assertion_redemptions';
+/** Worker-owned C17 rows: readable by the runtime role, written only through the scoped routines. */
+const routineWrittenTables = ['psp_provider_dispatches', 'psp_provider_evidence'] as const;
+/** Transient payer contacts: the runtime role may only insert; the scoped routines read and delete them. */
+const insertOnlyTables = ['psp_operation_payer_contacts'] as const;
+/** Cross-Tenant maintenance routines of the reconciliation driver; they refuse inside an operational scope. */
+const crossTenantRoutines = ['list_due_gateway_reconciliation', 'purge_expired_payer_contacts'] as const;
+/** Tenant-only route resolution of the workload binding route Read; it refuses under a Legal Entity scope. */
+const tenantScopedRoutines = ['psp_resolve_binding_route'] as const;
+/** The only Payment routines the runtime role may execute: SECURITY DEFINER with a pinned search_path. */
+const executableRoutines = EffectArray.sort(
+  [...PSP_WORKER_ROUTINES.map((routine) => routine.name), ...crossTenantRoutines, ...tenantScopedRoutines],
+  Order.String,
+);
 const expectedTriggers = EffectArray.sort(
   [
     'payment_authorizations_append_only',
@@ -35,6 +49,26 @@ const expectedTriggers = EffectArray.sort(
     'payment_outcome_transitions_durable_work',
     'payment_payments_no_delete',
     'payment_payments_transition',
+    'payment_psp_binding_revisions_append_only',
+    'payment_psp_bindings_credential',
+    'payment_psp_bindings_no_delete',
+    'payment_psp_binding_routes_append_only',
+    'payment_psp_bindings_transition',
+    'payment_psp_credentials_binding',
+    'payment_psp_credentials_no_delete',
+    'payment_psp_credentials_transition',
+    'payment_psp_dispatches_insert',
+    'payment_psp_dispatches_no_delete',
+    'payment_psp_dispatches_transition',
+    'payment_psp_enablement_revisions_append_only',
+    'payment_psp_enablements_no_delete',
+    'payment_psp_enablements_transition',
+    'payment_psp_evidence_insert',
+    'payment_psp_evidence_no_delete',
+    'payment_psp_evidence_transition',
+    'payment_psp_notifications_insert',
+    'payment_psp_notifications_no_delete',
+    'payment_psp_notifications_transition',
     'payment_reconciliation_cases_no_delete',
     'payment_reconciliation_cases_transition',
     'payment_reconciliation_decisions_append_only',
@@ -61,6 +95,28 @@ const updatableColumns = EffectArray.sort(
     'payment_operations.outcome_revision',
     'payments.aggregate_version',
     'payments.coverage_revision',
+    'psp_credential_revisions.retired_at',
+    'psp_credential_revisions.retired_by_action_invocation_id',
+    'psp_credential_revisions.status',
+    'psp_gateway_enablements.action_invocation_id',
+    'psp_gateway_enablements.actor_principal_id',
+    'psp_gateway_enablements.binding_id',
+    'psp_gateway_enablements.composition_revision',
+    'psp_gateway_enablements.configured_at',
+    'psp_gateway_enablements.enabled',
+    'psp_gateway_enablements.environment',
+    'psp_gateway_enablements.reason',
+    'psp_gateway_enablements.return_url',
+    'psp_gateway_enablements.revision',
+    'psp_provider_account_bindings.action_invocation_id',
+    'psp_provider_account_bindings.actor_principal_id',
+    'psp_provider_account_bindings.composition_revision',
+    'psp_provider_account_bindings.configured_at',
+    'psp_provider_account_bindings.current_credential_revision',
+    'psp_provider_account_bindings.notification_url',
+    'psp_provider_account_bindings.reason',
+    'psp_provider_account_bindings.revision',
+    'psp_provider_account_bindings.status',
     'reconciliation_cases.closed_at',
     'reconciliation_cases.revision',
     'reconciliation_cases.status',
@@ -81,6 +137,9 @@ const updatableColumns = EffectArray.sort(
 const requiredUniqueIndexes = [
   'payment_operations_one_collect_lineage_uk',
   'payment_refund_item_claims_active_item_uk',
+  'payment_psp_bindings_current_uk',
+  'payment_psp_credentials_active_uk',
+  'payment_psp_dispatches_return_token_uk',
 ] as const;
 
 const sameList = (actual: readonly string[], expected: readonly string[]) =>
@@ -102,6 +161,18 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
           not c.relrowsecurity and not c.relforcerowsecurity
           and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
           and has_table_privilege('ontos_runtime', c.oid, 'DELETE') and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
+        when c.relname = any($3::text[]) then
+          c.relrowsecurity and c.relforcerowsecurity
+          and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and not has_table_privilege('ontos_runtime', c.oid, 'INSERT')
+          and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
+          and not has_table_privilege('ontos_runtime', c.oid, 'DELETE')
+          and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
+        when c.relname = any($4::text[]) then
+          c.relrowsecurity and c.relforcerowsecurity
+          and not has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
+          and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
+          and not has_table_privilege('ontos_runtime', c.oid, 'DELETE')
+          and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
         else
           c.relrowsecurity and c.relforcerowsecurity
           and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
@@ -117,7 +188,7 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
       ) as safe
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and c.relkind in ('r', 'p') order by c.relname`,
-      [PAYMENT_SCHEMA_NAME, redemptionTable],
+      [PAYMENT_SCHEMA_NAME, redemptionTable, `{${routineWrittenTables.join(',')}}`, `{${insertOnlyTables.join(',')}}`],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read the Payment table catalog', cause)));
   if (
@@ -165,6 +236,24 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
   ) {
     return yield* failure('Payment append-only and transition triggers differ from the owner contract');
   }
+  const routines = yield* client
+    .unsafe<{ readonly name: string; readonly safe: boolean }>(
+      `select p.proname as name,
+         p.prosecdef and coalesce('search_path=pg_catalog, pg_temp' = any(p.proconfig), false) as safe
+       from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = $1 and has_function_privilege('ontos_runtime', p.oid, 'EXECUTE') order by p.proname`,
+      [PAYMENT_SCHEMA_NAME],
+    )
+    .pipe(Effect.mapError((cause) => failure('Unable to read Payment routine privileges', cause)));
+  if (
+    !sameList(
+      routines.map((routine) => routine.name),
+      executableRoutines,
+    ) ||
+    routines.some((routine) => !routine.safe)
+  ) {
+    return yield* failure('Payment runtime routine privileges differ from the scoped worker routine contract');
+  }
   const [infrastructure] = yield* client
     .unsafe<{
       readonly journal: number;
@@ -184,8 +273,8 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
         join pg_catalog.pg_namespace n on n.oid = c.relnamespace
         where n.nspname = $1 and i.indisunique and i.indpred is not null and c.relname = any($2::text[])) as partial_unique_indexes,
       (select count(*)::integer from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = $1 and (has_function_privilege('ontos_runtime', p.oid, 'EXECUTE')
-          or exists (select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) acl where acl.grantee = 0))) as public_routines,
+        where n.nspname = $1
+          and exists (select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) acl where acl.grantee = 0)) as public_routines,
       (select count(*)::integer from pg_catalog.pg_constraint k join pg_catalog.pg_namespace n on n.oid = k.connamespace
         where n.nspname = $1 and not k.convalidated) as unvalidated_constraints
     from pg_catalog.pg_roles r where r.rolname = 'ontos_runtime'`,
@@ -221,5 +310,5 @@ const tableCount = await Effect.runPromise(
   verify.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(Reactivity.layer, databaseLayer))),
 );
 process.stdout.write(
-  `Verified ${tableCount} payment tables: forced RLS, least privilege, append-only ledgers, collect lineage and validated constraints\n`,
+  `Verified ${tableCount} payment tables: forced RLS, least privilege, append-only ledgers, collect lineage, scoped worker routines and validated constraints\n`,
 );

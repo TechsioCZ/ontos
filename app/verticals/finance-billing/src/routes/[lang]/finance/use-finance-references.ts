@@ -1,8 +1,8 @@
-import type { ProductRecord } from '@app/merchandise/contracts/records';
-import { listProducts } from '@app/merchandise/clients/records';
+import type { RecordsResponseSchema as MerchandiseRecordsResponseSchema } from '@app/merchandise/apis/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
 import type { CustomerListItem } from '@app/party-registry/api/client';
-import { listCustomers } from '@app/party-registry/api/client';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Option, Predicate, Result, Schema } from 'effect';
@@ -12,6 +12,9 @@ import { financePageScope } from './finance-page-scope.ts';
 import { customerIndex } from './invoice-view.ts';
 import type { CustomerIndex } from './invoice-view.ts';
 import { financeReferenceAccess } from './sales-pipeline-readable.ts';
+
+/** One catalog product of the create-invoice form (Merchandise records read, summary rows). */
+export type ProductRecord = (typeof MerchandiseRecordsResponseSchema.Type)['products'][number];
 
 const ReferenceSourceSchema = Schema.Literals(['customers', 'opportunities', 'products']);
 type ReferenceSource = typeof ReferenceSourceSchema.Type;
@@ -41,9 +44,12 @@ const loadDirectory = Effect.fn('Finance.referenceDirectory')(function* loadDire
   const access = yield* financeReferenceAccess;
   const [customers, opportunities] = yield* Effect.all(
     [
-      listCustomers({ includeArchived: true }).pipe(Effect.result),
+      executeCustomerList({ includeArchived: true }, 'finance-billing.customers').pipe(
+        Effect.map(({ items }) => items),
+        Effect.result,
+      ),
       access.opportunitiesReadable
-        ? listOpportunities({}, 'finance-billing.opportunities').pipe(Effect.result, Effect.asSome)
+        ? executeOpportunityRecords({}, 'finance-billing.opportunities').pipe(Effect.result, Effect.asSome)
         : Effect.succeedNone,
     ],
     { concurrency: 2 },
@@ -94,11 +100,12 @@ const loadProducts = Effect.fn('Finance.referenceProducts')(function* loadProduc
   if (!access.productsReadable) {
     return { failed: false, items: [] } satisfies FinanceProducts;
   }
-  const products = yield* listProducts('finance-billing.products', { limit: 250, ordersLimit: 0, summary: true }).pipe(
-    Effect.result,
-  );
+  const products = yield* executeMerchandiseRecords(
+    { view: { limit: 250, ordersLimit: 0, summary: true } },
+    'finance-billing.products',
+  ).pipe(Effect.result);
   return (
-    Result.isSuccess(products) ? { failed: false, items: products.success } : { failed: true, items: [] }
+    Result.isSuccess(products) ? { failed: false, items: products.success.products } : { failed: true, items: [] }
   ) satisfies FinanceProducts;
 });
 

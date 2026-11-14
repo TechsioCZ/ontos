@@ -7,7 +7,7 @@
 // line's price too. Only the generated clients, the i18n runtime (real Czech texts)
 // and the router blocker are replaced.
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -180,7 +180,7 @@ const sentBeans = () =>
   rstest
     .mocked(executeManageCatalog)
     .mock.calls.flatMap(([payload]) =>
-      payload.command._tag === 'EditOrder'
+      Predicate.isTagged(payload.command, 'EditOrder')
         ? (payload.command.lines ?? []).filter((line) => line.productId === 'product-2')
         : [],
     );

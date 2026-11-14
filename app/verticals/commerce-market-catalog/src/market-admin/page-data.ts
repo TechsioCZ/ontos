@@ -1,9 +1,9 @@
 // Page data of the staff E-shop screens (definePageData: prepared before the Shell reveals a page, kept per document,
 // revalidated after writes and live changes) and the one way they run Market Actions and merchandise commands.
-import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
-import { executeRecords } from '@app/merchandise/clients/records';
-import { ManageMarketsPayloadSchema } from '@app/merchandise/contracts/manage-markets';
-import type { RecordsRequestEncoded } from '@app/merchandise/contracts/records';
+import { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
+import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
+import { RecordsRequestSchema } from '@app/merchandise/apis/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
 import { executeStorefrontApplications } from '@app/storefront-registry/api/storefront-applications-client';
 import { definePageData } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Schema } from 'effect';
@@ -64,6 +64,15 @@ export const storefrontsData = definePageData({
     ),
   runtime: browserRuntime,
 });
+
+/** The encoded Merchandise records request, before the owner's schema decodes it. */
+type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
+
+/** One Merchandise records read; the request is decoded with the owner's schema before it is sent. */
+const executeRecords = (payload: RecordsRequestEncoded, requestCorrelation: string) =>
+  Schema.decodeEffect(RecordsRequestSchema)(payload).pipe(
+    Effect.flatMap((request) => executeMerchandiseRecords(request, requestCorrelation)),
+  );
 
 const marketSettingsView: RecordsRequestEncoded = { view: { limit: 0, markets: true, ordersLimit: 0, summary: true } };
 

@@ -10,7 +10,7 @@
     "./clients/delete-tag": "./src/api/delete-tag-action-client.ts",
     "./clients/unassign-tag": "./src/api/unassign-tag-action-client.ts",
     "./clients/update-tag": "./src/api/update-tag-action-client.ts",
-    "./clients/records": "./src/api/records-consumer.ts",
+    "./clients/records": "./src/api/records-client.ts",
     "./components/tag-controls": "./src/components/tag-controls.tsx",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/assign-tag": "./shared/actions/assign-tag.ts",

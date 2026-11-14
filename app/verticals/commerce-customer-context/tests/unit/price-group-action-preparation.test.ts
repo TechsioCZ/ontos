@@ -5,11 +5,11 @@ import {
 } from '@app/core-runtime';
 import type { InstalledModuleCatalog, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { getActionHandler } from '@app/core-runtime/testing/actions';
+import { bindActionTestCommitTransaction, getActionHandler } from '@app/core-runtime/testing/actions';
 import { PriceGroupCompatibilityDecisionSchema } from '@app/price-group-catalog-contracts';
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -53,7 +53,11 @@ import {
   preparedPriceGroupWindowOpen,
   samePreparedPriceGroupProfile,
 } from '../../src/actions/price-group-action-preparation.ts';
-import { priceGroupActionServicesForTransaction } from '../../src/actions/price-group-action-services.ts';
+import {
+  assignCounterpartyPriceGroupServicesForTransaction,
+  assignCustomerPriceGroupServicesForTransaction,
+  priceGroupActionServicesForTransaction,
+} from '../../src/actions/price-group-action-services.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const scope: OperationalScope = {
@@ -131,8 +135,10 @@ it('prepares all four Catalog-dependent Actions and leaves Remove Actions local'
   );
   expect(getActionServicePreflight(removeCustomerPriceGroupAction)).toBeUndefined();
   expect(getActionServicePreflight(removeCounterpartyPriceGroupAction)).toBeUndefined();
-  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
+  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
+  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+    assignCounterpartyPriceGroupServicesForTransaction,
+  );
   expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
   expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
 });
@@ -245,8 +251,11 @@ const ownerPhase = Effect.fn('PriceGroupPreparationTest.ownerPhase')(function* o
       }
       return yield* Effect.die(`Unexpected Price Group owner routine ${routine.name}`);
     });
-  // SAFETY: Price Group persistence consumes only `invoke`; this fake supplies that exact test seam.
-  const executor = { invoke } as unknown as ScopedTransactionExecutor;
+  // SAFETY: Price Group persistence consumes only `invoke` and the installed scope; this fake supplies that exact seam.
+  const executor = {
+    invoke,
+    scope: { legalEntityId: gatewayScope.legalEntityId, tenantId: gatewayScope.tenantId },
+  } as unknown as ScopedTransactionExecutor;
   const transaction: ActionOwnerTransaction = (operation) =>
     operation(executor).pipe(insideDatabaseTransaction(ownerPhaseKey));
   const answer = (request: Request): Promise<Response> => {
@@ -336,8 +345,14 @@ const ownerPhase = Effect.fn('PriceGroupPreparationTest.ownerPhase')(function* o
     assignCustomerPriceGroupAction.descriptor.accessEvidencePolicy,
     assignCustomerPriceGroupAction.descriptor.auditEvidenceSchema,
   );
+  // The commit phase receives the runtime's bound owner transaction, not the bare routine fake.
+  const commit = bindActionTestCommitTransaction(executor, {
+    actionInvocationId: invocation,
+    registration: assignCustomerPriceGroupAction,
+    scope: gatewayScope,
+  });
   const outcome = yield* lease(
-    prepared.value(executor, gatewayScope, compositionRevision).pipe(
+    prepared.value(commit.transaction, gatewayScope, compositionRevision).pipe(
       Effect.flatMap((services) =>
         getActionHandler(assignCustomerPriceGroupAction)(ownerPhasePayload, {
           actionInvocationId: invocation,
@@ -352,7 +367,12 @@ const ownerPhase = Effect.fn('PriceGroupPreparationTest.ownerPhase')(function* o
       ),
       insideDatabaseTransaction(ownerPhaseKey),
     ),
-  ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(gatewayConfiguration), Effect.exit);
+  ).pipe(
+    Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+    Effect.provide(gatewayConfiguration),
+    Effect.ensuring(Effect.sync(commit.close)),
+    Effect.exit,
+  );
   return { cause: causeOf(outcome), events, failure: failureOf(outcome), shellBodies };
 });
 
@@ -387,10 +407,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, TestClock.layer()))('Price Group Actio
     Effect.gen(function* missingProvider() {
       const { events, failure } = yield* ownerPhase({ providerInstalled: false });
       // The requirement refusal is reported in SQL, after the runtime's owner decision, as main reported it.
-      expect(failure).toMatchObject({
-        _tag: 'CustomerPriceGroupCatalogUnavailable',
-        cause: { code: 'module_operation_requirement_unsatisfied' },
-      });
+      expect(Predicate.isTagged(failure, 'CustomerPriceGroupCatalogUnavailable')).toBe(true);
+      expect(failure).toMatchObject({ cause: { code: 'module_operation_requirement_unsatisfied' } });
       expect(events).toEqual([
         'sql:inspect_price_group_profile',
         'sql:inspect_price_group_profile',
@@ -402,7 +420,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, TestClock.layer()))('Price Group Actio
   suite.effect('keeps a Catalog rejection a rejection inside the transaction', () =>
     Effect.gen(function* rejectedCatalog() {
       const { events, failure } = yield* ownerPhase({ decision: 'MISSING' });
-      expect(failure).toMatchObject({ _tag: 'CustomerPriceGroupCatalogRejected', reasonCode: 'MISSING' });
+      expect(Predicate.isTagged(failure, 'CustomerPriceGroupCatalogRejected')).toBe(true);
+      expect(failure).toMatchObject({ reasonCode: 'MISSING' });
       expect(events).not.toContain('sql:assign_price_group');
     }),
   );
@@ -410,7 +429,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, TestClock.layer()))('Price Group Actio
   suite.effect('refuses to commit when the profile changed after preparation', () =>
     Effect.gen(function* staleSnapshot() {
       const { events, failure } = yield* ownerPhase({ profileRevisionAtCommit: 3 });
-      expect(failure).toMatchObject({ _tag: 'OperationContextUnavailable' });
+      expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
       expect(events).not.toContain('sql:assign_price_group');
     }),
   );

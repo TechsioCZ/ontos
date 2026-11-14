@@ -72,11 +72,45 @@ it('proves the real conditional Position-set load through its readonly owner Eff
 });
 
 for (const [name, original, replacement] of [
-  ['foreign context', 'context.services.observe(input.scope)', 'foreign.services.observe(input.scope)'],
+  [
+    'foreign context',
+    'context.services.observe(input.scope, context.prepared)',
+    'foreign.services.observe(input.scope, context.prepared)',
+  ],
   ['mutable result contract', 'readonly observe:', 'observe:'],
-  ['non-Effect branch', 'Effect.succeedNone', 'Option.none()'],
-  ['unknown Effect transform', 'Effect.asSome', 'Effect.unknownProperty'],
+  [
+    'unknown Effect transform',
+    'context.prepared).pipe(Effect.mapError(mapPositionSetReadFailure))',
+    'context.prepared).pipe(Effect.unknownProperty(mapPositionSetReadFailure))',
+  ],
   ['unbound observation', '../persistence/current-relevant-stock-position-set-repository.ts', '../foreign-owner.ts'],
+  [
+    'caller scope in positionSetServices',
+    'observeUnsettledPositionSet(transaction, scope, requested, prepared)',
+    'observeUnsettledPositionSet(transaction, input.scope, requested, prepared)',
+  ],
+  [
+    'a foreign scope in the service factory',
+    'positionSetServices: ReadServiceFactory<PositionSetServices> = (transaction, scope) =>',
+    'positionSetServices: ReadServiceFactory<PositionSetServices> = (transaction, scope) => foreign ??',
+  ],
+  ['an extra service member', 'Effect.succeed({\n    observe:', 'Effect.succeed({\n    leak: foreign,\n    observe:'],
+  ['a changed settled-result branch', "if (prepared.kind === 'RESULT')", "if (prepared.kind !== 'RESULT')"],
+  [
+    'an observation instead of the settled result',
+    'return Option.none<RelevantStockPositionSetObservation>();',
+    'return Option.some(foreign);',
+  ],
+  [
+    'a substituted scope in the owner observation',
+    'observeRelevantStockPositionSet(transaction, scope, requested)',
+    'observeRelevantStockPositionSet(transaction, requested, requested)',
+  ],
+  [
+    'a foreign observation',
+    'Option.some(yield* observeRelevantStockPositionSet(',
+    'Option.some(yield* foreignObserve(',
+  ],
 ] as const) {
   it(`rejects a conditional Position-set load with ${name}`, () => {
     const source = sources.get(readFile(positionSetRead)) ?? '';
@@ -177,7 +211,7 @@ for (const read of [projectionRead, guardedBlockLoadRead]) {
 
 it('still rejects a foreign context projection masquerading as the phase context', () => {
   const source = sources.get(readFile(projectionRead)) ?? '';
-  const invalid = source.replace('context.prepared.kind', 'foreign.prepared.kind');
+  const invalid = source.replace('observe(input.scope, context.prepared)', 'observe(input.scope, foreign.prepared)');
   expect(invalid).not.toBe(source);
   expect(parseSync(readFile(projectionRead), invalid).errors).toEqual([]);
   const diagnostics: string[] = [];

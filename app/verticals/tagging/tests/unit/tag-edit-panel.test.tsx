@@ -3,17 +3,17 @@
 // question before unsaved changes are left. Only the owner client, the i18n runtime and the router blocker are
 // replaced.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TagIdSchema } from '../../shared/apis/records.ts';
 import type { TagWithCounts } from '../../shared/apis/records.ts';
-import { applyTaggingCommandIfUnchanged } from '../../src/api/records-commands.ts';
+import { applyTaggingCommandIfUnchanged } from '../../src/tags/records-commands.ts';
 import { TagEditPanel } from '../../src/routes/[lang]/nastaveni/stitky/tag-edit-panel.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-rstest.mock('../../src/api/records-commands.ts');
+rstest.mock('../../src/tags/records-commands.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
@@ -162,8 +162,10 @@ describe('tag edit panel with one Save button', () => {
       yield* Effect.promise(() => click(button('Uložit')));
       yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
       expect(writes()).toBe(1);
+      expect(Predicate.isTagged(rstest.mocked(applyTaggingCommandIfUnchanged).mock.calls[0]?.[0], 'UpdateTag')).toBe(
+        true,
+      );
       expect(rstest.mocked(applyTaggingCommandIfUnchanged).mock.calls[0]?.[0]).toMatchObject({
-        _tag: 'UpdateTag',
         patch: { name: 'VIP klient' },
       });
       expect(button('Uložit').disabled).toBe(true);

@@ -19,12 +19,12 @@ import { merchandiseRelations } from '../../verticals/merchandise/src/database/s
 import { currentPricingOf, loadProducts } from '../../verticals/merchandise/src/services/merchandise-store.ts';
 import { stockLevelsOf, toProductRecord } from '../../verticals/merchandise/src/services/stock-levels.ts';
 
-const PricesSchema = Schema.Record(Schema.String, Schema.Array(Schema.NullOr(Schema.Number)));
+const PricesSchema = Schema.Record(Schema.String, Schema.Array(Schema.OptionFromNullOr(Schema.Number)));
 const RollbackSchema = Schema.Struct({
   chargedAfter: PricesSchema,
   classified: Schema.Array(Schema.Struct({ classification: Schema.String, id: Schema.String, rate: Schema.Number })),
-  held: Schema.NullOr(Schema.Record(Schema.String, Schema.Number)),
-  source: Schema.NullOr(Schema.String),
+  held: Schema.OptionFromNullOr(Schema.Record(Schema.String, Schema.Number)),
+  source: Schema.OptionFromNullOr(Schema.String),
 });
 const ReportSchema = Schema.Struct({ companyId: LegalEntityIdSchema, tenantId: TenantIdSchema });
 
@@ -50,11 +50,11 @@ it.live('the new release deployed again sells everything at what the old release
     }
     // A rewrite never adds a hold: once Tax priced the company there are none; while migrated only products held since
     // before the deploy and written at 10 % again keep theirs.
-    if (rollback.source === 'MIGRATION') {
+    if (Option.contains(rollback.source, 'MIGRATION')) {
       const tenPercent = new Set(rollback.classified.filter((row) => row.rate === 10).map((row) => row.id));
-      expect(Object.keys(rollback.held ?? {}).filter((id) => !tenPercent.has(id))).toEqual([]);
+      expect(Object.keys(Option.getOrElse(rollback.held, () => ({}))).filter((id) => !tenPercent.has(id))).toEqual([]);
     } else {
-      expect(rollback.held).toBeNull();
+      expect(Option.isNone(rollback.held)).toBe(true);
     }
 
     // The new release reads that state and sells at exactly what the old release charged.
@@ -72,8 +72,8 @@ it.live('the new release deployed again sells everything at what the old release
         return [
           product.id,
           [
-            record.grossPriceMinor ?? null,
-            ...(record.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+            Option.fromNullishOr(record.grossPriceMinor),
+            ...(record.variantRecords ?? []).map((entry) => Option.fromNullishOr(entry.grossPriceMinor)),
           ],
         ];
       }),

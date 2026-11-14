@@ -1,8 +1,9 @@
-import { listOrders, listProducts } from '@app/merchandise/clients/records';
-import { listCustomers } from '@app/party-registry/api/client';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { listEmployees } from '@app/workforce/clients/records';
-import { Effect, Match, Random } from 'effect';
+import { RecordsRequestSchema } from '@app/merchandise/apis/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
+import { Effect, Match, Random, Schema } from 'effect';
 import type { SubjectId, SubjectKind } from '../../shared/apis/records.ts';
 
 /** Display label per subject id. Ids without a readable record are missing from the map. */
@@ -10,9 +11,18 @@ export type SubjectNames = ReadonlyMap<string, string>;
 
 const noNames: SubjectNames = new Map();
 
+/** The encoded Merchandise records view (the read request before the owner's schema decodes it). */
+type RecordsViewEncoded = NonNullable<(typeof RecordsRequestSchema.Encoded)['view']>;
+
 const correlation = (label: string) =>
   Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
     Effect.map(([first, second]) => `tagging:names:${label}:${first}:${second}`),
+  );
+
+/** One Merchandise records read; the view is decoded with the owner's request schema before it is sent. */
+const readMerchandiseRecords = (requestCorrelation: string, view: RecordsViewEncoded) =>
+  Schema.decodeEffect(RecordsRequestSchema)({ view }).pipe(
+    Effect.flatMap((request) => executeMerchandiseRecords(request, requestCorrelation)),
   );
 
 const toNames = <T>(
@@ -50,8 +60,9 @@ const inBatches = <T, E>(
 const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
   Match.value(kind).pipe(
     Match.when('customer', () =>
-      listCustomers({ includeArchived: true, limit: 500 }).pipe(
-        Effect.map((items) =>
+      correlation('customer').pipe(
+        Effect.flatMap((id) => executeCustomerList({ includeArchived: true, limit: 500 }, id)),
+        Effect.map(({ items }) =>
           toNames(
             items,
             (item) => item.partyId,
@@ -61,10 +72,11 @@ const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
       ),
     ),
     Match.when('employee', () =>
-      listEmployees().pipe(
-        Effect.map((items) =>
+      correlation('employee').pipe(
+        Effect.flatMap((id) => executeEmployeeRecords({}, id)),
+        Effect.map((response) =>
           toNames(
-            items,
+            response.items,
             (item) => item.id,
             (item) => item.fullName,
           ),
@@ -74,7 +86,10 @@ const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
     Match.when('product', () =>
       inBatches(ids, (productIds) =>
         correlation('product').pipe(
-          Effect.flatMap((id) => listProducts(id, { limit: ID_BATCH, ordersLimit: 0, productIds, summary: true })),
+          Effect.flatMap((id) =>
+            readMerchandiseRecords(id, { limit: ID_BATCH, ordersLimit: 0, productIds, summary: true }),
+          ),
+          Effect.map(({ products }) => products),
         ),
       ).pipe(
         Effect.map((items) =>
@@ -89,7 +104,8 @@ const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
     Match.when('order', () =>
       inBatches(ids, (orderIds) =>
         correlation('order').pipe(
-          Effect.flatMap((id) => listOrders(id, { limit: 0, orderIds, ordersLimit: ID_BATCH })),
+          Effect.flatMap((id) => readMerchandiseRecords(id, { limit: 0, orderIds, ordersLimit: ID_BATCH })),
+          Effect.map(({ orders }) => orders),
         ),
       ).pipe(
         Effect.map((items) =>
@@ -103,7 +119,7 @@ const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
     ),
     Match.when('opportunity', () =>
       correlation('opportunity').pipe(
-        Effect.flatMap((id) => listOpportunities({}, id)),
+        Effect.flatMap((id) => executeOpportunityRecords({}, id)),
         Effect.map((response) =>
           toNames(
             response.items,

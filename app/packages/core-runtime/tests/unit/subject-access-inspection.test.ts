@@ -1,6 +1,7 @@
 import { Cause, Effect, Exit, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActorContextSchema } from '../../src/access/model.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeAccessActor, decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
@@ -40,6 +41,7 @@ import {
 } from './access-decision-support.ts';
 import type { AuthoritySpec } from './access-decision-support.ts';
 
+const [PrincipalActor, AgentActor] = ActorContextSchema.members;
 const company = LegalEntityIdSchema.make('00000000-0000-4000-8000-000000000080');
 const differentTenant = '00000000-0000-4000-8000-000000000090';
 const requesterScope: OperationalScope = Object.freeze({
@@ -215,7 +217,7 @@ it.effect(
       expect(result.inspectionOnly).toBe(true);
       expect(result.decision.outcome).toBe('ALLOWED');
       expect(f.entries).toHaveLength(1);
-      expect(f.entries[0]?.actor).toEqual({ _tag: 'Principal', principalId: otherPerson });
+      expect(f.entries[0]?.actor).toEqual(PrincipalActor.make({ principalId: otherPerson }));
       expect(f.entries[0]?.onBehalfOfPrincipalId).toBe(person);
       expect(f.entries[0]?.scope).toBe(requesterScope);
       expect(f.calls.length).toBeGreaterThan(3);
@@ -229,7 +231,7 @@ it.effect('does not borrow requester grants when the subject holds none', () =>
   Effect.gen(function* onlySubjectCells() {
     const f = fixture({ cells: [cell({ capability: read.key, holder: principalHolder(person) })] });
     expect((yield* f.service.inspect(question)).decision.outcome).toBe('DENIED');
-    expect(f.entries[0]?.actor).toEqual({ _tag: 'Principal', principalId: otherPerson });
+    expect(f.entries[0]?.actor).toEqual(PrincipalActor.make({ principalId: otherPerson }));
     expect(f.entries[0]?.onBehalfOfPrincipalId).toBe(person);
   }),
 );
@@ -379,13 +381,9 @@ it.effect('validates a real agent connection and its human independently, preser
     const answer = yield* f.service.inspect({ ...question, subject: agentSubject() });
     expect(answer.decision.reasons).toContainEqual({ code: 'deny.agent_sensitive_read' });
     expect(f.authority.calls.readConnection).toBeGreaterThan(0);
-    expect(f.entries[0]?.actor).toEqual({
-      _tag: 'Agent',
-      agentId: agent,
-      connectionId,
-      consentRevision: 1,
-      principalId: otherPerson,
-    });
+    expect(f.entries[0]?.actor).toEqual(
+      AgentActor.make({ agentId: agent, connectionId, consentRevision: 1, principalId: otherPerson }),
+    );
     expect(f.entries[0]?.scope).toBe(requesterScope);
     expect(f.entries[0]?.onBehalfOfPrincipalId).toBe(person);
   }),

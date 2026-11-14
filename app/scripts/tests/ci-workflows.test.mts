@@ -304,6 +304,7 @@ const ArtifactBuildJobSchema = Schema.Struct({
       shard: Schema.Array(Schema.Number),
     }),
   }),
+  'timeout-minutes': Schema.Number,
 });
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
@@ -331,6 +332,17 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
     expect(sorted(built)).toEqual(sorted(units));
     expect(steps.some(({ run }) => run?.includes(`"\${filters[@]}" run build\n`) === true)).toBe(true);
   }
+});
+
+it('gives each Node build shard room for the Shell build and the proving shard its wait for the siblings', () => {
+  const job = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs[NODE_ARTIFACT_BUILD_JOB];
+  // The Shell alone builds for about 11 minutes; at 20 minutes the Shell's shard and the proving shard were cancelled.
+  expect(job['timeout-minutes']).toBe(45);
+  // The two heaviest units never share a shard.
+  const shellShard = job.strategy.matrix.include.find(({ units }) =>
+    units.split(/\s+/u).includes('apps/shell-super-app'),
+  );
+  expect(shellShard?.units.split(/\s+/u)).not.toContain('verticals/party-registry');
 });
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
@@ -511,12 +523,15 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm api:check:ontos',
     'pnpm handler-services:check',
     'pnpm shell:ui-candidates:check',
-    'pnpm test:scripts',
     'pnpm module-entrypoints:check',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
   }
+  const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
+  expect(
+    sourceShards.map((entry) => entry.commands.trim()).filter((command) => command.startsWith('pnpm test:scripts')),
+  ).toEqual(['pnpm test:scripts --shard 1/3', 'pnpm test:scripts --shard 2/3', 'pnpm test:scripts --shard 3/3']);
   const { scripts } = readRootScripts();
   // The module entrypoint boundary check is the repository's own boundary script.
   expect(scripts['module-entrypoints:check']).toContain('check-module-entrypoint-boundaries.mts');
@@ -602,6 +617,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'native-composition': Schema.optional(Schema.Boolean),
               'native-preproposal': Schema.optional(Schema.Boolean),
               'package-filters': Schema.optional(Schema.String),
+              'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
               'root-suite': Schema.optional(Schema.Boolean),
               'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
               suite: Schema.Literals(['integration', 'browser']),
@@ -633,8 +649,9 @@ it('runs the root integration suite once and every package integration suite in 
     'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
   );
   expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
+  expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"');
   // One suite's failure never hides another's: the root suite's status is kept and the step fails only at the end.
-  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?');
+  expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"} || status=$?');
   expect(run?.run).toContain('exit "$status"');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
@@ -657,12 +674,14 @@ it('runs the root integration suite once and every package integration suite in 
     'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
-  expect(shards.filter((shard) => shard['root-suite'] === true)).toHaveLength(1);
-  const named = shards.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
-  const remainder = shards.filter((shard) => shardFilters(shard).some((filter) => filter.startsWith('!')));
-  // The root-suite shard runs every package the others do not name, excluding the workspace root like `pnpm -r`.
-  expect(remainder.map((shard) => shard['root-suite'])).toEqual([true]);
-  expect(named.length + remainder.length).toBe(shards.length);
+  const roots = shards.filter((shard) => shard['root-suite'] === true);
+  expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/3', '2/3', '3/3']);
+  expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
+  const packages = shards.filter((shard) => shard['root-suite'] !== true);
+  const named = packages.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
+  const remainder = packages.filter((shard) => shardFilters(shard).some((filter) => filter.startsWith('!')));
+  expect(remainder).toHaveLength(1);
+  expect(named.length + remainder.length).toBe(packages.length);
   // A package too large for one job is split by Rstest shards that are alone in their jobs and cover 1..n once.
   const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
   for (const shard of split) {
@@ -892,8 +911,8 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
   expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
   const roots = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
-  expect(roots).toHaveLength(1);
-  expect(roots[0]?.suite).toBe('integration');
+  expect(roots).toHaveLength(3);
+  expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
   const customerContext = integration.strategy.matrix.include.filter((shard) =>
     shardFilters(shard).includes('./verticals/commerce-customer-context'),
   );

@@ -6,8 +6,8 @@ import { employeeTagsData } from '../../src/routes/[lang]/prodej/zamestnanci/emp
 
 const { tagRecords } = rstest.hoisted(() => ({ tagRecords: rstest.fn() }));
 
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: rstest.fn() }));
-rstest.mock('@app/tagging/clients/records', () => ({ recordsOfKind: tagRecords }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: rstest.fn() }));
+rstest.mock('@app/tagging/clients/records', () => ({ executeRecords: tagRecords }));
 
 const events = new EventTarget();
 const browserGlobals = {

@@ -212,20 +212,12 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
       return;
     }
     setBusy(true);
-    const input: {
-      -readonly [Key in keyof Parameters<typeof changeOrderStatuses>[0]]: Parameters<
-        typeof changeOrderStatuses
-      >[0][Key];
-    } = {
-      orders: targets,
-      revision: ready.records.revision,
-      status,
-    };
-    if (reason !== undefined) {
-      input.reason = reason;
-    }
     void browserRuntime.runPromise(
-      changeOrderStatuses(input).pipe(
+      changeOrderStatuses(
+        reason === undefined
+          ? { orders: targets, revision: ready.records.revision, status }
+          : { orders: targets, reason, revision: ready.records.revision, status },
+      ).pipe(
         Effect.flatMap(({ changed, failed, proposals }) =>
           Effect.sync(() => {
             for (const proposal of proposals ?? []) {

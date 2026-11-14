@@ -79,6 +79,7 @@ export interface OutboxRepositoryService {
     claim: OutboxClaim,
     safeErrorMessage: string,
     now: Date,
+    wakeAt?: Date,
   ) => Effect.Effect<OutboxFailureStatus, OutboxClaimLostError | PersistenceFailure>;
   readonly matchUnmatched: (
     compositionRevision: string,
@@ -618,7 +619,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
           Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
           Effect.mapError(claimLostOrPersistenceError),
         ),
-    fail: (claim, safeErrorMessage, now) =>
+    fail: (claim, safeErrorMessage, now, wakeAt) =>
       executor
         .transaction(
           Effect.fn('failEffect')(function* failEffect(transaction: CoreTransaction) {
@@ -630,6 +631,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                   eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
                   eq(outboxDeliveries.status, 'processing'),
                   eq(outboxDeliveries.claimedBy, claim.claimId),
+                  wakeAt === undefined ? undefined : gt(outboxDeliveries.claimExpiresAt, now),
                 ),
               )
               .for('update');
@@ -648,19 +650,22 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
               return yield* claimLost();
             }
             const status: OutboxFailureStatus =
-              claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
+              wakeAt === undefined && claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
             const availableAt =
-              status === 'dead' ? now : addMilliseconds(now, retryBackoffMs(claim.retryPolicy, claim.attemptNumber));
+              wakeAt ??
+              (status === 'dead' ? now : addMilliseconds(now, retryBackoffMs(claim.retryPolicy, claim.attemptNumber)));
+            const settlement = {
+              availableAt,
+              claimedAt: null,
+              claimedBy: null,
+              claimExpiresAt: null,
+              status,
+              updatedAt: now,
+            };
             const updated = yield* transaction
               .update(outboxDeliveries)
-              .set({
-                availableAt,
-                claimedAt: null,
-                claimedBy: null,
-                claimExpiresAt: null,
-                status,
-                updatedAt: now,
-              })
+              // The completed wake stays in outbox_attempts without charging the ordinary retry budget.
+              .set(wakeAt === undefined ? settlement : { ...settlement, attemptsCount: claim.attemptNumber - 1 })
               .where(
                 and(
                   eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),

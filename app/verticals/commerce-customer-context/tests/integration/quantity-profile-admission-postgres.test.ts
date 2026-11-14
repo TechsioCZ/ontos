@@ -53,6 +53,14 @@ import {
 } from '../../shared/apis/commerce-quantity-policy-current.ts';
 import { executeCommerceQuantityPolicyCurrentWithAuthorization } from '../../src/api/commerce-quantity-policy-current-client.ts';
 import { commerceQuantityPolicyCurrentRead } from '../../src/api/commerce-quantity-policy-current.read.ts';
+import {
+  CustomerProfileIcoAuthenticationProblemSchema,
+  CustomerProfileIcoForbiddenProblemSchema,
+  CustomerProfileIcoNotFoundProblemSchema,
+  CustomerProfileIcoResponseSchema,
+} from '../../shared/apis/customer-profile-ico.ts';
+import type { CustomerProfileIcoRequest } from '../../shared/apis/customer-profile-ico.ts';
+import { executeCustomerProfileIcoWithAuthorization } from '../../src/api/customer-profile-ico-client.ts';
 import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
@@ -204,26 +212,37 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
   const readRuntime = Context.get(context, ReadRuntime);
 
   const effectiveAt = DateTime.formatIso(yield* DateTime.now);
+  const retailSubject = (partyId: string) =>
+    ({
+      kind: 'RETAIL',
+      partyRef: {
+        moduleId: 'party.registry',
+        resourceId: partyId,
+        resourceType: 'party.registry.party',
+        tenantId: fixture.tenantId,
+      },
+      sellingLegalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: fixture.legalEntityId,
+        resourceType: 'core.identity.legal-entity',
+        tenantId: fixture.tenantId,
+      },
+    }) as const;
+  const counterpartySubject = {
+    counterpartyRef: {
+      moduleId: 'party.registry',
+      resourceId: counterpartyId,
+      resourceType: 'party.registry.counterparty',
+      tenantId: fixture.tenantId,
+    },
+    kind: 'COUNTERPARTY',
+  } as const;
   const createRetail = (partyId: string) =>
     runtime
       .runAction({
         payload: {
           effectiveAt,
-          subject: {
-            kind: 'RETAIL',
-            partyRef: {
-              moduleId: 'party.registry',
-              resourceId: partyId,
-              resourceType: 'party.registry.party',
-              tenantId: fixture.tenantId,
-            },
-            sellingLegalEntityRef: {
-              moduleId: 'core.identity',
-              resourceId: fixture.legalEntityId,
-              resourceType: 'core.identity.legal-entity',
-              tenantId: fixture.tenantId,
-            },
-          },
+          subject: retailSubject(partyId),
           trigger: 'ENSURE_BEFORE_ORDER_ACCEPTANCE',
         },
         principal,
@@ -235,15 +254,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
     .runAction({
       payload: {
         effectiveAt,
-        subject: {
-          counterpartyRef: {
-            moduleId: 'party.registry',
-            resourceId: counterpartyId,
-            resourceType: 'party.registry.counterparty',
-            tenantId: fixture.tenantId,
-          },
-          kind: 'COUNTERPARTY',
-        },
+        subject: counterpartySubject,
         trigger: 'ENSURE_BEFORE_ORDER_ACCEPTANCE',
       },
       principal,
@@ -261,6 +272,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
     context,
     coreEvidenceExecutor,
     counterparty,
+    counterpartySubject,
     createRetail,
     databaseTransport,
     effectiveAt,
@@ -270,6 +282,7 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
     principal,
     readRuntime,
     retail,
+    retailSubject: retailSubject(partyId),
     runtime,
     secondary,
     snapshot,
@@ -897,7 +910,9 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
   );
   // TEST issuer/transport only. The unmodified receiver verifies crypto, redeems in PostgreSQL,
   // resolves the real staff binding/LE, authorizes through actual SpiceDB and runs the real read.
-  const freshAssertion = Effect.fn('QuantityProfileAdmissionTests.freshHttpAssertion')(function* issueAssertion() {
+  const freshAssertion = Effect.fn('QuantityProfileAdmissionTests.freshHttpAssertion')(function* issueAssertion(
+    principal = owner.principal,
+  ) {
     const [row] = yield* clock.execute<{ readonly epoch: number }>(
       sql`select floor(extract(epoch from clock_timestamp()))::integer as epoch`,
       'objects',
@@ -906,14 +921,14 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
     return yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: owner.snapshot.composition.revision,
-        principal: owner.principal,
+        principal,
         targetBuildMarker: ready.marker.buildMarker,
         ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
       })
         .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
         .setAudience('commerce-customer-context')
         .setIssuer(issuer)
-        .setSubject(owner.principal.principalId)
+        .setSubject(principal.principalId)
         .setIssuedAt(epoch)
         .setExpirationTime(epoch + GATEWAY_ASSERTION_TTL_SECONDS)
         .setJti(randomUUID())
@@ -927,8 +942,59 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
       randomUUID(),
       { baseUrl, compositionRevision: owner.snapshot.composition.revision },
     ).pipe(Effect.provide(FetchHttpClient.layer));
-  return { freshAssertion, read };
+  const readIco = (request: CustomerProfileIcoRequest, assertion: string) =>
+    executeCustomerProfileIcoWithAuthorization(request, `Bearer ${assertion}`, randomUUID(), {
+      baseUrl,
+      compositionRevision: owner.snapshot.composition.revision,
+    }).pipe(Effect.provide(FetchHttpClient.layer));
+  return { freshAssertion, read, readIco };
 });
+
+it.live(
+  'reports IČO migration required only for the exact authorized Commerce profile over production HTTP',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* readProfileIco() {
+        const prepared = yield* prepareQuantityReceiverArtifact();
+        const owner = yield* makeQuantityProfileFixture(prepared.marker.buildMarker);
+        const receiver = yield* startQuantityPublicReceiver(owner, prepared);
+        const retail = {
+          authorizationSubject: owner.retailSubject,
+          profileRef: { ...owner.retail.profileRef, kind: 'RETAIL' },
+        } as const;
+        const counterparty = {
+          authorizationSubject: owner.counterpartySubject,
+          profileRef: { ...owner.counterparty.profileRef, kind: 'COUNTERPARTY' },
+        } as const;
+        const assertion = yield* receiver.freshAssertion();
+        expect(yield* receiver.readIco(retail, assertion)).toStrictEqual(
+          CustomerProfileIcoResponseSchema.make({ profileRef: retail.profileRef }),
+        );
+        expect(yield* receiver.readIco(counterparty, yield* receiver.freshAssertion())).toStrictEqual(
+          CustomerProfileIcoResponseSchema.make({ profileRef: counterparty.profileRef }),
+        );
+        const replay = yield* Effect.flip(receiver.readIco(retail, assertion));
+        expect(Schema.is(CustomerProfileIcoAuthenticationProblemSchema)(replay)).toBe(true);
+
+        const wrongSubject = {
+          ...counterparty,
+          authorizationSubject: {
+            ...counterparty.authorizationSubject,
+            counterpartyRef: { ...counterparty.authorizationSubject.counterpartyRef, resourceId: randomUUID() },
+          },
+        };
+        const notFound = yield* Effect.flip(receiver.readIco(wrongSubject, yield* receiver.freshAssertion()));
+        expect(Schema.is(CustomerProfileIcoNotFoundProblemSchema)(notFound)).toBe(true);
+        const ungranted = yield* receiver.freshAssertion({
+          ...owner.fixture.legalEntityOnly,
+          legalEntityId: owner.fixture.legalEntityId,
+        });
+        const forbidden = yield* Effect.flip(receiver.readIco(counterparty, ungranted));
+        expect(Schema.is(CustomerProfileIcoForbiddenProblemSchema)(forbidden)).toBe(true);
+      }),
+    ).pipe(Effect.provide(quantityHttpServices)),
+  120_000,
+);
 
 it.live(
   'serves concrete Quantity Current over production HTTP, redeems assertions, and recovers after owner uncertainty',

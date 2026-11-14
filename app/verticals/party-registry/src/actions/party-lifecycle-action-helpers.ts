@@ -53,7 +53,7 @@ export const resolvePartyLifecycle = (
 
 export const recordPartyInvariantAccess = (
   context: Pick<ActionHandlerContext<Readonly<Record<string, never>>>, 'recordDataAccess'>,
-  party: typeof PartySchema.Type,
+  party: Pick<typeof PartySchema.Type, 'partyRef'>,
   queryPrefix: string,
 ) =>
   context.recordDataAccess({

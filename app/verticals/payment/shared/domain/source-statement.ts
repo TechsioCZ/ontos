@@ -159,6 +159,8 @@ export const PaymentSourceAuthorityConfigurationSchema = Schema.Struct({
   factFamily: PaymentSourceFactFamilySchema,
   /** The exact Payment Method this authority covers; omitted for every method its family permits. */
   method: Schema.optionalKey(PaymentMethodSchema),
+  /** Exact site capability this POS/operator is authorized to evidence. */
+  pickupCapabilityRef: Schema.optionalKey(PaymentPickupCapabilityRefSchema),
   reason: PaymentReasonSchema,
   /** True exactly for a configured refund executor/evidence route (fact family REFUND_EXECUTION). */
   refundRoute: Schema.Boolean,
@@ -170,6 +172,7 @@ export const PaymentSourceAuthorityConfigurationResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   factFamily: PaymentSourceFactFamilySchema,
   method: Schema.optional(PaymentMethodSchema),
+  pickupCapabilityRef: Schema.optional(PaymentPickupCapabilityRefSchema),
   refundRoute: Schema.Boolean,
   revision: PaymentRevisionSchema,
   source: PaymentSourceBindingSchema,

@@ -10,8 +10,8 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Effect } from 'effect';
-import { applyTaggingCommandIfUnchanged } from '../../../../api/records-commands.ts';
-import { refreshTagCatalog } from '../../../../components/tag-controls.tsx';
+import { applyTaggingCommandIfUnchanged } from '../../../../tags/records-commands.ts';
+import { refreshTagCatalog } from '../../../../tags/tag-catalog.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { TagWithCounts } from '../../../../../shared/apis/records.ts';
 import {

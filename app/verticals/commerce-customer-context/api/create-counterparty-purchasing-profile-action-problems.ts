@@ -28,13 +28,15 @@ type ProblemOf<Tag extends CreateCounterpartyPurchasingProfileActionProblem['_ta
 >;
 type DomainProblemIdentity =
   | {
-      readonly code: 'CURRENT_STATE_CONFLICT' | 'PROFILE_KIND_OR_SUBJECT_CONFLICT';
+      readonly code: 'CURRENT_STATE_CONFLICT' | 'PROFILE_KIND_OR_SUBJECT_CONFLICT' | 'SOURCE_CONFLICT' | 'SOURCE_STALE';
       readonly kind: 'conflict';
     }
   | {
       readonly code:
         | 'COUNTERPARTY_ROLE_NOT_ELIGIBLE'
+        | 'PRIVACY_DENIED'
         | 'PROFILE_RECONCILIATION_REQUIRED'
+        | 'SOURCE_AUTHORITY_DENIED'
         | 'SUBJECT_NOT_RESOLVED_OR_INVALID';
       readonly kind: 'ineligible';
     }
@@ -63,8 +65,12 @@ const createCounterpartyPurchasingProfileRejectedProblemByCode = {
   DEPENDENCY_UNAVAILABLE: { code: 'DEPENDENCY_UNAVAILABLE', kind: 'unavailable' },
   OUTCOME_INDETERMINATE: { code: 'OUTCOME_INDETERMINATE', kind: 'unavailable' },
   PERSISTENCE_UNAVAILABLE: { code: 'PERSISTENCE_UNAVAILABLE', kind: 'unavailable' },
+  PRIVACY_DENIED: { code: 'PRIVACY_DENIED', kind: 'ineligible' },
   PROFILE_KIND_OR_SUBJECT_CONFLICT: { code: 'PROFILE_KIND_OR_SUBJECT_CONFLICT', kind: 'conflict' },
   PROFILE_RECONCILIATION_REQUIRED: { code: 'PROFILE_RECONCILIATION_REQUIRED', kind: 'ineligible' },
+  SOURCE_AUTHORITY_DENIED: { code: 'SOURCE_AUTHORITY_DENIED', kind: 'ineligible' },
+  SOURCE_CONFLICT: { code: 'SOURCE_CONFLICT', kind: 'conflict' },
+  SOURCE_STALE: { code: 'SOURCE_STALE', kind: 'conflict' },
   SUBJECT_NOT_RESOLVED_OR_INVALID: { code: 'SUBJECT_NOT_RESOLVED_OR_INVALID', kind: 'ineligible' },
 } as const satisfies Record<
   Extract<DomainError, { readonly _tag: 'CreateCounterpartyPurchasingProfileRejected' }>['code'],

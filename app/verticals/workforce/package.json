@@ -7,7 +7,7 @@
     "./api/client": "./src/api/workforce-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
     "./clients/update-employee": "./src/api/update-employee-action-client.ts",
-    "./clients/records": "./src/api/records-consumer.ts",
+    "./clients/records": "./src/api/records-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/update-employee": "./shared/actions/update-employee.ts",
     "./contracts/records": "./shared/apis/records.ts",

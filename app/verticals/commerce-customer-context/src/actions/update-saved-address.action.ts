@@ -9,10 +9,14 @@ import {
   UpdateSavedAddressResultSchema,
 } from '../../shared/actions/update-saved-address.ts';
 import type { UpdateSavedAddressPayload } from '../../shared/actions/update-saved-address.ts';
-import { AddressBookDomainErrorSchema } from '../../shared/domain/address-errors.ts';
+import {
+  SourceSavedAddressDomainErrorSchema as AddressBookDomainErrorSchema,
+  SavedAddressSourceRejected,
+} from '../../shared/domain/saved-address-source.ts';
 import { partyBackedAddressSourceValidatorForScope } from '../integrations/party-address-source.ts';
 import { addressActionPersistenceForTransaction } from '../persistence/address-persistence.ts';
 import { prepareAddressPartyServices } from './address-party-preflight.ts';
+import { savedAddressSourceService } from '../services/saved-address-source.service.ts';
 import {
   UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxPayloadSchema,
   UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxProducerModuleKey,
@@ -42,6 +46,12 @@ const handle = Effect.fn('UpdateSavedAddress.handle')(function* handleUpdateSave
   payload: UpdateSavedAddressPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
+  if (context.scope.authMethod === 'system' && payload.source === undefined) {
+    return yield* new SavedAddressSourceRejected({
+      code: 'saved_address_source_authority_denied',
+      reason: 'A source workload must state its exact qualified address assertion',
+    });
+  }
   if (payload.origin?.kind === 'PARTY_BACKED') {
     yield* context.services.validatePartySource(payload);
     yield* context.recordDataAccess({
@@ -106,6 +116,10 @@ export const updateSavedAddressAction = defineAction(
       policyKey: 'commerce.customer-context.update-saved-address.access.v1',
     },
     accessOwnerFacts: manageAddressOwnerFacts,
+    accessWorkload: {
+      reason: 'Registered source writers may apply qualified Saved Address assertions',
+      workloads: ['commerce.customer-context.source-write'],
+    },
     actionKey: 'commerce.customer-context.update-saved-address',
     auditProfile: 'sensitive',
     domainErrorSchema: AddressBookDomainErrorSchema,
@@ -129,13 +143,17 @@ export const updateSavedAddressAction = defineAction(
   Effect.fn('UpdateSavedAddressAction.updateSavedAddressAction')(
     function* addressServices(transaction, scope): Effect.fn.Return<Services, never, Crypto.Crypto> {
       const crypto = yield* Crypto.Crypto;
-      return addressActionPersistenceForTransaction(
+      return savedAddressSourceService(
         transaction,
         scope,
-        partyBackedAddressSourceValidatorForScope(
+        addressActionPersistenceForTransaction(
+          transaction,
           scope,
-          crypto,
-          'commerce.customer-context.requirement.update-saved-address-party',
+          partyBackedAddressSourceValidatorForScope(
+            scope,
+            crypto,
+            'commerce.customer-context.requirement.update-saved-address-party',
+          ),
         ),
       );
     },

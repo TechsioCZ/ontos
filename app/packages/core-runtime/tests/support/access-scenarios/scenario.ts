@@ -50,7 +50,7 @@ export interface SeedTenantInput {
   readonly tenantId: string;
 }
 
-/** One role a scenario needs for its own scope: a run/all cell per named capability (O51). */
+/** One role a scenario needs for its own scope: a run cell per named capability (O51). */
 export interface SeededRoleInput {
   /** The one ceiling every cell of this role carries; omitted means an uncapped cell (O18). */
   readonly amountCeiling?: { readonly currency: string; readonly limitMinor: number };
@@ -58,9 +58,13 @@ export interface SeededRoleInput {
   readonly catalogSnapshotId: string;
   /** The human who authored the role; `access_roles.created_by` is a verified human (O46). */
   readonly createdBy: string;
+  /** Required when the role grants explicit record targets in one Legal Entity. */
+  readonly legalEntityId?: string;
   readonly roleId: string;
   readonly roleRevisionId: string;
   readonly scopeId: string;
+  /** Omit to grant the capability on every permitted record in the scope. */
+  readonly selector?: Cell['selector'];
 }
 
 /** The services one composed scenario carries; the suite resolves them and hands them in. */
@@ -269,7 +273,7 @@ export const insertRoleWithCells = (
       const base = {
         capabilityKey: CapabilityKeySchema.make(key),
         mode: 'run' as const,
-        selector: { _tag: 'all' as const },
+        selector: input.selector ?? { _tag: 'all' as const },
       };
       return ceiling === undefined
         ? base
@@ -284,8 +288,9 @@ export const insertRoleWithCells = (
     const roleId = RoleIdSchema.make(input.roleId);
     const scopeId = AccessScopeIdSchema.make(input.scopeId);
     yield* admin.unsafe(
-      `insert into core.access_roles (role_id, tenant_id, created_by, name)
-         values ('${input.roleId}', '${tenantId}', '${input.createdBy}', 'C20 scenario role')`,
+      `insert into core.access_roles (role_id, tenant_id, created_by, legal_entity_id, name)
+         values ($1, $2, $3, $4, 'C20 scenario role')`,
+      [input.roleId, tenantId, input.createdBy, input.legalEntityId ?? null],
     );
     yield* admin.unsafe(
       `insert into core.access_role_revisions

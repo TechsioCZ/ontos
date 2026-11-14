@@ -2,13 +2,13 @@ import { sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { ASSORTMENT_TABLES, gatewayAssertionRedemptions } from '../../src/database/schema.ts';
+import { ASSORTMENT_TABLES } from '../../src/database/schema.ts';
 import type { assortmentRelations } from '../../src/database/schema.ts';
 
 type AssortmentAdminDatabase = TestDatabaseFromClient<typeof assortmentRelations>;
 
 /** Owner tables the shared runtime role reads and writes under its row-level security policies. */
-const ASSORTMENT_OWNER_TABLES = ASSORTMENT_TABLES.filter((table) => table !== gatewayAssertionRedemptions);
+const ASSORTMENT_OWNER_TABLES = ASSORTMENT_TABLES;
 
 const ownerTableAccess = (admin: AssortmentAdminDatabase, statement: 'grant' | 'revoke') =>
   admin.transaction((transaction) =>

@@ -12,7 +12,7 @@ import type {
   ShellHomeComponent,
   ShellNavigationItem,
   ShellUnavailableDeployment,
-} from '../../../shared/api.ts';
+} from '../../../shared/browser-api.ts';
 import {
   availableLegalEntities,
   availableTenants,

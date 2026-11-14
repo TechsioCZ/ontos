@@ -268,3 +268,29 @@ it.effect('types database failures as resolver unavailability', () =>
     expect(error.reason).not.toMatch(/secret database error/u);
   }),
 );
+
+it.effect('resolves a current human through a transaction-bound database port', () =>
+  Effect.gen(function* resolvesThroughReadOnlyPort() {
+    const database = yield* makeTestDatabase(() => Effect.succeed([activeRecord]));
+    const resolved = yield* database.transaction(
+      Effect.fn('PrincipalResolverReadPortTest.read')(function* read(transaction) {
+        // Resolution may audit an inactive principal's denial, so the port also carries the transaction's insert.
+        const selectOnly = {
+          insert: transaction.insert.bind(transaction),
+          select: transaction.select.bind(transaction),
+        };
+        return yield* makePrincipalResolver(
+          { executor: selectOnly },
+          { authenticationNamespaceId: 'test.staff.better-auth.v1' },
+        ).resolveBetterAuthUserForTenant('subject', activeRecord.tenantId);
+      }),
+    );
+    expect(resolved).toEqual({
+      authBindingId: activeRecord.authBindingId,
+      displayName: activeRecord.displayName,
+      principalId: activeRecord.principalId,
+      principalKind: activeRecord.principalKind,
+      tenantId: activeRecord.tenantId,
+    });
+  }),
+);

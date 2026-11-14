@@ -4,7 +4,7 @@ import { formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { CZ_VAT_STANDARD, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Duration, Schema } from 'effect';
+import { DateTime, Duration, Option, Schema } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
 const KEY_PREFIX = 'merchandise.tax';
@@ -32,9 +32,12 @@ export const companyVatOf = (
     | Pick<RecordsResponse, 'sellerVatRegime' | 'taxRates' | 'taxRatesConfirmedAt' | 'taxRatesSource'>
     | undefined,
 ): CompanyVat => {
-  const vat: CompanyVat = { rates: response?.taxRates ?? [], regime: response?.sellerVatRegime ?? null };
-  const source = response?.taxRatesSource ?? undefined;
-  const confirmedAt = response?.taxRatesConfirmedAt ?? undefined;
+  const vat: CompanyVat = {
+    rates: response?.taxRates ?? [],
+    regime: Option.getOrNull(response?.sellerVatRegime ?? Option.none()),
+  };
+  const source = Option.getOrUndefined(response?.taxRatesSource ?? Option.none());
+  const confirmedAt = Option.getOrUndefined(response?.taxRatesConfirmedAt ?? Option.none());
   const sourced = source === undefined ? vat : { ...vat, source };
   return confirmedAt === undefined ? sourced : { ...sourced, confirmedAt };
 };

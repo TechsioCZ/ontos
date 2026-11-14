@@ -3,7 +3,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
-import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../../src/db/identity-policies.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -88,7 +88,7 @@ it('keeps publication authority singleton state admin-owned with one read-only r
   const config = getTableConfig(applicationCompositionAuthority);
   const policies = [
     ...config.policies,
-    ...makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+    ...coreIdentityPolicyDescriptors(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
       .filter(({ table }) => table === applicationCompositionAuthority)
       .map(({ policy }) => policy),
   ];

@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -11,6 +11,7 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
+import { ApplicationCompositionAuthorityError } from '../../src/modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
 import type { OntosDeploymentIdentitySchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -307,7 +308,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const afterExit = yield* Effect.flip(
     repository.claimNext(workers, 'after-entry-exit', DateTime.toDateUtc(DateTime.makeUnsafe(0)), composition.revision),
   );
-  expect(afterExit._tag).toBe('ApplicationCompositionAuthorityError');
+  expect(Predicate.isTagged(afterExit, 'ApplicationCompositionAuthorityError')).toBe(true);
   return { claimed, claims, completed, failures, observed, outcome, reconciled, results, statements };
 });
 
@@ -357,7 +358,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
         { actorPrincipalId, claimId: 'owner:claim', tenantId: 'not-a-tenant' },
       ]) {
         const failure = yield* Effect.flip(outboxWorkerTenantScope(input));
-        expect(failure._tag).toBe('CoreAuthorizationProjectionError');
+        expect(Predicate.isTagged(failure, 'CoreAuthorizationProjectionError')).toBe(true);
       }
     }),
   );
@@ -575,7 +576,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       Effect.gen(function* rejectChangedClaimAuthority() {
         const fixture = yield* runEntry({ authority });
         expect(fixture.outcome).toBe('failed');
-        expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+        expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
         expect(fixture.statements).toEqual([]);
         expect(fixture.reconciled).toEqual([]);
         expect(fixture.observed).toEqual([]);
@@ -588,7 +589,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       Effect.gen(function* rejectSqlAuthority() {
         const fixture = yield* runEntry({ selected: coreSystemOutboxWorkers[0], sqlAuthority });
         expect(fixture.outcome).toBe('failed');
-        expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+        expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
         expect(fixture.statements.some(({ sql }) => /rollback/iu.test(sql))).toBe(true);
         expect(fixture.statements.some(({ sql }) => sql.includes('skip locked'))).toBe(false);
         expect(fixture.claimed).toBe(false);
@@ -622,7 +623,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
         registrations: [replacement, ...workers.filter((worker) => worker !== coreSystemOutboxWorkers[0])],
       });
       expect(fixture.outcome).toBe('failed');
-      expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+      expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
       expect(fixture.statements).toEqual([]);
       expect(fixture.reconciled).toEqual([]);
       expect(fixture.observed).toEqual([]);

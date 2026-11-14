@@ -2,7 +2,7 @@ import { executeRecords as readAgreements } from '@app/legal-agreements/clients/
 import { executeRecords as readOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as readFinance } from '@app/finance-billing/clients/records';
 import { executeRecords as readWork } from '@app/work-tasks/clients/records';
-import { listEmployees } from '@app/workforce/clients/records';
+import { executeRecords as executeWorkforceRecords } from '@app/workforce/clients/records';
 import {
   changeConcerns,
   definePageData,
@@ -20,6 +20,13 @@ import { executeRecords } from '../../../api/records-client';
 import type { RecordsResponse } from '../../../../shared/apis/records';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime';
 import { propertySelection, readPropertySearch, PropertySearchInputSchema } from './property-navigation.ts';
+
+/** Workforce employees for this view, each read under its own correlation. */
+const listEmployees = () =>
+  Random.nextInt.pipe(
+    Effect.flatMap((id) => executeWorkforceRecords({}, `workforce:list:${id}`)),
+    Effect.map((response) => response.items),
+  );
 
 const keyOf = (parts: readonly string[]) =>
   Result.getOrThrow(Schema.encodeResult(Schema.fromJsonString(Schema.Array(Schema.String)))(parts));

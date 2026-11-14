@@ -1,17 +1,14 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Function as Fn, Layer, Schema } from 'effect';
+import { PgClient } from '@effect/sql-pg';
+import { Context, Crypto, Effect, Function as Fn, Layer, Redacted, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { AccessEnforcementPortsLive } from '../../src/actions/runtime-wiring.ts';
 import { TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
 import { AccessChangesStoreLive, AccessReleaseStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
 import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
-import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../../src/access/compiler/spice-db-compiler.ts';
+import { CoreAuthorizationProjectionCompilerLive } from '../../src/access/compiler/spice-db-compiler.ts';
 import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
 import type { LegalEntityId, TenantId } from '../../src/access/ids.ts';
@@ -27,11 +24,12 @@ import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
-import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { loadSpiceDbConfig, SpiceDbConfig } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { createTemplateDatabase, insertTenantStatement, replacedDatabase } from './access-scenarios/database.ts';
-import { makeTestDatabaseFromClient, makeTestPgClient } from './database.ts';
+import { acquireOutlivingCleanup, layerTestDatabaseFromClient } from './database.ts';
+import type { TestDatabaseFromClient } from './database.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 
 /*
@@ -39,6 +37,17 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
  * the v2 schema, composed with the real projection writer, journal store, bootstrap and gate. A suite may wrap the
  * engine compiler, e.g. to hold a projection inside its engine write.
  */
+class ScenarioCoreDatabase extends Context.Service<
+  ScenarioCoreDatabase,
+  TestDatabaseFromClient<typeof coreRelations>
+>()('@app/core-runtime/tests/support/projection-tenant-scenario/ScenarioCoreDatabase') {}
+
+/** A native client that stays usable for every cleanup finalizer the scenario registers after it. */
+const acquireScenarioPgClient = (connectionString: string, maxConnections: number) =>
+  acquireOutlivingCleanup(Layer.build(PgClient.layer({ maxConnections, url: Redacted.make(connectionString) }))).pipe(
+    Effect.map(Context.get(PgClient.PgClient)),
+  );
+
 export const scenarioUid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 export const SCENARIO_OWNER = PrincipalIdSchema.make(scenarioUid(2));
 export const SCENARIO_COMPANY = LegalEntityIdSchema.make(scenarioUid(4));
@@ -95,22 +104,21 @@ export const withProjectionTenant = <Value, Failure, Requirements>(
     const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const crypto = yield* Crypto.Crypto;
     const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
-    const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
+    const bootstrapConnection = yield* acquireScenarioPgClient(connections.admin.connectionString, 1);
     const database = `projection_tenant_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
     );
-    const admin = yield* makeTestPgClient(replacedDatabase(connections.admin.connectionString, database), {
-      maxConnections: 2,
-    });
+    const admin = yield* acquireScenarioPgClient(replacedDatabase(connections.admin.connectionString, database), 2);
     yield* createTemplateDatabase(admin);
     const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
     yield* seedTenant(admin, tenantId, options.activeModules ?? []);
-    const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
-      maxConnections: 4,
-    });
-    const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
+    const runtime = yield* acquireScenarioPgClient(replacedDatabase(connections.runtime.connectionString, database), 4);
+    const executor = Context.get(
+      yield* Layer.build(layerTestDatabaseFromClient(ScenarioCoreDatabase, runtime, coreRelations)),
+      ScenarioCoreDatabase,
+    );
     yield* Effect.acquireUseRelease(
       Effect.sync(() => newSpiceDbGrpcClient(configuration)),
       (client) =>
@@ -121,7 +129,12 @@ export const withProjectionTenant = <Value, Failure, Requirements>(
         ).pipe(Effect.orDie),
       (client) => Effect.sync(() => client.close()),
     );
-    const engine = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
+    const engine = Context.get(
+      yield* Layer.build(
+        CoreAuthorizationProjectionCompilerLive.pipe(Layer.provide(Layer.succeed(SpiceDbConfig, configuration))),
+      ),
+      AccessProjectionCompiler,
+    );
     const compiler = options.wrapCompiler === undefined ? engine : options.wrapCompiler(engine);
     const platforms = Layer.mergeAll(
       Layer.succeed(CoreDatabase, { executor }),

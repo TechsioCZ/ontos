@@ -18,8 +18,10 @@ import { Reactivity } from 'effect/reactivity';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, FinanceConflict } from '../../shared/actions/apply-command.ts';
-import { CommandReferenceValidators, prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
+import { prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
 import { financeStates } from '../../src/database/schema.ts';
+import type { FinanceValidators } from '../../src/services/persistence.service.ts';
+import { FinanceReferenceValidators } from '../../src/services/reference-validation.ts';
 import { FinanceTaxRatesBaseline } from '../support/finance-tax-rates.ts';
 
 const unused = () => Effect.die('Unexpected production reference transport');
@@ -117,9 +119,16 @@ const nativePreparation = Effect.scoped(
       expect(snapshotCount).toBe(1);
       referenceChecks += 1;
     };
-    const validators: CommandReferenceValidators['Service'] = { invoice: () => Effect.sync(assertOutsideSql) };
+    const validators: FinanceValidators = { invoice: () => Effect.sync(assertOutsideSql) };
+    const referenceValidators: FinanceReferenceValidators['Service'] = {
+      forScope: (requested) =>
+        Effect.sync(() => {
+          expect(requested).toBe(context.scope);
+          return validators;
+        }),
+    };
     const factory = yield* prepareApplyCommandServices(payload, context).pipe(
-      Effect.provideService(CommandReferenceValidators, validators),
+      Effect.provideService(FinanceReferenceValidators, referenceValidators),
     );
     const preparedChecks = referenceChecks;
     expect(preparedChecks).toBeGreaterThan(0);

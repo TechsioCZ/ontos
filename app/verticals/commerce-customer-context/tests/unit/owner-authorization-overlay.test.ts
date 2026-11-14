@@ -326,3 +326,28 @@ it.effect('denies a Retail capability whose profile fact or retail permission is
     expect(unboundProfile).toBe('unavailable');
   }),
 );
+
+it.effect('does not accept unsealed credentials as source Assignment or receipt authority', () =>
+  Effect.gen(function* sourceAssignmentNeedsCurrentGate() {
+    const calls: string[] = [];
+    const transaction = transactionWith((routineKey) => {
+      calls.push(routineKey);
+      return [];
+    });
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    for (const authMethod of ['system', 'api_key'] as const) {
+      const input = factInput('commerce.customer-context.assign-counterparty-price-group', { counterpartyId });
+      const sourceScope = { ...scope, authMethod };
+      expect(yield* overlay.authorize(transaction, { ...input, scope: sourceScope })).toBe('unavailable');
+      expect(
+        yield* overlay.authorize(transaction, {
+          ...input,
+          operation: 'read',
+          operationKey: 'commerce.customer-context.api.customer-price-group-assignment-receipt',
+          scope: sourceScope,
+        }),
+      ).toBe('unavailable');
+    }
+    expect(calls).toEqual([]);
+  }),
+);

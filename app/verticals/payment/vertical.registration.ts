@@ -5,20 +5,32 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { paymentManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { acceptPaymentObservationAction } from './src/actions/accept-payment-observation.action.ts';
+import { captureProviderNotificationAction } from './src/actions/capture-provider-notification.action.ts';
+import { configureGatewayEnablementAction } from './src/actions/configure-gateway-enablement.action.ts';
 import { configurePaymentMethodEnablementAction } from './src/actions/configure-payment-method-enablement.action.ts';
 import { configurePaymentSourceAuthorityAction } from './src/actions/configure-payment-source-authority.action.ts';
+import { configureProviderAccountBindingAction } from './src/actions/configure-provider-account-binding.action.ts';
 import { createPaymentAction } from './src/actions/create-payment.action.ts';
 import { currentPaymentRead } from './src/api/current-payment.read.ts';
+import { executeGatewayOperationWorker } from './src/workers/execute-gateway-operation.worker.ts';
+import { gatewayConfigurationRead } from './src/api/gateway-configuration.read.ts';
+import { gatewayCustomerActionRead } from './src/api/gateway-customer-action.read.ts';
+import { gatewayReconciliationDebtRead } from './src/api/gateway-reconciliation-debt.read.ts';
+import { gatewayReturnStatusRead } from './src/api/gateway-return-status.read.ts';
 import { issuePaymentAuthorizationAction } from './src/actions/issue-payment-authorization.action.ts';
 import { paymentAuthorizationValidationRead } from './src/api/payment-authorization-validation.read.ts';
 import { paymentHistoryRead } from './src/api/payment-history.read.ts';
 import { paymentMethodApplicabilityRead } from './src/api/payment-method-applicability.read.ts';
 import { paymentReconciliationDebtRead } from './src/api/payment-reconciliation-debt.read.ts';
+import { processProviderNotificationWorker } from './src/workers/process-provider-notification.worker.ts';
+import { providerBindingRouteRead } from './src/api/provider-binding-route.read.ts';
 import { recordPaymentLocalEvidenceAction } from './src/actions/record-payment-local-evidence.action.ts';
 import { recordPaymentReconciliationDecisionAction } from './src/actions/record-payment-reconciliation-decision.action.ts';
+import { recoverGatewayOperationWorker } from './src/workers/recover-gateway-operation.worker.ts';
 import { requestPaymentCancellationAction } from './src/actions/request-payment-cancellation.action.ts';
 import { requestPaymentOperationRecoveryAction } from './src/actions/request-payment-operation-recovery.action.ts';
 import { requestPaymentRefundAction } from './src/actions/request-payment-refund.action.ts';
+import { rotateProviderCredentialAction } from './src/actions/rotate-provider-credential.action.ts';
 import { startPaymentCollectionAction } from './src/actions/start-payment-collection.action.ts';
 // </generated-module-registration-imports>
 
@@ -26,8 +38,11 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     acceptPaymentObservationAction,
+    captureProviderNotificationAction,
+    configureGatewayEnablementAction,
     configurePaymentMethodEnablementAction,
     configurePaymentSourceAuthorityAction,
+    configureProviderAccountBindingAction,
     createPaymentAction,
     issuePaymentAuthorizationAction,
     recordPaymentLocalEvidenceAction,
@@ -35,6 +50,7 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
     requestPaymentCancellationAction,
     requestPaymentOperationRecoveryAction,
     requestPaymentRefundAction,
+    rotateProviderCredentialAction,
     startPaymentCollectionAction,
     // </generated-module-registration-actions>
   ],
@@ -42,11 +58,16 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'current-payment': () => import('./src/api/current-payment-client.ts'),
+      'gateway-configuration': () => import('./src/api/gateway-configuration-client.ts'),
+      'gateway-customer-action': () => import('./src/api/gateway-customer-action-client.ts'),
+      'gateway-reconciliation-debt': () => import('./src/api/gateway-reconciliation-debt-client.ts'),
+      'gateway-return-status': () => import('./src/api/gateway-return-status-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'payment-authorization-validation': () => import('./src/api/payment-authorization-validation-client.ts'),
       'payment-history': () => import('./src/api/payment-history-client.ts'),
       'payment-method-applicability': () => import('./src/api/payment-method-applicability-client.ts'),
       'payment-reconciliation-debt': () => import('./src/api/payment-reconciliation-debt-client.ts'),
+      'provider-binding-route': () => import('./src/api/provider-binding-route-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -69,15 +90,23 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
   manifest: paymentManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
+    executeGatewayOperationWorker,
+    processProviderNotificationWorker,
+    recoverGatewayOperationWorker,
     // </generated-module-registration-workers>
   ],
   reads: [
     // <generated-module-registration-reads>
     currentPaymentRead,
+    gatewayConfigurationRead,
+    gatewayCustomerActionRead,
+    gatewayReconciliationDebtRead,
+    gatewayReturnStatusRead,
     paymentAuthorizationValidationRead,
     paymentHistoryRead,
     paymentMethodApplicabilityRead,
     paymentReconciliationDebtRead,
+    providerBindingRouteRead,
     // </generated-module-registration-reads>
   ],
 });

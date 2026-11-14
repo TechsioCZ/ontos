@@ -3,6 +3,7 @@ import type { TenantModuleStateUnsatisfiedDependencyError } from './tenant-modul
 import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './tenant-module-state-unsatisfied-dependency-error.ts';
 import { Effect, Schema } from 'effect';
 
+import { AccessKeySyntaxSchema, WorkloadKeySchema } from '../authorization/access-key-syntax.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
 /** Required compatibility claim; providers advertise it only with executed closure enforcement. */
@@ -58,12 +59,24 @@ export const OntosModuleRequirementsSchema = Schema.Struct({
   schemaVersion: Schema.Literal('1'),
 });
 
+/**
+ * The registered workloads an operation admits (its `accessWorkload` workloads and its `accessActor`
+ * `subjectWorkloads`) and the declaration they run under. Present only when the operation declares both. Demo
+ * divergence exception 8 (upstream main has no such field): the Shell keeps a caller's declared registered-workload
+ * call only while the installed receiver publishes exactly that workload and declaration.
+ */
+export const OntosOperationWorkloadCarrierSchema = Schema.Struct({
+  declarationKey: AccessKeySyntaxSchema,
+  workloads: Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isUnique()),
+});
+
 /** Safe compatibility claim. The owner must separately prove its mounted receiving/runtime binding. */
 export const OntosOperationContractSchema = Schema.Struct({
   apiKey: OntosModuleIdSchema,
   entrypoint: ModuleEntrypointSchema,
   operationKey: OntosOperationKeySchema,
   schemaVersion: exactVersion,
+  workloadCarrier: Schema.optionalKey(OntosOperationWorkloadCarrierSchema),
 });
 
 export type OntosRequiredOperationContract = typeof OntosRequiredOperationContractSchema.Type;

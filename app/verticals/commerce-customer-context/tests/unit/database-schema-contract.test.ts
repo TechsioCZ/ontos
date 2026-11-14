@@ -53,8 +53,8 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(53);
-  expect(new Set(actual).size).toBe(53);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(70);
+  expect(new Set(actual).size).toBe(70);
   expect(actual).toEqual(expected);
 });
 
@@ -255,6 +255,17 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
     'market_bootstrap_policy_candidate_revisions',
     'portal_enrollment_attempts',
     'portal_enrollment_owner_operations',
+    'customer_profile_ico_assertions',
+    'customer_profile_ico_authority',
+    'customer_profile_ico_migration_history',
+  ]);
+  const tenantIdentityColumns = new Map<string, readonly string[]>([
+    ['customer_profile_source_bindings', ['tenant_id', 'issuer', 'namespace', 'record_type', 'record_id']],
+    ['customer_profile_source_receipts', ['tenant_id', 'issuer', 'namespace', 'record_type', 'effect_id']],
+    ['customer_profile_ico_target_inventory', ['tenant_id', 'customer_profile_id']],
+    ['customer_profile_ico_assertions', ['tenant_id', 'customer_profile_id', 'revision']],
+    ['customer_profile_ico_authority', ['tenant_id']],
+    ['customer_profile_ico_migration_history', ['tenant_id', 'revision']],
   ]);
   for (const table of COMMERCE_CUSTOMER_CONTEXT_TABLES) {
     const config = getTableConfig(table);
@@ -273,9 +284,18 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
     }
     expect(config.policies[4]?.to).toBe('public');
     expect(
-      [...config.primaryKeys, ...config.uniqueConstraints, ...config.indexes].some((candidate) => {
+      [
+        ...config.primaryKeys,
+        ...config.uniqueConstraints,
+        ...config.indexes,
+        ...config.columns.filter(({ primary }) => primary).map((column) => ({ columns: [column] })),
+      ].some((candidate) => {
         const columns = 'columns' in candidate ? candidate.columns : candidate.config.columns;
         const names = new Set(columns.flatMap((column) => ('name' in column ? [column.name] : [])));
+        const tenantIdentity = tenantIdentityColumns.get(config.name);
+        if (tenantIdentity !== undefined) {
+          return tenantIdentity.every((column) => names.has(column)) && !names.has('legal_entity_id');
+        }
         return tenantOnly
           ? names.has('tenant_id') &&
               (names.has('portal_enrollment_attempt_id') ||

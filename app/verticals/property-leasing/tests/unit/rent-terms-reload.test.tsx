@@ -38,12 +38,15 @@ rstest.mock('@app/shared-contracts', () => ({
 }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/party-registry/api/client', () => ({
-  createCustomer: () => Effect.never,
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
   executeCounterpartyRead: () => Effect.never,
+}));
+rstest.mock('@app/party-registry/apis/party-detail/client', () => ({
   executePartyDetail: () => Effect.never,
+}));
+rstest.mock('../../src/routes/[lang]/najmy/party-customers.ts', () => ({
+  findCustomers: () => Effect.succeed([]),
   listCustomers: () => Effect.succeed([]),
-  loadPartiesClient: () => Effect.never,
 }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({
   executeRecords: () => Effect.succeed({ assets: [], properties: [], revision: 1, units: [] }),

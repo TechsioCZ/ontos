@@ -2,7 +2,7 @@
 // Calendar events save only from the shared Save button ("Uložit"). The edit of an own event saves against the
 // revision its draft was built on: someone else's newer change is refused instead of overwritten, and "Načíst
 // nejnovější" loads it.
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
 import { AgendaStateSchema, emptyAgendaState } from '../../shared/domain/agenda.ts';
@@ -109,7 +109,8 @@ describe('calendar event forms', () => {
       yield* typeInto(title, 'Revize výtahu');
       expect(agenda.applied).toEqual([]);
       yield* save(agenda, 1);
-      expect(agenda.applied.map((entry) => entry.command._tag)).toEqual(['AgendaEventCreate']);
+      expect(agenda.applied).toHaveLength(1);
+      expect(Predicate.isTagged(agenda.applied[0]?.command, 'AgendaEventCreate')).toBe(true);
     }),
   );
 
@@ -126,7 +127,8 @@ describe('calendar event forms', () => {
       );
       yield* typeInto(title, 'Revize výtahu');
       yield* click(labels.save);
-      expect(refused.map((command) => command._tag)).toEqual(['AgendaEventCreate']);
+      expect(refused).toHaveLength(1);
+      expect(Predicate.isTagged(refused[0], 'AgendaEventCreate')).toBe(true);
       expect(bodyText()).toContain(forbidden);
       expect(bodyText()).not.toContain(labels.failed);
       unmountPanels();
@@ -144,7 +146,9 @@ describe('calendar event forms', () => {
       yield* click(editLabel);
       yield* typeInto(title, 'Porada týmu');
       yield* click(labels.save);
-      expect(refused.map((command) => command._tag)).toEqual(['AgendaEventCreate', 'AgendaEventUpdate']);
+      expect(refused).toHaveLength(2);
+      expect(Predicate.isTagged(refused[0], 'AgendaEventCreate')).toBe(true);
+      expect(Predicate.isTagged(refused[1], 'AgendaEventUpdate')).toBe(true);
       expect(bodyText()).toContain(forbidden);
       expect(bodyText()).not.toContain(labels.failed);
     }),

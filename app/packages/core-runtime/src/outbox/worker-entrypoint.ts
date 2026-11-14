@@ -1,3 +1,9 @@
+export {
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
+  registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
+} from '../auth/system-principal-context.ts';
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
 export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 export { databaseRuntime } from '#database-runtime';
@@ -5,6 +11,10 @@ export { defineAction, defineActionOwnerPermissions, defineActionResourcePermiss
 export { ActionPermissionCheckError, ActionResultValidationError } from '../actions/errors.ts';
 export { commitActionThenReject, TrustedPrincipalContextSchema } from '../actions/context.ts';
 export { ActionRuntime } from '../actions/runtime.ts';
+export {
+  ActionAuthorizationPreflightDatabase,
+  ActionAuthorizationPreflightDatabaseLive,
+} from '../actions/owner-proof-preflight.ts';
 export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
 export { decodeAccessDeclarationOrThrow } from '../authorization/access-declaration.ts';
 export {
@@ -16,6 +26,7 @@ export {
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 export {
@@ -25,8 +36,15 @@ export {
   defineReadResourcePermission,
 } from '../reads/definition.ts';
 export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
+// Owner Actions run in the worker host's own marked transactions, so their declared evidence calls (DEPLOYMENT.md,
+// demo divergence) need the same guard module the worker's ActionRuntime marks with.
+export { declaredEvidenceCallInsideTransaction } from '../db/transaction-io-guard.ts';
+export type { DeclaredEvidenceCall } from '../db/transaction-io-guard.ts';
 export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
+export {
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  OntosRequiredOperationContractSchema,
+} from '../modules/module-dependency-contracts.ts';
 export {
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
@@ -34,17 +52,20 @@ export {
   ShellReportContributionSchema,
   ShellSearchContributionSchema,
 } from '../modules/shell-contribution.ts';
-export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
+export { readModuleOperationRequirement, requireModuleOperation } from '../modules/module-operation-requirement.ts';
 export {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
-export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
+export {
+  ApplicationCompositionModuleSchema,
+  ApplicationCompositionSchema,
+} from '../modules/application-composition.ts';
 export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
 export { defineOntosMcpContribution } from '../modules/mcp-contribution.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-export { defineScopedRoutine } from '../db/scoped-routine.ts';
+export { defineScopedRoutine, ScopedRoutineInvocationError } from '../db/scoped-routine.ts';
 export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
 export { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../database/driver-failure.ts';
 export {
@@ -78,6 +99,8 @@ export {
 } from '../db/scoped-transaction.ts';
 export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
 export { DatabaseIdentityEnrollmentContext, makeDatabaseIdentityEnrollmentLive } from '../db/database-identities.ts';
+// Worker hosts enrol their database identities through this entrypoint, never a Core `db/` subpath.
+export { defineDatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
 export {
@@ -102,6 +125,7 @@ export {
   isVerifiedOutboxWorkerHandlerContext,
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
+export { OutboxWorkerDeferred } from './outbox-worker-deferred.ts';
 export { defineOutboxWorkerEntry, OutboxWorkerInfrastructureLive, startOutboxWorkerHost } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export {
@@ -148,3 +172,12 @@ export type {
 } from '../search/worker-snapshot.ts';
 
 export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';
+
+export { readWorkerModuleOperationRequirement } from '../modules/module-operation-requirement.ts';
+export type { WorkerModuleOperationRequirementFact } from '../modules/module-operation-requirement.ts';
+
+export { readWorkerExecutionContext } from '../modules/module-operation-execution.ts';
+export type { WorkerExecutionContextFact } from '../modules/module-operation-execution.ts';
+
+export { readScopedCurrentActionInvocation } from '../actions/current-invocation.ts';
+export type { ScopedCurrentActionInvocationFact } from '../actions/current-invocation.ts';

@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { DateTime, Schema } from 'effect';
-import { FinanceRecordsViewSchema } from '../../src/api/finance-reads.ts';
+import { FinanceRecordsViewSchema } from '../../src/ui/finance-reads.ts';
 
 const invoice = {
   accountingCorrelation: 'acc-1',

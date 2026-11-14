@@ -5,6 +5,7 @@ import type {
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { OwnerAuthorizationOverlay, ownerAuthorizationDenial } from '@app/core-runtime';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import { Effect, Layer, Result, Schema } from 'effect';
 
 import {
@@ -79,6 +80,7 @@ const unpublishedCounterpartyOperationPermissions: readonly (readonly [string, C
   ['commerce.customer-context.api.customer-payment-term-entitlement-read', COUNTERPARTY_PROFILE_READ],
   ['commerce.customer-context.api.payment-terms-resolution', COUNTERPARTY_PROFILE_READ],
   ['commerce.customer-context.api.customer-price-group-assignment-read', COUNTERPARTY_PROFILE_READ],
+  ['commerce.customer-context.api.customer-price-group-assignment-receipt', COUNTERPARTY_PROFILE_READ],
   ['commerce.customer-context.api.customer-price-group-resolution', COUNTERPARTY_PROFILE_READ],
   ['commerce.customer-context.api.order-commitment-approval-evidence', 'counterparty.purchase.submit'],
 ];
@@ -215,29 +217,70 @@ const decideOwnerFacts = (
   return Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.factsUnrecognized));
 };
 
+const authorizeStandardOwnerFacts = (
+  transaction: ScopedTransactionExecutor,
+  input: OwnerAuthorizationInput,
+): Effect.Effect<OwnerAuthorizationOutcome> => {
+  // O70: Core computes the owner's fact bag from the descriptor and passes it unchanged; the
+  // caller never supplies it (O64) and it never reaches the decision engine.
+  const facts = input.ownerFacts;
+  if (facts === undefined) {
+    // A capability that needs a Counterparty grant cannot be decided without its owner facts, so
+    // a descriptor that declares no resolver denies instead of falling back to the scope-wide
+    // capability (O70, fail closed).
+    const permission = counterpartyPermissionByOperation.get(input.operationKey);
+    return Effect.succeed(
+      permission === undefined
+        ? 'allowed'
+        : ownerAuthorizationDenial(OWNER_DENIAL_REASON.factsMissing, requires(permission)),
+    );
+  }
+  if (Object.keys(facts).length === 0) {
+    // A declared resolver may name no owner record at all (for example a guest purchase
+    // resolution): there is nothing owner-local to check, and the entrypoint's own declaration
+    // plus its handler own the request (O70).
+    return Effect.succeed('allowed' as const);
+  }
+  return decideOwnerFacts(transaction, input, facts);
+};
+const authorizeSourceOwnerFacts = (
+  transaction: ScopedTransactionExecutor,
+  input: OwnerAuthorizationInput,
+  workloadKey: 'commerce.customer-context.source-write' | 'commerce.customer-context.source-read',
+): Effect.Effect<OwnerAuthorizationOutcome> =>
+  readScopedAdmittedWorkload(transaction, input.scope, workloadKey).pipe(
+    Effect.flatMap((selected) =>
+      selected ? Effect.succeed('allowed' as const) : authorizeStandardOwnerFacts(transaction, input),
+    ),
+    Effect.orElseSucceed(() => 'unavailable' as const),
+  );
+
+const sourceAddressActions = new Set([
+  'commerce.customer-context.add-saved-address',
+  'commerce.customer-context.update-saved-address',
+  'commerce.customer-context.remove-saved-address',
+]);
 export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (): OwnerAuthorizationOverlayService => ({
   authorize: (transaction, input) => {
-    // O70: Core computes the owner's fact bag from the descriptor and passes it unchanged; the
-    // caller never supplies it (O64) and it never reaches the decision engine.
-    const facts = input.ownerFacts;
-    if (facts === undefined) {
-      // A capability that needs a Counterparty grant cannot be decided without its owner facts, so
-      // a descriptor that declares no resolver denies instead of falling back to the scope-wide
-      // capability (O70, fail closed).
-      const permission = counterpartyPermissionByOperation.get(input.operationKey);
-      return Effect.succeed(
-        permission === undefined
-          ? 'allowed'
-          : ownerAuthorizationDenial(OWNER_DENIAL_REASON.factsMissing, requires(permission)),
-      );
+    const sourceManagedOwnerFacts =
+      (sourceAddressActions.has(input.operationKey) && input.ownerFacts?.[OWNER_FACT_RETAIL_PROFILE] !== undefined) ||
+      (input.operationKey === 'commerce.customer-context.assign-counterparty-price-group' &&
+        input.ownerFacts?.[OWNER_FACT_COUNTERPARTY] !== undefined);
+    if (input.operation === 'action' && sourceManagedOwnerFacts) {
+      // This is the successful Core gate's sealed branch, never a credential or payload claim.
+      // Source factories retain their exact source/Privacy, profile and business invariant checks.
+      return authorizeSourceOwnerFacts(transaction, input, 'commerce.customer-context.source-write');
     }
-    if (Object.keys(facts).length === 0) {
-      // A declared resolver may name no owner record at all (for example a guest purchase
-      // resolution): there is nothing owner-local to check, and the entrypoint's own declaration
-      // plus its handler own the request (O70).
-      return Effect.succeed('allowed' as const);
+    if (
+      input.operation === 'read' &&
+      input.operationKey === 'commerce.customer-context.api.customer-price-group-assignment-receipt' &&
+      input.ownerFacts?.[OWNER_FACT_COUNTERPARTY] !== undefined
+    ) {
+      // The factory first proves the immutable original actor/action/hash, then current scoped
+      // profile association and Privacy. This grants no generic Counterparty profile Read.
+      return authorizeSourceOwnerFacts(transaction, input, 'commerce.customer-context.source-read');
     }
-    return decideOwnerFacts(transaction, input, facts);
+    return authorizeStandardOwnerFacts(transaction, input);
   },
 });
 

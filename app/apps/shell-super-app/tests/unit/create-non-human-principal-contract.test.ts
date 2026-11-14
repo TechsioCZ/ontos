@@ -1,7 +1,7 @@
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CreateNonHumanPrincipalPayloadSchema } from '../../shared/api.ts';
+import { CreateNonHumanPrincipalPayloadSchema } from '../../shared/browser-api.ts';
 
 /**
  * `system` is reserved for Core-attested workloads. A persisted kind is never evidence of Core attestation, so

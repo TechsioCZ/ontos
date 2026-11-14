@@ -4,7 +4,7 @@ import { AuthenticationNamespaceRegistrationSchema } from '@app/core-runtime/aut
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '@app/commerce-customer-context/portal-auth/contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { noticePresentationRead } from '../../src/api/notice-presentation.read.ts';
@@ -190,7 +190,7 @@ const nativeNotice = Effect.fn('PrivacyNotice.nativeWiringTest')(function* nativ
     ...target,
     privacySubjectRef: { ...target.privacySubjectRef, tenantId: '10000000-0000-4000-8000-000000000099' },
   }).pipe(Effect.flip);
-  expect(foreignTarget._tag).toBe('ReadPolicyDenied');
+  expect(Predicate.isTagged(foreignTarget, 'ReadPolicyDenied')).toBe(true);
   const foreignCompany = yield* run(
     trustVerifiedGatewayPrincipalContext(
       {
@@ -200,7 +200,7 @@ const nativeNotice = Effect.fn('PrivacyNotice.nativeWiringTest')(function* nativ
       compositionRevision,
     ),
   ).pipe(Effect.flip);
-  expect(foreignCompany._tag).toBe('ReadHandlerUnavailable');
+  expect(Predicate.isTagged(foreignCompany, 'ReadHandlerUnavailable')).toBe(true);
   expect(authorityCalls).toBe(1);
 });
 

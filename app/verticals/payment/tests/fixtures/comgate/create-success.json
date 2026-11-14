@@ -1,0 +1,6 @@
+{
+  "code": 0,
+  "message": "OK",
+  "transId": "AB12-CD34-EF56",
+  "redirect": "https://payments.comgate.cz/client/instructions/index?id=AB12-CD34-EF56"
+}

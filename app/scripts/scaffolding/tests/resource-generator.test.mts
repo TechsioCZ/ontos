@@ -95,13 +95,15 @@ export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
     yield* write(
       root,
       'verticals/property-registry/api/index.ts',
-      `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { Layer } from '@modern-js/bff-effect/effect-edge';
+      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { propertyRegistryApi } from '../shared/api.ts';
 
-const handlersLive = Layer.empty;
+const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(
+  Layer.provide(Layer.empty),
+) satisfies EffectRuntimeLayer;
 
-export default assembleEffectBffRuntime({ api: propertyRegistryApi, handlers: handlersLive });
+export default defineEffectBff({ api: propertyRegistryApi, layer });
 `,
     );
     yield* write(

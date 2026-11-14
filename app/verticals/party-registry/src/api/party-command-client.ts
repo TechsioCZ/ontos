@@ -10,7 +10,6 @@ import { HttpClient, HttpClientRequest } from 'effect/http';
 import {
   AddContactPointPayloadSchema,
   AddPartyOfficialIdentifierPayloadSchema,
-  CounterpartyCustomerOnboardPayloadSchema,
   CreatePartyPayloadSchema,
   UpdatePartyPayloadSchema,
   partyRegistryCommandsApi,
@@ -257,13 +256,7 @@ export const { authorized: counterpartyCreateWithAuthorization, execute: counter
 
 export const { authorized: counterpartyCustomerOnboardWithAuthorization, execute: counterpartyCustomerOnboard } =
   defineCommand((client, payload: CounterpartyCustomerOnboardPayload) =>
-    Schema.encodeUnknownEffect(CounterpartyCustomerOnboardPayloadSchema)(payload).pipe(
-      Effect.flatMap((endpointPayload) =>
-        client.partyCommands.counterpartyCustomerOnboard({
-          payload: endpointPayload,
-        }),
-      ),
-    ),
+    client.partyCommands.counterpartyCustomerOnboard({ payload }),
   );
 
 export const { authorized: counterpartyRoleAddWithAuthorization, execute: counterpartyRoleAdd } = defineCommand(

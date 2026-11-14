@@ -1,6 +1,5 @@
 import { Hex } from 'effect/encoding';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-import { makeApiKeyGatewayNativeComposition } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { pricingRegistration } from '../../vertical.registration.ts';
 import { pricingManifest } from '../../vertical.manifest.ts';
@@ -9,7 +8,10 @@ import { Buffer } from 'node:buffer';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makePublishedApplicationCompositionSnapshotFixture,
+} from '@app/core-runtime/testing/module-contract';
 import {
   extractVerticalRuntimeSafeDescriptors,
   canonicalOntosPublicApiKey,
@@ -1162,6 +1164,12 @@ const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchem
   Match.value(subject).pipe(
     Match.tag('Assertion', () => true),
     Match.tag('Originator', () => false),
+    Match.tag('OrganizationGovernanceRead', () => false),
+    Match.tag('PrivacyDispatch', () => false),
+    Match.tag('RegisteredAssertion', () => false),
+    Match.tag('RegisteredAdmission', () => false),
+    Match.tag('RegisteredRecovery', () => false),
+    Match.tag('RegisteredWorkload', () => false),
     Match.exhaustive,
   );
 
@@ -1737,14 +1745,14 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
     const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
       shellRuntimeDocument,
     );
-    const composition = yield* makeApiKeyGatewayNativeComposition(
-      [
+    const composition = yield* makePublishedApplicationCompositionSnapshotFixture({
+      contractInputs: [
         description.contractDocument,
         yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(pricingContract),
       ],
-      3_600_000,
-      { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
-    ).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+      publishedShellRuntime: { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
+      validityMs: 3_600_000,
+    }).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',

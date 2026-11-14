@@ -7,7 +7,7 @@ import { awaitPrimaryModuleReads } from '../../src/routes/browser-request-cache.
 import { modulePageProps, prepareModulePage, RemotePagePreparation } from '../../src/routes/remote-page-loader.ts';
 import type { loadRemotePage, ReadyRemotePage } from '../../src/routes/remote-page-loader.ts';
 import type { AuthenticatedHomePageModel } from '../../src/routes/[lang]/home-page-model.ts';
-import { LegalEntityIdSchema, ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../shared/api.ts';
+import { LegalEntityIdSchema, ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../shared/browser-api.ts';
 
 const transport = {
   load: rs.fn<typeof loadRemotePage>(),

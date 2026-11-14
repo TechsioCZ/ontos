@@ -8,11 +8,7 @@ import { Effect, Schema } from 'effect';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
-import {
-  workRecordsCarrier,
-  workRecordsReadDeclaration,
-  workApplyCommandDeclaration,
-} from '../../shared/access-declarations.ts';
+import { workRecordsCarrier, workWriteCarrier } from '../../shared/access-declarations.ts';
 import { TaskSchema, WorkStateSchema, PartyIdSchema } from '../../shared/apis/records.ts';
 import { WorkPermissionDenied, WorkReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
@@ -137,12 +133,12 @@ const assignments = {
   resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used' })),
 };
 
-it('the actual registered read, write and assignment carrier have one declaration source', () => {
+it('the actual registered read, write and assignment carrier declare the same capability', () => {
   expect(recordsRead.descriptor.accessDeclaration).toEqual(workRecordsCarrier.accessDeclaration);
-  expect(workRecordsReadDeclaration.selectors).toEqual(['all', 'assigned']);
-  expect(workRecordsReadDeclaration.risk).toBe('sensitive');
-  expect(applyCommandAction.descriptor.accessDeclaration?.key).toBe(workApplyCommandDeclaration.key);
-  expect(workApplyCommandDeclaration.selectors).toEqual([]);
+  expect(workRecordsCarrier.accessDeclaration.selectors).toEqual(['all', 'assigned']);
+  expect(workRecordsCarrier.accessDeclaration.risk).toBe('sensitive');
+  expect(applyCommandAction.descriptor.accessDeclaration).toEqual(workWriteCarrier.accessDeclaration);
+  expect(workWriteCarrier.accessDeclaration.selectors).toEqual([]);
 });
 for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
   it.effect(`read ${outcome} never becomes an own-task fallback`, () =>
@@ -168,7 +164,9 @@ it.effect('the runtime predicate is retained exactly and does not infer write pe
     expect(grants.readAll).toBe(false);
     expect(grants.writeAll).toBe(false);
     expect(
-      gate.askedLists.some(({ carrier }) => carrier.accessDeclaration?.key === workRecordsReadDeclaration.key),
+      gate.askedLists.some(
+        ({ carrier }) => carrier.accessDeclaration?.key === workRecordsCarrier.accessDeclaration.key,
+      ),
     ).toBe(false);
   }),
 );

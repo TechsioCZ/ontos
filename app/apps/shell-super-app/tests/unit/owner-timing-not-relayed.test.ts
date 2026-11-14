@@ -154,7 +154,7 @@ describe('no server-timing leaves the Shell, from an owner or from the Shell its
   it.effect('browser: the /module-api relay route answers without it', () =>
     Effect.gen(function* browserPath() {
       owner.calls = 0;
-      const response = yield* served(ModuleApiTransportLive.pipe(Layer.provide(composition)), ownerRead());
+      const response = yield* served(ModuleApiTransportLive.pipe(Layer.provide(composition), Layer.orDie), ownerRead());
       expect(owner.calls).toBe(1);
       expect(response.status).toBe(200);
       expect(response.headers.get('server-timing')).toBeNull();

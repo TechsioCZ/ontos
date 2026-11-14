@@ -1,5 +1,3 @@
-import { subjectsWithTag } from '@app/tagging/clients/records';
-import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { Cause } from 'effect';
@@ -7,6 +5,7 @@ import { Duration, Effect, Option, Result, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { subjectsWithTag, useTagsFor } from './customer-tags.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
 
 type TagFilterError = Effect.Error<ReturnType<typeof subjectsWithTag>> | Cause.TimeoutError;

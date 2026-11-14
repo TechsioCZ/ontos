@@ -123,6 +123,10 @@ export const setVariantLocalizedFactsAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-variant-localized-facts.access.v1',
     },
+    accessWorkload: {
+      reason: 'Write an explicitly authorized localized Variant source fact for the registered C14 integration',
+      workloads: ['commerce.catalog.symmy-variant-localized-facts'],
+    },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

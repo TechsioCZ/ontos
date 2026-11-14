@@ -20,7 +20,7 @@ export const mapSalesPipelineNotImplementedProblem = (
     code: 'sales_pipeline_not_implemented',
     detail: 'The Action capability is temporarily unavailable.',
     retryable: true,
-    status: 503,
+    status: SalesPipelineNotImplementedProblemSchema.fields.status.literal,
     title: 'Action unavailable',
     type: 'https://ontos.dev/problems/action-unavailable',
   });
@@ -39,7 +39,7 @@ export const mapSalesPipelineLifecycleConflictProblem = (
   SalesPipelineLifecycleConflictProblemSchema.make({
     code: 'sales_pipeline_lifecycle_conflict',
     detail: failure.reason,
-    status: 409,
+    status: SalesPipelineLifecycleConflictProblemSchema.fields.status.literal,
     title: 'Action conflict',
     type: 'https://ontos.dev/problems/action-conflict',
   });
@@ -54,7 +54,7 @@ export const mapSalesPipelineNotFoundProblem = (
   SalesPipelineNotFoundProblemSchema.make({
     code: 'sales_pipeline_not_found',
     detail: failure.reason,
-    status: 404,
+    status: SalesPipelineNotFoundProblemSchema.fields.status.literal,
     title: 'Resource not found',
     type: 'https://ontos.dev/problems/action-resource-not-found',
   });
@@ -73,7 +73,7 @@ export const mapSalesPipelinePermissionDeniedProblem = (
   SalesPipelinePermissionDeniedProblemSchema.make({
     code: 'sales_pipeline_permission_denied',
     detail: failure.reason,
-    status: 403,
+    status: SalesPipelinePermissionDeniedProblemSchema.fields.status.literal,
     title: 'Action forbidden',
     type: 'https://ontos.dev/problems/action-forbidden',
   });

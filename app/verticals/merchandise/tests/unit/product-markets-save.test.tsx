@@ -4,7 +4,7 @@
 // newer change by someone else is refused instead of overwritten. Only the generated markets client, the i18n runtime
 // and the router blocker are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -125,7 +125,7 @@ beforeEach(() => {
   committed.length = 0;
   rstest.mocked(executeManageMarkets).mockImplementation(({ command }) =>
     Effect.suspend(() => {
-      if (command._tag !== 'SetProductMarketOffer') {
+      if (!Predicate.isTagged(command, 'SetProductMarketOffer')) {
         return Effect.die('Only offers are saved here');
       }
       if (command.expectedOffered !== undefined && command.expectedOffered !== register.offers.get(command.marketId)) {

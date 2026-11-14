@@ -13,7 +13,7 @@ export const oxlintEntryPoint = join(
   'bin/oxlint',
 );
 // Production lint runs Oxlint through `effect-tsgo --tsrs-lint`, which serves type-aware rules from tsrs.
-export const effectTsgoEntryPoint = join(
+const effectTsgoEntryPoint = join(
   dirname(createRequire(import.meta.url).resolve('@effect/tsgo/package.json')),
   'dist/effect-tsgo.cjs',
 );
@@ -100,7 +100,6 @@ export function runOxlint(configPath: string, paths: readonly string[], cwd: str
       effectTsgoEntryPoint,
       '--tsrs-lint',
       'oxlint',
-      '--threads=2',
       '-c',
       configPath,
       '--format=json',

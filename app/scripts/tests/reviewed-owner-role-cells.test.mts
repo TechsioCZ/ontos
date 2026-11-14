@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts';
@@ -32,6 +32,7 @@ import {
   assertCommandAllowed,
   isAkrosCompany,
 } from '../../verticals/merchandise/shared/actions/command-guard.ts';
+import { MerchandisePermissionDenied } from '../../verticals/merchandise/shared/errors/merchandise-permission-denied.ts';
 
 const merchandise = 'demo.merchandise';
 const operations = [
@@ -260,9 +261,9 @@ it.effect('keeps the playground AKROS restriction and the current owner human-on
     expect(cells.some(({ capabilityKey }) => ordinary.some((key) => key === capabilityKey))).toBe(false);
     expect(cells.some(({ capabilityKey }) => capabilityKey === markets || capabilityKey === cleanup)).toBe(false);
     yield* assertCommandAllowed('human', 'AiDecideChanges');
-    expect((yield* Effect.flip(assertCommandAllowed('non_human', 'AiDecideChanges')))._tag).toBe(
-      'MerchandisePermissionDenied',
-    );
+    expect(
+      Schema.is(MerchandisePermissionDenied)(yield* Effect.flip(assertCommandAllowed('non_human', 'AiDecideChanges'))),
+    ).toBe(true);
     const missingCompany = yield* Effect.fromResult(
       policyRoleCellRows(reviewedCompanyRole(eshopDemoRoles.fulfilment), catalog),
     );

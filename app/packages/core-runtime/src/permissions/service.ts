@@ -1,5 +1,4 @@
-import { ObjectReference, SubjectReference } from '@authzed/authzed-node/v1/core';
-import { CheckPermissionRequest, CheckPermissionResponse_Permissionship } from '@authzed/authzed-node/v1/permissions';
+import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 
@@ -87,21 +86,21 @@ export const acquirePermissionClientResource = (
   acquireSpiceDbClientResource(acquire, checkFailure);
 
 export const actionReference = (identity: ScopedActionIdentity) =>
-  ObjectReference.create({
+  v1.ObjectReference.create({
     objectId: toSpiceDbActionObjectId(identity),
     objectType: SPICEDB_ACTION_OBJECT_TYPE,
   });
 
 export const principalReference = (principalId: string) =>
-  SubjectReference.create({
-    object: ObjectReference.create({
+  v1.SubjectReference.create({
+    object: v1.ObjectReference.create({
       objectId: principalId,
       objectType: SPICEDB_PRINCIPAL_OBJECT_TYPE,
     }),
   });
 
 const executionRequest = (input: CheckActionPermissionInput) =>
-  CheckPermissionRequest.create({
+  v1.CheckPermissionRequest.create({
     consistency: fullyConsistent,
     permission: SPICEDB_EXECUTE_PERMISSION,
     resource: actionReference(input),
@@ -116,10 +115,10 @@ export const classifyPermissionship = <Response>(
   }
 
   const { permissionship } = response;
-  if (permissionship === CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
+  if (permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
     return Effect.succeed('has');
   }
-  if (permissionship === CheckPermissionResponse_Permissionship.NO_PERMISSION) {
+  if (permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
     return Effect.succeed('none');
   }
   return Effect.fail(checkFailure());
@@ -127,7 +126,7 @@ export const classifyPermissionship = <Response>(
 
 export const runCheck = (
   client: PermissionCheckClient,
-  request: CheckPermissionRequest,
+  request: v1.CheckPermissionRequest,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> =>
   client.checkPermission(request).pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
 

@@ -44,10 +44,6 @@ import { pricingOrdinaryCurrentPublicationLive } from '../src/integrations/mater
 import { manageQuotationFreshCurrentAuthorityLive } from '../src/actions/manage-quotation.action.ts';
 import { currentPricingDecisionEvaluationFactoryLive } from '../src/services/current-pricing-decision-evaluation.service.ts';
 import { ExternalPriceInputBoundaryFactoryLive } from '../src/services/external-price-input-boundary.service.ts';
-import {
-  GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionDatabaseLive,
-  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
-} from './auth/gateway-assertion-redemption.ts';
 import { pricingCommitmentConfirmationVerificationFactoryLive } from '../src/services/commitment-confirmation-verification.service.ts';
 import { pricingQuotationRevalidationFactoryLive } from '../src/services/quotation-revalidation.service.ts';
 import { pricingQuotationBackedConfirmationIssuanceFactoryLive } from '../src/services/quotation-backed-confirmation-issuance.service.ts';
@@ -59,6 +55,10 @@ import {
   ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
   authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
 } from './auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -81,8 +81,10 @@ import { manageQuantityTierActionApiLive } from './manage-quantity-tier-action-s
 import { manageQuotationActionApiLive } from './manage-quotation-action-server.ts';
 import { manageZeroFloorAuthorizationActionApiLive } from './manage-zero-floor-authorization-action-server.ts';
 import { priceDefinitionReadApiLive } from './price-definition-read-server.ts';
+import { priceGroupSourcePricesReadApiLive } from './price-group-source-prices-read-server.ts';
 import { priceResultLookupReadApiLive } from './price-result-lookup-read-server.ts';
 import { priceScheduleReadApiLive } from './price-schedule-read-server.ts';
+import { priceSourceResultLookupReadApiLive } from './price-source-result-lookup-read-server.ts';
 import { quantityTierResultLookupReadApiLive } from './quantity-tier-result-lookup-read-server.ts';
 import { quotationResultLookupReadApiLive } from './quotation-result-lookup-read-server.ts';
 import { quotationVerificationReadApiLive } from './quotation-verification-read-server.ts';
@@ -218,7 +220,7 @@ const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegi
 );
 
 const governedReadRuntimeLive = readRuntimeLive;
-const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(
+const pricingGatewayAssertionRedemptionDatabaseLive = GatewayAssertionRedemptionDatabaseLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
 
@@ -260,8 +262,10 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   manageQuotationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageZeroFloorAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   priceDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  priceGroupSourcePricesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   priceResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   priceScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  priceSourceResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   quantityTierResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   quotationResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   quotationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

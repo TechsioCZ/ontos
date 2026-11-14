@@ -8,6 +8,20 @@ import {
   customerConsentUpdateOwnPermission,
 } from './shared/permissions/customer-consent-self-service.ts';
 import { customerPasswordChangeOwnPermission } from './shared/permissions/customer-password-self-service.ts';
+import { MigrateOrganizationCustomerProfileIcoActionApi } from './shared/apis/migrate-organization-customer-profile-ico-action.ts';
+import { ChangeOrganizationCustomerProfileIcoActionApi } from './shared/apis/change-organization-customer-profile-ico-action.ts';
+import { MigrateCustomerProfileIcoActionApi } from './shared/apis/migrate-customer-profile-ico-action.ts';
+import { AdmitCustomerGroupMembershipSnapshotActionApi } from './shared/apis/admit-customer-group-membership-snapshot-action.ts';
+import { RemoveSavedAddressActionApi } from './shared/apis/remove-saved-address-action.ts';
+import { UpdateSavedAddressActionApi } from './shared/apis/update-saved-address-action.ts';
+import { AddSavedAddressActionApi } from './shared/apis/add-saved-address-action.ts';
+import { AssignCounterpartyPriceGroupActionApi } from './shared/apis/assign-counterparty-price-group-action.ts';
+import { AssignCustomerPriceGroupActionApi } from './shared/apis/assign-customer-price-group-action.ts';
+import { CreateCounterpartyPurchasingProfileActionApi } from './shared/apis/create-counterparty-purchasing-profile-action.ts';
+import { EnsureRetailCustomerProfileActionApi } from './shared/apis/ensure-retail-customer-profile-action.ts';
+import { ChangeCustomerProfileIcoActionApi } from './shared/apis/change-customer-profile-ico-action.ts';
+import { UpdateCustomerGroupActionApi } from './shared/apis/update-customer-group-action.ts';
+import { CreateCustomerGroupActionApi } from './shared/apis/create-customer-group-action.ts';
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import { getCookies } from 'better-auth/cookies';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './api/portal-auth/provider/config.ts';
@@ -17,12 +31,17 @@ import {
   customerProfileReadOwnPermission,
   customerProfileUpdateOwnPermission,
 } from './shared/permissions/customer-profile-self-service.ts';
+import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 // <generated-module-manifest-imports>
+import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
 import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
 import { administerPaymentTermPolicyAction } from './src/actions/administer-payment-term-policy.action.ts';
 import { administerPurchaseCurrencyPolicyAction } from './src/actions/administer-purchase-currency-policy.action.ts';
+import { admitCustomerGroupMembershipSnapshotAction } from './src/actions/admit-customer-group-membership-snapshot.action.ts';
+import { applyCustomerGroupMembershipSourceAction } from './src/actions/apply-customer-group-membership-source.action.ts';
+import { ApplyCustomerGroupMembershipSourceActionApi } from './shared/apis/apply-customer-group-membership-source-action.ts';
 import { approvalDecisionResourceDescriptor } from './shared/resources/approval-decision.ts';
 import { approvalHierarchyResourceDescriptor } from './shared/resources/approval-hierarchy.ts';
 import { approvalRevalidationResourceDescriptor } from './shared/resources/approval-revalidation.ts';
@@ -38,6 +57,8 @@ import { bindRetailPortalProfileAction } from './src/actions/bind-retail-portal-
 import { bootstrapCounterpartyAccessAdministratorAction } from './src/actions/bootstrap-counterparty-access-administrator.action.ts';
 import { changeCounterpartyPurchaseLimitAction } from './src/actions/change-counterparty-purchase-limit.action.ts';
 import { changeCustomerPaymentTermsAction } from './src/actions/change-customer-payment-terms.action.ts';
+import { changeCustomerProfileIcoAction } from './src/actions/change-customer-profile-ico.action.ts';
+import { changeOrganizationCustomerProfileIcoAction } from './src/actions/change-organization-customer-profile-ico.action.ts';
 import { changePrincipalPurchaseLimitOverrideAction } from './src/actions/change-principal-purchase-limit-override.action.ts';
 import { changeRetailPaymentTermPreferenceAction } from './src/actions/change-retail-payment-term-preference.action.ts';
 import { claimCounterpartyAccessInvitationAction } from './src/actions/claim-counterparty-access-invitation.action.ts';
@@ -70,46 +91,78 @@ import { createCounterpartyPurchasingProfileAction } from './src/actions/create-
 import { createCustomerGroupAction } from './src/actions/create-customer-group.action.ts';
 import { createPurchaseProposalRevisionAction } from './src/actions/create-purchase-proposal-revision.action.ts';
 import { CustomerArchiveApi } from './shared/apis/customer-archive.ts';
+import { CustomerGroupDefinitionSourceApi } from './shared/apis/customer-group-definition-source.ts';
+import { customerGroupDefinitionSourceRead } from './src/api/customer-group-definition-source.read.ts';
 import { CustomerGroupDetailApi } from './shared/apis/customer-group-detail.ts';
 import { CustomerGroupHistoryApi } from './shared/apis/customer-group-history.ts';
 import { CustomerGroupMembersApi } from './shared/apis/customer-group-members.ts';
 import { customerGroupMembershipResourceDescriptor } from './shared/resources/customer-group-membership.ts';
+import { CustomerGroupMembershipSourceReceiptApi } from './shared/apis/customer-group-membership-source-receipt.ts';
+import { customerGroupMembershipSourceReceiptRead } from './src/api/customer-group-membership-source-receipt.read.ts';
 import { customerGroupResourceDescriptor } from './shared/resources/customer-group.ts';
 import { CustomerPaymentTermEntitlementReadApi } from './shared/apis/customer-payment-term-entitlement-read.ts';
 import { customerPaymentTermEntitlementResourceDescriptor } from './shared/resources/customer-payment-term-entitlement.ts';
 import { CustomerPriceGroupAssignmentReadApi } from './shared/apis/customer-price-group-assignment-read.ts';
+import { CustomerPriceGroupAssignmentReceiptApi } from './shared/apis/customer-price-group-assignment-receipt.ts';
+import { customerPriceGroupAssignmentReceiptRead } from './src/api/customer-price-group-assignment-receipt.read.ts';
 import { customerPriceGroupAssignmentResourceDescriptor } from './shared/resources/customer-price-group-assignment.ts';
 import { CustomerPriceGroupResolutionApi } from './shared/apis/customer-price-group-resolution.ts';
+import { customerPriceGroupResolutionRead } from './src/api/customer-price-group-resolution.read.ts';
+import { CustomerProfileIcoApi } from './shared/apis/customer-profile-ico.ts';
+import { CustomerProfileIcoMigrationApi } from './shared/apis/customer-profile-ico-migration.ts';
+import { customerProfileIcoMigrationRead } from './src/api/customer-profile-ico-migration.read.ts';
+import { customerProfileIcoRead } from './src/api/customer-profile-ico.read.ts';
+import { CustomerProfileOrganizationIcoFactsApi } from './shared/apis/customer-profile-organization-ico-facts.ts';
+import { customerProfileOrganizationIcoFactsRead } from './src/api/customer-profile-organization-ico-facts.read.ts';
 import { CustomerProfileReadApi } from './shared/apis/customer-profile-read.ts';
+import { CustomerProfileSourceApi } from './shared/apis/customer-profile-source.ts';
+import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { CustomerProfileTradingGateApi } from './shared/apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './shared/apis/customer-record-visibility.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { DeliveryDestinationResolutionApi } from './shared/apis/delivery-destination-resolution.ts';
+import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
 import { EffectiveCustomerGroupMembershipsApi } from './shared/apis/effective-customer-group-memberships.ts';
 import { EffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/effective-customer-group-membership-set-v1.ts';
+import { effectiveCustomerGroupMembershipSetV1Read } from './src/api/effective-customer-group-membership-set-v1.read.ts';
 import { ensureRetailCustomerProfileAction } from './src/actions/ensure-retail-customer-profile.action.ts';
 import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
 import { grantCounterpartyCommerceAccessAction } from './src/actions/grant-counterparty-commerce-access.action.ts';
 import { GuestAttributionStatusApi } from './shared/apis/guest-attribution-status.ts';
 import { GuestPaymentTermsResolutionApi } from './shared/apis/guest-payment-terms-resolution.ts';
+import { guestPaymentTermsResolutionRead } from './src/api/guest-payment-terms-resolution.read.ts';
 import { InvoiceRecipientResolutionApi } from './shared/apis/invoice-recipient-resolution.ts';
+import { invoiceRecipientResolutionRead } from './src/api/invoice-recipient-resolution.read.ts';
 import { MarketAffectedUseAssessmentApi } from './shared/apis/market-affected-use-assessment.ts';
+import { marketAffectedUseAssessmentRead } from './src/api/market-affected-use-assessment.read.ts';
 import { MarketBootstrapPolicyCurrentApi } from './shared/apis/market-bootstrap-policy-current.ts';
 import { marketBootstrapPolicyResourceDescriptor } from './shared/resources/market-bootstrap-policy.ts';
 import { MarketBootstrapResolutionApi } from './shared/apis/market-bootstrap-resolution.ts';
+import { marketBootstrapResolutionRead } from './src/api/market-bootstrap-resolution.read.ts';
 import { MarketRetirementReservationRecoveryApi } from './shared/apis/market-retirement-reservation-recovery.ts';
+import { marketRetirementReservationRecoveryRead } from './src/api/market-retirement-reservation-recovery.read.ts';
 import { MarketSubjectRestrictionsCurrentApi } from './shared/apis/market-subject-restrictions-current.ts';
+import { marketSubjectRestrictionsCurrentRead } from './src/api/market-subject-restrictions-current.read.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
+import { migrateCustomerProfileIcoAction } from './src/actions/migrate-customer-profile-ico.action.ts';
+import { migrateOrganizationCustomerProfileIcoAction } from './src/actions/migrate-organization-customer-profile-ico.action.ts';
 import { openProfileReconciliationAction } from './src/actions/open-profile-reconciliation.action.ts';
 import { OrderCommitmentApprovalEvidenceApi } from './shared/apis/order-commitment-approval-evidence.ts';
 import { OrderServiceApprovalEvidenceApi } from './shared/apis/order-service-approval-evidence.ts';
+import { OrganizationCustomerProfileIcoApi } from './shared/apis/organization-customer-profile-ico.ts';
+import { OrganizationCustomerProfileIcoMigrationApi } from './shared/apis/organization-customer-profile-ico-migration.ts';
+import { organizationCustomerProfileIcoMigrationRead } from './src/api/organization-customer-profile-ico-migration.read.ts';
+import { organizationCustomerProfileIcoRead } from './src/api/organization-customer-profile-ico.read.ts';
 import { PaymentTermAffectedUseAssessmentApi } from './shared/apis/payment-term-affected-use-assessment.ts';
+import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
 import { PaymentTermPolicyCurrentApi } from './shared/apis/payment-term-policy-current.ts';
 import { paymentTermPolicyResourceDescriptor } from './shared/resources/payment-term-policy.ts';
 import { PaymentTermsResolutionApi } from './shared/apis/payment-terms-resolution.ts';
+import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { PricingPurchaseContextVerificationApi } from './shared/apis/pricing-purchase-context-verification.ts';
+import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
 import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execution.ts';
 import { profileReconciliationCaseResourceDescriptor } from './shared/resources/profile-reconciliation-case.ts';
 import { ProfileReconciliationReadApi } from './shared/apis/profile-reconciliation-read.ts';
@@ -117,6 +170,7 @@ import { purchaseApprovalRequestResourceDescriptor } from './shared/resources/pu
 import { PurchaseCurrencyPolicyCurrentApi } from './shared/apis/purchase-currency-policy-current.ts';
 import { purchaseCurrencyPolicyResourceDescriptor } from './shared/resources/purchase-currency-policy.ts';
 import { PurchaseCurrencyResolutionApi } from './shared/apis/purchase-currency-resolution.ts';
+import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
 import { PurchaseLimitEvaluationApi } from './shared/apis/purchase-limit-evaluation.ts';
 import { PurchaseLimitPolicyReadApi } from './shared/apis/purchase-limit-policy-read.ts';
 import { purchaseLimitPolicyResourceDescriptor } from './shared/resources/purchase-limit-policy.ts';
@@ -138,7 +192,9 @@ import { repeatRetailOrderAction } from './src/actions/repeat-retail-order.actio
 import { reroutePurchaseApprovalRequestAction } from './src/actions/reroute-purchase-approval-request.action.ts';
 import { resendCounterpartyAccessInvitationAction } from './src/actions/resend-counterparty-access-invitation.action.ts';
 import { reserveMarketRetirementAction } from './src/actions/reserve-market-retirement.action.ts';
+import { ReserveMarketRetirementActionApi } from './shared/apis/reserve-market-retirement-action.ts';
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
+import { ReservePaymentTermRetirementActionApi } from './shared/apis/reserve-payment-term-retirement-action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
 import { RetailAccessDecisionApi } from './shared/apis/retail-access-decision.ts';
 import { retailCustomerProfileResourceDescriptor } from './shared/resources/retail-customer-profile.ts';
@@ -157,6 +213,8 @@ import { SavedAddressDefaultsApi } from './shared/apis/saved-address-defaults.ts
 import { SavedAddressDetailApi } from './shared/apis/saved-address-detail.ts';
 import { SavedAddressListApi } from './shared/apis/saved-address-list.ts';
 import { savedAddressResourceDescriptor } from './shared/resources/saved-address.ts';
+import { SavedAddressSourceReceiptApi } from './shared/apis/saved-address-source-receipt.ts';
+import { savedAddressSourceReceiptRead } from './src/api/saved-address-source-receipt.read.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
@@ -167,29 +225,48 @@ import { triggerPurchaseApprovalAction } from './src/actions/trigger-purchase-ap
 import { updateCustomerGroupAction } from './src/actions/update-customer-group.action.ts';
 import { updateSavedAddressAction } from './src/actions/update-saved-address.action.ts';
 import { VerifyEffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/verify-effective-customer-group-membership-set-v1.ts';
-import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
-import { marketSubjectRestrictionsCurrentRead } from './src/api/market-subject-restrictions-current.read.ts';
-import { marketAffectedUseAssessmentRead } from './src/api/market-affected-use-assessment.read.ts';
-import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
-import { customerPriceGroupResolutionRead } from './src/api/customer-price-group-resolution.read.ts';
-import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
-import { effectiveCustomerGroupMembershipSetV1Read } from './src/api/effective-customer-group-membership-set-v1.read.ts';
 import { verifyEffectiveCustomerGroupMembershipSetV1Read } from './src/api/verify-effective-customer-group-membership-set-v1.read.ts';
-import { ReserveMarketRetirementActionApi } from './shared/apis/reserve-market-retirement-action.ts';
-import { ReservePaymentTermRetirementActionApi } from './shared/apis/reserve-payment-term-retirement-action.ts';
-import { marketRetirementReservationRecoveryRead } from './src/api/market-retirement-reservation-recovery.read.ts';
-import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
-import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
-import { guestPaymentTermsResolutionRead } from './src/api/guest-payment-terms-resolution.read.ts';
-import { invoiceRecipientResolutionRead } from './src/api/invoice-recipient-resolution.read.ts';
-import { marketBootstrapResolutionRead } from './src/api/market-bootstrap-resolution.read.ts';
-import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
-import { purchaseCurrencyResolutionRead } from './src/api/purchase-currency-resolution.read.ts';
+import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
 import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
-import { commercePortalExternalIdentityProvider } from './shared/portal-auth-verification.ts';
+import type { OntosExternalIdentityProviderInput } from '@app/core-runtime/auth/external-identity-provider';
+import {
+  COMMERCE_ADMISSION_DEADLINE_MS,
+  COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+} from './shared/portal-auth-contracts.ts';
+import {
+  COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
+  COMMERCE_PORTAL_AUTH_VERIFY_PATH,
+} from './shared/portal-auth-verification.ts';
+import { commerceCustomerContextRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
+const createCounterpartyProfileEntrypoint = 'commerce.customer-context.create-counterparty-purchasing-profile';
+const organizationBusinessProviderEntrypoint = 'privacy.core.api.organization-business-applicability';
+const sourcePersonAdmissionProviderEntrypoint = 'party.registry.api.source-person-admission';
+const currentOrganizationProfileIcoEvidence =
+  'commerce.customer-context.evidence.current-organization-profile-ico-facts';
+const organizationProfileIcoProviderEntrypoint = 'privacy.core.api.organization-profile-ico-applicability';
+const counterpartyOrganizationIcoProviderEntrypoint = 'party.registry.api.counterparty-organization-ico-facts';
+const legacyIcoInventoryCondition = 'commerce.customer-context.condition.legacy-ico-inventory';
+const organizationIcoMigrationReadEntrypoint =
+  'commerce.customer-context.api.organization-customer-profile-ico-migration';
+const completePartyIcoInventoryEvidence = 'commerce.customer-context.evidence.complete-party-ico-inventory';
+const legacyIcoInventoryProviderEntrypoint = 'party.registry.api.legacy-ico-inventory';
+const organizationIcoMigrationWriteEntrypoint = 'commerce.customer-context.migrate-organization-customer-profile-ico';
+const customerProfileSourceEntrypoint = 'commerce.customer-context.api.customer-profile-source';
+const profileIcoMigrationReadEntrypoint = 'commerce.customer-context.api.customer-profile-ico-migration';
+const profileIcoMigrationWriteEntrypoint = 'commerce.customer-context.migrate-customer-profile-ico';
 const partyRegistryModuleId = 'party.registry';
+const sourcePrivacyProviderEntrypoint = 'privacy.core.api.source-processing-eligibility';
+const privacyModuleId = 'privacy.core';
+const currentSourceProcessingCondition = 'commerce.customer-context.condition.current-source-processing';
+const currentProcessingEligibilityEvidence = 'commerce.customer-context.evidence.current-processing-eligibility';
+const currentAntiResurrectionEvidence = 'commerce.customer-context.evidence.current-anti-resurrection';
+const currentSourceProfileCondition = 'commerce.customer-context.condition.current-source-profile';
+const exactSourceProfileAuthorityEvidence = 'commerce.customer-context.evidence.exact-current-source-profile-authority';
+const counterpartyIcoMigrationCondition = 'commerce.customer-context.condition.counterparty-ico-migration';
+const counterpartyPartyCorrelationEvidence = 'commerce.customer-context.evidence.counterparty-party-correlation';
+const counterpartyMigrationCorrelationEntrypoint = 'party.registry.api.counterparty-migration-correlation';
 const partyContactPointProviderEntrypoint = 'party.registry.api.party-contact-point-detail';
 const partyAddressCurrentEvidence = 'commerce.customer-context.evidence.address.party-origin-current';
 const partyAddressSourceIdentityEvidence = 'commerce.customer-context.evidence.address.source-identity-and-revision';
@@ -202,6 +279,15 @@ const priceGroupCompatibilityCurrentEvidence =
   'commerce.customer-context.evidence.price-group.compatibility-contract-current';
 const priceGroupCompatibilityEntrypoint = 'pricing.price-group-catalog.api.validate-price-group-compatibility';
 const priceGroupCatalogModuleId = 'pricing.price-group-catalog';
+
+/** The external identity provider this module declares in its contract; the Shell calls it generically.
+ * `provider` is the name the Shell records on the Auth Bindings it reserves for this namespace. */
+const commercePortalExternalIdentityProvider = {
+  admissionDeadlineMs: COMMERCE_ADMISSION_DEADLINE_MS,
+  authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+  provider: 'better-auth',
+  verification: { operation: COMMERCE_PORTAL_AUTH_VERIFY_OPERATION, path: COMMERCE_PORTAL_AUTH_VERIFY_PATH },
+} as const satisfies OntosExternalIdentityProviderInput;
 
 export const commerceCustomerContextManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -231,6 +317,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       administerMarketBootstrapPolicyAction,
       administerPaymentTermPolicyAction,
       administerPurchaseCurrencyPolicyAction,
+      admitCustomerGroupMembershipSnapshotAction,
+      applyCustomerGroupMembershipSourceAction,
       archiveCustomerGroupAction,
       archiveCustomerProfileAction,
       assignCommerceQuantityRuleAction,
@@ -242,6 +330,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       bootstrapCounterpartyAccessAdministratorAction,
       changeCounterpartyPurchaseLimitAction,
       changeCustomerPaymentTermsAction,
+      changeCustomerProfileIcoAction,
+      changeOrganizationCustomerProfileIcoAction,
       changePrincipalPurchaseLimitOverrideAction,
       changeRetailPaymentTermPreferenceAction,
       claimCounterpartyAccessInvitationAction,
@@ -262,6 +352,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       grantCounterpartyCommerceAccessAction,
       migrateCounterpartyPriceGroupAction,
       migrateCustomerPriceGroupAction,
+      migrateCustomerProfileIcoAction,
+      migrateOrganizationCustomerProfileIcoAction,
       openProfileReconciliationAction,
       preparePurchaseProposalBasisAction,
       reactivateCustomerGroupAction,
@@ -302,6 +394,13 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'customer-profile-read-own': CustomerOwnProfileReadApi,
       'customer-profile-update-own': CustomerOwnProfileUpdateApi,
       // <generated-module-manifest-apis>
+      'add-saved-address-action': AddSavedAddressActionApi,
+      'admit-customer-group-membership-snapshot-action': AdmitCustomerGroupMembershipSnapshotActionApi,
+      'apply-customer-group-membership-source-action': ApplyCustomerGroupMembershipSourceActionApi,
+      'assign-counterparty-price-group-action': AssignCounterpartyPriceGroupActionApi,
+      'assign-customer-price-group-action': AssignCustomerPriceGroupActionApi,
+      'change-customer-profile-ico-action': ChangeCustomerProfileIcoActionApi,
+      'change-organization-customer-profile-ico-action': ChangeOrganizationCustomerProfileIcoActionApi,
       'commerce-quantity-policy-current': CommerceQuantityPolicyCurrentApi,
       'commerce-quantity-resolution': CommerceQuantityResolutionApi,
       'counterparty-access-invitation-read': CounterpartyAccessInvitationReadApi,
@@ -314,19 +413,29 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'counterparty-customer-group-memberships': CounterpartyCustomerGroupMembershipsApi,
       'counterparty-order-history': CounterpartyOrderHistoryApi,
       'counterparty-order-history-detail': CounterpartyOrderHistoryDetailApi,
+      'create-counterparty-purchasing-profile-action': CreateCounterpartyPurchasingProfileActionApi,
+      'create-customer-group-action': CreateCustomerGroupActionApi,
       'customer-archive': CustomerArchiveApi,
+      'customer-group-definition-source': CustomerGroupDefinitionSourceApi,
       'customer-group-detail': CustomerGroupDetailApi,
       'customer-group-history': CustomerGroupHistoryApi,
       'customer-group-members': CustomerGroupMembersApi,
+      'customer-group-membership-source-receipt': CustomerGroupMembershipSourceReceiptApi,
       'customer-payment-term-entitlement-read': CustomerPaymentTermEntitlementReadApi,
       'customer-price-group-assignment-read': CustomerPriceGroupAssignmentReadApi,
+      'customer-price-group-assignment-receipt': CustomerPriceGroupAssignmentReceiptApi,
       'customer-price-group-resolution': CustomerPriceGroupResolutionApi,
+      'customer-profile-ico': CustomerProfileIcoApi,
+      'customer-profile-ico-migration': CustomerProfileIcoMigrationApi,
+      'customer-profile-organization-ico-facts': CustomerProfileOrganizationIcoFactsApi,
       'customer-profile-read': CustomerProfileReadApi,
+      'customer-profile-source': CustomerProfileSourceApi,
       'customer-profile-trading-gate': CustomerProfileTradingGateApi,
       'customer-record-visibility': CustomerRecordVisibilityApi,
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
       'effective-customer-group-membership-set-v1': EffectiveCustomerGroupMembershipSetV1Api,
       'effective-customer-group-memberships': EffectiveCustomerGroupMembershipsApi,
+      'ensure-retail-customer-profile-action': EnsureRetailCustomerProfileActionApi,
       'guest-attribution-status': GuestAttributionStatusApi,
       'guest-payment-terms-resolution': GuestPaymentTermsResolutionApi,
       'invoice-recipient-resolution': InvoiceRecipientResolutionApi,
@@ -335,8 +444,12 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'market-bootstrap-resolution': MarketBootstrapResolutionApi,
       'market-retirement-reservation-recovery': MarketRetirementReservationRecoveryApi,
       'market-subject-restrictions-current': MarketSubjectRestrictionsCurrentApi,
+      'migrate-customer-profile-ico-action': MigrateCustomerProfileIcoActionApi,
+      'migrate-organization-customer-profile-ico-action': MigrateOrganizationCustomerProfileIcoActionApi,
       'order-commitment-approval-evidence': OrderCommitmentApprovalEvidenceApi,
       'order-service-approval-evidence': OrderServiceApprovalEvidenceApi,
+      'organization-customer-profile-ico': OrganizationCustomerProfileIcoApi,
+      'organization-customer-profile-ico-migration': OrganizationCustomerProfileIcoMigrationApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'payment-term-affected-use-assessment': PaymentTermAffectedUseAssessmentApi,
       'payment-term-policy-current': PaymentTermPolicyCurrentApi,
@@ -349,6 +462,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'purchase-limit-evaluation': PurchaseLimitEvaluationApi,
       'purchase-limit-policy-read': PurchaseLimitPolicyReadApi,
       'purchase-proposal-basis': PurchaseProposalBasisApi,
+      'remove-saved-address-action': RemoveSavedAddressActionApi,
       'repeat-order-preparation': RepeatOrderPreparationApi,
       'reserve-market-retirement-action': ReserveMarketRetirementActionApi,
       'reserve-payment-term-retirement-action': ReservePaymentTermRetirementActionApi,
@@ -361,6 +475,9 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'saved-address-defaults': SavedAddressDefaultsApi,
       'saved-address-detail': SavedAddressDetailApi,
       'saved-address-list': SavedAddressListApi,
+      'saved-address-source-receipt': SavedAddressSourceReceiptApi,
+      'update-customer-group-action': UpdateCustomerGroupActionApi,
+      'update-saved-address-action': UpdateSavedAddressActionApi,
       'verify-effective-customer-group-membership-set-v1': VerifyEffectiveCustomerGroupMembershipSetV1Api,
       'verify-retail-purchasing-subject-current-v1': VerifyRetailPurchasingSubjectCurrentV1Api,
       // </generated-module-manifest-apis>
@@ -408,19 +525,84 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       {
-        apiKey: 'market-subject-restrictions-current',
-        operationKey: 'marketSubjectRestrictionsCurrent.execute',
-        registration: marketSubjectRestrictionsCurrentRead,
+        apiKey: 'customer-group-detail',
+        operationKey: 'customerGroupDetail.execute',
+        registration: customerGroupDetailRead,
       },
       {
-        apiKey: 'market-affected-use-assessment',
-        operationKey: 'marketAffectedUseAssessment.execute',
-        registration: marketAffectedUseAssessmentRead,
+        apiKey: 'guest-payment-terms-resolution',
+        operationKey: 'guestPaymentTermsResolution.execute',
+        registration: guestPaymentTermsResolutionRead,
       },
       {
-        apiKey: 'payment-term-affected-use-assessment',
-        operationKey: 'paymentTermAffectedUseAssessment.execute',
-        registration: paymentTermAffectedUseAssessmentRead,
+        apiKey: 'payment-terms-resolution',
+        operationKey: 'paymentTermsResolution.execute',
+        registration: paymentTermsResolutionRead,
+      },
+      {
+        apiKey: 'migrate-organization-customer-profile-ico-action',
+        operationKey: 'migrateOrganizationCustomerProfileIcoAction.execute',
+        registration: migrateOrganizationCustomerProfileIcoAction,
+      },
+      {
+        apiKey: 'change-organization-customer-profile-ico-action',
+        operationKey: 'changeOrganizationCustomerProfileIcoAction.execute',
+        registration: changeOrganizationCustomerProfileIcoAction,
+      },
+      {
+        apiKey: 'add-saved-address-action',
+        operationKey: 'addSavedAddressAction.execute',
+        registration: addSavedAddressAction,
+      },
+      {
+        apiKey: 'admit-customer-group-membership-snapshot-action',
+        operationKey: 'admitCustomerGroupMembershipSnapshotAction.execute',
+        registration: admitCustomerGroupMembershipSnapshotAction,
+      },
+      {
+        apiKey: 'apply-customer-group-membership-source-action',
+        operationKey: 'applyCustomerGroupMembershipSourceAction.execute',
+        registration: applyCustomerGroupMembershipSourceAction,
+      },
+      {
+        apiKey: 'assign-counterparty-price-group-action',
+        operationKey: 'assignCounterpartyPriceGroupAction.execute',
+        registration: assignCounterpartyPriceGroupAction,
+      },
+      {
+        apiKey: 'assign-customer-price-group-action',
+        operationKey: 'assignCustomerPriceGroupAction.execute',
+        registration: assignCustomerPriceGroupAction,
+      },
+      {
+        apiKey: 'change-customer-profile-ico-action',
+        operationKey: 'changeCustomerProfileIcoAction.execute',
+        registration: changeCustomerProfileIcoAction,
+      },
+      {
+        apiKey: 'create-counterparty-purchasing-profile-action',
+        operationKey: 'createCounterpartyPurchasingProfileAction.execute',
+        registration: createCounterpartyPurchasingProfileAction,
+      },
+      {
+        apiKey: 'create-customer-group-action',
+        operationKey: 'createCustomerGroupAction.execute',
+        registration: createCustomerGroupAction,
+      },
+      {
+        apiKey: 'customer-group-definition-source',
+        operationKey: 'customerGroupDefinitionSource.execute',
+        registration: customerGroupDefinitionSourceRead,
+      },
+      {
+        apiKey: 'customer-group-membership-source-receipt',
+        operationKey: 'customerGroupMembershipSourceReceipt.execute',
+        registration: customerGroupMembershipSourceReceiptRead,
+      },
+      {
+        apiKey: 'customer-price-group-assignment-receipt',
+        operationKey: 'customerPriceGroupAssignmentReceipt.execute',
+        registration: customerPriceGroupAssignmentReceiptRead,
       },
       {
         apiKey: 'customer-price-group-resolution',
@@ -428,9 +610,24 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: customerPriceGroupResolutionRead,
       },
       {
-        apiKey: 'pricing-purchase-context-verification',
-        operationKey: 'pricingPurchaseContextVerification.execute',
-        registration: pricingPurchaseContextVerificationRead,
+        apiKey: 'customer-profile-ico-migration',
+        operationKey: 'customerProfileIcoMigration.execute',
+        registration: customerProfileIcoMigrationRead,
+      },
+      {
+        apiKey: 'customer-profile-ico',
+        operationKey: 'customerProfileIco.execute',
+        registration: customerProfileIcoRead,
+      },
+      {
+        apiKey: 'customer-profile-organization-ico-facts',
+        operationKey: 'customerProfileOrganizationIcoFacts.execute',
+        registration: customerProfileOrganizationIcoFactsRead,
+      },
+      {
+        apiKey: 'customer-profile-source',
+        operationKey: 'customerProfileSource.execute',
+        registration: customerProfileSourceRead,
       },
       {
         apiKey: 'effective-customer-group-membership-set-v1',
@@ -438,9 +635,54 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: effectiveCustomerGroupMembershipSetV1Read,
       },
       {
-        apiKey: 'verify-effective-customer-group-membership-set-v1',
-        operationKey: 'verifyEffectiveCustomerGroupMembershipSetV1.execute',
-        registration: verifyEffectiveCustomerGroupMembershipSetV1Read,
+        apiKey: 'ensure-retail-customer-profile-action',
+        operationKey: 'ensureRetailCustomerProfileAction.execute',
+        registration: ensureRetailCustomerProfileAction,
+      },
+      {
+        apiKey: 'market-affected-use-assessment',
+        operationKey: 'marketAffectedUseAssessment.execute',
+        registration: marketAffectedUseAssessmentRead,
+      },
+      {
+        apiKey: 'market-retirement-reservation-recovery',
+        operationKey: 'marketRetirementReservationRecovery.execute',
+        registration: marketRetirementReservationRecoveryRead,
+      },
+      {
+        apiKey: 'market-subject-restrictions-current',
+        operationKey: 'marketSubjectRestrictionsCurrent.execute',
+        registration: marketSubjectRestrictionsCurrentRead,
+      },
+      {
+        apiKey: 'migrate-customer-profile-ico-action',
+        operationKey: 'migrateCustomerProfileIcoAction.execute',
+        registration: migrateCustomerProfileIcoAction,
+      },
+      {
+        apiKey: 'organization-customer-profile-ico-migration',
+        operationKey: 'organizationCustomerProfileIcoMigration.execute',
+        registration: organizationCustomerProfileIcoMigrationRead,
+      },
+      {
+        apiKey: 'organization-customer-profile-ico',
+        operationKey: 'organizationCustomerProfileIco.execute',
+        registration: organizationCustomerProfileIcoRead,
+      },
+      {
+        apiKey: 'payment-term-affected-use-assessment',
+        operationKey: 'paymentTermAffectedUseAssessment.execute',
+        registration: paymentTermAffectedUseAssessmentRead,
+      },
+      {
+        apiKey: 'pricing-purchase-context-verification',
+        operationKey: 'pricingPurchaseContextVerification.execute',
+        registration: pricingPurchaseContextVerificationRead,
+      },
+      {
+        apiKey: 'remove-saved-address-action',
+        operationKey: 'removeSavedAddressAction.execute',
+        registration: removeSavedAddressAction,
       },
       {
         apiKey: 'reserve-market-retirement-action',
@@ -453,9 +695,24 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: reservePaymentTermRetirementAction,
       },
       {
-        apiKey: 'market-retirement-reservation-recovery',
-        operationKey: 'marketRetirementReservationRecovery.execute',
-        registration: marketRetirementReservationRecoveryRead,
+        apiKey: 'saved-address-source-receipt',
+        operationKey: 'savedAddressSourceReceipt.execute',
+        registration: savedAddressSourceReceiptRead,
+      },
+      {
+        apiKey: 'update-customer-group-action',
+        operationKey: 'updateCustomerGroupAction.execute',
+        registration: updateCustomerGroupAction,
+      },
+      {
+        apiKey: 'update-saved-address-action',
+        operationKey: 'updateSavedAddressAction.execute',
+        registration: updateSavedAddressAction,
+      },
+      {
+        apiKey: 'verify-effective-customer-group-membership-set-v1',
+        operationKey: 'verifyEffectiveCustomerGroupMembershipSetV1.execute',
+        registration: verifyEffectiveCustomerGroupMembershipSetV1Read,
       },
       // </generated-module-manifest-operation-contracts>
     ],
@@ -521,10 +778,540 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       timelines: [],
     },
   },
+  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
+  registeredWorkloadCalls: commerceCustomerContextRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],
     operations: [
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: createCounterpartyProfileEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.create-counterparty-profile-source-organization',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: customerProfileSourceEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-organization',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: createCounterpartyProfileEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.create-counterparty-profile-source-person',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: customerProfileSourceEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-counterparty-person',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.assign-counterparty-price-group',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.price-group-assign-organization-privacy',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.customer-price-group-assignment-receipt',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.price-group-assignment-organization-receipt-privacy',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: profileIcoMigrationReadEntrypoint,
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-report-organization-privacy',
+        provider: {
+          entrypointKey: organizationProfileIcoProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: profileIcoMigrationReadEntrypoint,
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-report-organization-counterparty',
+        provider: {
+          entrypointKey: counterpartyOrganizationIcoProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: profileIcoMigrationWriteEntrypoint,
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-migrate-organization-privacy',
+        provider: {
+          entrypointKey: organizationProfileIcoProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: profileIcoMigrationWriteEntrypoint,
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-migrate-organization-counterparty',
+        provider: {
+          entrypointKey: counterpartyOrganizationIcoProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.org-membership-write-privacy',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.admit-customer-group-membership-snapshot',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.org-membership-snapshot-admit-privacy',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.customer-group-membership-source-receipt',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.org-membership-recovery-privacy',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: legacyIcoInventoryCondition,
+        entrypointKey: organizationIcoMigrationReadEntrypoint,
+        evidence: [completePartyIcoInventoryEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-migration-report-inventory',
+        provider: {
+          entrypointKey: legacyIcoInventoryProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: legacyIcoInventoryCondition,
+        entrypointKey: organizationIcoMigrationReadEntrypoint,
+        evidence: [completePartyIcoInventoryEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-migration-report-counterparty',
+        provider: {
+          entrypointKey: counterpartyOrganizationIcoProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: legacyIcoInventoryCondition,
+        entrypointKey: organizationIcoMigrationWriteEntrypoint,
+        evidence: [completePartyIcoInventoryEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-migrate-inventory',
+        provider: {
+          entrypointKey: legacyIcoInventoryProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: legacyIcoInventoryCondition,
+        entrypointKey: organizationIcoMigrationWriteEntrypoint,
+        evidence: [completePartyIcoInventoryEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-migrate-counterparty',
+        provider: {
+          entrypointKey: counterpartyOrganizationIcoProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.change-organization-customer-profile-ico',
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-write-privacy',
+        provider: {
+          entrypointKey: organizationProfileIcoProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.organization-customer-profile-ico',
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-read-privacy',
+        provider: {
+          entrypointKey: organizationProfileIcoProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: organizationIcoMigrationWriteEntrypoint,
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-migrate-privacy',
+        provider: {
+          entrypointKey: organizationProfileIcoProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: organizationIcoMigrationReadEntrypoint,
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.organization-profile-ico-migration-report-privacy',
+        provider: {
+          entrypointKey: organizationProfileIcoProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.customer-profile-organization-ico-facts',
+        evidence: [currentOrganizationProfileIcoEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-organization-ico-facts-party',
+        provider: {
+          entrypointKey: counterpartyOrganizationIcoProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.assign-customer-price-group',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.price-group-assign-retail-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.assign-counterparty-price-group',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.price-group-assign-counterparty-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.customer-price-group-assignment-receipt',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.price-group-assignment-receipt-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: 'commerce.customer-context.condition.current-membership-snapshot-privacy',
+        entrypointKey: 'commerce.customer-context.admit-customer-group-membership-snapshot',
+        evidence: [currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.membership-snapshot-admit-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: 'commerce.customer-context.ensure-retail-customer-profile',
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.ensure-retail-profile-source-person',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: createCounterpartyProfileEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.create-counterparty-profile-source-role',
+        provider: {
+          entrypointKey: 'party.registry.api.source-counterparty-admission',
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: 'commerce.customer-context.condition.exact-profile-ico-recovery',
+        entrypointKey: 'commerce.customer-context.change-customer-profile-ico',
+        evidence: [currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-write-recovery-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: 'commerce.customer-context.ensure-retail-customer-profile',
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.ensure-retail-profile-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: createCounterpartyProfileEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourceEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourceEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-party',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourceEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-counterparty',
+        provider: {
+          entrypointKey: 'party.registry.api.source-counterparty-admission',
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: counterpartyIcoMigrationCondition,
+        entrypointKey: profileIcoMigrationReadEntrypoint,
+        evidence: [counterpartyPartyCorrelationEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-report-counterparty',
+        provider: {
+          entrypointKey: counterpartyMigrationCorrelationEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: counterpartyIcoMigrationCondition,
+        entrypointKey: profileIcoMigrationWriteEntrypoint,
+        evidence: [counterpartyPartyCorrelationEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-migrate-counterparty',
+        provider: {
+          entrypointKey: counterpartyMigrationCorrelationEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.add-saved-address',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.saved-address-add-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.update-saved-address',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.saved-address-update-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.remove-saved-address',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.saved-address-remove-source-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.saved-address-source-receipt',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.saved-address-source-receipt-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.membership-source-write-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.customer-group-membership-source-receipt',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.membership-source-recover-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.change-customer-profile-ico',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-write-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: 'commerce.customer-context.api.customer-profile-ico',
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-read-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: profileIcoMigrationWriteEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-migrate-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: profileIcoMigrationReadEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.profile-ico-report-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: legacyIcoInventoryCondition,
+        entrypointKey: profileIcoMigrationWriteEntrypoint,
+        evidence: [completePartyIcoInventoryEvidence, 'commerce.customer-context.evidence.party-authority-fence'],
+        key: 'commerce.customer-context.requirement.profile-ico-migrate-inventory',
+        provider: {
+          entrypointKey: legacyIcoInventoryProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: legacyIcoInventoryCondition,
+        entrypointKey: profileIcoMigrationReadEntrypoint,
+        evidence: [completePartyIcoInventoryEvidence, 'commerce.customer-context.evidence.party-authority-fence'],
+        key: 'commerce.customer-context.requirement.profile-ico-report-inventory',
+        provider: {
+          entrypointKey: legacyIcoInventoryProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
       {
         condition: 'commerce.customer-context.condition.new-guest-attribution',
         entrypointKey: attributeGuestRetailCustomerAction.descriptor.entrypoint.entrypointKey,
@@ -735,7 +1522,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         key: 'commerce.customer-context.requirement.privacy-report-owner-outcome',
         provider: {
           entrypointKey: 'privacy.core.record-owner-execution-outcome',
-          moduleId: 'privacy.core',
+          moduleId: privacyModuleId,
           schemaVersion: '1',
         },
       },

@@ -15,6 +15,7 @@ import { captureCatalogActionResult } from '../persistence/catalog-action-result
 import { ProductActionErrorSchema, recordProductAccess, recordProductEvent } from './product-action-support.ts';
 import { catalogPersistenceForScope } from '../persistence/catalog-persistence.ts';
 import type { CatalogPersistence } from '../persistence/catalog-persistence.ts';
+import { catalogSourceCorrelationForScope } from '../persistence/catalog-source-correlation.ts';
 
 export { CreateProductPayloadSchema } from '../../shared/actions/create-product.ts';
 export type { CreateProductPayload } from '../../shared/actions/create-product.ts';
@@ -30,6 +31,7 @@ type CreateProductServices = CatalogPersistence & {
     actionInvocationId: string,
     result: CreateProductResult,
   ) => ReturnType<typeof captureCatalogActionResult<CreateProductResult>>;
+  readonly sourceCorrelation?: ReturnType<typeof catalogSourceCorrelationForScope>;
 };
 
 const createProductServiceFactory = (
@@ -51,6 +53,7 @@ const createProductServiceFactory = (
           },
           result,
         ),
+      sourceCorrelation: catalogSourceCorrelationForScope(transaction, scope),
     })),
   );
 
@@ -77,6 +80,13 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
   payload: CreateProductPayload,
   context: ActionHandlerContext<typeof domainEvents, CreateProductServices>,
 ) {
+  if (payload.sourceCorrelation !== undefined && context.services.sourceCorrelation !== undefined) {
+    const original = yield* context.services.sourceCorrelation.recoverProduct(payload);
+    if (original !== null) {
+      yield* recordProductAccess(context, original.product.productRef.resourceId);
+      return original;
+    }
+  }
   const creationClassification = payload.classification ?? { kind: 'INDEPENDENT_PRODUCT' as const };
   if (
     creationClassification.kind === 'NEW_PRODUCT' &&
@@ -153,7 +163,20 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
         }),
     ),
   );
-  const result = { ...created, classification };
+  const result =
+    payload.sourceCorrelation === undefined
+      ? { ...created, classification }
+      : { ...created, businessOriginalCreateInvocationId: context.actionInvocationId, classification };
+  if (payload.sourceCorrelation !== undefined) {
+    if (context.services.sourceCorrelation === undefined) {
+      return yield* new ProductPersistenceConflict({
+        code: 'product_persistence_conflict',
+        conflict: 'ACTION_INVOCATION_ID',
+        reason: 'Catalog source correlation service is required',
+      });
+    }
+    yield* context.services.sourceCorrelation.captureProduct(payload, result, context.actionInvocationId);
+  }
   const evidence: Record<string, Schema.Schema.Type<typeof Schema.Json>> = {};
   if (payload.reason !== undefined) {
     evidence['reason'] = payload.reason;
@@ -185,6 +208,10 @@ export const createProductAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-product.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Native Product writes for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-import'],
     },
     actionKey: 'commerce.catalog.create-product',
     auditEvidenceSchema: CreateProductAuditEvidenceSchema,

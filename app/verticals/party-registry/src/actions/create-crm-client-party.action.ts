@@ -8,7 +8,7 @@ import {
   CreateCrmClientPartyPayloadSchema,
   CreateCrmClientPartyResultSchema,
 } from '../../shared/actions/crm-client-party.ts';
-import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
+import { crmClientEvidenceReference } from '../services/crm-client-evidence.ts';
 import { PartyEvidenceInsufficient } from '../../shared/domain/identity-contracts.ts';
 import {
   CreatePartyErrorSchema,

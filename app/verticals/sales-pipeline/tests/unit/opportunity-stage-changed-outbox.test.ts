@@ -15,7 +15,7 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { Context, DateTime, Effect, Schema } from 'effect';
+import { Context, DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ApplyCommandPayloadSchema, SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
@@ -28,7 +28,9 @@ import { salesPipelineRegistration } from '../../vertical.registration.ts';
 import {
   salesPipelineApplyCommandDeclaration,
   salesPipelineEntrustGroup,
+  salesPipelineRecordsReadDeclaration,
 } from '../../shared/model/access-declarations.ts';
+import { recordsRead } from '../../src/api/records.read.ts';
 
 type CommandInput = typeof SalesPipelineCommandSchema.Encoded;
 
@@ -189,6 +191,13 @@ const runCommand = Effect.fn('runCommand')(function* runCommand(state: SalesPipe
   return { evidence, result };
 });
 
+it('asks the gate exactly what the registered descriptors declare', () => {
+  // The descriptors carry closed inline literals for the catalog; these owner copies must not drift.
+  expect(recordsRead.descriptor.accessDeclaration).toMatchObject(salesPipelineRecordsReadDeclaration);
+  expect(applyCommandAction.descriptor.accessDeclaration).toMatchObject(salesPipelineApplyCommandDeclaration);
+  expect(applyCommandAction.descriptor.accessFieldGroups).toMatchObject([salesPipelineEntrustGroup]);
+});
+
 it.effect('ChangeOpportunityStage to WON commits exactly one stage-changed message with the line snapshot', () =>
   Effect.gen(function* wonMessage() {
     const state = yield* stateWith([[opportunityA, 'NEGOTIATION']]);
@@ -335,7 +344,12 @@ it.effect('missing or unavailable write authority and denied entrusted fields ca
           transport: { correlationId: 'outbox-denied', idempotencyKey: `outbox-denied-${outcome}` },
         })
         .pipe(Effect.provideContext(gate.context), Effect.flip);
-      expect(failure._tag).toBe(outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied');
+      expect(
+        Predicate.isTagged(
+          failure,
+          outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied',
+        ),
+      ).toBe(true);
       expect(harness.snapshot().committed).toEqual([]);
       expect(harness.snapshot().transactionCount).toBe(0);
       expect(harness.snapshot().stages).not.toContain('handler_executed');

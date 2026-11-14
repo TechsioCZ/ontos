@@ -21,7 +21,11 @@ import {
   prepareMigrateCounterpartyPriceGroupServices,
   prepareMigrateCustomerPriceGroupServices,
 } from '../../src/actions/price-group-action-preparation.ts';
-import { priceGroupActionServicesForTransaction } from '../../src/actions/price-group-action-services.ts';
+import {
+  assignCounterpartyPriceGroupServicesForTransaction,
+  assignCustomerPriceGroupServicesForTransaction,
+  priceGroupActionServicesForTransaction,
+} from '../../src/actions/price-group-action-services.ts';
 import { removeCounterpartyPriceGroupAction } from '../../src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerPriceGroupAction } from '../../src/actions/remove-customer-price-group.action.ts';
 import {
@@ -96,8 +100,12 @@ it.effect('attaches every Price Group Action and the governed resolution Read to
     expect(getActionServicePreflight(migrateCounterpartyPriceGroupAction)).toBe(
       prepareMigrateCounterpartyPriceGroupServices,
     );
-    expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-    expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
+    expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(
+      assignCustomerPriceGroupServicesForTransaction,
+    );
+    expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+      assignCounterpartyPriceGroupServicesForTransaction,
+    );
     expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
     expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
 

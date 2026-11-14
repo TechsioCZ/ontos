@@ -1,10 +1,8 @@
 /// <reference types="node" />
-/** @type {typeof import('node:process')} */
-const nodeProcess = process;
-const { existsSync } = nodeProcess.getBuiltinModule('node:fs');
-const path = nodeProcess.getBuiltinModule('node:path');
+const { existsSync } = process.getBuiltinModule('node:fs');
+const path = process.getBuiltinModule('node:path');
 /** @type {{ readonly value?: unknown } | undefined} */
-const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(nodeProcess, 'env');
+const ambientEnvironmentDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
 
 /**
  * @param {string} name - Environment variable name.
@@ -77,7 +75,7 @@ const resolveWorkspaceEnvironmentSync = (candidates) => {
 
 const resolvedWorkspaceEnvironment = resolveWorkspaceEnvironmentSync([
   environmentValue('ULTRAMODERN_WORKSPACE_ROOT'),
-  nodeProcess.cwd(),
+  process.cwd(),
   environmentValue('INIT_CWD'),
 ]);
 

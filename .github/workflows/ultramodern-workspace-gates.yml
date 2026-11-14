@@ -392,6 +392,10 @@ jobs:
           - name: Database Access Boundaries
             if: ${{ !cancelled() && steps.install.outcome == 'success' }}
             working-directory: app
+            env:
+              # The whole-workspace prover peaks at about 5.7 GiB footprint (5.2 GiB resident) and ran out of
+              # memory under an 8 GiB heap limit, so it gets 10 GiB.
+              NODE_OPTIONS: --max-old-space-size=10240
             run: mise exec -- pnpm database-access:check
 
           - name: Lean Core Dependencies
@@ -709,16 +713,16 @@ jobs:
           MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
           SPICEDB_DATABASE_PASSWORD: spicedb
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
-        # Same commands as `pnpm test:integration`, restricted to this shard's packages and, for a package
-        # too large for one job, to one Rstest shard of its test files.
+        # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
         # one package's failure never hides another's; the step fails at the end if any of them failed.
         run: |
           status=0
           if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"} || status=$?
           fi
           if [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
@@ -794,7 +798,9 @@ jobs:
       contents: read
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The Shell alone builds for about 11 minutes (24 on a busy runner), and the proving shard also waits for its
+    # siblings before it proves the artifacts.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -813,12 +819,12 @@ jobs:
           - {
               shard: 3,
               proof: none,
-              units: verticals/assortment apps/shell-super-app verticals/merchandise verticals/facility-operations verticals/sales-insights verticals/promotion verticals/payment,
+              units: verticals/assortment apps/shell-super-app verticals/promotion verticals/payment,
             }
           - {
               shard: 4,
               proof: none,
-              units: verticals/party-registry verticals/inventory verticals/availability verticals/finance-billing verticals/crm-activities,
+              units: verticals/party-registry verticals/inventory verticals/availability verticals/finance-billing verticals/crm-activities verticals/symmy-integration verticals/merchandise verticals/facility-operations verticals/sales-insights,
             }
           - {
               shard: 5,
@@ -914,7 +920,7 @@ jobs:
       - name: Wait for every other Node build shard to upload its outputs
         if: matrix.proof != 'none'
         working-directory: app
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 5 'Build node artifacts (${{ matrix.shard }}/5)'
@@ -963,7 +969,16 @@ jobs:
     name: Workspace gates
     if: ${{ always() }}
     needs:
-      [queue-proof, ci-plan, workspace-gate, workspace-unit, static-contracts, format-and-lint, service-integration, node-artifact-build]
+      [
+        queue-proof,
+        ci-plan,
+        workspace-gate,
+        workspace-unit,
+        static-contracts,
+        format-and-lint,
+        service-integration,
+        node-artifact-build,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

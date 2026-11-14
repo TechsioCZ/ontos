@@ -403,6 +403,25 @@ it.effect('rejects a physical redemption target outside the original owner even 
   ),
 );
 
+it("binds main's typed Party runtime factory declaration to its executed rest tuple before publication", () => {
+  const owner = 'party-registry';
+  const root = consolidateOwnerApprovalAuthenticationImport(sourceOf(owner, rootFile));
+  const declaration =
+    'export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArguments) => PartyRegistryApiRuntime = (\n  ...args\n) => {';
+  expect(root).toContain(declaration);
+  expect(inspect(owner, root)).toEqual({ kind: 'mounted' });
+  for (const forged of [
+    declaration.replace('(...args: PartyRegistryApiRuntimeArguments)', '(...args: UnrelatedArguments)'),
+    declaration.replace('=> PartyRegistryApiRuntime =', '=> PartyRegistryApiRuntime | undefined ='),
+    declaration.replace('(\n  ...args\n) => {', '(\n  ...foreignArgs\n) => {'),
+    declaration.replace('(\n  ...args\n) => {', '(\n  ...args: UnrelatedArguments\n) => {'),
+    declaration.replace('export const makePartyRegistryApiRuntime:', 'const makePartyRegistryApiRuntime:'),
+  ]) {
+    expect(forged).not.toBe(declaration);
+    expect(inspect(owner, root.replace(declaration, forged)), forged).toMatchObject({ kind: 'invalid' });
+  }
+});
+
 for (const owner of owners) {
   it(`proves the actual executed ${owner} approval handler and original owner provider before publication`, () => {
     const original = sourceOf(owner, rootFile);

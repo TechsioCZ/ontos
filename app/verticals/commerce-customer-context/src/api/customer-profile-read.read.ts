@@ -10,7 +10,7 @@ import type {
   CustomerProfileReadRequest,
   CustomerProfileReadResponse,
 } from '../../shared/apis/customer-profile-read.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profileReadServicesForVerifiedScope } from '../profile-service-factory.ts';
 import { customerProfileNotFound, sameCommerceCustomerProfileSubject } from './customer-profile-read-support.ts';
 import { customerProfileSubjectOwnerFacts } from './read-owner-facts.ts';
 
@@ -91,7 +91,7 @@ export const customerProfileReadRead = defineRead(
       ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    profileReadServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ customerProfileRead }): CustomerProfileReadServices => customerProfileRead),
     ),
 );

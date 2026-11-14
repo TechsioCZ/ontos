@@ -1,6 +1,6 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied, ReadPermissionUnavailable } from '@app/core-runtime';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
-import { parseFacilitySearchPredicate } from '../../src/search/record-access.ts';
+import { parseFacilitySearchPredicate } from '../../src/services/facility-search-access.ts';
 import { company } from './facility-search-fixtures.ts';
 import { PrincipalIdSchema, RecordKeySchema } from '@app/core-runtime/access/ids';
 import { NodeCrypto } from '@effect/platform-node';

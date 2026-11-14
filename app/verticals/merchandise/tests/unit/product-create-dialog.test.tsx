@@ -5,7 +5,7 @@
 // runtime and the router blocker are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -103,7 +103,7 @@ const sentClassifications = () =>
   rstest
     .mocked(executeApplyCommand)
     .mock.calls.flatMap(([payload]) =>
-      payload.command._tag === 'CreateProduct' ? [payload.command.taxClassificationCode] : [],
+      Predicate.isTagged(payload.command, 'CreateProduct') ? [payload.command.taxClassificationCode] : [],
     );
 const text = () => (document.body.textContent ?? '').replaceAll(' ', ' ');
 

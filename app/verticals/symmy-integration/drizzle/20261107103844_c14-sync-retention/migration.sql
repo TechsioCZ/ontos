@@ -1,0 +1,1 @@
+ALTER TABLE "symmy_integration"."sync_admissions" ADD COLUMN "retention_receipt" jsonb;

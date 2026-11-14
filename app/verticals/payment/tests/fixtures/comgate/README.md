@@ -1,0 +1,21 @@
+# Comgate fixtures (#1154, #1156, #1157, #1158)
+
+Shapes copied from the Comgate API documentation, read 2026-11-12. Values that identify a real
+shop were never present; the `secret` is a fixture string, not a credential. Where a test needs an
+OntOS order reference, it overrides `refId` in the test (Comgate's own example uses `2010102600`).
+
+| File                                         | Source                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create-success.json`, `create-error.json`   | https://apidoc.comgate.cz/en/api/rest/ ("create", response 201 example; error codes 1100-1500, 1309 incorrect amount)                                                                                                                                                                                                                                                                    |
+| `status-paid.json`, `status-error.json`      | https://apidoc.comgate.cz/en/api/rest/ ("status", example `"test": "false"`, `"price": "10000"`, `"status": "PAID"`) and https://apidoc.comgate.cz/en/stavy-plateb                                                                                                                                                                                                                       |
+| `result-ok.json`, `result-1400.json`         | https://apidoc.comgate.cz/en/api/rest/ ("cancel" / "refund" `{code, message}`; cancel 1400 "the payment cannot be changed to CANCELLED status")                                                                                                                                                                                                                                          |
+| `push.json`, `push.txt`                      | https://apidoc.comgate.cz/en/push-notifikace (REST v2 JSON example and v1 urlencoded example, verbatim)                                                                                                                                                                                                                                                                                  |
+| `transfer-list.json`, `single-transfer.json` | https://apidoc.comgate.cz/en/api/rest/ ("transferList" and "singleTransfer" 200 examples, verbatim)                                                                                                                                                                                                                                                                                      |
+| `statement-refund-row.json`                  | A singleTransfer row (field names as documented) carrying the values of the first refund row ("Refundace ze dne 09.04.2026 14:48:30") of the official monthly gateway statement sample linked from https://help.comgate.eu/docs/en/payments-and-statements.md; the payer e-mail is replaced by the apidoc example address. Tests override `ID od klienta` with an OntOS order reference. |
+
+UNVERIFIED: the documented status `test` is a string (`"false"`) while create/refund requests type it as a
+boolean; the decoder accepts both forms (see `comgate-wire.ts`).
+
+UNVERIFIED (statement): the sample is synthetic and has no `typ` column; whether singleTransfer JSON returns
+refund rows, which `typ` they carry, whether `ID Comgate` on a refund row is the payment transId, and whether
+the refund `refId` really appears in `ID od klienta` were not seen in a live statement.

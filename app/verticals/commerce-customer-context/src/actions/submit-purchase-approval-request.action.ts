@@ -3,10 +3,9 @@
 // @ontos-action-slug submit-purchase-approval-request
 import type {
   ActionHandlerContext,
+  ActionServiceFactory,
   ActionServicePreparationContext,
-  OperationalScope,
   OperationContextUnavailable,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
@@ -160,11 +159,9 @@ const submissionPreparedEvidenceUnavailable = (cause: unknown) =>
 const prepareSubmissionServices = Effect.fn('SubmitPurchaseApprovalRequestAction.prepareServices')(
   function* prepareServices(payload: SubmitPurchaseApprovalRequestPayload, context: ActionServicePreparationContext) {
     const prepareCurrentness = yield* preparePurchaseApprovalSubmissionCurrentness(payload, context);
-    return Effect.fn('SubmitPurchaseApprovalRequestAction.commitServices')(function* commitServices(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      revision: string,
-    ) {
+    const factory: ActionServiceFactory<SubmitPurchaseApprovalRequestServices> = Effect.fn(
+      'SubmitPurchaseApprovalRequestAction.commitServices',
+    )(function* commitServices(transaction, scope, revision) {
       const { prepared, workflow } = yield* Effect.all(
         {
           prepared: prepareCurrentness(transaction, scope, revision),
@@ -198,6 +195,7 @@ const prepareSubmissionServices = Effect.fn('SubmitPurchaseApprovalRequestAction
         },
       } satisfies SubmitPurchaseApprovalRequestServices;
     });
+    return factory;
   },
 );
 

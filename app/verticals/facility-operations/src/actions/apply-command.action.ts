@@ -11,10 +11,8 @@ import type {
   ActionCollectorError,
   ActionHandlerContext,
   ActionServiceFactory,
-  ActionServicePreparationContext,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { DateTime, Effect, Schema } from 'effect';
@@ -25,7 +23,6 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { facilityOperationsApplyCommandDeclaration } from '../../shared/domain/access-declarations.ts';
 import { facilityOperationsGrants, persistenceService } from '../services/persistence.service.ts';
 
 import {
@@ -86,11 +83,9 @@ export const prepareApplyCommandServices = Effect.fn('FacilityOperations.prepare
   > {
     const grants = yield* facilityOperationsGrants(context.scope);
     const preparedAt = yield* DateTime.now;
-    return Effect.fn('FacilityOperations.revalidatePreparedGrants')(function* revalidatePreparedGrants(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
+    const factory: ActionServiceFactory<FacilityActionServices> = Effect.fn(
+      'FacilityOperations.revalidatePreparedGrants',
+    )(function* revalidatePreparedGrants(transaction, scope, compositionRevision) {
       const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
       if (
         age < 0 ||
@@ -108,6 +103,7 @@ export const prepareApplyCommandServices = Effect.fn('FacilityOperations.prepare
       }
       return yield* persistenceService(transaction, { preparedGrants: grants, scope });
     });
+    return factory;
   },
 ) satisfies ActionServicePreflight<
   ApplyCommandPayload,
@@ -123,7 +119,14 @@ const guardedApplyCommand: typeof handleApplyCommand = withCommandGuard(handleAp
 
 export const applyCommandAction = defineAction(
   {
-    accessDeclaration: facilityOperationsApplyCommandDeclaration,
+    accessDeclaration: {
+      key: 'facility.operations.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'facility-operations', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'facility.operations.apply-command.access.v1',

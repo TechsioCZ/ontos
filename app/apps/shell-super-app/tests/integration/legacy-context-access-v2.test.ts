@@ -7,13 +7,13 @@ import { expect, it } from 'effect-rstest';
 
 import { agentAdministrationDecision } from '../../api/auth/administration-access.ts';
 import { peopleAdministrationCapability } from '../../api/auth/demo-accounts.ts';
-import { TENANT_MODULE_TARGET_ACCESS_DECLARATION } from '../../api/modules/shell-governed-reads.ts';
 import {
   DECISION_AT,
   accessAdminTemplateLayer,
   withAccessAdminCase,
 } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase, Persona } from '../support/access-admin-real-gate-fixture.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 /*
  * The questions that used to ask legacy `ContextAccess` relations, answered by the real v2 gate on a
@@ -67,7 +67,7 @@ const tenantReleaseHint = Effect.fn('LegacyRows.tenantReleaseHint')(function* te
 ) {
   const scope = { ...(yield* accessCase.scopeFor(persona)), tenantId: accessCase.tenantId };
   const decision = yield* accessCase.gate.decide({
-    carrier: { accessDeclaration: TENANT_MODULE_TARGET_ACCESS_DECLARATION },
+    carrier: tenantModuleTargetTestCarrier,
     legalEntityScope: 'optional',
     now: DECISION_AT,
     scope,

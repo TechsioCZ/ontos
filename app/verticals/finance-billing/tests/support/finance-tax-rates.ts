@@ -1,6 +1,6 @@
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Effect, Layer } from 'effect';
+import { DateTime, Effect, Layer, Predicate } from 'effect';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
 import { FinanceTaxRates } from '../../src/integrations/tax-rates.ts';
 
@@ -46,6 +46,13 @@ export const standardLineVat = (tenantId: string) => ({
 /** Tax answering with the baseline for the scope's own tenant. */
 export const FinanceTaxRatesBaseline = Layer.succeed(FinanceTaxRates, {
   choices: (scope, on) => Effect.succeed(baselineVatChoices(scope.tenantId, on)),
-  choicesFor: ({ subject }, on) =>
-    Effect.succeed(baselineVatChoices(subject._tag === 'Originator' ? subject.tenantId : subject.scope.tenantId, on)),
+  choicesFor: ({ subject }, on) => {
+    if (Predicate.isTagged(subject, 'Originator')) {
+      return Effect.succeed(baselineVatChoices(subject.tenantId, on));
+    }
+    if (Predicate.isTagged(subject, 'Assertion')) {
+      return Effect.succeed(baselineVatChoices(subject.scope.tenantId, on));
+    }
+    return Effect.die(new Error(`Finance never asks Tax for a ${subject._tag} subject`));
+  },
 });

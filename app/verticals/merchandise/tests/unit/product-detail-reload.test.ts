@@ -4,7 +4,7 @@
 // does not expect its current revision. The editor stays mounted while its product reloads, so `product` still
 // shows the version before a save until that reload lands.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -97,11 +97,11 @@ const answerLikeTheRegister = () => {
 const sent = () =>
   rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => {
     const { command } = payload;
-    return command._tag === 'ChangePrice'
+    return Predicate.isTagged(command, 'ChangePrice')
       ? { expectedRevision: payload.expectedRevision, priceMinor: command.priceMinor, tag: command._tag }
       : {
           expectedRevision: payload.expectedRevision,
-          patch: command._tag === 'UpdateProduct' ? command.patch : undefined,
+          patch: Predicate.isTagged(command, 'UpdateProduct') ? command.patch : undefined,
           tag: command._tag,
         };
   });

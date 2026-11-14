@@ -22,6 +22,7 @@ import { expect, it } from 'effect-rstest';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
   GatewayAssertionRedemptionLive,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 
@@ -67,7 +68,11 @@ const fixture = Effect.fn('assortment.RedemptionNative.fixture')(function* fixtu
   const redemption = Effect.gen(function* makeProductionRedemptionLayer() {
     const services = yield* Layer.build(
       GatewayAssertionRedemptionLive.pipe(
-        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+        Layer.provide(
+          GatewayAssertionRedemptionDatabaseLive.pipe(
+            Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+          ),
+        ),
         Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
       ),
     );

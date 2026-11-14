@@ -1,8 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   ActiveApplicationCompositionSnapshotSchema,
-  applicationCompositionContentRevision,
   buildApplicationCompositionCatalog,
   closeApplicationCompositionDurableAdmission,
   ContextAccessLive,
@@ -12,11 +11,9 @@ import {
   GatewayAssertionReplayError,
   loadDatabaseConnectionPair,
   lockApplicationCompositionPublication,
-  OntosModuleDeploymentContractSchema,
   publishApplicationCompositionAuthority,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import {
@@ -117,37 +114,9 @@ const compositionSnapshot = Effect.fnUntraced(function* compositionSnapshot(
     ultramodernApiMarker.buildMarker,
     options.installedOwner === true ? ['commerce-cart'] : [],
   );
-  const cartContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
-    makeModuleContractFixture({
-      appId: 'commerce-cart',
-      buildMarker: ultramodernApiMarker.buildMarker,
-      moduleId: 'commerce.cart',
-    }),
-  );
-  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-    cartContract,
-  );
-  const sha256 = createHash('sha256').update(contractDocument, 'utf-8').digest('hex');
-  const composition = {
-    ...snapshot.composition,
-    modules: snapshot.composition.modules.map((module) =>
-      module.deployment.appId === 'commerce-cart'
-        ? {
-            ...module,
-            contract: { ...module.contract, sha256 },
-            contractDocument,
-            moduleId: cartContract.manifest.module.id,
-            publicContract: { id: cartContract.manifest.module.id, sha256, version: cartContract.schemaVersion },
-          }
-        : module,
-    ),
-  };
   const expired = options.expired === true;
   const decodedSnapshot = yield* Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)({
-    composition: {
-      ...composition,
-      revision: yield* applicationCompositionContentRevision(composition),
-    },
+    composition: snapshot.composition,
     observedAt: expired ? clock.expired_observed_at : clock.observed_at,
     validUntil: expired ? clock.expired_valid_until : clock.valid_until,
   });
@@ -622,6 +591,10 @@ it.live(
           SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
         };
         const installedSnapshot = yield* compositionSnapshot(clock, { installedOwner: true });
+        expect(
+          installedSnapshot.composition.modules.find(({ deployment }) => deployment.appId === 'commerce-cart')
+            ?.moduleId,
+        ).toBe('commerce.cart');
         const expiredSnapshot = yield* compositionSnapshot(clock, { expired: true });
         const snapshotJson = Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema);
         const cases = [

@@ -3,10 +3,9 @@
 // @ontos-action-slug ensure-retail-customer-profile
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
+  ActionServiceFactory,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -21,7 +20,6 @@ import type {
 } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
 import {
-  makePartyRegistryRetailPartyResolver,
   missingPartyTransport,
   PartyRegistryRetailPartyResolverFactory,
 } from '../integrations/party-registry-retail-party-resolver.ts';
@@ -50,6 +48,13 @@ const handleEnsureRetailCustomerProfile = Effect.fn('EnsureRetailCustomerProfile
     payload: EnsureRetailCustomerProfilePayload,
     context: ActionHandlerContext<DomainEvents, EnsureRetailCustomerProfileServices>,
   ) {
+    if (context.scope.authMethod === 'system' && payload.source === undefined) {
+      return yield* new EnsureRetailCustomerProfileRejected({
+        code: 'SOURCE_AUTHORITY_DENIED',
+        reason: 'System source workloads require an exact admitted source assertion',
+        retryable: false,
+      });
+    }
     if (
       payload.subject.partyRef.tenantId !== context.scope.tenantId ||
       payload.subject.sellingLegalEntityRef.tenantId !== context.scope.tenantId
@@ -83,9 +88,9 @@ const handleEnsureRetailCustomerProfile = Effect.fn('EnsureRetailCustomerProfile
     yield* recordProfileResourceLookup(
       context,
       result.profileRef,
-      `retail-profile-current:${result.profileRef.resourceId}:${result.revision}`,
+      `retail-profile-${result.sourceEffect?.replayed === true ? 'source-receipt' : 'current'}:${result.profileRef.resourceId}:${result.revision}`,
     );
-    if (result.outcome === 'PROFILE_CREATED') {
+    if (result.outcome === 'PROFILE_CREATED' && result.sourceEffect?.replayed !== true) {
       const event = yield* context.addDomainEvent({
         eventType: 'commerce.customer-context.retail-customer-profile-created.v1',
         payloadJson: result,
@@ -130,7 +135,8 @@ export const bindPreparedRetailParty = (
 export const prepareRetailProfileServices: ActionServicePreflight<
   EnsureRetailCustomerProfilePayload,
   EnsureRetailCustomerProfileServices,
-  EnsureRetailCustomerProfileRejected
+  EnsureRetailCustomerProfileRejected,
+  PartyRegistryRetailPartyResolverFactory
 > = Effect.fn('EnsureRetailCustomerProfileAction.prepareServices')(function* prepareServices(
   payload: EnsureRetailCustomerProfilePayload,
   context: ActionServicePreparationContext,
@@ -166,13 +172,13 @@ export const prepareRetailProfileServices: ActionServicePreflight<
     requestCorrelation: scope.correlationId,
     tenantId: scope.tenantId,
   };
-  const prepared = yield* Effect.serviceOption(PartyRegistryRetailPartyResolverFactory);
+  const resolvers = yield* PartyRegistryRetailPartyResolverFactory;
   const transport = yield* Effect.serviceOption(RetailPartyDetailExecutor);
   // Built only when used, so a prepared invocation never calls the transport at all.
   const readOnce = Effect.suspend(() =>
     Option.isNone(transport)
       ? missingPartyTransport()
-      : makePartyRegistryRetailPartyResolver(scopeInput, (detailRequest, correlation) =>
+      : resolvers.make(scopeInput, (detailRequest, correlation) =>
           transport.value.execute(detailRequest, correlation, {
             actionInvocationId: context.actionInvocationId,
             compositionRevision: context.compositionRevision,
@@ -180,27 +186,24 @@ export const prepareRetailProfileServices: ActionServicePreflight<
           }),
         )(request),
   );
-  const outcome = yield* (
-    Option.isNone(prepared)
-      ? readOnce
-      : prepared.value
-          .make(scopeInput)(request)
-          .pipe(Effect.catchTag('ProfilePersistenceDependencyFailure', () => readOnce))
-  ).pipe(
-    Effect.mapError((cause) =>
-      Object.defineProperty(
-        new EnsureRetailCustomerProfileRejected({
-          code: 'DEPENDENCY_UNAVAILABLE',
-          reason: 'Current Party Registry owner identity is unavailable',
-          retryable: true,
-        }),
-        'cause',
-        { value: cause },
+  const outcome = yield* resolvers
+    .make(scopeInput)(request)
+    .pipe(
+      Effect.catchTag('ProfilePersistenceDependencyFailure', () => readOnce),
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new EnsureRetailCustomerProfileRejected({
+            code: 'DEPENDENCY_UNAVAILABLE',
+            reason: 'Current Party Registry owner identity is unavailable',
+            retryable: true,
+          }),
+          'cause',
+          { value: cause },
+        ),
       ),
-    ),
-  );
+    );
   const resolveRetailParty = bindPreparedRetailParty(request, outcome);
-  return (transaction: ScopedTransactionExecutor, current: OperationalScope, revision: string) => {
+  const factory: ActionServiceFactory<EnsureRetailCustomerProfileServices> = (transaction, current, revision) => {
     if (
       current.tenantId !== scope.tenantId ||
       current.legalEntityId !== legalEntityId ||
@@ -245,6 +248,7 @@ export const prepareRetailProfileServices: ActionServicePreflight<
             ),
     } satisfies EnsureRetailCustomerProfileServices);
   };
+  return factory;
 });
 
 export const ensureRetailCustomerProfileAction = defineAction(
@@ -267,6 +271,10 @@ export const ensureRetailCustomerProfileAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.ensure-retail-customer-profile.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Registered Commerce source workloads ensure only qualified source Profiles',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.ensure-retail-customer-profile',
     auditProfile: 'standard',

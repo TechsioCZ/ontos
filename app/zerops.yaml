@@ -84,6 +84,9 @@ zerops:
       base: alpine/nodejs@26
       envVariables:
         NEXT_TELEMETRY_DISABLED: '1'
+        # Next's type check of N1 holds the owner API types it imports: about 3.3 GiB resident. Node's default
+        # heap (about 2 GiB) ran out there; the build container has a fixed 8 GB.
+        NODE_OPTIONS: --max-old-space-size=4096
       prepareCommands:
         - sudo npm install --global pnpm@12.16.1
       buildCommands:

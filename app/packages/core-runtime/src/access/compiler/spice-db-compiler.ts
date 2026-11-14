@@ -1,11 +1,13 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Option, Result } from 'effect';
+import { Effect, Layer, Option, Result } from 'effect';
 
 import { fullyConsistent } from '../../permissions/client.ts';
 import { openSpiceDbRpc } from '../../permissions/spicedb-transaction-guard.ts';
 import type { SpiceDbRpcError } from '../../permissions/spicedb-rpc.ts';
 import type { SpiceDbConfigError } from '../../permissions/config-error.ts';
+import { SpiceDbConfig } from '../../permissions/config.ts';
 import type { SpiceDbConfigValue } from '../../permissions/config.ts';
+import { AccessProjectionCompiler as AccessProjectionCompilerService } from '../intent/projection-compiler.ts';
 import { diffProjection, verifyProjection } from './diff.ts';
 import type { ProjectionDiff, ProjectionDrift, ProjectionVerification } from './diff.ts';
 import type { AccessProjectionIntent } from './intent.ts';
@@ -382,3 +384,21 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
   const compiler: AccessProjectionCompiler = { readProjection, reconcile, verify };
   return Object.freeze(compiler);
 };
+
+/**
+ * The projection compiler of the worker process. Its engine transport is deferred, so a worker that has
+ * no SpiceDB configured still starts and answers readiness; the first reconcile that needs the engine
+ * opens it, and a configuration it cannot read fails that reconcile as unavailable, never as a grant.
+ */
+export const CoreAuthorizationProjectionCompilerLive: Layer.Layer<
+  AccessProjectionCompilerService,
+  never,
+  SpiceDbConfig
+> = Layer.effect(
+  AccessProjectionCompilerService,
+  Effect.gen(function* makeCoreAuthorizationProjectionCompiler() {
+    const configuration = yield* SpiceDbConfig;
+    const transport = yield* makeDeferredAccessProjectionTransport(Effect.succeed(configuration));
+    return makeAccessProjectionCompiler(transport);
+  }),
+);

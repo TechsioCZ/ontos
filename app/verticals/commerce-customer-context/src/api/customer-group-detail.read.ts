@@ -52,6 +52,10 @@ export const customerGroupDetailRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Checks an exact owner fact for the enrolled internal Assortment import',
+      workloads: ['commerce.assortment.symmy-fixture-currentness'],
+    },
     entrypoint: customerGroupDetailEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

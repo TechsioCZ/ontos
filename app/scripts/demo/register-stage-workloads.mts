@@ -30,13 +30,15 @@ import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../pa
 import { runScopedRead } from '../../packages/core-runtime/src/access/intent/persistence.ts';
 import type { AccessIntentDatabase } from '../../packages/core-runtime/src/access/intent/persistence.ts';
 import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
-import { makeDrizzleAccessWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/bindings.ts';
+import { AccessWorkloadBindingSource } from '../../packages/core-runtime/src/access/enforcement/workload-port.ts';
+import { AccessWorkloadBindingSourceLive } from '../../packages/core-runtime/src/access/workloads/bindings.ts';
 import { writeWorkloadCompanyBindings } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
 import { AccessWorkloadCompanyBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/company-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   accessMemberships,
   accessScopes,
@@ -348,12 +350,9 @@ const applyStep = Effect.fn('StageWorkloads.apply')(function* apply(
 });
 
 /** Reads one step back through the gate's own reader: the key is active and the company is selectable. */
-const verifyStep = Effect.fn('StageWorkloads.verify')(function* verify(
-  database: AccessIntentDatabase,
-  resolved: ResolvedStep,
-) {
+const verifyStep = Effect.fn('StageWorkloads.verify')(function* verify(resolved: ResolvedStep) {
   const { scope, step } = resolved;
-  const reader = makeDrizzleAccessWorkloadBindings(database);
+  const reader = yield* AccessWorkloadBindingSource;
   const query = { principalId: step.principalId, scope, tenantId: step.tenantId };
   const active = yield* reader
     .readActiveWorkloadKeys(query)
@@ -398,7 +397,7 @@ const main = Effect.fn('StageWorkloads.main')(function* run(
     const at = yield* DateTime.nowAsDate;
     yield* Effect.all(resolved.map((step) => applyStep(database, step, at)));
   }
-  const verified = yield* Effect.all(resolved.map((step) => verifyStep(database, step)));
+  const verified = yield* Effect.all(resolved.map((step) => verifyStep(step)));
   return yield* Console.log({ mode, verified: verified.length });
 });
 
@@ -410,6 +409,12 @@ const DatabaseLive = Layer.unwrap(
     );
     return CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration)));
   }),
+);
+
+/** The gate's own workload reader over the same Core executor and enrolled database identities. */
+const WorkloadsLive = AccessWorkloadBindingSourceLive.pipe(
+  Layer.provideMerge(DatabaseLive),
+  Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, enrollment)),
 );
 
 const command = Command.make(
@@ -429,7 +434,7 @@ const command = Command.make(
         ),
       ),
     ),
-).pipe(Command.provide(DatabaseLive));
+).pipe(Command.provide(WorkloadsLive));
 
 if (import.meta.main) {
   const result = await Effect.runPromiseExit(

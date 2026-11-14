@@ -10,7 +10,7 @@ import type {
   GuestAttributionStatusRequest,
   GuestAttributionStatusResponse,
 } from '../../shared/apis/guest-attribution-status.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profileReadServicesForVerifiedScope } from '../profile-service-factory.ts';
 
 const MODULE_KEY = 'commerce.customer-context';
 
@@ -79,7 +79,7 @@ export const guestAttributionStatusRead = defineRead(
       ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    profileReadServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ guestAttributionStatus }): GuestAttributionStatusServices => guestAttributionStatus),
     ),
 );

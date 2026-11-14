@@ -192,6 +192,9 @@ const makeFixtureTransactionExecutor = (role: string) => {
       const query = new PgDialect().sqlToQuery(statement);
       // Statements run when the Effect is run, not when the Core builds it, so a verify that is built
       // before the install reads the settings the install has written by then.
+      if (query.sql === 'select current_user::text as role') {
+        return Effect.succeed([{ role: fixtureRuntimeRole }]);
+      }
       // A session-setting role installs its scope and reads back the connected role in one statement:
       // `set_config` answers the value it set.
       if (query.sql === installAndReadScopeSql) {

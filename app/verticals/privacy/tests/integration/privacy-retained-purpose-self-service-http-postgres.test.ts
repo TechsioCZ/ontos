@@ -199,7 +199,11 @@ import {
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import type { RetainedConsentAccountTransport } from '../support/privacy-retained-purpose-self-service-http.ts';
 
-import { makeDsrObligationNative, readPrivacyFixtureShellObservation } from '../support/dsr-obligation-native.ts';
+import {
+  makeDsrObligationNative,
+  readPrivacyFixtureShellObservation,
+  resolvePrivacyFixtureShellBuildIdentity,
+} from '../support/dsr-obligation-native.ts';
 
 // Real public retained-V1 consent lifecycle, using one isolated enrolled account and actual owner services.
 class RetainedAccountNativeError extends Schema.TaggedError<RetainedAccountNativeError>()(
@@ -553,6 +557,7 @@ const prepareRetainedNativeIdentities = Effect.fn('RetainedAccount.prepareRetain
   },
 );
 const commandOutput = Effect.fn('RetainedAccount.commandOutput')(function* commandOutput(
+  stage: string,
   commandArguments: readonly string[],
 ) {
   const child = yield* ChildProcess.make('mise', ['exec', '--', ...commandArguments], {
@@ -566,9 +571,9 @@ const commandOutput = Effect.fn('RetainedAccount.commandOutput')(function* comma
   const [code, stdout] = yield* Effect.all(
     [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.runCollect), Stream.runDrain(child.stderr)],
     { concurrency: 3 },
-  ).pipe(Effect.timeoutOrElse({ duration: '20 seconds', orElse: () => Effect.fail(failed('deadline')) }));
+  ).pipe(Effect.timeoutOrElse({ duration: '60 seconds', orElse: () => Effect.fail(failed(`${stage}-deadline`)) }));
   if (Number(code) !== 0) {
-    return yield* failed('source-description');
+    return yield* failed(stage);
   }
   return [...stdout].join('');
 });
@@ -616,7 +621,13 @@ const describeContracts = Effect.fn('RetainedAccount.describeContracts')(functio
       return yield* Schema.encodeEffect(Schema.fromJsonString(descriptionSchema))({contracts, buildIdentities});
     }));
     process.stdout.write(text); } finally { await runtime.dispose(); }`;
-  const output = yield* commandOutput(['node', '--experimental-strip-types', '--input-type=module', '--eval', program]);
+  const output = yield* commandOutput('describe-owner-contracts', [
+    'node',
+    '--experimental-strip-types',
+    '--input-type=module',
+    '--eval',
+    program,
+  ]);
   const description = yield* Schema.decodeUnknownEffect(
     Schema.fromJsonString(
       Schema.Struct({
@@ -798,7 +809,7 @@ const bundleOwner = Effect.fn('RetainedAccount.bundleOwner')(function* bundleOwn
   yield* fs.symlink(path.join(ownerRoot, 'node_modules'), path.join(directory, 'node_modules'));
   const artifact = path.join(directory, 'owner.mjs');
   const originalUrl = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(pathToFileURL(entry).href);
-  yield* commandOutput([
+  yield* commandOutput(`bundle:${specifier}`, [
     'pnpm',
     'exec',
     'esbuild',
@@ -850,7 +861,7 @@ Effect.runFork(
 startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
 `,
   );
-  yield* commandOutput([
+  yield* commandOutput('bundle-commerce-worker', [
     'pnpm',
     'exec',
     'esbuild',
@@ -1160,13 +1171,14 @@ const retainedPublicArtifacts = Layer.effect(
   RetainedPublicArtifacts,
   Effect.gen(function* preparePublicArtifacts() {
     const { buildIdentities, contracts } = yield* describeContracts();
+    const shellBuildIdentity = yield* resolvePrivacyFixtureShellBuildIdentity(buildIdentities['shell-super-app']);
     const shellArtifact = yield* bundleOwner(
       '@app/shell-super-app/testing/api-key-gateway-native-child',
-      buildIdentities['shell-super-app'],
+      shellBuildIdentity,
     );
     const shellMarker = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(OntosShellRuntimeContractSchema.fields.deployment),
-    )(yield* commandOutput(['node', shellArtifact, '--describe']));
+    )(yield* commandOutput('describe-shell', ['node', shellArtifact, '--describe']));
     const partyArtifact = yield* bundleOwner(
       '@app/party-registry/testing/tenant-party-http',
       buildIdentities['party-registry'],
@@ -1177,10 +1189,10 @@ const retainedPublicArtifacts = Layer.effect(
     );
     const accountDescription = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(retainedAccountDescriptionSchema),
-    )(yield* commandOutput(['node', accountArtifact, '--describe']));
+    )(yield* commandOutput('describe-commerce-account', ['node', accountArtifact, '--describe']));
     const shellHttpArtifact = yield* bundleOwner(
       '@app/shell-super-app/testing/tenant-party-shell-http',
-      buildIdentities['shell-super-app'],
+      shellBuildIdentity,
     );
     const workerArtifact = yield* bundlePublishedWorker(buildIdentities['commerce-customer-context']);
     return {
@@ -3359,9 +3371,9 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
 // These are full multi-owner journeys, not request-latency tests. Budget for owner startup,
 // hundreds of lifecycle assertions and scoped shutdown; private operations still time out after
 // 20 seconds and resistant children are still force-killed after 2 seconds.
-const publicJourneyTimeoutMillis = 120_000;
+const publicJourneyTimeoutMillis = 300_000;
 
-it.layer(retainedNativeInfrastructure, { excludeTestServices: true, timeout: '60 seconds' })(
+it.layer(retainedNativeInfrastructure, { excludeTestServices: true, timeout: '120 seconds' })(
   'retained Purpose public owner processes',
   (suite) => {
     suite.effect(

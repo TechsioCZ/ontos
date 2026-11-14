@@ -407,8 +407,20 @@ const checkCoverage = (
   return Result.void;
 };
 
+/** The authored text of one tool, before its optional description is added. */
+type ToolTextFieldsDraft = Mutable<Pick<OntosMcpTool, 'title' | 'description' | 'genericOnly'>>;
+/** The authored write metadata of one tool, before its optional live right is added. */
+type ToolWriteFieldsDraft = Mutable<
+  Pick<
+    OntosMcpTool,
+    'title' | 'description' | 'genericOnly' | 'agentProposalOnly' | 'destructive' | 'referenceAudiences' | 'liveRight'
+  >
+>;
+/** The published contribution, before its optional authored sections are added. */
+type ContributionDraft = Mutable<OntosMcpContribution>;
+
 const textFields = (entry: OntosMcpToolTextInput) => {
-  const fields: Mutable<Pick<OntosMcpTool, 'title' | 'description' | 'genericOnly'>> = { title: entry.title };
+  const fields: ToolTextFieldsDraft = { title: entry.title };
   if (entry.description !== undefined) {
     fields.description = entry.description;
   }
@@ -419,12 +431,7 @@ const textFields = (entry: OntosMcpToolTextInput) => {
 };
 
 const writeFields = (entry: OntosMcpWriteInput, verb: string) => {
-  const fields: Mutable<
-    Pick<
-      OntosMcpTool,
-      'title' | 'description' | 'genericOnly' | 'agentProposalOnly' | 'destructive' | 'referenceAudiences' | 'liveRight'
-    >
-  > = {
+  const fields: ToolWriteFieldsDraft = {
     ...textFields(entry),
     agentProposalOnly: entry.agentProposalOnly ?? false,
     destructive: entry.destructive ?? DESTRUCTIVE_VERB.test(verb),
@@ -594,7 +601,7 @@ const contributionOf = (
   commandActions: OntosMcpCommandActions,
 ) => {
   const { revision } = authored;
-  const contribution: Mutable<OntosMcpContribution> = {
+  const contribution: ContributionDraft = {
     approvals: authored.approvals,
     description: authored.description,
     keywords: authored.keywords,

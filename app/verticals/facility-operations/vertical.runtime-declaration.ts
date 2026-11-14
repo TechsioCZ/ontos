@@ -44,9 +44,6 @@ const moduleKey = 'facility.operations';
 const facilityNavigationGroupKey = 'shell.navigation.facility';
 const facilityAccessGroup = 'facility-operations';
 const pageKey = (agenda: string) => `${moduleKey}.page.${agenda}`;
-const moduleAccess = { kind: 'protected' } as const;
-/** Restricted agendas (finance values, documents, security) are listed only for principals with read_all. */
-const restrictedAccess = { kind: 'protected' } as const;
 
 const propertyFamily = {
   icon: 'icon-[mdi--home-city-outline]',
@@ -127,8 +124,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.navigation.overview',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
-            entrypointKey: pageKey('overview'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.overview',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -152,8 +149,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.navigation.agenda',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
-            entrypointKey: pageKey('agenda'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.agenda',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -177,8 +174,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.navigation.assets',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('assets'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.assets',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -202,8 +199,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           entrypoint: {
             access: 'read',
             // Governed records expose only the operational projection without read_all.
-            authorization: moduleAccess,
-            entrypointKey: pageKey('meters'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.meters',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -226,8 +223,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.navigation.purchasing',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('purchasing'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.purchasing',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -250,8 +247,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.navigation.security',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('security'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.security',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -274,8 +271,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.navigation.documents',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('documents'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.documents',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -303,8 +300,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: pageKey('overview'),
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
-            entrypointKey: pageKey('overview'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.overview',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -325,8 +322,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: pageKey('agenda'),
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
-            entrypointKey: pageKey('agenda'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.agenda',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -347,8 +344,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: pageKey('assets'),
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('assets'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.assets',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -370,8 +367,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           entrypoint: {
             access: 'read',
             // Governed records expose only the operational projection without read_all.
-            authorization: moduleAccess,
-            entrypointKey: pageKey('meters'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.meters',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -392,8 +389,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: pageKey('purchasing'),
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('purchasing'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.purchasing',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -414,8 +411,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: pageKey('security'),
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('security'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.security',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -436,8 +433,8 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: pageKey('documents'),
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
-            entrypointKey: pageKey('documents'),
+            authorization: { kind: 'protected' },
+            entrypointKey: 'facility.operations.page.documents',
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -483,7 +480,7 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.search.assets',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: 'facility.operations.search.assets',
             moduleKey,
             role: 'search',
@@ -517,7 +514,7 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.search.devices',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: 'facility.operations.search.devices',
             moduleKey,
             role: 'search',
@@ -551,7 +548,7 @@ export const facilityOperationsRuntimeManifest: VerticalRuntimeRegistrationInput
           contributionKey: 'facility.operations.search.documents',
           entrypoint: {
             access: 'read',
-            authorization: restrictedAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: 'facility.operations.search.documents',
             moduleKey,
             role: 'search',

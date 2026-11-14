@@ -14,15 +14,15 @@ import type {
   GatewayAssertionRedemptionInput,
 } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
-import { PgClient } from '@effect/sql-pg';
+import type { PgClient } from '@effect/sql-pg';
 import { defineRelations, lt } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
-import { Reactivity } from 'effect/reactivity';
+import type { Reactivity } from 'effect/reactivity';
 
-import { gatewayAssertionRedemptions } from '../database/schema.ts';
+import { inventoryGatewayAssertionRedemptions as gatewayAssertionRedemptions } from '../database/schema.ts';
 
 const inventoryGatewayAssertionRedemptionRelations = defineRelations({ gatewayAssertionRedemptions });
 
@@ -103,41 +103,36 @@ const makeGatewayAssertionRedemption = (
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
 
-const makeGatewayAssertionRedemptionDatabase = Effect.fn('InventoryGatewayAssertionRedemptionDatabase.make')(
-  function* makeGatewayAssertionRedemptionDatabaseEffect(
+const makeGatewayAssertionRedemptionPgClient = Effect.fn('InventoryGatewayAssertionRedemptionDatabase.client')(
+  function* makeGatewayAssertionRedemptionPgClientEffect(
     configuration: ContextServiceContract<typeof DatabaseConfig> & {
       readonly maxConnections?: number;
       readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
     },
   ): Effect.fn.Return<
-    ContextServiceContract<typeof InventoryGatewayAssertionRedemptionDatabase>,
+    PgClient.PgClient,
     GatewayAssertionRedemptionUnavailableError,
-    Scope.Scope
+    Scope.Scope | Reactivity.Reactivity
   > {
     const poolConfiguration = yield* configureDatabasePool(
       Redacted.make(configuration.connectionString),
       configuration.poolDeadlines,
       configuration.maxConnections,
     ).pipe(Effect.mapError((error) => unavailableError(error)));
-    const reactivity = yield* Reactivity.make;
-    const client = yield* openDatabaseClient(poolConfiguration).pipe(
-      Effect.provideService(Reactivity.Reactivity, reactivity),
-      Effect.mapError(unavailableError),
-    );
-    return {
-      executor: yield* makeWithDefaults({ relations: inventoryGatewayAssertionRedemptionRelations }).pipe(
-        Effect.provideService(PgClient.PgClient, client),
-      ),
-    };
+    return yield* openDatabaseClient(poolConfiguration).pipe(Effect.mapError(unavailableError));
   },
+);
+
+/** The redemption store's own configured pool; the composition root binds it as the store's PgClient. */
+export const gatewayAssertionRedemptionPgClient = DatabaseConfig.pipe(
+  Effect.flatMap((configuration) => makeGatewayAssertionRedemptionPgClient(configuration)),
 );
 
 export const GatewayAssertionRedemptionDatabaseLive = Layer.effect(
   InventoryGatewayAssertionRedemptionDatabase,
-  Effect.gen(function* makeGatewayAssertionRedemptionDatabaseService() {
-    const configuration = yield* DatabaseConfig;
-    return yield* makeGatewayAssertionRedemptionDatabase(configuration);
-  }),
+  makeWithDefaults({ relations: inventoryGatewayAssertionRedemptionRelations }).pipe(
+    Effect.map((executor) => ({ executor })),
+  ),
 );
 
 export const GatewayAssertionRedemptionLive = Layer.effect(

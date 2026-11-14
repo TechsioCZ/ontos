@@ -498,7 +498,7 @@ it.live('observes the original profile handler cause before mapping while public
       compositionRevision: originalCompositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
-      scope: { authMethod: 'system', correlationId: 'unit-profile-failure', legalEntityId, principalId, tenantId },
+      scope: { authMethod: 'session', correlationId: 'unit-profile-failure', legalEntityId, principalId, tenantId },
       services,
     }).pipe(
       Effect.flatMap((value) =>

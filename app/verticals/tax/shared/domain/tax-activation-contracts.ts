@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 
 import {
   SellerVatRegimeAtInstantSelectionSchema,
-  SellerVatRegimeTimelineContractSchema,
+  SellerVatRegimeHistoryResponseContractSchema,
 } from './seller-vat-regime-contracts.ts';
 import { distinctBy } from './tax-kernel/tax-domain-primitives.ts';
 
@@ -98,7 +98,7 @@ export const TaxActivationEvidenceSchema = Schema.Struct({
   scope: TaxActivationScopeSchema,
   sellerDeclarations: Schema.Array(
     Schema.Struct({
-      history: SellerVatRegimeTimelineContractSchema,
+      history: SellerVatRegimeHistoryResponseContractSchema,
       sellingLegalEntityRef: ReferenceSchema,
     }),
   ).check(

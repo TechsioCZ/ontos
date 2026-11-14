@@ -1,8 +1,19 @@
+import { PrivacyDispatchLivenessSource } from './privacy-dispatch-liveness.ts';
+import { sealSelectedWorkloadDecision } from './workload-admission.ts';
 import { Effect, Layer, Option } from 'effect';
 
 import type { AccessActor } from '../../authorization/access-declaration.ts';
-import { readVerifiedGatewayActor } from '../../auth/system-principal-context-provenance.ts';
-import type { VerifiedGatewayActor } from '../../auth/system-principal-context-provenance.ts';
+import {
+  readVerifiedGatewayWorkload,
+  readVerifiedGatewayActor,
+  readVerifiedGatewayRouteScope,
+  readVerifiedGatewayPrivacyDispatch,
+  readVerifiedGatewayOrganizationGovernanceRead,
+} from '../../auth/system-principal-context-provenance.ts';
+import type {
+  RegisteredGatewayPrivacyDispatch,
+  VerifiedGatewayActor,
+} from '../../auth/system-principal-context-provenance.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import { legalEntityObjectId, objectTypeOf } from '../compiler/object-id.ts';
 import { AccessIntent } from '../decision/authority.ts';
@@ -173,6 +184,18 @@ const admitsSubjectWorkload = (declared: AccessActor, bound: ReadonlySet<string>
 const callerMayBringWorkload = (declared: AccessActor, calledBy: VerifiedGatewayActor): boolean =>
   declared.subjectWorkloadCallers === undefined ||
   declared.subjectWorkloadCallers.some((caller) => caller === calledBy.appId);
+
+const admittedWorkloadDecision = (
+  input: Pick<GateInput, 'carrier' | 'scope'>,
+  declaredKeys: readonly string[],
+  boundKeys: ReadonlySet<string>,
+  code: string = ALLOW_WORKLOAD,
+): AccessDecision =>
+  sealSelectedWorkloadDecision(
+    seamAdmission(code),
+    input,
+    declaredKeys.filter((key) => boundKeys.has(key)),
+  );
 
 const denialOf = (reasons: readonly DecisionReason[]): AccessDecision => {
   const [first, ...rest] = reasons;
@@ -398,7 +421,12 @@ const delegatedWorkloadDecision = (gate: GateInput, group: DelegatedGroup): Acce
     return seamUnavailable(IDENTITY_UNAVAILABLE);
   }
   return admitsSubjectWorkload(workloadCarrier.declared, group.workloadKeys ?? NO_WORKLOADS)
-    ? seamAdmission(workloadCarrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY)
+    ? admittedWorkloadDecision(
+        gate,
+        workloadCarrier.declared.subjectWorkloads ?? [],
+        group.workloadKeys ?? NO_WORKLOADS,
+        workloadCarrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY,
+      )
     : seamRefusal(ACTOR_SUBJECT_INVALID);
 };
 
@@ -521,7 +549,9 @@ const prepareEntry = (params: {
       params.companyDeclaration === undefined
         ? undefined
         : workloadCompanyRefusalOf(params.scope, params.companyDeclaration);
-    return companyRefusal === undefined ? { decision: seamAdmission(ALLOW_WORKLOAD) } : { decision: companyRefusal };
+    return companyRefusal === undefined
+      ? { decision: admittedWorkloadDecision(params.gate, accessWorkload.workloads, params.workloadKeys) }
+      : { decision: companyRefusal };
   }
   if (accessDeclaration === undefined) {
     // A human or agent reached a workload carrier: a v2 decision never admits one (O59, O67-Q4).
@@ -686,6 +716,88 @@ const engineListsSettled = (
  * One instance per process, built once from its ports: every call carries its own trusted
  * `OperationalScope` (O66), and no method asks the caller for a collaborator.
  */
+type ExactGatewayCarrierInput = Pick<GateInput, 'carrier' | 'legalEntityScope' | 'scope'>;
+const privacyDispatchCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
+  const privacy = readVerifiedGatewayPrivacyDispatch(input.scope);
+  if (privacy === undefined) {
+    return true;
+  }
+  const operation = privacy.target;
+  return (
+    input.scope.tenantId === privacy.tenantId &&
+    input.scope.principalId === privacy.principalId &&
+    input.scope.legalEntityId === privacy.governanceLegalEntityId &&
+    input.carrier.accessDeclaration?.key === operation.declarationKey &&
+    input.carrier.entrypoint?.entrypointKey === operation.entrypointKey &&
+    input.carrier.schemaVersion === operation.schemaVersion &&
+    input.legalEntityScope === operation.legalEntityScope
+  );
+};
+
+const organizationGovernanceCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
+  const read = readVerifiedGatewayOrganizationGovernanceRead(input.scope);
+  if (read === undefined) {
+    return true;
+  }
+  const operation = read.target;
+  return (
+    input.scope.tenantId === read.tenantId &&
+    input.scope.principalId === read.principalId &&
+    input.scope.legalEntityId === read.governanceLegalEntityId &&
+    input.carrier.accessDeclaration?.key === operation.declarationKey &&
+    input.carrier.entrypoint?.entrypointKey === operation.entrypointKey &&
+    input.carrier.schemaVersion === operation.schemaVersion &&
+    input.legalEntityScope === operation.legalEntityScope
+  );
+};
+const hasFiniteGatewayReadOrDispatch = (scope: OperationalScope): boolean =>
+  readVerifiedGatewayPrivacyDispatch(scope) !== undefined ||
+  readVerifiedGatewayOrganizationGovernanceRead(scope) !== undefined;
+
+const finiteWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
+  const workload = readVerifiedGatewayWorkload(input.scope);
+  if (workload === undefined) {
+    return true;
+  }
+  return (
+    (workload.organizationProcessingRead !== undefined) === (input.carrier.accessWorkload?.requestPurpose !== undefined)
+  );
+};
+
+const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
+  if (
+    !privacyDispatchCarrierMatches(input) ||
+    !organizationGovernanceCarrierMatches(input) ||
+    !finiteWorkloadCarrierMatches(input)
+  ) {
+    return false;
+  }
+  const routeScope = readVerifiedGatewayRouteScope(input.scope);
+  if (
+    routeScope !== undefined &&
+    (routeScope.tenantId !== input.scope.tenantId ||
+      routeScope.principalId !== input.scope.principalId ||
+      routeScope.legalEntityId !== input.scope.legalEntityId ||
+      !routeScope.operations.some(
+        (operation) =>
+          operation.entrypointKey === input.carrier.entrypoint?.entrypointKey &&
+          operation.schemaVersion === input.carrier.schemaVersion,
+      ))
+  ) {
+    return false;
+  }
+  const workload = readVerifiedGatewayWorkload(input.scope);
+  return (
+    workload === undefined ||
+    (input.carrier.accessDeclaration?.key === workload.declarationKey &&
+      input.carrier.entrypoint?.entrypointKey === workload.entrypointKey &&
+      input.carrier.schemaVersion === workload.schemaVersion &&
+      input.legalEntityScope === workload.legalEntityScope &&
+      input.scope.legalEntityId === workload.legalEntityId &&
+      input.carrier.accessWorkload?.workloads.some((key) => key === workload.workloadKey) === true)
+  );
+};
+
 /** One read answered once per distinct key; the first caller's answer (or failure) is every later caller's. */
 const sharedPerKey = <Key, A, E>(keyOf: (key: Key) => string, read: (key: Key) => Effect.Effect<A, E>) => {
   const answered = new Map<string, Effect.Effect<A, E>>();
@@ -793,6 +905,46 @@ export const makeAccessDecisionService = (
     resolveGateScope(scope, undefined, holders).pipe(Effect.map((read) => read.scopeId));
 
   /**
+   * A workload subject is decided exactly as a direct workload call is: by its registered binding, never by a
+   * membership or a v2 grant, and it leaves no v2 evidence row, because a workload is never a v2 subject (O29,
+   * O73). The company check still holds, so a company carrier never runs without one, and an `admin`
+   * declaration refuses a machine here exactly as the direct path does (O81).
+   */
+  const delegatedWorkloadSubjectOf = Effect.fn('AccessDecisionGate.delegatedWorkloadSubject')(
+    function* delegatedWorkloadSubjectEffect(
+      input: Parameters<typeof delegatedWorkloadCarrierOf>[0] & { readonly scope: OperationalScope },
+      calledBy: VerifiedGatewayActor,
+      actor: Parameters<typeof workloadQueryOf>[1],
+      gateScope: ReturnType<typeof gateScopeOf>,
+    ) {
+      if (gateScope.refusal !== undefined) {
+        return { decision: denialOf([gateScope.refusal]) };
+      }
+      const carrier = delegatedWorkloadCarrierOf(input, calledBy);
+      if ('refusal' in carrier) {
+        return { decision: carrier.refusal };
+      }
+      const bound = yield* Effect.option(
+        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(input.scope, actor)),
+      );
+      if (Option.isNone(bound)) {
+        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+      }
+      return admitsSubjectWorkload(carrier.declared, bound.value)
+        ? {
+            decision: admittedWorkloadDecision(
+              input,
+              carrier.declared.subjectWorkloads ?? [],
+              bound.value,
+              carrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY,
+            ),
+            workloadAdmitted: true as const,
+          }
+        : { decision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+    },
+  );
+
+  /**
    * A call made by a verified calling module (D6). The subject and its scope are resolved first, so the
    * carrier's refusals are decided for a known subject and leave an evidence row (D6 step 5). Then the
    * carrier's `subject` says whether the subject's rights are decided (`rights`) or the subject is
@@ -825,29 +977,7 @@ export const makeAccessDecisionService = (
     }
     const gateScope = gateScopeOf(input.legalEntityScope, input.scope);
     if (isWorkloadPrincipalKind(actor.kind)) {
-      // A workload subject is decided exactly as a direct workload call is: by its registered binding, never by a
-      // membership or a v2 grant, and it leaves no v2 evidence row, because a workload is never a v2 subject (O29,
-      // O73). The company check still holds, so a company carrier never runs without one, and an `admin`
-      // declaration refuses a machine here exactly as the direct path does (O81).
-      if (gateScope.refusal !== undefined) {
-        return { decision: denialOf([gateScope.refusal]) };
-      }
-      const carrier = delegatedWorkloadCarrierOf(input, calledBy);
-      if ('refusal' in carrier) {
-        return { decision: carrier.refusal };
-      }
-      const bound = yield* Effect.option(
-        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(input.scope, actor)),
-      );
-      if (Option.isNone(bound)) {
-        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
-      }
-      return admitsSubjectWorkload(carrier.declared, bound.value)
-        ? {
-            decision: seamAdmission(carrier.declared.subject === 'workload' ? ALLOW_WORKLOAD : ALLOW_ACTOR_IDENTITY),
-            workloadAdmitted: true as const,
-          }
-        : { decision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+      return yield* delegatedWorkloadSubjectOf(input, calledBy, actor, gateScope);
     }
     if (gateScope.refusal !== undefined) {
       // A refused company is evidenced in the tenant scope, the one scope a company-less request is decided in.
@@ -898,6 +1028,9 @@ export const makeAccessDecisionService = (
     readonly mode?: GateMode;
     readonly scope: OperationalScope;
   }) {
+    if (!registeredWorkloadCarrierMatches(input)) {
+      return { decision: seamRefusal(WORKLOAD_UNBOUND) };
+    }
     const calledBy = readVerifiedGatewayActor(input.scope);
     if (calledBy !== undefined) {
       return yield* delegatedPreambleOf(input, calledBy);
@@ -952,7 +1085,10 @@ export const makeAccessDecisionService = (
       }
       const companyRefusal = workloadCompanyRefusalOf(input.scope, declared.value);
       return companyRefusal === undefined
-        ? { decision: seamAdmission(ALLOW_WORKLOAD), workloadAdmitted: true as const }
+        ? {
+            decision: admittedWorkloadDecision(input, accessWorkload.workloads, bound.value),
+            workloadAdmitted: true as const,
+          }
         : { decision: companyRefusal };
     }
     if (accessDeclaration === undefined) {
@@ -996,7 +1132,213 @@ export const makeAccessDecisionService = (
    * One protected request: the carrier, the acting principal, the scope, then the one decision
    * function. Every seam refusal happens before the engine is asked and names its own reason.
    */
+  const decidePrivacyDispatchTarget = Effect.fn('AccessDecisionGate.privacyDispatchTarget')(
+    function* decidePrivacyDispatchTarget(
+      input: GateInput,
+      actor: GateActor,
+      capability: DecisionCapabilityPolicy,
+      access: NonNullable<RegisteredGatewayPrivacyDispatch['authority']>['targetAccess'],
+    ) {
+      if (access === 'tenant-unrestricted-list') {
+        const listing = yield* resolveListAccess(ports.authorityFor(input.scope), ports.check, {
+          actor: actorInputOf(input.scope, undefined, actor),
+          capability,
+          mode: 'run',
+          now: input.now,
+        });
+        return listing.decision.outcome === 'ALLOWED' && listing.predicate?.groups.length !== 0
+          ? seamRefusal(INSUFFICIENT_GRANT)
+          : listing.decision;
+      }
+      if (access === 'tenant-scope') {
+        return yield* decideAccess(ports.authorityFor(input.scope), ports.check, {
+          actor: actorInputOf(input.scope, undefined, actor),
+          now: input.now,
+          request: { capability, mode: 'run' },
+        });
+      }
+      return seamAdmission(ALLOW_ACTOR_IDENTITY);
+    },
+  );
+
+  const decidePrivacyDispatchAuthority = Effect.fn('AccessDecisionGate.privacyDispatchAuthority')(
+    function* decidePrivacyDispatchAuthority(
+      input: GateInput,
+      dispatch: NonNullable<ReturnType<typeof readVerifiedGatewayPrivacyDispatch>>,
+      actor: GateActor,
+      calledBy: VerifiedGatewayActor,
+    ) {
+      if (!registeredWorkloadCarrierMatches(input) || (input.mode !== undefined && input.mode !== 'run')) {
+        return seamRefusal(ACTOR_SUBJECT_INVALID);
+      }
+      const carrier = delegatedCarrierOf(input.carrier, calledBy);
+      if ('refusal' in carrier) {
+        return carrier.refusal;
+      }
+      const liveness = ports.privacyDispatchLiveness;
+      if (liveness === undefined) {
+        return seamUnavailable(IDENTITY_UNAVAILABLE);
+      }
+      const current = yield* Effect.option(liveness.read(input.scope, dispatch));
+      if (Option.isNone(current)) {
+        return seamUnavailable(IDENTITY_UNAVAILABLE);
+      }
+      if (!current.value) {
+        return seamRefusal(ACTOR_SUBJECT_INVALID);
+      }
+      // Recheck the same native Gov authority as the original dispatch, never a new Tenant Privacy grant.
+      const governance = yield* decideAccess(ports.authorityFor(input.scope), ports.check, {
+        actor: actorInputOf(input.scope, LegalEntityIdSchema.make(dispatch.governanceLegalEntityId), actor),
+        now: input.now,
+        request: {
+          capability: {
+            capabilityKey: CapabilityKeySchema.make(dispatch.authority.originCapabilityKey),
+            kind: 'action',
+            modes: ['run', 'propose', 'approve'],
+            risk: 'critical',
+            selectors: [],
+          },
+          mode: 'run',
+        },
+      });
+      if (governance.outcome !== 'ALLOWED') {
+        return governance;
+      }
+      const declaration = input.carrier.accessDeclaration;
+      if (declaration === undefined) {
+        return seamRefusal(DECLARATION_MISSING);
+      }
+      return yield* decidePrivacyDispatchTarget(
+        input,
+        actor,
+        capabilityPolicyOf(declaration),
+        dispatch.authority.targetAccess,
+      );
+    },
+  );
+
+  const decidePrivacyDispatch = Effect.fn('AccessDecisionGate.privacyDispatch')(function* decidePrivacyDispatch(
+    input: GateInput,
+  ) {
+    const dispatch = readVerifiedGatewayPrivacyDispatch(input.scope);
+    const calledBy = readVerifiedGatewayActor(input.scope);
+    if (dispatch === undefined || calledBy === undefined) {
+      return seamRefusal(ACTOR_SUBJECT_INVALID);
+    }
+    const subject = yield* resolveGateActor(ports.principalKinds, input.scope, { admitWorkloads: true });
+    if (subject.unavailable === true) {
+      return seamUnavailable(IDENTITY_UNAVAILABLE);
+    }
+    const { actor } = subject;
+    if (actor === undefined || actor.kind !== 'human') {
+      return seamRefusal(ACTOR_SUBJECT_INVALID);
+    }
+    const gateScope = gateScopeOf(input.legalEntityScope, input.scope);
+    const resolved = yield* resolveGateScope(input.scope, gateScope.legalEntityId, memberHoldersOf(actor));
+    if (resolved.scopeId === undefined) {
+      return resolved.decision ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+    }
+    const decision =
+      gateScope.refusal === undefined
+        ? yield* decidePrivacyDispatchAuthority(input, dispatch, actor, calledBy)
+        : denialOf([gateScope.refusal]);
+    return yield* recordDecision({
+      actor,
+      capability: evidenceCapabilityOf(input.carrier.accessDeclaration),
+      decision,
+      delegation: delegationOf(calledBy),
+      entry: withOptional(
+        withOptional(
+          { mode: input.mode ?? 'run', scope: input.scope, scopeId: resolved.scopeId },
+          'target',
+          input.target,
+        ),
+        'onBehalfOfPrincipalId',
+        input.onBehalfOfPrincipalId,
+      ),
+      now: input.now,
+    });
+  });
+
+  const decideOrganizationGovernanceAuthority = Effect.fn('AccessDecisionGate.organizationGovernanceAuthority')(
+    function* decideOrganizationGovernanceAuthority(
+      input: GateInput,
+      actor: GateActor,
+      calledBy: VerifiedGatewayActor,
+    ) {
+      const read = readVerifiedGatewayOrganizationGovernanceRead(input.scope);
+      if (
+        read === undefined ||
+        !organizationGovernanceCarrierMatches(input) ||
+        (input.mode !== undefined && input.mode !== 'run')
+      ) {
+        return seamRefusal(ACTOR_SUBJECT_INVALID);
+      }
+      const delegated = delegatedCarrierOf(input.carrier, calledBy);
+      if ('refusal' in delegated) {
+        return delegated.refusal;
+      }
+      const declaration = input.carrier.accessDeclaration;
+      if (declaration === undefined) {
+        return seamRefusal(DECLARATION_MISSING);
+      }
+      return yield* decideAccess(ports.authorityFor(input.scope), ports.check, {
+        actor: actorInputOf(input.scope, LegalEntityIdSchema.make(read.governanceLegalEntityId), actor),
+        now: input.now,
+        request: { capability: capabilityPolicyOf(declaration), mode: 'run' },
+      });
+    },
+  );
+
+  const decideOrganizationGovernanceRead = Effect.fn('AccessDecisionGate.organizationGovernanceRead')(
+    function* decideOrganizationGovernanceRead(input: GateInput) {
+      const calledBy = readVerifiedGatewayActor(input.scope);
+      if (calledBy === undefined) {
+        return seamRefusal(ACTOR_SUBJECT_INVALID);
+      }
+      const subject = yield* resolveGateActor(ports.principalKinds, input.scope, { admitWorkloads: true });
+      if (subject.unavailable === true) {
+        return seamUnavailable(IDENTITY_UNAVAILABLE);
+      }
+      const { actor } = subject;
+      if (actor === undefined || actor.kind !== 'human') {
+        return seamRefusal(ACTOR_SUBJECT_INVALID);
+      }
+      const gateScope = gateScopeOf(input.legalEntityScope, input.scope);
+      const resolved = yield* resolveGateScope(input.scope, gateScope.legalEntityId, memberHoldersOf(actor));
+      if (resolved.scopeId === undefined) {
+        return resolved.decision ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+      }
+      const decision =
+        gateScope.refusal === undefined
+          ? yield* decideOrganizationGovernanceAuthority(input, actor, calledBy)
+          : denialOf([gateScope.refusal]);
+      return yield* recordDecision({
+        actor,
+        capability: evidenceCapabilityOf(input.carrier.accessDeclaration),
+        decision,
+        delegation: delegationOf(calledBy),
+        entry: withOptional(
+          withOptional(
+            { mode: input.mode ?? 'run', scope: input.scope, scopeId: resolved.scopeId },
+            'target',
+            input.target,
+          ),
+          'onBehalfOfPrincipalId',
+          input.onBehalfOfPrincipalId,
+        ),
+        now: input.now,
+      });
+    },
+  );
+
   const decide = Effect.fn('AccessDecisionGate.decide')(function* decideGate(input: GateInput) {
+    if (readVerifiedGatewayOrganizationGovernanceRead(input.scope) !== undefined) {
+      return yield* decideOrganizationGovernanceRead(input);
+    }
+    if (readVerifiedGatewayPrivacyDispatch(input.scope) !== undefined) {
+      return yield* decidePrivacyDispatch(input);
+    }
     const preamble: GatePreamble = yield* preambleOf(input);
     const declaration = input.carrier.accessDeclaration;
     const mode = input.mode ?? DEFAULT_MODE;
@@ -1059,6 +1401,10 @@ export const makeAccessDecisionService = (
 
   /** A list, search or history page: the same authority question, answered as an owner predicate. */
   const list = Effect.fn('AccessDecisionGate.list')(function* listGate(input: ListGateInput) {
+    if (hasFiniteGatewayReadOrDispatch(input.scope)) {
+      const decision = yield* decide(input);
+      return decision.outcome === 'ALLOWED' ? { decision, predicate: ALL_IN_SCOPE } : { decision };
+    }
     const preamble: GatePreamble = yield* preambleOf(input);
     const declaration = input.carrier.accessDeclaration;
     if (preamble.workloadAdmitted === true) {
@@ -1380,6 +1726,9 @@ export const makeAccessDecisionService = (
       if (one === undefined) {
         return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
       }
+      if (!registeredWorkloadCarrierMatches(one)) {
+        return { decision: seamRefusal(WORKLOAD_UNBOUND) };
+      }
       if (gate.calledBy !== undefined) {
         return prepareDelegatedEntry({
           gate: one,
@@ -1467,7 +1816,9 @@ export const makeAccessDecisionService = (
    * page. The actor, the scope and the intent are resolved once per distinct scope, and every
    * request's items travel in ONE engine snapshot (CUTOVER-PLAN §5.3 risk 6).
    */
-  const decideMany = Effect.fn('AccessDecisionGate.decideMany')(function* decideManyGate(input: readonly GateInput[]) {
+  const decideManyBatch = Effect.fn('AccessDecisionGate.decideMany')(function* decideManyGate(
+    input: readonly GateInput[],
+  ) {
     const groups = gateGroupsOf(input);
     // Each group reads identity and scope through the pool: two at a time, never more of a small shared pool.
     const prepared = yield* Effect.forEach(groups, (group) => prepareGroup({ group, input }), { concurrency: 2 });
@@ -1504,6 +1855,37 @@ export const makeAccessDecisionService = (
     return yield* recordBatchEvidence(input.map((one, index) => evidenceOfOne({ answers, index, one, reached })));
   });
 
+  const decideMany: AccessDecisionService['decideMany'] = (input) => {
+    if (!input.some((one) => hasFiniteGatewayReadOrDispatch(one.scope))) {
+      return decideManyBatch(input);
+    }
+    const ordinary = input.filter((one) => !hasFiniteGatewayReadOrDispatch(one.scope));
+    return Effect.gen(function* decideMixedPrivacyDispatchBatch() {
+      const [ordinaryAnswers, privacyAnswers] = yield* Effect.all(
+        [
+          decideManyBatch(ordinary),
+          Effect.forEach(
+            input.filter((one) => hasFiniteGatewayReadOrDispatch(one.scope)),
+            (one) => decide(one),
+            { concurrency: 4 },
+          ),
+        ],
+        { concurrency: 2 },
+      );
+      let ordinaryIndex = 0;
+      let privacyIndex = 0;
+      return input.map((one) => {
+        if (!hasFiniteGatewayReadOrDispatch(one.scope)) {
+          const answer = ordinaryAnswers[ordinaryIndex];
+          ordinaryIndex += 1;
+          return answer ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+        }
+        const answer = privacyAnswers[privacyIndex];
+        privacyIndex += 1;
+        return answer ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+      });
+    });
+  };
   /**
    * Many LISTs, one answer each, each exactly as `list` answers it alone: its own preamble (workload, delegated and
    * identity admissions unchanged), then every LIST that reaches the engine answered with the others of its request
@@ -1608,10 +1990,16 @@ export const makeAccessDecisionService = (
   });
 
   // Every LIST of one call asks the same subject's kind and scope at one instant: those reads are taken once per call.
-  const listMany = (input: readonly ListGateInput[]): Effect.Effect<readonly ListAccessResolution[]> =>
-    preambleReadsShared
+  // A finite gateway read or Privacy dispatch has its own exact decision: a page holding one answers every LIST through
+  // `list`, one at a time, exactly as `decideMany` hands those to `decide`.
+  const listMany = (input: readonly ListGateInput[]): Effect.Effect<readonly ListAccessResolution[]> => {
+    if (input.some((one) => hasFiniteGatewayReadOrDispatch(one.scope))) {
+      return Effect.forEach(input, (one) => list(one), { concurrency: 1 });
+    }
+    return preambleReadsShared
       ? listManyOwn(input)
       : Effect.suspend(() => makeAccessDecisionService(sharedPreambleReads(ports), true).listMany(input));
+  };
 
   return {
     decide,
@@ -1645,10 +2033,21 @@ export const AccessDecisionLive: Layer.Layer<
     const workloadBindings = yield* Effect.serviceOption(AccessWorkloadBindingSource);
     // The batch writer is resolved where it is provided: a batch's rows then share one transaction per scope.
     const decisionLogBatch = yield* Effect.serviceOption(AccessDecisionLogBatch);
+    const privacyDispatchLiveness = Option.getOrUndefined(yield* Effect.serviceOption(PrivacyDispatchLivenessSource));
     return makeAccessDecisionService(
       withOptional(
         withOptional(
-          { authorityFor: intent.authorityFor, check, decisionLog, legalEntities, principalKinds },
+          withOptional(
+            {
+              authorityFor: intent.authorityFor,
+              check,
+              decisionLog,
+              legalEntities,
+              principalKinds,
+            },
+            'privacyDispatchLiveness',
+            privacyDispatchLiveness,
+          ),
           'workloadBindings',
           Option.getOrUndefined(workloadBindings),
         ),

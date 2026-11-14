@@ -1,15 +1,16 @@
-import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals';
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
 // only the rows a command changed. Bounded reads live in merchandise-queries.ts.
+import { agentHistoryPageSql } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Clock, Data, DateTime, Effect, Option, Predicate, Ref, Schema, SchemaIssue } from 'effect';
-import type { MerchandiseAiSlice, MerchandiseState } from '../../shared/apis/records.ts';
-import { MerchandiseAiSliceSchema } from '../../shared/apis/records.ts';
+import type { MerchandiseState } from '../../shared/apis/records.ts';
+import type { MerchandiseAiSlice } from '../../shared/domain/merchandise-ai.ts';
+import { MerchandiseAiSliceSchema } from '../../shared/domain/merchandise-ai.ts';
 import {
   CatalogCategorySchema,
   CatalogChangeSchema,

@@ -62,11 +62,12 @@ import type { ShellGovernedReadsService } from '../../../api/modules/shell-gover
 import { makeShellSearch, ShellResourceServicesFactoryLive } from '../../../api/modules/shell-resources.ts';
 import { ConnectionUnauthorized } from '../../../api/oauth-connections/errors.ts';
 import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
-import { ShellSearchResponseSchema } from '../../../shared/api.ts';
-import type { ShellSearchResponse } from '../../../shared/api.ts';
+import { ShellSearchResponseSchema } from '../../../shared/browser-api.ts';
+import type { ShellSearchResponse } from '../../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-registry-fixture.ts';
 import { connectionDescription, fixtureCatalog, FIXTURE_MODULE_ID } from './fixture-vertical.ts';
+import { tenantModuleTargetTestCarrier } from '../../support/tenant-module-target-carrier.ts';
 
 rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
   get loadOAuthServerConfig() {
@@ -350,6 +351,7 @@ const setup = Effect.fn('recordSearchTest.setup')(function* setup(
           expect((yield* CapturedShellCompositionCatalog)?.composition.revision).toBe(installed.composition.revision);
           return yield* controls.search(request);
         }),
+      tenantModuleTargetCarrier: tenantModuleTargetTestCarrier,
     }),
   );
   const services = Layer.mergeAll(

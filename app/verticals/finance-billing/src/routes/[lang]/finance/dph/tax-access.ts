@@ -11,6 +11,7 @@ import {
   executeSellerVatRegimeHistory,
   executeTaxRuleHistory,
 } from '@app/tax/api/client';
+import { executeVatChangeRights } from '@app/tax/apis/vat-change-rights/client';
 import type { TaxRuleRevisionRef } from '@app/tax/resources/tax-rule-revision';
 import type { TaxRuleRef } from '@app/tax/resources/tax-rule';
 import { Effect, Match } from 'effect';
@@ -37,10 +38,13 @@ export const readRuleHistory = (taxRuleRef: TaxRuleRef) => executeTaxRuleHistory
 export const readRegimeAt = (instant: DateTime.Utc) =>
   executeSellerVatRegimeAtInstant({ instant }, REQUEST_CORRELATION);
 
-/** Every declared regime revision of the company, and which VAT changes Tax lets this person make. */
+/** Every declared regime revision of the company. */
 export const readRegimeHistory = () => executeSellerVatRegimeHistory({}, REQUEST_CORRELATION);
+
+/** Which VAT changes Tax lets this person make in the company. */
+export const readChangeRights = () => executeVatChangeRights({}, REQUEST_CORRELATION);
 /** The VAT changes Tax says the signed-in person may make in the company. */
-export type VatChangeRights = Effect.Success<ReturnType<typeof readRegimeHistory>>['changeRights'];
+export type VatChangeRights = Effect.Success<ReturnType<typeof readChangeRights>>;
 
 /** A refusal of a Tax Action: approval needed (the person may only propose) or no right at all. */
 const refused = (problem: { readonly code: string }): VatChangeOutcome =>

@@ -41,7 +41,7 @@ import type { LiveApprovalServices } from '../../packages/core-runtime/src/acces
 import { liveMandateDispatchPorts } from '../../packages/core-runtime/src/access/approvals/live-composition.ts';
 import {
   freezeActionCommandV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
 } from '../../packages/core-runtime/src/access/approvals/action-command-v2.ts';
 import {
   ActionApprovalLifecycleV2Ports,
@@ -1599,7 +1599,7 @@ it.layer(
          * runner's own propose request freezes, and its digest. The assertions below compare the
          * STORED digest with this command, never with a store value or a non-empty string.
          */
-        const expectedCommand = yield* makeActionCommandV2({
+        const expectedCommand = yield* resolveActionCommandV2({
           payload: PAYLOAD,
           registration: createBrandAction,
           scope: jana,
@@ -1688,7 +1688,7 @@ it.layer(
           owner,
           gateAnswering('NEEDS_APPROVAL', [requesterEvidence]),
         );
-        const expectedCommand = yield* makeActionCommandV2({
+        const expectedCommand = yield* resolveActionCommandV2({
           payload: PAYLOAD,
           registration: createBrandAction,
           scope: jana,

@@ -1,8 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "4814759a-da8a-4d9b-ae76-c08776c5d3de",
+  "id": "96c99cfc-6dc9-4217-8536-9ca17a92f8f0",
   "prevIds": [
+    "70fcad5e-6a3e-4d6a-b551-dbe663224bbe",
     "76d36ab2-bb59-4873-b6ad-fbe80a89ad21",
     "a32dfe1e-f408-4372-aa6a-77f8e3995f6e"
   ],
@@ -354,6 +355,24 @@
     {
       "isRlsEnabled": false,
       "name": "worker_checkpoints",
+      "entityType": "tables",
+      "schema": "core"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "source_execution_gates",
+      "entityType": "tables",
+      "schema": "core"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "source_execution_gate_actions",
+      "entityType": "tables",
+      "schema": "core"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "source_execution_fences",
       "entityType": "tables",
       "schema": "core"
     },
@@ -8534,6 +8553,214 @@
       "table": "worker_checkpoints"
     },
     {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "gate_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_key",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mapping_version",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "epoch",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_key",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gate_actions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_key",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_gate_actions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "admission_invocation_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "gate_id",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "gate_epoch",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -14543,6 +14770,63 @@
       "table": "worker_checkpoints"
     },
     {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "source_execution_gates_principal_scope_fk",
+      "entityType": "fks",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "source_execution_gates_legal_entity_scope_fk",
+      "entityType": "fks",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "gate_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "source_execution_gates",
+      "columnsTo": [
+        "tenant_id",
+        "gate_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "source_execution_fences_gate_fk",
+      "entityType": "fks",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
       "columns": [
         "catalog_snapshot_id",
         "capability_key"
@@ -14714,6 +14998,28 @@
       "entityType": "pks",
       "schema": "core",
       "table": "worker_checkpoints"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "gate_id"
+      ],
+      "nameExplicit": true,
+      "name": "source_execution_gates_pk",
+      "entityType": "pks",
+      "schema": "core",
+      "table": "source_execution_gates"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "admission_invocation_id"
+      ],
+      "nameExplicit": true,
+      "name": "source_execution_fences_pk",
+      "entityType": "pks",
+      "schema": "core",
+      "table": "source_execution_fences"
     },
     {
       "columns": [
@@ -15143,6 +15449,16 @@
       "name": "tenants_pkey",
       "schema": "core",
       "table": "tenants",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "action_key"
+      ],
+      "nameExplicit": false,
+      "name": "source_execution_gate_actions_pkey",
+      "schema": "core",
+      "table": "source_execution_gate_actions",
       "entityType": "pks"
     },
     {
@@ -16277,6 +16593,20 @@
       "entityType": "checks",
       "schema": "core",
       "table": "tenants"
+    },
+    {
+      "value": "\"state\" in ('open', 'cancelled')",
+      "name": "source_execution_fences_state_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "source_execution_fences"
+    },
+    {
+      "value": "(\"gate_id\" is null) = (\"gate_epoch\" is null)",
+      "name": "source_execution_fences_gate_pair_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "source_execution_fences"
     },
     {
       "value": "\"source\" in ('akros-order', 'facility-agenda', 'rent-reminder', 'storefront-inquiry', 'person-invitation')",

@@ -10,6 +10,7 @@ import { delegationUnavailable as unavailableBecause } from './gateway-delegatio
 import {
   GatewayOriginatorEvidence,
   admitInvocationEvidence,
+  admitPrivacyDispatchHumanEvidence,
   decodeOriginatorEvidenceRows,
 } from './gateway-originator-evidence.ts';
 import type { GatewayOriginatorEvidenceService, OriginatorEvidenceRow } from './gateway-originator-evidence.ts';
@@ -121,6 +122,14 @@ const makeGatewayOriginatorEvidence = (core: CoreExecutor, auth: AuthExecutor): 
       tenantId: input.tenantId,
     });
   }),
+  loadPrivacyDispatchHuman: Effect.fn('GatewayOriginatorEvidence.loadPrivacyDispatchHuman')(
+    function* loadPrivacyDispatchHuman(input: { readonly actionInvocationId: string; readonly tenantId: string }) {
+      const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+      const rows = yield* selectInvocationRows(core, input.tenantId, input.actionInvocationId);
+      const banned = yield* subjectUserBanned(auth, rows[0], nowSeconds);
+      return yield* admitPrivacyDispatchHumanEvidence(rows, { subjectUserBanned: banned, tenantId: input.tenantId });
+    },
+  ),
   messageCompanyRecorded: (input) => selectMessageCompany(core, input),
 });
 

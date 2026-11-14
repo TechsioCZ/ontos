@@ -36,7 +36,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 // <generated-governed-http-handler-support-imports>
 import {
@@ -49,7 +49,14 @@ import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
-import { paymentUnavailableOwnerPortsLive } from './payment-production-layers.ts';
+import { GopayOAuthTokenLive } from '../src/integrations/gopay/gopay-oauth-token.ts';
+import { ProviderCredentialStoreLive } from '../src/integrations/psp/credentials-live.ts';
+import {
+  GatewayProviderAdaptersLive,
+  GatewayProviderServicesLive,
+} from '../src/integrations/psp/gateway-adapters-live.ts';
+import { ProviderHttpLive } from '../src/integrations/psp/provider-http-live.ts';
+import { paymentProductionOwnerPortsLive } from './payment-production-layers.ts';
 import {
   paymentCorsAllowedHeaders,
   paymentCorsAllowedMethods,
@@ -59,20 +66,29 @@ import {
 
 // <generated-governed-http-handler-imports>
 import { acceptPaymentObservationActionApiLive } from './accept-payment-observation-action-server.ts';
+import { captureProviderNotificationActionApiLive } from './capture-provider-notification-action-server.ts';
+import { configureGatewayEnablementActionApiLive } from './configure-gateway-enablement-action-server.ts';
 import { configurePaymentMethodEnablementActionApiLive } from './configure-payment-method-enablement-action-server.ts';
 import { configurePaymentSourceAuthorityActionApiLive } from './configure-payment-source-authority-action-server.ts';
+import { configureProviderAccountBindingActionApiLive } from './configure-provider-account-binding-action-server.ts';
 import { createPaymentActionApiLive } from './create-payment-action-server.ts';
 import { currentPaymentReadApiLive } from './current-payment-read-server.ts';
+import { gatewayConfigurationReadApiLive } from './gateway-configuration-read-server.ts';
+import { gatewayCustomerActionReadApiLive } from './gateway-customer-action-read-server.ts';
+import { gatewayReconciliationDebtReadApiLive } from './gateway-reconciliation-debt-read-server.ts';
+import { gatewayReturnStatusReadApiLive } from './gateway-return-status-read-server.ts';
 import { issuePaymentAuthorizationActionApiLive } from './issue-payment-authorization-action-server.ts';
 import { paymentAuthorizationValidationReadApiLive } from './payment-authorization-validation-read-server.ts';
 import { paymentHistoryReadApiLive } from './payment-history-read-server.ts';
 import { paymentMethodApplicabilityReadApiLive } from './payment-method-applicability-read-server.ts';
 import { paymentReconciliationDebtReadApiLive } from './payment-reconciliation-debt-read-server.ts';
+import { providerBindingRouteReadApiLive } from './provider-binding-route-read-server.ts';
 import { recordPaymentLocalEvidenceActionApiLive } from './record-payment-local-evidence-action-server.ts';
 import { recordPaymentReconciliationDecisionActionApiLive } from './record-payment-reconciliation-decision-action-server.ts';
 import { requestPaymentCancellationActionApiLive } from './request-payment-cancellation-action-server.ts';
 import { requestPaymentOperationRecoveryActionApiLive } from './request-payment-operation-recovery-action-server.ts';
 import { requestPaymentRefundActionApiLive } from './request-payment-refund-action-server.ts';
+import { rotateProviderCredentialActionApiLive } from './rotate-provider-credential-action-server.ts';
 import { startPaymentCollectionActionApiLive } from './start-payment-collection-action-server.ts';
 // </generated-governed-http-handler-imports>
 
@@ -158,8 +174,28 @@ const paymentReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, paymentR
   Layer.provide(activeApplicationCompositionLive),
   Layer.provide(databaseIdentitiesLive),
 );
-/** Deployment composition seam. Cross-owner evidence ports stay fail-closed until their owners publish them. */
-const productionReadRuntimeLive = paymentReadRuntime.pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive));
+/** Provider calls carry no client span or trace headers, follow no redirect and are never retried here. */
+const providerHttpClientLive = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* makeProviderHttpClient() {
+    const client = yield* HttpClient.HttpClient;
+    return client.pipe(
+      HttpClient.transform((effect) => Effect.updateService(effect, HttpClient.TracerDisabledWhen, () => () => true)),
+    );
+  }),
+).pipe(Layer.provide(compositionHttpClientLive));
+/** The capture Action verifies notifications through the live adapters; one GoPay token cache per process. */
+const gatewayProviderAdaptersLive = GatewayProviderAdaptersLive.pipe(
+  Layer.provide(GatewayProviderServicesLive),
+  Layer.provide(GopayOAuthTokenLive),
+  Layer.provide(
+    Layer.mergeAll(ProviderHttpLive, ProviderCredentialStoreLive).pipe(Layer.provide(providerHttpClientLive)),
+  ),
+);
+const paymentOwnerEvidenceLive = Layer.mergeAll(paymentProductionOwnerPortsLive, gatewayProviderAdaptersLive).pipe(
+  Layer.provide(nodeCryptoLayer),
+);
+const productionReadRuntimeLive = paymentReadRuntime.pipe(Layer.provideMerge(paymentOwnerEvidenceLive));
 
 const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, paymentRegistration).pipe(
   Layer.provide(
@@ -197,7 +233,7 @@ const paymentActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, paym
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(databaseIdentitiesLive),
 );
-const productionActionRuntimeLive = paymentActionRuntime.pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive));
+const productionActionRuntimeLive = paymentActionRuntime.pipe(Layer.provideMerge(paymentOwnerEvidenceLive));
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
@@ -234,20 +270,29 @@ export const makePaymentApiRuntime = (
     ),
     // <generated-governed-http-handler-layers>
     acceptPaymentObservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    captureProviderNotificationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    configureGatewayEnablementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     configurePaymentMethodEnablementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     configurePaymentSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    configureProviderAccountBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPaymentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentPaymentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayConfigurationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayCustomerActionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayReconciliationDebtReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayReturnStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     issuePaymentAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     paymentAuthorizationValidationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentMethodApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentReconciliationDebtReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    providerBindingRouteReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     recordPaymentLocalEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     recordPaymentReconciliationDecisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     requestPaymentCancellationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     requestPaymentOperationRecoveryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     requestPaymentRefundActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    rotateProviderCredentialActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     startPaymentCollectionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));

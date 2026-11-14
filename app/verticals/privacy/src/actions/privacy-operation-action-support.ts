@@ -62,7 +62,10 @@ export const requirePrivacyActionScope = (
       )
     : Effect.succeed({ legalEntityId: scope.legalEntityId, tenantId: scope.tenantId });
 
-type OwnerExecutionAuthorityActionServices = Pick<PrivacyOperationRepositoryService, 'getPrivacyMeasureHandoff'> & {
+type OwnerExecutionAuthorityActionServices = Pick<
+  PrivacyOperationRepositoryService,
+  'getPrivacyMeasureHandoff' | 'getPrivacyMeasureDispatchOriginator'
+> & {
   readonly authority: OwnerExecutionAuthorityService;
 };
 
@@ -90,9 +93,17 @@ export const resolveOwnerExecutionAuthority = Effect.fn('PrivacyOperationActionS
     }
     const authority = yield* context.services.authority.resolve(request, {
       actionInvocationId: context.actionInvocationId,
+      dispatchOriginator: Option.getOrUndefined(
+        yield* context.services.getPrivacyMeasureDispatchOriginator(
+          scope.tenantId,
+          scope.legalEntityId,
+          request.measureId,
+        ),
+      ),
       handoff: handoffOption.value,
       legalEntityId: scope.legalEntityId,
       principalId: context.scope.principalId,
+      scope: context.scope,
       tenantId: scope.tenantId,
     });
     const authorityError = validateOwnerExecutionAuthorityResult(handoffOption.value, request, authority);

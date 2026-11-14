@@ -1,4 +1,4 @@
-import { Effect, Cache, Layer } from "effect";
+import { Effect, Cache, Layer, Result } from "effect";
 import { rs } from "@rstest/core";
 import { FetchHttpClient } from "effect/http";
 import { afterAll, beforeAll, describe, expect, it } from "effect-rstest";
@@ -55,7 +55,7 @@ describe("bounded intent-only variant cache", () => {
         ),
         Effect.result,
       );
-      expect(failure._tag).toBe("Failure");
+      expect(Result.isFailure(failure)).toBe(true);
       expect(calls).toBe(1);
     }),
   );

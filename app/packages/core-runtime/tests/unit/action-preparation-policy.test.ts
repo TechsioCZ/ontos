@@ -1,10 +1,10 @@
-import { Context, Effect, Option, Schema } from 'effect';
+import { Context, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 // Import the public barrel as well as running the native registered-owner lifecycle.
 import { defineAction } from '../../src/index.ts';
-import { ActionPolicyDenied } from '../../src/actions/errors.ts';
+import { ActionAlreadyCommitted, ActionPolicyDenied, ActionPolicyEvaluationError } from '../../src/actions/errors.ts';
 import type { ActionServiceFactory, ActionServicePreflight } from '../../src/actions/definition.ts';
 import {
   defineMicroverticalPolicy,
@@ -201,7 +201,7 @@ it.effect('publishes before normal factory consumption, once, without changing t
       .runAction(probe.input(request))
       .pipe(Effect.provideService(AssignablePrincipals, { check: () => Effect.succeed(true) }));
     expect(yield* run).toBe('selected');
-    expect((yield* Effect.flip(run))._tag).toBe('ActionAlreadyCommitted');
+    expect(Schema.is(ActionAlreadyCommitted)(yield* Effect.flip(run))).toBe(true);
     expect(Option.getOrThrow(probe.snapshot())).toBe(original);
     expect(preparations).toBe(1);
     expect(consumptions).toBe(1);
@@ -292,8 +292,8 @@ it.effect('persists one normalized Policy denial and replays it without calling 
     const first = yield* Effect.flip(run);
     expect(subject.snapshot().transactionCount).toBe(0);
     const retry = yield* Effect.flip(run);
-    expect(first._tag).toBe('ActionPolicyDenied');
-    expect(retry._tag).toBe('ActionPolicyDenied');
+    expect(Predicate.isTagged(first, 'ActionPolicyDenied')).toBe(true);
+    expect(Predicate.isTagged(retry, 'ActionPolicyDenied')).toBe(true);
     expect(checks).toBe(1);
     expect(Option.isNone(probe.snapshot())).toBe(true);
     expect(subject.writes).toEqual([]);
@@ -314,7 +314,7 @@ it.effect('admits the ordinary Core gate before any effectful preparation', () =
     const probe = makeActionPreparationProbe(subject.registration);
     const failure = yield* Effect.flip(subject.runtime.runAction(probe.input(request)));
     expect(Option.isNone(probe.snapshot())).toBe(true);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
     expect(subject.snapshot().policyDenials).toEqual([]);
     expect(subject.writes).toEqual([]);
   }),
@@ -334,8 +334,8 @@ it.effect('keeps directory unavailability typed and retryable, not a terminal Po
           }),
       }),
     );
-    expect((yield* Effect.flip(run))._tag).toBe('AssignmentUnavailable');
-    expect((yield* Effect.flip(run))._tag).toBe('AssignmentUnavailable');
+    expect(Schema.is(Unavailable)(yield* Effect.flip(run))).toBe(true);
+    expect(Schema.is(Unavailable)(yield* Effect.flip(run))).toBe(true);
     expect(checks).toBe(2);
     expect(Option.isNone(probe.snapshot())).toBe(true);
     expect(subject.snapshot().policyDenials).toEqual([]);
@@ -381,8 +381,8 @@ it.effect('bound transaction services cannot skip a terminal preparation denial 
           }),
       }),
     );
-    expect((yield* Effect.flip(run))._tag).toBe('ActionPolicyDenied');
-    expect((yield* Effect.flip(run))._tag).toBe('ActionPolicyDenied');
+    expect(Schema.is(ActionPolicyDenied)(yield* Effect.flip(run))).toBe(true);
+    expect(Schema.is(ActionPolicyDenied)(yield* Effect.flip(run))).toBe(true);
     expect(checks).toBe(1);
     expect(subject.writes).toEqual([]);
     expect(subject.snapshot().committed).toEqual([]);
@@ -405,7 +405,7 @@ it.effect('bound transaction services preserve genuine preparation unavailabilit
           }),
       }),
     );
-    expect((yield* Effect.flip(run))._tag).toBe('AssignmentUnavailable');
+    expect(Schema.is(Unavailable)(yield* Effect.flip(run))).toBe(true);
     expect(Option.isNone(probe.snapshot())).toBe(true);
     expect(subject.writes).toEqual([]);
     expect(subject.snapshot().transactionCount).toBe(0);
@@ -469,7 +469,9 @@ for (const violation of [
       const probe = makeActionPreparationProbe(subject.registration);
       const failure = yield* Effect.flip(subject.runtime.runAction(probe.input(request)));
       expect(Option.isNone(probe.snapshot())).toBe(true);
-      expect(failure._tag).toBe(violation === 'caught-denial' ? 'ActionPolicyDenied' : 'ActionPolicyEvaluationError');
+      expect(Schema.is(violation === 'caught-denial' ? ActionPolicyDenied : ActionPolicyEvaluationError)(failure)).toBe(
+        true,
+      );
       expect(subject.writes).toEqual([]);
       expect(subject.snapshot().committed).toEqual([]);
     }),

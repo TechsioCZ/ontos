@@ -1,6 +1,6 @@
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { listInvoices } from '@app/finance-billing/clients/records';
-import { listTasks } from '@app/work-tasks/clients/records';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeFinanceRecords } from '@app/finance-billing/apis/records/client';
+import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Random } from 'effect';
@@ -9,12 +9,16 @@ import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { dashboardValues } from './dashboard-model.ts';
 import type { DashboardSourceState } from './dashboard-model.ts';
 
+/** Work Tasks records for this view, each read under its own correlation. */
+const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
+
 export interface DashboardSourceResult<A> {
   readonly items: readonly A[];
   readonly state: DashboardSourceState;
 }
 // All three records clients currently expose the same failure union; every call below is checked against it.
-type DashboardReadFailure = Effect.Error<ReturnType<typeof listOpportunities>>;
+type DashboardReadFailure = Effect.Error<ReturnType<typeof executeOpportunityRecords>>;
 const dashboardFailureState = Match.type<DashboardReadFailure>().pipe(
   Match.tag('RecordsForbiddenProblem', 'GatewayForbiddenProblem', () => 'forbidden' as const),
   Match.tag(
@@ -58,10 +62,15 @@ const correlation = Random.nextInt.pipe(Effect.map((id) => `crm-dashboard:${id}`
 export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
   const result = yield* Effect.all(
     {
-      invoices: settleDashboardSource(correlation.pipe(Effect.flatMap((id) => listInvoices({}, id)))),
+      invoices: settleDashboardSource(
+        correlation.pipe(
+          Effect.flatMap((id) => executeFinanceRecords({}, id)),
+          Effect.map((response) => response.state.invoices),
+        ),
+      ),
       opportunities: settleDashboardSource(
         correlation.pipe(
-          Effect.flatMap((id) => listOpportunities({}, id)),
+          Effect.flatMap((id) => executeOpportunityRecords({}, id)),
           Effect.map((response) => response.items),
         ),
       ),

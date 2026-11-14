@@ -10,7 +10,7 @@ import {
   ContextAccess,
 } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { DateTime, Effect, Schema, Struct } from 'effect';
+import { DateTime, Effect, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { WorkforceCommandPayloadSchema, WorkforcePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import type { WorkforceCommandPayload, WorkforceCommand } from '../../shared/actions/apply-command.ts';
@@ -104,10 +104,9 @@ for (const { name, payload, state } of cases) {
         transport: { correlationId: 'workforce-refresh-test', idempotencyKey: name },
       };
       // No Core Search services are installed: the Action must only collect, never publish synchronously.
-      const invoke =
-        payload.command._tag === 'CreateEmployee'
-          ? harness.runtime.runAction({ ...request, registration: applyCommandAction })
-          : harness.runtime.runAction({ ...request, registration: updateEmployeeAction });
+      const invoke = Predicate.isTagged(payload.command, 'CreateEmployee')
+        ? harness.runtime.runAction({ ...request, registration: applyCommandAction })
+        : harness.runtime.runAction({ ...request, registration: updateEmployeeAction });
       const result = yield* invoke;
       expect(result.revision).toBe(payload.expectedRevision + 1);
       const replay = yield* invoke.pipe(Effect.flip);

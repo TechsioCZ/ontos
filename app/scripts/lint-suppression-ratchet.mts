@@ -80,9 +80,15 @@ export const checkLintSuppressions = Effect.fn('lintSuppressionRatchet.check')(f
   );
   const deltas = compareLintSuppressions(baseline.rules, current);
   const increased = deltas.filter(({ baseline: before, current: after }) => after > before);
+  const decreased = deltas.filter(({ baseline: before, current: after }) => after < before);
   if (increased.length > 0) {
     yield* new LintSuppressionRatchetError({
       message: `Lint suppressions increased: ${describe(increased)}. Fix the diagnostic, or encode a repeated false positive as a rule exemption instead of disabling it.`,
+    });
+  }
+  if (decreased.length > 0) {
+    yield* new LintSuppressionRatchetError({
+      message: `Lint suppressions decreased: ${describe(decreased)}. Lower ${BASELINE} with \`pnpm lint:suppressions --update\`.`,
     });
   }
 });
@@ -122,7 +128,7 @@ const cli = Command.make(
         return;
       }
       yield* checkLintSuppressions(yield* fs.readFileString(baselinePath), current);
-      yield* Console.log('Lint suppressions stay within the committed limits');
+      yield* Console.log('Lint suppressions match the committed baseline');
     }),
 );
 

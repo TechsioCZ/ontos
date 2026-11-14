@@ -4,6 +4,7 @@
 // mounted: typed input, its unsaved status and the leave question survive, a save goes out against the revision the
 // draft was read at, and a draft with nothing typed takes the reloaded building.
 import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+import type { Employee } from '@app/workforce/contracts/records';
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { constVoid } from 'effect/Function';
@@ -31,7 +32,9 @@ const mocks = rstest.hoisted(() => ({
 }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/workforce/clients/records', () => ({ listEmployees: mocks.employees }));
+rstest.mock('@app/workforce/clients/records', () => ({
+  executeRecords: () => mocks.employees().pipe(Effect.map((items: readonly Employee[]) => ({ items }))),
+}));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/finance-billing/clients/records', () => ({ executeRecords: () => Effect.never }));

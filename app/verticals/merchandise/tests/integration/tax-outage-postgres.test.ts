@@ -15,7 +15,7 @@ import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Ref, Schema } from 'effect';
+import { DateTime, Effect, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -124,9 +124,9 @@ it.live('Merchandise keeps working while Tax is down, and prices nothing new on 
         ['cz.vat.standard', 21],
         ['cz.vat.reduced', 12],
       ]);
-      expect(staff.sellerVatRegime).toBe('VAT_PAYER');
-      expect(staff.taxRatesConfirmedAt).toEqual(confirmedAt);
-      expect(staff.taxRatesSource).toBe('TAX');
+      expect(staff.sellerVatRegime).toEqual(Option.some('VAT_PAYER'));
+      expect(staff.taxRatesConfirmedAt).toEqual(Option.some(confirmedAt));
+      expect(staff.taxRatesSource).toEqual(Option.some('TAX'));
 
       const apply = Effect.fn('TaxOutage.apply')(function* apply(
         command: typeof MerchandiseCommandPayloadSchema.Encoded.command,
@@ -213,7 +213,11 @@ it.live('Merchandise keeps working while Tax is down, and prices nothing new on 
       // and the staff read says the company has no rates (no source) rather than calling them unconfirmed.
       yield* admin.update(catalogHeads).set({ taxRates: null }).where(whereScope(catalogHeads, company));
       const bare = yield* read({ view: { ordersLimit: 10, summary: true } });
-      expect([bare.taxRates, bare.taxRatesSource, bare.taxRatesConfirmedAt]).toEqual([[], null, null]);
+      expect([bare.taxRates, bare.taxRatesSource, bare.taxRatesConfirmedAt]).toEqual([
+        [],
+        Option.none(),
+        Option.none(),
+      ]);
       expect(
         yield* conflictReason(apply({ ...newProduct, sku: `NEW-${randomUUID().slice(0, 8)}` }, bare.revision)),
       ).toContain('firma zatím nemá žádné sazby DPH');

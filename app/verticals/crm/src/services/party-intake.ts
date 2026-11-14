@@ -8,7 +8,10 @@ import {
   CreatePartyPayloadSchema,
   ResolveDuplicateCandidateCreatePayloadSchema,
 } from '@app/party-registry/api';
-import { crmClientEvidenceReference } from '@app/party-registry/crm-client-evidence';
+import {
+  crmClientEvidencePreimage,
+  crmClientEvidenceReferenceFromSha256,
+} from '@app/party-registry/domain/crm-client-evidence';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   addContactPointWithAuthorization,
@@ -19,6 +22,7 @@ import {
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
 import { Crypto, Context, DateTime, Effect, Layer, Option, Predicate, Redacted, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import {
   acquireDelegatedGatewayContext,
   acquireWorkloadGatewayContext,
@@ -477,10 +481,18 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
     if (originalScope === undefined || originalScope.legalEntityId !== scope.legalEntityId) {
       return yield* unavailable('CRM identity intake requires its verified owner-server operation context');
     }
-    const evidenceReference = crmClientEvidenceReference(
-      { legalEntityId: scope.legalEntityId, tenantId: originalScope.tenantId },
-      client.id,
-    );
+    const evidenceDigest = yield* (yield* Crypto.Crypto)
+      .digest(
+        'SHA-256',
+        new TextEncoder().encode(
+          crmClientEvidencePreimage(
+            { legalEntityId: scope.legalEntityId, tenantId: originalScope.tenantId },
+            client.id,
+          ),
+        ),
+      )
+      .pipe(Effect.mapError(registryDown));
+    const evidenceReference = crmClientEvidenceReferenceFromSha256(Hex.encode(evidenceDigest));
     const createPayload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)(
       crmCreatePayload(client, evidenceReference, now),
     ).pipe(Effect.mapError(registryDown));

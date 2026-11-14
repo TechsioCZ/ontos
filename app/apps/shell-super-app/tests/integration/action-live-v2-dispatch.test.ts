@@ -1,3 +1,4 @@
+import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   NativeHumanSessionsFactory,
@@ -9,7 +10,7 @@ import { Effect, Layer, Option, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
-import { makeNativeHumanSessionProvider } from '../support/native-human-sessions.ts';
+import { NativeHumanSessionFixtureError, makeNativeHumanSessionProvider } from '../support/native-human-sessions.ts';
 
 /** Real Shell sessions over the same native Core fixture; Core itself never imports the Shell provider. */
 const services = Layer.mergeAll(
@@ -131,9 +132,11 @@ it.layer(services, { excludeTestServices: true, timeout: '120 seconds' })('live 
         { legalEntityId: fixture.companyId, principalId: fixture.approverId, tenantId: fixture.tenantId },
         { legalEntityId: fixture.companyId, principalId: fixture.requesterId, tenantId: fixture.approverId },
       ]) {
-        expect((yield* Effect.flip(fixture.requesterSession.authenticate(mismatch)))._tag).toBe(
-          'NativeHumanSessionFixtureError',
-        );
+        expect(
+          Schema.is(NativeHumanSessionFixtureError)(
+            yield* Effect.flip(fixture.requesterSession.authenticate(mismatch)),
+          ),
+        ).toBe(true);
       }
       const accepted = yield* park(fixture);
       const original = Option.getOrThrow(
@@ -174,7 +177,7 @@ it.layer(services, { excludeTestServices: true, timeout: '120 seconds' })('live 
         fixture.ids.map((recordKey) => ({ record_key: recordKey, salary: 50, version: 2 })),
       );
       const { calls } = fixture.remote;
-      expect((yield* Effect.flip(fixture.runtime.runAction(request)))._tag).toBe('ActionAlreadyCommitted');
+      expect(Schema.is(ActionAlreadyCommitted)(yield* Effect.flip(fixture.runtime.runAction(request)))).toBe(true);
       expect(fixture.remote.calls).toBe(calls);
       expect(fixture.executions.value).toBe(1);
       const [receipt] = yield* fixture.admin.unsafe<{
@@ -195,13 +198,15 @@ it.layer(services, { excludeTestServices: true, timeout: '120 seconds' })('live 
       });
       expect(receipt?.execution_operation_id).toBeTruthy();
       expect(
-        (yield* Effect.flip(
-          fixture.runtime.runAction({
-            ...request,
-            transport: { ...request.transport, idempotencyKey: 'second-native-execution' },
-          }),
-        ))._tag,
-      ).toBe('ActionAlreadyCommitted');
+        Schema.is(ActionAlreadyCommitted)(
+          yield* Effect.flip(
+            fixture.runtime.runAction({
+              ...request,
+              transport: { ...request.transport, idempotencyKey: 'second-native-execution' },
+            }),
+          ),
+        ),
+      ).toBe(true);
       expect(fixture.executions.value).toBe(1);
       expect(
         yield* fixture.frozenCommands.load(fixture.requesterScope, {
@@ -210,15 +215,19 @@ it.layer(services, { excludeTestServices: true, timeout: '120 seconds' })('live 
         }),
       ).toEqual(Option.some(original));
       yield* fixture.approverSession.revokeBinding();
-      expect((yield* Effect.flip(fixture.approverSession.authenticate()))._tag).toBe('NativeHumanSessionFixtureError');
-      expect((yield* Effect.flip(fixture.approverSession.authenticateTenant()))._tag).toBe(
-        'NativeHumanSessionFixtureError',
-      );
+      expect(
+        Schema.is(NativeHumanSessionFixtureError)(yield* Effect.flip(fixture.approverSession.authenticate())),
+      ).toBe(true);
+      expect(
+        Schema.is(NativeHumanSessionFixtureError)(yield* Effect.flip(fixture.approverSession.authenticateTenant())),
+      ).toBe(true);
       yield* fixture.requesterSession.signOut();
-      expect((yield* Effect.flip(fixture.requesterSession.authenticate()))._tag).toBe('NativeHumanSessionFixtureError');
-      expect((yield* Effect.flip(fixture.requesterSession.authenticateTenant()))._tag).toBe(
-        'NativeHumanSessionFixtureError',
-      );
+      expect(
+        Schema.is(NativeHumanSessionFixtureError)(yield* Effect.flip(fixture.requesterSession.authenticate())),
+      ).toBe(true);
+      expect(
+        Schema.is(NativeHumanSessionFixtureError)(yield* Effect.flip(fixture.requesterSession.authenticateTenant())),
+      ).toBe(true);
       return yield* Effect.void;
     }),
   );

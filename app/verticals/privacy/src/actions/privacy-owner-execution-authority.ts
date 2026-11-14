@@ -4,7 +4,7 @@ import type {
   DataAccessEventInput,
   OperationalScope,
 } from '@app/core-runtime';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
 import type {
@@ -24,11 +24,15 @@ import { privacySubjectPreparationScopeMatches } from '../persistence/privacy-su
 import { requirePrivacyActionScope } from './privacy-operation-action-support.ts';
 import type { PrivacyActionScopeRequired } from './privacy-action-scope-required.ts';
 
-interface OwnerExecutionAuthorityContext {
+export interface OwnerExecutionAuthorityContext {
   readonly actionInvocationId: string;
+  readonly dispatchOriginator:
+    | { readonly actionInvocationId: string; readonly compositionRevision: string }
+    | undefined;
   readonly handoff: PrivacyMeasureHandoff;
   readonly legalEntityId: string;
   readonly principalId: string;
+  readonly scope: OperationalScope;
   readonly tenantId: string;
 }
 
@@ -57,14 +61,10 @@ export const ownerExecutionAuthorityUnavailable = Object.freeze({
     ),
 }) satisfies OwnerExecutionAuthorityService;
 
-export const OwnerExecutionAuthorityUnavailableLive = Layer.succeed(
-  OwnerExecutionAuthority,
-  ownerExecutionAuthorityUnavailable,
-);
-
 export interface PreparedOwnerExecution {
   readonly authority: OwnerExecutionAuthorityResult;
   readonly context: Pick<ActionServicePreparationContext, 'actionInvocationId' | 'compositionRevision' | 'scope'>;
+  readonly dispatchOriginator: OwnerExecutionAuthorityContext['dispatchOriginator'];
   readonly handoff: PrivacyMeasureHandoff;
   readonly readEvidence?: readonly DataAccessEventInput[];
   readonly request: OwnerExecutionOutcomeRequest;
@@ -94,9 +94,11 @@ export const observeOwnerExecutionPreparation = Effect.fn('OwnerExecutionAuthori
     const owner = yield* OwnerExecutionAuthority;
     const authority = yield* owner.resolve(structuredClone(request), {
       actionInvocationId: context.actionInvocationId,
+      dispatchOriginator: input.dispatchOriginator,
       handoff: structuredClone(handoff),
       legalEntityId: context.scope.legalEntityId,
       principalId: context.scope.principalId,
+      scope: context.scope,
       tenantId: context.scope.tenantId,
     });
     const reason = validateOwnerExecutionAuthorityResult(handoff, request, authority);
@@ -106,6 +108,7 @@ export const observeOwnerExecutionPreparation = Effect.fn('OwnerExecutionAuthori
     return {
       authority: structuredClone(authority),
       context,
+      dispatchOriginator: input.dispatchOriginator,
       handoff,
       readEvidence: structuredClone(input.readEvidence ?? []),
       request,
@@ -149,12 +152,22 @@ export const prepareOwnerExecutionAuthority = Effect.fn('OwnerExecutionAuthority
   const capturedRequest = structuredClone(request);
   const scope = yield* requirePrivacyActionScope(context.scope);
   const readEvidence: DataAccessEventInput[] = [];
-  const handoff = yield* context.transaction((transaction) =>
+  // The handoff and the dispatch's originating invocation are one owner snapshot read before any owner call.
+  const { dispatchOriginator, handoff } = yield* context.transaction((transaction) =>
     privacyOperationRepositoryWithReadEvidence(transaction, { readEvidence, scope: context.scope }).pipe(
       Effect.flatMap((repository) =>
-        repository.getPrivacyMeasureHandoff(scope.tenantId, scope.legalEntityId, capturedRequest.measureId),
+        Effect.all(
+          {
+            dispatchOriginator: repository
+              .getPrivacyMeasureDispatchOriginator(scope.tenantId, scope.legalEntityId, capturedRequest.measureId)
+              .pipe(Effect.map((value) => structuredClone(Option.getOrUndefined(value)))),
+            handoff: repository
+              .getPrivacyMeasureHandoff(scope.tenantId, scope.legalEntityId, capturedRequest.measureId)
+              .pipe(Effect.map(Option.map((value) => structuredClone(value)))),
+          },
+          { concurrency: 1 },
+        ),
       ),
-      Effect.map(Option.map((value) => structuredClone(value))),
     ),
   );
   if (Option.isNone(handoff)) {
@@ -169,6 +182,7 @@ export const prepareOwnerExecutionAuthority = Effect.fn('OwnerExecutionAuthority
       compositionRevision: context.compositionRevision,
       scope: context.scope,
     },
+    dispatchOriginator,
     handoff: handoff.value,
     readEvidence,
     request: capturedRequest,

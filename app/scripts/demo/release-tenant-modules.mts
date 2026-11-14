@@ -19,17 +19,13 @@ import { FetchHttpClient } from 'effect/http';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
-import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
-import { AccessProjectionCompiler } from '../../packages/core-runtime/src/access/intent/projection-compiler.ts';
+import { CoreAuthorizationProjectionCompilerLive } from '../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
 import { AccessProjectionWriterLive } from '../../packages/core-runtime/src/access/intent/projection-writer.ts';
 import { TenantIntentLoaderLive } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../../packages/core-runtime/src/access/lifecycle/persistence/journal-store.ts';
 import { CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   deriveReleaseTenantModules,
   installReleaseTenantModules,
@@ -41,7 +37,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
-import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
+import { loadSpiceDbConfig, SpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { stageReleaseModuleRules } from './stage-tenant-modules.mts';
 
 const LOG_PREFIX = '[release-modules]';
@@ -67,15 +63,9 @@ const ReleaseRuntimeLive = Layer.unwrap(
     const spiceDb = yield* loadSpiceDbConfig().pipe(Effect.mapError(() => failure('The SpiceDB settings are missing')));
     const database = Layer.mergeAll(
       CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
-      makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
-    const engine = Layer.effect(
-      AccessProjectionCompiler,
-      Effect.acquireRelease(
-        Effect.sync(() => makeAccessProjectionTransport(spiceDb)),
-        (transport) => Effect.sync(() => transport.close()),
-      ).pipe(Effect.map(makeAccessProjectionCompiler)),
-    );
+    const engine = CoreAuthorizationProjectionCompilerLive.pipe(Layer.provide(Layer.succeed(SpiceDbConfig, spiceDb)));
     const stores = Layer.mergeAll(TenantIntentLoaderLive, AccessWriteJournalStoreLive, AccessReleaseStoreLive).pipe(
       Layer.provideMerge(Layer.merge(database, engine)),
     );

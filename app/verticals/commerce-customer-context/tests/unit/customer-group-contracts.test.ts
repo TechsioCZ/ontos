@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Exit, Schema } from 'effect';
 import { CounterpartyCustomerGroupMembershipsRequestSchema } from '../../shared/apis/counterparty-customer-group-memberships.ts';
+import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '../../shared/actions/apply-customer-group-membership-source.ts';
 import { CustomerGroupHistoryRequestSchema } from '../../shared/apis/customer-group-history.ts';
 import { CustomerGroupMembersRequestSchema } from '../../shared/apis/customer-group-members.ts';
 import { EffectiveCustomerGroupMembershipsRequestSchema } from '../../shared/apis/effective-customer-group-memberships.ts';
@@ -9,6 +10,7 @@ import {
   AssignCustomerGroupPayloadSchema,
   assignCustomerGroupAction,
 } from '../../src/actions/assign-customer-group.action.ts';
+import { applyCustomerGroupMembershipSourceAction } from '../../src/actions/apply-customer-group-membership-source.action.ts';
 import { archiveCustomerGroupAction } from '../../src/actions/archive-customer-group.action.ts';
 import {
   CreateCustomerGroupPayloadSchema,
@@ -54,13 +56,60 @@ describe('Commerce Customer Group contracts', () => {
       reactivateCustomerGroupAction,
       assignCustomerGroupAction,
       removeCustomerGroupAction,
+      applyCustomerGroupMembershipSourceAction,
     ];
-    expect(actions).toHaveLength(6);
+    expect(actions).toHaveLength(7);
     for (const action of actions) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
       expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
+  });
+
+  it('requires explicit complete snapshots and expected revisions for source removals', () => {
+    const sourcePayload = {
+      effectiveAt: '2026-09-09T10:00:00.000Z',
+      manager: {
+        factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+        issuer: 'internal-fixture',
+        sourceNamespace: 'groups',
+        tenantId,
+      },
+      profile: retailProfile,
+      reason: 'Internal fixture',
+      route: { id: 'route-1', revision: '1' },
+      source: { assertionId: 'assertion-1', effectId: 'effect-1', order: 2, sourceRecordId: 'record-1' },
+    };
+    const accepted = Schema.is(ApplyCustomerGroupMembershipSourcePayloadSchema);
+    expect(accepted({ ...sourcePayload, groupRef, operation: 'ASSIGN' })).toBe(true);
+    expect(accepted({ ...sourcePayload, groupRefs: [groupRef], operation: 'PARTIAL' })).toBe(true);
+    expect(accepted({ ...sourcePayload, groupRefs: [], operation: 'PARTIAL' })).toBe(false);
+    expect(accepted({ ...sourcePayload, groupRefs: [], operation: 'COMPLETE' })).toBe(false);
+    expect(accepted({ ...sourcePayload, completenessProofRef: 'proof', groupRefs: null, operation: 'COMPLETE' })).toBe(
+      false,
+    );
+    expect(
+      accepted({
+        ...sourcePayload,
+        completenessProofRef: 'proof',
+        groupRefs: [groupRef, groupRef],
+        operation: 'COMPLETE',
+      }),
+    ).toBe(false);
+    expect(accepted({ ...sourcePayload, completenessProofRef: 'proof', groupRefs: [], operation: 'COMPLETE' })).toBe(
+      true,
+    );
+    const remove = {
+      ...sourcePayload,
+      groupRef,
+      membershipRef: {
+        ...groupRef,
+        resourceType: 'commerce.customer-context.customer-group-membership',
+      },
+      operation: 'REMOVE',
+    };
+    expect(accepted(remove)).toBe(false);
+    expect(accepted({ ...remove, expectedRevision: 1 })).toBe(true);
   });
 
   it('rejects an empty or reversed membership period at the public boundary', () => {

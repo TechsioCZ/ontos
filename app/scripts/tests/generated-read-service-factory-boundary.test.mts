@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   hasOwnerLocalReadServiceFactory,
+  hasOwnerLocalReadServiceFactoryStaged,
   hasReadOwnerPermissionDeclaration,
 } from '../generated-governed-http-boundary.mts';
 
@@ -36,10 +37,17 @@ const currentSources = new Map<string, string>(
   ),
 );
 
+// Demo-only exception 3 (staged reads): these Customer Context reads run a staged `load` phase over a factory typed
+// with Core's scoped routine capability, so they bind to the ported staged-read factory proof, not the trunk helper.
 for (const name of currentReadFiles) {
   it(`accepts the real CCC ${name} owner service factory without widening the boundary`, () => {
     expect(
-      hasOwnerLocalReadServiceFactory(currentSources, `${ownerPath}/src/api/${name}.read.ts`, ownerPath, factoryName),
+      hasOwnerLocalReadServiceFactoryStaged(
+        currentSources,
+        `${ownerPath}/src/api/${name}.read.ts`,
+        ownerPath,
+        factoryName,
+      ),
     ).toBe(true);
   });
 }
@@ -47,7 +55,9 @@ for (const name of currentReadFiles) {
 it('accepts only the original scoped Core routine capability paired with its native operational scope', () => {
   const source = `import type { ScopedRoutineInvoker, OperationalScope } from '@app/core-runtime';
 export const ${factoryName} = (transaction: ScopedRoutineInvoker, scope: OperationalScope) => makeService(transaction, scope);`;
-  expect(accepts(sourcesFor(factoryImport, source))).toBe(true);
+  const acceptsStaged = (factorySource: string): boolean =>
+    hasOwnerLocalReadServiceFactoryStaged(sourcesFor(factoryImport, factorySource), readFile, ownerPath, factoryName);
+  expect(acceptsStaged(source)).toBe(true);
   for (const invalid of [
     source.replace("from '@app/core-runtime'", "from './foreign-core.ts'"),
     source.replace(
@@ -61,9 +71,150 @@ export const ${factoryName} = (transaction: ScopedRoutineInvoker, scope: Operati
     `${source}\nfunction shadow(OperationalScope) {}`,
   ]) {
     expect(invalid).not.toBe(source);
-    expect(accepts(sourcesFor(factoryImport, invalid))).toBe(false);
+    expect(acceptsStaged(invalid)).toBe(false);
   }
 });
+
+const privacyOwner = 'verticals/privacy';
+const privacyRead = `${privacyOwner}/src/api/measure-execution-eligibility.read.ts`;
+const privacyService = `${privacyOwner}/src/services/measure-execution-eligibility.service.ts`;
+const privacyRepository = `${privacyOwner}/src/persistence/privacy-operation-postgres-repository.ts`;
+const privacyFactory = 'measureExecutionEligibilityService';
+const SCOPED_TRANSACTION_ALIAS_DECLARATION = 'type ScopedTransaction =';
+const actualPrivacySources = new Map<string, string>(
+  [privacyRead, privacyService, privacyRepository].map((file): readonly [string, string] => [
+    file,
+    readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
+  ]),
+);
+
+it('accepts the actual Privacy factory transaction derived through its own native repository parameter', () => {
+  expect(hasOwnerLocalReadServiceFactory(actualPrivacySources, privacyRead, privacyOwner, privacyFactory)).toBe(true);
+});
+
+for (const [name, file, before, after] of [
+  [
+    'wrong selected parameter',
+    privacyService,
+    'Parameters<typeof privacyOperationRepositoryForScope>[0]',
+    'Parameters<typeof privacyOperationRepositoryForScope>[1]',
+  ],
+  [
+    'foreign repository',
+    privacyService,
+    '../persistence/privacy-operation-postgres-repository.ts',
+    '../../../foreign/src/privacy-operation-postgres-repository.ts',
+  ],
+  [
+    'shadowed repository callable',
+    privacyService,
+    'export interface MeasureExecutionEligibilityServices',
+    'const privacyOperationRepositoryForScope = foreignFactory;\nexport interface MeasureExecutionEligibilityServices',
+  ],
+  ['fake Core factory type', privacyRepository, "from '@app/core-runtime'", "from './fake-core-runtime.ts'"],
+  [
+    'wrong native factory parameter',
+    privacyRepository,
+    'ReadServiceFactory<Readonly<Record<string, never>>>>[0]',
+    'ReadServiceFactory<Readonly<Record<string, never>>>>[1]',
+  ],
+  [
+    'cyclic transaction type',
+    privacyRepository,
+    'Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0]',
+    'ScopedTransaction',
+  ],
+  [
+    'duplicate transaction alias',
+    privacyRepository,
+    SCOPED_TRANSACTION_ALIAS_DECLARATION,
+    'type ScopedTransaction = unknown;\ntype ScopedTransaction =',
+  ],
+  [
+    'fake Parameters type',
+    privacyRepository,
+    SCOPED_TRANSACTION_ALIAS_DECLARATION,
+    'type Parameters<T> = [unknown];\ntype ScopedTransaction =',
+  ],
+  [
+    'imported Parameters type',
+    privacyRepository,
+    SCOPED_TRANSACTION_ALIAS_DECLARATION,
+    "import type { Parameters } from './fake-parameters.ts';\ntype ScopedTransaction =",
+  ],
+  [
+    'default imported Parameters type',
+    privacyRepository,
+    SCOPED_TRANSACTION_ALIAS_DECLARATION,
+    "import type Parameters from './fake-parameters.ts';\ntype ScopedTransaction =",
+  ],
+  [
+    'non-exported repository callable',
+    privacyRepository,
+    'export const privacyOperationRepositoryForScope =',
+    'const privacyOperationRepositoryForScope =',
+  ],
+  [
+    'unknown repository transaction',
+    privacyRepository,
+    'transaction: ScopedTransaction,\n  scope: OperationalScope,',
+    'transaction: unknown,\n  scope: OperationalScope,',
+  ],
+] as const) {
+  it(`rejects the actual Privacy factory with a ${name}`, () => {
+    const original = actualPrivacySources.get(file) ?? '';
+    expect(original).toContain(before);
+    const changed = original.replaceAll(before, after);
+    const sources = new Map([...actualPrivacySources, [file, changed]]);
+    expect(hasOwnerLocalReadServiceFactory(sources, privacyRead, privacyOwner, privacyFactory)).toBe(false);
+  });
+}
+
+for (const [name, owner, read, service, factory, invalid] of [
+  [
+    'Pricing narrowed native transaction',
+    'verticals/pricing',
+    'verticals/pricing/src/api/price-group-source-prices.read.ts',
+    'verticals/pricing/src/persistence/price-group-source-prices-persistence.ts',
+    'priceGroupSourcePricesPersistenceForScope',
+    [
+      ["Pick<Transaction, 'invoke'>", "Pick<unknown, 'invoke'>"],
+      ["Pick<Transaction, 'invoke'>", 'Pick<Transaction, configuredKeys>'],
+      ['type Transaction =', 'type Pick<T, K> = unknown;\ntype Transaction ='],
+      ['type Transaction =', "import type Pick from './fake-pick.ts';\ntype Transaction ="],
+    ],
+  ],
+  [
+    'Privacy native factory with trailing trace argument comma',
+    privacyOwner,
+    `${privacyOwner}/src/api/organization-profile-ico-applicability.read.ts`,
+    `${privacyOwner}/src/services/organization-profile-ico-applicability.service.ts`,
+    'organizationProfileIcoApplicabilityService',
+    [
+      [
+        "'Privacy.organizationProfileIcoApplicabilityServices',",
+        "'Privacy.organizationProfileIcoApplicabilityServices', unexpectedArgument,",
+      ],
+      ["from 'effect'", "from './fake-effect.ts'"],
+    ],
+  ],
+] as const) {
+  it(`accepts the actual ${name} and rejects nearby forged factory types`, () => {
+    const sources = new Map<string, string>(
+      [read, service].map((file): readonly [string, string] => [
+        file,
+        readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
+      ]),
+    );
+    expect(hasOwnerLocalReadServiceFactory(sources, read, owner, factory)).toBe(true);
+    const original = sources.get(service) ?? '';
+    for (const [before, after] of invalid) {
+      expect(original).toContain(before);
+      const changed = new Map([...sources, [service, original.replace(before, after)]]);
+      expect(hasOwnerLocalReadServiceFactory(changed, read, owner, factory), after).toBe(false);
+    }
+  });
+}
 
 it('accepts a genuine Core factory annotation imported only as a type', () => {
   expect(accepts(sourcesFor())).toBe(true);

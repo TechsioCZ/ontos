@@ -1,11 +1,11 @@
 // Contact (party registry) and invoice (finance) references for documents. Read through each owner's PUBLIC governed
 // read, filtered to what the current person may see; the link stores the owner's resource id + a display snapshot.
-import { listCustomers } from '@app/party-registry/api/client';
+import { listCustomers } from './party-customers.ts';
 import { Effect } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';
 import type { SubjectRef } from '../../shared/domain/documents.ts';
-import { readFinance } from '../api/finance-reads.ts';
+import { readFinance } from './finance-reads.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
 export type OptionsState<Failure> =

@@ -389,7 +389,7 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
-        authMethod: 'system',
+        authMethod: 'session',
         correlationId: 'address-update',
         legalEntityId: '30000000-0000-4000-8000-000000000003',
         principalId: '40000000-0000-4000-8000-000000000004',
@@ -432,7 +432,7 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       recordAuditEvidence: unchangedCollector.recordAuditEvidence,
       recordDataAccess: unchangedCollector.recordDataAccess,
       scope: {
-        authMethod: 'system',
+        authMethod: 'session',
         correlationId: 'address-unchanged',
         legalEntityId: '30000000-0000-4000-8000-000000000003',
         principalId: '40000000-0000-4000-8000-000000000004',
@@ -471,7 +471,7 @@ it.effect('does not attach a duplicate add event when an exact business replay i
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
-        authMethod: 'system',
+        authMethod: 'session',
         correlationId: 'address-reused',
         legalEntityId: '30000000-0000-4000-8000-000000000003',
         principalId: '40000000-0000-4000-8000-000000000004',
@@ -523,7 +523,7 @@ it.effect('records the contributing Party Contact Point read for add and update'
         recordAuditEvidence: addCollector.recordAuditEvidence,
         recordDataAccess: addCollector.recordDataAccess,
         scope: {
-          authMethod: 'system',
+          authMethod: 'session',
           correlationId: 'party-address-add',
           legalEntityId: '30000000-0000-4000-8000-000000000003',
           principalId: '40000000-0000-4000-8000-000000000004',
@@ -558,7 +558,7 @@ it.effect('records the contributing Party Contact Point read for add and update'
         recordAuditEvidence: updateCollector.recordAuditEvidence,
         recordDataAccess: updateCollector.recordDataAccess,
         scope: {
-          authMethod: 'system',
+          authMethod: 'session',
           correlationId: 'party-address-update',
           legalEntityId: '30000000-0000-4000-8000-000000000003',
           principalId: '40000000-0000-4000-8000-000000000004',

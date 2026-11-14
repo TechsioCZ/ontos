@@ -88,12 +88,17 @@ it('re-exports the same pure identity facts while retaining validated runtime en
 
 it('grants only request-scope trust routines and grants none to the worker', () => {
   expect(PARTY_REGISTRY_REQUEST_DATABASE_GRANTS.routines).toEqual([
+    'trust.lock_source_execution_fence(uuid,uuid)',
+    'trust.read_source_execution_fence(uuid,uuid)',
+    'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
     'trust.establish_gateway_scope(text)',
     'trust.current_tenant_id()',
     'trust.current_legal_entity_id()',
     'trust.auth_binding_issuing_legal_entity(uuid,uuid)',
     'trust.lock_access_scope_fence(uuid,uuid)',
     PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,
+    'party.issue_ico_correlation_witness(uuid)',
+    'party.observe_ico_correlation_coverage(uuid[],jsonb)',
   ]);
   expect(PARTY_REGISTRY_WORKER_DATABASE_GRANTS.routines).toEqual([]);
 });

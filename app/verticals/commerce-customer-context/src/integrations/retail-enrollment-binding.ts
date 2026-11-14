@@ -280,6 +280,18 @@ export const loadRetailEnrollmentBindingSnapshot = Effect.fn('RetailEnrollmentBi
   return { accountSubject, attempt, operations, profileRevision: Option.getOrUndefined(profile)?.revision, ...journal };
 });
 
+/** Invocation-local target assertion, consumed once inside the actual Action transaction. */
+type PreparedRetailEnrollmentTargetAssertion = (
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  revision: string,
+  candidate: RetailPortalBindingPayload,
+  actionInvocationId: string,
+) => Effect.Effect<
+  Pick<typeof CurrentExternalIdentityBindingSchema.Type, 'authBindingId' | 'principalId'>,
+  RetailPortalBindingActionRejected
+>;
+
 /** Prepared after authorization, outside SQL; consumed only for this actual Action invocation. */
 export const prepareRetailEnrollmentTargetBinding = Effect.fn('RetailEnrollmentBinding.prepareTarget')(
   function* prepare(payload: RetailPortalBindingPayload, context: ActionServicePreparationContext) {
@@ -317,13 +329,9 @@ export const prepareRetailEnrollmentTargetBinding = Effect.fn('RetailEnrollmentB
     }).pipe(Effect.mapError(unavailable));
     const snapshotRevision = stableRevision(snapshot);
     let consumed = false;
-    return Effect.fn('RetailEnrollmentBinding.assertTarget')(function* assertTarget(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      revision: string,
-      candidate: RetailPortalBindingPayload,
-      actionInvocationId: string,
-    ) {
+    const assertPreparedTarget: PreparedRetailEnrollmentTargetAssertion = Effect.fn(
+      'RetailEnrollmentBinding.assertTarget',
+    )(function* assertTarget(transaction, scope, revision, candidate, actionInvocationId) {
       if (
         consumed ||
         scope !== context.scope ||
@@ -347,5 +355,6 @@ export const prepareRetailEnrollmentTargetBinding = Effect.fn('RetailEnrollmentB
       );
       return { authBindingId: expected.authBindingId, principalId: expected.principalId };
     });
+    return assertPreparedTarget;
   },
 );

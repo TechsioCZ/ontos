@@ -8,6 +8,7 @@ import { Effect, Layer, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { mapAddSavedAddressActionProblem } from '../../api/add-saved-address-action-problems.ts';
+import { AddSavedAddressActionForbiddenProblemSchema } from '../../shared/apis/add-saved-address-action.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { addSavedAddressAction } from '../../src/actions/add-saved-address.action.ts';
@@ -194,8 +195,9 @@ it.live(
         }
         expect(Schema.is(ActionPermissionDenied)(refused.failure)).toBe(true);
         expect(refused.failure).toMatchObject({ code: 'action_permission_denied', reasons: ownerRuleReasons });
-        expect(mapAddSavedAddressActionProblem(refused.failure)).toMatchObject({
-          _tag: 'AddSavedAddressActionForbiddenProblem',
+        const problem = mapAddSavedAddressActionProblem(refused.failure);
+        expect(Schema.is(AddSavedAddressActionForbiddenProblemSchema)(problem)).toBe(true);
+        expect(problem).toMatchObject({
           code: 'action_permission_denied',
           reasons: ownerRuleReasons,
           status: 403,

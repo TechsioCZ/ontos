@@ -2,6 +2,7 @@ import {
   Clock,
   Config,
   ConfigProvider,
+  Context,
   DateTime,
   Duration,
   Effect,
@@ -13,7 +14,8 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { Headers, HttpClient } from 'effect/http';
+import type { Scope } from 'effect';
+import { FetchHttpClient, Headers, HttpClient } from 'effect/http';
 
 import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from './application-composition-limits.ts';
 import { ActiveApplicationCompositionSourceReadError } from './active-application-composition-source-errors.ts';
@@ -83,7 +85,19 @@ const confirmedRead = (held: SharedSnapshotRead | undefined, status: number, eta
  */
 export const ActiveApplicationCompositionSourceLive = Layer.effect(ActiveApplicationCompositionSource)(
   Effect.gen(function* nodeSourceLayer() {
-    const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+    const sourceFetch = yield* FetchHttpClient.Fetch;
+    const sourceRequestInit = yield* Effect.serviceOption(FetchHttpClient.RequestInit);
+    // FetchHttpClient resolves transport options from each executing fiber. Pin only the
+    // authoritative transport keys; request Scope, tracing and cancellation stay local.
+    const client = HttpClient.transformResponse(
+      HttpClient.withScope(yield* HttpClient.HttpClient),
+      Effect.updateContext((context: Context.Context<Scope.Scope>) => {
+        const transport = Context.add(context, FetchHttpClient.Fetch, sourceFetch);
+        return Option.isSome(sourceRequestInit)
+          ? Context.add(transport, FetchHttpClient.RequestInit, sourceRequestInit.value)
+          : Context.omit(FetchHttpClient.RequestInit)(transport);
+      }),
+    );
     const clock = yield* Clock.Clock;
     const configuration = yield* ConfigProvider.ConfigProvider;
     const layerReads: CompositionSourceReads = new Map();

@@ -1,23 +1,19 @@
-import { createServer } from 'node:net';
-
-import { Console, Effect, Option, Ref, Schema } from 'effect';
+import { NodeSocketServer } from '@effect/platform-node';
+import { Console, Effect, Option, Ref } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { HttpServerRequest } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import { TestClock, TestConsole } from 'effect/testing';
 
 import { hostApplication, hostControlApplication } from '../zerops/app-host.mts';
 import { loggableRoute, makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
-
-const decodeBoundAddress = Schema.decodeUnknownOption(Schema.Struct({ port: Schema.Number }));
+import { makeSupersedeDrain } from '../zerops/supersede-drain.mts';
 
 /** A loopback port nothing listens on: bound once by the OS, then released. */
-const closedPort = Effect.callback<number>((resume) => {
-  const server = createServer();
-  server.listen(0, '127.0.0.1', () => {
-    const port = Option.match(decodeBoundAddress(server.address()), { onNone: () => 0, onSome: (bound) => bound.port });
-    server.close(() => resume(Effect.succeed(port)));
-  });
-});
+const closedPort = Effect.scoped(NodeSocketServer.make({ host: '127.0.0.1', port: 0 })).pipe(
+  Effect.map(({ address }) => (NetAddress.isUnixPathAddress(address) ? 0 : address.port)),
+  Effect.orDie,
+);
 
 const at = (url: string, method = 'GET') =>
   Effect.provideService(HttpServerRequest.HttpServerRequest, HttpServerRequest.fromWeb(new Request(url, { method })));
@@ -36,7 +32,13 @@ it.effect('a relay to a unit that does not listen answers 502 and logs one WARN 
     const console = yield* TestConsole.make;
     const port = yield* closedPort;
     const published = yield* Ref.make(true);
-    const app = hostApplication(new Map([['crm', port]]), published, Effect.succeed(Option.none()));
+    const app = hostApplication(
+      new Map([['crm', port]]),
+      published,
+      Effect.succeed(Option.none()),
+      makeHostRefusalLog(),
+      makeSupersedeDrain(),
+    );
     const response = yield* app.pipe(
       at(`https://stage.test/_m/crm/crm-api/records${SECRET_QUERY}`),
       Effect.provideService(Console.Console, console),
@@ -69,7 +71,13 @@ it.effect('a burst of 50 refusals writes one line at once and one summary after 
     const port = yield* closedPort;
     const published = yield* Ref.make(true);
     const refusals = makeHostRefusalLog();
-    const app = hostApplication(new Map([['crm', port]]), published, Effect.succeed(Option.none()), refusals);
+    const app = hostApplication(
+      new Map([['crm', port]]),
+      published,
+      Effect.succeed(Option.none()),
+      refusals,
+      makeSupersedeDrain(),
+    );
     for (let request = 0; request < 50; request += 1) {
       const response = yield* app.pipe(
         at('https://stage.test/_m/crm/x'),
@@ -99,7 +107,7 @@ it.effect('the host logs its own refusals: an unknown control path and a publish
     const console = yield* TestConsole.make;
     const published = yield* Ref.make(false);
     const none = Effect.succeed(Option.none<string>());
-    const control = hostControlApplication(published, none);
+    const control = hostControlApplication(published, none, makeHostRefusalLog());
     const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(Effect.provideService(Console.Console, console));
 
@@ -125,7 +133,13 @@ it.effect(
       const console = yield* TestConsole.make;
       const published = yield* Ref.make(true);
       const refusals = makeHostRefusalLog();
-      const host = hostApplication(new Map(), published, Effect.succeed(Option.none<string>()), refusals);
+      const host = hostApplication(
+        new Map(),
+        published,
+        Effect.succeed(Option.none<string>()),
+        refusals,
+        makeSupersedeDrain(),
+      );
       for (let request = 0; request < 1000; request += 1) {
         const response = yield* host.pipe(at(`https://stage.test/_m/probe-${String(request)}/remoteEntry.js`));
         expect(response.status).toBe(404);
@@ -192,6 +206,8 @@ it.effect('a refused password-reset link never puts its token into the log', () 
       new Map([['commerce-customer-context', port]]),
       published,
       Effect.succeed(Option.none()),
+      makeHostRefusalLog(),
+      makeSupersedeDrain(),
     );
     const token = 'Q7mXk2vN9pLr4TzA8bWcE1sY';
     const response = yield* app.pipe(

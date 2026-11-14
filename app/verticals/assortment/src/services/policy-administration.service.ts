@@ -1,10 +1,9 @@
-import { findPostgresFailure } from '@app/core-runtime';
+import { defineScopedRoutine, findPostgresFailure } from '@app/core-runtime';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
-import { Hex } from 'effect/encoding';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   AssortmentBindingAudience,
@@ -12,9 +11,12 @@ import type {
   CreateRulePayload,
   CreateRuleRevisionPayload,
   EndApplicabilityBindingPayload,
+  ImportSymmyRulePayload,
   ReplaceApplicabilityBindingPayload,
   RetireRulePayload,
 } from '../../shared/actions/policy-administration.ts';
+import { projectSymmyRuleFixtureDatabaseCommand } from '../../shared/actions/policy-administration.ts';
+import { assortmentMeaningFingerprint, ruleMeaning } from '../../shared/domain/policy-fingerprint.ts';
 import {
   applicabilityBindingEndFacts,
   applicabilityBindings,
@@ -25,6 +27,7 @@ import {
 import {
   AssortmentPolicyConflictKindSchema,
   AssortmentPolicyPersistenceUnavailable,
+  AssortmentSymmyFixtureAccessDenied,
 } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyConflictKind } from '../../shared/domain/policy-errors.ts';
 
@@ -59,40 +62,7 @@ export const bindingRef = (tenantId: string, resourceId: string) => ({
   tenantId,
 });
 
-const CanonicalJsonSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
-  Schema.Union([
-    Schema.Null,
-    Schema.Boolean,
-    Schema.Finite,
-    Schema.String,
-    Schema.Array(CanonicalJsonSchema),
-    Schema.Record(Schema.String, CanonicalJsonSchema),
-  ]),
-);
-const CanonicalJsonRecordSchema = Schema.Record(Schema.String, CanonicalJsonSchema);
-const JsonStringSchema = Schema.fromJsonString(CanonicalJsonSchema);
-const canonicalJson = (value: Schema.Json): Schema.Json => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalJson);
-  }
-  if (Schema.is(CanonicalJsonRecordSchema)(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
-        .map(([key, child]) => [key, canonicalJson(child)]),
-    );
-  }
-  return value;
-};
-const canonicalize = <Value extends object>(value: Value): string => {
-  const decoded = Result.getOrThrow(Schema.decodeUnknownResult(CanonicalJsonSchema)(value));
-  return Result.getOrThrow(Schema.encodeResult(JsonStringSchema)(canonicalJson(decoded)));
-};
-
-export const assortmentMeaningFingerprint = <Value extends object>(value: Value): string => {
-  const canonical = canonicalize(value);
-  return Hex.encode(sha256(utf8ToBytes(canonical)));
-};
+export { assortmentMeaningFingerprint } from '../../shared/domain/policy-fingerprint.ts';
 
 export type PolicyConflict = Readonly<{ readonly conflict: AssortmentPolicyConflictKind; readonly kind: 'conflict' }>;
 const PolicyConflictSchema = Schema.Struct({
@@ -289,12 +259,6 @@ const selectorTenant = (selector: CreateRulePayload['selector']): string | undef
 
 const trustedTenant = (scope: OperationalScope, tenantId: string, refs: readonly (string | undefined)[]): boolean =>
   tenantId === scope.tenantId && refs.every((ref) => ref === undefined || ref === scope.tenantId);
-
-const ruleMeaning = (input: Pick<CreateRulePayload, 'effect' | 'purpose' | 'selector'>) => ({
-  effect: input.effect,
-  purpose: input.purpose,
-  selector: input.selector,
-});
 
 const audienceColumns = (audience: AssortmentBindingAudience) => {
   if (audience.kind === 'SHARED') {
@@ -1282,3 +1246,74 @@ export const assortmentPolicyPersistenceForScope = (
 
 export const assortmentPolicyServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) =>
   Effect.succeed(assortmentPolicyPersistenceForScope(transaction, scope));
+
+export const assortmentSymmyRuleFixtureWorkload = 'commerce.assortment.symmy-fixture-rule-import';
+const fixtureResourceId = Schema.String.check(Schema.isUUID());
+
+const importSymmyRuleFixture = defineScopedRoutine({
+  name: 'import_c14_rule_fixture',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({
+    binding_id: fixtureResourceId,
+    revision_id: fixtureResourceId,
+    rule_id: fixtureResourceId,
+  }),
+  routineKey: 'commerce.assortment.import-c14-rule-fixture',
+  schema: 'assortment',
+});
+
+export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) =>
+  Effect.succeed({
+    persistFixture: Effect.fn('AssortmentPolicyPersistence.persistSymmyRuleFixture')(function* persist(
+      payload: ImportSymmyRulePayload,
+      actionInvocationId: string,
+      permit: Redacted.Redacted,
+    ) {
+      const source = readVerifiedGatewayWorkload(scope);
+      const admitted = yield* readScopedAdmittedWorkload(transaction, scope, assortmentSymmyRuleFixtureWorkload).pipe(
+        Effect.mapError(unavailable),
+      );
+      const command = projectSymmyRuleFixtureDatabaseCommand(payload);
+      if (!admitted || source === undefined || command === null) {
+        return yield* new AssortmentSymmyFixtureAccessDenied({
+          code: 'assortment_symmy_fixture_access_denied',
+          reason: 'The exact internal fixture is outside the approved execution scope',
+        });
+      }
+      const rows = yield* transaction
+        .invoke(importSymmyRuleFixture, [
+          actionInvocationId,
+          scope.principalId,
+          source.admissionInvocationId,
+          source.originalPrincipalId,
+          Redacted.value(permit),
+          command,
+        ])
+        .pipe(Effect.mapError(unavailable));
+      const [row] = rows;
+      return row === undefined
+        ? null
+        : {
+            bindingId: row.binding_id,
+            created: true,
+            initialRevisionNumber: 1,
+            initialRuleRevisionId: row.revision_id,
+            meaningFingerprint: command.fingerprint,
+            stableRuleId: row.rule_id,
+          };
+    }),
+  });
+
+export type AssortmentSymmyRuleFixtureService = Effect.Success<
+  ReturnType<typeof assortmentSymmyRuleFixtureServiceFactory>
+>;

@@ -7,20 +7,23 @@ import type { AccessIntentDatabase } from '../access/intent/persistence.ts';
 import { intentUnavailable } from '../access/intent/errors.ts';
 import { runScoped } from '../access/intent/persistence.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../access/release/activation.ts';
-import { makeAccessWorkloadBindingDrizzleStore, writeWorkloadBindings } from '../access/workloads/binding-store.ts';
+import { writeWorkloadBindings } from '../access/workloads/binding-store.ts';
+import { writeWorkloadCompanyBindings } from '../access/workloads/company-bindings.ts';
 import {
-  makeAccessWorkloadCompanyBindingDrizzleStore,
-  writeWorkloadCompanyBindings,
-} from '../access/workloads/company-bindings.ts';
-import { AccessWorkloadCompanyBindingIdSchema } from '../access/workloads/company-store.ts';
-import { AccessWorkloadBindingIdSchema } from '../access/workloads/store.ts';
+  AccessWorkloadCompanyBindingIdSchema,
+  AccessWorkloadCompanyBindingStore,
+} from '../access/workloads/company-store.ts';
+import { AccessWorkloadBindingIdSchema, AccessWorkloadBindingStore } from '../access/workloads/store.ts';
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 import { internalWorkloadPrincipalId, tenantServesPeople } from '../auth/module-credentials.ts';
 import {
   INTERNAL_WORKLOAD_PLATFORM_ROLE,
   principalManagementRepositoryFromTransaction,
 } from '../auth/principal-management.ts';
-import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../auth/system-principal-context.ts';
+import {
+  registerSystemWorkload,
+  SystemPrincipalContextResolverFromCoreDatabase,
+} from '../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import {
@@ -242,11 +245,11 @@ const releaseScopeOf = Effect.fn('ReleaseInternalWorkloads.releaseScope')(functi
   runReference: string,
 ) {
   const releases = yield* AccessReleaseStore;
-  const { executor } = yield* CoreDatabase;
+  const resolver = yield* SystemPrincipalContextResolverFromCoreDatabase;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
     .pipe(Effect.mapError((cause) => refusal(`the release actor could not be ensured: ${cause.reason}`)));
-  const resolved = yield* makeSystemPrincipalContextResolver({ executor })
+  const resolved = yield* resolver
     .resolve({
       principalId: releaseActorId(tenantId),
       registration: RELEASE_INTERNAL_WORKLOAD_JOB,
@@ -267,8 +270,15 @@ const stepFailed =
     refusal(`${what}: ${cause.reason ?? 'unavailable'}`);
 
 /** Performs one planned step through Core's own writer for it, as the release actor. */
+/** Core's own workload binding writers, from the surrounding composition. */
+interface WorkloadBindingWriters {
+  readonly bindings: AccessWorkloadBindingStore['Service'];
+  readonly companies: AccessWorkloadCompanyBindingStore['Service'];
+}
+
 const performStep = (
   database: AccessIntentDatabase,
+  writers: WorkloadBindingWriters,
   scope: OperationalScope,
   step: InternalWorkloadStep,
   at: Date,
@@ -337,14 +347,14 @@ const performStep = (
             .pipe(Effect.mapError((cause) => intentUnavailable(cause.reason, cause))),
         ).pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload principal could not be renamed'))),
       'revoke-company': (company) =>
-        makeAccessWorkloadCompanyBindingDrizzleStore(database)
+        writers.companies
           .revokeCompanyBinding(scope, {
             companyBindingId: AccessWorkloadCompanyBindingIdSchema.make(company.companyBindingId),
             revokedAt: at,
           })
           .pipe(Effect.asVoid, Effect.mapError(stepFailed('the company binding could not be revoked'))),
       'revoke-workload': (binding) =>
-        makeAccessWorkloadBindingDrizzleStore(database)
+        writers.bindings
           .revokeBinding(scope, { bindingId: AccessWorkloadBindingIdSchema.make(binding.bindingId), revokedAt: at })
           .pipe(Effect.asVoid, Effect.mapError(stepFailed('the workload binding could not be revoked'))),
     }),
@@ -376,8 +386,17 @@ const takenBy = Effect.fn('ReleaseInternalWorkloads.takenBy')(function* takenByO
 });
 
 /** One registration's steps, in order; its failure is reported by name and stops no other registration. */
-const performUnit = (database: AccessIntentDatabase, scope: OperationalScope, unit: RegistrationUnit, at: Date) =>
-  Effect.forEach(unit.steps, (step) => performStep(database, scope, step, at), { concurrency: 1, discard: true }).pipe(
+const performUnit = (
+  database: AccessIntentDatabase,
+  writers: WorkloadBindingWriters,
+  scope: OperationalScope,
+  unit: RegistrationUnit,
+  at: Date,
+) =>
+  Effect.forEach(unit.steps, (step) => performStep(database, writers, scope, step, at), {
+    concurrency: 1,
+    discard: true,
+  }).pipe(
     Effect.catchTag('ReleaseInternalWorkloadError', (stepError) =>
       unit.steps.some(({ kind }) => kind === 'create-principal')
         ? takenBy(unit.principalId, scope.tenantId).pipe(
@@ -429,9 +448,13 @@ const registerTenant = Effect.fn('ReleaseInternalWorkloads.registerTenant')(func
     }
     const scope = yield* releaseScopeOf(tenantId, runReference);
     const at = yield* DateTime.nowAsDate;
+    const writers: WorkloadBindingWriters = {
+      bindings: yield* AccessWorkloadBindingStore,
+      companies: yield* AccessWorkloadCompanyBindingStore,
+    };
     // Each registration on its own, wanted ones first and retirements always: a principal before its bindings, a
     // binding before its company; retirement company-first.
-    const results = yield* Effect.forEach(plan.units, (unit) => performUnit(database, scope, unit, at), {
+    const results = yield* Effect.forEach(plan.units, (unit) => performUnit(database, writers, scope, unit, at), {
       concurrency: 1,
     });
     const failures = results.flatMap((result) => (Result.isFailure(result) ? [result.failure.reason] : []));

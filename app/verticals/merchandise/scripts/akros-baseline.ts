@@ -238,13 +238,11 @@ export const buildAkrosEncodedFrom = Effect.fn('Akros.buildEncodedBaseline')(fun
     return units
       .filter((unit) => unit.stockCount !== 0)
       .map((unit) => {
-        const identity: { -readonly [Key in keyof BaselineMovementIdentity]: BaselineMovementIdentity[Key] } = {
+        const receipt = {
           id: demoId('akros.receipt', unit.id ?? product.id),
           productId: product.id,
-        };
-        if (unit.id !== undefined) {
-          identity.variantId = unit.id;
-        }
+        } satisfies BaselineMovementIdentity;
+        const identity: BaselineMovementIdentity = unit.id === undefined ? receipt : { ...receipt, variantId: unit.id };
         return {
           ...identity,
           at,

@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./actions/import-seller-vat-regime-declarations": "./shared/actions/import-seller-vat-regime-declarations.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/tax-client.ts",
+    "./api/import-seller-vat-regime-declarations-action-client": "./src/api/import-seller-vat-regime-declarations-action-client.ts",
+    "./apis/vat-change-rights": "./shared/apis/vat-change-rights.ts",
+    "./apis/vat-change-rights/client": "./src/api/vat-change-rights-client.ts",
     "./permissions/tax.evidence.read": "./shared/permissions/tax-evidence-read.ts",
     "./permissions/tax.governed.read": "./shared/permissions/tax-governed-read.ts",
     "./permissions/tax.rule.manage": "./shared/permissions/tax-rule-manage.ts",

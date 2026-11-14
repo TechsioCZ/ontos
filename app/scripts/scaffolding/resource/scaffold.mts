@@ -29,24 +29,19 @@ const renderResource = (vertical: Pick<OntosVerticalMetadata, 'moduleId'>, resou
   const type = toPascalCase(resource);
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
   const resourceType = `${vertical.moduleId}.${resource}`;
-  let resourceIdValidation = 'Schema.isMinLength(1), Schema.isMaxLength(300)';
-  let resourceIdBrand = '';
-  if (core) {
-    resourceIdValidation = 'Schema.isUUID()';
-    resourceIdBrand = ".pipe(Schema.brand('LegalEntityId'))";
-    if (resource === 'person') {
-      resourceIdValidation =
-        "Schema.makeFilter((value) => value.split('.').length === 2 && value.split('.').every(Schema.is(Schema.String.check(Schema.isUUID()))) ? undefined : 'Expected company and principal UUIDs')";
-      resourceIdBrand = ".pipe(Schema.brand('PersonResourceId'))";
-    }
-  }
+  // Demo-only exception (Core people): a Core person is addressed by its company and principal UUIDs.
+  const corePerson = core && resource === 'person';
+  const coreIdValidation = corePerson
+    ? "Schema.makeFilter((value) => value.split('.').length === 2 && value.split('.').every(Schema.is(Schema.String.check(Schema.isUUID()))) ? undefined : 'Expected company and principal UUIDs')"
+    : 'Schema.isUUID()';
+  const coreIdBrand = corePerson ? ".pipe(Schema.brand('PersonResourceId'))" : ".pipe(Schema.brand('LegalEntityId'))";
   return `${RESOURCE_GENERATOR_HEADER}
 // @ontos-resource-owner ${vertical.moduleId}
 // @ontos-resource-slug ${resource}
 import type { OntosResourceType } from '${core ? '../modules/manifest.ts' : '@app/core-runtime'}';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(${resourceIdValidation})${resourceIdBrand};
+const ResourceIdSchema = Schema.String.check(${core ? coreIdValidation : 'Schema.isMinLength(1), Schema.isMaxLength(300)'})${core ? coreIdBrand : ''};
 const TenantIdSchema = Schema.String.check(Schema.isUUID())${core ? ".pipe(Schema.brand('TenantId'))" : ''};
 
 export const ${type}RefSchema = Schema.Struct({
@@ -75,6 +70,7 @@ export const ${descriptor} = {
 
 const isResourceDescriptor = (candidate: string): boolean => /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
 const CorePackageSchema = Schema.Struct({
+  // Demo-only exception (Core people): Core's package publishes conditional exports.
   exports: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
   name: Schema.Literal('@app/core-runtime'),
 });
@@ -131,6 +127,7 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
     requireCanonicalSlug(config.resource, 'resource'),
   );
   if (config.vertical === 'core') {
+    // Demo-only exception (Core people): the Core person resource is generated too.
     if (resource !== 'legal-entity' && resource !== 'person') {
       return yield* scaffoldFailure('Core Resource generation supports only legal-entity and person');
     }

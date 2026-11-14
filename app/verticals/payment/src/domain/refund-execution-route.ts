@@ -1,5 +1,6 @@
 import { Data, Match, Option, Result } from 'effect';
 
+import { isPickupCapabilityBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type {
   PaymentMethod,
@@ -34,6 +35,7 @@ export interface PaymentRefundRouteCandidate {
   readonly factFamily: PaymentSourceFactFamily;
   /** The method the authority is configured for; none means method-neutral. */
   readonly method: Option.Option<PaymentMethod>;
+  readonly pickupCapabilityRef?: string | undefined;
   readonly refundRoute: boolean;
   readonly revision: number;
   readonly sourceAuthorityId: string;
@@ -108,20 +110,30 @@ const gatewayTiers = (binding: PaymentExecutionBinding): RouteTiers =>
     PICKUP_CAPABILITY: (): RouteTiers => Result.fail('BINDING_METHOD_MISMATCH'),
   });
 
+const pickupTiers = (binding: PaymentExecutionBinding): RouteTiers => {
+  if (!isPickupCapabilityBinding(binding)) {
+    return Result.fail('BINDING_METHOD_MISMATCH');
+  }
+  const method = 'PAY_ON_PICKUP_OR_ON_SITE';
+  return Result.succeed([
+    ...methodTiers(
+      method,
+      (candidate) =>
+        candidate.sourceKind === 'LOCAL_POS_OPERATOR' && candidate.pickupCapabilityRef === binding.pickupCapabilityRef,
+    ),
+    // The fallback must be explicitly authorized for pickup; a method-neutral route never qualifies.
+    (candidate) =>
+      sourceKindIn('BANK_ACCOUNTING', 'MANUAL_EXTERNAL_REFUND')(candidate) && configuredFor(candidate, method),
+  ]);
+};
+
 const tiersFor = (method: PaymentMethod, binding: PaymentExecutionBinding): RouteTiers =>
   Match.value(method).pipe(
     Match.when('ONLINE_GATEWAY', () => gatewayTiers(binding)),
     Match.whenOr('BANK_TRANSFER_ADVANCE', 'CASH_ON_DELIVERY', 'DEFERRED_INVOICE', (merchantMethod): RouteTiers =>
       Result.succeed(methodTiers(merchantMethod, sourceKindIn('BANK_ACCOUNTING'))),
     ),
-    Match.when('PAY_ON_PICKUP_OR_ON_SITE', (pickup): RouteTiers =>
-      Result.succeed([
-        ...methodTiers(pickup, sourceKindIn('LOCAL_POS_OPERATOR')),
-        // The fallback must be explicitly authorized for pickup; a method-neutral route never qualifies.
-        (candidate) =>
-          sourceKindIn('BANK_ACCOUNTING', 'MANUAL_EXTERNAL_REFUND')(candidate) && configuredFor(candidate, pickup),
-      ]),
-    ),
+    Match.when('PAY_ON_PICKUP_OR_ON_SITE', () => pickupTiers(binding)),
     Match.exhaustive,
   );
 

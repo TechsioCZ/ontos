@@ -21,6 +21,7 @@ import {
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { requestPaymentCancellationAction } from '../../src/actions/request-payment-cancellation.action.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { makeTestScope, paymentTestRelations } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
@@ -98,6 +99,8 @@ const makeRuntimes = Effect.fn('ReconciliationGuards.makeRuntimes')(function* ma
 });
 
 const scenario = Effect.fn('ReconciliationGuards.scenario')(function* scenario() {
+  // Gateway dispatches admitted under R1 are completion-bound executor work of R1 (#1158).
+  yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
   const database = yield* nativeDatabase;
   const scope = yield* makeTestScope;
   yield* seedCoreScope(database, scope);
@@ -305,12 +308,13 @@ it.live('#1151 a receipt whose COLLECT no longer holds the attached outcome does
       });
       expect(yield* outcomesOf(evidence, payment.paymentId)).toEqual(['EFFECT_CONFIRMED']);
       // The COLLECT is put in CONFLICT: the attached outcome no longer stands, so the receipt is unaccounted.
-      const conflictCaseId = yield* evidence.openCase('UNRESOLVED_OPERATION', payment.paymentId, collect.operationId);
-      yield* evidence.decide({
-        caseId: conflictCaseId,
-        decision: { _tag: 'CLASSIFY_CONFLICT' },
-        reason: 'Provider and bank statements contradict',
-      });
+      yield* evidence.accept(
+        gopayStatement({
+          factKind: 'COLLECTION_NOT_EFFECTED',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
       expect(yield* outcomesOf(evidence, payment.paymentId)).toEqual(['CONFLICT']);
       const closed = yield* refusalOrAccepted(
         evidence.decide({
@@ -532,6 +536,7 @@ const refundNativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_R1),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -612,6 +617,7 @@ const expectGovernedExit = (
 it.live('#1150 an unattributed prior return held on the collection has a governed exit that counts it once', () =>
   native(
     Effect.gen(function* priorReturnExitRefundExecution() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const held = yield* priorReturnOnCollection(refundCase, 'REFUND_EXECUTION', 'gopay:refund:9');
       expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
@@ -623,6 +629,7 @@ it.live('#1150 an unattributed prior return held on the collection has a governe
 it.live('#1150 the same held prior return on the GATEWAY_OUTCOME family has a governed exit too', () =>
   native(
     Effect.gen(function* priorReturnExitGatewayOutcome() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const held = yield* priorReturnOnCollection(refundCase, 'GATEWAY_OUTCOME', 'gopay:refund:gw-40');
       expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');

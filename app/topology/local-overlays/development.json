@@ -30,7 +30,8 @@
     "facility-operations": "http://localhost:4126/.well-known/ontos-module-manifest.json",
     "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json",
     "payment": "http://localhost:4130/.well-known/ontos-module-manifest.json",
-    "promotion": "http://localhost:4131/.well-known/ontos-module-manifest.json"
+    "promotion": "http://localhost:4131/.well-known/ontos-module-manifest.json",
+      "symmy-integration": "http://localhost:4132/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -67,7 +68,8 @@
     "facility-operations": 4126,
     "crm": 4125,
     "payment": 4130,
-    "promotion": 4131
+    "promotion": 4131,
+      "symmy-integration": 4132
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -1655,6 +1657,54 @@
           "buildMarker": "8cd2bb6855e9f51c"
         }
       }
+    },
+    "symmy-integration": {
+      "apiBaseUrl": "http://localhost:4132/symmy-integration-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/symmy-integration",
+        "buildMarker": "d271b1bd0da558f4"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-symmy-integration",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SYMMY_INTEGRATION",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_SYMMY_INTEGRATION_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_SYMMY_INTEGRATION_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_SYMMY_INTEGRATION_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_SYMMY_INTEGRATION_WORKER",
+          "serviceBindingEnv": "VERTICAL_SYMMY_INTEGRATION_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_SYMMY_INTEGRATION_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_SYMMY_INTEGRATION_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalSymmyIntegrationBackend",
+        "manifestEnv": "VERTICAL_SYMMY_INTEGRATION_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4132/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4132/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/symmy-integration",
+          "buildMarker": "d271b1bd0da558f4"
+        }
+      }
     }
   },
   "apis": {
@@ -1688,6 +1738,7 @@
     "facility-operations": "http://localhost:4126/facility-operations-api",
     "crm": "http://localhost:4125/crm-api",
     "payment": "http://localhost:4130/payment-api",
-    "promotion": "http://localhost:4131/promotion-api"
+    "promotion": "http://localhost:4131/promotion-api",
+      "symmy-integration": "http://localhost:4132/symmy-integration-api"
   }
 }

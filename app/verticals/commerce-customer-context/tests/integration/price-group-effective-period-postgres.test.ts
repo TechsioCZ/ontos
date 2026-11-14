@@ -63,6 +63,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Match,
   Option,
   Path,
   Redacted,
@@ -83,11 +84,16 @@ import { executeRemoveCustomerPriceGroupWithAuthorization } from '../../src/api/
 import { executeRemoveCounterpartyPriceGroupWithAuthorization } from '../../src/api/remove-counterparty-price-group-action-client.ts';
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '../../src/api/customer-price-group-resolution-client.ts';
 import { executeCustomerPriceGroupAssignmentReadWithAuthorization } from '../../src/api/customer-price-group-assignment-read-client.ts';
+import { executeCustomerPriceGroupAssignmentReceiptWithAuthorization } from '../../src/api/customer-price-group-assignment-receipt-client.ts';
+import { CustomerPriceGroupAssignmentReceiptRequestSchema } from '../../shared/apis/customer-price-group-assignment-receipt.ts';
 import { CustomerPriceGroupAssignmentReadResponseSchema } from '../../shared/apis/customer-price-group-assignment-read.ts';
 import { EnsureRetailCustomerProfileResultSchema } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { CreateCounterpartyPurchasingProfileResultSchema } from '../../shared/actions/create-counterparty-purchasing-profile.ts';
 import { AssignCustomerPriceGroupResultSchema } from '../../shared/actions/assign-customer-price-group.ts';
-import { AssignCounterpartyPriceGroupResultSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
+import {
+  AssignCounterpartyPriceGroupResultSchema,
+  PersonalCounterpartyPriceGroupResultSchema,
+} from '../../shared/actions/assign-counterparty-price-group.ts';
 import { RemoveCustomerPriceGroupResultSchema } from '../../shared/actions/remove-customer-price-group.ts';
 import { RemoveCounterpartyPriceGroupResultSchema } from '../../shared/actions/remove-counterparty-price-group.ts';
 import { requireExecutionResult } from '../support/action-execution-result.ts';
@@ -96,10 +102,13 @@ import {
   AssignCustomerPriceGroupActionIneligibleProblemSchema,
   AssignCustomerPriceGroupActionNotFoundProblemSchema,
   AssignCustomerPriceGroupActionUnavailableProblemSchema,
+  AssignCustomerPriceGroupActionAlreadyCommittedProblemSchema,
 } from '../../shared/apis/assign-customer-price-group-action.ts';
 import {
   AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
   AssignCounterpartyPriceGroupActionNotFoundProblemSchema,
+  AssignCounterpartyPriceGroupActionAlreadyCommittedProblemSchema,
+  AssignCounterpartyPriceGroupActionUnavailableProblemSchema,
 } from '../../shared/apis/assign-counterparty-price-group-action.ts';
 import {
   CustomerPriceGroupResolutionCurrentnessEvidenceSchema,
@@ -480,31 +489,6 @@ const grantOwnerAccess = defineScopedRoutine({
   parameters: grantOwnerAccessParameters,
   resultSchema: Schema.Struct({ state: Schema.String }),
   routineKey: 'test.price-group-period.grant-owner-access',
-  schema: 'commerce_customer_context',
-});
-// The `before` schema still stages an owner grant and activates it in a second routine; the current one
-// writes the grant ACTIVE in `grant_access` itself.
-const beginOwnerGrant = defineScopedRoutine({
-  name: 'begin_access_grant',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: grantOwnerAccessParameters,
-  resultSchema: Schema.Struct({ grant_id: Schema.String, mutation_id: Schema.String }),
-  routineKey: 'test.price-group-period.begin-owner-access',
-  schema: 'commerce_customer_context',
-});
-const activateOwnerGrant = defineScopedRoutine({
-  name: 'transition_access_grant',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-  ],
-  resultSchema: Schema.Struct({ state: Schema.String }),
-  routineKey: 'test.price-group-period.activate-owner-access',
   schema: 'commerce_customer_context',
 });
 const PublicKeySchema = Schema.Struct({ crv: Schema.Literal('Ed25519'), kty: Schema.Literal('OKP'), x: Schema.String });
@@ -1167,7 +1151,8 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
     certificate: native.owned.certificate,
     effectiveAt: DateTime.formatIso(yield* DateTime.now),
     fixture: native.fixture,
-    mode: native.bootstrap.mode,
+    // Only the resolver body is historical; authorization routines use the full current schema.
+    mode: 'current',
     profileRef: retail.profileRef,
   });
   // The v2 capability alone cannot replace the owner-local grant.
@@ -1206,27 +1191,10 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
       'Scoped native PriceGroup permission precondition',
       false,
     ] as const;
-    if (native.bootstrap.mode === 'current') {
-      const [granted] = yield* native.fixture
-        .prepareOwner((transaction) => transaction.invoke(grantOwnerAccess, grantArguments), 'required')
-        .pipe(Effect.provide(ownerNamespace));
-      expect(granted).toEqual({ state: 'ACTIVE' });
-      return yield* Effect.void;
-    }
-    const [intent] = yield* native.fixture
-      .prepareOwner((transaction) => transaction.invoke(beginOwnerGrant, grantArguments), 'required')
+    const [granted] = yield* native.fixture
+      .prepareOwner((transaction) => transaction.invoke(grantOwnerAccess, grantArguments), 'required')
       .pipe(Effect.provide(ownerNamespace));
-    if (intent === undefined) {
-      return yield* fail('owner-access-intent-missing');
-    }
-    const [active] = yield* native.fixture
-      .prepareOwner(
-        (transaction) =>
-          transaction.invoke(activateOwnerGrant, [intent.grant_id, intent.mutation_id, 'grant', 'ACTIVE']),
-        'required',
-      )
-      .pipe(Effect.provide(ownerNamespace));
-    expect(active).toEqual({ state: 'ACTIVE' });
+    expect(granted).toEqual({ state: 'ACTIVE' });
     return yield* Effect.void;
   });
   yield* grantCounterpartyOwner('counterparty.profile.read', counterparty.counterpartyRef);
@@ -1409,10 +1377,23 @@ const verifyCurrentOwner = Effect.fn('TemporalNative.verifyCurrentOwner')(functi
       stdout: 'pipe',
     },
   ).pipe(Effect.provide(NodeServices.layer, { local: true }));
-  const [code] = yield* Effect.all(
-    [verification.exitCode, Stream.runDrain(verification.stderr), Stream.runDrain(verification.stdout)],
+  const [code, errors, output] = yield* Effect.all(
+    [
+      verification.exitCode,
+      verification.stderr.pipe(Stream.decodeText(), Stream.runCollect),
+      verification.stdout.pipe(Stream.decodeText(), Stream.runCollect),
+    ],
     { concurrency: 3 },
   );
+  if (code !== 0) {
+    const technical =
+      /(?:Commerce Customer Context database infrastructure is unsafe;|Table catalog mismatch;)[^\r\n]+/u.exec(
+        [...errors, ...output].join(''),
+      )?.[0];
+    if (technical !== undefined) {
+      yield* Effect.logError('Owned Commerce verifier rejected the native fixture', { infrastructure: technical });
+    }
+  }
   yield* requireCondition(code === 0, 'strict-current-owner-verifier');
 });
 const normalizeResolverBody = (body: string) => body.replaceAll('\r\n', '\n').trim();
@@ -1533,7 +1514,7 @@ const makeTemporalCase = Effect.fn('TemporalNative.case')(function* temporalCase
     schedule: { readonly effectiveTo?: string } = defaultSchedule,
   ) =>
     Effect.gen(function* assignCounterpartyThroughPublicClient() {
-      return yield* requireExecutionResult(
+      const executed = yield* requireExecutionResult(
         AssignCounterpartyPriceGroupResultSchema,
         executeAssignCounterpartyPriceGroupWithAuthorization(
           {
@@ -1550,6 +1531,7 @@ const makeTemporalCase = Effect.fn('TemporalNative.case')(function* temporalCase
           yield* native.options(),
         ),
       );
+      return yield* Schema.decodeUnknownEffect(Schema.toType(PersonalCounterpartyPriceGroupResultSchema))(executed);
     });
   return {
     assignCounterparty,
@@ -1564,6 +1546,251 @@ const makeTemporalCase = Effect.fn('TemporalNative.case')(function* temporalCase
     transition,
   };
 });
+const assignmentReceiptScenario = Effect.fn('TemporalNative.originalAssignmentReceipt')(
+  function* originalAssignmentReceipt() {
+    const { assignRetail, counterparty, counterpartyRef, native, retail, start, subjects, transition } =
+      yield* makeTemporalCase('current');
+    const payload = {
+      effectiveFrom: start,
+      expectedProfileRevision: subjects.retail.revision,
+      priceGroupRef: subjects.first.identity.priceGroupRef,
+      profile: retail,
+      reason: 'INTERNAL_CONTRACT explicit independent Price Group Assignment',
+    };
+    // This receiver has no Privacy fixture grant. A qualified source cannot inherit the human path's permission.
+    const withoutCurrentPrivacy = yield* Effect.flip(
+      executeAssignCustomerPriceGroupWithAuthorization(
+        {
+          ...payload,
+          source: {
+            effectId: 'price-assignment',
+            issuer: 'INTERNAL_CONTRACT',
+            mappingRevision: 'mapping-1',
+            namespace: 'customers',
+            occurrenceId: 'occurrence-1',
+            order: 1,
+            recordId: 'customer-1',
+            recordType: 'CUSTOMER',
+            revision: 'source-1',
+            route: { id: 'customers-import', revision: 'route-1' },
+          },
+        },
+        yield* native.credential(),
+        yield* nextId,
+        yield* native.options(),
+      ),
+    );
+    expect(
+      yield* Schema.decodeUnknownEffect(AssignCustomerPriceGroupActionUnavailableProblemSchema)(withoutCurrentPrivacy),
+    ).toMatchObject({ code: 'customer_price_group_profile_unavailable' });
+    yield* guardPriceGroupOwnedDatabase(native.owned.certificate);
+    const [beforeOriginal] = yield* native.owned.client.unsafe<{ readonly count: string }>(
+      'select count(*)::text as count from commerce_customer_context.customer_price_group_assignment_receipts',
+    );
+    expect(beforeOriginal?.count).toBe('0');
+    const options = yield* native.options();
+    const original = yield* requireExecutionResult(
+      AssignCustomerPriceGroupResultSchema,
+      executeAssignCustomerPriceGroupWithAuthorization(payload, yield* native.credential(), yield* nextId, options),
+    );
+    // Model a lost first response: recover the original invocation only by the saved exact command/key.
+    const recoverOriginal = Effect.gen(function* recoverOriginalInvocation() {
+      const response = yield* Effect.flip(
+        executeAssignCustomerPriceGroupWithAuthorization(payload, yield* native.credential(), yield* nextId, options),
+      );
+      return yield* Schema.decodeUnknownEffect(AssignCustomerPriceGroupActionAlreadyCommittedProblemSchema)(response);
+    });
+    const [first, concurrent] = yield* Effect.all([recoverOriginal, recoverOriginal], { concurrency: 2 });
+    expect(first.invocationId).toBe(concurrent.invocationId);
+    const changedOriginal = yield* Effect.flip(
+      executeAssignCustomerPriceGroupWithAuthorization(
+        { ...payload, reason: 'Changed original command under the same key' },
+        yield* native.credential(),
+        yield* nextId,
+        options,
+      ),
+    );
+    expect(
+      yield* Schema.decodeUnknownEffect(AssignCustomerPriceGroupActionConflictProblemSchema)(changedOriginal),
+    ).toMatchObject({ code: 'action_request_hash_conflict' });
+    const request = yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignmentReceiptRequestSchema)({
+      actionInvocationId: first.invocationId,
+      authorizationSubject: { kind: 'RETAIL' },
+      originalCommand: { _tag: 'RETAIL', payload },
+      profile: retail,
+    });
+    const readOriginal = (input = request) =>
+      Effect.gen(function* readOriginalAssignment() {
+        return yield* executeCustomerPriceGroupAssignmentReceiptWithAuthorization(
+          input,
+          yield* native.credential(),
+          yield* nextId,
+          yield* native.options(),
+        );
+      });
+    const beforeReplacement = yield* readOriginal();
+    expect(
+      Match.value(beforeReplacement).pipe(
+        Match.tag('COMMITTED', ({ receipt }) => receipt),
+        Match.tag('INDETERMINATE', () => null),
+        Match.exhaustive,
+      ),
+    ).toMatchObject({
+      actionInvocationId: first.invocationId,
+      assignmentRef: original.assignment.assignmentRef,
+      changed: true,
+      effectiveFrom: start,
+      effectiveTo: null,
+      priceGroupRef: payload.priceGroupRef,
+      profile: retail,
+      revision: original.assignment.revision,
+    });
+    const counterpartyPayload = {
+      ...payload,
+      counterpartyRef,
+      expectedProfileRevision: subjects.counterpartyProfile.revision,
+      profile: counterparty,
+    };
+    // An explicit company intent has its own governed capability; the human permission cannot supply it.
+    const unavailableCompany = yield* Effect.flip(
+      executeAssignCounterpartyPriceGroupWithAuthorization(
+        {
+          counterpartyRef,
+          effectiveFrom: payload.effectiveFrom,
+          expectedProfileRevision: subjects.counterpartyProfile.revision,
+          priceGroupRef: payload.priceGroupRef,
+          processingKind: 'ORGANIZATION_BUSINESS',
+          profile: counterparty,
+          source: {
+            effectId: 'company-price-assignment',
+            issuer: 'INTERNAL_CONTRACT',
+            mappingRevision: 'mapping-1',
+            namespace: 'companies',
+            occurrenceId: 'company-occurrence-1',
+            order: 1,
+            recordId: 'company-1',
+            recordType: 'ORGANIZATION',
+            revision: 'source-1',
+            route: { id: 'companies-import', revision: 'route-1' },
+          },
+        },
+        yield* native.credential(),
+        yield* nextId,
+        yield* native.options(),
+      ),
+    );
+    expect(
+      yield* Schema.decodeUnknownEffect(AssignCounterpartyPriceGroupActionUnavailableProblemSchema)(unavailableCompany),
+    ).toMatchObject({ code: 'customer_price_group_profile_unavailable' });
+    yield* guardPriceGroupOwnedDatabase(native.owned.certificate);
+    const [companyReceiptCount] = yield* native.owned.client.unsafe<{ readonly count: string }>(
+      "select count(*)::text as count from commerce_customer_context.customer_price_group_assignment_receipts where receipt->'profile'->>'resourceId'=$1",
+      [counterparty.resourceId],
+    );
+    expect(companyReceiptCount?.count).toBe('0');
+    const counterpartyOptions = yield* native.options();
+    const counterpartyOriginal = yield* requireExecutionResult(
+      AssignCounterpartyPriceGroupResultSchema,
+      executeAssignCounterpartyPriceGroupWithAuthorization(
+        counterpartyPayload,
+        yield* native.credential(),
+        yield* nextId,
+        counterpartyOptions,
+      ),
+    );
+    const counterpartyRetry = yield* Effect.flip(
+      executeAssignCounterpartyPriceGroupWithAuthorization(
+        counterpartyPayload,
+        yield* native.credential(),
+        yield* nextId,
+        counterpartyOptions,
+      ),
+    );
+    const counterpartyInvocation = yield* Schema.decodeUnknownEffect(
+      AssignCounterpartyPriceGroupActionAlreadyCommittedProblemSchema,
+    )(counterpartyRetry);
+    const counterpartyRequest = yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignmentReceiptRequestSchema)({
+      actionInvocationId: counterpartyInvocation.invocationId,
+      authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
+      originalCommand: { _tag: 'COUNTERPARTY', payload: counterpartyPayload },
+      profile: counterparty,
+    });
+    const counterpartyReceipt = yield* readOriginal(counterpartyRequest);
+    expect(
+      Match.value(counterpartyReceipt).pipe(
+        Match.tag('COMMITTED', ({ receipt }) => receipt),
+        Match.tag('INDETERMINATE', () => null),
+        Match.exhaustive,
+      ),
+    ).toMatchObject({
+      assignmentRef: counterpartyOriginal.assignment.assignmentRef,
+      changed: true,
+      profile: counterparty,
+    });
+    const replacement = yield* assignRetail(subjects.second.identity.priceGroupRef, transition);
+    expect(replacement.replacedAssignmentRef).toEqual(original.assignment.assignmentRef);
+    expect(yield* readOriginal()).toEqual(beforeReplacement);
+    const changedIntent = {
+      ...request,
+      originalCommand: { _tag: 'RETAIL' as const, payload: { ...payload, reason: 'Changed source meaning' } },
+    };
+    expect(
+      Match.value(yield* readOriginal(changedIntent)).pipe(
+        Match.tag('COMMITTED', () => false),
+        Match.tag('INDETERMINATE', ({ retryCommand }) => !retryCommand),
+        Match.exhaustive,
+      ),
+    ).toBe(true);
+    const absent = {
+      ...request,
+      actionInvocationId: yield* Schema.decodeUnknownEffect(
+        CustomerPriceGroupAssignmentReceiptRequestSchema.fields.actionInvocationId,
+      )(yield* nextId),
+    };
+    expect(
+      Match.value(yield* readOriginal(absent)).pipe(
+        Match.tag('COMMITTED', () => false),
+        Match.tag('INDETERMINATE', ({ retryCommand }) => !retryCommand),
+        Match.exhaustive,
+      ),
+    ).toBe(true);
+    const foreignTenant = yield* nextId;
+    const foreign = yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignmentReceiptRequestSchema)({
+      ...request,
+      originalCommand: {
+        _tag: 'RETAIL',
+        payload: {
+          ...payload,
+          priceGroupRef: { ...payload.priceGroupRef, tenantId: foreignTenant },
+          profile: { ...retail, tenantId: foreignTenant },
+        },
+      },
+      profile: { ...retail, tenantId: foreignTenant },
+    });
+    const refused = yield* readOriginal(foreign);
+    expect(
+      Match.value(refused).pipe(
+        Match.tag('COMMITTED', () => false),
+        Match.tag('INDETERMINATE', ({ retryCommand }) => !retryCommand),
+        Match.exhaustive,
+      ),
+    ).toBe(true);
+    yield* guardPriceGroupOwnedDatabase(native.owned.certificate);
+    const [count] = yield* native.owned.client.unsafe<{ readonly count: string }>(
+      'select count(*)::text as count from commerce_customer_context.customer_price_group_assignment_receipts where action_invocation_id = $1::uuid',
+      [first.invocationId],
+    );
+    expect(count?.count).toBe('1');
+    expect(
+      Match.value(beforeReplacement).pipe(
+        Match.tag('COMMITTED', ({ receipt }) => receipt),
+        Match.tag('INDETERMINATE', () => null),
+        Match.exhaustive,
+      ),
+    ).not.toHaveProperty('reason');
+  },
+);
+
 const temporalScenario = Effect.fn('TemporalNative.effectivePeriods')(function* effectivePeriods() {
   const {
     assignCounterparty,
@@ -1578,6 +1805,7 @@ const temporalScenario = Effect.fn('TemporalNative.effectivePeriods')(function* 
     transition,
   } = yield* makeTemporalCase('before');
   const originalMetadata = yield* nativeMetadata(native);
+  const originalJournal = yield* nativeJournal(native);
   const originalReceipt = yield* resolverReceipt(native, 'original');
   const firstRetail = yield* assignRetail(subjects.first.identity.priceGroupRef, start);
   const firstCounterparty = yield* assignCounterparty(subjects.first.identity.priceGroupRef, start);
@@ -1615,6 +1843,7 @@ const temporalScenario = Effect.fn('TemporalNative.effectivePeriods')(function* 
   const currentReceipt = yield* resolverReceipt(native, 'current');
   expect(currentReceipt.bodyDigest).not.toBe(originalReceipt.bodyDigest);
   const appliedJournal = yield* nativeJournal(native);
+  expect(appliedJournal).toEqual(originalJournal);
   yield* reapplyOwnerJournal(native);
   expect(yield* nativeJournal(native)).toEqual(appliedJournal);
   yield* verifyCurrentOwner(native);
@@ -2580,6 +2809,11 @@ it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalA
       memoMap: temporalArtifactMemoMap,
       timeout: 120_000,
     })((caseIt) => {
+      caseIt.effect(
+        'recovers an explicit original Price Group Assignment through real public owner receivers without replaying its mutation',
+        () => Effect.scoped(assignmentReceiptScenario()),
+        120_000,
+      );
       // The native runner's AbortSignal interrupts the Effect Scope and cleans up both real children.
       // This is one 20-second case budget, distinct from the owned fixture's setup-hook budget.
       caseIt.effect(
@@ -2595,7 +2829,7 @@ it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalA
       timeout: 120_000,
     })((caseIt) => {
       caseIt.effect(
-        'preserves actual Retail and Counterparty effective periods, forward journal identity, and restarted original audit',
+        'preserves actual Retail and Counterparty periods across the historical resolver body and real forward replacement without rewriting the journal or original audit',
         () => Effect.scoped(temporalScenario()),
         // Native scenario bodies measure 19–31s locally; keep headroom for the slower CI runner.
         120_000,

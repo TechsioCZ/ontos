@@ -3,7 +3,7 @@ import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Config } from 'effect';
 import { Url, UrlParams } from 'effect/http';
 
-import type { ShellSearchResponse } from '../../../../shared/api.ts';
+import type { ShellSearchResponse } from '../../../../shared/browser-api.ts';
 import { searchResources } from '../../../api/auth-client.ts';
 import type { ShellSearchClientError, ShellAuthenticationClientOptions } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';

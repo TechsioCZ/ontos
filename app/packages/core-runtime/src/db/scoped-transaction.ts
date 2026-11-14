@@ -208,31 +208,60 @@ const scopedTransactionExecutor = (
     update: transaction.update.bind(transaction),
   });
 
-const operationalScopeAuthority = (
-  transaction: OperationalScopeRawTransaction,
-  scope: OperationalScope,
-  enrollment: DatabaseIdentityEnrollment,
-): OperationalScopeAuthority => {
-  const scopeAssertion = readVerifiedGatewayScopeAssertion(scope);
-  const expectedRole =
-    scopeAssertion === undefined
-      ? Option.none<string>()
-      : gatewayScopeGrantRoleForAudience(enrollment, scopeAssertion.audience);
-  return scopeAssertion !== undefined && Option.isSome(expectedRole)
-    ? gatewayGrantScopeAuthority(transaction, scopeAssertion, enrollment, expectedRole.value)
-    : sessionSettingScopeAuthority(transaction, enrollment);
-};
+interface CurrentDatabaseRoleRow extends Record<string, unknown> {
+  readonly role: string;
+}
+
+/**
+ * The connected database role, not the presence of an assertion, chooses the scope authority:
+ * session-setting roles install settings, gateway-grant roles must carry an assertion for their own
+ * audience, and unknown or `none` roles fail closed.
+ */
+const operationalScopeAuthority = Effect.fn('OperationalScope.resolveDatabaseAuthority')(
+  function* operationalScopeAuthority(
+    transaction: OperationalScopeRawTransaction,
+    scope: OperationalScope,
+    enrollment: DatabaseIdentityEnrollment,
+  ): Effect.fn.Return<OperationalScopeAuthority, OperationContextUnavailable> {
+    const rows = yield* transaction
+      .execute<CurrentDatabaseRoleRow>(sql`select current_user::text as role`, 'objects')
+      .pipe(Effect.mapError(operationContextUnavailable));
+    const [row] = rows;
+    if (rows.length !== 1 || row === undefined || !Predicate.isString(row.role) || row.role.length === 0) {
+      return yield* operationContextUnavailable();
+    }
+    const authority = scopeAuthorityForRole(enrollment, row.role);
+    if (authority === 'session_setting') {
+      return sessionSettingScopeAuthority(transaction, enrollment);
+    }
+    if (authority === 'none') {
+      return yield* operationContextUnavailable();
+    }
+    const scopeAssertion = readVerifiedGatewayScopeAssertion(scope);
+    if (
+      scopeAssertion === undefined ||
+      !Option.contains(gatewayScopeGrantRoleForAudience(enrollment, scopeAssertion.audience), row.role)
+    ) {
+      return yield* operationContextUnavailable();
+    }
+    return gatewayGrantScopeAuthority(transaction, scopeAssertion, enrollment, row.role);
+  },
+);
 
 const operationalScopeTransactionFromCoreTransaction = (
   transaction: OperationalScopeRawTransaction,
   scope: OperationalScope,
   enrollment: DatabaseIdentityEnrollment,
 ): OperationalScopeTransactionService => {
-  const authority = operationalScopeAuthority(transaction, scope, enrollment);
+  let installedAuthority: OperationalScopeAuthority | undefined;
   return {
     delete: transaction.delete.bind(transaction),
     insert: transaction.insert.bind(transaction),
-    install: authority.install,
+    install: Effect.fn('OperationalScopeTransaction.installActualRole')(function* installActualRole(requestedScope) {
+      const authority = yield* operationalScopeAuthority(transaction, scope, enrollment);
+      yield* authority.install(requestedScope);
+      installedAuthority = authority;
+    }),
     scopedRoutineInvoker: (routineScope) =>
       scopedRoutineInvokerFromTransaction(
         (statement) => transaction.execute<ScopedRoutineRawRow>(statement, 'objects'),
@@ -240,7 +269,9 @@ const operationalScopeTransactionFromCoreTransaction = (
       ),
     select: transaction.select.bind(transaction),
     update: transaction.update.bind(transaction),
-    verify: authority.verify,
+    verify: Effect.suspend(() =>
+      installedAuthority === undefined ? Effect.fail(operationContextUnavailable()) : installedAuthority.verify,
+    ),
   };
 };
 

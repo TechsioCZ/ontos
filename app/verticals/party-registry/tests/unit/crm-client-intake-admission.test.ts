@@ -1,5 +1,5 @@
-import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
-import { ActionRuntime, collectAccessCatalog } from '@app/core-runtime';
+import { crmClientEvidenceReference } from '../../src/services/crm-client-evidence.ts';
+import { ActionRuntime, ReadPermissionDenied, collectAccessCatalog } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import { AccessScopeIdSchema, LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
@@ -7,7 +7,7 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/sys
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
-import { DateTime, Effect, Option, Result, Schema, Struct } from 'effect';
+import { DateTime, Effect, Option, Predicate, Result, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { createCrmClientPartyAction } from '../../src/actions/create-crm-client-party.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
@@ -120,6 +120,28 @@ it('client evidence is bounded, company-qualified and unambiguous for Unicode or
   expect(crmClientEvidenceReference(scope, 'a:b')).not.toBe(crmClientEvidenceReference(scope, 'a'));
 });
 
+it('client evidence keeps its published wire value (SHA-256 of the length-prefixed identity)', () => {
+  const scope = {
+    legalEntityId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '10000000-0000-4000-8000-000000000001',
+  };
+  expect(crmClientEvidenceReference(scope, 'client-1')).toBe(
+    'crm-client:9e9d4e97b6d8eea9ed6f17c9dcd980139968d0027cc56540ae1a73b3fc8164f3',
+  );
+  expect(crmClientEvidenceReference(scope, '')).toBe(
+    'crm-client:1418954ede073509d70cf5d0ef4771d720a2fe3540fcf8b1e8411e92ea304709',
+  );
+  expect(crmClientEvidenceReference(scope, '\uD800')).toBe(
+    'crm-client:98deea69df7f27fa95395376856dd219f1104a421389392249ea51946e5c1f99',
+  );
+  expect(crmClientEvidenceReference(scope, 'Pekárna Novák 🍞')).toBe(
+    'crm-client:214525b5d8f3f0b8a6adc930331b72ac9c698643322d270fa62a5dac4638272b',
+  );
+  expect(crmClientEvidenceReference(scope, 'x'.repeat(300))).toBe(
+    'crm-client:a43944894e886636fdad94be331d9bb5a14c6719341a7518d628f02c348eb5cb',
+  );
+});
+
 it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
   suite.effect(
     'native purpose Action and Read deny humans, unbound workload and module-less service before owner work',
@@ -156,7 +178,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
               transport: { correlationId: 'exclusive-negative', idempotencyKey: `exclusive-${kind}-${bound}` },
             })
             .pipe(Effect.flip);
-          expect(refused._tag).toBe('ActionPermissionDenied');
+          expect(Predicate.isTagged(refused, 'ActionPermissionDenied')).toBe(true);
           expect(harness.snapshot().committed).toEqual([]);
           expect(harness.snapshot().transactionCount).toBe(0);
           const reads = yield* makeReadTestHarness({
@@ -197,7 +219,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
               }),
               Effect.flip,
             );
-          expect(deniedRead._tag, deniedRead.reason).toBe('ReadPermissionDenied');
+          expect(Schema.is(ReadPermissionDenied)(deniedRead), deniedRead.reason).toBe(true);
         }
       }),
   );
@@ -291,7 +313,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'stale-composition', idempotencyKey: 'crm-party-intake:stale' },
           })
           .pipe(Effect.flip);
-        expect(stale._tag).toBe('ActionTransactionError');
+        expect(Predicate.isTagged(stale, 'ActionTransactionError')).toBe(true);
         expect(created).toBe(0);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().invocations).toHaveLength(1);
@@ -316,7 +338,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'bad-client', idempotencyKey: 'crm-party-intake:bad' },
           })
           .pipe(Effect.flip);
-        expect(bad._tag).toBe('PartyEvidenceInsufficient');
+        expect(Predicate.isTagged(bad, 'PartyEvidenceInsufficient')).toBe(true);
         expect(created).toBe(1);
         const foreign = yield* harness.runtime
           .runAction({
@@ -325,7 +347,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'foreign-company', idempotencyKey: 'crm-party-intake:foreign' },
           })
           .pipe(Effect.flip);
-        expect(foreign._tag).toBe('PartyEvidenceInsufficient');
+        expect(Predicate.isTagged(foreign, 'PartyEvidenceInsufficient')).toBe(true);
         expect(created).toBe(1);
         const unattested = yield* harness.runtime
           .runAction({
@@ -334,7 +356,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'missing-attestation', idempotencyKey: 'crm-party-intake:unattested' },
           })
           .pipe(Effect.flip);
-        expect(unattested._tag).toBe('PartyEvidenceInsufficient');
+        expect(Predicate.isTagged(unattested, 'PartyEvidenceInsufficient')).toBe(true);
         expect(created).toBe(1);
       }),
   );

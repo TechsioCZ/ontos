@@ -10,6 +10,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'assortment-fixture-market-association': () =>
+        import('./src/api/assortment-fixture-market-association-client.ts'),
       'current-market-catalog': () => import('./src/api/current-market-catalog-client.ts'),
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
       'market-administration': () => import('./src/api/market-administration-client.ts'),

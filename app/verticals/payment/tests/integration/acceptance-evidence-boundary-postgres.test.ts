@@ -30,7 +30,11 @@ import { issuePaymentAuthorizationAction } from '../../src/actions/issue-payment
 import { paymentAuthorizationValidationRead } from '../../src/api/payment-authorization-validation.read.ts';
 import type { PaymentRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { makeAuthorizationOwnerEvidenceFixture } from '../support/authorization-owner-evidence.fixture.ts';
+import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
+import {
+  authorizationAttemptFor,
+  makeAuthorizationOwnerEvidenceFixture,
+} from '../support/authorization-owner-evidence.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
@@ -200,6 +204,7 @@ const boundaryScenario = Effect.fn('AcceptanceEvidenceBoundary.scenario')(functi
     frozenT,
     issueProof,
     outcomeChanges,
+    owners,
     validateProof,
   };
 });
@@ -246,6 +251,9 @@ const provenCollection = Effect.fn('AcceptanceEvidenceBoundary.provenCollection'
 ) {
   const confirmed = yield* confirmedCollection(scenario);
   const binding = bindingFor(confirmed.payment, yield* scenario.frozenT);
+  yield* scenario.owners.putAttempt(
+    yield* authorizationAttemptFor(binding, confirmed.payment.purchasingContext, scenario.evidence.scope),
+  );
   const issued = yield* scenario.issueProof(binding);
   const validation = yield* scenario.validateProof(issued.proof.authorizationId, binding);
   expect(validation.outcome).toBe('VALID');
@@ -329,7 +337,7 @@ it.live(
     native(
       Effect.gen(function* lateRefund() {
         const scenario = yield* boundaryScenario();
-        const { authorizationId, binding, collect, payment, receipt } = yield* provenCollection(scenario);
+        const { authorizationId, binding, collect, payment } = yield* provenCollection(scenario);
         const refund = yield* scenario.evidence.startOperation({
           amountMinor: 40_000,
           kind: 'REFUND',
@@ -339,13 +347,17 @@ it.live(
             _tag: 'REFUNDABLE_ITEMS',
             items: [{ amountMinor: 40_000, currency: 'CZK', itemRef: 'line-1', sourceEvidenceRef: 'order-line-1' }],
           },
-          refundExecutionRoute: yield* scenario.evidence.refundRouteOf(receipt.sourceAuthorityId),
+          refundExecutionRoute: yield* configuredRefundExecutionRouteFor(
+            scenario.evidence.native.database,
+            scenario.evidence.scope,
+            payment.executionBinding,
+          ),
           targetOperationId: collect.operationId,
         });
         const confirmedRefund = yield* scenario.accept({
           amount: czk(40_000),
           economicEffectKey: `gopay:refund:${refund.operationId}`,
-          factFamily: 'GATEWAY_OUTCOME',
+          factFamily: 'REFUND_EXECUTION',
           factKind: 'REFUND_CONFIRMED',
           operationId: refund.operationId,
           paymentId: payment.paymentId,

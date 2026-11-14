@@ -20,10 +20,11 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
+import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -129,7 +130,10 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
         Layer.mock(LegalEntityContext, {}),
         Layer.mock(ReadRuntime, {}),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        Layer.mock(ShellGovernedReads, { composition: readComposition }),
+        Layer.mock(ShellGovernedReads, {
+          composition: readComposition,
+          tenantModuleTargetCarrier: tenantModuleTargetTestCarrier,
+        }),
         Layer.mock(GatewayIssuer, { issueDocument: issue }),
       ),
     ),

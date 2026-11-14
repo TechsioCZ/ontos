@@ -18,8 +18,8 @@ import {
   stopSignal,
 } from '../../zerops/app-host.mts';
 import { withKeepAlive } from '../../zerops/http-keep-alive.mts';
-import { makeHostRefusalLog } from '../../zerops/host-refusal-log.mts';
-import { makeSupersedeDrain } from '../../zerops/supersede-drain.mts';
+import { HostRefusals, HostRefusalsLive } from '../../zerops/host-refusal-log.mts';
+import { SupersedeDrains, SupersedeDrainsLive } from '../../zerops/supersede-drain.mts';
 
 const unit = Effect.gen(function* unitAnswer() {
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -45,12 +45,12 @@ const program = Effect.gen(function* stopSignalHost() {
   const publicScope = yield* Scope.fork(scope, 'sequential');
   const unitPort = yield* serveOn(unit, scope);
   const published = yield* Ref.make(true);
-  const drain = makeSupersedeDrain();
+  const drain = yield* SupersedeDrains;
   const app = hostApplication(
     new Map([['crm', unitPort]]),
     published,
     Effect.succeed(Option.none<string>()),
-    makeHostRefusalLog(),
+    yield* HostRefusals,
     drain,
   );
   // The public server exactly as the host makes it: kept-alive connections and its stop bounds included.
@@ -81,6 +81,12 @@ const program = Effect.gen(function* stopSignalHost() {
 });
 
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(program.pipe(Effect.scoped, Effect.raceFirst(stopSignal)));
+  const exit = await Effect.runPromiseExit(
+    program.pipe(
+      Effect.scoped,
+      Effect.raceFirst(stopSignal),
+      Effect.provide(Layer.merge(HostRefusalsLive, SupersedeDrainsLive)),
+    ),
+  );
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

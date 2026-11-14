@@ -13,6 +13,7 @@ import {
   PrincipalResolverLive,
   runAction,
   TrustedPrincipalContextSchema,
+  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
@@ -26,13 +27,13 @@ import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeSocket } fro
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
 import { Config, Console, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
 import { Reactivity } from 'effect/reactivity';
 
 import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
@@ -159,10 +160,19 @@ const serve = Effect.scoped(
     }
     const crypto = yield* Crypto.Crypto;
     const suffix = yield* crypto.randomUUIDv4();
-    const composition = yield* Config.schema(
-      Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
-      'ONTOS_1258_TEST_COMPOSITION',
-    );
+    const compositionUrl = yield* Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL');
+    const expectedRevision = yield* Config.String('ONTOS_1258_TEST_REVISION');
+    const composition = yield* Effect.gen(function* loadFixtureComposition() {
+      const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+      const response = yield* client.get(compositionUrl);
+      const snapshot = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(yield* response.text);
+      if (snapshot.composition.revision !== expectedRevision) {
+        return yield* new PrivacyCompletionShellFailure({ reason: 'Fixture composition revision does not match' });
+      }
+      return yield* validateActiveApplicationCompositionSnapshot(snapshot);
+    }).pipe(Effect.provide(FetchHttpClient.layer));
     const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
     const expectedDatabase = yield* Config.String('ONTOS_1258_TEST_DATABASE');
     const expectedUser = yield* Config.String('ONTOS_1258_TEST_RUNTIME');

@@ -3,7 +3,7 @@
 // agenda documents (~270 kB on Nájempark), so the overview read computes them here and ships only the result.
 // Pure functions over the decoded agenda states the person may read; owned by the ops-agenda lane.
 import { Schema } from 'effect';
-import type { DateTime } from 'effect';
+import type { DateTime, Types } from 'effect';
 import { AgendaStateSchema } from './agenda.ts';
 import type { CalendarEvent } from './agenda.ts';
 import type { AgendaId } from './common.ts';
@@ -107,7 +107,7 @@ export const eventDeadlines = (events: readonly CalendarEvent[]): Deadline[] =>
     if (event.status === 'CANCELLED') {
       return [];
     }
-    const deadline: { -readonly [K in keyof Deadline]: Deadline[K] } = {
+    const deadline: Types.Mutable<Deadline> = {
       category: 'event',
       date: day(event.date),
       detail: event.kind,
@@ -304,7 +304,7 @@ const scanHit = (
 ): ScanHit => {
   const { closed, href, location, recordId, title } = context;
   const kind = isString(entry['kind']) ? entry['kind'] : '';
-  const hit: { -readonly [K in keyof ScanHit]: ScanHit[K] } = {
+  const hit: Types.Mutable<ScanHit> = {
     agenda,
     closed,
     date: day(value),
@@ -343,7 +343,7 @@ const scanRecords = (
         hits.push(scanHit(agenda, entry, field, value, context, parent));
       } else if (depth < 3 && (isArray(value) || isRecord(value))) {
         // Contract terms and inventory follow-ups are nested objects, not arrays.
-        const nextParent: { -readonly [K in keyof ScanParent]: ScanParent[K] } = {
+        const nextParent: Types.Mutable<ScanParent> = {
           closed: context.closed,
           href: context.href,
           id: `${context.recordId}:${field}`,
@@ -380,7 +380,7 @@ export const opsAgendaDeadlines = (agenda: string, state: OverviewValue): Deadli
     }
   }
   return [...latest.values()].map((hit): Deadline => {
-    const deadline: { -readonly [K in keyof Deadline]: Deadline[K] } = {
+    const deadline: Types.Mutable<Deadline> = {
       category: categoryOfField(hit.field, hit.agenda),
       date: hit.date,
       detail: hit.parentTitle !== undefined && hit.parentTitle !== hit.title ? hit.parentTitle : hit.agenda,
@@ -411,7 +411,7 @@ export const openOpsIncidents = (agenda: string, state: OverviewValue): OpsIncid
       if (!isRecord(entry) || isClosedRecord(entry)) {
         return [];
       }
-      const incident: { -readonly [K in keyof OpsIncident]: OpsIncident[K] } = {
+      const incident: Types.Mutable<OpsIncident> = {
         agenda,
         id: isString(entry['id']) ? entry['id'] : `${agenda}:${key}#${index}`,
         title: titleOf(entry) ?? (isString(entry['description']) ? entry['description'] : key),

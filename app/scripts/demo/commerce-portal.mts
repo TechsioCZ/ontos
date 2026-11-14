@@ -27,6 +27,7 @@ import { NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
+import { SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
@@ -158,7 +159,6 @@ const GatewayBodySchema = Schema.Struct({
   compositionRevision: Schema.String,
   legalEntityId: Schema.toEncoded(Schema.String.pipe(Schema.brand('LegalEntityId'))),
 });
-const SECURE_COOKIE_PREFIX = '__Secure-';
 const shellConfig = Config.all({
   compositionUrl: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
     Config.withDefault('http://127.0.0.1:3041/active'),

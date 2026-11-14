@@ -1,8 +1,9 @@
 // Records that hang off one business case (opportunity): its tasks, contracts and orders/offers in the owning modules.
 import { documentNavigationModules } from '@app/shared-contracts';
-import { listOrders } from '@app/merchandise/clients/records';
+import { RecordsRequestSchema as MerchandiseRecordsRequestSchema } from '@app/merchandise/apis/records';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
-import { listTasks } from '@app/work-tasks/clients/records';
+import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { useHeldSnapshot } from '@app/admin-ui';
 import { Data, Effect, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
@@ -11,6 +12,10 @@ import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
+/** Work Tasks records for this view, each read under its own correlation. */
+const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
 
 /** One related list: hidden when the module is not part of this company, `unavailable` when its read failed. */
 export type RelatedSection<Item> =
@@ -114,9 +119,11 @@ export const loadOpportunityRelated = (
             'demo.merchandise',
             correlation('orders').pipe(
               Effect.flatMap((id) =>
-                listOrders(id, { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 }),
+                Schema.decodeEffect(MerchandiseRecordsRequestSchema)({
+                  view: { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 },
+                }).pipe(Effect.flatMap((request) => executeMerchandiseRecords(request, id))),
               ),
-              Effect.map((orders) =>
+              Effect.map(({ orders }) =>
                 orders.map((order): RelatedOrder => ({
                   id: order.id,
                   number: order.number,

@@ -132,7 +132,7 @@ describe('the provisioning channel', () => {
   it.live('fails a child that exits without success, whatever it wrote', () =>
     Effect.gen(function* failedChild() {
       const exit = yield* Effect.exit(captureChannel('failing-probe', ['--eval', 'process.exit(3)'], {}));
-      expect(exit._tag).toBe('Failure');
+      expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

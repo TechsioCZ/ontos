@@ -99,6 +99,18 @@ describe('Commerce portal roles', () => {
     }
   });
 
+  it('lets an authorized Counterparty assignment author open exact receipt recovery', () => {
+    expect(COUNTERPARTY_CUSTOMER_PORTAL_ROLE.capabilities).toContain(
+      'commerce.customer-context.counterparty-price-group.assign',
+    );
+    expect(COUNTERPARTY_CUSTOMER_PORTAL_ROLE.capabilities).toContain(
+      'commerce.customer-context.customer-price-group-assignment-receipt.read',
+    );
+    expect(RETAIL_CUSTOMER_PORTAL_ROLE.capabilities).not.toContain(
+      'commerce.customer-context.customer-price-group-assignment-receipt.read',
+    );
+  });
+
   it('compiles each role into one run cell per capability against a release of this module', () => {
     for (const role of ROLES) {
       const pinned = Result.getOrThrow(portalRoleRelease(role, releaseRowsOf(role)));

@@ -1,5 +1,5 @@
-import type { ShellNavigationItem } from './api.ts';
-import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from './api.ts';
+import type { ShellNavigationItem } from './browser-api.ts';
+import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from './browser-api.ts';
 
 /**
  * Navigation section of in-module AI approval pages. They stay in their modules but leave the sidebar: the platform

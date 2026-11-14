@@ -1,11 +1,10 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreflight,
   ActionServicePreparationContext,
   ActionTargetSetAdmission,
-  ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import type { EmployeeId } from '../../shared/apis/records.ts';
@@ -77,31 +76,30 @@ export const prepareApplyCommandServices = Effect.fn('Workforce.prepareApplyComm
       });
     }
     yield* prepareWorkforceCommand(payload.command, context.scope);
-    return Effect.fn('Workforce.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
-      const now = DateTime.toEpochMillis(yield* DateTime.now);
-      const age = now - DateTime.toEpochMillis(preparedAt);
-      const deadline = targetSetAdmission?.decision.admissionDeadline;
-      if (
-        age < 0 ||
-        age >= 30_000 ||
-        (deadline !== undefined && now >= deadline.getTime()) ||
-        !samePrincipal(scope, context.scope) ||
-        scope.tenantId !== context.scope.tenantId ||
-        scope.legalEntityId !== context.scope.legalEntityId ||
-        scope.correlationId !== context.scope.correlationId ||
-        compositionRevision !== context.compositionRevision
-      ) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Prepared Workforce permissions expired or belong to another operation',
-        });
-      }
-      return yield* persistenceService(transaction, { prepared: payload, scope });
-    });
+    const factory: ActionServiceFactory<Services> = Effect.fn('Workforce.revalidatePreparedCommand')(
+      function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const age = now - DateTime.toEpochMillis(preparedAt);
+        const deadline = targetSetAdmission?.decision.admissionDeadline;
+        if (
+          age < 0 ||
+          age >= 30_000 ||
+          (deadline !== undefined && now >= deadline.getTime()) ||
+          !samePrincipal(scope, context.scope) ||
+          scope.tenantId !== context.scope.tenantId ||
+          scope.legalEntityId !== context.scope.legalEntityId ||
+          scope.correlationId !== context.scope.correlationId ||
+          compositionRevision !== context.compositionRevision
+        ) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Prepared Workforce permissions expired or belong to another operation',
+          });
+        }
+        return yield* persistenceService(transaction, { prepared: payload, scope });
+      },
+    );
+    return factory;
   },
 ) satisfies ActionServicePreflight<
   WorkforceCommandPayload,

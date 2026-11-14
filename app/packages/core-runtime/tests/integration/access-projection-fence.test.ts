@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Clock, Context, Deferred, Duration, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
+import { LockTimeoutError } from 'effect/sql/SqlError';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -59,7 +60,10 @@ const deployment: readonly AccessCatalogModule[] = [
   },
 ];
 
-const FenceRowSchema = Schema.Struct({ owning_operation_id: Schema.NullOr(Schema.String), state: Schema.String });
+const FenceRowSchema = Schema.Struct({
+  owning_operation_id: Schema.OptionFromNullOr(Schema.String),
+  state: Schema.String,
+});
 const JournalRowSchema = Schema.Struct({ operation_id: Schema.String, phase: Schema.String });
 
 export const tenantFence = (admin: PgClient.PgClient, tenantId: TenantId) =>
@@ -94,7 +98,7 @@ export const bootstrapTenant = (tenantId: TenantId) =>
   });
 
 const DEAD_HOLDER = scenarioUid(900);
-const LeaseRowSchema = Schema.Struct({ lease_live: Schema.NullOr(Schema.Boolean) });
+const LeaseRowSchema = Schema.Struct({ lease_live: Schema.OptionFromNullOr(Schema.Boolean) });
 
 /**
  * What a holder that died in the middle of its engine write leaves behind (OOM kill, SIGKILL, host loss): its
@@ -464,7 +468,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           yield* Deferred.succeed(gate.letGo, true);
           yield* Fiber.join(stopping);
           expect(yield* Ref.get(gate.finished)).toBe(true);
-          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
           expect((yield* journals(admin, tenantId)).at(-1)?.phase).toBe('committed');
         }),
       );
@@ -484,7 +488,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
           expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
           expect(yield* tenantFence(admin, tenantId)).toEqual([
-            { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
+            { owning_operation_id: Option.some(DEAD_HOLDER), state: 'Changing' },
           ]);
           // Each refused attempt ended its own journal as `fence_refused`: none is left `validated` with nobody to
           // finish it.
@@ -495,12 +499,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           const recovered = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
           expect(recovered.verified).toBe(true);
           // The fence opens only after the taker's whole reconcile committed, and the dead holder can never resume.
-          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
           expect(yield* journalOf(admin, DEAD_HOLDER)).toEqual([{ failure_code: 'lease_expired', phase: 'failed' }]);
           expect(yield* journalOf(admin, recovered.operationId)).toEqual([{ failure_code: null, phase: 'committed' }]);
           // And the next reconcile is an ordinary one.
           yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
-          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
         }),
       ),
   );
@@ -523,7 +527,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
           yield* idleJournal(admin, '36 minutes');
           yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
-          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
         }),
       ),
   );
@@ -545,15 +549,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           const writer = yield* AccessProjectionWriter;
           const holder = yield* writer.reconcileTenant({ scope }).pipe(Effect.forkChild);
           yield* Deferred.await(gate.entered);
-          expect(yield* leaseLive(admin, tenantId)).toEqual([{ lease_live: true }]);
+          expect(yield* leaseLive(admin, tenantId)).toEqual([{ lease_live: Option.some(true) }]);
           const [held] = yield* tenantFence(admin, tenantId);
           yield* Ref.set(gate.armed, false);
           expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
           expect(yield* tenantFence(admin, tenantId)).toEqual([held]);
           yield* Deferred.succeed(gate.letGo, true);
           yield* Fiber.join(holder).pipe(Effect.orDie);
-          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
-          expect(yield* leaseLive(admin, tenantId)).toEqual([{ lease_live: null }]);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
+          expect(yield* leaseLive(admin, tenantId)).toEqual([{ lease_live: Option.none() }]);
         }),
       );
     }),
@@ -578,11 +582,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             const [held] = yield* tenantFence(admin, tenantId);
             // The graph may be half-written by the dead holder: the fence does not open on a failed reconcile.
             expect(held?.state).toBe('Changing');
-            expect(held?.owning_operation_id).not.toBe(DEAD_HOLDER);
+            expect(held?.owning_operation_id).not.toEqual(Option.some(DEAD_HOLDER));
             yield* Ref.set(failing, false);
             yield* lapseLease(admin, tenantId);
             yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
           }),
       );
     }),
@@ -620,7 +626,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
             expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
             expect((yield* journalPhases(admin, tenantId)).slice(-3)).toEqual(['failed', 'committed', 'committed']);
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
           }),
       );
     }),
@@ -641,7 +649,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             expect(yield* Ref.get(failures)).toBe(96);
             const [held] = yield* tenantFence(admin, tenantId);
             const failed = yield* lastJournal(admin, tenantId);
-            expect(held).toEqual({ owning_operation_id: failed?.operation_id, state: 'Changing' });
+            expect(held).toEqual({
+              owning_operation_id: Option.fromNullishOr(failed?.operation_id),
+              state: 'Changing',
+            });
             expect(yield* journalOf(admin, failed?.operation_id ?? '')).toEqual([
               { failure_code: 'projection_failed', phase: 'failed' },
             ]);
@@ -659,7 +670,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             // Once the lease lapsed the next reconcile takes the fence over and opens it on a full projection.
             yield* lapseLease(admin, tenantId);
             yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
           }),
       );
     }),
@@ -676,7 +689,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             yield* Ref.set(failing, true);
             const writer = yield* AccessProjectionWriter;
             yield* refusalOf(writer.reconcileTenant({ scope }));
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
             expect((yield* lastJournal(admin, tenantId))?.phase).toBe('failed');
           }),
       );
@@ -696,7 +711,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
             expect(written.verified).toBe(true);
             expect(yield* journalOf(admin, written.operationId)).toEqual([{ failure_code: null, phase: 'committed' }]);
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
           }),
       );
     }),
@@ -731,7 +748,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             expect(yield* refusalOf(Fiber.join(holder))).toContain('no longer holds');
             expect(yield* Ref.get(gate.wroteAfterLoss)).toBe(false);
             expect(yield* tenantFence(admin, tenantId)).toEqual([
-              { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
+              { owning_operation_id: Option.some(DEAD_HOLDER), state: 'Changing' },
             ]);
           }),
       );
@@ -752,7 +769,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         expect(yield* journals(admin, tenantId)).toHaveLength(before.length + 1);
         yield* lapseLease(admin, tenantId);
         expect(yield* sweepLapsedAccessFences(backoffs, 'tick-3')).toEqual({ ...idle, healed: [tenantId] });
-        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
         expect(yield* journalOf(admin, DEAD_HOLDER)).toEqual([{ failure_code: 'lease_expired', phase: 'failed' }]);
         expect(yield* sweepLapsedAccessFences(backoffs, 'tick-4')).toEqual(idle);
       }),
@@ -790,7 +807,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             yield* Ref.set(failing, false);
             yield* TestClock.adjust('121 seconds').pipe(Effect.provide(clock));
             expect(yield* sweep('tick-4')).toEqual({ busy: [], deferred: 0, failed: [], healed: [tenantId] });
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
           }),
       );
     }),
@@ -898,7 +917,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
               });
               expect((yield* Ref.get(backoffs)).size).toBe(0);
               expect(yield* tenantFence(admin, tenantId)).toEqual([
-                { owning_operation_id: OTHER_HEALER, state: 'Changing' },
+                { owning_operation_id: Option.some(OTHER_HEALER), state: 'Changing' },
               ]);
             }),
         );
@@ -920,7 +939,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         );
         expect(reports.flatMap(({ healed }) => healed)).toEqual([tenantId]);
         expect(reports.flatMap(({ failed }) => failed)).toEqual([]);
-        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
       }),
     ),
   );
@@ -936,7 +955,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         yield* holderReleases(admin, tenantId);
         const activated = yield* Fiber.join(activation);
         expect(activated.tenants.find((entry) => entry.tenantId === tenantId)?.outcome).not.toBe('failed');
-        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
       }),
     ),
   );
@@ -965,7 +984,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             const writer = yield* AccessProjectionWriter;
             const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
             expect(written.deletions).toBeGreaterThan(0);
-            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: Option.none(), state: 'Ready' },
+            ]);
             // The first take-over ended its journal when the intent moved; the second took the fence from it at once.
             expect((yield* journalPhases(admin, tenantId)).slice(-2)).toEqual(['failed', 'committed']);
             const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
@@ -986,7 +1007,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual(idle);
         yield* idleJournal(admin, '36 minutes');
         expect(yield* sweepLapsedAccessFences(backoffs, 'tick-2')).toEqual({ ...idle, healed: [tenantId] });
-        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
       }),
     ),
   );
@@ -1006,7 +1027,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           const started = yield* Clock.currentTimeMillis;
           const refused = yield* Effect.flip(applyLeaseMigration(admin, statements));
           expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(15_000);
-          expect(refused.cause._tag).toBe('LockTimeoutError');
+          expect(Schema.is(LockTimeoutError)(refused.cause)).toBe(true);
           yield* Deferred.succeed(lock.release, true);
           yield* Fiber.join(action);
           // Run again once the Action committed, the migration applies.

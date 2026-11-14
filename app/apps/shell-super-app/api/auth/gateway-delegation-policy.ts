@@ -1,3 +1,8 @@
+import { OntosRegisteredWorkloadCallSchema, registeredWorkloadCallReceiverIssue } from '@app/core-runtime';
+import type { OntosRegisteredWorkloadCall, RegisteredWorkloadCallReceiver } from '@app/core-runtime';
+import type { ModuleEntrypointAccess } from '@app/core-runtime/module-entrypoint';
+import type { FiniteGatewayOperationTarget } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import type { ModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
 import { GatewayAudienceSchema } from '@app/shared-contracts';
 import { Effect, Option, Schema } from 'effect';
@@ -17,12 +22,14 @@ export {
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
 
 /**
- * One module credential's binding: the key's provider id, the module it belongs to, and the build and release that
- * module runs. The platform derives it from its own enrolment and the installed release; nothing configures it.
+ * One module credential's binding: the key's provider id, the module it belongs to, the build and release that
+ * module runs, and the registered-workload calls that build declares in its manifest. The platform derives it from
+ * its own enrolment and the installed release; nothing configures it.
  */
 export const GatewayModuleBindingSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   providerKeyId: nonEmpty.pipe(Schema.brand('GatewayModuleCredentialId')),
+  registeredWorkloads: Schema.optionalKey(Schema.Array(OntosRegisteredWorkloadCallSchema)),
   sourceAppId: GatewayAudienceSchema,
   sourceBuildMarker: nonEmpty,
 });
@@ -36,18 +43,44 @@ const bindingsSchema = Schema.Array(GatewayModuleBindingSchema).check(
   ),
 );
 
+/** The parts of an installed contract the derivation reads: its deployment and, when present, its manifest. */
+interface DerivationContract {
+  readonly deployment: { readonly appId: string; readonly buildMarker: string };
+  readonly manifest?: RegisteredWorkloadCallReceiver['manifest'] & {
+    readonly registeredWorkloadCalls?: readonly OntosRegisteredWorkloadCall[];
+  };
+}
+
+/**
+ * The calls the attested source contract declares that its receiver, as installed now, still takes. A call is dropped
+ * unless the installed receiver publishes its exact operation version with that declaration and that workload, so a
+ * receiver that was removed, replaced or changed never inherits a caller's earlier declaration.
+ */
+const receivedCalls = (source: DerivationContract, contracts: readonly DerivationContract[]) =>
+  (source.manifest?.registeredWorkloadCalls ?? []).filter((call) => {
+    const receiver = contracts.find((candidate) => candidate.deployment.appId === call.audience);
+    return (
+      registeredWorkloadCallReceiverIssue(
+        call,
+        receiver?.manifest === undefined ? undefined : { deployment: receiver.deployment, manifest: receiver.manifest },
+      ) === undefined
+    );
+  });
+
 /**
  * The bindings of the installed release. A credential binds only what its issuing host attested with the key: its
  * module, that module's build marker and the composition revision of the issuing host's release. It binds while the
  * installed release has exactly that build of that module at exactly that revision, and nothing otherwise, so during a
  * deploy overlap only the keys issued for the release that holds the authority bind; an older or newer host's keys,
- * a key without an attestation and a key of a module this release does not install all bind nothing.
+ * a key without an attestation and a key of a module this release does not install all bind nothing. A binding
+ * carries the registered-workload calls of exactly that attested contract (demo divergence exception 8); no
+ * configuration, table or request adds one.
  */
 export const deriveGatewayModuleBindings = (
   enrolment: readonly Pick<AttestedModuleCredential, 'appId' | 'attestation' | 'providerKeyId'>[],
   installed: {
     readonly composition: { readonly revision: string };
-    readonly contracts: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
+    readonly contracts: readonly DerivationContract[];
   },
 ) =>
   Schema.decodeUnknownEffect(bindingsSchema)(
@@ -57,19 +90,23 @@ export const deriveGatewayModuleBindings = (
       }
       const attested = credential.attestation.value;
       const contract = installed.contracts.find((candidate) => candidate.deployment.appId === credential.appId);
-      return contract === undefined ||
+      if (
+        contract === undefined ||
         attested.appId !== credential.appId ||
         attested.buildMarker !== contract.deployment.buildMarker ||
         attested.compositionRevision !== installed.composition.revision
-        ? []
-        : [
-            {
-              compositionRevision: attested.compositionRevision,
-              providerKeyId: credential.providerKeyId,
-              sourceAppId: credential.appId,
-              sourceBuildMarker: attested.buildMarker,
-            },
-          ];
+      ) {
+        return [];
+      }
+      const binding = {
+        compositionRevision: attested.compositionRevision,
+        providerKeyId: credential.providerKeyId,
+        sourceAppId: credential.appId,
+        sourceBuildMarker: attested.buildMarker,
+      };
+      return contract.manifest?.registeredWorkloadCalls === undefined
+        ? [binding]
+        : [{ ...binding, registeredWorkloads: receivedCalls(contract, installed.contracts) }];
     }),
   ).pipe(Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })));
 
@@ -123,3 +160,208 @@ export const bindingAttestsSource = (
   binding.sourceBuildMarker === source.targetBuildMarker &&
   binding.compositionRevision === source.compositionRevision &&
   requestedCompositionRevision === source.compositionRevision;
+
+export type GatewayRegisteredWorkloadRule = NonNullable<GatewayModuleBinding['registeredWorkloads']>[number];
+type InstalledContract = ShellInstalledCatalog['contracts'][number];
+
+/** Lifecycle authority comes from the exact advertised operation, never from a caller's mode. */
+export const gatewayPublishedOperationAccess = (
+  contract: InstalledContract,
+  entrypointKey: string,
+  schemaVersion: string,
+): ModuleEntrypointAccess | undefined => {
+  const action = contract.manifest.publicSurface.actions.find(
+    (candidate) => candidate.entrypoint.entrypointKey === entrypointKey && candidate.schemaVersion === schemaVersion,
+  );
+  const operation = contract.manifest.publicSurface.operationContracts?.find(
+    (candidate) => candidate.entrypoint.entrypointKey === entrypointKey && candidate.schemaVersion === schemaVersion,
+  );
+  if (action !== undefined && operation !== undefined && action.entrypoint.access !== operation.entrypoint.access) {
+    return undefined;
+  }
+  return action?.entrypoint.access ?? operation?.entrypoint.access;
+};
+
+/** Select one deployed version for an already approved finite capability. */
+export const resolvePublishedFiniteGatewayTarget = (
+  destination: InstalledContract,
+  approved: FiniteGatewayOperationTarget,
+) => {
+  if (destination.deployment.appId !== approved.appId || destination.manifest.module.id !== approved.moduleId) {
+    return Option.none();
+  }
+  const { actions, operationContracts } = destination.manifest.publicSurface;
+  const versions = new Set<string>();
+  for (const operation of [...actions, ...(operationContracts ?? [])]) {
+    if (operation.entrypoint.entrypointKey === approved.entrypointKey) {
+      versions.add(operation.schemaVersion);
+    }
+  }
+  const [schemaVersion] = versions;
+  if (
+    versions.size !== 1 ||
+    schemaVersion === undefined ||
+    gatewayPublishedOperationAccess(destination, approved.entrypointKey, schemaVersion) !== approved.access
+  ) {
+    return Option.none();
+  }
+  return Option.some(Object.freeze({ ...approved, schemaVersion }));
+};
+
+/** Derived only from the authenticated incoming operation and its one requested branch declaration. */
+export interface GatewayConditionalOperationWitness {
+  readonly requirementKey: string;
+  readonly sourceEntrypointKey: string;
+  readonly sourceSchemaVersion: string;
+}
+
+type ConditionalConsumer = Pick<GatewayConditionalOperationWitness, 'requirementKey' | 'sourceEntrypointKey'>;
+const conditionalProviderAllows = (
+  source: InstalledContract,
+  destination: InstalledContract,
+  rule: GatewayRegisteredWorkloadRule,
+  witness: ConditionalConsumer,
+): boolean => {
+  const requirements =
+    source.manifest.requirements?.operations.filter((requirement) => requirement.key === witness.requirementKey) ?? [];
+  const [requirement] = requirements;
+  return (
+    requirements.length === 1 &&
+    requirement !== undefined &&
+    requirement.entrypointKey === witness.sourceEntrypointKey &&
+    requirement.provider.moduleId === destination.manifest.module.id &&
+    requirement.provider.entrypointKey === rule.entrypointKey &&
+    requirement.provider.schemaVersion === rule.schemaVersion
+  );
+};
+const conditionalOperationAllows = (
+  source: InstalledContract,
+  destination: InstalledContract,
+  rule: GatewayRegisteredWorkloadRule,
+  witness: GatewayConditionalOperationWitness,
+): boolean =>
+  gatewayPublishedOperationAccess(source, witness.sourceEntrypointKey, witness.sourceSchemaVersion) !== undefined &&
+  conditionalProviderAllows(source, destination, rule, witness);
+
+const receivingOperationContractAllows = (
+  destination: InstalledContract,
+  rule: GatewayRegisteredWorkloadRule,
+  legalEntityId: string | undefined,
+): boolean => {
+  const target = destination.manifest.publicSurface.actions.find(
+    (action) => action.entrypoint.entrypointKey === rule.entrypointKey && action.schemaVersion === rule.schemaVersion,
+  );
+  const read = destination.manifest.publicSurface.operationContracts?.find(
+    (operation) =>
+      operation.entrypoint.entrypointKey === rule.entrypointKey && operation.schemaVersion === rule.schemaVersion,
+  );
+  const receivingActionAllows =
+    target === undefined ||
+    (target.accessDeclaration?.key === rule.declarationKey &&
+      target.legalEntityScope === rule.legalEntityScope &&
+      target.accessWorkload?.workloads.some((key) => key === rule.workloadKey) === true);
+  const scopeAllows =
+    rule.legalEntityScope === 'optional' ||
+    (rule.legalEntityScope === 'forbidden' ? legalEntityId === undefined : legalEntityId !== undefined);
+  return (target !== undefined || read !== undefined) && receivingActionAllows && scopeAllows;
+};
+
+/** One exact intrinsic or authenticated conditional requirement must match the receiver's public operation. */
+export const gatewayRegisteredOperationContractAllows = (
+  source: InstalledContract,
+  destination: InstalledContract,
+  rule: GatewayRegisteredWorkloadRule,
+  legalEntityId: string | undefined,
+  conditionalWitness?: GatewayConditionalOperationWitness,
+): boolean => {
+  const intrinsic = source.manifest.requirements?.intrinsic.some(
+    (requirement) =>
+      requirement.moduleId === destination.manifest.module.id &&
+      requirement.requiredOperations.some(
+        (operation) => operation.entrypointKey === rule.entrypointKey && operation.schemaVersion === rule.schemaVersion,
+      ),
+  );
+  const sourceAllows =
+    conditionalWitness === undefined
+      ? intrinsic === true
+      : conditionalOperationAllows(source, destination, rule, conditionalWitness);
+  return sourceAllows && receivingOperationContractAllows(destination, rule, legalEntityId);
+};
+
+/** Native delivery facts identify a registered worker; workers do not advertise a schema version. */
+export interface GatewayConditionalWorkerWitness {
+  readonly consumerModuleKey: string;
+  readonly producerModuleKey: string;
+  readonly requirementKey: string;
+  readonly topic: string;
+  readonly workerKey: string;
+}
+export const gatewayRegisteredWorkerOperationContractAllows = (
+  source: InstalledContract,
+  destination: InstalledContract,
+  rule: GatewayRegisteredWorkloadRule,
+  legalEntityId: string | undefined,
+  witness: GatewayConditionalWorkerWitness,
+): boolean => {
+  if (
+    rule.workerKey !== witness.workerKey ||
+    rule.sourceActionKey !== undefined ||
+    rule.sourceWorkloadKey !== undefined
+  ) {
+    return false;
+  }
+  const subscriptions = source.runtime.outboxSubscriptions.filter(
+    (subscription) =>
+      subscription.workerKey === witness.workerKey &&
+      subscription.consumerModuleKey === witness.consumerModuleKey &&
+      subscription.producerModuleKey === witness.producerModuleKey &&
+      subscription.topic === witness.topic &&
+      subscription.consumerModuleKey === source.manifest.module.id &&
+      subscription.entrypoint.entrypointKey === subscription.workerKey &&
+      subscription.entrypoint.moduleKey === subscription.consumerModuleKey,
+  );
+  const [subscription] = subscriptions;
+  return (
+    subscriptions.length === 1 &&
+    subscription !== undefined &&
+    conditionalProviderAllows(source, destination, rule, {
+      requirementKey: witness.requirementKey,
+      sourceEntrypointKey: subscription.entrypoint.entrypointKey,
+    }) &&
+    receivingOperationContractAllows(destination, rule, legalEntityId)
+  );
+};
+
+/** The ledger records the Action key; this witness checks its current public contract, not a historical version. */
+export interface GatewayConditionalAdmissionWitness {
+  readonly admissionActionKey: string;
+  readonly requirementKey: string;
+}
+export const gatewayRegisteredAdmissionOperationContractAllows = (
+  source: InstalledContract,
+  destination: InstalledContract,
+  rule: GatewayRegisteredWorkloadRule,
+  legalEntityId: string | undefined,
+  witness: GatewayConditionalAdmissionWitness,
+): boolean => {
+  if (
+    rule.sourceActionKey !== witness.admissionActionKey ||
+    rule.workerKey !== undefined ||
+    rule.sourceWorkloadKey !== undefined
+  ) {
+    return false;
+  }
+  const actions = source.manifest.publicSurface.actions.filter(
+    (action) => action.actionKey === witness.admissionActionKey,
+  );
+  const [action] = actions;
+  return (
+    actions.length === 1 &&
+    action !== undefined &&
+    conditionalProviderAllows(source, destination, rule, {
+      requirementKey: witness.requirementKey,
+      sourceEntrypointKey: action.entrypoint.entrypointKey,
+    }) &&
+    receivingOperationContractAllows(destination, rule, legalEntityId)
+  );
+};

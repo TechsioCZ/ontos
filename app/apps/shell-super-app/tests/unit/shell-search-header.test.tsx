@@ -7,8 +7,8 @@ import type {
   ShellSearchPresentationInventory,
   ShellSearchResponse,
   ShellSearchResult,
-} from '../../shared/api.ts';
-import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
+import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/browser-api.ts';
 import { ShellSearchBar } from '../../src/routes/shell-search-bar.tsx';
 import { shellSearchPresentationIndex, shellSearchResultTarget } from '../../src/routes/shell-search-resource-types.ts';
 import type { ShellSearchFamilyAvailability } from '../../src/routes/shell-search-match.ts';

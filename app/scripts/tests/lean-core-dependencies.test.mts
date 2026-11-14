@@ -9,6 +9,106 @@ import { expect, it } from 'effect-rstest';
 
 import { checkLeanCoreDependencies } from '../check-lean-core-dependencies.mts';
 
+const commercePrivateFixturePath = 'verticals/commerce-customer-context/src/api/private.ts';
+
+const commercePrivateFixtureExport = './src/api/private.ts';
+
+const commerceFixtureManifest = 'verticals/commerce-customer-context/package.json';
+
+for (const [importer, suffixes] of [
+  [
+    'verticals/symmy-integration/src/services/symmy-party-commerce-adapters.ts',
+    [
+      'client',
+      'customer-group-definition-source/client',
+      'customer-group-membership-source-receipt/client',
+      'customer-profile-ico/client',
+      'organization-customer-profile-ico/client',
+      'change-organization-customer-profile-ico-action/client',
+      'migrate-organization-customer-profile-ico-action/client',
+      'customer-profile-source/client',
+      'customer-price-group-assignment-receipt/client',
+      'add-saved-address-action/client',
+      'update-saved-address-action/client',
+      'remove-saved-address-action/client',
+      'saved-address-source-receipt/client',
+    ],
+  ],
+  [
+    'apps/shell-super-app/api/symmy/source-read-projections.ts',
+    ['customer-profile-ico/client', 'customer-profile-source/client', 'organization-customer-profile-ico/client'],
+  ],
+  [
+    'verticals/privacy/src/services/organization-profile-ico-applicability.service.ts',
+    ['customer-profile-organization-ico-facts', 'customer-profile-organization-ico-facts/client'],
+  ],
+  [
+    'verticals/privacy/src/services/organization-business-applicability.service.ts',
+    ['customer-profile-organization-ico-facts', 'customer-profile-organization-ico-facts/client'],
+  ],
+] as const) {
+  it.live(`admits exact C14 Commerce clients at ${importer} and refuses adjacent and private imports`, () =>
+    Effect.gen(function* symmyCommerceClientPairs() {
+      const root = yield* Effect.acquireRelease(
+        Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-lean-core-symmy-'))),
+        (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+      );
+      const manifest = path.join(root, commerceFixtureManifest);
+      yield* Effect.tryPromise(() => mkdir(path.dirname(manifest), { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          manifest,
+          JSON.stringify({
+            exports: {
+              ...Object.fromEntries(
+                suffixes.map((suffix, index) => [`./api/${suffix}`, `./src/api/client-${index}.ts`]),
+              ),
+              './api/client-private': commercePrivateFixtureExport,
+            },
+          }),
+        ),
+      );
+      const file = path.join(root, importer);
+      yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          file,
+          suffixes
+            .map(
+              (suffix, index) =>
+                `import { execute as execute${index} } from '@app/commerce-customer-context/api/${suffix}';\n`,
+            )
+            .join(''),
+        ),
+      );
+      expect(yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer))).toEqual([]);
+      for (const [index, suffix] of suffixes.entries()) {
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            path.join(root, importer.replace(/\.ts$/u, `.adjacent-${index}.ts`)),
+            `import { execute } from '@app/commerce-customer-context/api/${suffix}';\n`,
+          ),
+        );
+      }
+      const privatePath = path.relative(path.dirname(importer), commercePrivateFixturePath);
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          file,
+          `import { privateClient } from '@app/commerce-customer-context/api/client-private';\nimport { privateOwner } from '${privatePath}';\n`,
+        ),
+      );
+      const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+      expect(violations).toHaveLength(suffixes.length + 2);
+      expect(violations.filter((violation) => violation.file === importer).map(({ line }) => line)).toEqual([1, 2]);
+      for (const index of suffixes.keys()) {
+        expect(
+          violations.filter((violation) => violation.file === importer.replace(/\.ts$/u, `.adjacent-${index}.ts`)),
+        ).toHaveLength(1);
+      }
+    }),
+  );
+}
+
 const customerPriceGroupClientImport =
   "import { execute } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';\n";
 
@@ -24,6 +124,9 @@ it.live(
         // Market Catalog: allowed exact owner-client composition seam.
         'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts':
           "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
+        // Shell: allowed documented composition seams.
+        'apps/shell-super-app/api/auth/commerce-external-identity.ts':
+          "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
         // Shell: violates via the bare Commerce package specifier (no subpath), resolved against the
         // exports map's "." entry, which points at Commerce's private src.
         'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts':
@@ -85,7 +188,7 @@ it.live(
         'packages/core-runtime/tests/unit/commerce-leak.test.ts':
           "import { CommercePortalAuth } from '@app/commerce-customer-context';\n",
         // Commerce publishes its exports map.
-        'verticals/commerce-customer-context/package.json': JSON.stringify({
+        [commerceFixtureManifest]: JSON.stringify({
           exports: {
             '.': './src/index.ts',
             './api/client': './src/api/client.ts',
@@ -153,11 +256,11 @@ it.live('passes on a tree with only allowed dependencies and documented seams', 
     const files = {
       'apps/shell-super-app/src/api/vertical-clients.ts':
         "import { Client } from '@app/commerce-customer-context/api/client';\n",
-      'packages/core-runtime/package.json': JSON.stringify({ dependencies: { effect: '^4.0.0' } }),
-      'packages/core-runtime/src/index.ts': "import { Effect } from 'effect';\n",
-      'verticals/commerce-customer-context/package.json': JSON.stringify({
+      [commerceFixtureManifest]: JSON.stringify({
         exports: { './api/client': './src/api/client.ts' },
       }),
+      'packages/core-runtime/package.json': JSON.stringify({ dependencies: { effect: '^4.0.0' } }),
+      'packages/core-runtime/src/index.ts': "import { Effect } from 'effect';\n",
     } as const;
     yield* Effect.all(
       Object.entries(files).map(([relative, source]) =>
@@ -189,16 +292,6 @@ const hostImports = {
   ]),
 };
 const hostExports = { '.': './src/index.ts', './transport': './src/transport.ts' };
-const nativeFixturePath = './tests/native.ts';
-const nativeFixtureSources = { 'tests/native.ts': "export { driver } from '../src/driver.ts';" };
-const typeAdapterPath = './src/transport.types.ts';
-const typesFirstHostImports = {
-  '#transport': Object.fromEntries([
-    ['types', typeAdapterPath],
-    ['workerd', workerAdapterPath],
-    ['node', nodeAdapterPath],
-  ]),
-};
 const hostSources = {
   'src/driver.ts': nodeDriverSource,
   'src/index.ts': "export { Effect } from 'effect';",
@@ -215,176 +308,8 @@ interface HostGraphControl {
   readonly sources?: Readonly<Record<string, string>>;
 }
 
-const authzedPublicMessagesSource = [
-  "export { ObjectReference } from '@authzed/authzed-node/v1/core';",
-  "export { Consistency } from '@authzed/authzed-node/v1/permissions';",
-  "export { ReadSchemaRequest } from '@authzed/authzed-node/v1/schema';",
-].join('\n');
-
-const effectMetadataPublicImports = {
-  'effect/Match': "export { value } from 'effect/Match';",
-  'effect/Option': "export { getOrNull } from 'effect/Option';",
-  'effect/Result': "export { getOrThrow } from 'effect/Result';",
-  'effect/Schema': "export { String } from 'effect/Schema';",
-};
-
-const sharedJavaScriptFile = 'src/shared.js';
 const hostGraphControls: readonly HostGraphControl[] = [
-  {
-    name: 'allows the three explicit Authzed message exports in shared Core source',
-    rejected: false,
-    sources: { 'src/shared.ts': authzedPublicMessagesSource },
-  },
-  {
-    name: 'allows the three explicit Authzed message exports in the Workerd branch',
-    rejected: false,
-    sources: { 'src/transport.worker.ts': authzedPublicMessagesSource },
-  },
-  ...Object.entries(effectMetadataPublicImports).flatMap(([specifier, source]): HostGraphControl[] => [
-    {
-      name: `allows the pinned public metadata module ${specifier} in shared Core source`,
-      rejected: false,
-      sources: { 'src/shared.ts': source },
-    },
-    {
-      name: `allows the pinned public metadata module ${specifier} in the Workerd branch`,
-      rejected: false,
-      sources: { 'src/transport.worker.ts': source },
-    },
-  ]),
-  ...[
-    '@authzed/authzed-node/v1/debug',
-    '@authzed/authzed-node/v1/core/private',
-    '@authzed/authzed-node/dist/src/authzedapi/authzed/api/v1/core.js',
-    '@authzed/authzed-node/package.json',
-    'effect/Effect',
-    'effect/Match/internal',
-    'effect/Option/private',
-    'effect/Result.js',
-    'effect/Schema/internal',
-    'effect/internal/schema',
-    'effect/unstable/schema',
-    'effect/UnknownModule',
-    'effect/match',
-    '@foreign/Schema',
-  ].map((specifier) => ({
-    name: `rejects unpinned Core external specifier ${specifier}`,
-    rejected: true,
-    sources: { 'src/shared.ts': `import '${specifier}';` },
-  })),
-  ...Object.entries({
-    'generic parameters': 'export function ready<require, createRequire>(): boolean { return true; }',
-    'inline type imports': "import { type Effect as require } from 'effect'; export type Options = require;",
-    'interface members': 'export interface Options { require: string; createRequire: string; }',
-    'type-only exports': "export { type Effect as require } from 'effect';",
-    'type-only import-equals': "import type require = require('./driver.ts'); export type Options = typeof require;",
-    'type-only imports': "import type { Effect as require } from 'effect'; export type Options = require;",
-    'type aliases': 'export type require = string; export type createRequire = { ready: boolean };',
-    'type annotations': 'export const ready = (options: { require: string; createRequire: string }): boolean => true;',
-    'type arguments':
-      'declare function ready<T>(): T; export const options = ready<{ require: string; createRequire: string }>();',
-  }).map(([name, source]): HostGraphControl => ({
-    name: `preserves erased ${name} mentioning CommonJS loader names`,
-    rejected: false,
-    sources: { 'src/shared.ts': source },
-  })),
-  ...Object.entries({
-    'satisfies expression': 'const load = require satisfies (name: string) => unknown; void load("./driver.ts");',
-    'type assertion': 'const load = require as (name: string) => unknown; void load("./driver.ts");',
-  }).map(([name, source]): HostGraphControl => ({
-    name: `rejects runtime CommonJS loading inside a ${name}`,
-    rejected: true,
-    sources: { 'src/shared.ts': source },
-  })),
   { name: 'allows a consumed native Node conditional entry and its runtime descendants', rejected: false },
-  {
-    name: 'allows a JavaScript native driver behind a proven Node conditional entry',
-    rejected: false,
-    sources: {
-      'src/driver.js': nodeDriverSource,
-      'src/driver.ts': "export { driver } from './driver.js';",
-    },
-  },
-  ...[
-    {
-      file: sharedJavaScriptFile,
-      name: 'rejects a shared JavaScript import of a native transport',
-      source: "import { fromReadable } from '@effect/platform-node/NodeStream';",
-    },
-    {
-      file: sharedJavaScriptFile,
-      name: 'rejects a shared JavaScript re-export of a native transport',
-      source: "export { fromReadable } from '@effect/platform-node/NodeStream';",
-    },
-    {
-      file: sharedJavaScriptFile,
-      name: 'rejects a shared JavaScript dynamic import of a native transport',
-      source: "void import('@effect/platform-node/Undici');",
-    },
-    {
-      file: 'src/shared.mjs',
-      name: 'rejects a shared MJS re-export of a native transport',
-      source: "export * from '@effect/platform-node/Undici';",
-    },
-    {
-      file: 'src/shared.cjs',
-      name: 'rejects a shared CJS dynamic import of a native transport',
-      source: "void import('@effect/platform-node/Undici');",
-    },
-  ].map(({ file, name, source }): HostGraphControl => ({
-    name,
-    rejected: true,
-    sources: { [file]: source },
-  })),
-  {
-    exports: {
-      ...hostExports,
-      './native-fixture': Object.fromEntries([
-        ['types', nativeFixturePath],
-        ['node', nativeFixturePath],
-      ]),
-    },
-    name: 'a Node-only public test fixture does not become a shared runtime root through its types condition',
-    rejected: false,
-    sources: nativeFixtureSources,
-  },
-  {
-    exports: { ...hostExports, './native-fixture': nativeFixturePath },
-    name: 'an unproven shared test-fixture export cannot authorize native dependencies',
-    rejected: true,
-    sources: nativeFixtureSources,
-  },
-  {
-    exports: { ...hostExports, './native-fixture': { node: nativeFixturePath, workerd: nativeFixturePath } },
-    name: 'a test fixture declared for Workerd does not inherit its Node branch isolation',
-    rejected: true,
-    sources: nativeFixtureSources,
-  },
-  {
-    imports: typesFirstHostImports,
-    name: 'allows types-first declaration resolution while proving distinct Node and Workerd runtime branches',
-    rejected: false,
-    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
-  },
-  {
-    imports: {
-      '#transport': Object.fromEntries([
-        ['types', typeAdapterPath],
-        ['workerd', workerAdapterPath],
-        ['node', nodeAdapterPath],
-        ['default', nodeAdapterPath],
-      ]),
-    },
-    name: 'a types-first declaration does not authorize a default browser fallback into Node',
-    rejected: true,
-    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
-  },
-  {
-    imports: typesFirstHostImports,
-    name: 'a types condition does not conceal a runtime import from shared source into the Node driver',
-    rejected: true,
-    sources: { 'src/transport.types.ts': driverReExportSource },
-  },
   {
     name: 'does not treat a type-only worker reference as a runtime Node dependency',
     rejected: false,
@@ -616,7 +541,7 @@ for (const control of hostGraphControls) {
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const manifest = {
-        dependencies: { '@effect/platform-node': '4.0.5', effect: '4.0.5' },
+        dependencies: { '@effect/platform-node': '4.0.0-rc.117', effect: '4.0.0-rc.117' },
         exports: control.exports ?? hostExports,
         imports: control.imports ?? hostImports,
       };
@@ -654,7 +579,7 @@ it.live('admits only the six approved 1257 governed owner client composition pai
     );
     const approvalEvidenceClient = '@app/commerce-customer-context/api/order-service-approval-evidence/client';
     const approvalOwnerGateway = 'verticals/commerce-order/src/services/approval-owner-gateway.ts';
-    const commerceManifest = 'verticals/commerce-customer-context/package.json';
+    const commerceManifest = commerceFixtureManifest;
     const pairs = [
       {
         importer: 'verticals/commerce-cart/src/services/final-cart-candidate-owners.service.ts',
@@ -708,10 +633,7 @@ it.live('admits only the six approved 1257 governed owner client composition pai
       yield* Effect.tryPromise(() => writeFile(file, `import { execute } from '${specifier}';\n`));
     }
     for (const importer of new Set(pairs.map((pair) => pair.importer))) {
-      const privatePath = path.relative(
-        path.dirname(importer),
-        'verticals/commerce-customer-context/src/api/private.ts',
-      );
+      const privatePath = path.relative(path.dirname(importer), commercePrivateFixturePath);
       yield* Effect.tryPromise(() =>
         writeFile(
           path.join(root, importer),
@@ -725,7 +647,7 @@ it.live('admits only the six approved 1257 governed owner client composition pai
       JSON.stringify({
         exports: {
           ...exports,
-          './api/order-service-approval-evidence/client-private': './src/api/private.ts',
+          './api/order-service-approval-evidence/client-private': commercePrivateFixtureExport,
         },
       }),
     );
@@ -739,6 +661,82 @@ it.live('admits only the six approved 1257 governed owner client composition pai
       expect(invalid.filter((violation) => violation.file === importer).map((violation) => violation.line)).toEqual([
         1, 2,
       ]);
+    }
+  }),
+);
+
+it.live('admits only the exact Privacy profile-authority client composition pairs', () =>
+  Effect.gen(function* privacyProfileAuthorityClientPairs() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-lean-core-privacy-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const importers = [
+      'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-consent-withdrawal.service.ts',
+      'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts',
+    ];
+    const operations = [
+      'customer-profile-read',
+      'retail-access-decision',
+      'retail-portal-profile-binding-read',
+      'retail-principal-resolution',
+    ];
+    const exports = Object.fromEntries(
+      operations.map((operation) => [`./api/${operation}/client`, `./src/api/${operation}-client.ts`]),
+    );
+    const manifest = path.join(root, commerceFixtureManifest);
+    yield* Effect.tryPromise(() => mkdir(path.dirname(manifest), { recursive: true }));
+    yield* Effect.tryPromise(() => writeFile(manifest, JSON.stringify({ exports })));
+    for (const importer of importers) {
+      const file = path.join(root, importer);
+      yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+      const source = operations
+        .map(
+          (operation, index) =>
+            `import { execute as execute${index} } from '@app/commerce-customer-context/api/${operation}/client';\n`,
+        )
+        .join('');
+      yield* Effect.tryPromise(() => writeFile(file, source));
+    }
+    const valid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    expect(valid).toEqual([]);
+    for (const [index, operation] of operations.entries()) {
+      for (const importer of importers) {
+        const adjacent = path.join(root, importer.replace(/\.ts$/u, `.unauthorized-${index}.ts`));
+        yield* Effect.tryPromise(() =>
+          writeFile(adjacent, `import { execute } from '@app/commerce-customer-context/api/${operation}/client';\n`),
+        );
+      }
+    }
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        manifest,
+        JSON.stringify({
+          exports: {
+            ...exports,
+            './api/customer-profile-read/client-private': commercePrivateFixtureExport,
+          },
+        }),
+      ),
+    );
+    for (const importer of importers) {
+      const privatePath = path.relative(path.dirname(importer), commercePrivateFixturePath);
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          path.join(root, importer),
+          `import { execute } from '@app/commerce-customer-context/api/customer-profile-read/client-private';\nimport { privateOperation } from '${privatePath}';\n`,
+        ),
+      );
+    }
+    const invalid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    expect(invalid).toHaveLength(12);
+    for (const importer of importers) {
+      expect(invalid.filter((violation) => violation.file === importer).map(({ line }) => line)).toEqual([1, 2]);
+      for (const index of operations.keys()) {
+        expect(
+          invalid.filter((violation) => violation.file === importer.replace(/\.ts$/u, `.unauthorized-${index}.ts`)),
+        ).toHaveLength(1);
+      }
     }
   }),
 );

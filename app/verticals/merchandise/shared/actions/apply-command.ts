@@ -186,7 +186,7 @@ const ApplyAiProposeChangesCommandSchema = Schema.TaggedStruct('AiProposeChanges
 });
 
 const ApplyAiDecideChangesCommandSchema = Schema.TaggedStruct('AiDecideChanges', {
-  changeIds: Schema.Array(AiChangeIdSchema.check(Schema.isMinLength(1))).check(
+  changeIds: Schema.Array(Schema.NonEmptyString.pipe(Schema.decodeTo(AiChangeIdSchema))).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(50),
   ),
@@ -195,7 +195,7 @@ const ApplyAiDecideChangesCommandSchema = Schema.TaggedStruct('AiDecideChanges',
 });
 
 const ApplyAiRevertBatchCommandSchema = Schema.TaggedStruct('AiRevertBatch', {
-  batchId: AiBatchIdSchema.check(Schema.isMinLength(1)),
+  batchId: Schema.NonEmptyString.pipe(Schema.decodeTo(AiBatchIdSchema)),
   note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
 });
 
@@ -277,7 +277,7 @@ const ApplyCreateCategoryCommandSchema = Schema.TaggedStruct('CreateCategory', {
   heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  parentId: Schema.NullOr(CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  parentId: Schema.OptionFromNullOr(CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   published: Schema.optionalKey(Schema.Boolean),
   slug: Schema.Trim.check(

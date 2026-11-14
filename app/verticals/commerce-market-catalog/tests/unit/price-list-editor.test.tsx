@@ -2,7 +2,7 @@
 // The price list of a market as the user sees it: edits change only the draft, one Save button sends one
 // ConfigureMarket, and a change parked for approval stays unsaved. Only the merchandise client, the i18n runtime and
 // the router blocker are replaced.
-import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
+import { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
 import { MarketSettingsSchema } from '@app/merchandise/domain/market-offers';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Option, Schema } from 'effect';
@@ -16,7 +16,7 @@ import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
 import { PriceListEditor } from '../../src/market-admin/assortment-section.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-rstest.mock('@app/merchandise/clients/manage-markets');
+rstest.mock('@app/merchandise/apis/manage-markets-action/client');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));

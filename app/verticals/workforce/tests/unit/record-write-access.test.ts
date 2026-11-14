@@ -1,6 +1,6 @@
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { WorkforceCommandPayloadSchema, ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
@@ -104,7 +104,7 @@ for (const { command, registration } of cases) {
             transport: { correlationId: 'record-denied', idempotencyKey: `${registration.descriptor.actionKey}-other` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect(writes).toBe(1);
         expect(harness.snapshot().committed).toHaveLength(1);
       }),
@@ -150,7 +150,7 @@ for (const { command, registration } of cases) {
             },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect(readChecks).toBeGreaterThan(0);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
@@ -172,7 +172,7 @@ for (const { command, registration } of cases) {
             transport: { correlationId: 'approval-only', idempotencyKey: registration.descriptor.actionKey },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect('code' in failure && failure.code).toBe('action_approval_required');
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
@@ -191,7 +191,7 @@ for (const { command, registration } of cases) {
             transport: { correlationId: 'no-dispatch-bypass', idempotencyKey: registration.descriptor.actionKey },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPayloadValidationError');
+        expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
       }),

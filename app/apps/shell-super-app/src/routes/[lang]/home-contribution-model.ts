@@ -1,6 +1,6 @@
 import { Effect, Match, Schema } from 'effect';
-import { ResolveModuleTargetPayloadSchema } from '../../../shared/api.ts';
-import type { ResolvedModuleTarget, ShellHomeComponent } from '../../../shared/api.ts';
+import { ResolveModuleTargetPayloadSchema } from '../../../shared/browser-api.ts';
+import type { ResolvedModuleTarget, ShellHomeComponent } from '../../../shared/browser-api.ts';
 import { resolveModuleTarget } from '../../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 

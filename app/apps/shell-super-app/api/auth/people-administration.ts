@@ -1,4 +1,3 @@
-/* oxlint-disable effect-native/no-threaded-correlation-parameter -- This ingress adapter passes the persisted Core command/read transport identity, not ambient tracing; remove-when: Core accepts ingress transport identity as a service. */
 import {
   ActionRuntime,
   invitePersonAction,
@@ -7,7 +6,7 @@ import {
   peopleDirectoryRead,
   setCompanyMembershipAction,
 } from '@app/core-runtime';
-import type { TrustedPrincipalContext } from '@app/core-runtime';
+import type { ActionTransportMetadata, TrustedPrincipalContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import type {
@@ -16,9 +15,15 @@ import type {
   SetPeopleCompanyMembershipRequest,
 } from '../../shared/people-api.ts';
 
+/** The principal and Core's own transport metadata the ingress built; a read carries only its correlation. */
 interface PeopleCommandContext {
   readonly principal: TrustedPrincipalContext;
-  readonly transport: { readonly correlationId: string; readonly idempotencyKey: string };
+  readonly transport: ActionTransportMetadata;
+}
+
+interface PeopleReadContext {
+  readonly principal: TrustedPrincipalContext;
+  readonly transport: Pick<ActionTransportMetadata, 'correlationId'>;
 }
 
 /*
@@ -37,17 +42,11 @@ interface PeopleCommandContext {
 
 /** No direct SQL / graph writes here: the Core registrations own authorization and evidence. */
 export const listPeople = Effect.fn('PeopleAdministration.listPeople')(function* listPeople(
-  principal: TrustedPrincipalContext,
+  context: PeopleReadContext,
   input: PeopleListRequest,
-  correlationId: string,
 ) {
   const runtime = yield* ReadRuntime;
-  const result = yield* runtime.runRead({
-    input,
-    principal,
-    registration: peopleDirectoryRead,
-    transport: { correlationId },
-  });
+  const result = yield* runtime.runRead({ ...context, input, registration: peopleDirectoryRead });
   return yield* Schema.encodeEffect(PeopleDirectoryResultSchema)(result);
 });
 

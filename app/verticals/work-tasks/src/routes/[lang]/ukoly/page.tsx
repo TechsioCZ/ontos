@@ -10,8 +10,8 @@ import {
   useUnsavedChangesScope,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
-import { listCustomers } from '@app/party-registry/api/client';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
@@ -27,7 +27,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import { executeRecords } from '../../../api/records-consumer.ts';
+import { executeRecords } from '../../../api/records-client.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import { BulkWorkCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import type {
@@ -123,8 +123,15 @@ type CommandOutcome =
   // A command parked for approval changed nothing yet; `message` says so.
   | { readonly message: string; readonly ok: false; readonly proposed: boolean };
 
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = () =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) => executeCustomerList({}, `party-registry:customer-list:${first}:${second}`)),
+    Effect.map(({ items }) => items),
+  );
+
 type PageReadFailure = Effect.Error<
-  ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof listOpportunities>
+  ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof executeOpportunityRecords>
 >;
 const isForbiddenReadFailure = (error: PageReadFailure): boolean =>
   Match.value(error).pipe(
@@ -217,7 +224,7 @@ const opportunityDirectory = definePageData({
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     requestId.pipe(
-      Effect.flatMap((id) => listOpportunities({}, id)),
+      Effect.flatMap((id) => executeOpportunityRecords({}, id)),
       Effect.map((result) => result.items),
       retryTransient,
       Effect.tapError((failure) => Effect.logWarning('Opportunity list unavailable.', failure)),

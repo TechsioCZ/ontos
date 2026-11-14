@@ -2,7 +2,7 @@ import { ConfigProvider, Console, Deferred, Effect, Fiber, Redacted, Schema } fr
 import { TestClock, TestConsole } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
+import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/browser-api.ts';
 import {
   DOCUMENT_ACCEPTANCE_MS,
   StageTransportError,

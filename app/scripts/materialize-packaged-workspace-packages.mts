@@ -14,7 +14,10 @@
  *   - each package's `exports` targets are repointed at the compiled modules.
  *
  * Traced sources stay in place. Missing relative TypeScript inputs are completed at build time from the
- * declared dependency only after its package identity and every carried source agree. The executable unit
+ * declared dependency only after its package identity and every carried source agree. The trace cannot parse
+ * TypeScript, so a bare `@app/*` import that a compiled packaged module makes and the packaged tree lacks is carried
+ * from the install the importing package declares (its manifest and the imported entry, then their relative graph),
+ * until the compiled workspace graph names nothing the packaged tree lacks. The executable unit
  * resolves `@app/*` through its own `.output/node_modules`, never through the build workspace at runtime.
  * Missing build inputs and colliding outputs fail the build instead of publishing an incomplete graph.
  *
@@ -658,13 +661,18 @@ const sameBuildPackageIdentity = (
   source.type === packaged.type &&
   sameImportTarget(source.imports, packaged.imports);
 
-/** Completes missing relative and private-import TypeScript inputs at build time, never at runtime. */
+/**
+ * Completes missing relative and private-import TypeScript inputs at build time, never at runtime. A package the unit
+ * declares resolves its build input from the unit; a package carried for another packaged package passes the manifest
+ * of the install that package declares.
+ */
 const completeTracedModuleGraph = (
   unitDirectory: string,
   packageDirectory: string,
   name: string,
   packageIsModule: boolean,
   packagedManifest: typeof PackagedPackageManifestSchema.Type,
+  declaredSourceManifest: string | undefined,
 ) =>
   Effect.gen(function* completePackagedGraph() {
     const fs = yield* FileSystem.FileSystem;
@@ -711,10 +719,12 @@ const completeTracedModuleGraph = (
       }
       if (sourceDirectory === undefined) {
         const packageName = `${WORKSPACE_PACKAGE_SCOPE}/${name}`;
-        const sourceManifestPath = yield* Effect.try({
-          catch: () => failed(`${packageName}: the declared build dependency could not be resolved`),
-          try: () => findPackageJSON(packageName, pathToFileURL(path.join(unitDirectory, PACKAGE_MANIFEST))),
-        });
+        const sourceManifestPath =
+          declaredSourceManifest ??
+          (yield* Effect.try({
+            catch: () => failed(`${packageName}: the declared build dependency could not be resolved`),
+            try: () => findPackageJSON(packageName, pathToFileURL(path.join(unitDirectory, PACKAGE_MANIFEST))),
+          }));
         if (sourceManifestPath === undefined) {
           return yield* Effect.fail(failed(`${packageName}: missing the declared build dependency manifest`));
         }
@@ -764,7 +774,12 @@ const completeTracedModuleGraph = (
 /** Compiles one traced `@app` package and repoints its `exports` targets at the compiled modules. */
 const compilePackagedWorkspacePackage = Effect.fn(
   'MaterializePackagedWorkspacePackages.compilePackagedWorkspacePackage',
-)(function* compilePackagedWorkspacePackage(unitDirectory: string, packageDirectory: string, name: string) {
+)(function* compilePackagedWorkspacePackage(
+  unitDirectory: string,
+  packageDirectory: string,
+  name: string,
+  declaredSourceManifest: string | undefined,
+) {
   const fs = yield* FileSystem.FileSystem;
   const manifestPath = path.join(packageDirectory, PACKAGE_MANIFEST);
   if (!(yield* fs.exists(manifestPath))) {
@@ -775,7 +790,14 @@ const compilePackagedWorkspacePackage = Effect.fn(
     Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)),
   );
   const packageIsModule = manifest[MANIFEST_TYPE] === MODULE_MANIFEST_TYPE;
-  const modules = yield* completeTracedModuleGraph(unitDirectory, packageDirectory, name, packageIsModule, manifest);
+  const modules = yield* completeTracedModuleGraph(
+    unitDirectory,
+    packageDirectory,
+    name,
+    packageIsModule,
+    manifest,
+    declaredSourceManifest,
+  );
   const compiledPaths = new Set(modules.map((module) => module.outputPath));
   yield* Effect.forEach(
     modules,
@@ -826,9 +848,273 @@ const compilePackagedWorkspacePackage = Effect.fn(
   } satisfies PackagedWorkspacePackageReport;
 });
 
+/** The `exports` subpath of a package's root entry, in `package.json` and in an import specifier. */
+const ROOT_EXPORT = '.';
+/** The manifest fields a package declares its installs in. */
+const DECLARING_MANIFEST_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const;
+
+/** A bare `@app/<name>[/<subpath>]` specifier split into the package directory name and its `exports` subpath. */
+const workspaceSpecifierParts = (
+  specifier: string,
+): { readonly name: string; readonly subpath: string } | undefined => {
+  const scope = `${WORKSPACE_PACKAGE_SCOPE}/`;
+  if (!specifier.startsWith(scope)) {
+    return undefined;
+  }
+  const [name = '', ...rest] = specifier.slice(scope.length).split('/');
+  return name === '' ? undefined : { name, subpath: rest.length === 0 ? ROOT_EXPORT : `./${rest.join('/')}` };
+};
+
+/** Whether a manifest declares an install of `packageName`. */
+const declaresInstall = (manifest: typeof PackagedPackageManifestSchema.Type, packageName: string): boolean =>
+  DECLARING_MANIFEST_FIELDS.some((field) => {
+    const declared = manifest[field];
+    return Predicate.isObject(declared) && Object.hasOwn(declared, packageName);
+  });
+
+/** The `exports` target Node selects for an import of `subpath`, or `undefined` when the package exports none. */
+const exportImportTarget = (
+  manifest: typeof PackagedPackageManifestSchema.Type,
+  subpath: string,
+): string | undefined => {
+  const exportsField = manifest[MANIFEST_EXPORTS];
+  let entry: PackagedExportTarget | undefined;
+  if (isExportTargetConditions(exportsField) && Object.keys(exportsField).every((key) => key.startsWith(ROOT_EXPORT))) {
+    entry = exportsField[subpath];
+  } else if (subpath === ROOT_EXPORT) {
+    entry = exportsField;
+  }
+  return entry === undefined ? undefined : nodeImportTarget(entry, false);
+};
+
+/** Every static ES module `import` / `export … from` specifier of one compiled module. */
+const staticImportSpecifiers = (file: string, code: string) =>
+  Effect.gen(function* readStaticImportSpecifiers() {
+    const parsed = parseSync(file, code, { lang: 'js', sourceType: 'module' });
+    if (parsed.errors.length > 0) {
+      return yield* Effect.fail(failed(`${file}: the compiled module does not parse`));
+    }
+    const specifiers: string[] = [];
+    const record = (literal: { readonly value?: unknown } | null) => {
+      if (literal !== null && Predicate.isString(literal.value)) {
+        specifiers.push(literal.value);
+      }
+    };
+    new Visitor({
+      ExportAllDeclaration: (node) => record(node.source),
+      ExportNamedDeclaration: (node) => record(node.source),
+      ImportDeclaration: (node) => record(node.source),
+    }).visit(parsed.program);
+    return specifiers;
+  });
+
+const readPackagedManifest = (manifestPath: string) =>
+  Effect.gen(function* readPackageManifest() {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* Schema.decodeUnknownEffect(packagedPackageManifestCodec)(yield* fs.readFileString(manifestPath)).pipe(
+      Effect.mapError((cause) => failed(`${manifestPath}: ${String(cause)}`)),
+    );
+  });
+
+/** One bare `@app/*` import a compiled packaged module makes. */
+interface WorkspaceImport {
+  /** The compiled module that imports it. */
+  readonly file: string;
+  /** The importing package's directory name under `@app`. */
+  readonly importer: string;
+  /** The imported package's directory name under `@app`. */
+  readonly name: string;
+  readonly specifier: string;
+  /** The `exports` subpath the specifier names. */
+  readonly subpath: string;
+}
+
+/** Every bare `@app/*` static ES module import of one packaged workspace package's compiled and native modules. */
+const workspaceImportsOf = (tracedScope: string, importer: string) =>
+  Effect.gen(function* collectWorkspaceImports() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = path.join(tracedScope, importer);
+    const manifest = yield* readPackagedManifest(path.join(directory, PACKAGE_MANIFEST));
+    const modules = yield* collectTracedModules(directory, manifest[MANIFEST_TYPE] === MODULE_MANIFEST_TYPE);
+    const imports: WorkspaceImport[] = [];
+    // CommonJS `require` edges are traced as written; only static ES module edges link at load time.
+    for (const module of modules.filter((candidate) => !candidate.commonJs)) {
+      const file = module.typescript ? module.outputPath : module.sourcePath;
+      // A source carried earlier in this pass is compiled, then scanned, by the next pass.
+      if (!(yield* fs.exists(file))) {
+        continue;
+      }
+      for (const specifier of yield* staticImportSpecifiers(file, yield* fs.readFileString(file))) {
+        const parts = workspaceSpecifierParts(specifier);
+        if (parts !== undefined) {
+          imports.push({ file, importer, name: parts.name, specifier, subpath: parts.subpath });
+        }
+      }
+    }
+    return imports;
+  });
+
+/** Whether the packaged tree already answers an import: its package holds the exported entry, or exports none. */
+const packagedTreeAnswers = (tracedScope: string, workspaceImport: WorkspaceImport) =>
+  Effect.gen(function* checkPackagedImport() {
+    const fs = yield* FileSystem.FileSystem;
+    const packageDirectory = path.join(tracedScope, workspaceImport.name);
+    const manifestPath = path.join(packageDirectory, PACKAGE_MANIFEST);
+    if (!(yield* fs.exists(manifestPath))) {
+      return false;
+    }
+    const target = exportImportTarget(yield* readPackagedManifest(manifestPath), workspaceImport.subpath);
+    // An unexported subpath is the dependency closure's to judge, with Node's own error.
+    return target === undefined || (yield* fs.exists(path.resolve(packageDirectory, target)));
+  });
+
+/** The `package.json` of the install a packaged workspace package was built from. */
+const buildInputManifestOf = (unit: string, name: string, declaredSources: ReadonlyMap<string, string>) =>
+  Effect.gen(function* resolveBuildInputManifest() {
+    const carried = declaredSources.get(name);
+    if (carried !== undefined) {
+      return carried;
+    }
+    const packageName = `${WORKSPACE_PACKAGE_SCOPE}/${name}`;
+    const manifestPath = yield* Effect.try({
+      catch: () => failed(`${packageName}: the declared build dependency could not be resolved`),
+      try: () => findPackageJSON(packageName, pathToFileURL(path.join(unit, PACKAGE_MANIFEST))),
+    });
+    return (
+      manifestPath ?? (yield* Effect.fail(failed(`${packageName}: missing the declared build dependency manifest`)))
+    );
+  });
+
+/** The install of an imported workspace package that its importing package declares, resolved from that package. */
+const declaredWorkspaceInstall = (
+  unit: string,
+  workspaceImport: WorkspaceImport,
+  declaredSources: ReadonlyMap<string, string>,
+) =>
+  Effect.gen(function* resolveDeclaredWorkspaceInstall() {
+    const fs = yield* FileSystem.FileSystem;
+    const importerName = `${WORKSPACE_PACKAGE_SCOPE}/${workspaceImport.importer}`;
+    const packageName = `${WORKSPACE_PACKAGE_SCOPE}/${workspaceImport.name}`;
+    const importerSourceManifest = yield* buildInputManifestOf(unit, workspaceImport.importer, declaredSources);
+    if (!declaresInstall(yield* readPackagedManifest(importerSourceManifest), packageName)) {
+      return yield* Effect.fail(
+        failed(
+          `${workspaceImport.file}: imports ${workspaceImport.specifier}, but ${importerName} declares no install of ${packageName}`,
+        ),
+      );
+    }
+    const sourceManifestPath = yield* Effect.try({
+      catch: () => failed(`${packageName}: the install ${importerName} declares could not be resolved`),
+      try: () => findPackageJSON(packageName, pathToFileURL(importerSourceManifest)),
+    });
+    if (sourceManifestPath === undefined) {
+      return yield* Effect.fail(failed(`${packageName}: the install ${importerName} declares is missing`));
+    }
+    const directory = yield* fs.realPath(path.dirname(sourceManifestPath));
+    const packagedOutput = yield* fs.realPath(path.join(unit, PACKAGED_DIRECTORY));
+    if (directory === packagedOutput || isInside(packagedOutput, directory)) {
+      return yield* Effect.fail(failed(`${packageName}: build inputs must not resolve through the packaged output`));
+    }
+    const manifestPath = path.join(directory, PACKAGE_MANIFEST);
+    const manifest = yield* readPackagedManifest(manifestPath);
+    if (manifest.name !== packageName) {
+      return yield* Effect.fail(failed(`${manifestPath}: the declared install is not ${packageName}`));
+    }
+    return { directory, manifest, manifestPath, packageName };
+  });
+
+/** The regular, package-owned runtime file an install exports for `subpath`. */
+const exportedEntryOf = (
+  install: Effect.Success<ReturnType<typeof declaredWorkspaceInstall>>,
+  workspaceImport: WorkspaceImport,
+) =>
+  Effect.gen(function* resolveExportedEntry() {
+    const fs = yield* FileSystem.FileSystem;
+    const target = exportImportTarget(install.manifest, workspaceImport.subpath);
+    if (target === undefined) {
+      return yield* Effect.fail(
+        failed(`${workspaceImport.file}: ${workspaceImport.specifier} is not exported by ${install.packageName}`),
+      );
+    }
+    const entry = path.resolve(install.directory, target);
+    if (
+      !RELATIVE_SPECIFIER.test(target) ||
+      !isInside(install.directory, entry) ||
+      !isRuntimeModule(path.extname(entry))
+    ) {
+      return yield* Effect.fail(
+        failed(`${install.packageName}: ${workspaceImport.subpath} is not a runtime module in its package`),
+      );
+    }
+    const real = yield* fs.realPath(entry);
+    if (!isInside(install.directory, real) || (yield* fs.lstat(entry)).type !== 'File') {
+      return yield* Effect.fail(failed(`${entry}: an imported entry must be a regular package-owned file`));
+    }
+    return { real, relative: path.relative(install.directory, entry) };
+  });
+
+/** Carries one unanswered import's package manifest and exported entry. Returns how many files it wrote. */
+const carryWorkspaceImport = (
+  unit: string,
+  tracedScope: string,
+  workspaceImport: WorkspaceImport,
+  declaredSources: Map<string, string>,
+) =>
+  Effect.gen(function* carryOneWorkspaceImport() {
+    const fs = yield* FileSystem.FileSystem;
+    if (yield* packagedTreeAnswers(tracedScope, workspaceImport)) {
+      return 0;
+    }
+    const install = yield* declaredWorkspaceInstall(unit, workspaceImport, declaredSources);
+    const packageDirectory = path.join(tracedScope, workspaceImport.name);
+    const packagedManifestPath = path.join(packageDirectory, PACKAGE_MANIFEST);
+    let written = 0;
+    if (!(yield* fs.exists(packagedManifestPath))) {
+      yield* fs.makeDirectory(packageDirectory, { recursive: true });
+      yield* fs.writeFileString(packagedManifestPath, yield* fs.readFileString(install.manifestPath));
+      declaredSources.set(workspaceImport.name, install.manifestPath);
+      written += 1;
+    } else if ((declaredSources.get(workspaceImport.name) ?? install.manifestPath) !== install.manifestPath) {
+      return yield* Effect.fail(
+        failed(
+          `${install.packageName}: two declaring packages resolve different installs; the packaged tree keeps one`,
+        ),
+      );
+    }
+    const entry = yield* exportedEntryOf(install, workspaceImport);
+    const target = path.join(packageDirectory, entry.relative);
+    if (!(yield* fs.exists(target))) {
+      yield* ensurePackagedSourceParent(packageDirectory, entry.relative);
+      yield* fs.writeFileString(target, yield* fs.readFileString(entry.real));
+      written += 1;
+    }
+    return written;
+  });
+
 /**
- * Compiles every workspace package the unit traced into `.output/node_modules`. Idempotent: a unit without a
- * packaged output, or one whose modules are already compiled and repointed, reports nothing to change.
+ * Carries the workspace inputs a compiled packaged module imports by bare `@app/*` specifier but the packaged tree
+ * does not hold. The trace cannot parse TypeScript, so a workspace package that only another workspace package's
+ * TypeScript imports never reaches `.output`. The importing package must declare the install, which is resolved from
+ * that package's own build input; the carried package's manifest and the imported entry are copied verbatim, and the
+ * compile pass that follows completes their relative graph from the same install. Returns how many files it carried.
+ */
+const carryDeclaredWorkspaceImports = Effect.fn('MaterializePackagedWorkspacePackages.carryDeclaredWorkspaceImports')(
+  function* carryDeclaredWorkspaceImports(unit: string, tracedScope: string, declaredSources: Map<string, string>) {
+    const fs = yield* FileSystem.FileSystem;
+    let carriedFiles = 0;
+    for (const importer of (yield* fs.readDirectory(tracedScope)).toSorted()) {
+      for (const workspaceImport of yield* workspaceImportsOf(tracedScope, importer)) {
+        carriedFiles += yield* carryWorkspaceImport(unit, tracedScope, workspaceImport, declaredSources);
+      }
+    }
+    return carriedFiles;
+  },
+);
+
+/**
+ * Compiles every workspace package the unit traced into `.output/node_modules`, carrying in the declared workspace
+ * imports the trace could not follow until the compiled graph names nothing the packaged tree lacks. Idempotent: a
+ * unit without a packaged output, or one whose modules are already compiled and repointed, reports nothing to change.
  */
 export const compilePackagedWorkspacePackages = Effect.fn(
   'MaterializePackagedWorkspacePackages.compilePackagedWorkspacePackages',
@@ -841,20 +1127,27 @@ export const compilePackagedWorkspacePackages = Effect.fn(
   if (!(yield* fs.exists(tracedScope))) {
     return { packages: [] } satisfies PackagedWorkspaceCompilation;
   }
-  const packages: PackagedWorkspacePackageReport[] = [];
-  for (const name of (yield* fs.readDirectory(tracedScope)).toSorted()) {
-    const packageDirectory = path.join(tracedScope, name);
-    const info = yield* fs.lstat(packageDirectory);
-    if (info.type !== 'Directory') {
-      return yield* Effect.fail(
-        failed(
-          `${packageDirectory}: a packaged workspace package must be a real directory inside ${PACKAGED_DIRECTORY}`,
-        ),
-      );
+  /** Carried package directory name → the manifest of the install its declaring package resolves. */
+  const declaredSources = new Map<string, string>();
+  while (true) {
+    const packages: PackagedWorkspacePackageReport[] = [];
+    for (const name of (yield* fs.readDirectory(tracedScope)).toSorted()) {
+      const packageDirectory = path.join(tracedScope, name);
+      const info = yield* fs.lstat(packageDirectory);
+      if (info.type !== 'Directory') {
+        return yield* Effect.fail(
+          failed(
+            `${packageDirectory}: a packaged workspace package must be a real directory inside ${PACKAGED_DIRECTORY}`,
+          ),
+        );
+      }
+      packages.push(yield* compilePackagedWorkspacePackage(unit, packageDirectory, name, declaredSources.get(name)));
     }
-    packages.push(yield* compilePackagedWorkspacePackage(unit, packageDirectory, name));
+    // Every pass carries at least one new file or stops, so the loop ends with the workspace graph closed.
+    if ((yield* carryDeclaredWorkspaceImports(unit, tracedScope, declaredSources)) === 0) {
+      return { packages } satisfies PackagedWorkspaceCompilation;
+    }
   }
-  return { packages } satisfies PackagedWorkspaceCompilation;
 });
 
 const reportUnit = Effect.fn('MaterializePackagedWorkspacePackages.reportUnit')(function* reportUnit(

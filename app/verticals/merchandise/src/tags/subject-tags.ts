@@ -1,10 +1,9 @@
-import { subjectsWithTag } from '@app/tagging/clients/records';
-import { runTagEffect, useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, Tag, TagId } from '@app/tagging/contracts/records';
 import { Schema } from 'effect';
 import { useEffect, useState } from 'react';
+import { runTagEffect, subjectsWithTag, useTagsFor } from './tag-records.ts';
 
 const isSubjectId = Schema.is(SubjectIdSchema);
 

@@ -18,7 +18,7 @@ import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { createProductAction } from '../../src/actions/create-product.action.ts';
 import { catalogRegistration } from '../../vertical.registration.ts';
-import { makeCatalogScriptedAccess } from '../support/catalog-scripted-access-seam.ts';
+import { CatalogScriptedAccess, catalogScriptedAccessLayer } from '../support/catalog-scripted-access-seam.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -69,7 +69,10 @@ const mediaOrderingAccessScript = {
  */
 it.effect('binds the receiver scripted access gate once, with its declared refusals intact', () =>
   Effect.gen(function* scriptedReceiverGate() {
-    const { bound } = yield* makeCatalogScriptedAccess(mediaOrderingAccessScript);
+    const { bound } = Context.get(
+      yield* Layer.build(catalogScriptedAccessLayer(mediaOrderingAccessScript)),
+      CatalogScriptedAccess,
+    );
     // No live preparation contract: the runner takes the scripted decision path, never a preparation
     // this fixture never declared.
     expect(bound.prepare).toBeUndefined();
@@ -88,7 +91,10 @@ it.effect('binds the receiver scripted access gate once, with its declared refus
  */
 it.effect('keeps the production refusal for a gate that cannot prepare persisted authority', () =>
   Effect.gen(function* productionPreparationRefusal() {
-    const { services } = yield* makeCatalogScriptedAccess(mediaOrderingAccessScript);
+    const { services } = Context.get(
+      yield* Layer.build(catalogScriptedAccessLayer(mediaOrderingAccessScript)),
+      CatalogScriptedAccess,
+    );
     const scripted = Context.get(services, AccessDecisionGate);
     // A gate that really cannot rebind to the caller's transaction: the scripted decisions without `rebind`.
     const unrebindable: AccessDecisionService = {

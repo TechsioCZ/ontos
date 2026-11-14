@@ -1,6 +1,6 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import type { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
-import { ManageMarketsPayloadSchema, ManageMarketsResultSchema } from '@app/merchandise/contracts/manage-markets';
+import type { executeManageMarkets } from '@app/merchandise/apis/manage-markets-action/client';
+import { ManageMarketsPayloadSchema } from '@app/merchandise/apis/manage-markets-action';
 import { Effect, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
@@ -8,7 +8,7 @@ import { merchandiseCommand } from '../../src/market-admin/page-data.ts';
 import type { MarketCommandInput } from '../../src/market-admin/page-data.ts';
 
 const manageMarkets = rstest.hoisted(() => rstest.fn<typeof executeManageMarkets>());
-rstest.mock('@app/merchandise/clients/manage-markets', () => ({ executeManageMarkets: manageMarkets }));
+rstest.mock('@app/merchandise/apis/manage-markets-action/client', () => ({ executeManageMarkets: manageMarkets }));
 
 const command: MarketCommandInput = {
   _tag: 'ConfigureMarket',
@@ -20,11 +20,12 @@ const command: MarketCommandInput = {
   offerMode: 'WHOLE_CATALOGUE',
   roundingMinor: 100,
 };
-const committed = Schema.decodeUnknownSync(ManageMarketsResultSchema)({
+/** A committed ManageMarkets answer (the client's non-proposal success). */
+const committed: Effect.Success<ReturnType<typeof executeManageMarkets>> = {
   entityIds: [],
   marketRevision: 4,
   revision: 17,
-});
+};
 
 beforeEach(() => {
   manageMarkets.mockReset();
@@ -53,7 +54,7 @@ it.effect('preserves the original successful 202 proposal receipt without invent
     const result = yield* merchandiseCommand(command, 17);
     expect(result).toBe(proposal);
     expect(Schema.is(ActionProposalAcceptedSchema)(result)).toBe(true);
-    expect(Schema.is(ManageMarketsResultSchema)(result)).toBe(false);
+    expect(result).not.toHaveProperty('entityIds');
     expect(result).not.toHaveProperty('marketRevision');
     expect(result).not.toHaveProperty('revision');
     expect(manageMarkets).toHaveBeenCalledTimes(1);

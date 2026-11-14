@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
-import { connect, createServer as createTcpServer } from 'node:net';
+import { connect } from 'node:net';
 import path from 'node:path';
 
-import { NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { NodeHttpServer, NodeServices, NodeSocket, NodeSocketServer } from '@effect/platform-node';
 import {
   Clock,
   Console,
@@ -26,6 +26,7 @@ import {
 import { expect, it } from 'effect-rstest';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
+import type { Socket } from 'effect/socket';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { TestClock, TestConsole } from 'effect/testing';
 
@@ -189,7 +190,13 @@ const twoHosts = (console?: TestConsole.TestConsole) =>
     const none = Effect.succeed(Option.none<string>());
     const drain = makeSupersedeDrain();
     const oldHost = hostApplication(new Map([['crm', oldUnit]]), published, none, makeHostRefusalLog(), drain);
-    const newHost = hostApplication(new Map([['crm', newUnit]]), published, none);
+    const newHost = hostApplication(
+      new Map([['crm', newUnit]]),
+      published,
+      none,
+      makeHostRefusalLog(),
+      makeSupersedeDrain(),
+    );
     const oldPort = yield* serveOn(
       console === undefined ? oldHost : oldHost.pipe(Effect.provideService(Console.Console, console)),
       oldPublic,
@@ -892,32 +899,35 @@ it.live(
     }),
 );
 
-const decodeBoundPort = Schema.decodeUnknownOption(Schema.Struct({ port: Schema.Number }));
-
 /** A loopback port nothing listens on yet: bound once by the OS, then released. */
-const freePort = Effect.callback<number>((resume) => {
-  const probe = createTcpServer();
-  probe.listen(0, '127.0.0.1', () => {
-    const port = Option.match(decodeBoundPort(probe.address()), { onNone: () => 0, onSome: (bound) => bound.port });
-    probe.close(() => resume(Effect.succeed(port)));
+const freePort = Effect.scoped(NodeSocketServer.make({ host: '127.0.0.1', port: 0 })).pipe(
+  Effect.map(({ address }) => (NetAddress.isUnixPathAddress(address) ? 0 : address.port)),
+  Effect.orDie,
+);
+
+/** Copies every chunk `from` reads to `to` until `from` closes. */
+const copyBytes = (from: Socket.Socket, to: Socket.Socket) =>
+  Effect.gen(function* copy() {
+    const reader = yield* from.reader;
+    const writer = yield* to.writer;
+    return yield* reader.pull.pipe(Effect.flatMap(writer.writeAll), Effect.forever);
   });
-});
+
+/** Pipes one accepted connection to `target` in both directions until either side closes. */
+const pipeToTarget = (client: Socket.Socket, target: number) =>
+  Effect.scoped(
+    Effect.gen(function* pipeConnection() {
+      const upstream = yield* NodeSocket.makeNet({ host: '127.0.0.1', port: target });
+      yield* Effect.raceFirst(copyBytes(client, upstream), copyBytes(upstream, client)).pipe(Effect.ignore);
+    }),
+  );
 
 /** From now on, `port` accepts connections and pipes their bytes to `target`: a listener that came up late. */
 const lateListener = (port: number, target: number) =>
-  Effect.acquireRelease(
-    Effect.callback<ReturnType<typeof createTcpServer>>((resume) => {
-      const server = createTcpServer((client) => {
-        const upstream = connect(target, '127.0.0.1');
-        client.pipe(upstream).pipe(client);
-      });
-      server.listen(port, '127.0.0.1', () => resume(Effect.succeed(server)));
-    }),
-    (server) =>
-      Effect.callback<true>((resume) => {
-        server.close(() => resume(Effect.succeed(true)));
-      }),
-  );
+  Effect.gen(function* listenLate() {
+    const server = yield* NodeSocketServer.make({ host: '127.0.0.1', port }).pipe(Effect.orDie);
+    yield* server.run((client) => pipeToTarget(client, target)).pipe(Effect.forkScoped);
+  });
 
 it.live('a peer that refused the connection once is tried again after the next resolution', () =>
   Effect.gen(function* lateNewHost() {

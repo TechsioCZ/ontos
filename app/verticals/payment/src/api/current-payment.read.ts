@@ -7,10 +7,11 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 
 import { CurrentPaymentRequestSchema, CurrentPaymentResponseSchema } from '../../shared/apis/current-payment.ts';
 import type { CurrentPaymentRequest, CurrentPaymentResponse } from '../../shared/apis/current-payment.ts';
+import { PaymentCoverageHeldSchema } from '../../shared/domain/lifecycle-views.ts';
 import type { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
@@ -76,18 +77,22 @@ export const readCurrentPayment = Effect.fn('CurrentPaymentRead.read')(function*
     ),
   );
   const { snapshot } = yield* readFailure(services.refunds.selectFunds(aggregate));
+  const coverage = coverageSummaryOf(snapshot);
   const unresolvedOperationIds = aggregate.operations.flatMap((operation) =>
     isUnresolvedOutcome(operation.outcome) ? [operation.operationId] : [],
   );
   const observedAt = yield* DateTime.now;
   return {
-    coverage: coverageSummaryOf(snapshot),
+    coverage,
     observedAt,
     operations: aggregate.operations.map(paymentOperationViewOf),
     payment: paymentIntentViewOf(aggregate.payment),
     successorPaymentId: successor,
     unresolved: {
-      hasUnresolvedEffect: unresolvedOperationIds.length > 0 || aggregate.openReconciliationCaseCount > 0,
+      hasUnresolvedEffect:
+        Schema.is(PaymentCoverageHeldSchema)(coverage) ||
+        unresolvedOperationIds.length > 0 ||
+        aggregate.openReconciliationCaseCount > 0,
       openReconciliationCaseCount: aggregate.openReconciliationCaseCount,
       unresolvedOperationIds,
     },

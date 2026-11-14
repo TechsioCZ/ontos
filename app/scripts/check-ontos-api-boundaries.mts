@@ -6,7 +6,6 @@ import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect
 import type { PlatformError } from 'effect/PlatformError';
 
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
-import { moduleImportSources } from './check-ontos-module-contracts.mts';
 import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()('ApiBoundaryCheckFailed', {
@@ -58,43 +57,6 @@ interface WorkspaceAccess {
   readonly path: Path.Path;
   readonly workspaceRoot: string;
 }
-
-// The native CLI's baseline flag constrains the installed package identity. It does not
-// replace the checker or its rules. Keep this command local and reject shell composition,
-// workspace retargeting, duplicate flags, and flags that can skip the required check.
-export const hasNativeApiCheckCommand = (
-  script: string | undefined,
-  verticalDirectories: readonly string[],
-): boolean => {
-  if (script === undefined || !/^[A-Za-z0-9_./@ \t-]+$/u.test(script)) {
-    return false;
-  }
-  const [command, ...argumentsList] = script.trim().split(/\s+/u);
-  if (command !== 'modern-api-check' || argumentsList.length % 2 !== 0) {
-    return false;
-  }
-  const allowedBaselines = new Set([
-    './node_modules/@modern-js/bff-effect',
-    ...verticalDirectories.map((directory) => `./${directory}/node_modules/@modern-js/bff-effect`),
-  ]);
-  const flags = new Set<string>();
-  for (let index = 0; index < argumentsList.length; index += 2) {
-    const flag = argumentsList[index];
-    const value = argumentsList[index + 1];
-    if (flag === undefined || flags.has(flag)) {
-      return false;
-    }
-    flags.add(flag);
-    if (flag === '--rules') {
-      if (value !== './scripts/api-contract-schema-rules.mts') {
-        return false;
-      }
-    } else if (flag !== '--baseline-package-directory' || value === undefined || !allowedBaselines.has(value)) {
-      return false;
-    }
-  }
-  return flags.has('--rules');
-};
 
 const listWorkspaceFiles = (
   { fileSystem, path, workspaceRoot }: WorkspaceAccess,
@@ -205,22 +167,18 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     );
   };
 
-  const assertPrivateOwnerImports = (file: string, content: string) =>
-    Effect.gen(function* inspectPrivateOwnerImports() {
-      const imports = yield* moduleImportSources(file, content);
-      for (const specifier of imports) {
+  const assertPrivateOwnerImports = (file: string, content: string): void => {
+    const imports = content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu);
+    for (const match of imports) {
+      const specifier = match.groups?.specifier;
+      if (specifier !== undefined) {
         const violation = privateOwnerImportViolation(workspaceRoot, file, specifier);
         if (violation !== undefined) {
           fail(`${file}: ${violation}. Discover other deployments as allowlisted data.`);
         }
-        assertNotContains(
-          file,
-          specifier,
-          /^@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
-          'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
-        );
       }
-    });
+    }
+  };
 
   const allVerticalDirectories = yield* listDirectories('verticals');
 
@@ -237,9 +195,13 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     }
 
     for (const [file, content] of sourceByFile) {
-      if (/\.[cm]?[jt]sx?$/u.test(file)) {
-        yield* assertPrivateOwnerImports(file, content);
-      }
+      assertPrivateOwnerImports(file, content);
+      assertNotContains(
+        file,
+        content,
+        /(?:from\s+|import\s*\(|require\s*\()\s*['"]@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
+        'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
+      );
     }
   });
   yield* inspectGeneratedSources;
@@ -268,15 +230,13 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const sharedApi = `${verticalPath}/shared/api.ts`;
       const sharedApiContent = (yield* exists(sharedApi)) ? yield* readText(sharedApi) : '';
       assertVerticalBaseline(verticalPath, sharedApi);
-      const diagnostics: string[] = [];
       if (
         /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
         !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent) &&
-        !hasCompleteGeneratedModuleApiSeam(sourceByFile, sharedApi, path.basename(verticalPath), diagnostics)
+        !hasCompleteGeneratedModuleApiSeam(sourceByFile, sharedApi)
       ) {
-        const failedChecks = diagnostics.length === 0 ? '' : ` (failed: ${diagnostics.join('; ')})`;
         fail(
-          `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.${failedChecks}`,
+          `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
         );
       }
     }
@@ -291,7 +251,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         'Root package.json must expose api:check:ontos.',
       );
       assert(
-        hasNativeApiCheckCommand(rootPackageJson.scripts?.['api:check'], verticalDirectories),
+        rootPackageJson.scripts?.['api:check'] === 'modern-api-check --rules ./scripts/api-contract-schema-rules.mts',
         'Root api:check must run the published framework checker and OntOS schema rules.',
       );
     }
@@ -310,13 +270,11 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   return 0;
 });
 
-if (process.argv[1] === import.meta.filename) {
-  const failureCount = await Effect.runPromise(
-    checkApiBoundaries.pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
-  );
-  if (failureCount > 0) {
-    NodeRuntime.runMain(Effect.fail(new ApiBoundaryCheckFailed({ failureCount })), {
-      disableErrorReporting: true,
-    });
-  }
+const failureCount = await Effect.runPromise(
+  checkApiBoundaries.pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
+);
+if (failureCount > 0) {
+  NodeRuntime.runMain(Effect.fail(new ApiBoundaryCheckFailed({ failureCount })), {
+    disableErrorReporting: true,
+  });
 }

@@ -8,7 +8,7 @@ import { expect, it } from 'effect-rstest';
 
 import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identity-manifest.ts';
 import type { DatabaseOwnerIdentityDescriptor } from '../../src/db/database-identity-manifest.ts';
-import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../../src/db/identity-policies.ts';
 import type { CoreIdentityPolicyDescriptor } from '../../src/db/identity-policies.ts';
 import {
   applicationCompositionAuthority,
@@ -23,7 +23,7 @@ import {
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const dialect = new PgDialect();
-const fixturePolicies = makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+const fixturePolicies = coreIdentityPolicyDescriptors(FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
 const searchTables = [
   searchIndexEntries,
   searchProjectionGenerations,
@@ -159,9 +159,11 @@ it('keeps owner-dependent publication and all search policies out of import-time
 it('builds independent frozen policy sets without mutating enrollment or table configuration', () => {
   const enrollment = FIXTURE_DATABASE_IDENTITY_ENROLLMENT;
   const before = Object.values(coreDatabaseSchema).map((table) => getTableConfig(table).policies);
-  const first = makeCoreIdentityPolicies(enrollment);
-  const other = makeCoreIdentityPolicies(defineDatabaseIdentityEnrollment([fixtureOwner('fixture.orders', 'orders')]));
-  const second = makeCoreIdentityPolicies(enrollment);
+  const first = coreIdentityPolicyDescriptors(enrollment);
+  const other = coreIdentityPolicyDescriptors(
+    defineDatabaseIdentityEnrollment([fixtureOwner('fixture.orders', 'orders')]),
+  );
+  const second = coreIdentityPolicyDescriptors(enrollment);
 
   expect(Object.isFrozen(first)).toBe(true);
   expect(Object.isFrozen(enrollment)).toBe(true);
@@ -180,7 +182,7 @@ it('builds independent frozen policy sets without mutating enrollment or table c
 
 it('excludes every enrolled owner from every shared-runtime search operation', () => {
   const enrollment = defineDatabaseIdentityEnrollment([fixtureOwner(), fixtureOwner('fixture.orders', 'orders')]);
-  const descriptors = makeCoreIdentityPolicies(enrollment);
+  const descriptors = coreIdentityPolicyDescriptors(enrollment);
   const sharedPolicies = descriptors.filter(
     ({ policy, table }) => searchTables.some((candidate) => candidate === table) && policy.to === 'ontos_runtime',
   );
@@ -208,7 +210,7 @@ it('excludes every enrolled owner from every shared-runtime search operation', (
 });
 
 it('supports an explicitly empty enrollment without inventing owner policies', () => {
-  const descriptors = makeCoreIdentityPolicies(defineDatabaseIdentityEnrollment([]));
+  const descriptors = coreIdentityPolicyDescriptors(defineDatabaseIdentityEnrollment([]));
   expect(descriptors).toHaveLength(20);
   expect(descriptors.find(({ table }) => table === applicationCompositionAuthority)?.policy.to).toEqual([
     'ontos_runtime',
@@ -231,7 +233,7 @@ it.each(["fixture.stock' or true --", 'Fixture.stock', 'fixture..stock', 'fixtur
   'rejects a noncanonical owner module key before SQL interpolation: %s',
   (moduleKey) => {
     expect(() =>
-      makeCoreIdentityPolicies({
+      coreIdentityPolicyDescriptors({
         ...defineDatabaseIdentityEnrollment([]),
         owners: [fixtureOwner(moduleKey)],
       }),
@@ -241,7 +243,7 @@ it.each(["fixture.stock' or true --", 'Fixture.stock', 'fixture..stock', 'fixtur
 
 it.each(['stock-name', "stock' or true --"])('rejects noncanonical owner policy prefixes: %s', (policyPrefix) => {
   expect(() =>
-    makeCoreIdentityPolicies({
+    coreIdentityPolicyDescriptors({
       ...defineDatabaseIdentityEnrollment([]),
       owners: [fixtureOwner('fixture.stock', policyPrefix)],
     }),
@@ -250,13 +252,13 @@ it.each(['stock-name', "stock' or true --"])('rejects noncanonical owner policy 
 
 it('rejects canonical policy prefixes that would produce PostgreSQL-truncated policy names', () => {
   expect(() =>
-    makeCoreIdentityPolicies(defineDatabaseIdentityEnrollment([fixtureOwner('fixture.stock', 's'.repeat(30))])),
+    coreIdentityPolicyDescriptors(defineDatabaseIdentityEnrollment([fixtureOwner('fixture.stock', 's'.repeat(30))])),
   ).toThrow(/canonical PostgreSQL identifier/u);
 });
 
 it('rejects a dedicated module inventory that could silently remove shared-search exclusions', () => {
   expect(() =>
-    makeCoreIdentityPolicies({
+    coreIdentityPolicyDescriptors({
       ...FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       dedicatedModuleKeys: [],
     }),

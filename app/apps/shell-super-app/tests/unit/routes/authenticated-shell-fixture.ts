@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { LegalEntityIdSchema, SafeTenantIdentitySchema } from '../../../shared/api.ts';
+import { LegalEntityIdSchema, SafeTenantIdentitySchema } from '../../../shared/browser-api.ts';
 import type { AuthenticatedHomePageModel } from '../../../src/routes/[lang]/home-page-model.ts';
 
 /** The authenticated shell every route page test renders its own model on top of. */

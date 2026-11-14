@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
-    "./api": "./shared/api.ts",
+    "./api": "./shared/browser-api.ts",
     "./api/client": "./src/api/auth-client.ts",
     "./testing/api-key-gateway-native": "./tests/fixtures/api-key-gateway-native.ts",
     "./testing/native-human-sessions": "./tests/support/native-human-sessions.ts",
@@ -13,7 +13,7 @@
   },
   "scripts": {
     "dev": "modern dev",
-    "build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node && node ../../scripts/materialize-packaged-workspace-packages.mts . && node ../../scripts/complete-packaged-node-dependencies.mts .",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-shell-ui-candidates.mts --check --all && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node && node ../../scripts/materialize-packaged-workspace-packages.mts . && node ../../scripts/complete-packaged-node-dependencies.mts .",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "db:generate": "drizzle-kit generate --config drizzle.auth.config.ts",
@@ -28,9 +28,19 @@
   },
   "dependencies": {
     "@app/better-auth-effect-drizzle": "workspace:*",
+    "@app/catalog": "workspace:*",
+    "@app/commerce-customer-context": "workspace:*",
+    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/party-registry": "workspace:*",
+    "@app/payment": "workspace:*",
+    "@app/price-group-catalog": "workspace:*",
+    "@app/pricing": "workspace:*",
+    "@app/pricing-contracts": "workspace:*",
+    "@app/privacy": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/symmy-integration": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.12",
     "@effect/opentelemetry": "4.0.7",
@@ -67,6 +77,7 @@
     "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
+    "@app/gateway-principal-verifier": "workspace:*",
     "@cloudflare/workers-types": "5.20260923.1",
     "@effect/platform-node": "4.0.7",
     "@modern-js/adapter-rstest": "catalog:ultramodern",
@@ -87,9 +98,9 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "happy-dom": "21.0.4",
+    "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "pg": "8.22.0",
     "@modelcontextprotocol/client": "2.3.1"
   },
   "modernjs": {

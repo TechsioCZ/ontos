@@ -1,7 +1,6 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { executeReviewOrderChanges } from '@app/merchandise/clients/review-order-changes';
-import { executeRecords } from '@app/merchandise/clients/records';
-import type { ReviewOrderChangesPayload } from '@app/merchandise/contracts/review-order-changes';
+import { executeRecords } from '@app/merchandise/apis/records/client';
+import { executeReviewOrderChanges } from '@app/merchandise/apis/review-order-changes-action/client';
 import { Effect, Match, Random, Schema } from 'effect';
 
 export class OrderReviewPendingApproval extends Schema.TaggedError<OrderReviewPendingApproval>()(
@@ -10,7 +9,7 @@ export class OrderReviewPendingApproval extends Schema.TaggedError<OrderReviewPe
 ) {}
 
 export const sendOrderReview = Effect.fn('SalesPipeline.sendAiOrderCommand')(
-  function* sendOrderReview(command: ReviewOrderChangesPayload['command']) {
+  function* sendOrderReview(command: Parameters<typeof executeReviewOrderChanges>[0]['command']) {
     const nonce = yield* Random.nextInt;
     const key = `sales-pipeline:ai:orders-command:${nonce}`;
     const { revision } = yield* executeRecords({ view: { limit: 0, ordersLimit: 0 } }, `${key}:revision`);

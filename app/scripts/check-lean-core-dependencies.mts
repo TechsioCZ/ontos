@@ -79,7 +79,6 @@ interface SourceImportAnalysis {
 }
 
 type ProgramStatement = ReturnType<typeof parseSync>['program']['body'][number];
-type SourceRange = Pick<ProgramStatement, 'end' | 'start'>;
 
 const occurrenceForStatement = (statement: ProgramStatement): ImportOccurrence | undefined => {
   if (statement.type === 'ImportDeclaration') {
@@ -138,16 +137,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
   let unsupportedRuntimeImport = parsed.program.body.some(
     (statement) => statement.type === 'TSImportEqualsDeclaration' && statement.importKind !== 'type',
   );
-  const erasedRanges: SourceRange[] = [];
-  const recordErasedRange = (node: SourceRange): void => {
-    erasedRanges.push(node);
-  };
-  const isErased = (node: SourceRange): boolean =>
-    erasedRanges.some(({ end, start }) => node.start >= start && node.end <= end);
   const recordDynamicImportExpression = (node: ImportExpression): void => {
-    if (isErased(node)) {
-      return;
-    }
     if (node.source.type === 'Literal' && Predicate.isString(node.source.value)) {
       dynamicOccurrences.push({ index: node.start, isTypeOnly: false, specifier: node.source.value });
     } else if (node.source.type === 'TemplateLiteral' && node.source.expressions.length === 0) {
@@ -163,11 +153,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
   };
   new Visitor({
     CallExpression: (node) => {
-      if (
-        node.callee.type !== 'MemberExpression' ||
-        staticMemberName(node.callee) !== 'getBuiltinModule' ||
-        isErased(node)
-      ) {
+      if (node.callee.type !== 'MemberExpression' || staticMemberName(node.callee) !== 'getBuiltinModule') {
         return;
       }
       const [target] = node.arguments;
@@ -176,53 +162,22 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
         unsupportedRuntimeImport = true;
       }
     },
-    ExportNamedDeclaration: (node) => {
-      if (node.exportKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
-    ExportSpecifier: (node) => {
-      if (node.exportKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
     Identifier: (node) => {
-      if ((node.name === 'require' || node.name === 'createRequire') && !isErased(node)) {
+      if (node.name === 'require' || node.name === 'createRequire') {
         unsupportedRuntimeImport = true;
       }
     },
-    ImportDeclaration: (node) => {
-      if (node.importKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
     ImportExpression: recordDynamicImportExpression,
-    ImportSpecifier: (node) => {
-      if (node.importKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
     MemberExpression: (node) => {
       const name = staticMemberName(node);
       if (
-        (name === 'require' ||
-          name === 'createRequire' ||
-          (node.computed && node.object.type === 'Identifier' && node.object.name === 'module')) &&
-        !isErased(node)
+        name === 'require' ||
+        name === 'createRequire' ||
+        (node.computed && node.object.type === 'Identifier' && node.object.name === 'module')
       ) {
         unsupportedRuntimeImport = true;
       }
     },
-    TSImportEqualsDeclaration: (node) => {
-      if (node.importKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
-    TSInterfaceDeclaration: recordErasedRange,
-    TSTypeAliasDeclaration: recordErasedRange,
-    TSTypeAnnotation: recordErasedRange,
-    TSTypeParameterDeclaration: recordErasedRange,
-    TSTypeParameterInstantiation: recordErasedRange,
   }).visit(parsed.program);
   unsupportedRuntimeImport ||= occurrences.some(
     ({ specifier }) => specifier === 'module' || specifier === 'node:module',
@@ -247,9 +202,6 @@ const commerceVocabulary = /commerce|storefront|better[-_]?auth/iu;
 
 const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node',
-  '@authzed/authzed-node/v1/core',
-  '@authzed/authzed-node/v1/permissions',
-  '@authzed/authzed-node/v1/schema',
   '@effect/platform-node',
   // The one Node HTTP server module, so a bundle reaching the outbox health server leaves the rest of
   // the platform package (its Redis and websocket clients) out.
@@ -264,15 +216,10 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
-  // Public metadata modules of the same pinned Effect dependency; descendants remain unapproved.
-  'effect/Match',
-  'effect/Option',
-  'effect/Result',
-  'effect/Schema',
   'pg',
 ]);
 
-// Effect 4 platform modules (formerly `effect/*`) are published as top-level subpaths.
+// Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
 const effectPlatformSubpath =
   /^effect\/(?:ai|cli|cluster|devtools|encoding|eventlog|http|http-api|net|observability|persistence|process|reactivity|rpc|schema|socket|sql|workers|workflow)(?:\/|$)/u;
 
@@ -358,14 +305,10 @@ type SourceHost = typeof SourceHostSchema.Type;
 const hasSupportedConditions = (target: PackageImportTarget): boolean =>
   Predicate.isString(target) ||
   Object.keys(target).every(
-    (condition) =>
-      Schema.is(SourceHostSchema)(condition) ||
-      condition === 'types' ||
-      condition === 'import' ||
-      condition === 'default',
+    (condition) => Schema.is(SourceHostSchema)(condition) || condition === 'import' || condition === 'default',
   );
 
-/** Native runtime maps skip TypeScript's types condition and select the first matching runtime property. */
+/** Native conditional maps select the first matching property; default is not a fallback reordered by this gate. */
 const selectHostTarget = (target: PackageImportTarget, host: SourceHost): string | undefined => {
   if (Predicate.isString(target)) {
     return target;
@@ -707,8 +650,102 @@ interface AllowedCompositionSeam {
 }
 
 const orderApprovalOwnerGateway = 'verticals/commerce-order/src/services/approval-owner-gateway.ts';
+const privacyConsentProfileAuthority =
+  'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-consent-withdrawal.service.ts';
+const privacyNoticeProfileAuthority =
+  'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 
 const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
+  ...[
+    '/api/client',
+    '/api/customer-group-definition-source/client',
+    '/api/customer-group-membership-source-receipt/client',
+    '/api/customer-profile-ico/client',
+    '/api/organization-customer-profile-ico/client',
+    '/api/change-organization-customer-profile-ico-action/client',
+    '/api/migrate-organization-customer-profile-ico-action/client',
+    '/api/customer-profile-source/client',
+    '/api/customer-price-group-assignment-receipt/client',
+    '/api/add-saved-address-action/client',
+    '/api/update-saved-address-action/client',
+    '/api/remove-saved-address-action/client',
+    '/api/saved-address-source-receipt/client',
+  ].map((suffix) => ({
+    importer: 'verticals/symmy-integration/src/services/symmy-party-commerce-adapters.ts',
+    reason:
+      'Approved C14 source orchestration calls the governed Commerce owner clients for separate native effects and exact recovery.',
+    specifier: `${commercePackageSpecifierPrefix}${suffix}`,
+  })),
+  ...[
+    '/api/customer-profile-ico/client',
+    '/api/customer-profile-source/client',
+    '/api/organization-customer-profile-ico/client',
+  ].map((suffix) => ({
+    importer: 'apps/shell-super-app/api/symmy/source-read-projections.ts',
+    reason: 'Approved C14 customer export projects current qualified profiles and IČO through governed Commerce Reads.',
+    specifier: `${commercePackageSpecifierPrefix}${suffix}`,
+  })),
+  ...[
+    'verticals/privacy/src/services/organization-profile-ico-applicability.service.ts',
+    'verticals/privacy/src/services/organization-business-applicability.service.ts',
+  ].flatMap((importer) =>
+    ['/api/customer-profile-organization-ico-facts', '/api/customer-profile-organization-ico-facts/client'].map(
+      (suffix) => ({
+        importer,
+        reason:
+          'Approved organization policy verifies the exact current profile through the governed owner projection.',
+        specifier: `${commercePackageSpecifierPrefix}${suffix}`,
+      }),
+    ),
+  ),
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies the exact customer profile through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-profile-read/client`,
+  },
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies the profile-bound Principal through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-principal-resolution/client`,
+  },
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies the exact portal profile binding through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-portal-profile-binding-read/client`,
+  },
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies current Consent authority through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-access-decision/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies the exact customer profile through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-profile-read/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies the profile-bound Principal through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-principal-resolution/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies the exact portal profile binding through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-portal-profile-binding-read/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies current Consent authority through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-access-decision/client`,
+  },
   {
     importer: 'verticals/commerce-cart/src/services/final-cart-candidate-owners.service.ts',
     reason:
@@ -786,6 +823,18 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     reason: 'Commerce publishes this as its sanctioned read-only API client for Shell composition.',
     specifier: `${commercePackageSpecifierPrefix}/api/client`,
   },
+  {
+    importer: 'apps/shell-super-app/api/auth/commerce-external-identity.ts',
+    reason:
+      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
+    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
+  },
+  {
+    importer: 'apps/shell-super-app/api/auth/external-identity/commerce-admission-observation.ts',
+    reason:
+      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
+    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
+  },
 ];
 
 export const isAllowedCompositionSeam = (importer: string, specifier: string): boolean =>
@@ -839,6 +888,166 @@ const ViolationOrder = Order.combine(
   Order.combine(byField('line', Order.Number), byField('reason', Order.String)),
 );
 
+// ---------------------------------------------------------------------------------------------------------------
+// Demo rule: Core and the Shell platform name no MicroVertical.
+// Every vertical id, module id, tool name, label, navigation entry or review rule comes from the composed module
+// contracts, so a vertical's app id (quoted, or as an `@app/<id>` / `verticals/<id>` path segment) or module id must
+// not appear in Core or Shell platform source. Demo guide content, demo seed data and Core's test fixtures name demo
+// tenants' modules on purpose. Main's governed integration layer is deliberately vertical-aware (Shell owns the
+// Symmy ingress, the Payment gateway relay and the gateway evidence that issues Symmy, Payment route-scope,
+// Privacy-dispatch and organization-governance assertions), so those files, or only the audiences they name, are exempt.
+// ---------------------------------------------------------------------------------------------------------------
+export interface PlatformVertical {
+  readonly appId: string;
+  readonly moduleId: string | undefined;
+}
+
+const PLATFORM_GUARDED = [
+  'packages/core-runtime/src/',
+  'packages/shared-contracts/src/',
+  'apps/shell-super-app/api/',
+  'apps/shell-super-app/server/',
+  'apps/shell-super-app/shared/',
+  'apps/shell-super-app/src/',
+  'scripts/ontos-mcp-contribution.mts',
+];
+const PLATFORM_EXEMPT = [
+  'apps/shell-super-app/src/demo-guide/guides/',
+  'packages/core-runtime/src/testing/',
+  'apps/shell-super-app/api/symmy/',
+  'apps/shell-super-app/api/auth/gateway-payment-route-scope.ts',
+  'apps/shell-super-app/api/auth/gateway-organization-governance-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-recovery-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-registered-assertion.ts',
+  'apps/shell-super-app/api/auth/gateway-symmy-route-scope.ts',
+  'packages/shared-contracts/src/gateway-context.ts',
+  'packages/shared-contracts/src/gateway-context-server.ts',
+];
+/** Mixed files: only the audiences main's integration layer names there, never another vertical. */
+const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
+  ['apps/shell-super-app/api/auth/gateway-delegation-issuer.ts', ['privacy']],
+  ['apps/shell-super-app/api/auth/gateway-issuer.ts', ['privacy', 'symmy-integration']],
+  ['apps/shell-super-app/api/auth/gateway-originator-evidence.ts', ['privacy.core']],
+  ['apps/shell-super-app/api/index.ts', ['symmy-integration']],
+  // The Payment gateway relay names only Payment, and only in the files that carry its relay contract and transport.
+  ['apps/shell-super-app/api/payment-gateway/contract.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/notification-boundary.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/notification-contract.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/owner-release-transport.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/reconciliation-boundary.ts', ['payment']],
+  ['apps/shell-super-app/api/payment-gateway/transport.ts', ['payment']],
+  ['apps/shell-super-app/server/modern.server.ts', ['payment']],
+  ['apps/shell-super-app/shared/api.ts', ['payment']],
+]);
+
+const isPlatformGuarded = (relative: string): boolean =>
+  PLATFORM_GUARDED.some((prefix) => relative.startsWith(prefix)) &&
+  !PLATFORM_EXEMPT.some((prefix) => relative.startsWith(prefix)) &&
+  !relative.includes('/demo-seed/') &&
+  !isTestSource(relative) &&
+  !/\.(?:test|spec)\.[cm]?tsx?$/u.test(relative);
+
+const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+
+const verticalPatterns = (verticals: readonly PlatformVertical[]) =>
+  verticals.flatMap(({ appId, moduleId }) => [
+    {
+      id: appId,
+      pattern: new RegExp(
+        `(?:['"\`]${escapeRegExp(appId)}['"\`]|(?:@app/|verticals/)${escapeRegExp(appId)}['"\`/])`,
+        'u',
+      ),
+    },
+    ...(moduleId === undefined ? [] : [{ id: moduleId, pattern: new RegExp(escapeRegExp(moduleId), 'u') }]),
+  ]);
+
+/** Lines of one Core or Shell platform source that name a vertical; empty outside the guarded platform. */
+export const platformVerticalIdViolations = (
+  relative: string,
+  source: string,
+  verticals: readonly PlatformVertical[],
+): readonly LeanCoreDependencyViolation[] => {
+  if (!isPlatformGuarded(relative)) {
+    return [];
+  }
+  const exemptIds = PLATFORM_EXEMPT_IDS.get(relative) ?? [];
+  const patterns = verticalPatterns(verticals).filter(({ id }) => !exemptIds.includes(id));
+  return source
+    .split('\n')
+    .flatMap((line, index) =>
+      patterns
+        .filter(({ pattern }) => pattern.test(line))
+        .map(({ id }) => ({ file: relative, line: index + 1, reason: `platform source names MicroVertical ${id}` })),
+    );
+};
+
+const VerticalPackageFromJson = Schema.fromJsonString(
+  Schema.Struct({
+    modernjs: Schema.optionalKey(
+      Schema.Struct({
+        appId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LeanCorePlatformAppId'))),
+        ontosModule: Schema.optionalKey(
+          Schema.Struct({ moduleId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LeanCorePlatformModuleId'))) }),
+        ),
+      }),
+    ),
+  }),
+);
+
+/** The verticals of the workspace, by app id and module id, read from their package manifests. */
+export const discoverPlatformVerticals = (
+  fileSystem: FileSystem.FileSystem,
+  root: string,
+  path: Path.Path,
+): Effect.Effect<readonly PlatformVertical[], PlatformError> =>
+  Effect.gen(function* discoverPlatformVerticalsProgram() {
+    const verticalsRoot = path.join(root, 'verticals');
+    if (!(yield* fileSystem.exists(verticalsRoot))) {
+      return [];
+    }
+    const directories = yield* fileSystem.readDirectory(verticalsRoot);
+    const verticals = yield* Effect.all(
+      directories.map((directory) =>
+        fileSystem.readFileString(path.join(root, 'verticals', directory, 'package.json'), 'utf-8').pipe(
+          Effect.flatMap(Schema.decodeEffect(VerticalPackageFromJson)),
+          Effect.map((manifest) =>
+            Option.some({
+              appId: manifest.modernjs?.appId ?? directory,
+              moduleId: manifest.modernjs?.ontosModule?.moduleId,
+            }),
+          ),
+          Effect.orElseSucceed(() => Option.none<PlatformVertical>()),
+        ),
+      ),
+      { concurrency: 32 },
+    );
+    return verticals.flatMap((vertical) => Option.toArray(vertical));
+  });
+
+/** Demo rule over the workspace: every Core or Shell platform line that names a MicroVertical. */
+export const checkPlatformVerticalIds = (
+  root: string,
+): Effect.Effect<readonly LeanCoreDependencyViolation[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* checkPlatformVerticalIdsProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const [files, verticals] = yield* Effect.all([collect(root), discoverPlatformVerticals(fileSystem, root, path)]);
+    const violations = yield* Effect.all(
+      files.map((file) =>
+        fileSystem
+          .readFileString(file, 'utf-8')
+          .pipe(
+            Effect.map((source) =>
+              platformVerticalIdViolations(path.relative(root, file).split(path.sep).join('/'), source, verticals),
+            ),
+          ),
+      ),
+      { concurrency: 32 },
+    );
+    return EffectArray.sort(violations.flat(), ViolationOrder);
+  });
+
 export const checkLeanCoreDependencies = (
   root: string,
 ): Effect.Effect<readonly LeanCoreDependencyViolation[], PlatformError, FileSystem.FileSystem | Path.Path> =>
@@ -869,8 +1078,7 @@ export const checkLeanCoreDependencies = (
       { concurrency: 32 },
     );
 
-    // Native JS/CJS participates in both graph proof and Core source policy; indexing runtime edges
-    // without checking their external specifiers would let shared JavaScript bypass Node isolation.
+    // Source policy retains its original TS inventory. Native JS/CJS is indexed only to prove graph edges.
     const coreRoot = path.join(root, coreSourceRoot);
     const coreRootExists = yield* fileSystem.exists(coreRoot);
     const coreGraphFiles = coreRootExists ? yield* collect(coreRoot, graphSourceExtensions) : [];
@@ -891,12 +1099,9 @@ export const checkLeanCoreDependencies = (
     const nodeOnlyFiles = nodeOnlyCoreSources(coreSources, coreBoundary);
     const corePackageImports = new Set(coreBoundary.imports.keys());
 
-    for (const [file, source] of [...sourcePairs, ...additionalGraphSources]) {
-      const relative = path.relative(root, file).split(path.sep).join('/');
-      recordCoreSourceViolations(record, relative, source, corePackageImports, nodeOnlyFiles);
-    }
     for (const [file, source] of sourcePairs) {
       const relative = path.relative(root, file).split(path.sep).join('/');
+      recordCoreSourceViolations(record, relative, source, corePackageImports, nodeOnlyFiles);
       recordNonCommerceImportViolations(record, relative, source, commerceExports, nonCommerceOwnerRoots);
     }
 
@@ -910,7 +1115,13 @@ class LeanCoreDependencyCheckFailed extends Schema.TaggedError<LeanCoreDependenc
 
 const main = Effect.gen(function* leanCoreDependencyMain() {
   const path = yield* Path.Path;
-  const violations = yield* checkLeanCoreDependencies(path.resolve(process.cwd()));
+  const root = path.resolve(process.cwd());
+  const [leanCore, platformVerticalIds] = yield* Effect.all([
+    checkLeanCoreDependencies(root),
+    // Demo rule: Core and the Shell platform name no MicroVertical.
+    checkPlatformVerticalIds(root),
+  ]);
+  const violations = [...leanCore, ...platformVerticalIds];
   if (violations.length > 0) {
     yield* Effect.all(
       violations.map((violation) => Console.error(`${violation.file}:${violation.line}: ${violation.reason}`)),

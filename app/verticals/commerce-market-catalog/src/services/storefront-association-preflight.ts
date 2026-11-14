@@ -18,7 +18,7 @@ import {
   StorefrontApplicationEvidenceStale,
   StorefrontApplicationNotCurrent,
   StorefrontApplicationValidationUnavailable,
-  makeServerCurrentStorefrontApplicationAuthority,
+  readServerCurrentStorefrontApplicationEvidence,
 } from '../integrations/current-storefront-application.ts';
 import type { MarketAdministrationService } from './market-administration.service.ts';
 import {
@@ -96,11 +96,6 @@ export const prepareStorefrontAssociationServices = <
       });
     }
     const crypto = yield* Crypto.Crypto;
-    const authority = makeServerCurrentStorefrontApplicationAuthority({
-      compositionRevision: context.compositionRevision,
-      crypto,
-      scope: context.scope,
-    });
     yield* requireCurrentContract().pipe(
       Effect.mapError((cause) =>
         Object.defineProperty(
@@ -114,7 +109,11 @@ export const prepareStorefrontAssociationServices = <
       ),
     );
     const preparedAt = yield* DateTime.now;
-    const evidence = yield* authority.validateCurrent(request, context.scope.correlationId);
+    const evidence = yield* readServerCurrentStorefrontApplicationEvidence(
+      { compositionRevision: context.compositionRevision, crypto, scope: context.scope },
+      request,
+      context.scope.correlationId,
+    );
     const { validateCurrent } = preparedStorefrontApplicationAuthority(
       request,
       context.scope.correlationId,

@@ -1,7 +1,7 @@
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 
 import { randomUUID } from 'node:crypto';
@@ -109,7 +109,7 @@ import {
   ResolvedModuleTargetSchema,
   ShellTargetForbiddenProblemSchema,
   ShellTargetNotFoundProblemSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import {
   makeModuleEntrypointLoadScheduler,
   moduleEntrypointLoadIdentity,
@@ -547,7 +547,7 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeShellTestAuthentication({
+    const authentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, configuration),
@@ -652,9 +652,9 @@ it.live(
     ]);
     yield* coreDatabase.insert(accessScopes).values(
       fixtureAccessScopes.map((entry) => ({
-        legalEntityId: entry._tag === 'LegalEntity' ? entry.legalEntityId : null,
+        legalEntityId: Predicate.isTagged(entry, 'LegalEntity') ? entry.legalEntityId : null,
         scopeId: entry.scopeId,
-        tenantContextId: entry._tag === 'TenantContext' ? tenantId : null,
+        tenantContextId: Predicate.isTagged(entry, 'TenantContext') ? tenantId : null,
         tenantId,
       })),
     );
@@ -1906,7 +1906,7 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeShellTestAuthentication({
+    const authentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, configuration),
@@ -2161,7 +2161,7 @@ it.live(
       .update(principals)
       .set({ status: 'active' })
       .where(eq(principals.principalId, secondPrincipalId));
-    const resolverUnavailableAuthentication = yield* makeShellTestAuthentication({}).pipe(
+    const resolverUnavailableAuthentication = yield* shellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(CoreDatabase, { executor: coreDatabase }),
@@ -2844,7 +2844,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
       Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
     ),
   );
-  const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+  const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
     Effect.provideService(AuthConfig, configuration),
     Effect.provideService(AuthDatabase, authPersistence),
     Effect.provideService(CoreDatabase, { executor: Context.get(resolverContext, CoreDatabase).executor }),
