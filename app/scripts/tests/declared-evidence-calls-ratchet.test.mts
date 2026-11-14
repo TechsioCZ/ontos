@@ -10,6 +10,7 @@ import { expect, it } from 'effect-rstest';
  * deleting its registry entry and its line here; adding one fails this test.
  */
 const PINNED_DECLARATIONS = [
+  'commerce.assortment assortment.symmy-rule-fixture-owner-currentness',
   'commerce.customer-context commerce.counterparty-migration-correlation',
   'commerce.customer-context commerce.counterparty-organization-ico-facts',
   'commerce.customer-context commerce.legacy-ico-inventory',
@@ -35,6 +36,7 @@ const PINNED_DECLARATIONS = [
 ];
 
 const REGISTRIES = [
+  'verticals/assortment/src/declared-evidence-calls.ts',
   'verticals/commerce-customer-context/src/declared-evidence-calls.ts',
   'verticals/party-registry/src/declared-evidence-calls.ts',
   'verticals/privacy/src/declared-evidence-calls.ts',
