@@ -2937,23 +2937,42 @@ const bindStorefrontWorkload = (
   }).pipe(Effect.orDie);
 
 /** A Retail self-enrollment start naming the company the Attempt is for, with a fresh address each time. */
-const storefrontStartIn = (company: string) => ({
+/** A Storefront visitor's Retail self-enrollment start for one company, with a fresh address each time. */
+const storefrontRetailStart = (company: string, email: string) => ({
   displayName: START_DISPLAY_NAME,
-  email: `enrollment-storefront-${randomUUID()}@example.test`,
+  email,
   journey: 'RETAIL_SELF_ENROLLMENT',
   password: PORTAL_OWNER_PASSWORD,
   sellingLegalEntityId: company,
 });
 
 /**
- * The Storefront client's own visitor start, over the very route a Storefront calls, in the tenant context with the
- * company named in the payload — the one way the start and its transition claim run for a workload (D6).
+ * A Counterparty-invitation start for one company. It carries no retail registration, so the start may run in the
+ * tenant context with the company named only in the payload — the one path the start's preparation guards (D6).
+ */
+const storefrontInvitationStart = (company: string) => ({
+  displayName: START_DISPLAY_NAME,
+  email: `enrollment-storefront-${randomUUID()}@example.test`,
+  invitationId: randomUUID(),
+  journey: 'COUNTERPARTY_INVITATION',
+  password: PORTAL_OWNER_PASSWORD,
+  sellingLegalEntityId: company,
+});
+
+/**
+ * The Storefront client's own visitor start, over the very route a Storefront calls.
+ *
+ * A Retail start carries the visitor's registration, which the start Action accepts only in a company context whose
+ * company is the target, so the client presents its company in its scope and the gate's own workload rule decides it:
+ * a key bound with no registration, or registered for another company, is refused there. A start with no retail
+ * registration may run in the tenant context, naming its company only in the payload; there the start's preparation
+ * refuses a company the client is not registered for, before any Attempt exists.
  *
  * The route answers every refusal with the same `enrollment_rejected` problem on purpose: a public start never says
  * why it refused. The reason a refused workload gets (`deny.workload_unbound`, or `action_permission_check_failed`
  * when the registry cannot be read) is therefore pinned where it is decided, by the start's preparation in
  * `tests/unit/enrollment-actions.test.ts`; here every refusal is proven by what a caller can observe — the 403 and
- * that no Enrollment Attempt exists — and the admission by the committed start itself.
+ * that no Enrollment Attempt exists — and the admission by the committed start and its transition claim.
  */
 it.live(
   'admits a registered Storefront client only in its registered company, through the start and its transition claim',
@@ -2996,43 +3015,54 @@ it.live(
         yield* bindStorefrontWorkload(fixture, unregistered, []);
 
         const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
-        const runtime = yield* authenticatedRuntime(gateway);
-        const storefrontAssertion = (client: { readonly authBindingId: string; readonly principalId: string }) =>
-          issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
-            authBindingId: client.authBindingId,
-            authContextRef: `better-auth-api-key:${client.principalId}`,
-            authenticationNamespaceId: STOREFRONT_KEY_NAMESPACE_ID,
-            authMethod: 'api_key',
-            // The tenant context: the start and its claim forbid a company in the caller's scope; the payload names it.
-            principalId: client.principalId,
-            tenantId,
-          });
-        const start = (client: typeof registered, company: string) =>
+        // The deployed composition the committing start runs on: the configured owner preparation authority beside
+        // the configured portal provider the claim's effect is dispatched into.
+        const runtime = yield* authenticatedRuntime(
+          gateway,
+          singleUseRedemptionLive,
+          commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
+            Layer.provide(yield* preparationAuthorityLive()),
+          ),
+        );
+        /** The client's API-key assertion: in the company context of `company`, or in the tenant context. */
+        const start = (client: typeof registered, body: Record<string, string>, company?: string) =>
           Effect.gen(function* startAs() {
-            const assertion = yield* storefrontAssertion(client);
-            return yield* Effect.promise(
-              async () => await runtime.handler(governedStartRequest(storefrontStartIn(company), assertion)),
-            );
+            const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+              authBindingId: client.authBindingId,
+              authContextRef: `better-auth-api-key:${client.principalId}`,
+              authenticationNamespaceId: STOREFRONT_KEY_NAMESPACE_ID,
+              authMethod: 'api_key',
+              ...(company === undefined ? {} : { legalEntityId: company }),
+              principalId: client.principalId,
+              tenantId,
+            });
+            return yield* Effect.promise(async () => await runtime.handler(governedStartRequest(body, assertion)));
           });
-        const refusedWithoutAttempt = (response: Response, attemptsBefore: number) =>
+        const refusedWithoutAttempt = (response: Response) =>
           Effect.gen(function* refused() {
             expect(response.status).toBe(403);
             expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
               code: 'enrollment_rejected',
             });
-            expect(yield* enrollmentAttemptCount(fixture)).toBe(attemptsBefore);
+            expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
           });
+        const retailIn = (company: string) =>
+          storefrontRetailStart(company, `enrollment-storefront-${randomUUID()}@example.test`);
 
-        // An unregistered Storefront client — its key is bound, but no company is registered for it — is refused
-        // in the Tenant's own company: a workload is never Tenant-wide by omission (D6, `deny.workload_unbound`).
-        yield* refusedWithoutAttempt(yield* start(unregistered, companyA), 0);
+        // A key bound with no company registered is refused in the Tenant's own company: a workload is never
+        // Tenant-wide by omission (D6, `deny.workload_unbound` at the gate).
+        yield* refusedWithoutAttempt(yield* start(unregistered, retailIn(companyA), companyA));
 
-        // The client registered for company A is refused on an Attempt of company B of the same Tenant (D6).
-        yield* refusedWithoutAttempt(yield* start(registered, companyB), 0);
+        // The client registered for company A is refused in company B of the same Tenant (D6, at the gate).
+        yield* refusedWithoutAttempt(yield* start(registered, retailIn(companyB), companyB));
+
+        // In the tenant context the company is named only in the payload, and the start's preparation refuses one the
+        // client is not registered for before any Attempt exists (D6, `deny.workload_unbound` at the preparation).
+        yield* refusedWithoutAttempt(yield* start(registered, storefrontInvitationStart(companyB)));
 
         // An unreadable registry is never an admission: the start answers a refusal and writes nothing
-        // (`action_permission_check_failed` at the preparation). Only the read privilege on the registry is taken
-        // away, and it is given back exactly when this scope closes.
+        // (`action_permission_check_failed`). Only the read privilege on the registry is taken away, and it is given
+        // back exactly when this scope closes.
         yield* Effect.acquireRelease(
           fixture.admin
             .execute(sql`revoke select on core.access_workload_bindings from ontos_runtime`, 'objects')
@@ -3044,7 +3074,7 @@ it.live(
         ).pipe(
           Effect.flatMap(() =>
             Effect.gen(function* unreadableRegistry() {
-              const response = yield* start(registered, companyA);
+              const response = yield* start(registered, retailIn(companyA), companyA);
               expect(response.status).toBeGreaterThanOrEqual(400);
               expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
             }),
@@ -3052,10 +3082,12 @@ it.live(
           Effect.scoped,
         );
 
-        // The registered client in its registered company gets through: the start Action and the transition claim
-        // it runs both admit the Storefront workload, and the Attempt is committed.
-        const admitted = yield* start(registered, companyA);
-        expect(admitted.status).toBe(200);
+        // The client registered for A, in A, gets through: the start Action and the transition claim it runs both
+        // admit the Storefront workload, and the Attempt is committed.
+        const email = `enrollment-storefront-${randomUUID()}@example.test`;
+        yield* removePortalAccountsOnClose(email);
+        const admitted = yield* start(registered, storefrontRetailStart(companyA, email), companyA);
+        expect(admitted.status, yield* Effect.promise(async () => await admitted.clone().text())).toBe(200);
         const started = yield* Schema.decodeUnknownEffect(StartedEnrollmentResponseSchema)(
           yield* Effect.promise(async () => await admitted.clone().json()),
         ).pipe(Effect.orDie);
