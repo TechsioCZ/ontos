@@ -6,6 +6,7 @@ import { purchaseInvoiceCommandOf } from '../../src/routes/[lang]/provoz/nakupy/
 import type { PurchaseInvoiceInput } from '../../src/routes/[lang]/provoz/nakupy/purchase-invoice-command.ts';
 
 const input: PurchaseInvoiceInput = {
+  documentNumber: 'SUP-2026-118',
   dueDate: '2026-11-16',
   issueDate: '2026-11-02',
   lines: [{ description: 'Maintenance', quantity: 1, unitPriceMinor: 10_000, vatRate: 21 }],
@@ -28,7 +29,7 @@ it('preserves the known supplier ICO and exact CZK prices in the public Finance 
   expect(payload).toMatchObject({
     command: {
       _tag: 'RecordIncomingInvoice',
-      documentNumber: 'NÁVRH-OBJ-2026-001',
+      documentNumber: input.documentNumber,
       lines: input.lines,
       sourceOrder: { id: input.order.id, number: input.order.number },
       supplierCompanyId: '01234567',
@@ -37,6 +38,11 @@ it('preserves the known supplier ICO and exact CZK prices in the public Finance 
     },
     expectedRevision: 7,
   });
+});
+
+it('refuses an absent supplier document number rather than inventing one from the order', () => {
+  expect(Option.isNone(purchaseInvoiceCommandOf({ ...input, documentNumber: '' }))).toBe(true);
+  expect(Option.isNone(purchaseInvoiceCommandOf({ ...input, documentNumber: '   ' }))).toBe(true);
 });
 
 it('does not invent a supplier ICO when the purchasing supplier has none', () => {

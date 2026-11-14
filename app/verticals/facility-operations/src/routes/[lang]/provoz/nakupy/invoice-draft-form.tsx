@@ -18,6 +18,7 @@ const vatRates = [0, 10, 12, 21] as const;
 const saveFailure = 'Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.';
 type VatRate = (typeof vatRates)[number];
 interface SubmitInvoiceDraftInput {
+  readonly documentNumber: string;
   readonly dueDate: IsoDate;
   readonly issueDate: IsoDate;
   readonly lines: readonly {
@@ -36,7 +37,19 @@ interface SubmitInvoiceDraftInput {
 }
 const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoiceDraft')(
   function* submitPurchaseInvoiceDraft(input: SubmitInvoiceDraftInput) {
-    const { dueDate, issueDate, lines, onCreated, order, rate, setError, submitting, supplier, totalMinor } = input;
+    const {
+      documentNumber,
+      dueDate,
+      issueDate,
+      lines,
+      onCreated,
+      order,
+      rate,
+      setError,
+      submitting,
+      supplier,
+      totalMinor,
+    } = input;
     if (submitting.current) {
       return 'failed' as const;
     }
@@ -44,7 +57,15 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
       setError('Vyberte sazbu DPH a zkontrolujte datum vystavení a splatnost.');
       return 'failed' as const;
     }
-    const command = purchaseInvoiceCommandOf({ dueDate, issueDate, lines, order, supplier, totalMinor });
+    const command = purchaseInvoiceCommandOf({
+      documentNumber,
+      dueDate,
+      issueDate,
+      lines,
+      order,
+      supplier,
+      totalMinor,
+    });
     if (Option.isNone(command)) {
       setError(saveFailure);
       return 'failed' as const;
@@ -99,6 +120,7 @@ export const InvoiceDraftForm = ({
 }) => {
   const { t } = useModernI18n();
   const [issueDate, setIssueDate] = useState(todayIso);
+  const [documentNumber, setDocumentNumber] = useState('');
   const [dueDate, setDueDate] = useState(todayIso);
   const [rate, setRate] = useState<VatRate | undefined>();
   const submitting = useRef(false);
@@ -116,8 +138,10 @@ export const InvoiceDraftForm = ({
   }
   // The draft is created on Uložit only; the dates it opens with are not typed input.
   const form = useFormSave({
+    isValid: (value) => value.documentNumber.trim() !== '',
     submit: () =>
       submitInvoiceDraft({
+        documentNumber,
         dueDate,
         issueDate,
         lines,
@@ -129,7 +153,7 @@ export const InvoiceDraftForm = ({
         supplier,
         totalMinor,
       }),
-    value: { dueDate, issueDate, rate },
+    value: { documentNumber, dueDate, issueDate, rate },
   });
   return (
     <SectionCard title={t('facility-operations.ui.prepareIncomingInvoice')}>
@@ -142,6 +166,13 @@ export const InvoiceDraftForm = ({
           {error}
         </StatusText>
       )}
+      <FormInput
+        id="draft-invoice-number"
+        label={t('facility-operations.ui.supplierDocumentNumber')}
+        onChange={(event) => setDocumentNumber(event.target.value)}
+        required
+        value={documentNumber}
+      />
       <div className="flex flex-col gap-100">
         {order.lines.map((line) => (
           <div className="rounded-md bg-surface-secondary p-150 text-sm" key={line.id}>

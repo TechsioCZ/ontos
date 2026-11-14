@@ -31,6 +31,7 @@ type MutableIncomingInvoiceInput = {
 };
 
 export interface PurchaseInvoiceInput extends Pick<IncomingInvoice, 'dueDate' | 'issueDate' | 'lines' | 'totalMinor'> {
+  readonly documentNumber: string;
   readonly order: Pick<PurchaseOrder, 'currency' | 'id' | 'number'>;
   readonly supplier: Pick<Supplier, 'ico' | 'name'>;
 }
@@ -48,8 +49,7 @@ export const purchaseInvoiceCommandOf = ({
   const command: MutableIncomingInvoiceInput = {
     ...invoice,
     _tag: 'RecordIncomingInvoice',
-    documentNumber: `NÁVRH-${order.number}`,
-    note: `Návrh z nákupní objednávky ${order.number}. Číslo a sazbu DPH ověří účetní podle dokladu dodavatele.`,
+    note: `Návrh z nákupní objednávky ${order.number}. Údaje ověřte podle dokladu dodavatele.`,
     sourceOrder: { id: order.id, number: order.number },
     supplierName: supplier.name,
   };

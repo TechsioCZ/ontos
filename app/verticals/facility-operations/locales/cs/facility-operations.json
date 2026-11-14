@@ -93,6 +93,7 @@
       "prepareIncomingInvoice": "Připravit návrh přijaté faktury",
       "issueDate": "Datum vystavení",
       "dueDate": "Datum splatnosti",
+      "supplierDocumentNumber": "Číslo dokladu dodavatele",
       "supplierDocumentVat": "DPH podle dokladu dodavatele",
       "selectVatRate": "Vyberte sazbu DPH",
       "leaseAgreement": "Nájemní smlouva",
