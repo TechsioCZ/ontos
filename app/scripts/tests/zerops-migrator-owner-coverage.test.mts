@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-import { Result, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ChildProcess } from 'effect/process';
 import { parse } from 'yaml';
+
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const migrator = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
 const deployment = Result.getOrThrow(
@@ -86,6 +91,20 @@ it('the migrator asks the pending-migration planner before every native owner mi
   expect(decided).toBeGreaterThan(-1);
   expect(skipped).toBeGreaterThan(decided);
   expect(spawned).toBeGreaterThan(skipped);
-  expect(migrator).toContain('OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))');
-  expect(migrator).toContain('NodeRuntime.runMain(main.pipe(Effect.provide(MigratorLive))');
 });
+
+it.effect('the migrator builds its services and reports the first failed boot stage instead of exiting silently', () =>
+  Effect.gen(function* migratorWithoutDatabase() {
+    // No database configuration: the services still build, the first boot stage runs and its failure is reported.
+    const result = yield* collectToolingProcess(
+      ChildProcess.make(process.execPath, [fileURLToPath(new URL('../run-zerops-migrator.mjs', import.meta.url))], {
+        env: { MIGRATOR_ONCE: 'true' },
+        extendEnv: false,
+      }),
+    );
+    expect(result.status).toBe(1);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toContain('[boot-timing] stage=migrator.spicedb-database-bootstrap');
+    expect(output).toContain('MigratorError');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

@@ -308,15 +308,25 @@ const main = Effect.scoped(
     if (!(yield* migrateOnce)) {
       yield* serveReadiness(yield* migratorPort);
     }
-  }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
+  }),
 );
 
-/** The migrator process's services, provided once at its executable edge. */
-const MigratorLive = Layer.mergeAll(
-  NodeServices.layer,
-  OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer)),
+/**
+ * The migrator process's services, provided once at its executable edge. The planner opens its evidence connection with
+ * the platform services, so they are provided to it and kept for the migrator's own child processes.
+ */
+const MigratorLive = OwnerMigrationPlannerLive(appDirectory).pipe(
+  Layer.provide(Reactivity.layer),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 // SIGTERM (a container stop) interrupts the migrator instead of killing it, so its running child is stopped
 // gracefully by `stopChild` rather than orphaned or killed in the middle of a projection.
-NodeRuntime.runMain(main.pipe(Effect.provide(MigratorLive)), { disableErrorReporting: true });
+// Logged after the services are provided, so a service that cannot be built is reported too, not a silent exit 1.
+NodeRuntime.runMain(
+  main.pipe(
+    Effect.provide(MigratorLive),
+    Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause))),
+  ),
+  { disableErrorReporting: true },
+);
