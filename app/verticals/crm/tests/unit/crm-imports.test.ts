@@ -120,6 +120,43 @@ const order = (state: CrmState, externalId: string, source = 'E-shop') => {
 };
 
 describe('CRM order CSV parser', () => {
+  it('refuses an unterminated quote instead of absorbing later orders', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova\nE-shop;2;paid\n');
+    expect(parsed.fileError).toContain('Řádek 2, sloupec 3');
+    expect(parsed.rows).toEqual([]);
+    expect(parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova"').rows[0]).toMatchObject({
+      kind: 'ok',
+      value: { rawStatus: 'nova' },
+    });
+  });
+  it('keeps valid quoted multiline cells and doubled quotes', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"První\n""druhý"""\nE-shop;2;nova\n');
+    expect(parsed.fileError).toBeUndefined();
+    expect(parsed.rows).toMatchObject([
+      { kind: 'ok', value: { rawStatus: 'První\n"druhý"', row: 2 } },
+      { kind: 'ok', value: { externalId: '2', row: 4 } },
+    ]);
+  });
+  it('rejects surplus cells per row without discarding the next valid order', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;nova;unexpected\nE-shop;2;nova\n');
+    expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
+    expect(parsed.rows[0]?.kind === 'error' ? parsed.rows[0].message : '').toContain('sloupcem 3');
+    expect(parsed.rows[1]).toMatchObject({ kind: 'ok', value: { externalId: '2' } });
+  });
+  it('refuses duplicate canonical columns, including aliases and accented headers', () => {
+    for (const extra of ['stav', 'status', 'Stáv']) {
+      const parsed = parseOrdersCsv(`zdroj;id_objednavky;stav;${extra}\nE-shop;1;nova;paid\n`);
+      expect(parsed.fileError).toContain('sloupec stav');
+      expect(parsed.rows).toEqual([]);
+    }
+    const parsed = parseOrdersCsv('source;order_id;status\nE-shop;1;nova\n');
+    expect(parsed.fileError).toBeUndefined();
+    expect(parsed.rows[0]).toMatchObject({ kind: 'ok' });
+  });
+  it('provides the new CSV refusal messages in English too', () => {
+    expect(parseOrdersCsv('source;order_id;status\nE-shop;1;"nova', 'en').fileError).toContain('Row 2, column 3');
+    expect(parseOrdersCsv('source;order_id;status;stav\nE-shop;1;nova;paid', 'en').fileError).toContain('column stav');
+  });
   it('samples in TS are identical to demo-data files', () => {
     for (const entry of ordersCsvSamples) {
       const file = readFileSync(new URL(`../../demo-data/${entry.fileName}`, import.meta.url), 'utf-8');

@@ -1,1 +1,9 @@
-{ "imports": {} }
+{
+  "imports": {
+    "csv": {
+      "unterminatedQuote": "Řádek {{row}}, sloupec {{column}}: chybí uzavírací uvozovka. Opravte CSV a import opakujte.",
+      "surplusCells": "Řádek {{row}}: za posledním sloupcem {{column}} jsou další hodnoty. Opravte oddělovače nebo uvozovky.",
+      "duplicateHeader": "Řádek 1, sloupec {{column}} je uveden vícekrát (i pod jiným názvem). Ponechte jej jen jednou."
+    }
+  }
+}

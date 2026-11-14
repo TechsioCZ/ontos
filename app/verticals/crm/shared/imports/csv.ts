@@ -2,6 +2,8 @@
 // Pure parser of the documented CRM order CSV template (crm-orders-csv-v1). The browser uses it for the preview,
 // the server re-parses the same text inside the ImportOrdersCsv command, so the preview and the stored result match.
 import { DateTime, Option, Result, Schema } from 'effect';
+import csImports from '../../locales/cs/crm-imports.json';
+import enImports from '../../locales/en/crm-imports.json';
 import { IsoTimeSchema } from '../domain/common.ts';
 import { OrderDateSchema } from '../domain/imports.ts';
 
@@ -146,8 +148,13 @@ interface RawRecord {
   readonly line: number;
 }
 
+interface UnclosedCell {
+  readonly column: number;
+  readonly row: number;
+}
+
 /** RFC 4180 tokenizer (quoted cells, doubled quotes, CRLF/LF, BOM). */
-const tokenize = (text: string, delimiter: string): RawRecord[] => {
+const tokenize = (text: string, delimiter: string): Result.Result<RawRecord[], UnclosedCell> => {
   const source = text.startsWith('﻿') ? text.slice(1) : text;
   const records: RawRecord[] = [];
   let cells: string[] = [];
@@ -193,11 +200,14 @@ const tokenize = (text: string, delimiter: string): RawRecord[] => {
       cell += char;
     }
   }
+  if (quoted) {
+    return Result.fail({ column: cells.length + 1, row: recordLine });
+  }
   if (cell !== '' || cells.length > 0) {
     cells.push(cell);
     records.push({ cells, line: recordLine });
   }
-  return records.filter((record) => record.cells.some((value) => value.trim() !== ''));
+  return Result.succeed(records.filter((record) => record.cells.some((value) => value.trim() !== '')));
 };
 
 /** "12 450,50" / "12450.5" -> "12450.50"; undefined when not an exact decimal. */
@@ -444,10 +454,20 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
 };
 
 /** Parses CSV text of the crm-orders-csv-v1 template into validated rows and readable per-row errors. */
-export const parseOrdersCsv = (text: string): ParsedCsv => {
+export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): ParsedCsv => {
+  const copy = (locale === 'en' ? enImports : csImports).imports.csv;
   const firstLine = text.split(/\r?\n/u, 1)[0] ?? '';
   const records = tokenize(text, detectDelimiter(firstLine));
-  const [header, ...data] = records;
+  if (Result.isFailure(records)) {
+    return {
+      fileError: copy.unterminatedQuote
+        .replace('{{row}}', String(records.failure.row))
+        .replace('{{column}}', String(records.failure.column)),
+      rows: [],
+      unknownColumns: [],
+    };
+  }
+  const [header, ...data] = records.success;
   if (header === undefined) {
     return { fileError: 'Soubor je prázdný', rows: [], unknownColumns: [] };
   }
@@ -458,6 +478,14 @@ export const parseOrdersCsv = (text: string): ParsedCsv => {
   const known = new Set(ordersCsvColumns.map((column) => column.key));
   const missing = ordersCsvColumns.filter((column) => column.required && !keys.includes(column.key));
   const unknownColumns = keys.filter((key) => key !== '' && !known.has(key));
+  const duplicate = keys.find((key, index) => known.has(key) && keys.indexOf(key) !== index);
+  if (duplicate !== undefined) {
+    return {
+      fileError: copy.duplicateHeader.replace('{{column}}', duplicate),
+      rows: [],
+      unknownColumns,
+    };
+  }
   if (missing.length > 0) {
     return {
       fileError: `V hlavičce chybí povinné sloupce: ${missing.map((column) => column.key).join(', ')}`,
@@ -465,12 +493,19 @@ export const parseOrdersCsv = (text: string): ParsedCsv => {
       unknownColumns,
     };
   }
-  const rows = data.map((record) =>
-    parseRecord(record.line, (key) => {
+  const rows = data.map((record): ParsedRow => {
+    if (record.cells.length > keys.length) {
+      return {
+        kind: 'error',
+        message: copy.surplusCells.replace('{{row}}', String(record.line)).replace('{{column}}', String(keys.length)),
+        row: record.line,
+      };
+    }
+    return parseRecord(record.line, (key) => {
       const index = keys.indexOf(key);
       return index === -1 ? undefined : record.cells[index];
-    }),
-  );
+    });
+  });
   return { rows, unknownColumns };
 };
 

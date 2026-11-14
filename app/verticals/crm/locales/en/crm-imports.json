@@ -1,1 +1,9 @@
-{ "imports": {} }
+{
+  "imports": {
+    "csv": {
+      "unterminatedQuote": "Row {{row}}, column {{column}}: missing closing quote. Correct the CSV and import it again.",
+      "surplusCells": "Row {{row}}: extra values follow the last column {{column}}. Correct the delimiters or quotes.",
+      "duplicateHeader": "Row 1, column {{column}} appears more than once (including aliases). Keep it only once."
+    }
+  }
+}
