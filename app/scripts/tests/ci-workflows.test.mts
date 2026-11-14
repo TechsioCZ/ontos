@@ -446,10 +446,41 @@ it('builds in the stage deploy mode because the typecheck gate proves the types'
 it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {
   const build = buildStep()?.run ?? '';
   // The native hosted-owner fixtures start an owner only from its dist/zerops-entry.mjs, from these same artifacts.
-  const entry = build.indexOf('mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"');
+  const entry = build.indexOf('node scripts/zerops/owner-entry.mts "$unit"');
   expect(entry).toBeGreaterThan(build.indexOf(UNIT_BUILD_COMMAND));
   expect(build).toContain('require("./topology/application-release-intent.json")');
-  expect(build).toContain('console.log("apps/shell-super-app")');
+  expect(build).toContain('console.log("shell-super-app")');
+  // A rebuilt unit starts from clean outputs and gets its cache receipt only after its build and entry.
+  expect(build.indexOf('rm -rf -- "$unit/dist" "$unit/.output"')).toBeLessThan(build.indexOf(UNIT_BUILD_COMMAND));
+  expect(build.indexOf('node scripts/ci/unit-output-cache.mts stamp --unit "$id"')).toBeGreaterThan(entry);
+});
+
+it('keeps only verified unit outputs from the unit output cache and saves them only after verification', () => {
+  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const index = (predicate: (step: (typeof steps)[number]) => boolean) => steps.findIndex(predicate);
+  const paths = index(({ name }) => name === "Name the shard's cached output paths");
+  const restore = index(({ uses }) => uses?.startsWith('actions/cache/restore@') === true);
+  const plan = index(({ run }) => run?.includes('unit-output-cache.mts plan --units "$SHARD_UNITS"') === true);
+  const build = index(({ run }) => run?.includes(UNIT_BUILD_COMMAND) === true);
+  const verify = index(
+    ({ run }) => run === 'mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"',
+  );
+  const save = index(({ uses }) => uses?.startsWith('actions/cache/save@') === true);
+  const pack = index(({ name }) => name === "Pack the shard's build outputs");
+  expect(paths > -1 && paths < restore && restore < plan && plan < build && build < verify).toBe(true);
+  expect(verify < save && save < pack).toBe(true);
+  const prefix = `gates-units-v1-${expression('runner.os')}-${expression('runner.arch')}-${expression('matrix.shard')}-`;
+  expect(steps[restore]?.with).toEqual({
+    key: `${prefix}${expression('github.sha')}-${expression('github.run_id')}-${expression('github.run_attempt')}`,
+    path: expression('steps.unit-cache-paths.outputs.paths'),
+    'restore-keys': prefix,
+  });
+  expect(steps[save]?.with).toEqual({
+    key: expression('steps.unit-cache.outputs.cache-primary-key'),
+    path: expression('steps.unit-cache-paths.outputs.paths'),
+  });
+  expect(steps[save]?.if).toBeUndefined();
+  expect(steps[build]?.env).toEqual({ BUILD_UNITS: expression('steps.cached-plan.outputs.build') });
 });
 
 it('only builds on the shards and proves every unit together in its own job that no test waits for', () => {

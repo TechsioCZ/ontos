@@ -1053,27 +1053,50 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # HOOK (unit output cache, restore). Lane CACHE plugs app/scripts/ci/unit-output-cache.mts in here.
-      #   Inputs:  SHARD_UNITS - this shard's unit paths, space separated, in build order; the installed workspace in
-      #            app/ at GITHUB_SHA.
-      #   Outputs: `pending` - the shard's units the cache did not restore, same order, space separated. Every unit left
-      #            out of `pending` must already hold its complete git-ignored build output (dist/, .output/ and
-      #            dist/zerops-entry.mjs) for exactly its current inputs, as a fresh build would write it.
-      #   Until it is wired, every unit is pending and builds.
-      - name: Restore unchanged units from the unit output cache
-        id: unit-cache
+      # Per-unit output cache (scripts/ci/unit-output-cache.mts). The Actions key only locates a candidate archive:
+      # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
+      # the complete shard before anything is saved or packed.
+      # Cache scope: a run reads caches of its own ref and of the default branch (main), plus the base branch of a
+      # pull request. The demo trunk is not the default branch, so its caches are invisible to candidate/* refs (and
+      # this workflow does not run on trunk pushes at all). A fix round therefore reuses its own earlier runs only
+      # when it keeps dispatching on the same candidate/<name> ref. The key names the shard, so rebalancing the
+      # shards makes the next run cold.
+      - name: Name the shard's cached output paths
+        id: unit-cache-paths
         env:
           SHARD_UNITS: ${{ matrix.units }}
-        run: echo "pending=$SHARD_UNITS" >>"$GITHUB_OUTPUT"
+        run: |
+          {
+            echo 'paths<<UNIT_CACHE_PATHS'
+            for unit in $SHARD_UNITS; do
+              printf 'app/%s/dist\napp/%s/.output\n' "$unit" "$unit"
+            done
+            echo 'UNIT_CACHE_PATHS'
+          } >>"$GITHUB_OUTPUT"
 
-      - name: Build the shard's pending units two at a time
+      - name: Restore the shard's unit outputs from earlier runs
+        id: unit-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.unit-cache-paths.outputs.paths }}
+          key: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+
+      - name: Keep the restored units whose inputs are unchanged
+        id: cached-plan
         working-directory: app
         env:
-          PENDING_UNITS: ${{ steps.unit-cache.outputs.pending }}
+          SHARD_UNITS: ${{ matrix.units }}
+        run: mise exec -- node scripts/ci/unit-output-cache.mts plan --units "$SHARD_UNITS" >>"$GITHUB_OUTPUT"
+
+      - name: Build the shard's changed units two at a time
+        working-directory: app
+        env:
+          BUILD_UNITS: ${{ steps.cached-plan.outputs.build }}
         run: |
-          read -ra units <<<"$PENDING_UNITS"
-          if [ "${#units[@]}" -eq 0 ]; then
-            echo 'The unit output cache restored every unit of this shard.'
+          read -ra ids <<<"$BUILD_UNITS"
+          if [ "${#ids[@]}" -eq 0 ]; then
+            echo 'Every unit of this shard was kept from the unit output cache.'
             exit 0
           fi
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
@@ -1081,13 +1104,29 @@ jobs:
           logs="$RUNNER_TEMP/unit-build-logs"
           mkdir -p "$logs"
           export logs
-          # xargs bounds the parallel builds; each unit runs its own package `build` script, as pnpm -r run build does.
+          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
+          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
+          served="$(mise exec -- node -e '
+            const intent = require("./topology/application-release-intent.json");
+            for (const { appId } of intent.modules) console.log(appId);
+            console.log("shell-super-app");
+          ')"
+          export served
+          # xargs bounds the parallel builds; each unit runs its own package `build` script, as pnpm -r run build does,
+          # from clean outputs, then gets its app host entry when served and its cache receipt.
           status=0
-          printf '%s\n' "${units[@]}" | mise exec -- xargs -P "$BUILD_JOBS" -n 1 bash -c '
-            unit="$1"
-            log="$logs/${unit//\//-}.log"
+          printf '%s\n' "${ids[@]}" | mise exec -- xargs -P "$BUILD_JOBS" -n 1 bash -c '
+            id="$1"
+            unit="verticals/$id"
+            [ "$id" != shell-super-app ] || unit=apps/shell-super-app
+            log="$logs/$id.log"
             started="$SECONDS"
-            if pnpm --filter "./$unit" run build >"$log" 2>&1; then
+            if {
+              rm -rf -- "$unit/dist" "$unit/.output" &&
+                pnpm --filter "./$unit" run build &&
+                { ! grep -qxF "$id" <<<"$served" || node scripts/zerops/owner-entry.mts "$unit"; } &&
+                node scripts/ci/unit-output-cache.mts stamp --unit "$id"
+            } >"$log" 2>&1; then
               echo "built $unit in $((SECONDS - started))s"
             else
               tail -80 "$log"
@@ -1101,31 +1140,19 @@ jobs:
             echo '::endgroup::'
           done
           [ "$status" -eq 0 ]
-          # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
-          # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
-          served="$(mise exec -- node -e '
-            const intent = require("./topology/application-release-intent.json");
-            for (const { appId } of intent.modules) console.log(`verticals/${appId}`);
-            console.log("apps/shell-super-app");
-          ')"
-          entries=()
-          for unit in "${units[@]}"; do
-            if grep -qxF "$unit" <<<"$served"; then
-              entries+=("$unit")
-            fi
-          done
-          if [ "${#entries[@]}" -gt 0 ]; then
-            mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"
-          fi
 
-      # HOOK (unit output cache, save). Lane CACHE plugs app/scripts/ci/unit-output-cache.mts in here.
-      #   Inputs:  `steps.unit-cache.outputs.pending` - the units this job built; their outputs in app/.
-      #   Outputs: none. A save never fails the gate and never runs for a ref that cannot be trusted to seed main.
-      - name: Save the built units to the unit output cache
-        continue-on-error: true
+      - name: Verify every unit output of the shard
+        working-directory: app
         env:
-          BUILT_UNITS: ${{ steps.unit-cache.outputs.pending }}
-        run: echo "The unit output cache is not wired yet; nothing saved for $BUILT_UNITS."
+          SHARD_UNITS: ${{ matrix.units }}
+        run: mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
+
+      # Saved only after verify, under this run's own ref scope; a failed shard saves nothing.
+      - name: Save the shard's unit outputs for later runs
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.unit-cache-paths.outputs.paths }}
+          key: ${{ steps.unit-cache.outputs.cache-primary-key }}
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
