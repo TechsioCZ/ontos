@@ -72,9 +72,11 @@ export interface NativeWorkloadBindingReference {
   readonly incarnation: string;
 }
 
+const RUNTIME_IDENTITY_STAGE = 'runtime-identity';
+
 const NativeWorkloadControlStageSchema = Schema.Literals([
   'verification',
-  'runtime-identity',
+  RUNTIME_IDENTITY_STAGE,
   'scope-installation',
   'operator-identity',
   'scope-currentness',
@@ -93,6 +95,8 @@ export class NativeWorkloadBindingControlError extends Schema.TaggedError<Native
   },
 ) {}
 
+const isControlError = Schema.is(NativeWorkloadBindingControlError);
+
 export interface OwnedNativeWorkloadBindingControl {
   readonly originalBinding: NativeWorkloadBindingReference;
   readonly rebind: () => Effect.Effect<NativeWorkloadBindingReference, NativeWorkloadBindingControlError>;
@@ -106,8 +110,7 @@ const unavailable = (
   reason: string,
   cause?: unknown,
   stage: typeof NativeWorkloadControlStageSchema.Type = 'verification',
-) =>
-  new NativeWorkloadBindingControlError({ cause: Redacted.make(cause), reason, stage });
+) => new NativeWorkloadBindingControlError({ cause: Redacted.make(cause), reason, stage });
 
 /**
  * TEST infrastructure only: controls one exact allowed enrollment in an authentic live clone.
@@ -158,14 +161,14 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
               )
               .pipe(
                 Effect.mapError((cause) =>
-                  unavailable('Unable to verify the runtime connection', cause, 'runtime-identity'),
+                  unavailable('Unable to verify the runtime connection', cause, RUNTIME_IDENTITY_STAGE),
                 ),
               );
             if (runtime?.valid !== true) {
               return yield* unavailable(
                 'The owned enrollment control requires its exact non-privileged runtime role',
                 undefined,
-                'runtime-identity',
+                RUNTIME_IDENTITY_STAGE,
               );
             }
             yield* installOperationalScope(transaction, scope, enrollment).pipe(
@@ -234,7 +237,7 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
         );
       },
       Effect.mapError((cause) =>
-        cause instanceof NativeWorkloadBindingControlError
+        isControlError(cause)
           ? cause
           : unavailable('The owned enrollment control could not be verified', cause, 'transaction'),
       ),

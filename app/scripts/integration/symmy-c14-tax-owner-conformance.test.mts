@@ -7,6 +7,7 @@ import {
 } from '@app/symmy-integration/symmy-internal-contracts';
 import { ImportSellerVatRegimeDeclarationsPayloadSchema } from '@app/tax/actions/import-seller-vat-regime-declarations';
 import { expect, it } from 'effect-rstest';
+import { PgClient } from '@effect/sql-pg';
 import { Duration, Effect, FileSystem, Option, Queue, Schema } from 'effect';
 
 import {
@@ -77,7 +78,8 @@ it.live(
     Effect.scoped(
       Effect.gen(function* taxConformance() {
         const runtime = yield* makeSymmyC14PolicyFixture({
-          initializeScopes: initializePolicyFixtureScopes,
+          initializeScopes: (scope) =>
+            initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.runtime)),
           lifecyclePolicy,
           owner: 'tax',
           workloadKey: 'commerce.tax.symmy-seller-vat-fixture-import',

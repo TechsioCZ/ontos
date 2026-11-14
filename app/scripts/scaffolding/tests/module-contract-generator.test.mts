@@ -1468,9 +1468,7 @@ it.live(
           const generated = yield* generateOntosModuleContract({ target: 'dist', vertical, workspaceRoot: root }).pipe(
             Effect.provide(NodeServices.layer),
           );
-          const document = yield* decodeModuleContract(
-            yield* Effect.promise(() => readFile(generated.path, 'utf-8')),
-          );
+          const document = yield* decodeModuleContract(yield* Effect.promise(() => readFile(generated.path, 'utf-8')));
           expect(document.manifest.publicSurface.components).toEqual([]);
         }
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));

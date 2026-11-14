@@ -100,12 +100,7 @@ it.live(
             moduleId: commerceModuleId,
             schemaVersion: '1',
           })),
-          initializeScopes: ({
-            legalEntityId: scopeLegalEntityId,
-            principalId,
-            runtime,
-            tenantId: scopeTenantId,
-          }) =>
+          initializeScopes: ({ legalEntityId: scopeLegalEntityId, principalId, runtime, tenantId: scopeTenantId }) =>
             testCoreDatabase.pipe(
               Effect.provideService(PgClient.PgClient, runtime),
               Effect.flatMap((core) =>

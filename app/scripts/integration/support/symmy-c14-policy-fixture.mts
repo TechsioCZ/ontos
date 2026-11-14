@@ -83,9 +83,9 @@ interface FixtureScope {
   readonly tenantId: string;
 }
 
-export const initializePolicyFixtureScopes = ({ principalId, runtime, sellerId, tenantId }: FixtureScope) =>
+/** Requires the clone's enrolled runtime `PgClient`: the test provides `scope.runtime` at its composition root. */
+export const initializePolicyFixtureScopes = ({ principalId, sellerId, tenantId }: FixtureScope) =>
   testCoreDatabase.pipe(
-    Effect.provideService(PgClient.PgClient, runtime),
     Effect.flatMap((core) => writeTestTenantScopes(core, { legalEntityIds: [sellerId], principalId, tenantId })),
   );
 
