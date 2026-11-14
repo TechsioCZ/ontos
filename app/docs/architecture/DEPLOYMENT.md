@@ -645,11 +645,18 @@ It needs the same database identities as the dead-delivery command — `DATABASE
 
 ## Returning a stuck authority to `active`
 
-A publication that fails in or after its drain — the drain budget or the old release's freshness lease expires, the
-enter-draining fence refuses, or a promote or seal exhausts its re-drains — returns the authority itself before it
-exits: the same revision goes from `draining` back to `active` with durable admission open, in one transaction under
-the exclusive authority lock, and its failure message ends with `The authority was returned to active with durable
-admission open (drain abandonment …)`. Reads return within seconds; nothing is left for an operator.
+A publication that ends early in or after its drain returns the authority itself before it exits: the same revision
+goes from `draining` back to `active` with durable admission open, in one transaction under the exclusive authority
+lock. That covers an ordinary failure — the drain budget or the old release's freshness lease expires, the
+enter-draining fence refuses, a quiescence check after draining fails, a promote or seal exhausts its re-drains — and
+also an interruption (the platform's SIGTERM after its readiness timeout, an outer deadline) or a defect. A failure
+message ends with `The authority was returned to active with durable admission open (drain abandonment …)`; an
+interruption is recorded in the ledger as one. The restore is bounded by the database (`lock_timeout` 5 s,
+`statement_timeout` 10 s) and commits whole or not at all.
+
+What it cannot cover is a process that never runs its exit hook: a `SIGKILL`, an out-of-memory kill, a lost
+container, or a database the publisher can no longer reach. Then the authority stays `draining` and an operator
+returns it with the command below.
 
 The rule, enforced by the database rather than by the caller: a revision returns from `draining` to `active` only
 through a row in `core.application_composition_drain_abandonments`, and only while the authority row is exactly that
@@ -677,6 +684,22 @@ mise exec -- pnpm composition:abandon-drain --revision <the revision the old rel
   authority itself when it fails.
 - It refuses unless the authority row is exactly `--revision`, `draining` and unexpired, writes exactly one ledger
   row, and prints the abandonment's id, who recorded it, when, and the lease — never a payload.
+
+Without the command — an image or checkout that predates it — the same transition is one insert, run with the
+administrative identity in a session that first proves no publisher is alive:
+
+```sql
+select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0)); -- must be true
+insert into core.application_composition_drain_abandonments
+  (revision, initiated_by, operator_name, reason, lease_valid_until)
+values ('<the revision the old release serves>', 'operator', '<who>', '<why>', clock_timestamp());
+select pg_advisory_unlock(hashtextextended('ontos.application-composition-publication', 0));
+```
+
+The insert's triggers lock the authority, refuse anything but that revision while `draining` and unexpired, stamp
+the session user, transaction, time and the real lease (the `lease_valid_until` value given is replaced), and return
+the revision to `active` with durable admission open in the same statement. If `pg_try_advisory_lock` returns
+`false`, a publisher is alive: stop and let it finish.
 
 If it refuses because the lease has expired, **renew first, then run the command again**:
 
