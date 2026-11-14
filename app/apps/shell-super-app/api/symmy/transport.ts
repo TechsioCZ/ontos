@@ -21,6 +21,7 @@ import { ShellAuthenticationApi } from '../../shared/api.ts';
 
 import {
   symmyInvalidProblem,
+  isSymmyRegionFieldName,
   SymmyFixtureAdmissionSchema,
   SymmyFixtureItemResultsSchema,
   SymmyFixtureJobStatusSchema,
@@ -29,10 +30,12 @@ import {
   SymmySchemaError,
   symmyMethodNotAllowedProblem,
   symmyIdempotencyRequiredProblem,
+  symmyUnavailableProblem,
   SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
 } from './contract.ts';
 import type {
+  SymmyRegionFieldName,
   SymmyClientIdempotencyKeySchema,
   symmyFixtureIntentConflictProblem,
   symmyFixtureJobNotFoundProblem,
@@ -40,7 +43,13 @@ import type {
   SymmyIngressProblem,
   SymmyInternalWritePayloadSchema,
 } from './contract.ts';
-import { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import {
+  mapSymmyRegionsProjection,
+  selectSymmyRegionFields,
+  SymmyRegionsResponseSchema,
+  SymmyRegionsSuccessSchema,
+} from './regions-public-contract.ts';
 import {
   SymmyInternalProductsProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
@@ -62,8 +71,14 @@ type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }> | keyof typeof S
 type SelectedWrites = RouteKeyWith<{ readonly selector: 'code' }>;
 
 interface FixtureRead {
-  readonly query?: typeof SymmyInternalReadQuerySchema.Type;
+  /** `q` is the free-text filter of the regions read only. Every other read route rejects it at the decoder. */
+  readonly query?: typeof SymmyInternalReadQuerySchema.Type & { readonly q?: string };
   readonly route: Reads;
+}
+interface RegionsRead extends FixtureRead {
+  readonly fields: readonly SymmyRegionFieldName[] | undefined;
+  readonly query: NonNullable<FixtureRead['query']>;
+  readonly route: 'adminRegions';
 }
 interface FixturePoll {
   readonly id: typeof SymmyFixtureJobIdSchema.Type;
@@ -223,7 +238,7 @@ const queryRepeatsCredential = Effect.fn('SymmyIngress.queryRepeatsCredential')(
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.toType(SymmyInternalReadQuerySchema)))(
     read.query ?? {},
   ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
-  return encoded.includes(raw);
+  return encoded.includes(raw) || (read.query?.q ?? '').includes(raw);
 });
 
 const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* credentialInRequest(
@@ -347,7 +362,24 @@ const handleCustomersRead = makeReadHandler(
 const handleProductsRead = makeReadHandler(
   Schema.Union([SymmyFixtureReadSchema, SymmyInternalProductsProjectionSchema]),
 );
-const handleRegionsRead = makeReadHandler(Schema.Union([SymmyFixtureReadSchema, SymmyInternalRegionsProjectionSchema]));
+const validateRegionsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyRegionsResponseSchema));
+/** The regions read answers only the public body. Anything but a regions projection is unavailable, never an empty list. */
+const handleRegionsRead = handle(SymmyRegionsSuccessSchema, (ingress, input: FixtureInput<RegionsRead>) =>
+  ingress.dispatch
+    .read({ admission: input.admission, request: { query: input.request.query, route: 'adminRegions' } })
+    .pipe(
+      Effect.flatMap((result) =>
+        'projection' in result && result.projection === 'regions'
+          ? validateRegionsBody(mapSymmyRegionsProjection(result)).pipe(
+              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy regions response')),
+            )
+          : Effect.fail(symmyUnavailableProblem),
+      ),
+      Effect.map((body) =>
+        input.request.fields === undefined ? body : selectSymmyRegionFields(body, input.request.fields),
+      ),
+    ),
+);
 const handlePriceListsRead = makeReadHandler(
   Schema.Union([SymmyFixtureReadSchema, SymmyInternalPriceListsProjectionSchema]),
 );
@@ -398,8 +430,16 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('adminProducts', ({ headers, query, request }) =>
       handleProductsRead(headers['x-api-key'], { query, route: 'adminProducts' }, request),
     )
-    .handle('adminRegions', ({ headers, query, request }) =>
-      handleRegionsRead(headers['x-api-key'], { query, route: 'adminRegions' }, request),
+    .handle('adminRegions', ({ headers, query: { fields, ...read }, request }) =>
+      handleRegionsRead(
+        headers['x-api-key'],
+        {
+          fields: fields?.filter(isSymmyRegionFieldName),
+          query: { ...read, contractVersion: 'INTERNAL_C14' },
+          route: 'adminRegions',
+        },
+        request,
+      ),
     )
     .handle('customerGroupCustomersBatch', ({ headers, params, payload, request }) =>
       handleSubmit(

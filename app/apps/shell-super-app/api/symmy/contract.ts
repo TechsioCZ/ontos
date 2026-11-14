@@ -9,7 +9,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
-import { Schema } from 'effect';
+import { Schema, SchemaTransformation } from 'effect';
 import { HttpApiMiddleware } from 'effect/http-api';
 
 import {
@@ -107,6 +107,12 @@ const submitHeaders = Schema.Struct({
   'idempotency-key': SymmyClientIdempotencyKeySchema,
 });
 const query = Schema.Struct({}).check(Schema.isMaxProperties(0));
+/** Paging fields shared by every read route, so each route's own query schema pages the same way. */
+export const symmyReadLimitSchema = Schema.NumberFromString.check(
+  Schema.isInt(),
+  Schema.isBetween({ maximum: 100, minimum: 1 }),
+);
+export const symmyReadOffsetSchema = Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 export const SymmyInternalReadQuerySchema = Schema.Struct({
   afterRecordId: Schema.optionalKey(Schema.toEncoded(SymmySourceRecordKeySchema.fields.sourceRecordId)),
   code: Schema.optionalKey(
@@ -116,15 +122,45 @@ export const SymmyInternalReadQuerySchema = Schema.Struct({
     ]),
   ),
   contractVersion: Schema.optionalKey(Schema.Literal('INTERNAL_C14')),
-  limit: Schema.optionalKey(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
-  ),
-  offset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
   priceLimit: Schema.optionalKey(
     Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   ),
   priceOffset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   sourceRecordId: Schema.optionalKey(Schema.toEncoded(SymmySourceRecordKeySchema.fields.sourceRecordId)),
+});
+const SymmyRegionFieldNameSchema = Schema.Literals([
+  'countryCodes',
+  'currencyCode',
+  'id',
+  'marketCode',
+  'marketRef',
+  'sourceRecordId',
+]);
+export type SymmyRegionFieldName = typeof SymmyRegionFieldNameSchema.Type;
+export const isSymmyRegionFieldName = Schema.is(SymmyRegionFieldNameSchema);
+/** The public `GET /admin/regions` query. `contractVersion` is never a parameter: the route sets it. */
+export const SymmyRegionsReadQuerySchema = Schema.Struct({
+  fields: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+      Schema.decodeTo(
+        Schema.Array(Schema.String),
+        SchemaTransformation.transform<readonly string[], string>({
+          decode: (value) => value.split(','),
+          encode: (names) => names.join(','),
+        }),
+      ),
+      Schema.check(
+        Schema.makeFilter((names: readonly string[]) => names.length > 0 && names.every(isSymmyRegionFieldName), {
+          description: 'A comma-separated list of region field names.',
+        }),
+      ),
+    ),
+  ),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 export const SymmyFixtureIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/u)).pipe(
   Schema.brand('SymmyFixtureId'),

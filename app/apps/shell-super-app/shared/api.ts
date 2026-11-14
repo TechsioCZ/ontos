@@ -5,6 +5,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { OpenApi } from 'effect/http-api';
 import {
   SymmyFixtureReadSchema,
+  SymmyRegionsReadQuerySchema,
   SymmySchemaError,
   symmyCodeParams,
   symmyFixtureSubmitOptions,
@@ -22,7 +23,7 @@ import {
   SymmyInternalPriceListsProjectionSchema,
   SymmyInternalProductsProjectionSchema,
 } from '../api/symmy/read-projection-contracts.ts';
-import { SymmyInternalRegionsProjectionSchema } from '../api/symmy/regions-projection-contract.ts';
+import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
 import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';
 
 const nativeSymmyPath = (path: `/${string}`): `/${string}` =>
@@ -38,7 +39,8 @@ const adminProductsEndpoint = HttpApiEndpoint.get('adminProducts', SYMMY_ROUTES.
 });
 const adminRegionsEndpoint = HttpApiEndpoint.get('adminRegions', SYMMY_ROUTES.adminRegions.path, {
   ...symmyReadOptions,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalRegionsProjectionSchema]),
+  query: SymmyRegionsReadQuerySchema,
+  success: SymmyRegionsSuccessSchema,
 });
 const customerGroupCustomersBatchEndpoint = HttpApiEndpoint.post(
   'customerGroupCustomersBatch',
