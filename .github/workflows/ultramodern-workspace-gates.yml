@@ -949,40 +949,55 @@ jobs:
   # the units build in shards on parallel runners. A build shard only builds, packs and uploads: test jobs that read
   # built outputs wait for the build shards, never for the proof, and node-artifact-proof proves the whole topology
   # on its own runner. A new unit joins one shard (a test checks).
+  #
+  # The build mode is the stage deploy's (scripts/zerops/build-app.sh): two unit builds per runner, no build-time
+  # TS checker and no server typecheck or server declaration pass, because the typecheck gate proves the types of the
+  # whole workspace with TS-Go. The `.output` contract is unchanged: the same `build` script of every unit runs and
+  # owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in.
+  # The Shell builds alone in shard 1; the verticals are balanced by their measured build seconds (about 480 s of
+  # one-at-a-time work per shard) and listed heaviest first, so two build lanes finish together.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/5)
+    name: Build node artifacts (${{ matrix.shard }}/7)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
-    # The Shell alone builds for about 11 minutes (24 on a busy runner).
-    timeout-minutes: 45
+    # The Shell alone builds for about 13 minutes, 9 of them completing its packaged dependencies.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7]
         include:
-          - {
-              shard: 1,
-              units: verticals/catalog verticals/tax verticals/commerce-cart verticals/property-portfolio verticals/property-leasing verticals/legal-agreements verticals/work-tasks,
-            }
+          - { shard: 1, units: apps/shell-super-app }
           - {
               shard: 2,
-              units: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/workforce verticals/tagging verticals/crm verticals/sales-pipeline,
+              units: verticals/commerce-customer-context verticals/sales-pipeline verticals/pricing verticals/legal-agreements verticals/availability,
             }
           - {
               shard: 3,
-              units: verticals/assortment apps/shell-super-app verticals/promotion verticals/payment,
+              units: verticals/party-registry verticals/crm-activities verticals/commerce-market-catalog verticals/storefront-registry verticals/price-group-catalog,
             }
           - {
               shard: 4,
-              units: verticals/party-registry verticals/inventory verticals/availability verticals/finance-billing verticals/crm-activities verticals/symmy-integration verticals/merchandise verticals/facility-operations verticals/sales-insights,
+              units: verticals/inventory verticals/facility-operations verticals/privacy verticals/payment verticals/payment-term-catalog,
             }
           - {
               shard: 5,
-              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects,
+              units: verticals/merchandise verticals/crm verticals/sales-insights verticals/work-tasks verticals/promotion verticals/commerce-cart,
+            }
+          - {
+              shard: 6,
+              units: verticals/symmy-integration verticals/catalog verticals/commerce-order verticals/projects verticals/property-leasing verticals/tax,
+            }
+          - {
+              shard: 7,
+              units: verticals/finance-billing verticals/workforce verticals/tagging verticals/assortment verticals/property-portfolio,
             }
     env:
+      BUILD_JOBS: '2'
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
+      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1'
+      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
@@ -999,19 +1014,54 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Build the shard's Node artifacts one unit at a time
-        working-directory: app
+      # HOOK (unit output cache, restore). Lane CACHE plugs app/scripts/ci/unit-output-cache.mts in here.
+      #   Inputs:  SHARD_UNITS - this shard's unit paths, space separated, in build order; the installed workspace in
+      #            app/ at GITHUB_SHA.
+      #   Outputs: `pending` - the shard's units the cache did not restore, same order, space separated. Every unit left
+      #            out of `pending` must already hold its complete git-ignored build output (dist/, .output/ and
+      #            dist/zerops-entry.mjs) for exactly its current inputs, as a fresh build would write it.
+      #   Until it is wired, every unit is pending and builds.
+      - name: Restore unchanged units from the unit output cache
+        id: unit-cache
         env:
           SHARD_UNITS: ${{ matrix.units }}
+        run: echo "pending=$SHARD_UNITS" >>"$GITHUB_OUTPUT"
+
+      - name: Build the shard's pending units two at a time
+        working-directory: app
+        env:
+          PENDING_UNITS: ${{ steps.unit-cache.outputs.pending }}
         run: |
-          read -ra units <<<"$SHARD_UNITS"
-          filters=()
-          for unit in "${units[@]}"; do
-            filters+=(--filter "./$unit")
-          done
+          read -ra units <<<"$PENDING_UNITS"
+          if [ "${#units[@]}" -eq 0 ]; then
+            echo 'The unit output cache restored every unit of this shard.'
+            exit 0
+          fi
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run build
+          logs="$RUNNER_TEMP/unit-build-logs"
+          mkdir -p "$logs"
+          export logs
+          # xargs bounds the parallel builds; each unit runs its own package `build` script, as pnpm -r run build does.
+          status=0
+          printf '%s\n' "${units[@]}" | mise exec -- xargs -P "$BUILD_JOBS" -n 1 bash -c '
+            unit="$1"
+            log="$logs/${unit//\//-}.log"
+            started="$SECONDS"
+            if pnpm --filter "./$unit" run build >"$log" 2>&1; then
+              echo "built $unit in $((SECONDS - started))s"
+            else
+              tail -80 "$log"
+              echo "::error title=Unit build failed::$unit"
+              exit 1
+            fi
+          ' _ || status=$?
+          for log in "$logs"/*.log; do
+            echo "::group::$(basename "$log" .log)"
+            cat "$log"
+            echo '::endgroup::'
+          done
+          [ "$status" -eq 0 ]
           # The app host serves the Shell and every released module from the unit's dist/zerops-entry.mjs, which
           # scripts/zerops/build-app.sh writes after the build; the native hosted-owner fixtures start them so too.
           served="$(mise exec -- node -e '
@@ -1028,6 +1078,15 @@ jobs:
           if [ "${#entries[@]}" -gt 0 ]; then
             mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"
           fi
+
+      # HOOK (unit output cache, save). Lane CACHE plugs app/scripts/ci/unit-output-cache.mts in here.
+      #   Inputs:  `steps.unit-cache.outputs.pending` - the units this job built; their outputs in app/.
+      #   Outputs: none. A save never fails the gate and never runs for a ref that cannot be trusted to seed main.
+      - name: Save the built units to the unit output cache
+        continue-on-error: true
+        env:
+          BUILT_UNITS: ${{ steps.unit-cache.outputs.pending }}
+        run: echo "The unit output cache is not wired yet; nothing saved for $BUILT_UNITS."
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
