@@ -111,7 +111,8 @@ it('the migrator stops a child gracefully and takes SIGTERM as an interrupt itse
   expect(stop).toContain("child.kill('SIGTERM')");
   expect(stop).toContain("child.once('exit', onExit)");
   expect(stop).toContain("child.kill('SIGKILL')");
-  expect(migrator).toContain('NodeRuntime.runMain(main');
+  // runMain takes the migrator's main program, however the call is laid out (it is wrapped with its services).
+  expect(migrator).toMatch(/NodeRuntime\.runMain\(\s*main\b/u);
   expect(migrator).not.toContain('Effect.runPromiseExit(main)');
 });
 
