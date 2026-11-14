@@ -1031,7 +1031,8 @@ const selectedSearchRows = Effect.fn('MerchandiseQueries.selectedSearchRows')(fu
           db
             .select({
               document: sql<unknown>`jsonb_strip_nulls(jsonb_build_object(
-      'active', true, 'attributes', '', 'id', legacy.value->'id',
+      'active', true, 'attributes', '',
+      'grossPriceMinor', legacy.value->'grossPriceMinor', 'id', legacy.value->'id',
       'imageSrc', legacy.value->'imageSrc',
       'minimumQuantity', legacy.value->'minimumQuantity',
       'name', legacy.value->'name',
