@@ -6085,7 +6085,8 @@ it.effect('exposes only the actual gate-selected workload branch to the exact li
       ...inertAccessEnforcementPorts(),
       principalKinds: { readKind: () => Effect.succeed(Option.some('integration' as const)) },
       workloadBindings: {
-        readWorkloadAuthority: () => Effect.succeed({ activeCompanyIds: new Set<never>(), workloadKeys: new Set<string>() }),
+        readWorkloadAuthority: () =>
+          Effect.succeed({ activeCompanyIds: new Set<never>(), workloadKeys: new Set<string>() }),
       },
     };
     const deniedGate = makeAccessDecisionService({

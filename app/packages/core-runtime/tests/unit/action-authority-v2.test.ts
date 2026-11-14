@@ -765,7 +765,9 @@ it.effect('distinguishes lost membership, expired deadlines, foreign scope and u
     // an ownership read that fails is unavailable, never a pass.
     const foreign = { ...fixture.authority, readCompanyOwnership: () => Effect.succeed(false) };
     expect(
-      Schema.is(ActionPermissionDenied)(yield* recheckActionAuthorityV2({ ...base, authority: foreign }).pipe(Effect.flip)),
+      Schema.is(ActionPermissionDenied)(
+        yield* recheckActionAuthorityV2({ ...base, authority: foreign }).pipe(Effect.flip),
+      ),
     ).toBe(true);
     const ownershipUnreadable = {
       ...fixture.authority,
