@@ -84,13 +84,13 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.67.0",
+    "@effect/tsgo": "0.69.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
     "@rsbuild/plugin-tailwindcss": "^2.0.3",
-    "@rstest/core": "0.11.12",
+    "@rstest/core": "0.12.6",
     "@types/node": "^26.4.1",
     "@types/pg": "8.20.0",
     "@types/react": "^19.3.0",
@@ -100,7 +100,7 @@
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "tsrs": "0.21.0-ts7.1.0-beta"
+    "tsrs": "0.25.0-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

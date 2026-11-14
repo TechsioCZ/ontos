@@ -48,7 +48,7 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@tanstack/react-router": "1.170.39",
-    "@techsio/ui-kit": "0.25.1",
+    "@techsio/ui-kit": "catalog:",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
     "i18next": "26.4.2",
@@ -56,13 +56,13 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.67.0",
+    "@effect/tsgo": "0.69.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
     "@rsbuild/plugin-tailwindcss": "^2.0.3",
-    "@rstest/core": "0.11.12",
+    "@rstest/core": "0.12.6",
     "@types/node": "^26.4.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -72,7 +72,7 @@
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "tsrs": "0.21.0-ts7.1.0-beta"
+    "tsrs": "0.25.0-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",
