@@ -18,7 +18,7 @@ import {
 } from '@app/admin-ui';
 import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import { useEffect, useState } from 'react';
-import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
@@ -28,6 +28,7 @@ import type { CommandOutcome, ProductCommand } from './products-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
+import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { loadProductRecord } from './product-reads.ts';
 import type { ProductRecordState } from './product-reads.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
@@ -736,10 +737,10 @@ export const PriceChangeDialog = ({
 };
 
 interface CategoryDraft {
-  readonly category: string;
+  readonly category: CategoryTrail | null;
 }
 
-const noCategory: CategoryDraft = { category: '' };
+const noCategory: CategoryDraft = { category: null };
 
 /** Bulk category change. Sends BulkUpdateProducts with the new category. */
 export const CategoryDialog = ({
@@ -753,11 +754,14 @@ export const CategoryDialog = ({
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<CategoryDraft>(noCategory);
-  const errorOf = (value: CategoryDraft) =>
-    value.category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.category, PRODUCT_LIMITS.category);
+  const errorOf = (value: CategoryDraft) => (value.category === null ? k(REQUIRED_KEY) : undefined);
   const form = useFormSave<CategoryDraft>({
-    command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { category: value.category.trim() } }),
-    equals: (left, right) => left.category === right.category,
+    command: (value) => ({
+      _tag: 'BulkUpdateProducts',
+      ids: [...ids],
+      patch: value.category === null ? {} : { categoryId: value.category.id },
+    }),
+    equals: (left, right) => left.category?.id === right.category?.id,
     initial: noCategory,
     isValid: (value) => errorOf(value) === undefined && ids.length > 0,
     onOpenChange,
@@ -785,15 +789,19 @@ export const CategoryDialog = ({
         title={k('category.title')}
       >
         <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
-          <FormInput
-            autoComplete="off"
+          <CategorySearchCombobox
+            errorMessage={k('filters.categoryError')}
             id="bulk-category"
             label={k('category.field')}
-            name="category"
-            onChange={(event) => setDraft({ category: event.target.value })}
+            loadingMessage={t('merchandise.loading')}
+            moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
+            noResultsMessage={k('filters.categoryNoResults')}
+            onSelect={(category) => setDraft({ category })}
+            placeholder={k('filters.categorySearch')}
             required
-            value={draft.category}
-            {...fieldError(form.record.status === 'invalid', errorOf(draft))}
+            retryLabel={k('filters.categoryRetry')}
+            selected={draft.category}
+            validateStatus={form.record.status === 'invalid' && draft.category === null ? 'error' : 'default'}
           />
         </form>
       </SidePanel>

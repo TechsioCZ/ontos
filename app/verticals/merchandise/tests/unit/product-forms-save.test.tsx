@@ -9,12 +9,17 @@ import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 import type { ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
+import { CatalogCategoryIdSchema, ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { CategoryDialog, PriceChangeDialog } from '../../src/routes/[lang]/provoz/produkty/product-forms.tsx';
+import { searchCategoryTrails } from '../../src/routes/[lang]/provoz/produkty/product-reads.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
+  SEARCH_DEBOUNCE: '0 millis',
+  searchCategoryTrails: rstest.fn(),
+}));
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
@@ -25,6 +30,7 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 
 const labels = saveLabelsFor('cs');
 const ids = [Schema.decodeUnknownSync(ProductIdSchema)('product-1')];
+const category = { id: Schema.decodeSync(CatalogCategoryIdSchema)('category-tools'), trail: 'Nářadí' };
 
 const sent = () => rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => payload.command);
 
@@ -123,6 +129,7 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
+  rstest.mocked(searchCategoryTrails).mockReturnValue(Effect.succeed({ matches: [category], total: 1 }));
   committed.length = 0;
   openChanges.length = 0;
   rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.succeed({ entityIds: [], revision: 5 }));
@@ -142,14 +149,19 @@ it.effect('the category change is sent once, from Uložit only, never on Enter',
     expect(saveButton().disabled).toBe(true);
     expect(footerButtons().at(-1)).toBe(saveButton());
 
-    yield* typeInto('bulk-category', 'Nářadí');
-    yield* pressEnter('bulk-category');
+    yield* click(field('bulk-category-input'));
+    yield* typeInto('bulk-category-input', 'Nářadí');
+    expect(saveButton().disabled).toBe(true);
+    yield* Effect.promise(() => waitUntil(() => document.querySelector('[role="option"]') !== null));
+    const option = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLElement>('[role="option"]')));
+    yield* click(option);
+    yield* pressEnter('bulk-category-input');
     expect(sent()).toEqual([]);
     expect(saveButton().disabled).toBe(false);
 
     yield* click(saveButton());
     yield* Effect.promise(() => waitUntil(() => committed.length === 1));
-    expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { category: 'Nářadí' } }]);
+    expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { categoryId: category.id } }]);
     expect(openChanges).toEqual([false]);
   }),
 );
@@ -225,7 +237,7 @@ it.effect('reads the required text of a required field in Czech', () =>
   Effect.gen(function* requiredText() {
     yield* Effect.promise(() => mount(<CategoryDialog {...dialogProps} />));
     const label = Option.getOrThrow(
-      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="bulk-category"]')),
+      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="bulk-category-input"]')),
     );
     expect(label.textContent).toContain(requiredLabelFor('cs'));
     expect(document.body.textContent).not.toContain('(required)');
