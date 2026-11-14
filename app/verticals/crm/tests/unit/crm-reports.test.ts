@@ -18,6 +18,7 @@ import {
 } from '../../shared/domain/reports.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
+import { summaryCsv } from '../../src/routes/[lang]/crm/prehled-prodeju/report-tables.tsx';
 
 const at = '2026-10-01T08:00:00.000Z';
 const client = (id: string, owner?: string): typeof ClientSchema.Encoded => {
@@ -107,6 +108,8 @@ describe('CRM sales report (C05)', () => {
     const report = buildSalesReport(state);
     expect(ordersCsv(report)).toContain(';-123456789012345,1234;CZK');
     expect(groupsCsv('Klient', report.byClient, report.currencies)).toContain(';-123456789012345,1234;0');
+    expect(summaryCsv(report, 'client', state)).toContain(';1;-123456789012345,1234;');
+    expect(summaryCsv(report, 'client', state)).not.toContain("'-123456789012345,1234");
   });
 
   for (const { day, instant, previousDay } of [

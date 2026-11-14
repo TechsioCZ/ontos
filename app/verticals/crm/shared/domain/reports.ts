@@ -666,7 +666,7 @@ export const toCsv = (header: readonly string[], rows: readonly (readonly CsvCel
   [header, ...rows].map((row) => row.map(csvCell).join(';')).join('\r\n');
 
 /** Decimal for Czech spreadsheets: "1234.50" -> "1234,50". */
-const csvDecimal = (value: string | undefined): CsvNumber | undefined =>
+export const csvDecimal = (value: string | undefined): CsvNumber | undefined =>
   value === undefined ? undefined : { decimal: value.replace('.', ',') };
 
 export const ordersCsv = (report: SalesReport) =>
