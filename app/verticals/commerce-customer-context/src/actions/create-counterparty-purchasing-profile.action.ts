@@ -207,8 +207,7 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
       };
       // The source-workload carrier check holds here too: a source workload never creates an ordinary Profile.
       const services = createWithSourceCarrier(
-        transaction,
-        verifiedScope,
+        { scope: verifiedScope, transaction },
         profilePersistenceServicesForTransaction(transaction, ownerScope, {
           resolveCounterpartyRole: preparedRole.make({
             legalEntityId: ownerScope.legalEntityId,

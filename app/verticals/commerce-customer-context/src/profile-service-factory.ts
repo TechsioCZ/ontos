@@ -203,15 +203,14 @@ const ensureWithSourceCarrier = (
 
 /** The Counterparty Profile counterpart of {@link ensureWithSourceCarrier}, bound to the same verified scope object. */
 export const createWithSourceCarrier = (
-  transaction: ProfileScopedRoutineInvoker,
-  scope: OperationalScope,
+  carrier: Readonly<{ scope: OperationalScope; transaction: ProfileScopedRoutineInvoker }>,
   service: ProfilePersistenceServices['createCounterpartyPurchasingProfile'],
 ): ProfilePersistenceServices['createCounterpartyPurchasingProfile'] => ({
   create: Effect.fn('SourceProfile.createWithCarrier')(function* createWithCarrier(payload, context) {
     if (payload.source === undefined) {
       const sourceSelected = yield* readScopedAdmittedWorkload(
-        transaction,
-        scope,
+        carrier.transaction,
+        carrier.scope,
         'commerce.customer-context.source-write',
       ).pipe(
         Effect.mapError((cause) =>
@@ -566,8 +565,7 @@ const profileServicesFor = (
     return {
       ...services,
       createCounterpartyPurchasingProfile: createWithSourceCarrier(
-        transaction,
-        scope,
+        { scope, transaction },
         services.createCounterpartyPurchasingProfile,
       ),
       ensureRetailCustomerProfile: ensureWithSourceCarrier(transaction, scope, services.ensureRetailCustomerProfile),
