@@ -10,7 +10,7 @@ import type { CrmViewer } from '../../shared/domain/access.ts';
 import { needsReview, openReviewEvents, orderDateText } from '../../shared/domain/imports.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
-import { parseOrdersCsv } from '../../shared/imports/csv.ts';
+import { parseCsvTime, parseOrdersCsv } from '../../shared/imports/csv.ts';
 import { seedImports } from '../../shared/imports/demo-seed.ts';
 import { ordersCsvSamples } from '../../shared/imports/samples.ts';
 import { buildSalesReport } from '../../shared/domain/reports.ts';
@@ -121,6 +121,29 @@ const order = (state: CrmState, externalId: string, source = 'E-shop') => {
 };
 
 describe('CRM order CSV parser', () => {
+  it('preserves local ISO fractional seconds through Prague time conversion in winter and summer', () => {
+    for (const { local, utc } of [
+      { local: '2026-01-15T14:10:20.1', utc: '2026-01-15T13:10:20.100Z' },
+      { local: '2026-07-15T14:10:20.12', utc: '2026-07-15T12:10:20.120Z' },
+      { local: '2026-07-15T14:10:20.123', utc: '2026-07-15T12:10:20.123Z' },
+    ]) {
+      expect(parseCsvTime(local, true)).toBe(utc);
+      const parsed = parseOrdersCsv(`source;order_id;status;order_date;event_time\nE-shop;1;nova;${local};${local}`);
+      const first = parsed.rows[0];
+      expect(first).toMatchObject({ kind: 'ok' });
+      if (first?.kind === 'ok') {
+        expect(orderDateText(first.value.orderedAt)).toBe(utc);
+        expect(orderDateText(first.value.eventAt)).toBe(utc);
+      }
+    }
+    expect(parseCsvTime('15. 7. 2026 14:10:20', true)).toBe('2026-07-15T12:10:20.000Z');
+    expect(parseCsvTime('2026-07-15', false)).toBe('2026-07-15');
+    expect(parseCsvTime('2026-07-15T14:10:20.123+02:00', true)).toBe('2026-07-15T12:10:20.123Z');
+  });
+  it('refuses sub-millisecond timestamp precision instead of silently losing accepted digits', () => {
+    const parsed = parseOrdersCsv('source;order_id;status;event_time\nE-shop;1;nova;2026-07-15T14:10:20.1234\n');
+    expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
+  });
   it('rejects every overlong destination text field with a bounded column error', () => {
     const columns = [
       'zdroj',

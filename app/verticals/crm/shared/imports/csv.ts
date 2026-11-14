@@ -230,10 +230,11 @@ const daysInMonth = (year: number, month: number) => {
 
 const pragueIso = (parts: {
   readonly day: number;
-  readonly hours: number;
-  readonly minutes: number;
+  readonly hour: number;
+  readonly millisecond: number;
+  readonly minute: number;
   readonly month: number;
-  readonly seconds: number;
+  readonly second: number;
   readonly year: number;
 }): string | undefined => {
   if (
@@ -241,9 +242,9 @@ const pragueIso = (parts: {
     parts.month > 12 ||
     parts.day < 1 ||
     parts.day > daysInMonth(parts.year, parts.month) ||
-    parts.hours > 23 ||
-    parts.minutes > 59 ||
-    parts.seconds > 59
+    parts.hour > 23 ||
+    parts.minute > 59 ||
+    parts.second > 59
   ) {
     return undefined;
   }
@@ -261,28 +262,28 @@ const pragueIso = (parts: {
 export const parseCsvTime = (value: string, asInstant: boolean): string | undefined => {
   const text = value.trim();
   const iso =
-    /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.\d+)?)?)?(?<zone>Z|[+-]\d{2}:?\d{2})?$/u.exec(
+    /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,3}))?)?)?(?<zone>Z|[+-]\d{2}:?\d{2})?$/u.exec(
       text,
     );
   const czech =
     /^(?<day>\d{1,2})\.\s?(?<month>\d{1,2})\.\s?(?<year>\d{4})(?:\s+(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?)?$/u.exec(
       text,
     );
-  const groups = iso ?? czech;
-  if (groups === null) {
+  const groups = (iso ?? czech)?.groups;
+  if (groups === undefined) {
     return undefined;
   }
-  const [year, month, day] =
-    iso === null
-      ? [Number(groups[3]), Number(groups[2]), Number(groups[1])]
-      : [Number(groups[1]), Number(groups[2]), Number(groups[3])];
-  const hasTime = groups[4] !== undefined;
+  const year = Number(groups['year']);
+  const month = Number(groups['month']);
+  const day = Number(groups['day']);
+  const hasTime = groups['hour'] !== undefined;
   const parts = {
     day,
-    hours: Number(groups[4] ?? 0),
-    minutes: Number(groups[5] ?? 0),
+    hour: Number(groups['hour'] ?? 0),
+    millisecond: Number((groups['fraction'] ?? '').padEnd(3, '0')),
+    minute: Number(groups['minute'] ?? 0),
     month,
-    seconds: Number(groups[6] ?? 0),
+    second: Number(groups['second'] ?? 0),
     year,
   };
   const local = pragueIso(parts);
@@ -292,7 +293,7 @@ export const parseCsvTime = (value: string, asInstant: boolean): string | undefi
   if (!hasTime && !asInstant) {
     return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
-  const offset = iso === null ? undefined : groups[7];
+  const offset = groups['zone'];
   if (offset !== undefined) {
     return Option.getOrUndefined(DateTime.make(text.replace(' ', 'T')).pipe(Option.map(DateTime.formatIso)));
   }
@@ -368,14 +369,17 @@ interface ParsedTimes {
 }
 
 /** An order may supply a civil day; an event supplies an instant. Do not mix these contracts. */
-const parseTimes = (get: (key: string) => string | undefined): Result.Result<ParsedTimes, string> => {
+const parseTimes = (
+  get: (key: string) => string | undefined,
+  invalidTime: string,
+): Result.Result<ParsedTimes, string> => {
   const orderedText = optional(get('datum_objednavky'));
   const orderedAt =
     orderedText === undefined
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(OrderDateSchema)(parseCsvTime(orderedText, false)));
   if (orderedText !== undefined && orderedAt === undefined) {
-    return Result.fail(`Datum objednávky „${orderedText}“ není platné datum`);
+    return Result.fail(invalidTime.replace('{{column}}', 'datum_objednavky'));
   }
   const eventText = optional(get('cas_udalosti'));
   const eventAt =
@@ -383,13 +387,13 @@ const parseTimes = (get: (key: string) => string | undefined): Result.Result<Par
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(IsoTimeSchema)(parseCsvTime(eventText, true)));
   if (eventText !== undefined && eventAt === undefined) {
-    return Result.fail(`Čas události „${eventText}“ není platné datum a čas`);
+    return Result.fail(invalidTime.replace('{{column}}', 'cas_udalosti'));
   }
   return Result.succeed({ eventAt, orderedAt });
 };
 
 const parseRecord = (input: {
-  readonly copy: { readonly invalidLine: string; readonly invalidText: string };
+  readonly copy: { readonly invalidLine: string; readonly invalidText: string; readonly invalidTime: string };
   readonly get: (key: string) => string | undefined;
   readonly line: number;
 }): ParsedRow => {
@@ -432,7 +436,7 @@ const parseRecord = (input: {
     return fail(money.failure);
   }
   const { amount, currency } = money.success;
-  const times = parseTimes(get);
+  const times = parseTimes(get, copy.invalidTime);
   if (Result.isFailure(times)) {
     return fail(times.failure);
   }
