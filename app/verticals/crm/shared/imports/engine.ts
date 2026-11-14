@@ -169,14 +169,20 @@ const eventReviewReason = (existing: ImportedOrder, event: OrderStatusEvent): st
   return undefined;
 };
 
+interface MonetaryEnrichment {
+  readonly fields: Partial<Pick<ImportedOrder, 'amount' | 'currency' | 'lines'>>;
+  readonly reviewReason?: string;
+}
+
 /** An amount is meaningful only in its own snapshot's currency, including amounts on order lines. */
-const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow) => {
+const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow): MonetaryEnrichment => {
   const preserved = definedEntries({
     amount: existing.amount,
     currency: existing.currency,
     lines: existing.lines,
   });
-  const existingHasAmount = existing.amount !== undefined || existing.lines?.some((line) => line.amount !== undefined);
+  const existingHasAmount =
+    existing.amount !== undefined || existing.lines?.some((line) => line.amount !== undefined) === true;
   if (existing.currency === undefined && existingHasAmount) {
     return { fields: preserved, reviewReason: csImports.imports.incompleteMoney };
   }
@@ -189,7 +195,6 @@ const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow) => {
       currency: existing.currency ?? row.currency,
       lines: existing.lines ?? row.lines,
     }),
-    reviewReason: undefined,
   };
 };
 
