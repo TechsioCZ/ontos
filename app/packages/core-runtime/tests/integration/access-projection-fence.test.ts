@@ -441,7 +441,7 @@ const changeBehindAHolder = (tenantId: TenantId, admin: PgClient.PgClient) =>
     const writer = yield* AccessProjectionWriter;
     const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
     expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
-    expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+    expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: Option.none(), state: 'Ready' }]);
     return yield* Effect.void;
   });
 
