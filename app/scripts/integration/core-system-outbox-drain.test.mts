@@ -13,13 +13,14 @@
 import { applicationCompositionContentRevision } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Clock, Crypto, DateTime, Duration, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, Crypto, DateTime, Deferred, Duration, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import type { CoreDbExecutor } from '../../packages/core-runtime/src/db/types.ts';
 import {
   applicationCompositionAuthority,
+  applicationCompositionDrainAbandonments,
   domainEvents,
   outboxDeliveries,
   outboxDeliveryResolutions,
@@ -60,7 +61,10 @@ import { makeApplicationCompositionSnapshotFixture } from '../../packages/core-r
 import {
   APPLICATION_COMPOSITION_PUBLICATION_BUDGETS,
   publishApplicationCompositionAuthoritySnapshot,
+  runApplicationCompositionMigration,
+  withApplicationCompositionPublicationLock,
 } from '../application-composition-authority-publication.mts';
+import { abandonDrainAsOperator, CompositionAbandonDrainCommandError } from '../composition-abandon-drain.mts';
 
 const services = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 const FIXTURE_NAME = 'core-system-drain';
@@ -252,6 +256,19 @@ const writeUnclaimableDelivery = (f: DrainFixture) =>
     });
     return yield* Effect.void;
   });
+
+/** The operator and reason every abandonment in this suite records. */
+const OPERATOR = 'operator@example.test';
+const OPERATOR_REASON = 'The deploy failed and no publisher is alive';
+
+/** The operator's evidence for one abandonment of `revision`. */
+const operatorFlags = (revision: string) => ({ operator: OPERATOR, reason: OPERATOR_REASON, revision });
+
+/** A refusal's own words, whichever of the two refusal types carried it. */
+const reasonOf = <Failure,>(failure: Failure) =>
+  Schema.is(ApplicationCompositionAuthorityError)(failure) || Schema.is(CompositionAbandonDrainCommandError)(failure)
+    ? failure.reason
+    : '';
 
 it.layer(services, { excludeTestServices: true })('core-system Outbox claim, carry-over and drain', (suite) => {
   suite.effect('claims core lifecycle work in a tenant that has no core module state', () =>
@@ -629,7 +646,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       yield* f.admin.executor.insert(outboxDeliveryResolutions).values({
         action: 'redrive',
         deadAttemptsCount: 3,
-        operatorName: 'operator@example.test',
+        operatorName: OPERATOR,
         outboxDeliveryId: delivery.id,
         outboxMessageId: delivery.messageId,
         reason: 'Redriven on this release after the owner recovered',
@@ -685,17 +702,46 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         .update(applicationCompositionAuthority)
         .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+      // When did the running release last see its authority refuse reads?
+      const lastRefused = yield* Ref.make(0);
+      const sampler = yield* Effect.forever(
+        Effect.gen(function* sampleRefusal() {
+          const row = yield* authorityRow(f.runtime).pipe(Effect.orElseSucceed(() => null));
+          if (row !== null && row !== undefined && row.phase !== 'active') {
+            yield* Ref.set(lastRefused, yield* Clock.currentTimeMillis);
+          }
+          yield* Effect.sleep('50 millis');
+        }),
+      ).pipe(Effect.forkChild);
 
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
         Effect.flip,
       );
+      const failedAt = yield* Clock.currentTimeMillis;
+      yield* Fiber.interrupt(sampler);
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       // The pre-flight admitted it (work in flight drains); the drain then waited for it and ran out of lease.
       expect(reason).not.toContain('drain was not started');
       expect(reason).toContain('did not finish within its freshness lease');
+      // The failing publisher returned the same revision to active before it exited, and said so.
+      expect(reason).toContain('returned to active with durable admission open');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      expect(failedAt - (yield* Ref.get(lastRefused))).toBeLessThan(5000);
+      const [recorded] = yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments);
+      expect(recorded).toMatchObject({
+        initiatedBy: 'publisher',
+        operatorName: 'application-composition-publisher',
+        revision: f.old.composition.revision,
+      });
+      expect(recorded?.reason).toContain('did not finish within its freshness lease');
       expect(yield* deliveryRow(f.runtime)).toMatchObject({ status: 'processing' });
+      return yield* Effect.void;
     }),
   );
 
@@ -851,10 +897,147 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       );
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       expect(reason).toContain('re-drains, so the Application Composition transition was abandoned');
-      expect(reason).toContain('left in draining');
-      // Until the automatic return to `active` (G3) exists, an exhausted promotion leaves the authority draining;
-      // that change must turn this expectation into "active, admission open".
-      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining', revision: f.old.composition.revision });
+      // The exhausted promotion no longer leaves the authority draining: the publisher returned it to active.
+      expect(reason).toContain('returned to active with durable admission open');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      expect(yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments)).toHaveLength(1);
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('a publisher that already sealed never returns its authority to active', () =>
+    Effect.gen(function* sealedNeverAborts() {
+      const f = yield* fixture();
+      // The drain and the seal succeed; the publisher's own schema migration then fails.
+      const failure = yield* runApplicationCompositionMigration(
+        Effect.fail(
+          new ApplicationCompositionAuthorityError({
+            code: 'application_composition_authority_unavailable',
+            reason: 'the schema migration failed',
+          }),
+        ),
+        Effect.void,
+      ).pipe(Effect.provide(f.layer), Effect.flip);
+      expect(reasonOf(failure)).toContain('the schema migration failed');
+      // Sealed stays sealed: no abandonment was recorded and none can be.
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'sealed', revision: f.old.composition.revision });
+      expect(yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments)).toEqual([]);
+      const refused = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      expect(reasonOf(refused)).toContain('never returned to active');
+      // The ledger's own trigger refuses a hand-written abandonment of a sealed revision too.
+      const forged = yield* f.admin.executor
+        .execute(
+          sql`insert into core.application_composition_drain_abandonments
+                (revision, initiated_by, operator_name, reason, lease_valid_until)
+              values (${f.old.composition.revision}, 'operator', 'forger', 'no reason', clock_timestamp())`,
+          'objects',
+        )
+        .pipe(Effect.exit);
+      expect(forged._tag).toBe('Failure');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'sealed' });
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('the operator command returns a draining authority to active and records who, why and when', () =>
+    Effect.gen(function* operatorAbandonsDrain() {
+      const f = yield* fixture();
+      yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ durableWorkAdmission: 'closed', phase: 'draining' });
+      // A hand-written return to active is refused: only a recorded abandonment may do it.
+      const handWritten = yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ phase: 'active' })
+        .pipe(Effect.exit);
+      expect(handWritten._tag).toBe('Failure');
+      // A different revision and malformed input are refused before anything changes.
+      const otherRevision = yield* abandonDrainAsOperator(operatorFlags('f'.repeat(64))).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      expect(reasonOf(otherRevision)).toContain('Only the revision that holds');
+      const malformed = yield* abandonDrainAsOperator({
+        ...operatorFlags(f.old.composition.revision),
+        revision: 'x',
+      }).pipe(Effect.provide(f.layer), Effect.flip);
+      expect(Schema.is(CompositionAbandonDrainCommandError)(malformed)).toBe(true);
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining' });
+
+      const recorded = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
+        Effect.provide(f.layer),
+      );
+      expect(yield* authorityRow(f.runtime)).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: f.old.composition.revision,
+      });
+      const [row] = yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments);
+      const [authority] = yield* f.admin.executor
+        .select({ validUntil: applicationCompositionAuthority.validUntil })
+        .from(applicationCompositionAuthority);
+      expect(row).toMatchObject({
+        drainAbandonmentId: recorded.drainAbandonmentId,
+        initiatedBy: 'operator',
+        operatorName: OPERATOR,
+        reason: OPERATOR_REASON,
+        revision: f.old.composition.revision,
+      });
+      expect(row?.recordedBy.length).toBeGreaterThan(0);
+      expect(row?.leaseValidUntil.getTime()).toBe(authority?.validUntil.getTime());
+      // Nothing left to abandon: a second run is refused.
+      const again = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      expect(reasonOf(again)).toContain('not draining');
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('the operator command refuses an expired lease, and while a publisher is alive', () =>
+    Effect.gen(function* operatorRefusals() {
+      const f = yield* fixture();
+      yield* f.admin.executor.update(applicationCompositionAuthority).set({
+        durableWorkAdmission: 'closed',
+        phase: 'draining',
+        validUntil: sql`clock_timestamp() - interval '1 second'`,
+      });
+      const expired = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      expect(reasonOf(expired)).toContain('lease has expired');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining' });
+
+      // A second publisher: while one holds the publication lock, the command refuses at once instead of waiting.
+      yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ validUntil: sql`clock_timestamp() + interval '1 hour'` });
+      const holding = yield* Deferred.make<boolean>();
+      const release = yield* Deferred.make<boolean>();
+      const publisher = yield* withApplicationCompositionPublicationLock(
+        Deferred.succeed(holding, true).pipe(Effect.andThen(Deferred.await(release))),
+      ).pipe(Effect.provide(f.layer), Effect.forkChild);
+      yield* Deferred.await(holding);
+      const whilePublishing = yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+      );
+      expect(reasonOf(whilePublishing)).toContain('A publisher is alive');
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'draining' });
+      yield* Deferred.succeed(release, true);
+      yield* Fiber.join(publisher);
+      // Once no publisher is alive, the same command goes through.
+      yield* abandonDrainAsOperator(operatorFlags(f.old.composition.revision)).pipe(Effect.provide(f.layer));
+      expect(yield* authorityRow(f.runtime)).toMatchObject({ phase: 'active' });
       return yield* Effect.void;
     }),
   );

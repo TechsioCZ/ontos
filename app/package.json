@@ -71,6 +71,7 @@
     "typecheck:lint-rules": "tsc -p tools/oxlint/effect-native/tsconfig.json",
     "lint:effect": "node tools/oxlint/effect-native/report.mts",
     "test:generation": "rstest --project generation",
+    "composition:abandon-drain": "node ./scripts/composition-abandon-drain.mts",
     "composition:drain-preflight": "node ./scripts/composition-drain-preflight.mts",
     "outbox:dead-delivery": "node ./scripts/outbox-dead-delivery.mts",
     "zerops:materialize-environment": "node ./scripts/materialize-zerops-environment.mts",
