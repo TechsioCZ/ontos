@@ -257,15 +257,19 @@ describe('new contract', () => {
           leases={[]}
           onClose={() => {}}
           onCreate={(draft) => renewAgreement(draft, { expectedRevision: 4, previous })}
-          onCreated={(resourceId) => created.push(resourceId)}
+          onCreated={(resourceId) => {
+            created.push(resourceId);
+          }}
           onKindChange={() => {}}
           references={references}
-          renewal={previous}
+          renewal={{ opening: renewalDraftOf(previous, '2026-11-14'), previous }}
         />,
       );
       expect(field('contract-start-date').value).toBe('2030-01-31');
       expect(field(endDate).value).toBe('2031-01-31');
       expect(sent()).toEqual([]);
+      // The suggested successor period is valid as it opens: Uložit could send it without retyping a date.
+      expect(button(labels.save).disabled).toBe(false);
       yield* type(endDate, '2027-10-05');
       expect(button(labels.save).disabled).toBe(true);
       yield* type(endDate, '2032-02-01');

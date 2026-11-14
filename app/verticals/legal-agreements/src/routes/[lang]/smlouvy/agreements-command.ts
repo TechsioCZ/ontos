@@ -158,7 +158,7 @@ export const createAgreement = (
 
 export const renewAgreement = (
   draft: CreateDraft,
-  input: { readonly previous: Contract; readonly expectedRevision: number },
+  input: { readonly expectedRevision: number; readonly previous: Contract },
 ): Effect.Effect<AgreementOutcome> => {
   if (!renewalPeriodValid(draft, input.previous)) {
     return Effect.succeed(failedWith('validation'));
