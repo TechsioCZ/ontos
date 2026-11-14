@@ -248,9 +248,15 @@ const measuredRequest = Effect.fn('test.measuredPeopleRequest')(function* measur
   return { answer, counts };
 });
 
-/** The round trips one owner request may make in this shape (measured on trunk 685b87f90 with this branch). */
-const LIST_BOUNDS = { statements: 401, transactions: 40 };
-const OPTIONS_BOUNDS = { statements: 814, transactions: 83 };
+/**
+ * The round trips one owner request may make in this shape. Measured on trunk 685b87f90 with this branch as list
+ * 401 statements / 40 transactions and options 814 / 83. Trunk 301b9eb45 (C14) has every scoped transaction read its
+ * connected role (`select current_user`) before it installs the scope, because the role, not the caller, chooses the
+ * scope authority: one more statement per transaction and no more transactions, so list 401 + 40 = 441 and options
+ * 814 + 83 = 897 (measured exactly so in CI run 43593136492).
+ */
+const LIST_BOUNDS = { statements: 441, transactions: 40 };
+const OPTIONS_BOUNDS = { statements: 897, transactions: 83 };
 
 /** The case clones its database, bootstraps a tenant with five companies into SpiceDB and signs every persona in. */
 const CASE_TIMEOUT = 300_000;
