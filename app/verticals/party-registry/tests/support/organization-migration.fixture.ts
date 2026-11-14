@@ -6,8 +6,6 @@ import {
 } from '@app/core-runtime';
 import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
-import { makeDrizzleAccessPrincipalKinds } from '@app/core-runtime/access/enforcement';
-import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
 import { requireOwnedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import type { OwnedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
@@ -174,16 +172,12 @@ const withNativeTransaction = <A, E, R>(
       Effect.provideService(PgClient.PgClient, adminClient),
     );
 
-    const core = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
-    const kind = yield* makeDrizzleAccessPrincipalKinds({
-      enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-      executor: core,
-    }).readKind({
-      principalId: PrincipalIdSchema.make(input.principal.principalId),
-      tenantId: TenantIdSchema.make(input.principal.tenantId),
-      scope: { ...input.principal, correlationId: 'internal:organization-migration-fixture' },
-    });
-    if (Option.getOrUndefined(kind) !== 'human') {
+    const runtimeCore = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtimeClient));
+    const [identity] = yield* adminClient<{ readonly kind: string }>`
+      select kind from core.principals
+      where principal_id = ${input.principal.principalId} and tenant_id = ${input.principal.tenantId}
+      limit 1`;
+    if (identity?.kind !== 'human') {
       return yield* unavailable();
     }
     return yield* database.transaction((transaction) =>
@@ -213,7 +207,7 @@ const withNativeTransaction = <A, E, R>(
         yield* requireOwnership;
         const { principal } = input;
         const persisted = yield* makeOperationalScopeRepository(
-          { executor: core },
+          { executor: runtimeCore },
           PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         ).load(principal);
         if (

@@ -99,6 +99,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
           actionKeys: [addPartyOfficialIdentifierAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          bootstrapConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
           compositionRevision: snapshot.composition.revision,
           databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
           ownerRegistration: partyRegistryBackendRegistration,
