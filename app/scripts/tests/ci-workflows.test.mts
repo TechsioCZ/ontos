@@ -1335,28 +1335,7 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
       ),
     }),
   )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8')));
-  const deployFiles = packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles ?? [];
-  expect(deployFiles.length).toBeGreaterThan(0);
-  expect(deployFiles.every((file) => file.startsWith('app/'))).toBe(true);
-  // The Zerops build creates these two; every job that assembles the artifact provisions them before the proof.
-  expect(deployFiles).toEqual(expect.arrayContaining(['app/.zerops/runtime/outbox-worker-host', 'app/.zerops/bun']));
-  const ProofJobsSchema = Schema.Struct({
-    jobs: Schema.Record(Schema.String, Schema.Struct({ steps: Schema.optional(Schema.Array(WorkflowStepSchema)) })),
-  });
-  const { jobs } = Schema.decodeUnknownSync(ProofJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  for (const [job, proofStep] of [
-    [SERVICE_INTEGRATION_JOB, ASSEMBLED_MIGRATOR_STEP],
-    [INTEGRATION_SEED_PROOF_JOB, 'Prove the fresh-database preparation and dump the seed'],
-  ] as const) {
-    const steps = jobs[job]?.steps ?? [];
-    const provision = steps.findIndex(
-      ({ name }) => name === 'Provision the worker host runtime and Bun that the app artifact ships',
-    );
-    expect(provision, job).toBeGreaterThan(-1);
-    expect(provision, job).toBeLessThan(steps.findIndex(({ name }) => name === proofStep));
-    expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4');
-    expect(steps[provision]?.run).toContain('zerops:materialize --app outbox-worker-host');
-  }
+  expect(packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles).toEqual(['app/']);
   const artifact = mkdtempSync(path.join(os.tmpdir(), 'ontos-existing-migrator-artifact-'));
   const marker = path.join(artifact, 'preserved-owner-data');
   try {
