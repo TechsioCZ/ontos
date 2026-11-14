@@ -265,7 +265,7 @@ export const planCiChecks = (input: {
   // integration row does.
   const rows = {
     'browser-integration': jobs.browser.length,
-    'format-and-lint': 1,
+    'format-and-lint': 3,
     'integration-seed-proof': jobs.services.length,
     'node-artifact-build': 1,
     'node-artifact-proof': 1,

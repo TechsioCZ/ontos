@@ -235,7 +235,14 @@ it('selects work before gates and starts source checks without waiting for artif
   expect(Object.keys(jobs).filter((job) => jobs[job]?.needs?.includes(INTEGRATION_SEED_PROOF_JOB) === true)).toEqual([
     WORKSPACE_GATES_JOB,
   ]);
-  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SERVICE_INTEGRATION_JOB)) {
+  // The lint shards start once every build shard has a runner, or right away when no build runs.
+  expect(jobs[FORMAT_AND_LINT_JOB]?.needs).toEqual([CI_PLAN_JOB, BUILD_LEASE_JOB]);
+  expect(jobs[FORMAT_AND_LINT_JOB]?.if).toBe(
+    expression(
+      `!cancelled() && needs.ci-plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build-lease.result) && fromJSON(needs.ci-plan.outputs.expected)['${FORMAT_AND_LINT_JOB}'] == 'success'`,
+    ),
+  );
+  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SERVICE_INTEGRATION_JOB && job !== FORMAT_AND_LINT_JOB)) {
     const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.has(gate);
     expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
     expect(jobs[gate]?.if).toBe(
@@ -1089,6 +1096,9 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
     }
     expect(tracked).not.toContain(untrackedPath);
     expect(sorted(selected.flat())).toEqual(sorted(tracked));
+    // Each shard is one contiguous slice in `git ls-files` order, so it loads only the type programs of its packages.
+    expect(selected.flat()).toEqual(tracked);
+    expect(shards).toBeGreaterThan(1);
     for (const files of selected) {
       expect(files.length).toBeGreaterThan(0);
     }

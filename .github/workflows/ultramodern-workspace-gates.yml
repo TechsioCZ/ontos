@@ -766,21 +766,25 @@ jobs:
   # those files touch, once, under whichever program reaches it first: a vertical test importing a script checked the
   # script under the vertical's options, and a script importing vertical source checked that source under the script
   # options, so the result depended on which files a run listed. Interleaved shards would each load nearly every program,
-  # so one job runs every file. The separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace,
+  # so each shard takes one contiguous third of the tracked files: a slice loads only the programs of the packages in it,
+  # and lefthook still cuts a slice into command lines that each fit a runner (one run over all verticals did not). The
+  # separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace,
   # and runs the Effect diagnostics, which tsgolint's type check does not emit, for the test and tooling tsconfigs
   # outside its project graph (`pnpm lint:effect-diagnostics`).
   # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
   # candidate check, over every file.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/1)
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/3)
+    # The three shards start once every build shard has a runner (or when no build runs), so they never take the 20
+    # runners' first wave from the builds on the critical path; lint itself is off it.
+    needs: [ci-plan, build-lease]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build-lease.result) && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1]
+        shard: [1, 2, 3]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -799,11 +803,14 @@ jobs:
       - name: Format and Lint the shard's files through the pre-commit hook
         env:
           SHARD: ${{ matrix.shard }}
-          SHARDS: 1
+          SHARDS: 3
         run: |
+          total="$(git ls-files -z | tr -cd '\0' | wc -c)"
+          first=$(((SHARD - 1) * total / SHARDS))
+          end=$((SHARD * total / SHARDS))
           index=0
           git ls-files -z | while IFS= read -r -d '' file; do
-            if ((index % SHARDS == SHARD - 1)); then
+            if ((index >= first && index < end)); then
               printf '%s\0' "$file"
             fi
             index=$((index + 1))
