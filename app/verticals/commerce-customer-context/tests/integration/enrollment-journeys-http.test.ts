@@ -3027,15 +3027,20 @@ it.live(
         /** The client's API-key assertion: in the company context of `company`, or in the tenant context. */
         const start = (client: typeof registered, body: Record<string, string>, company?: string) =>
           Effect.gen(function* startAs() {
-            const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+            const tenantContext = {
               authBindingId: client.authBindingId,
               authContextRef: `better-auth-api-key:${client.principalId}`,
               authenticationNamespaceId: STOREFRONT_KEY_NAMESPACE_ID,
               authMethod: 'api_key',
-              ...(company === undefined ? {} : { legalEntityId: company }),
               principalId: client.principalId,
               tenantId,
-            });
+            } as const;
+            const assertion = yield* issueAcceptanceGatewayAssertion(
+              fixture.admin,
+              gateway,
+              READ_AUDIENCE,
+              company === undefined ? tenantContext : { ...tenantContext, legalEntityId: company },
+            );
             return yield* Effect.promise(async () => await runtime.handler(governedStartRequest(body, assertion)));
           });
         const refusedWithoutAttempt = (response: Response) =>
