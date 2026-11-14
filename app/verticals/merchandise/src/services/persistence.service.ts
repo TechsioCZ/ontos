@@ -2230,10 +2230,7 @@ export const workingSetRequestOf = (
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       // A sync touches only the head row and the stored prices, which persistence reprices in place.
       SyncTaxRates: (): WorkingSetRequest => ({}),
-      UpdateCategory: (value): WorkingSetRequest => ({
-        categoryIds: [value.id],
-        ...(value.patch.name === undefined ? {} : { productPrimaryCategoryIds: [value.id] }),
-      }),
+      UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
       UpdateProduct: (value): WorkingSetRequest => {
         const request = {
           movements: value.patch.variants !== undefined,

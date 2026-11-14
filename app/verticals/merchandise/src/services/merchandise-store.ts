@@ -1255,8 +1255,6 @@ export interface WorkingSetRequest {
   /** Category edits also need the loaded product's current primary/additional ids under this locked head. */
   readonly productCategoryMemberships?: boolean;
   readonly productIds?: readonly string[];
-  /** Products whose denormalized primary-category label a rename updates. */
-  readonly productPrimaryCategoryIds?: readonly string[];
   /** Products that could collide with a new SKU or storefront slug (case-insensitive). */
   readonly productKeys?: { readonly sku?: string; readonly slug?: string; readonly slugPrefix?: string };
   readonly sourceCatalog?: boolean;
@@ -1427,12 +1425,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
     ...new Set([...(request.productIds ?? []), ...loadedOrders.flatMap(orderLineProductIds), ...referencedProductIds]),
   ];
   const keyFilters = productKeyFilters(request.productKeys);
-  const categoryProducts = request.productPrimaryCategoryIds ?? [];
-  const productFilters = [
-    ...(productIds.length === 0 ? [] : [inArray(products.id, productIds)]),
-    ...(categoryProducts.length === 0 ? [] : [inArray(products.categoryId, [...categoryProducts])]),
-    ...keyFilters,
-  ];
+  const productFilters = [...(productIds.length === 0 ? [] : [inArray(products.id, productIds)]), ...keyFilters];
   const loaded = productFilters.length === 0 ? [] : yield* loadProducts(db, scope, or(...productFilters));
   const movementRows =
     request.movements === true && loaded.length > 0

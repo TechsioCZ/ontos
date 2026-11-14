@@ -1,5 +1,11 @@
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { Reactivity } from 'effect/reactivity';
+import { merchandiseRelations } from '../../src/database/schema.ts';
+import { persistChange } from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
-import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   MerchandiseCommandSchema,
@@ -21,7 +27,7 @@ import {
   updateCategoryCommand,
   withContentHistory,
 } from '../../src/services/catalog-content.ts';
-import { TEST_TAX } from '../support/tax-fixtures.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const now = DateTime.makeUnsafe('2026-10-20T10:00:00.000Z');
@@ -301,27 +307,6 @@ it.effect('CreateProduct derives primary category ancestry without additional ca
   }),
 );
 
-it('loads products by primary category for a rename, but not for an unrelated category edit', () => {
-  const renamed = workingSetRequestOf(
-    {
-      _tag: 'UpdateCategory',
-      id: categoryId('c'),
-      patch: { name: 'Renamed category' },
-    },
-    'rename-category',
-  );
-  expect(renamed.productPrimaryCategoryIds).toEqual(['c']);
-  const repositioned = workingSetRequestOf(
-    {
-      _tag: 'UpdateCategory',
-      id: categoryId('c'),
-      patch: { position: 3 },
-    },
-    'move-category',
-  );
-  expect(repositioned.productPrimaryCategoryIds).toBeUndefined();
-});
-
 it.effect('rejects a category slug already used elsewhere in the company, including unpublished categories', () =>
   Effect.gen(function* categorySlugCollision() {
     const create = {
@@ -340,4 +325,62 @@ it.effect('rejects a category slug already used elsewhere in the company, includ
     const accepted = yield* createCategoryCommand(state, { ...create, slug: 'new-unique-slug' });
     expect(accepted.state.categories?.at(-1)?.slug).toBe('new-unique-slug');
   }),
+);
+
+it.effect('a category-only working set already renames all stored primary-category labels transactionally', () =>
+  Effect.scoped(
+    Effect.gen(function* persistedCategoryRename() {
+      const statements: { readonly sql: string; readonly params: readonly unknown[] }[] = [];
+      const services = yield* Layer.build(
+        scriptedPgClientLayer(
+          Effect.succeed(
+            testSqlConnection((sql, params) => {
+              statements.push({ params, sql });
+              if (sql.startsWith('select')) {
+                return Effect.succeed([{ outcome: 'unrecorded' }]);
+              }
+              return Effect.succeed(sql.includes('returning') ? [{ revision: 1 }] : []);
+            }),
+          ),
+        ).pipe(Layer.provide(Reactivity.layer)),
+      );
+      const db = yield* makeWithDefaults({ relations: merchandiseRelations }).pipe(
+        Effect.provideService(PgClient.PgClient, Context.get(services, PgClient.PgClient)),
+      );
+      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
+      const categoryOnly = { ...state, products: [] };
+      const change = yield* updateCategoryCommand(
+        categoryOnly,
+        {
+          _tag: 'UpdateCategory',
+          id: categoryId('c'),
+          patch: { name: 'Renamed without loading products' },
+        },
+        input,
+      );
+      yield* db.transaction((transaction) =>
+        persistChange(
+          transaction,
+          scope,
+          {
+            revision: 0,
+            state: categoryOnly,
+            stock: new Map(),
+          },
+          change.state,
+          now,
+          TEST_RATES,
+          {},
+        ),
+      );
+      const productUpdates = statements.filter(({ sql }) => sql.startsWith('update "demo_merchandise"."products"'));
+      expect(productUpdates).toHaveLength(1);
+      expect(productUpdates[0]?.sql).toContain('jsonb_set(jsonb_set(');
+      expect(productUpdates[0]?.sql).toContain('"category_id"');
+      expect(productUpdates[0]?.params).toEqual(
+        expect.arrayContaining([scope.tenantId, scope.legalEntityId, 'c', 'Renamed without loading products']),
+      );
+      return yield* Effect.void;
+    }),
+  ),
 );
