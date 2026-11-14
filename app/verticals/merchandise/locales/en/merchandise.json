@@ -503,7 +503,7 @@
         },
         "title": "Products and stock",
         "validation": {
-          "delta": "Enter a whole number other than zero.",
+          "delta": "Enter a non-zero quantity between −1,000,000 and 1,000,000, with at most 6 decimal places.",
           "lowStock": "Enter a whole number of 0 or more.",
           "percent": "Enter a non-zero whole number from −90 to 1000.",
           "positive": "Enter an amount greater than 0 CZK.",

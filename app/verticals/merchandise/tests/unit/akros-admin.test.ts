@@ -4,6 +4,7 @@ import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../sh
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { formatDelta } from '../../src/routes/[lang]/provoz/produkty/products-format.ts';
 import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
@@ -116,4 +117,9 @@ it('preserves fractional-length packages and does not invent an integer package 
   expect(isOrderQuantityValid(12.4, rules)).toBe(false);
   expect(isOrderQuantityValid(1.5, orderQuantityRules({ stockOnHand: 10 }))).toBe(true);
   expect(isOrderQuantityValid(0.75, orderQuantityRules({ minimumQuantity: 0.5, stockOnHand: 10 }))).toBe(true);
+});
+
+it('shows every supported fractional stock digit rather than a rounded zero movement', () => {
+  expect(formatDelta(0.000001)).toBe('+0,000001');
+  expect(formatDelta(-0.123456)).toBe('-0,123456');
 });
