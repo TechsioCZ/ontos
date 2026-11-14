@@ -3254,8 +3254,11 @@ class DataFactoryProof {
       return schema({ ...record(new Map()), native: 'json-object', element: args[1].payload ?? BAD },
         { ...record(new Map()), native: 'json-object', element: args[1].encoded ?? args[1].payload ?? BAD });
     // In data-factory mode a record is admitted only when its key is a closed string schema and its value is closed
-    // data both decoded and encoded; an open, unknown, function or class-instance value, or any other key, stays
-    // unmodelled.
+    // data both decoded and encoded. Soundness: a wrongly admitted record would let a factory hand out a function,
+    // class instance or unknown value under a data-shaped type. Its element is exactly the value schema's payload and
+    // must itself pass `isClosedData`, so an open, unknown, function or class-instance value (or one nested anywhere
+    // inside a struct, array or record) stays unmodelled; the key must be a closed string, so numeric, symbol,
+    // unknown and Json keys stay unmodelled too.
     if (!this.publicCodecs && operation === 'Record' && args.length === 2 && args[1]?.kind === 'schema') {
       const decoded = args[1].payload ?? BAD;
       const encoded = args[1].encoded ?? decoded;
@@ -3264,8 +3267,10 @@ class DataFactoryProof {
           { ...record(new Map()), native: 'json-object', element: encoded })
         : BAD;
     }
-    // In data-factory mode a template literal is a string. It is closed string data when every part is a string literal or a closed string
-    // schema; a number, unknown, open or structured part leaves it unmodelled.
+    // In data-factory mode a template literal is closed string data when every part is a string literal or a closed
+    // string schema. Soundness: a wrongly admitted one would let an unknown or structured part be claimed as a plain
+    // string; every part is checked individually from the literal array's own fields, and an array with a spread has
+    // no fields, so it stays unmodelled.
     if (!this.publicCodecs && operation === 'TemplateLiteral' && args.length === 1 && args[0]?.kind === 'array' && args[0].fields !== undefined) {
       const parts = [...args[0].fields.values()];
       return parts.every((part) => (part.kind === 'data' && isClosedString(part)) || isClosedStringSchema(part))
@@ -3540,7 +3545,8 @@ class DataFactoryProof {
       };
     // A Json value is an acyclic tree of null, strings, booleans, finite numbers, arrays and plain (Object.prototype or
     // null-prototype) objects: effect's `SchemaAST.isJson` rejects functions, class instances, symbols, undefined and
-    // bigints. That is inert closed data in every mode, so the opaque data leaf models it soundly.
+    // bigints. `isClosedData` means "no function, class instance, unknown or open record reachable", which every such
+    // tree satisfies, so the opaque data leaf models it soundly in every mode.
     if (name === 'effect:Schema.Json') return schema({ kind: 'data', native: 'json' });
     if (name === 'effect:Schema.Unknown') return schema(BAD);
     if (this.strictSchemaExports && ['effect:Schema.Finite', 'effect:Schema.Int'].includes(name)) return { ...schema(DATA), astTag: 'Number', astChecks: [this.nativeSchemaFilter(name.endsWith('.Int') ? 'isInt' : 'isFinite', [])] };
