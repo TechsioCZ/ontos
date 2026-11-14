@@ -149,7 +149,9 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   const quantity = Number(quantityText.replaceAll(/\s/gu, '').replace(',', '.'));
   const quantityValid = isStockQuantity(quantity) && (reason === 'ADJUSTMENT' || quantity > 0);
   const quantityError = t(
-    reason === 'ADJUSTMENT' ? 'merchandise.pages.products.validation.delta' : 'merchandise.pages.products.validation.quantity',
+    reason === 'ADJUSTMENT'
+      ? 'merchandise.pages.products.validation.delta'
+      : 'merchandise.pages.products.validation.quantity',
   );
 
   const submit = () => {
