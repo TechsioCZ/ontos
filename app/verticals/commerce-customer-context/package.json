@@ -267,7 +267,7 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.4",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.3",
     "@noble/hashes": "2.2.0",
-    "better-auth": "1.7.12",
+    "better-auth": "1.7.23",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.7",
     "@app/commerce-cart-contracts": "workspace:*",
