@@ -9,7 +9,6 @@ const projectionUnitSchema = Schema.String.check(Schema.isMinLength(1), Schema.i
  */
 export class AccessProjectionError extends Schema.TaggedError<AccessProjectionError>()('AccessProjectionError', {
   code: Schema.Literals([
-    'access_projection_agent_sensitive_run',
     'access_projection_ambiguous_role_revision',
     'access_projection_caveat_context_too_large',
     'access_projection_cell_outside_declaration',

@@ -15,6 +15,7 @@ export type AccessIntentReads = Pick<
   TenantIntentLoaderService,
   | 'loadAuthorityCells'
   | 'loadAuthorityCellsMany'
+  | 'loadCompanyOwnership'
   | 'loadConfigureBases'
   | 'loadConnection'
   | 'loadScope'
@@ -47,6 +48,8 @@ export const decisionAuthorityOf = (
         reads.loadAuthorityCells(scope, query).pipe(Effect.mapError(intentUnavailable)),
       readCellsMany: (queries: Parameters<NonNullable<DecisionAuthorityPort['readCellsMany']>>[0]) =>
         reads.loadAuthorityCellsMany(scope, queries).pipe(Effect.mapError(intentUnavailable)),
+      readCompanyOwnership: (query: Parameters<DecisionAuthorityPort['readCompanyOwnership']>[0]) =>
+        reads.loadCompanyOwnership(scope, query).pipe(Effect.mapError(intentUnavailable)),
       readConfigureBases: (query: Parameters<NonNullable<DecisionAuthorityPort['readConfigureBases']>>[0]) =>
         reads.loadConfigureBases(scope, query).pipe(Effect.mapError(intentUnavailable)),
       readConnection: (query: Parameters<DecisionAuthorityPort['readConnection']>[0]) =>

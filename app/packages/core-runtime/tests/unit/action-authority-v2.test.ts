@@ -761,6 +761,23 @@ it.effect('distinguishes lost membership, expired deadlines, foreign scope and u
         }).pipe(Effect.flip),
       ),
     ).toBe(true);
+    // The gate's company-of-tenant rule holds on re-check: a company the tenant no longer owns loses the proof, and
+    // an ownership read that fails is unavailable, never a pass.
+    const foreign = { ...fixture.authority, readCompanyOwnership: () => Effect.succeed(false) };
+    expect(
+      Schema.is(ActionPermissionDenied)(
+        yield* recheckActionAuthorityV2({ ...base, authority: foreign }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
+    const ownershipUnreadable = {
+      ...fixture.authority,
+      readCompanyOwnership: () => Effect.fail(accessDecisionUnavailable('Ownership is unavailable')),
+    };
+    expect(
+      Schema.is(ActionPermissionCheckError)(
+        yield* recheckActionAuthorityV2({ ...base, authority: ownershipUnreadable }).pipe(Effect.flip),
+      ),
+    ).toBe(true);
   }),
 );
 
@@ -787,6 +804,7 @@ const countedInFlight = (
     withOptional(
       {
         readCells: (query) => counted(port.readCells(query)),
+        readCompanyOwnership: (query) => counted(port.readCompanyOwnership(query)),
         readConnection: (query) => counted(port.readConnection(query)),
         readScope: (query) => counted(port.readScope(query)),
         readTeamIds: (query) => counted(port.readTeamIds(query)),

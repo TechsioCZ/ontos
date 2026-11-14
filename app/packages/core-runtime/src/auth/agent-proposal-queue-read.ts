@@ -20,6 +20,7 @@ import {
   AgentProposalQueueModuleReview,
   AgentProposalQueueResultSchema,
   AgentProposalQueueVisibilitySchema,
+  agentProposalQueueReadKey,
 } from './agent-proposal-queue-contract.ts';
 import type { AgentProposalQueueInput, AgentProposalQueueRow } from './agent-proposal-queue-contract.ts';
 import { isOwnProposalRead, proposalQueueFromTransaction } from './agent-proposal-queue-persistence.ts';
@@ -380,7 +381,7 @@ export const agentProposalQueueRead = defineRead(
     owningModuleKey: 'core.identity',
     permissionTarget: 'legal_entity',
     policies: [],
-    readKey: 'core.identity.agent-proposal-queue',
+    readKey: agentProposalQueueReadKey,
     resultSchema: Schema.toType(AgentProposalQueueResultSchema),
     schemaVersion: '1',
   },

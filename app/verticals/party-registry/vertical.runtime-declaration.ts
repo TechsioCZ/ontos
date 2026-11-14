@@ -18,6 +18,7 @@ import {
   partySourcePrivacyRequirementKey,
 } from './src/services/party-client-source-privacy.service.ts';
 import { duplicateCandidateDetailRead } from './src/api/duplicate-candidate-detail.read.ts';
+import { partyCommandResultRead } from './src/api/party-command-result.read.ts';
 import { partyCorrectionRead } from './src/api/party-correction.read.ts';
 import { partyMatchDecisionRead } from './src/api/party-match-decision.read.ts';
 import { partyMatchRead } from './src/api/party-match.read.ts';
@@ -674,6 +675,8 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         sourceCounterpartyAdmissionRead,
         duplicateCandidateDetailRead,
         partyMatchDecisionRead,
+        // Create recovery returns a source-created result only through its exact receipt and current Privacy.
+        partyCommandResultRead,
         partyMatchRead,
         partyCorrectionRead,
       ].map(({ descriptor }) => ({
@@ -791,6 +794,7 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
   ],
   reads: [
     duplicateCandidateDetailRead,
+    partyCommandResultRead,
     partyCorrectionRead,
     partyMatchDecisionRead,
     partyMatchRead,

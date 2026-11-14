@@ -4,6 +4,7 @@ import {
   ContextAccess,
   ReadRuntime,
   makeDatabaseIdentityEnrollmentLive,
+  AgentLifecycleAuthority,
 } from '@app/core-runtime';
 import type { OperationalScopeRequest } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
@@ -20,6 +21,7 @@ import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.t
 import { administrationScopeLayer } from '../unit/oauth-connections-admin/administration-runtime.fixture.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { makeTestAgentLifecycleAuthority } from '@app/core-runtime/testing/access-gate';
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
@@ -54,6 +56,10 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
       AccessDecisionGate,
       makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
     );
+    const lifecycle = Layer.succeed(
+      AgentLifecycleAuthority,
+      makeTestAgentLifecycleAuthority({ prepare: () => 'allowed', recheck: () => 'allowed' }),
+    );
     const deniedAudit = IdentityAdministrationDeniedAuditLive.pipe(
       Layer.provide(Layer.mergeAll(core, access, resolver, identities, gate)),
     );
@@ -72,7 +78,7 @@ export const nativeDemoAccountTestServices = Effect.fn('NativeDemoAccountTestSer
       checkActionProposalPermission: () => Effect.die('Unexpected business proposal authority check'),
     });
     const preparation = AgentProposalCommandPreparationLive.pipe(
-      Layer.provide(Layer.mergeAll(core, access, active, authority, identities, gate)),
+      Layer.provide(Layer.mergeAll(core, access, active, authority, identities, gate, lifecycle)),
     );
     // Lifecycle administration must never use module-private visibility as a permission substitute.
     const review = Layer.succeed(AgentProposalQueueModuleReview, {

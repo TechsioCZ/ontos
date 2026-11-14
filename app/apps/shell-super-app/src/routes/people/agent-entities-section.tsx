@@ -5,7 +5,7 @@ import type {
   AgentAuditEntry,
   AgentEntity,
   AgentEntityOverview,
-  AgentModuleOption,
+  AgentRoleOption,
   ConnectionSummary,
   ManageAgentEntityRequest,
   PrincipalRef,
@@ -25,6 +25,7 @@ import { usePageData } from './use-agent-page-data.ts';
 import { newRequestToken } from './people-client.ts';
 import { AgentEditorPanel } from './agent-editor-panel.tsx';
 import { OperatorsBlock } from './agent-operators-block.tsx';
+import { AgentRolesBlock } from './agent-roles-block.tsx';
 import { agentEntitiesData } from './agent-data.ts';
 
 const key = 'shell.agents.section';
@@ -236,11 +237,12 @@ interface AgentCardProps {
   readonly company: string;
   readonly highlighted: boolean;
   readonly members: readonly PrincipalRef[];
-  readonly modules: readonly AgentModuleOption[];
   readonly onChanged: () => void;
   readonly onEdit: () => void;
   readonly onNotify: Notify;
   readonly onStatus: (action: AgentStatusAction) => void;
+  readonly roles: readonly AgentRoleOption[];
+  readonly rolesRevision: string;
 }
 
 const AgentCard = ({
@@ -248,25 +250,14 @@ const AgentCard = ({
   company,
   highlighted,
   members,
-  modules,
   onChanged,
   onEdit,
   onNotify,
   onStatus,
+  roles,
+  rolesRevision,
 }: AgentCardProps) => {
   const { t } = useModernI18n();
-  const moduleLabel = (moduleId: string) => modules.find((option) => option.moduleId === moduleId)?.label ?? moduleId;
-  const readable = agent.modules.map((grant) => moduleLabel(grant.moduleId)).join(', ');
-  const writable = agent.modules
-    .flatMap((grant) => (grant.access === 'write' ? [moduleLabel(grant.moduleId)] : []))
-    .join(', ');
-
-  let writeLine = t(`${key}.noWrites`);
-  if (writable !== '' && agent.writePolicy === 'direct') {
-    writeLine = t(`${key}.writes`, { modules: writable });
-  } else if (writable !== '' && agent.writePolicy === 'approval') {
-    writeLine = t(`${key}.proposes`, { modules: writable });
-  }
 
   return (
     <article
@@ -284,6 +275,11 @@ const AgentCard = ({
           <Badge size="sm" variant="outline">
             {agent.hasProfile ? t(`${connectionsKey}.policy.${agent.writePolicy}`) : t(`${key}.noProfile`)}
           </Badge>
+          {agent.roles.length === 0 && (
+            <Badge size="sm" variant="warning">
+              {t('shell.agents.roles.badgeNone')}
+            </Badge>
+          )}
         </div>
         <div className="flex flex-wrap gap-100">
           <Button onClick={onEdit} size="sm" theme="outlined" variant="secondary">
@@ -315,14 +311,13 @@ const AgentCard = ({
         {Option.isNone(agent.owner) ? t(`${key}.noOwner`) : t(`${key}.owner`, { name: agent.owner.value.displayName })}
       </p>
 
-      {agent.hasProfile ? (
-        <div className="flex min-w-0 flex-col gap-50">
-          {readable !== '' && <p className="text-sm">{t(`${key}.reads`, { modules: readable })}</p>}
-          <p className="text-sm">{writeLine}</p>
-        </div>
-      ) : (
-        <p className="text-fg-secondary text-sm">{t(`${key}.noProfileDescription`)}</p>
-      )}
+      <AgentRolesBlock
+        agent={agent}
+        onChanged={onChanged}
+        onNotify={onNotify}
+        roles={roles}
+        rolesRevision={rolesRevision}
+      />
 
       {agent.status === 'disabled' && (
         <StatusText showIcon status="warning">
@@ -716,11 +711,12 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
                 highlighted={agent.principalId === linkedAgent}
                 key={agent.principalId}
                 members={overview.members}
-                modules={overview.modules}
                 onChanged={fetchOverview}
                 onEdit={() => setEditing({ agent, mode: 'edit' })}
                 onNotify={onNotify}
                 onStatus={setStatusAction}
+                roles={overview.roles}
+                rolesRevision={overview.rolesRevision}
               />
             ))}
 
@@ -733,14 +729,12 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
           agent={editor.agent}
           key={editor.key}
           members={editor.overview.members}
-          modules={editor.overview.modules}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
             setEditing(null);
             onNotify(message);
             fetchOverview();
           }}
-          presets={editor.overview.presets}
         />
       )}
 

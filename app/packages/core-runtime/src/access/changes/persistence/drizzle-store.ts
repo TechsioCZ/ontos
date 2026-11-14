@@ -51,6 +51,7 @@ import {
   cellSlotKey,
   namesRoleTemplate,
 } from '../../model.ts';
+import { roleRevisionIsAgentAssignable } from '../../lifecycle/people-commands.ts';
 import { cellContentKey } from '../role-edits.ts';
 import type { RoleCellEdit, RoleWithRevision } from '../role-edits.ts';
 import type { AccessChangesStoreError } from './errors/index.ts';
@@ -603,6 +604,65 @@ const requireGrantorAssignments = Effect.fn('AccessChangesStore.requireGrantorAs
   return yield* Effect.void;
 });
 
+/**
+ * A role edit moves every live holder to the successor revision, agents included. An agent may hold a role only while
+ * every run cell is of a routine capability (O48a): the projection never writes an agent into a sensitive or critical
+ * run cell. So the edit is refused, under the role lock, when an agent holds the role and the successor is not one an
+ * agent may hold — otherwise one edit would stop the projection of the whole tenant. The refusal names the agents.
+ */
+const requireAgentHoldersKeepTheRole = Effect.fn('AccessChangesStore.requireAgentHoldersKeepTheRole')(
+  function* requireAgentHoldersKeepTheRoleEffect(transaction: CoreTransaction, write: RoleRevisionWrite) {
+    const { catalogSnapshotId, decidedAt, edit, tenantId } = write;
+    const agents = yield* transaction
+      .selectDistinct({ displayName: principals.displayName })
+      .from(accessAssignments)
+      .innerJoin(
+        principals,
+        and(eq(principals.tenantId, accessAssignments.tenantId), eq(principals.principalId, accessAssignments.agentId)),
+      )
+      .where(
+        and(
+          eq(accessAssignments.tenantId, tenantId),
+          eq(accessAssignments.roleId, edit.roleId),
+          eq(accessAssignments.status, 'active'),
+          or(isNull(accessAssignments.validUntil), gt(accessAssignments.validUntil, decidedAt)),
+        ),
+      );
+    if (agents.length === 0) {
+      return yield* Effect.void;
+    }
+    const runKeys = [...new Set(edit.cells.flatMap((cell) => (cell.mode === 'run' ? [cell.capabilityKey] : [])))];
+    const entries =
+      runKeys.length === 0
+        ? []
+        : yield* transaction
+            .select({ entry: accessCatalogEntries.entryJson })
+            .from(accessCatalogEntries)
+            .where(
+              and(
+                eq(accessCatalogEntries.catalogSnapshotId, catalogSnapshotId),
+                inArray(accessCatalogEntries.capabilityKey, runKeys),
+              ),
+            );
+    if (
+      roleRevisionIsAgentAssignable(
+        { cells: edit.cells },
+        entries.map(({ entry }) => entry),
+      )
+    ) {
+      return yield* Effect.void;
+    }
+    const names = agents
+      .map(({ displayName }) => displayName)
+      .toSorted((left, right) => left.localeCompare(right, 'cs'))
+      .join(', ');
+    return yield* storeConflict(
+      'access_changes_write_refused',
+      `Roli drží agent (${names}). Agent smí citlivé a správcovské akce jen navrhovat, ne provádět: roli mu nejdřív odeberte, nebo tuto změnu upravte.`,
+    );
+  },
+);
+
 const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* recordRevisionEffect(
   transaction: CoreTransaction,
   write: RoleRevisionWrite,
@@ -653,6 +713,7 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
   if (successorIssue !== null) {
     return yield* storeConflict('access_changes_record_conflict', successorIssue);
   }
+  yield* requireAgentHoldersKeepTheRole(transaction, write);
   const followIssue = write.followTemplate === true ? templateFollowIssue(current, edit) : null;
   if (followIssue !== null) {
     return yield* storeConflict('access_changes_record_conflict', followIssue);

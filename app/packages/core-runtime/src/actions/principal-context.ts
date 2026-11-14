@@ -23,8 +23,20 @@ const ConnectionModuleGrantSchema = Schema.Struct({
   moduleId: nonEmptyString.check(Schema.isMaxLength(120)),
 });
 
+/**
+ * The credential-bound v2 access connection an agent's OAuth grant was consented with: the exact connection row and
+ * the consent revision the gate decides against. Present only when an agent acts (with `delegatedByPrincipalId`); it is
+ * read from the connection row bound to the authenticated grant, never from a request.
+ */
+export const OAuthAgentConnectionSchema = Schema.Struct({
+  connectionId: decodedStringBrand(uuid, 'OAuthAgentConnectionId'),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type OAuthAgentConnection = typeof OAuthAgentConnectionSchema.Type;
+
 /** What an MCP OAuth connection may do (ONTOS-MCP-AUTH-DESIGN.md §4.3); only with authMethod 'oauth_connection'. */
 export const OAuthConnectionContextSchema = Schema.Struct({
+  agentConnection: Schema.optionalKey(OAuthAgentConnectionSchema),
   clientId: nonEmptyString.check(Schema.isMaxLength(500)),
   clientName: nonEmptyString.check(Schema.isMaxLength(200)),
   grantId: decodedStringBrand(uuid, 'OAuthGrantId'),
@@ -93,9 +105,10 @@ const validateOAuthConnectionContext: PrincipalContextValidator = (context) =>
   context.legalEntityId === undefined ||
   context.impersonatedByPrincipalId !== undefined ||
   context.authContextRef !== `oauth-grant:${context.connection.grantId}` ||
-  context.delegatedByPrincipalId === context.principalId
+  context.delegatedByPrincipalId === context.principalId ||
+  (context.connection.agentConnection !== undefined && context.delegatedByPrincipalId === undefined)
     ? issue(
-        'oauth_connection context requires a binding, its grant reference, a legal entity and a distinct delegating principal',
+        'oauth_connection context requires a binding, its grant reference, a legal entity and a distinct delegating principal; only an agent carries an agent connection',
       )
     : [];
 

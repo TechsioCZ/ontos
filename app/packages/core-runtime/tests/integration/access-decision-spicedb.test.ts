@@ -394,6 +394,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('access decision eng
       const authorityFor = (cellsForActor: readonly AuthorityCell[]) => ({
         readCells: (query: { readonly capabilityKey: string; readonly holder: Holder; readonly mode: AccessMode }) =>
           Effect.succeed(cellsForActor.filter(cellMatchesQuery(query))),
+        readCompanyOwnership: (query: { readonly legalEntityId: string }) =>
+          Effect.succeed(query.legalEntityId === ids.legalEntityId),
         readConnection: () => Effect.succeed(Option.some(connection)),
         readScope: () => {
           const membership = [{ source: 'membership' as const, until: later }];

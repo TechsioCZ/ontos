@@ -20,6 +20,8 @@
     "./access/decision/list-access": "./src/access/decision/list-access.ts",
     "./access/enforcement": "./src/access/enforcement/index.ts",
     "./access/ids": "./src/access/ids.ts",
+    "./access/intent/agent-connections": "./src/access/intent/agent-connections.ts",
+    "./access/lifecycle/agent-authority": "./src/access/lifecycle/agent-authority.ts",
     "./access/intent/catalog-snapshot-writer": "./src/access/intent/catalog-snapshot-writer.ts",
     "./access/intent/projection-compiler": "./src/access/intent/projection-compiler.ts",
     "./access/intent/projection-writer": "./src/access/intent/projection-writer.ts",

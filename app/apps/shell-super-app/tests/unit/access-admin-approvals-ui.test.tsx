@@ -153,7 +153,6 @@ test('agent proposals cannot be approved even if server eligibility says true', 
     />,
   );
   expect(screen.queryByRole('button', { name: en.shell.accessAdmin.approvals.actions.approve })).toBeNull();
-  expect(screen.getByText(en.shell.accessAdmin.agents.unavailable)).toBeDefined();
 });
 
 it.effect('requester withdraw is distinct from approval and rejection; pending disables every mutation', () =>

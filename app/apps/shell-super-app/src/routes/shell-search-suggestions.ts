@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 
 import type { ShellSearchResult } from '../../shared/browser-api.ts';
@@ -56,6 +56,8 @@ export type ShellSearchSuggestionsState =
       readonly query: string;
       readonly status: 'unavailable';
     }
+  /** The person's Roles do not include search here: said plainly, and not asked again in this scope. */
+  | { readonly filters: ShellSearchSuggestionFilters; readonly query: string; readonly status: 'forbidden' }
   | {
       readonly filters: ShellSearchSuggestionFilters;
       readonly groups: readonly ShellSearchSuggestionGroup[];
@@ -194,6 +196,11 @@ export const useShellSearchSuggestions = (compositionRevision: string | undefine
       apply(idleSuggestionsState);
       return;
     }
+    // Search is a right of its own; once this scope refused it, typing asks nothing more.
+    if (state.status === 'forbidden') {
+      apply({ filters: state.filters, query, status: 'forbidden' });
+      return;
+    }
     const controller = new AbortController();
     const requestScope = scope;
     const previous = scoped.scope === scope && scoped.state.status !== 'idle' ? scoped.state : undefined;
@@ -239,12 +246,10 @@ export const useShellSearchSuggestions = (compositionRevision: string | undefine
           );
         }),
         Effect.match({
-          onFailure: (error): ShellSearchSuggestionsState => ({
-            failure: error,
-            filters: loadingFilters,
-            query,
-            status: 'unavailable',
-          }),
+          onFailure: (error): ShellSearchSuggestionsState =>
+            Predicate.isTagged(error, 'ShellTargetForbiddenProblem')
+              ? { filters: emptyFilters, query, status: 'forbidden' }
+              : { failure: error, filters: loadingFilters, query, status: 'unavailable' },
           onSuccess: ({ index, plan, response }): ShellSearchSuggestionsState => {
             const ready = {
               filters: {

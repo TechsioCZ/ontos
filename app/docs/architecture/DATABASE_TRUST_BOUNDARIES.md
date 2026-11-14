@@ -427,7 +427,7 @@ Every existing `ontos_runtime` Search policy gains `and source_module_key <> 'pa
 
 ### Core installer
 
-`installOperationalScope(transaction, scope)` (`packages/core-runtime/src/db/scoped-transaction.ts`) keeps its signature, and `OperationalScopeTransactionService` keeps its shape. The transaction service is built per transaction with the authority chosen from the scope:
+`installOperationalScope(transaction, scope)` (`packages/core-runtime/src/db/scoped-transaction.ts`) keeps its signature. `OperationalScopeTransactionService.install` answers the authority it installed with, and the returned `ScopedTransactionExecutor.authority` carries it, so statements whose grants differ by role (the operational scope lookup's issuing-company attestation) follow the connected role instead of the assertion's audience. The transaction service is built per transaction with the authority chosen from the connected role (`current_user`) and the scope:
 
 - **`gateway_grant`**: `readVerifiedGatewayScopeAssertion(scope)` returns an assertion whose audience maps to a role through `gatewayScopeGrantRoleForAudience`. `install` runs `select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)`. `verify` runs `select coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id`. No `ontos.*` setting is written.
 - **`session_setting`**: everything else. This is the existing `set_config` / `current_setting` pair.

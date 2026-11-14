@@ -1,11 +1,8 @@
 import { expect, test } from 'effect-rstest';
 import { ConnectionModuleIdSchema } from '@app/shared-contracts/oauth-connections';
 
-import {
-  connectionScopeOf,
-  evaluateLiveChecks,
-  revokedStatusFor,
-} from '../../../api/oauth-connections/connection-service.ts';
+import { connectionScopeOf } from '../../../api/oauth-connections/connection-scope.ts';
+import { evaluateLiveChecks, revokedStatusFor } from '../../../api/oauth-connections/connection-service.ts';
 import type { LiveFacts } from '../../../api/oauth-connections/connection-service.ts';
 import type { GrantRow } from '../../../api/oauth-connections/types.ts';
 
@@ -14,6 +11,7 @@ const human: LiveFacts = {
   actingPrincipalStatus: 'active',
   agentInCompany: true,
   bindingStatus: 'active',
+  connectionLive: true,
   grantStatus: 'active',
   hasCompanyAccess: true,
   operatorHolds: true,
@@ -165,4 +163,14 @@ test('an agent scope retains the original OAuth owner without inventing a bindin
   expect(scope.authContextRef).toBe(`oauth-grant:${grant.grantId}`);
   expect(scope.authBindingId).toBeUndefined();
   expect(scope.authenticationNamespaceId).toBeUndefined();
+});
+
+test('an agent grant without a live credential-bound connection carries nothing, and is refused', () => {
+  expect(evaluateLiveChecks({ ...agent, connectionLive: false })).toEqual({
+    code: 'grant_inactive',
+    ok: false,
+    revoke: null,
+  });
+  // A person's grant has no access connection; the fact never refuses one.
+  expect(evaluateLiveChecks({ ...human, connectionLive: false })).toEqual({ ok: true });
 });

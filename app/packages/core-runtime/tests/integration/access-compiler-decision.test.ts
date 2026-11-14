@@ -255,6 +255,7 @@ const authorityPortOf = (params: {
           candidate.mode === query.mode,
       ),
     ),
+  readCompanyOwnership: (query) => Effect.succeed(query.legalEntityId === params.entity),
   readConnection: () => Effect.succeed(Option.some(connection())),
   readScope: () =>
     Effect.succeed(

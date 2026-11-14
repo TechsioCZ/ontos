@@ -50,6 +50,21 @@ const PORT = 'const port = process.env.PORT || 8080;';
 /** The unit's Node server; the host configures it (keep-alive) through `start(port, configureServer)` before it listens. */
 const CREATE_SERVER = 'const app = await createProdServer(prodServerOptions);';
 const RUN = '\nmain();';
+/** The generated entry ends its `main` right before calling it; `start` waits for the listen there. */
+const MAIN_END = /\n\}\nmain\(\);\s*$/u;
+/**
+ * The generated `main` calls `app.listen(...)` and returns without waiting for it. `start` resolves only once the
+ * server listens, and fails when listening fails (a taken port), so the host never reports a unit it is not serving.
+ * The error listener leaves once the server listens: later server errors stay the process's own, as before.
+ */
+const AWAIT_LISTENING = [
+  '    const listening = new Promise((listened, failed) => {',
+  '        const onListening = () => { app.off("error", onError); listened(); };',
+  '        const onError = (cause) => { app.off("listening", onListening); failed(cause); };',
+  '        app.once("listening", onListening);',
+  '        app.once("error", onError);',
+  '    });',
+].join('\n');
 
 const relativeImport = (distDirectory: string, absolute: string) => {
   const relative = path.relative(distDirectory, absolute);
@@ -70,7 +85,7 @@ export const ownerEntrySource = (
     !generated.includes(MAIN) ||
     !generated.includes(PORT) ||
     !generated.includes(CREATE_SERVER) ||
-    !generated.trimEnd().endsWith('main();')
+    !MAIN_END.test(generated)
   ) {
     return undefined;
   }
@@ -94,10 +109,10 @@ export const ownerEntrySource = (
           : 'export async function start(port, configureServer) {',
       )
       .replace(PORT, '')
-      .replace(CREATE_SERVER, `${CREATE_SERVER}\n    configureServer(app);`)
+      .replace(CREATE_SERVER, `${CREATE_SERVER}\n    configureServer(app);\n${AWAIT_LISTENING}`)
       // Owners answer only the host's loopback relay, never the container's private network.
       .replace('app.listen({', "app.listen({ host: '127.0.0.1',")
-      .replace(/\nmain\(\);\s*$/u, commonJs ? '\nmodule.exports = { start };\n' : '\n')
+      .replace(MAIN_END, `\n    await listening;\n}${commonJs ? '\nmodule.exports = { start };\n' : '\n'}`)
       .replace(RUN, '')
   );
 };

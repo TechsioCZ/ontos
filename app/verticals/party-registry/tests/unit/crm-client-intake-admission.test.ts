@@ -45,10 +45,15 @@ const gateFor = (kind: 'service' | 'human', bound = true) =>
   makeAccessDecisionService({
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
     workloadBindings: {
-      readActiveWorkloadKeys: () => Effect.succeed(new Set(bound ? ['demo.crm.party-intake'] : [])),
-      readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set([legalEntityId]), pinned: true }),
+      readWorkloadAuthority: () =>
+        Effect.succeed({
+          activeCompanyIds: new Set([legalEntityId]),
+          workloadKeys: new Set(bound ? ['demo.crm.party-intake'] : []),
+        }),
     },
     authorityFor: () => ({
+      readCompanyOwnership: (query) =>
+        Effect.succeed(query.tenantId === tenantId && query.legalEntityId === legalEntityId),
       readScope: (query) =>
         Effect.succeed(
           query.tenantId !== tenantId || (query.legalEntityId !== undefined && query.legalEntityId !== legalEntityId)

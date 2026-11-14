@@ -7,7 +7,7 @@ import { withCause } from '../../../src/enrollment/attempts/errors.ts';
 import { commercePortalAuthMfaSessionReadApiFromBetterAuth } from '../provider/mfa/http.ts';
 import type { CommercePortalAuthMfaSessionReadApi } from '../provider/mfa/http.ts';
 import { encodeCommerceSessionReference } from '../provider/session-reference.ts';
-import type { CommercePortalAuthService } from '../session/http.ts';
+import type { CommercePortalAuthService } from '../session/auth-service.ts';
 import type { CommercePortalAuthSessionLifecycle } from '../session/lifecycle-service.ts';
 
 /**

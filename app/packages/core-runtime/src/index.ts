@@ -224,6 +224,8 @@ export type {
   AgentProposalCommandResult,
 } from './auth/agent-proposal-command-contract.ts';
 export { AgentProposalCommandError } from './auth/agent-proposal-command-error.ts';
+export { AgentLifecycleAuthority, AgentLifecycleAuthorityLive } from './auth/agent-lifecycle-authority.ts';
+export type { AgentLifecycleAuthorityService } from './auth/agent-lifecycle-authority.ts';
 export {
   AgentProposalCommandPreparation,
   AgentProposalCommandPreparationLive,
@@ -270,6 +272,7 @@ export {
 export {
   OAuthConnectionAdministrationInputSchema,
   OAuthConnectionAdministrationResultSchema,
+  administersOAuthConnections,
   oauthConnectionAdministrationRead,
 } from './auth/oauth-connection-administration-read.ts';
 // @ontos-codesmith-core-read-exports:start
@@ -604,6 +607,8 @@ export type {
   RunActionInput,
 } from './actions/runtime.ts';
 export { TrustedCompanyPrincipalContextSchema } from './actions/principal-context.ts';
+export { OAuthAgentConnectionSchema } from './actions/principal-context.ts';
+export type { OAuthAgentConnection } from './actions/principal-context.ts';
 export {
   ActionTransportMetadataSchema,
   TrustedPrincipalContextSchema,
@@ -1212,8 +1217,6 @@ export type {
 export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
-export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
-export type { PrincipalOperators } from './permissions/principal-operators.ts';
 export {
   agentGrantRelationships,
   agentModuleAccessOf,

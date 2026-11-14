@@ -25,6 +25,13 @@ on:
       - '**/CHANGELOG.md'
       - '**/LICENSE.md'
   workflow_dispatch:
+    # One deploy with the upload warm-up on decides whether the first transfer of a service, rather than the first
+    # large transfer, is what stops every hostname of the project for 20-30 s. Off unless the input is ticked.
+    inputs:
+      upload_warmup:
+        description: Experiment — warm up the upload host before the first upload of each service
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -457,6 +464,7 @@ jobs:
       - name: Push only services whose inputs changed
         if: needs.plan.outputs.app == 'true'
         env:
+          ONTOS_PUSH_UPLOAD_WARMUP: ${{ github.event.inputs.upload_warmup }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
           current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"

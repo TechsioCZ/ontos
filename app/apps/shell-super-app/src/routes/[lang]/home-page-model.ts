@@ -1,14 +1,18 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Effect, Fiber, Match, Option } from 'effect';
+import { Effect, Fiber, Match, MutableRef, Option } from 'effect';
 
 import type {
+  AvailableLegalEntitiesResponse,
   AvailableTenant,
+  AvailableTenantsResponse,
   CurrentSession,
   LegalEntityChoice,
+  ModuleTargetSelector,
   SafeAuthenticatedIdentity,
   SafeTenantIdentity,
   ShellComposition,
   ShellDocumentContext,
+  ShellDocumentTarget,
   ShellHomeComponent,
   ShellNavigationItem,
   ShellUnavailableDeployment,
@@ -22,7 +26,6 @@ import {
   executeLegalEntityDetail,
   shellComposition,
 } from '../../api/auth-client.ts';
-import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-api.ts';
 import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
 import { presentedShellNavigationItems } from '../../../shared/shell-platform-navigation.ts';
 import { homeContributionCandidates, isHomeRequest, resolveHomeContribution } from './home-contribution-model.ts';
@@ -58,16 +61,28 @@ export interface ReloadRequiredHomePageModel {
   readonly state: 'reload_required';
 }
 
+/**
+ * Server rendering only: the answers the browser's own Shell reads (composition, legal entities, tenants and the
+ * people-administration hint) would get right after hydration. The document context resolved them once for this person
+ * in this company, from the same handlers and checks as those endpoints; the browser keeps them in its read caches,
+ * keyed by that person, tenant and company, instead of asking again. The session itself is not among them: the
+ * browser reads it fresh, so a person or company that changed since the render never meets these answers. Nothing
+ * else: no other person's or company's data, no token or assertion.
+ */
+export interface ServerBrowserReads {
+  readonly canManagePeople: boolean;
+  readonly composition: Extract<ShellComposition, { readonly state: 'available' }>;
+  readonly legalEntities: AvailableLegalEntitiesResponse;
+  readonly tenants: AvailableTenantsResponse;
+}
+
 export interface AuthenticatedHomePageModel {
+  /** Server rendering only; see `ServerBrowserReads`. */
+  readonly browserReads?: ServerBrowserReads;
   /** The company's own Home text (Core tenant data); read only for the Shell's welcome page. */
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required' | 'tenant_authenticated';
-  /**
-   * Server rendering only, when the batch answered in time: the document's gateway assertions, one per module audience,
-   * so the browser's first module reads need no assertion round trip. Kept in memory (document-gateway-assertions.ts).
-   */
-  readonly gatewayAssertions?: readonly DocumentGatewayAssertion[];
   /** Module deployments this document may call; the browser obtains their assertions in one batch. */
   readonly gatewayAudiences?: readonly string[];
   readonly homeContribution?: HomeContribution;
@@ -260,6 +275,60 @@ const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationCl
     : browserTenantsCache.get(browserReadKey(cacheBaseUrl, identity));
 };
 
+/** The reads this document primed: each server-rendered model is primed once, never again after a session boundary. */
+const primedReads = MutableRef.make(Option.none<ServerBrowserReads>());
+
+/**
+ * Keeps the server-rendered document's own Shell reads in the browser caches, under the keys the browser loaders ask
+ * with, so the first loader after hydration (a preload, a navigation) asks the Shell nothing again. Primed once per
+ * document model and never over an entry the cache already holds; a session boundary drops them like any read.
+ */
+export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(function* primeBrowserReadsEffect(
+  identity: SafeTenantIdentity,
+  reads: ServerBrowserReads,
+  documentUrl: string = globalThis.location.href,
+) {
+  if (!('document' in globalThis) || Option.getOrUndefined(MutableRef.get(primedReads)) === reads) {
+    return;
+  }
+  MutableRef.set(primedReads, Option.some(reads));
+  // The loaders' requests carry the document's own URL, so this resolves the same cache keys they ask with.
+  const options = yield* shellAuthenticationClientOptionsFromRequest(new Request(documentUrl));
+  const cacheBaseUrl = browserBaseUrl(options);
+  if (cacheBaseUrl === undefined) {
+    return;
+  }
+  const key = browserReadKey(cacheBaseUrl, identity);
+  yield* browserCompositionCache.prime(
+    browserReadKey(cacheBaseUrl, identity, reads.composition.compositionRevision),
+    reads.composition,
+  );
+  yield* browserPeopleCapabilityCache.prime(key, reads.canManagePeople);
+  yield* browserLegalEntitiesCache.prime(key, reads.legalEntities);
+  yield* browserTenantsCache.prime(key, reads.tenants);
+});
+
+/**
+ * The document context's answers as the separate endpoints give them, when it answered every one of them; otherwise
+ * the browser reads them itself. A hint whose check could not answer (shown as "no") is never kept as an answer: the
+ * document then primes nothing, so the browser asks again.
+ */
+const serverBrowserReads = (
+  context: ShellDocumentContext,
+  composition: ServerBrowserReads['composition'],
+): ServerBrowserReads | undefined =>
+  context.legalEntities === undefined ||
+  context.tenants?.state !== 'available' ||
+  context.canManagePeople === undefined ||
+  context.tenantContextUnavailable === true
+    ? undefined
+    : {
+        canManagePeople: context.canManagePeople,
+        composition,
+        legalEntities: context.legalEntities,
+        tenants: { tenants: context.tenants.tenants },
+      };
+
 /** What the selected company says about itself on Home; nothing when it provides no text or the read fails. */
 interface HomeCompanyContext {
   readonly legalEntityId: SafeAuthenticatedIdentity['legalEntityId'];
@@ -371,90 +440,91 @@ const unavailableLegalEntities = { items: [] as const, state: 'unavailable' as c
 
 /**
  * Server rendering reads the whole document context in ONE request: the BFF resolves the session's context once and
- * answers session, legal entities, tenants, composition, the people-administration hint and the gateway assertions of
- * the composition's audiences together. Separate reads resolved that context five times, each in its own invocation
- * on the document's isolate (stage: 4-5 s sequential, then 2.6 s concurrent with ~1 s of their CPU queued on the
- * document's thread), and a separate assertion batch waited for the composition before resolving the session again.
- * Home target admission shares this invocation; remote code and primary data still load only in the browser.
+ * answers session, legal entities, tenants, composition and the people-administration hint together. Separate reads
+ * resolved that context five times, each in its own invocation on the document's isolate (stage: 4-5 s sequential,
+ * then 2.6 s concurrent with ~1 s of their CPU queued on the document's thread). Home target admission shares this
+ * invocation; gateway assertions, remote code and primary data load only in the browser.
  */
-const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel')(
-  function* loadServerHomePageModelEffect(request: Request, options: ShellAuthenticationClientOptions) {
-    const requestedRevision = yield* requestedCompositionRevision(request);
-    const compositionRequest = requestedRevision === undefined ? {} : { compositionRevision: requestedRevision };
-    const context = yield* documentContext(
-      isHomeRequest(request) ? { ...compositionRequest, home: true } : compositionRequest,
-      options,
-    );
-    const { session } = context;
-    if (session.state === 'anonymous') {
-      return anonymousModel;
-    }
-    const tenants =
-      context.tenants?.state === 'available'
-        ? { items: context.tenants.tenants, state: 'available' as const }
-        : unavailableTenants(session.identity.tenantId);
-    if (session.state !== 'authenticated') {
-      if (context.tenants?.state === 'authentication_required') {
-        return sessionEndedModel;
-      }
-      // A verified tenant session may carry the real captured revision; it never carries company navigation,
-      // assertions or a fabricated selected company. A missing revision keeps the session ineligible.
-      const tenantRevision = capturedTenantRevision(session.state, context.compositionRevision);
-      const base: AuthenticatedHomePageModel = {
-        contextState: session.state,
-        identity: session.identity,
-        legalEntities:
-          context.legalEntities === undefined
-            ? legalEntitiesWithoutSelection(session)
-            : {
-                items: context.legalEntities.legalEntities,
-                state: 'available',
-                tenantContextAvailable: context.legalEntities.tenantContextAvailable,
-              },
-        navigation: emptyNavigation,
-        state: 'authenticated',
-        tenants,
-      };
-      return tenantRevision === undefined ? base : { ...base, compositionRevision: tenantRevision };
-    }
-    const composition = context.composition ?? { state: 'unavailable' as const };
-    if (composition.state === 'reload_required') {
-      return reloadRequiredModel;
-    }
-    if (composition.state !== 'available') {
-      return unavailableModel;
-    }
+const readServerDocument = Effect.fn('HomePageModel.readServerDocument')(function* readServerDocumentEffect(
+  request: Request,
+  options: ShellAuthenticationClientOptions,
+  target?: ModuleTargetSelector,
+) {
+  const requestedRevision = yield* requestedCompositionRevision(request);
+  const compositionRequest = requestedRevision === undefined ? {} : { compositionRevision: requestedRevision };
+  const pageRequest = isHomeRequest(request) ? { ...compositionRequest, home: true as const } : compositionRequest;
+  return yield* documentContext(target === undefined ? pageRequest : { ...pageRequest, target }, options);
+});
+
+const serverHomePageModel = (context: ShellDocumentContext): HomePageModel => {
+  const { session } = context;
+  if (session.state === 'anonymous') {
+    return anonymousModel;
+  }
+  const tenants =
+    context.tenants?.state === 'available'
+      ? { items: context.tenants.tenants, state: 'available' as const }
+      : unavailableTenants(session.identity.tenantId);
+  if (session.state !== 'authenticated') {
     if (context.tenants?.state === 'authentication_required') {
       return sessionEndedModel;
     }
-    const navigation = presentedNavigation(composition, context.canManagePeople ?? false);
-
-    const model: AuthenticatedHomePageModel = {
-      compositionRevision: composition.compositionRevision,
+    // A verified tenant session may carry the real captured revision; it never carries company navigation,
+    // assertions or a fabricated selected company. A missing revision keeps the session ineligible.
+    const tenantRevision = capturedTenantRevision(session.state, context.compositionRevision);
+    const base: AuthenticatedHomePageModel = {
       contextState: session.state,
-      gatewayAudiences: composition.gatewayAudiences,
       identity: session.identity,
       legalEntities:
         context.legalEntities === undefined
-          ? unavailableLegalEntities
+          ? legalEntitiesWithoutSelection(session)
           : {
               items: context.legalEntities.legalEntities,
               state: 'available',
               tenantContextAvailable: context.legalEntities.tenantContextAvailable,
             },
-      navigation,
-      selectedLegalEntityId: session.identity.legalEntityId,
+      navigation: emptyNavigation,
       state: 'authenticated',
       tenants,
     };
-    const withAssertions =
-      context.gatewayAssertions === undefined ? model : { ...model, gatewayAssertions: context.gatewayAssertions };
-    return {
-      ...withAssertions,
-      ...homeFields(Option.fromUndefinedOr(context.home)),
-    };
-  },
-);
+    return tenantRevision === undefined ? base : { ...base, compositionRevision: tenantRevision };
+  }
+  const composition = context.composition ?? { state: 'unavailable' as const };
+  if (composition.state === 'reload_required') {
+    return reloadRequiredModel;
+  }
+  if (composition.state !== 'available') {
+    return unavailableModel;
+  }
+  if (context.tenants?.state === 'authentication_required') {
+    return sessionEndedModel;
+  }
+  const navigation = presentedNavigation(composition, context.canManagePeople ?? false);
+
+  const model: AuthenticatedHomePageModel = {
+    compositionRevision: composition.compositionRevision,
+    contextState: session.state,
+    gatewayAudiences: composition.gatewayAudiences,
+    identity: session.identity,
+    legalEntities:
+      context.legalEntities === undefined
+        ? unavailableLegalEntities
+        : {
+            items: context.legalEntities.legalEntities,
+            state: 'available',
+            tenantContextAvailable: context.legalEntities.tenantContextAvailable,
+          },
+    navigation,
+    selectedLegalEntityId: session.identity.legalEntityId,
+    state: 'authenticated',
+    tenants,
+  };
+  const browserReads = serverBrowserReads(context, composition);
+  return {
+    ...(browserReads === undefined ? model : { ...model, browserReads }),
+    ...homeFields(Option.fromUndefinedOr(context.home)),
+  };
+};
 
 /** The browser warms the document's gateway assertions (detached, deduplicated) so remotes join one batch. */
 const warmAssertions = (compositionRevision: string, audiences: readonly string[]) =>
@@ -620,6 +690,39 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
   },
 );
 
+type HomePageModelFailure =
+  | Effect.Error<ReturnType<typeof shellAuthenticationClientOptionsFromRequest>>
+  | Effect.Error<ReturnType<typeof readServerDocument>>
+  | Effect.Error<ReturnType<typeof loadBrowserHomePageModel>>;
+
+const homePageModelOfFailure = (error: HomePageModelFailure): HomePageModel =>
+  Match.value(error).pipe(
+    Match.tag('InvalidCredentialsProblem', () => anonymousModel),
+    // A disabled account keeps its browser cookie, but the session read answers 403: that is "not signed in
+    // (account without access)", not an outage. A session the Shell no longer accepts is "not signed in" too.
+    Match.tag('OntosIdentityForbiddenProblem', () => accountForbiddenModel),
+    Match.tag('ShellAuthenticationRequiredProblem', () => sessionEndedModel),
+    Match.tag('DocumentCompositionRevisionError', 'ShellReloadRequiredProblem', () => reloadRequiredModel),
+    Match.tag(
+      'AuthenticationInternalProblem',
+      'AuthenticationUnavailableProblem',
+      'ConfigError',
+      'HttpClientError',
+      'SchemaError',
+      'ShellCapabilityUnavailableProblem',
+      'ShellInternalProblem',
+      'ShellInvalidRequestProblem',
+      'ShellPolicyConflictProblem',
+      'ShellPolicyUnprocessableProblem',
+      'ShellPreconditionRequiredProblem',
+      'ShellRateLimitedProblem',
+      'ShellTargetForbiddenProblem',
+      'ShellTargetNotFoundProblem',
+      () => unavailableModel,
+    ),
+    Match.exhaustive,
+  );
+
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   function* loadHomePageModelEffect(request: Request, onCompanyReady?: BrowserCompanyReady) {
     const options = yield* shellAuthenticationClientOptionsFromRequest(request);
@@ -627,39 +730,39 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       return anonymousModel;
     }
     return yield* isServerRender()
-      ? loadServerHomePageModel(request, options)
+      ? readServerDocument(request, options).pipe(Effect.map(serverHomePageModel))
       : loadBrowserHomePageModel(request, options, onCompanyReady);
   },
   Effect.matchEffect({
-    onFailure: (error) =>
-      Effect.succeed<HomePageModel>(
-        Match.value(error).pipe(
-          Match.tag('InvalidCredentialsProblem', () => anonymousModel),
-          // A disabled account keeps its browser cookie, but the session read answers 403: that is "not signed in
-          // (account without access)", not an outage. A session the Shell no longer accepts is "not signed in" too.
-          Match.tag('OntosIdentityForbiddenProblem', () => accountForbiddenModel),
-          Match.tag('ShellAuthenticationRequiredProblem', () => sessionEndedModel),
-          Match.tag('DocumentCompositionRevisionError', 'ShellReloadRequiredProblem', () => reloadRequiredModel),
-          Match.tag(
-            'AuthenticationInternalProblem',
-            'AuthenticationUnavailableProblem',
-            'ConfigError',
-            'HttpClientError',
-            'SchemaError',
-            'ShellCapabilityUnavailableProblem',
-            'ShellInternalProblem',
-            'ShellInvalidRequestProblem',
-            'ShellPolicyConflictProblem',
-            'ShellPolicyUnprocessableProblem',
-            'ShellPreconditionRequiredProblem',
-            'ShellRateLimitedProblem',
-            'ShellTargetForbiddenProblem',
-            'ShellTargetNotFoundProblem',
-            () => unavailableModel,
-          ),
-          Match.exhaustive,
-        ),
-      ),
+    onFailure: (error) => Effect.succeed(homePageModelOfFailure(error)),
+    onSuccess: Effect.succeed,
+  }),
+);
+
+export interface ServerModuleDocument {
+  readonly shell: HomePageModel;
+  /** The page target the document read resolved against the document's release; absent when it read none. */
+  readonly target?: ShellDocumentTarget;
+}
+
+/**
+ * Server rendering of a module page: the document context resolves the page's target in the same request, with the
+ * same session resolution and against the same captured release, instead of a second request beside it.
+ */
+export const loadServerModuleDocument = Effect.fn('HomePageModel.loadServerModuleDocument')(
+  function* loadServerModuleDocumentEffect(request: Request, target: ModuleTargetSelector) {
+    const options = yield* shellAuthenticationClientOptionsFromRequest(request);
+    if (isServerRenderWithoutSession(options)) {
+      return { shell: anonymousModel } satisfies ServerModuleDocument;
+    }
+    const context = yield* readServerDocument(request, { ...options, targetSource: 'server_render' }, target);
+    const shell = serverHomePageModel(context);
+    return (
+      context.target === undefined ? { shell } : { shell, target: context.target }
+    ) satisfies ServerModuleDocument;
+  },
+  Effect.matchEffect({
+    onFailure: (error) => Effect.succeed<ServerModuleDocument>({ shell: homePageModelOfFailure(error) }),
     onSuccess: Effect.succeed,
   }),
 );

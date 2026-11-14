@@ -6,7 +6,6 @@ import { ManageAgentEntityRequestSchema } from '../../src/agent-access.ts';
 const createRequest = {
   description: null,
   displayName: 'Pomocník',
-  modules: [],
   operation: 'create',
   operatorPrincipalIds: [],
   ownerPrincipalId: 'owner',

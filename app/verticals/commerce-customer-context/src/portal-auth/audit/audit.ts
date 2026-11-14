@@ -6,7 +6,7 @@ import { Context, Effect, Layer, Redacted } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import type { Scope } from 'effect';
 
-import { CommercePortalAuthDatabase } from '../persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../persistence/portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from '../persistence/portal-auth-database-types.ts';
 import type { CommercePortalAuthAuditEvent } from './audit-contracts.ts';
 import { commercePortalAuthAuditUnavailable } from './audit-unavailable.ts';
@@ -118,7 +118,11 @@ export const makeCommercePortalAuthAuditRecorder = (
       .pipe(Effect.asVoid, Effect.mapError(commercePortalAuthAuditUnavailable)),
 });
 
-/** The single Layer the composition root wires for Commerce portal authentication audit evidence. */
+/**
+ * The durable recorder the composition root wires. It needs only the portal database service; the
+ * pool that provides that service is supplied by the composition root, so this module stays free
+ * of PgClient construction and safe to reach from the Outbox worker's bundle.
+ */
 export const CommercePortalAuthAuditLive = Layer.effect(
   CommercePortalAuthAudit,
   CommercePortalAuthDatabase.pipe(Effect.map((database) => makeCommercePortalAuthAuditRecorder(database.executor))),

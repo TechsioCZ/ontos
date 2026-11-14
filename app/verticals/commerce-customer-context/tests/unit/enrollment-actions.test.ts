@@ -8,9 +8,21 @@ import type {
   ActionAccessEvidencePolicy,
   DomainEventContractMap,
 } from '../../../../packages/core-runtime/src/actions/events.ts';
-import { claimPortalEnrollmentTransitionAction } from '../../src/actions/claim-portal-enrollment-transition.action.ts';
+import {
+  claimAttemptCompanyRefusal,
+  claimPortalEnrollmentTransitionAction,
+  prepareClaimPortalEnrollmentTransition,
+} from '../../src/actions/claim-portal-enrollment-transition.action.ts';
 import { recordPortalEnrollmentOutcomeAction } from '../../src/actions/record-portal-enrollment-outcome.action.ts';
-import { startPortalEnrollmentAction } from '../../src/actions/start-portal-enrollment.action.ts';
+import {
+  prepareStartPortalEnrollment,
+  startPortalEnrollmentAction,
+} from '../../src/actions/start-portal-enrollment.action.ts';
+import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import type { AccessDecisionService } from '@app/core-runtime/access/enforcement';
+import { accessDecisionUnavailable } from '../../../../packages/core-runtime/src/access/decision/errors.ts';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { terminatePortalEnrollmentAction } from '../../src/actions/terminate-portal-enrollment.action.ts';
 import type {
   AttemptClaimResult,
@@ -209,6 +221,74 @@ const preparedOwner = (
     }),
 });
 
+/** A gate whose company selection answers exactly `companies`, or cannot answer at all. */
+const selectionGate = (companies: readonly string[] | 'unavailable'): AccessDecisionService => ({
+  decide: () => Effect.die('The enrollment preflight asks no decision'),
+  decideMany: () => Effect.die('The enrollment preflight asks no decision'),
+  list: () => Effect.die('The enrollment preflight asks no list'),
+  listMany: () => Effect.die('The enrollment preflight asks no list'),
+  selectableLegalEntities: () =>
+    companies === 'unavailable'
+      ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
+      : Effect.succeed(companies.map((company) => LegalEntityIdSchema.make(company))),
+});
+
+const preparationContext = (preparationScope: OperationalScope) => ({
+  actionInvocationId,
+  compositionRevision: 'c'.repeat(64),
+  scope: preparationScope,
+  transaction: () => Effect.die('The enrollment preflight opens no owner transaction'),
+});
+
+it('a claim admits only an Attempt of a company the caller may act for, and refuses every other (D6)', () => {
+  // The preflight is registered, so no claim reaches the owner transaction without this decision.
+  expect(getActionServicePreflight(claimPortalEnrollmentTransitionAction)).toBe(prepareClaimPortalEnrollmentTransition);
+  // Its own company: admitted.
+  expect(claimAttemptCompanyRefusal({ selectable: [legalEntityId], target: legalEntityId })).toBeUndefined();
+  // Another company of the same tenant, claimed with no company named: refused as a workload outside its company.
+  expect(claimAttemptCompanyRefusal({ selectable: [legalEntityId], target: otherLegalEntityId })).toMatchObject({
+    code: 'action_permission_denied',
+    reasons: ['deny.workload_unbound'],
+  });
+  // A caller registered for no company reaches no Attempt at all.
+  expect(claimAttemptCompanyRefusal({ selectable: [], target: legalEntityId })).toMatchObject({
+    code: 'action_permission_denied',
+    reasons: ['deny.workload_unbound'],
+  });
+});
+
+it.effect('start in the tenant context admits only a target company the caller is registered for (D6)', () =>
+  Effect.gen(function* startTargetCompany() {
+    expect(getActionServicePreflight(startPortalEnrollmentAction)).toBe(prepareStartPortalEnrollment);
+    const targeted = { ...startPayload, targetLegalEntityId: legalEntityId };
+    // The Storefront client registered for this company starts the enrollment.
+    yield* prepareStartPortalEnrollment(targeted, preparationContext(scope)).pipe(
+      Effect.provideService(AccessDecisionGate, selectionGate([legalEntityId])),
+    );
+    // Registered only for another company, or for none: refused with the gate's own reason, before any Attempt.
+    for (const registered of [[otherLegalEntityId], []]) {
+      const refused = yield* prepareStartPortalEnrollment(targeted, preparationContext(scope)).pipe(
+        Effect.provideService(AccessDecisionGate, selectionGate(registered)),
+        Effect.flip,
+      );
+      expect(refused).toMatchObject({ code: 'action_permission_denied', reasons: ['deny.workload_unbound'] });
+    }
+    // An unreadable registry is an outage, never an admission.
+    const unavailable = yield* prepareStartPortalEnrollment(targeted, preparationContext(scope)).pipe(
+      Effect.provideService(AccessDecisionGate, selectionGate('unavailable')),
+      Effect.flip,
+    );
+    expect(unavailable).toMatchObject({ code: 'action_permission_check_failed' });
+    // A company context was already decided by the gate; a start naming no company asks nothing.
+    yield* prepareStartPortalEnrollment(targeted, preparationContext({ ...scope, legalEntityId })).pipe(
+      Effect.provideService(AccessDecisionGate, selectionGate('unavailable')),
+    );
+    yield* prepareStartPortalEnrollment(startPayload, preparationContext(scope)).pipe(
+      Effect.provideService(AccessDecisionGate, selectionGate('unavailable')),
+    );
+  }),
+);
+
 it.effect('start derives Actor, Tenant and Action invocation from trusted Core context', () =>
   Effect.gen(function* startsEnrollment() {
     let request: StartEnrollmentAttemptInput | undefined;
@@ -237,7 +317,7 @@ it.effect('start derives Actor, Tenant and Action invocation from trusted Core c
     expect(request?.actorPrincipalId).toBe(actorPrincipalId);
     expect(request?.tenantId).toBe(tenantId);
     expect(collector.snapshot().domainEvents).toHaveLength(0);
-  }),
+  }).pipe(Effect.provideService(AccessDecisionGate, selectionGate('unavailable'))),
 );
 
 it.effect('start preserves the verified legal entity for real retail registration', () =>
@@ -266,7 +346,7 @@ it.effect('start preserves the verified legal entity for real retail registratio
     expect(startPortalEnrollmentAction.descriptor.legalEntityScope).toBe('optional');
     expect(request?.targetLegalEntityId).toBe(legalEntityId);
     expect(request?.retailRegistration).toEqual(payload.retailRegistration);
-  }),
+  }).pipe(Effect.provideService(AccessDecisionGate, selectionGate('unavailable'))),
 );
 
 for (const targetLegalEntityId of [otherLegalEntityId, undefined]) {
@@ -284,7 +364,7 @@ for (const targetLegalEntityId of [otherLegalEntityId, undefined]) {
         }),
       );
       expect(failure.code).toBe('attempt_invalid');
-    }),
+    }).pipe(Effect.provideService(AccessDecisionGate, selectionGate('unavailable'))),
   );
 }
 
@@ -303,7 +383,7 @@ it.effect('retail registration cannot use a tenant-only invocation', () =>
       ),
     );
     expect(failure.code).toBe('attempt_invalid');
-  }),
+  }).pipe(Effect.provideService(AccessDecisionGate, selectionGate('unavailable'))),
 );
 
 it.effect('claim preserves a matching verified legal entity', () =>

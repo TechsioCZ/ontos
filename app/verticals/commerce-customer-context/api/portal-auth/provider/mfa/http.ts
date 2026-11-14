@@ -23,7 +23,7 @@ import {
 } from '../../http-transport.ts';
 import { consumeRateLimitBudget } from '../../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../../rate-limit-service.ts';
-import { CommercePortalAuthService } from '../../session/http.ts';
+import { CommercePortalAuthService } from '../../session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../../session/lifecycle-service.ts';
 import { CommercePortalAuthConfig } from '../config-service.ts';
 import { encodeCommerceSessionReference } from '../session-reference.ts';

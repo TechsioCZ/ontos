@@ -4,11 +4,20 @@ import { Effect, Schema } from 'effect';
 
 import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyCreateOutcomeSchema } from '../../shared/domain/identity-contracts.ts';
+import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import { findPartyCreateContinuation } from '../services/party-matching-persistence.service.ts';
 
 export interface PartyCommandResultServices {
   readonly find: (invocationId: string) => ReturnType<typeof findPartyCreateContinuation>;
 }
+
+const partyCommandResultEntrypoint = defineTenantModuleEntrypoint({
+  access: 'read',
+  authorization: { kind: 'protected' },
+  entrypointKey: 'party.registry.api.owned-command-result',
+  moduleKey: 'party.registry',
+  role: 'api',
+});
 
 /** Private recovery projection: the HTTP caller must first pass native invocation ownership. */
 export const partyCommandResultRead = defineRead(
@@ -22,13 +31,7 @@ export const partyCommandResultRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
-    entrypoint: defineTenantModuleEntrypoint({
-      access: 'read',
-      authorization: { kind: 'protected' },
-      entrypointKey: 'party.registry.api.owned-command-result',
-      moduleKey: 'party.registry',
-      role: 'api',
-    }),
+    entrypoint: partyCommandResultEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: 'party.registry.api.owned-command-result.evidence.v1' },
     inputSchema: Schema.Struct({ invocationId: ActionInvocationIdSchema }),
     legalEntityScope: 'optional',
@@ -56,6 +59,10 @@ export const partyCommandResultRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({
-      find: (invocationId: string) => findPartyCreateContinuation(transaction, scope.tenantId, invocationId),
+      // A source-created result recovers only through its exact source receipt and current source Privacy.
+      find: (invocationId: string) =>
+        findPartyCreateContinuation(transaction, scope.tenantId, invocationId, scope).pipe(
+          withPartyClientSourcePrivacyRequirement(partyCommandResultEntrypoint.entrypointKey),
+        ),
     }),
 );

@@ -1,7 +1,7 @@
 import { APIError } from 'better-auth';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { classifyPasswordChangeFailure } from '../../api/portal-auth/password-change/http.ts';
+import { classifyPasswordChangeFailure } from '../../api/portal-auth/password-change/routine.ts';
 import { UpdateCustomerPasswordSchema } from '../../shared/portal-auth/password-change-api.ts';
 
 const body = (currentPassword: string, newPassword: string) => ({ currentPassword, newPassword });

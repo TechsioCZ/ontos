@@ -18,17 +18,17 @@ import type {
   EnsureRetailCustomerProfilePayload,
   EnsureRetailCustomerProfileResult,
 } from '../../shared/actions/ensure-retail-customer-profile.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { preparedRetailProfileEnsureServices, profileServicesForVerifiedScope } from '../profile-service-factory.ts';
 import {
   missingPartyTransport,
+  missingPreparedResolution,
   PartyRegistryRetailPartyResolverFactory,
 } from '../integrations/party-registry-retail-party-resolver.ts';
 import { RetailPartyDetailExecutor } from '../integrations/retail-party-detail-executor.ts';
+import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
+import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
-import {
-  ProfilePersistenceDependencyFailure,
-  profilePersistenceServicesForTransaction,
-} from '../persistence/profile-persistence.ts';
+import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import { stableRevision } from '../stable-revision.ts';
 import { createEnsureRetailCustomerProfileCommerceCustomerContextRetailCustomerProfileCreatedV1OutboxMessage as createProfileCreatedOutboxMessage } from './ensure-retail-customer-profile.commerce-customer-context-retail-customer-profile-created-v1.outbox-message.ts';
 import { recordProfileResourceLookup } from './profile-action-data-access.ts';
@@ -186,7 +186,7 @@ export const prepareRetailProfileServices: ActionServicePreflight<
           }),
         )(request),
   );
-  const outcome = yield* resolvers
+  const readPreparedParty = resolvers
     .make(scopeInput)(request)
     .pipe(
       Effect.catchTag('ProfilePersistenceDependencyFailure', () => readOnce),
@@ -201,8 +201,16 @@ export const prepareRetailProfileServices: ActionServicePreflight<
           { value: cause },
         ),
       ),
+      Effect.map((outcome) => bindPreparedRetailParty(request, outcome)),
     );
-  const resolveRetailParty = bindPreparedRetailParty(request, outcome);
+  // A source Profile proves its Party through the source admission in the owner transaction, never through this
+  // actor-bound Retail read, so a source invocation prepares no Retail Party evidence.
+  const resolveRetailParty: RetailPartyResolver =
+    preparedPayload.source === undefined ? yield* readPreparedParty : () => Effect.fail(missingPreparedResolution());
+  const sourceOwners = {
+    sourcePrivacy: yield* Effect.serviceOption(CommerceSourceProcessingEligibility),
+    sourceProof: yield* Effect.serviceOption(CommerceSourceProfileOwnerProof),
+  };
   const factory: ActionServiceFactory<EnsureRetailCustomerProfileServices> = (transaction, current, revision) => {
     if (
       current.tenantId !== scope.tenantId ||
@@ -219,15 +227,15 @@ export const prepareRetailProfileServices: ActionServicePreflight<
         }),
       );
     }
-    const service = profilePersistenceServicesForTransaction(
+    // A source Profile proves its own Party and Privacy here, as the unprepared factory does; only an ordinary
+    // Profile consumes the prepared actor-bound Party evidence.
+    const service = preparedRetailProfileEnsureServices(
       transaction,
-      {
-        legalEntityId,
-        principalId: current.principalId,
-        tenantId: current.tenantId,
-      },
-      { resolveRetailParty },
-    ).ensureRetailCustomerProfile;
+      current,
+      legalEntityId,
+      resolveRetailParty,
+      sourceOwners,
+    );
     return Effect.succeed({
       ensure: (candidate, actionContext) =>
         stableRevision(candidate) === payloadRevision &&

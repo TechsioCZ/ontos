@@ -1,102 +1,65 @@
-// Agent entities, pure part (lane agent-entities): the module choices and role presets the Agents page offers. No
-// database or Effect imports.
-import type {
-  AgentModuleAccess,
-  AgentModuleGrant,
-  AgentModuleOption,
-  AgentRolePreset,
-} from '@app/shared-contracts/agent-access';
+// Agent entities, pure part (lane agent-entities): the draft rules the company administrator sees as Czech reasons and
+// the per-module summary of what an agent can actually use. No database or Effect imports.
+import type { AgentUsableModule } from '@app/shared-contracts/agent-access';
 import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 
-/** One capability of the tenant's published release, as much of it as the agent catalogue reads. */
-export interface AgentCatalogCapability {
-  readonly key: string;
-  readonly kind: string;
-  readonly moduleKey: string;
+export interface AgentDraftInput {
+  readonly displayName: string;
+  readonly existingNames: readonly string[];
+  readonly memberIds: readonly string[];
+  readonly operatorPrincipalIds: readonly string[];
+  readonly ownerPrincipalId: string;
 }
 
-/** One v2 role of the tenant with the capability keys its current revision pins. */
-export interface AgentCatalogRole {
-  readonly capabilityKeys: readonly string[];
-  readonly id: string;
-  /** Set for a company-local role, which is offered only in its own company. */
-  readonly legalEntityId: string | null;
-  readonly name: string;
-}
+const sameName = (left: string, right: string) =>
+  left.trim().toLocaleLowerCase('cs') === right.trim().toLocaleLowerCase('cs');
 
-/**
- * What an agent could use of one capability kind: reading, writing, or nothing. Administration is never an agent's,
- * so an `admin` capability adds no module access.
- */
-const AGENT_ACCESS_BY_KIND: ReadonlyMap<string, AgentModuleAccess> = new Map([
-  ['action', 'write'],
-  ['export', 'read'],
-  ['field_read', 'read'],
-  ['field_write', 'write'],
-  ['read', 'read'],
-]);
-
-/** Module access per module, the highest any of these capabilities gives, only in the modules offered. */
-const moduleAccessOf = (
-  capabilities: readonly AgentCatalogCapability[],
-  offered: ReadonlySet<string>,
-): readonly AgentModuleGrant[] => {
-  const access = new Map<string, AgentModuleAccess>();
-  for (const capability of capabilities) {
-    const granted = AGENT_ACCESS_BY_KIND.get(capability.kind);
-    if (granted !== undefined && offered.has(capability.moduleKey) && access.get(capability.moduleKey) !== 'write') {
-      access.set(capability.moduleKey, granted);
-    }
+/** Czech reason why the agent cannot be saved, or null. First failing rule wins. */
+export const agentDraftProblem = (input: AgentDraftInput): string | null => {
+  if (input.displayName.trim() === '') {
+    return 'Vyplňte název agenta.';
   }
-  return [...access]
-    .map(([moduleId, moduleAccess]) => ({ access: moduleAccess, moduleId: AgentModuleKeySchema.make(moduleId) }))
-    .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId));
+  if (input.existingNames.some((name) => sameName(name, input.displayName))) {
+    return 'Agent s tímto názvem už ve firmě je.';
+  }
+  const members = new Set(input.memberIds);
+  if (!members.has(input.ownerPrincipalId)) {
+    return 'Za agenta může odpovídat jen aktivní člověk z firmy.';
+  }
+  if (input.operatorPrincipalIds.some((id) => !members.has(id))) {
+    return 'Agenta mohou připojit jen aktivní lidé z firmy.';
+  }
+  return null;
 };
 
-/** Module choices for agents of a company: highest access the release offers, sorted by Czech label. */
-export const agentModuleOptions = (
-  access: readonly AgentModuleGrant[],
-  labelOf: (moduleId: string) => string,
-): readonly AgentModuleOption[] =>
-  access
-    .map(({ access: maxAccess, moduleId }) => ({ label: labelOf(moduleId), maxAccess, moduleId }))
-    .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
+const READ_KINDS: ReadonlySet<string> = new Set(['export', 'field_read', 'read']);
 
-/** The module choices and role presets the Agents page offers. */
-export interface AgentCatalog {
-  readonly options: readonly AgentModuleOption[];
-  readonly presets: readonly AgentRolePreset[];
+/** One capability the agent can use: its module, its kind and whether it runs it itself or only proposes it. */
+export interface AgentUsableCapabilityFact {
+  readonly kind: string;
+  readonly moduleKey: string;
+  readonly use: 'approval' | 'direct';
 }
 
 /**
- * The Agents page catalogue from the tenant's v2 intent: the modules an agent of this company could be offered (active
- * in the tenant, composed in the release, with at least one capability an agent could use) and the company's roles as
- * module presets (tenant-wide roles and this company's own, in name order).
+ * Per module of the installed composition: whether the agent reads there, and how it changes things there (direct
+ * wins over approval). A module the composition does not carry is not shown; nothing technical is named.
  */
-export const agentCatalogOf = (input: {
-  readonly activeModuleKeys: readonly string[];
-  readonly capabilities: readonly AgentCatalogCapability[];
-  readonly composedModuleKeys: readonly string[];
-  readonly labelOf: (moduleId: string) => string;
-  readonly legalEntityId: string;
-  readonly roles: readonly AgentCatalogRole[];
-}): AgentCatalog => {
-  const composed = new Set(input.composedModuleKeys);
-  const offered = new Set(input.activeModuleKeys.filter((moduleKey) => composed.has(moduleKey)));
-  const byKey = new Map(input.capabilities.map((capability) => [capability.key, capability] as const));
-  const presets = input.roles
-    .filter((role) => role.legalEntityId === null || role.legalEntityId === input.legalEntityId)
-    .toSorted((left, right) => left.name.localeCompare(right.name, 'cs') || left.id.localeCompare(right.id))
-    .map((role): AgentRolePreset => ({
-      key: role.id,
-      label: role.name,
-      modules: moduleAccessOf(
-        role.capabilityKeys.flatMap((key) => {
-          const capability = byKey.get(key);
-          return capability === undefined ? [] : [capability];
-        }),
-        offered,
-      ),
-    }));
-  return { options: agentModuleOptions(moduleAccessOf(input.capabilities, offered), input.labelOf), presets };
+export const usableModulesOf = (
+  facts: readonly AgentUsableCapabilityFact[],
+  labelOf: (moduleId: string) => string,
+  installed: ReadonlySet<string>,
+): readonly AgentUsableModule[] => {
+  const modules = new Map<string, { reads: boolean; writes: AgentUsableModule['writes'] }>();
+  for (const fact of facts.filter(({ moduleKey }) => installed.has(moduleKey))) {
+    const current = modules.get(fact.moduleKey) ?? { reads: false, writes: 'none' };
+    if (READ_KINDS.has(fact.kind)) {
+      modules.set(fact.moduleKey, { ...current, reads: true });
+    } else {
+      modules.set(fact.moduleKey, { ...current, writes: current.writes === 'direct' ? 'direct' : fact.use });
+    }
+  }
+  return [...modules.entries()]
+    .map(([moduleId, usage]) => ({ label: labelOf(moduleId), moduleId: AgentModuleKeySchema.make(moduleId), ...usage }))
+    .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
 };

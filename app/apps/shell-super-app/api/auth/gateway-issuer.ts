@@ -686,7 +686,8 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     // A malformed principal is refused before the document reads any admission.
     yield* decodeTrustedPrincipal(input);
     // One document is one issuance operation. Its audiences share this fresh admission; a later
-    // document or individual issuance always reads authority again, with fresh tokens.
+    // document or individual issuance always reads authority again, with fresh tokens. An audience named
+    // several times gets several assertions, each checked, signed and registered on its own.
     const approved = yield* admission;
     const issued = yield* Effect.forEach(
       input.audiences,

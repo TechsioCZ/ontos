@@ -436,6 +436,8 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const composition = defineRead(
     {
       accessDeclaration: {
+        // The frame (membership, no Role cell): the installed composition; each contribution is decided on its own.
+        baseline: true,
         key: 'core.shell.composition.read',
         kind: 'read',
         modes: ['run'],
@@ -637,6 +639,8 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const moduleTarget = defineRead(
     {
       accessDeclaration: {
+        // The frame (membership, no Role cell): which module serves a page, never the page's data (its own right).
+        baseline: true,
         key: 'core.shell.module-target.resolve',
         kind: 'read',
         modes: ['run'],
@@ -675,6 +679,9 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const tenantModuleTarget = defineRead(
     {
       accessDeclaration: {
+        // The frame (membership, no Role cell): a tenant-context page target, never its page's data (still its own
+        // right). The session document's release hint asks this very declaration (`tenantModuleTargetCarrier`).
+        baseline: true,
         key: 'core.shell.tenant-module-target.resolve',
         kind: 'read',
         modes: ['run'],

@@ -7,10 +7,8 @@ import { eq } from 'drizzle-orm';
 import { Config, Console, Effect, Layer, Redacted, Schedule, Schema } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
-import {
-  CommercePortalAuthDatabase,
-  CommercePortalAuthDatabaseFromDatabaseConfigLive,
-} from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabaseFromDatabaseConfigLive } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-database-service.ts';
 import { user } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
 import { DEFAULT_PASSWORD } from '../ops/stage-demo-verify.mjs';
 

@@ -215,6 +215,7 @@ const structuralIntent = Effect.gen(function* structuralIntentEffect() {
   const reads: AccessIntentReads = {
     loadAuthorityCells: (scope, query) => loader.loadAuthorityCells(scope, query),
     loadAuthorityCellsMany: (scope, queries) => loader.loadAuthorityCellsMany(scope, queries),
+    loadCompanyOwnership: (scope, query) => loader.loadCompanyOwnership(scope, query),
     loadConfigureBases: (scope, query) => loader.loadConfigureBases(scope, query),
     loadConnection: (scope, query) => loader.loadConnection(scope, query),
     loadScope: (scope, query) => loader.loadScope(scope, query),

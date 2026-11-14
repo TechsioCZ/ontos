@@ -3,7 +3,7 @@ import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/se
 import { configureDatabasePool, openDatabaseClient, DatabaseConfig } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
@@ -11,18 +11,7 @@ import { CommercePortalAuthDatabaseConnectionError } from '../../../api/portal-a
 import { CommercePortalAuthConfig } from '../../../api/portal-auth/provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../../../api/portal-auth/provider/config.ts';
 import { commercePortalAuthDatabaseSchema, commercePortalAuthRelations } from './portal-auth-tables.ts';
-import type {
-  CommercePortalAuthDatabaseAdapter,
-  CommercePortalAuthDatabaseExecutor,
-} from './portal-auth-database-types.ts';
-
-export class CommercePortalAuthDatabase extends Context.Service<
-  CommercePortalAuthDatabase,
-  {
-    readonly adapter: CommercePortalAuthDatabaseAdapter;
-    readonly executor: CommercePortalAuthDatabaseExecutor;
-  }
->()('@app/commerce-customer-context/portal-auth/persistence/portal-auth-database/CommercePortalAuthDatabase') {}
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 
 const connectionFailure = (cause: unknown): CommercePortalAuthDatabaseConnectionError =>
   new CommercePortalAuthDatabaseConnectionError({

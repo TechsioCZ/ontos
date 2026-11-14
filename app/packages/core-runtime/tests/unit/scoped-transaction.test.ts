@@ -70,6 +70,7 @@ it.effect('installs and verifies transaction-local scope and exposes no transact
       () =>
         Effect.sync(() => {
           calls += 1;
+          return 'session_setting' as const;
         }),
       Effect.sync(() => {
         calls += 1;
@@ -93,7 +94,7 @@ it.effect('installs and verifies transaction-local scope and exposes no transact
 it.effect('fails closed when transaction settings do not match', () =>
   Effect.gen(function* migratedTest2() {
     const transaction = transactionService(
-      () => Effect.void,
+      () => Effect.succeed('session_setting' as const),
       Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' }),
     );
     const error = yield* Effect.flip(

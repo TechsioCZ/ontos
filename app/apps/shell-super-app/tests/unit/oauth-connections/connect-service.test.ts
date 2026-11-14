@@ -27,7 +27,7 @@ import {
   createDraft,
 } from '../../../api/oauth-connections/connect-service.ts';
 import type { ConnectOptionsPorts, ConnectSession } from '../../../api/oauth-connections/connect-service.ts';
-import { connectionScopeOf } from '../../../api/oauth-connections/connection-service.ts';
+import { connectionScopeOf } from '../../../api/oauth-connections/connection-scope.ts';
 import {
   ConnectionForbidden,
   ConnectionInvalid,
@@ -41,6 +41,7 @@ import { SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
 import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
+import { agentConnectionStoreDouble, unusedPeopleCommandsLayer } from '../../support/agent-connection-store-double.ts';
 
 const ISSUER = 'http://localhost:3020/shell-super-app-api/oauth';
 
@@ -215,6 +216,22 @@ const authorityDouble =
     });
   };
 
+/** The agents the person operates in le-a, as the live port offers them: one, with what it can use there. */
+const agentOffer = {
+  displayName: 'Agent Eins',
+  modules: [crm],
+  principalId: ConnectionPrincipalIdSchema.make('agent-1'),
+  writePolicy: 'approval' as const,
+};
+const agentsDouble =
+  (asked: string[]): ConnectOptionsPorts<never>['agentsOf'] =>
+  (asking) =>
+    Effect.sync(() => {
+      asked.push(asking.principalId);
+      return [agentOffer];
+    });
+const noAgents: ConnectOptionsPorts<never>['agentsOf'] = () => Effect.succeed([]);
+
 /** Everything `createDraft` names in its requirements. The inspection records each authority read it is asked. */
 const draftLayers = (agentReads: string[]) =>
   Effect.gen(function* draftDependencies() {
@@ -231,44 +248,49 @@ const draftLayers = (agentReads: string[]) =>
         inspection.layer,
         makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
         Layer.succeed(Crypto.Crypto, crypto),
+        agentConnectionStoreDouble().layer,
+        unusedPeopleCommandsLayer,
       ),
     };
   });
 
-it.effect(
-  'offers only the scoped company with no agent choices, although the person has another company and operable agents',
-  () => {
-    const reads: AuthorityRead[] = [];
-    const agentReads: string[] = [];
-    return connectOptionsWith({ authorityOf: authorityDouble(reads) })(session, request).pipe(
-      Effect.provide(servicesWith(agentReads)),
-      Effect.flatMap((options) =>
-        Effect.sync(() => {
-          expect(options.state).toBe('ready');
-          expect(options.companies).toStrictEqual([
-            { agents: [], legalEntityId: 'le-a', legalName: 'Firma A', modules: [crm] },
-          ]);
-          expect(options.preselect).toStrictEqual({
-            agentPrincipalId: Option.none(),
-            legalEntityId: Option.some('le-a'),
-          });
-          expect(options.user).toStrictEqual({
-            displayName: 'Ada',
-            principalId: ConnectionPrincipalIdSchema.make('person-1'),
-          });
-          expect(reads).toStrictEqual([{ actingKind: 'human', legalEntityId: 'le-a' }]);
-          expect(agentReads).toStrictEqual([]);
-        }),
-      ),
-    );
-  },
-);
+it.effect('offers only the scoped company, with the agents the person operates there and what each can use', () => {
+  const reads: AuthorityRead[] = [];
+  const agentReads: string[] = [];
+  const asked: string[] = [];
+  return connectOptionsWith({ agentsOf: agentsDouble(asked), authorityOf: authorityDouble(reads) })(
+    session,
+    request,
+  ).pipe(
+    Effect.provide(servicesWith(agentReads)),
+    Effect.flatMap((options) =>
+      Effect.sync(() => {
+        expect(options.state).toBe('ready');
+        expect(options.companies).toStrictEqual([
+          { agents: [agentOffer], legalEntityId: 'le-a', legalName: 'Firma A', modules: [crm] },
+        ]);
+        // The agent offer is asked once, for the session person and their own company only.
+        expect(asked).toStrictEqual(['person-1']);
+        expect(options.preselect).toStrictEqual({
+          agentPrincipalId: Option.none(),
+          legalEntityId: Option.some('le-a'),
+        });
+        expect(options.user).toStrictEqual({
+          displayName: 'Ada',
+          principalId: ConnectionPrincipalIdSchema.make('person-1'),
+        });
+        expect(reads).toStrictEqual([{ actingKind: 'human', legalEntityId: 'le-a' }]);
+        expect(agentReads).toStrictEqual([]);
+      }),
+    ),
+  );
+});
 
 it.effect('answers access_blocked, with no form, when the session is not scoped to a company it may offer', () => {
   const reads: AuthorityRead[] = [];
   const agentReads: string[] = [];
   const unscoped: ConnectSession = { ...session, scope: { ...session.scope, legalEntityId: 'le-unknown' } };
-  return connectOptionsWith({ authorityOf: authorityDouble(reads) })(unscoped, request).pipe(
+  return connectOptionsWith({ agentsOf: noAgents, authorityOf: authorityDouble(reads) })(unscoped, request).pipe(
     Effect.provide(servicesWith(agentReads)),
     Effect.flatMap((options) =>
       Effect.sync(() => {
@@ -282,7 +304,7 @@ it.effect('answers access_blocked, with no form, when the session is not scoped 
   );
 });
 
-it.effect('refuses a draft that would act as an agent before any authority or agent read', () =>
+it.effect('refuses a draft for an agent the person does not operate, before any authority read', () =>
   Effect.gen(function* agentDraftRefused() {
     const agentReads: string[] = [];
     const { inspection, layer } = yield* draftLayers(agentReads);
@@ -430,6 +452,8 @@ const approvalLayers = (
       ),
       countingInspection(inspection, calls ?? { capabilities: 0, scope: 0 }),
       makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
+      agentConnectionStoreDouble().layer,
+      unusedPeopleCommandsLayer,
       Layer.succeed(OAuthAuthenticationAudit, {
         record: () =>
           Effect.sync(() => {
@@ -475,7 +499,7 @@ it.effect('approval refuses a draft of another company before any authority read
   }),
 );
 
-it.effect('approval refuses an agent-acting draft as forbidden, before any read or write', () =>
+it.effect('approval refuses an agent draft whose agent the person no longer operates, before any write', () =>
   Effect.gen(function* agentApprovalRefused() {
     const writes: string[] = [];
     const layer = yield* approvalLayers({ actingKind: 'agent', actingPrincipalId: agentUuid }, writes, [
@@ -529,7 +553,7 @@ it.effect('approval describes a member of the company once: one scope and at mos
 );
 
 it.effect('ends a stalled options build at the 20 second budget as the retryable 503 problem', () => {
-  const stalled: ConnectOptionsPorts<never> = { authorityOf: () => Effect.never };
+  const stalled: ConnectOptionsPorts<never> = { agentsOf: noAgents, authorityOf: () => Effect.never };
   return Effect.gen(function* stalledBuild() {
     const fiber = yield* connectOptionsWith(stalled)(session, request).pipe(
       Effect.provide(servicesWith([])),
@@ -552,6 +576,7 @@ it.effect('ends a stalled options build at the 20 second budget as the retryable
 it.effect('logs one structured line with each phase duration and the counts when the build is slow', () => {
   const entries: unknown[] = [];
   const slow: ConnectOptionsPorts<never> = {
+    agentsOf: noAgents,
     authorityOf: (asker, input, trace) =>
       TestClock.adjust(Duration.seconds(4)).pipe(Effect.andThen(authorityDouble([])(asker, input, trace))),
   };
@@ -594,6 +619,7 @@ it.effect('names the authority step that was running, with its timings and count
   const entries: unknown[] = [];
   // The authority read finishes its catalog and scope steps, then stalls inside the capability batch.
   const stalledInBatch: ConnectOptionsPorts<never> = {
+    agentsOf: noAgents,
     authorityOf: (_asker, _input, trace) =>
       Effect.gen(function* stalledAuthority() {
         yield* Ref.set(trace, {

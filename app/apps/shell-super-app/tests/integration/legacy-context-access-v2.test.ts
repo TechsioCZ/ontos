@@ -2,7 +2,8 @@ import { proposalLifecycleAdministrator } from '@app/core-runtime';
 import { administersOAuthConnections } from '../../../../packages/core-runtime/src/auth/oauth-connection-administration-read.ts';
 import { mayFindPeople } from '@app/core-runtime/people/search';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
-import { Effect } from 'effect';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { agentAdministrationDecision } from '../../api/auth/administration-access.ts';
@@ -101,6 +102,62 @@ const findsPeople = Effect.fn('LegacyRows.findsPeople')(function* findsPeople(
   return yield* mayFindPeople(scope).pipe(Effect.provideService(AccessDecisionGate, accessCase.gate));
 });
 
+/**
+ * An agent of the first company on a live, credential-bound connection its owner consented to: a member of the tenant
+ * and the company in v2 intent, with an active connection row and consent snapshot, and the trusted scope the MCP
+ * transport builds for it. It holds no legacy tuple of any kind.
+ */
+const connectedAgent = Effect.fn('LegacyRows.connectedAgent')(function* connectedAgent(accessCase: AccessAdminCase) {
+  const [minted] = yield* accessCase.admin
+    .unsafe<{ readonly agent: string; readonly connection: string; readonly grant: string }>(
+      'select gen_random_uuid()::text as agent, gen_random_uuid()::text as connection, gen_random_uuid()::text as grant',
+    )
+    .pipe(Effect.orDie);
+  const agentId = minted?.agent ?? '';
+  const connectionId = minted?.connection ?? '';
+  const grantId = minted?.grant ?? '';
+  const companyA = accessCase.companies[0] ?? '';
+  const operator = accessCase.ids.get('owner')?.principalId ?? '';
+  const [tenantScope, companyScope] = yield* Effect.all([accessCase.scopeIdOf(), accessCase.scopeIdOf(companyA)]);
+  for (const statement of [
+    `insert into core.principals (tenant_id, principal_id, kind, display_name, status)
+       values ('${accessCase.tenantId}', '${agentId}', 'agent', 'Agent', 'active')`,
+    `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+       values ('${accessCase.tenantId}', '${companyA}', '${agentId}', null, 'active')`,
+    `insert into core.access_memberships (membership_id, tenant_id, scope_id, agent_id, kind, status, valid_from, recorded_by)
+       values (gen_random_uuid(), '${accessCase.tenantId}', '${tenantScope}', '${agentId}', 'member', 'active',
+               now() - interval '1 day', '${operator}'),
+              (gen_random_uuid(), '${accessCase.tenantId}', '${companyScope}', '${agentId}', 'member', 'active',
+               now() - interval '1 day', '${operator}')`,
+    `insert into core.access_agent_connections (connection_id, tenant_id, agent_id, principal_id, scope_id, status,
+       revision, ceiling_json, valid_from, valid_until)
+       values ('${connectionId}', '${accessCase.tenantId}', '${agentId}', '${operator}', '${companyScope}', 'active', 1,
+               '{"cells":[]}', now() - interval '1 day', now() + interval '10 years')`,
+    `insert into core.access_consent_snapshots (tenant_id, connection_id, revision, ceiling_json, granted_at, granted_by)
+       values ('${accessCase.tenantId}', '${connectionId}', 1, '{"cells":[]}', now() - interval '1 day', '${operator}')`,
+  ]) {
+    yield* accessCase.admin.unsafe(statement).pipe(Effect.orDie);
+  }
+  const trusted = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+    authBindingId: grantId,
+    authContextRef: `oauth-grant:${grantId}`,
+    authMethod: 'oauth_connection',
+    connection: {
+      agentConnection: { connectionId, revision: 1 },
+      clientId: 'https://client.example/oauth/metadata.json',
+      clientName: 'Client',
+      grantId,
+      modules: 'all',
+      writePolicy: 'direct',
+    },
+    delegatedByPrincipalId: operator,
+    legalEntityId: companyA,
+    principalId: agentId,
+    tenantId: accessCase.tenantId,
+  }).pipe(Effect.orDie);
+  return { ...trusted, correlationId: 'legacy-rows:agent', legalEntityId: companyA, tenantId: accessCase.tenantId };
+});
+
 it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 seconds' })(
   'legacy context-access questions on a v2-only tenant',
   (suite) => {
@@ -132,7 +189,9 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
       withAccessAdminCase((accessCase) =>
         Effect.gen(function* tenantReleaseHintRows() {
           expect(yield* tenantReleaseHint(accessCase, 'owner')).toBe('ALLOWED');
-          expect(yield* tenantReleaseHint(accessCase, 'member')).toBe('DENIED');
+          // Tenant-context page dispatch is part of the Shell frame (baseline): a member of the tenant may load it as
+          // a member, though no Role of theirs grants it; the page itself is still decided by its own right.
+          expect(yield* tenantReleaseHint(accessCase, 'member')).toBe('ALLOWED');
           expect(yield* tenantReleaseHint(accessCase, 'foreignOwner')).toBe('DENIED');
         }),
       ),
@@ -160,6 +219,26 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
           expect(yield* administersConnections(accessCase, 'member', companyA)).toBe(false);
           expect(yield* administersConnections(accessCase, 'companyAdmin', companyB)).toBe(false);
           expect(yield* administersConnections(accessCase, 'foreignOwner', companyA)).toBe(false);
+        }),
+      ),
+    );
+
+    suite.effect('an agent on its live connection is cleanly refused every administration question, never 503', () =>
+      withAccessAdminCase((accessCase) =>
+        Effect.gen(function* agentAdministrationRefused() {
+          const agent = yield* connectedAgent(accessCase);
+          const gated = <A, E>(effect: Effect.Effect<A, E, AccessDecisionGate>) =>
+            effect.pipe(Effect.provideService(AccessDecisionGate, accessCase.gate));
+          // The questions the Core reads behind the agents, proposals and connections pages ask in `prepare`: an agent
+          // administers nothing, so each is a refusal (403), never an unavailable answer (503).
+          const administration = yield* gated(agentAdministrationDecision(agent));
+          expect(administration.outcome).toBe('DENIED');
+          expect(administration.reasons.map(({ code }) => code)).toContain('deny.agent_forbidden');
+          expect(yield* gated(proposalLifecycleAdministrator(agent))).toBe(false);
+          expect(yield* gated(administersOAuthConnections(agent))).toBe(false);
+          expect(yield* gated(mayFindPeople(agent))).toBe(false);
+          const people = yield* gated(peopleAdministrationCapability({ principal: agent }));
+          expect(people.canManage).toBe(false);
         }),
       ),
     );

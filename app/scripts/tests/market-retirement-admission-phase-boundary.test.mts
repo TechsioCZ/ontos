@@ -240,7 +240,7 @@ const ownerTable = (scope: OperationalScope, initialRows: readonly AdmissionRow[
   const service: OperationalScopeTransactionService = {
     delete: unusedDatabaseOperation,
     insert: unusedDatabaseOperation,
-    install: () => Effect.void,
+    install: () => Effect.succeed('session_setting' as const),
     scopedRoutineInvoker: () => scopedRoutineInvokerFromTransaction(() => Effect.succeed([]), scope),
     select: unusedDatabaseOperation,
     update: unusedDatabaseOperation,

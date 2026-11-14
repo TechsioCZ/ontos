@@ -169,6 +169,7 @@ describe('stage-accounts-bootstrap', () => {
             actingPrincipalStatus: 'active',
             agentInCompany: true,
             bindingStatus: 'active',
+            connectionLive: true,
             grantStatus: 'active',
             hasCompanyAccess: true,
             operatorHolds: true,

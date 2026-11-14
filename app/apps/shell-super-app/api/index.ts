@@ -55,10 +55,10 @@ import type {
 
 import {
   makeActionRuntimeLive,
+  AgentLifecycleAuthorityLive,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
-  oauthConnectionAdministrationRead,
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
@@ -155,6 +155,7 @@ import {
 } from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
+import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
 import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
 import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
@@ -290,6 +291,8 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
   ShellDocumentContextRequest,
+  ShellDocumentTarget,
+  ModuleTargetSelector,
   ResolveModuleTargetPayload,
   ResolveModuleTargetsPayload,
   ShellInvalidRequestProblem,
@@ -349,6 +352,11 @@ import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { NoServerTimingLive } from './no-server-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  connectedAppsAdministration,
+  peopleAdministrationDecision,
+  tenantReleaseHintAdmitted,
+} from './auth/administration-access.ts';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
@@ -1535,9 +1543,10 @@ const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<
   effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /**
- * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
- * (same audience binding and lifetime). An audience the release does not admit is left out instead of failing the
- * others; the browser asks for it alone and gets the single 400.
+ * One assertion per requested entry (an audience may be named up to eight times) for an authenticated session
+ * principal, from the same issuer as `issueGatewayContext`: each with its own id, audience binding, lifetime and scope
+ * grant. An audience the release does not admit is left out instead of failing the others; the browser asks for it
+ * alone and gets the single 400.
  */
 const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAssertions')(
   function* issueDocumentGatewayAssertionsEffect(
@@ -1693,13 +1702,53 @@ const liveScopeOrRefusal = Option.match({
 });
 
 /**
+ * A module page document's target: the same governed read `resolveModuleTargetHandler` runs for the same principal
+ * (`tenantModuleTarget` for a tenant session), against the document's captured release. Its problem is its own
+ * outcome, never the document's, exactly as the separate request answered it.
+ */
+const documentTarget = Effect.fn('shell.composition.documentTarget')(function* documentTargetEffect(
+  request: RequestWithHeaders,
+  selector: ModuleTargetSelector,
+  principal: TrustedPrincipalContext,
+  catalog: ShellInstalledCatalog,
+  context: 'company' | 'tenant',
+) {
+  const governedReads = yield* ShellGovernedReads;
+  const input = {
+    ...selector,
+    compositionRevision: catalog.composition.revision,
+    correlationId: correlationFromRequest(request),
+    principal,
+  };
+  const read: Effect.Effect<ShellDocumentTarget, ReadCoreError> =
+    context === 'tenant'
+      ? governedReads.tenantModuleTarget(input)
+      : governedReads.moduleTarget(input).pipe(Effect.map((target) => ({ state: 'resolved' as const, target })));
+  return yield* read.pipe(
+    Effect.provideService(CapturedShellCompositionCatalog, catalog),
+    Effect.tapError((error) =>
+      logShellReadFailure(
+        'module_target',
+        request,
+        error,
+        moduleTargetLogAnnotations(catalog, {
+          ...moduleTargetSourceHints(request.headers),
+          selector,
+        }),
+      ),
+    ),
+    Effect.catch((error) => Effect.succeed({ problem: shellReadProblem(error), state: 'failed' as const })),
+    observeGatewayPhase('document-target'),
+  );
+});
+
+/**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
  * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
  * the document's isolate. Each part keeps its own outcome; the browser keeps the separate, cached endpoints.
- * It also signs the gateway assertions of the composition's audiences for the session principal (it is classified as
- * `shell.document-context.issue.session`): a separate batch call had to wait for this answer and then resolved the
- * session a second time. When signing fails the document goes without them and the browser asks the batch issuer.
+ * It issues no gateway assertions: the HTML waited for one signature and one scope-grant registration per audience
+ * here, while the browser obtains them in one batch (`auth/gateway-contexts`) as soon as the document renders.
  */
 export const documentContextHandler = Effect.fn('shell.composition.documentContext')(
   function* documentContextHandlerEffect(request: RequestWithHeaders, payload: ShellDocumentContextRequest) {
@@ -1756,9 +1805,13 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             return yield* Effect.fail(authenticationInternalProblem());
           }
           const capability = yield* Effect.forkChild(
-            peopleAdministrationCapability({ principal }).pipe(
-              Effect.map(({ canManage }) => canManage),
-              Effect.orElseSucceed(() => false),
+            // A check that could not answer is told apart from a refusal: the document shows no people
+            // administration either way, but says nothing the browser could keep as an answer.
+            peopleAdministrationDecision(principal).pipe(
+              Effect.map(({ outcome }) =>
+                outcome === 'UNAVAILABLE' ? Option.none<boolean>() : Option.some(outcome === 'ALLOWED'),
+              ),
+              Effect.orElseSucceed(() => Option.none<boolean>()),
             ),
             { startImmediately: true },
           );
@@ -1766,6 +1819,15 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             const catalog = yield* captureShellRelease(payload.compositionRevision).pipe(
               observeGatewayPhase('document-admission'),
             );
+            // The page target reads beside the composition, against the same captured release.
+            const target =
+              payload.target === undefined
+                ? Option.none<Fiber.Fiber<ShellDocumentTarget>>()
+                : Option.some(
+                    yield* Effect.forkChild(documentTarget(request, payload.target, principal, catalog, 'company'), {
+                      startImmediately: true,
+                    }),
+                  );
             const governedReads = yield* ShellGovernedReads;
             const response = yield* governedReads
               .composition({
@@ -1777,7 +1839,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                 Effect.tapError((error) => logShellReadFailure('composition', request, error)),
               );
             const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
-            return { catalog, composition: documentComposition };
+            return { catalog, composition: documentComposition, target };
           }).pipe(
             observeGatewayPhase('document-composition'),
             Effect.catch((error) =>
@@ -1788,6 +1850,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                     ? ('reload_required' as const)
                     : ('unavailable' as const),
                 },
+                target: Option.none<Fiber.Fiber<ShellDocumentTarget>>(),
               }),
             ),
           );
@@ -1801,21 +1864,9 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
           if (documentComposition.state !== 'available' || captured.catalog === null) {
             return base;
           }
-          const assertions = yield* Effect.forkChild(
-            Effect.option(
-              issueDocumentGatewayAssertions(
-                context.principal,
-                documentComposition.compositionRevision,
-                documentComposition.gatewayAudiences,
-              ).pipe(
-                observeGatewayPhase('document-assertions'),
-                Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
-              ),
-            ),
-            { startImmediately: true },
-          );
           // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
-          const canManagePeople = yield* Fiber.join(capability);
+          const capabilityAnswer = yield* Fiber.join(capability);
+          const canManagePeople = Option.getOrElse(capabilityAnswer, () => false);
           const home =
             payload.home === true
               ? yield* resolveDocumentHome({
@@ -1828,48 +1879,62 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                   Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
                 )
               : undefined;
-          const result = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
-          return Option.match(yield* Fiber.join(assertions), {
-            onNone: () => result,
-            onSome: (gatewayAssertions) => ({ ...result, gatewayAssertions }),
-          });
+          const answered = Option.isSome(capabilityAnswer) ? { ...base, canManagePeople } : base;
+          const withHome = home === undefined ? answered : { ...answered, home };
+          return Option.isNone(captured.target)
+            ? withHome
+            : { ...withHome, target: yield* Fiber.join(captured.target.value) };
         }),
-        tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
+        tenantContextAvailable: Effect.option(canSelectTenantContext(context.principal)),
       },
       { concurrency: 2 },
     );
     let tenantRelease = Option.none<string>();
+    let tenantTarget = Option.none<ShellDocumentTarget>();
     if (context.state === 'tenant_authenticated') {
-      // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that
-      // dispatch admits: `core.shell.tenant-module-target.resolve`, asked in the tenant context (O28).
-      const gate = yield* AccessDecisionGate;
+      // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that dispatch
+      // admits: the dispatch Read's own carrier, asked in the tenant context (O28).
       const governedReads = yield* ShellGovernedReads;
-      const decision = yield* gate.decide({
-        carrier: governedReads.tenantModuleTargetCarrier,
-        legalEntityScope: 'optional',
-        now: yield* DateTime.nowAsDate,
-        scope: preserveSystemPrincipalContextTrust(context.principal, {
+      const admitted = yield* tenantReleaseHintAdmitted(
+        governedReads.tenantModuleTargetCarrier,
+        preserveSystemPrincipalContextTrust(context.principal, {
           ...context.principal,
           correlationId: correlationFromRequest(request),
         }),
-      });
-      if (decision.outcome === 'ALLOWED') {
-        tenantRelease = yield* Effect.option(
-          captureShellRelease(payload.compositionRevision).pipe(Effect.map((catalog) => catalog.composition.revision)),
-        );
+      );
+      if (admitted) {
+        const tenantCatalog = yield* Effect.option(captureShellRelease(payload.compositionRevision));
+        tenantRelease = tenantCatalog.pipe(Option.map((catalog) => catalog.composition.revision));
+        // A page target counts only beside the release hint; without it the page shows "select a company".
+        if (Option.isSome(tenantCatalog) && payload.target !== undefined) {
+          tenantTarget = Option.some(
+            yield* documentTarget(request, payload.target, context.principal, tenantCatalog.value, 'tenant'),
+          );
+        }
       }
     }
-    const result = {
+    const assembled = {
       ...document,
       legalEntities: withOptionalProperty(
-        { legalEntities: context.availableLegalEntities, tenantContextAvailable },
+        {
+          legalEntities: context.availableLegalEntities,
+          tenantContextAvailable: Option.getOrElse(tenantContextAvailable, () => false),
+        },
         context.state === 'authenticated',
         'selectedLegalEntityId',
         context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
         { state: context.state },
       ),
     };
-    return Option.isSome(tenantRelease) ? { ...result, compositionRevision: tenantRelease.value } : result;
+    // The switcher hint shows "no tenant context" when its check could not answer, and says so.
+    const result = Option.isNone(tenantContextAvailable)
+      ? { ...assembled, tenantContextUnavailable: true as const }
+      : assembled;
+    if (Option.isNone(tenantRelease)) {
+      return result;
+    }
+    const withRelease = { ...result, compositionRevision: tenantRelease.value };
+    return Option.isSome(tenantTarget) ? { ...withRelease, target: tenantTarget.value } : withRelease;
   },
 );
 
@@ -3537,20 +3602,15 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
   withAdminRight: boolean,
 ) {
   const caller = yield* agentPlatformSessionCaller(request);
-  // The company's connected applications are administered through Core's own capability carrier,
-  // `core.identity.oauth-connection.administer`: admitting the read is the answer.
+  // The company's connected applications are administered through Core's own capability,
+  // `core.identity.oauth-connection.administer`, asked in the caller's selected company.
   const isCompanyAdmin = withAdminRight
-    ? yield* (yield* ReadRuntime)
-        .runRead({
-          input: {},
-          principal: caller.principal,
-          registration: oauthConnectionAdministrationRead,
-          transport: { correlationId: correlationFromRequest(request) },
-        })
-        .pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        )
+    ? yield* connectedAppsAdministration(
+        preserveSystemPrincipalContextTrust(caller.principal, {
+          ...caller.principal,
+          correlationId: correlationFromRequest(request),
+        }),
+      )
     : false;
   const result: ConnectionsCaller = {
     isCompanyAdmin,
@@ -3738,7 +3798,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           const caller = yield* agentPlatformSessionCaller(request);
           const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
-          const response = yield* listAgentEntities(caller, deps).pipe(
+          const response = yield* listAgentEntities(caller, new Headers(Object.entries(request.headers)), deps).pipe(
             Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
             Effect.catch(connectionsAdminFailure),
           );
@@ -3756,7 +3816,12 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           const caller = yield* agentPlatformSessionCaller(request);
           const transport = { correlationId: correlationFromRequest(request), idempotencyKey };
           const deps = yield* connectionsAdminDeps(caller, transport);
-          const response = yield* manageAgentEntity(caller, payload, deps).pipe(
+          const response = yield* manageAgentEntity(
+            caller,
+            payload,
+            new Headers(Object.entries(request.headers)),
+            deps,
+          ).pipe(
             Effect.provideService(AgentReadRequestIdentity, transport),
             Effect.provideService(AgentActionRequestIdentity, transport),
             Effect.catch(connectionsAdminFailure),
@@ -3819,7 +3884,13 @@ const oauthGrantRegistryLive = OAuthGrantRegistryLive.pipe(Layer.provide(corePer
 const oauthCredentialsLive = OAuthCredentialsLive.pipe(Layer.provide(authPersistenceLive));
 const oauthGrantOwnersLive = OAuthGrantOwnersLive.pipe(Layer.provide(oauthGrantRegistryLive));
 const oauthEndpointGuardDataLive = OAuthEndpointGuardDataLive.pipe(
-  Layer.provide(Layer.merge(oauthGrantRegistryLive, oauthCredentialsLive)),
+  Layer.provide(
+    Layer.mergeAll(
+      oauthGrantRegistryLive,
+      oauthCredentialsLive,
+      AgentConnectionStoreLive.pipe(Layer.provide(Layer.merge(corePersistenceLive, databaseIdentitiesLive))),
+    ),
+  ),
 );
 const principalResolverLive = PrincipalResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -4097,6 +4168,8 @@ export const makeShellAuthenticationApiRuntime = (
   );
   // Agent-platform proposal preparation runs through the same canonical gate as every other protected surface.
   const proposalPreparationLayer = AgentProposalCommandPreparationLive.pipe(
+    // The lifecycle question of a withdrawal is prepared by the bound Action gate and re-checked in its transaction.
+    Layer.provide(AgentLifecycleAuthorityLive),
     Layer.provide(
       Layer.mergeAll(
         runtimeCorePersistenceLive,
@@ -4434,10 +4507,15 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  // The credential-bound agent connections: written at consent, read by every agent request, ended by revocation.
+  const agentConnectionStoreLive = AgentConnectionStoreLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive)),
+  );
   const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
   );
   const handlerDependenciesLive = Layer.mergeAll(
+    agentConnectionStoreLive,
     platformWorkloadKeyAdmissionLayer,
     emailDeliveryRequestsLive,
     authenticationIsolateLive,

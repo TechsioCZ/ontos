@@ -4974,15 +4974,6 @@ export const demoGatewayIssuerBindings: readonly DemoGatewayIssuerBinding[] = [
     handler: 'issueDocumentGatewayContexts',
     path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
   },
-  {
-    contractFile: 'apps/shell-super-app/shared/browser-api.ts',
-    credential: 'session',
-    entrypointKey: 'shell.document-context.issue.session',
-    groupExport: 'ShellDocumentContextApiGroup',
-    groupId: 'documentContext',
-    handler: 'documentContext',
-    path: shellGatewayContextContract.documentContextPath,
-  },
 ];
 
 export const hasClassifiedDemoIssuers = (issuers: readonly GatewayIssuerEntrypoint[]): boolean => {
@@ -5039,7 +5030,7 @@ export const validateDemoCapabilityIssuers = (
     if (!hasClassifiedDemoIssuers(demoCapabilityIssuerEntrypoints)) {
       yield* fail(
         GATEWAY_CONTRACT_FILE,
-        'demo capability issuers must classify exactly the API-key read relay and the two Shell document session issuers',
+        'demo capability issuers must classify exactly the API-key read relay and the Shell document gateway batch issuer',
       );
     }
     for (const binding of demoGatewayIssuerBindings) {

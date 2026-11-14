@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 
 import { principalCompanyMemberships, principals } from '../db/schema.ts';
@@ -95,7 +95,11 @@ const directoryFromTransaction = (transaction: ScopedTransactionExecutor) => ({
           eq(principalCompanyMemberships.tenantId, tenantId),
           eq(principalCompanyMemberships.legalEntityId, legalEntityId),
           eq(principalCompanyMemberships.status, 'active'),
-          or(eq(principals.kind, 'agent'), and(eq(principals.kind, 'human'), eq(principals.status, 'active'))),
+          // An agent's directory row carries no affiliation (the agent status Action requires that); a person's is active.
+          or(
+            and(eq(principals.kind, 'agent'), isNull(principalCompanyMemberships.affiliation)),
+            and(eq(principals.kind, 'human'), eq(principals.status, 'active')),
+          ),
         ),
       )
       .pipe(Effect.mapError(unavailable));

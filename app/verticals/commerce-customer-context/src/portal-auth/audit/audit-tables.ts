@@ -15,6 +15,8 @@ const commercePortalAuthAuditSchema = pgSchema('commerce_auth');
 export const portalAuthAuditEvent = commercePortalAuthAuditSchema.table(
   'portal_auth_audit_event',
   {
+    /** The Core Action invocation a storefront write's rows follow (its authorization row in Core's audit). */
+    actionInvocationId: uuid('action_invocation_id'),
     auditEventId: uuid('audit_event_id').defaultRandom().primaryKey(),
     /**
      * Ties a pre-mutation intent row to the completion row for the same attempt — a recovery
@@ -41,5 +43,6 @@ export const portalAuthAuditEvent = commercePortalAuthAuditSchema.table(
     index('commerce_auth_audit_event_subject_digest_idx').on(table.subjectDigest),
     index('commerce_auth_audit_event_provider_subject_id_idx').on(table.providerSubjectId),
     index('commerce_auth_audit_event_correlation_digest_idx').on(table.correlationDigest),
+    index('commerce_auth_audit_event_action_invocation_id_idx').on(table.actionInvocationId),
   ],
 );

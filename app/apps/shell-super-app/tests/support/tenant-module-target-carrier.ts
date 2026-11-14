@@ -9,6 +9,8 @@ import type { GateCarrier } from '@app/core-runtime/access/enforcement';
 export const tenantModuleTargetTestCarrier: GateCarrier = {
   accessDeclaration: decodeAccessDeclarationOrThrow(
     {
+      // The frame (membership, no Role cell), as the production Read declares it.
+      baseline: true,
       key: 'core.shell.tenant-module-target.resolve',
       kind: 'read',
       modes: ['run'],

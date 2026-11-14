@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
 
-import { auditEvents, principalCompanyMemberships, principals } from '../db/schema.ts';
+import { auditEvents, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import {
   IdentityAdministrationAuditEvidenceSchema,
@@ -12,7 +12,7 @@ import { identityAdministrationAuditUnavailable as unavailable } from './identit
 
 export const identityAdministrationAuditFromTransaction = (transaction: ScopedTransactionExecutor) => ({
   load: Effect.fn('IdentityAdministrationAudit.load')(function* load(
-    input: typeof IdentityAdministrationAuditInputSchema.Type,
+    _input: typeof IdentityAdministrationAuditInputSchema.Type,
   ) {
     const { legalEntityId, tenantId } = transaction.scope;
     if (legalEntityId === undefined) {
@@ -23,45 +23,15 @@ export const identityAdministrationAuditFromTransaction = (transaction: ScopedTr
     const actionRows = and(
       eq(auditEvents.legalEntityId, legalEntityId),
       inArray(auditEvents.eventType, ['action.executed', 'action.rejected']),
-      input.subjects === 'agents'
-        ? or(
-            sql`${auditEvents.evidenceJson}->>'actionKey' in ('core.identity.configure-agent', 'core.identity.manage-agent-status', 'core.identity.replace-agent-operators')`,
-            and(manageAccount, sql`${auditEvents.evidenceJson}->>'principalKind' = 'agent'`),
-          )
-        : and(manageAccount, sql`coalesce(${auditEvents.evidenceJson}->>'principalKind', 'human') <> 'agent'`),
+      or(
+        sql`${auditEvents.evidenceJson}->>'actionKey' in ('core.identity.configure-agent', 'core.identity.manage-agent-status', 'core.identity.replace-agent-operators')`,
+        and(manageAccount, sql`${auditEvents.evidenceJson}->>'principalKind' = 'agent'`),
+      ),
     );
-    // Retained company membership includes disabled/departed people; a caller can never submit this ID set.
-    const retainedPeople = transaction
-      .select({ principalId: principalCompanyMemberships.principalId })
-      .from(principalCompanyMemberships)
-      .innerJoin(
-        principals,
-        and(
-          eq(principals.tenantId, principalCompanyMemberships.tenantId),
-          eq(principals.principalId, principalCompanyMemberships.principalId),
-          eq(principals.kind, 'human'),
-        ),
-      )
-      .where(
-        and(
-          eq(principalCompanyMemberships.tenantId, tenantId),
-          eq(principalCompanyMemberships.legalEntityId, legalEntityId),
-        ),
-      );
-    const otherRows =
-      input.subjects === 'agents'
-        ? and(
-            eq(auditEvents.legalEntityId, legalEntityId),
-            eq(auditEvents.eventType, 'identity.agent_operators_changed'),
-          )
-        : and(
-            eq(auditEvents.eventType, 'authn.rejected'),
-            eq(auditEvents.outcomeCode, 'principal_inactive'),
-            // Login can fail before company selection. Such tenant-global evidence belongs only to retained
-            // members; an explicitly different company's observation must never cross the selected scope.
-            or(isNull(auditEvents.legalEntityId), eq(auditEvents.legalEntityId, legalEntityId)),
-            inArray(auditEvents.principalId, retainedPeople),
-          );
+    const otherRows = and(
+      eq(auditEvents.legalEntityId, legalEntityId),
+      eq(auditEvents.eventType, 'identity.agent_operators_changed'),
+    );
     const rows = yield* transaction
       .select({
         actorName: principals.displayName,
@@ -86,7 +56,7 @@ export const identityAdministrationAuditFromTransaction = (transaction: ScopedTr
       rows,
       (row) =>
         Schema.decodeUnknownEffect(IdentityAdministrationAuditEvidenceSchema)(row.evidence).pipe(
-          Effect.flatMap((evidence) => identityAdministrationAuditDetails(evidence, row.eventType, row.principalId)),
+          Effect.flatMap((evidence) => identityAdministrationAuditDetails(evidence)),
           Effect.map((details) => ({ details, row })),
           Effect.mapError(unavailable),
         ),

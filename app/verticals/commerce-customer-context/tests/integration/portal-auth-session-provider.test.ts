@@ -22,7 +22,7 @@ import { TestClock } from 'effect/testing';
 import { randomUUID } from 'node:crypto';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { rateLimit, session, user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { makeCommercePortalAuth } from '../../api/portal-auth/provider/auth.ts';
@@ -30,7 +30,8 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { CommercePortalAuthRecoveryRateLimitService } from '../../api/portal-auth/rate-limit-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthSessionProvider } from '../../api/portal-auth/session/provider.ts';
-import { CommercePortalAuthService, portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
+import { portalAuthSessionStandaloneApiLive } from '../../api/portal-auth/session/http.ts';
+import { CommercePortalAuthService } from '../../api/portal-auth/session/auth-service.ts';
 import {
   CommercePortalAuthSessionLifecycle,
   makeCommercePortalAuthSessionLifecycle,

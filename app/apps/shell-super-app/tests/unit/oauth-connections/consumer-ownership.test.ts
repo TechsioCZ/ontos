@@ -39,6 +39,7 @@ import { ConnectionUnauthorized, ConnectionUnavailable } from '../../../api/oaut
 import type { GrantRow } from '../../../api/oauth-connections/types.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { agentConnectionStoreDouble, unusedPeopleCommandsLayer } from '../../support/agent-connection-store-double.ts';
 
 type OAuthAuthenticationObservation = Parameters<(typeof OAuthAuthenticationAudit)['Service']['record']>[0];
 const unexpectedAuthentication = () => Effect.die('MCP must not authenticate through a browser session');
@@ -102,6 +103,8 @@ const coreDatabase = Layer.effect(
   makeWithDefaults({ relations: coreRelations }).pipe(Effect.map((executor) => ({ executor }))),
 ).pipe(Layer.provide(scriptedDatabase));
 const unusedCollaborators = Layer.mergeAll(
+  agentConnectionStoreDouble().layer,
+  unusedPeopleCommandsLayer,
   Layer.unwrap(
     makeCompositionSnapshot([]).pipe(
       Effect.map((snapshot) => subjectInspectionFixture({ snapshot, subjects: [] }).layer),

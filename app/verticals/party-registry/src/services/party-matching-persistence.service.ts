@@ -2614,10 +2614,20 @@ export const listDuplicateCandidateCases = Effect.fn('PartyMatchingPersistenceSe
   Effect.mapError(unavailable),
 );
 
-/** Called only after native Core invocation ownership and commit have been established. */
+/**
+ * Called only after native Core invocation ownership and commit have been established.
+ * The committed Create result of one invocation. Given the caller's source scope, a source-created decision is
+ * recovered only through its exact source receipt and current source Privacy, as the match-decision recovery does;
+ * without it a source decision stays unavailable.
+ */
 export const findPartyCreateContinuation = Effect.fn('PartyMatchingPersistenceService.findPartyCreateContinuation')(
-  function* findContinuation(transaction: Pick<PartyTransaction, 'select'>, tenantId: string, invocationId: string) {
-    const found = yield* findMatchDecision(transaction, tenantId, { actionInvocationId: invocationId });
+  function* findContinuation(
+    transaction: Pick<PartyTransaction, 'select'>,
+    tenantId: string,
+    invocationId: string,
+    sourceScope?: PartyClientSourceScope,
+  ) {
+    const found = yield* findMatchDecision(transaction, tenantId, { actionInvocationId: invocationId }, sourceScope);
     if (Schema.is(PartyNotFoundSchema)(found)) {
       return;
     }
@@ -2647,9 +2657,12 @@ export const findPartyCreateContinuation = Effect.fn('PartyMatchingPersistenceSe
     ) {
       return original;
     }
-    const resolved = yield* findMatchDecision(transaction, tenantId, {
-      actionInvocationId: candidateCase.resolutionActionInvocationId,
-    });
+    const resolved = yield* findMatchDecision(
+      transaction,
+      tenantId,
+      { actionInvocationId: candidateCase.resolutionActionInvocationId },
+      sourceScope,
+    );
     if (Schema.is(PartyNotFoundSchema)(resolved)) {
       return yield* unavailable();
     }

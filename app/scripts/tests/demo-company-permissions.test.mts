@@ -108,11 +108,15 @@ it('pins each service principal to its own company and gives it no Role of its o
 it('maps every reviewed machine identity to exactly the workload keys a carrier declares', () => {
   const bindings = reviewedWorkloadBindings();
   // The storefronts and the portal run the portal-enrollment journey; only the portal is the identity provider.
-  // Each storefront binding is registered for the storefront's own company (D6).
+  // Each storefront binding, and the portal's, is registered for its own company (D6).
   const kavarna = { legalEntityId: storefrontPrincipal.legalEntityId, principalId: storefrontPrincipal.principalId };
   const sroubshop = {
     legalEntityId: akrosStorefrontPrincipal.legalEntityId,
     principalId: akrosStorefrontPrincipal.principalId,
+  };
+  const portal = {
+    legalEntityId: commercePortalPrincipal.legalEntityId,
+    principalId: commercePortalPrincipal.principalId,
   };
   expect(bindings).toEqual([
     { ...kavarna, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
@@ -120,9 +124,11 @@ it('maps every reviewed machine identity to exactly the workload keys a carrier 
     { ...sroubshop, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
     { ...sroubshop, workloadKey: STOREFRONT_MERCHANDISE_WORKLOAD },
     { ...sroubshop, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
-    { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-    { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
+    { ...portal, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+    { ...portal, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
   ]);
+  // No binding is tenant-wide by omission: every reviewed workload names the one company it acts for.
+  expect(bindings.every((binding) => binding.legalEntityId !== undefined)).toBe(true);
   // Every bound principal has a principal row, and every row is a machine identity, never a person.
   const machineIds = new Set(reviewedMachinePrincipals.map((machine) => machine.principalId));
   for (const binding of bindings) {

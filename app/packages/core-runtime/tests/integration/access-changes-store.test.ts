@@ -248,10 +248,12 @@ const REQUIRED_IDENTITY_TABLES = [
      legal_entity_id uuid primary key,
      unique (tenant_id, legal_entity_id)
    )`,
+  // The agents-on-v2 change store names an agent by its display name (`requireAgentHoldersKeepTheRole`).
   `create table "core"."principals" (
      tenant_id uuid not null,
      principal_id uuid primary key,
      kind text not null,
+     display_name text not null,
      unique (tenant_id, principal_id)
    )`,
   // The access migration scopes its gateway-request policies by the redeemed trusted scope
@@ -343,9 +345,9 @@ it.layer(NodeServices.layer)('the Access changes store', (suite) => {
 
       // ---- the identities the access tables reference -------------------------------------
       yield* admin.unsafe(`insert into "core"."tenants" values ('${tenantA}'), ('${tenantB}')`);
-      yield* admin.unsafe(`insert into "core"."principals" (tenant_id, principal_id, kind) values
-        ('${tenantA}', '${principalA}', 'human'),
-        ('${tenantB}', '${principalB}', 'human')`);
+      yield* admin.unsafe(`insert into "core"."principals" (tenant_id, principal_id, kind, display_name) values
+        ('${tenantA}', '${principalA}', 'human', 'Seeded human'),
+        ('${tenantB}', '${principalB}', 'human', 'Seeded human')`);
 
       // ---- publication: the release catalog is global, append-only and repaired by retry (D3) --
       const firstRelease = release(snapshot1, NOW, []);
@@ -699,7 +701,7 @@ it.layer(NodeServices.layer)('the Access changes store', (suite) => {
 
       yield* admin.unsafe(`insert into "core"."tenants" values ('${tenantA}')`);
       yield* admin.unsafe(
-        `insert into "core"."principals" (tenant_id, principal_id, kind) values ('${tenantA}', '${principalA}', 'human')`,
+        `insert into "core"."principals" (tenant_id, principal_id, kind, display_name) values ('${tenantA}', '${principalA}', 'human', 'Seeded human')`,
       );
       // The binding scope the role's cells are projected in, and the one live holder of the role.
       yield* admin.unsafe(
@@ -831,7 +833,7 @@ it.layer(NodeServices.layer)('the Access changes store', (suite) => {
       const { admin, otherStore, scopeA, store } = schema;
       yield* admin.unsafe(`insert into "core"."tenants" values ('${tenantA}')`);
       yield* admin.unsafe(
-        `insert into "core"."principals" (tenant_id, principal_id, kind) values ('${tenantA}', '${principalA}', 'human')`,
+        `insert into "core"."principals" (tenant_id, principal_id, kind, display_name) values ('${tenantA}', '${principalA}', 'human', 'Seeded human')`,
       );
 
       const firstRelease = release(snapshot1, NOW, []);

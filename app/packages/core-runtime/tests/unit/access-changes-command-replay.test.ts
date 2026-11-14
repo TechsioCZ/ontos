@@ -195,6 +195,7 @@ const harness = () => {
   const loader: TenantIntentLoaderService = {
     loadAuthorityCells: unused,
     loadAuthorityCellsMany: unused,
+    loadCompanyOwnership: unused,
     loadConfigureBases: unused,
     loadConnection: unused,
     loadProjection: () => Effect.succeed(intent),

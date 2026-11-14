@@ -88,6 +88,12 @@ export interface ScopeQuery {
   readonly tenantId: TenantId;
 }
 
+/** A company a request names, and the tenant it must belong to (O66, O88). */
+export interface CompanyOwnershipQuery {
+  readonly legalEntityId: LegalEntityId;
+  readonly tenantId: TenantId;
+}
+
 /** The freshly read connection of an agent: consent revisions are never cached. */
 export interface ResolvedAgentConnection {
   /** The one agent this consent was granted to; a connection never authorizes another agent. */
@@ -157,6 +163,11 @@ export interface DecisionAuthorityPort {
   readonly readCellsMany?: (
     queries: readonly AuthorityCellQuery[],
   ) => Effect.Effect<readonly (readonly AuthorityCell[])[], AccessDecisionUnavailable>;
+  /**
+   * Whether the company a request names is one of the asked tenant's own: the one company-of-tenant read every gate
+   * path asks before deciding (O66, O88). It reads no membership.
+   */
+  readonly readCompanyOwnership: (query: CompanyOwnershipQuery) => Effect.Effect<boolean, AccessDecisionUnavailable>;
   /** Fresh Core configure authority for a structural admin decision (O81). An absent port is unavailable. */
   readonly readConfigureBases?: (query: {
     readonly actor: PrincipalId;
@@ -206,6 +217,11 @@ export type AccessIntentSource = (typeof AccessIntent)['Service'];
 export interface ActorContextInput {
   /** The authenticated principal, or the agent together with its connection and consent revision. */
   readonly actor: ActorContext;
+  /**
+   * A tenant-context request that names a company (O66, O88): checked by the actor's own scope read, which then
+   * resolves only when the company is one of the tenant's. Ignored when `legalEntityId` is set.
+   */
+  readonly checkedCompany?: LegalEntityId;
   /** The trusted legal-entity context from the request; omitted for tenant-context capabilities (O28). */
   readonly legalEntityId?: LegalEntityId;
   readonly tenantId: TenantId;
@@ -243,12 +259,15 @@ const agentIdentityOf = (actor: ActorContext) =>
   );
 
 const scopeQueryOf = (input: ActorContextInput): ScopeQuery => {
-  const { legalEntityId, tenantId } = input;
+  const { checkedCompany, legalEntityId, tenantId } = input;
   const principalHolder = holderOf('principal', input.actor);
   const agentHolder = Option.getOrUndefined(agentIdentityOf(input.actor));
   const holders: readonly Holder[] =
     agentHolder === undefined ? [principalHolder] : [principalHolder, holderOf('agent', input.actor)];
-  return legalEntityId === undefined ? { holders, tenantId } : { holders, legalEntityId, tenantId };
+  if (legalEntityId !== undefined) {
+    return { holders, legalEntityId, tenantId };
+  }
+  return checkedCompany === undefined ? { holders, tenantId } : { checkedCompany, holders, tenantId };
 };
 
 /**

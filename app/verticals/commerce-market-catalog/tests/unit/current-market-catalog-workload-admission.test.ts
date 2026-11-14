@@ -49,15 +49,19 @@ const question = (scope: typeof storefrontScope) => ({
  */
 const gateFor = (options: { readonly boundWorkloadKeys?: readonly string[]; readonly kind: AccessPrincipalKind }) => {
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () => Effect.succeed(new Set(options.boundWorkloadKeys)),
-    readCompanyDeclaration: () =>
-      Effect.succeed({ activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]), pinned: true }),
+    readWorkloadAuthority: () =>
+      Effect.succeed({
+        activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]),
+        workloadKeys: new Set(options.boundWorkloadKeys),
+      }),
   };
   return makeAccessDecisionService({
     authorityFor: () => ({
       readCells: () => Effect.die('Only a human decision reads authority cells'),
       readConnection: () => Effect.die('Only an agent decision reads a connection'),
       // A person who resolves no live membership scope is refused by the scope read itself.
+      // The company the workload names is the tenant's: its binding, not ownership, decides these cases.
+      readCompanyOwnership: () => Effect.succeed(true),
       readScope: () => Effect.succeed(Option.none()),
       readTeamIds: () => Effect.die('Only a human decision reads team ids'),
     }),

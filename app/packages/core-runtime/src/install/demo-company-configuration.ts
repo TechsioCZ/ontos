@@ -1,12 +1,14 @@
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 
+import { legalEntityScopesOf, scopeRowsOf } from '../access/bootstrap/persistence.ts';
+import { LegalEntityIdSchema, TenantIdSchema } from '../access/ids.ts';
 import {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
   IdentityTargetInvalidError,
 } from '../auth/principal-management-errors.ts';
-import { legalEntities, tenantModuleStates } from '../db/schema.ts';
+import { accessScopeFences, accessScopes, legalEntities, tenantModuleStates } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import {
   additionalDemoCompanies,
@@ -49,6 +51,10 @@ export interface DemoCompanyRecord {
 export interface DemoCompanyConfigurationPersistence {
   readonly createCompany: (company: AdditionalDemoCompany) => Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly createRental: Effect.Effect<void, IdentityPersistenceUnavailableError>;
+  /** Writes the access scope and fence of each company that has none; an existing scope is left as it is. */
+  readonly ensureCompanyScopes: (
+    legalEntityIds: readonly string[],
+  ) => Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly ensureModules: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly load: Effect.Effect<readonly DemoCompanyRecord[], IdentityPersistenceUnavailableError>;
   readonly pseudonymizeScrewSeller: Effect.Effect<void, IdentityPersistenceUnavailableError>;
@@ -128,6 +134,9 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
     (company) => persistence.createCompany(company),
     { concurrency: 1, discard: true },
   );
+  // A company created after tenant setup gets the access scope tenant setup gives its first companies, in this same
+  // transaction: without one no grant can ever be decided in it. A rerun repairs a company created before this.
+  yield* persistence.ensureCompanyScopes([...knownCompanyIds]);
   yield* persistence.ensureModules;
   return {
     companies: [
@@ -164,6 +173,25 @@ const persistenceFromTransaction = (
       tenantId: demoCompanyTenantId,
     })
     .pipe(Effect.mapError(persistenceFailure), Effect.asVoid),
+  ensureCompanyScopes: (legalEntityIds) => {
+    const tenantId = TenantIdSchema.make(demoCompanyTenantId);
+    const rows = scopeRowsOf(
+      tenantId,
+      legalEntityScopesOf(
+        tenantId,
+        legalEntityIds.map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId)),
+      ),
+    );
+    return transaction
+      .insert(accessScopes)
+      .values(rows.scopes)
+      .onConflictDoNothing()
+      .pipe(
+        Effect.andThen(transaction.insert(accessScopeFences).values(rows.fences).onConflictDoNothing()),
+        Effect.mapError(persistenceFailure),
+        Effect.asVoid,
+      );
+  },
   ensureModules: Effect.forEach(
     demoCompanyActiveModuleKeys,
     (moduleKey, index) =>

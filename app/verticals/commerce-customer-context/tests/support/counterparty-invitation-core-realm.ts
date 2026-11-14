@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Match } from 'effect';
 
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
@@ -9,6 +9,7 @@ import {
   accessScopeFences,
   accessScopes,
   accessWorkloadBindings,
+  accessWorkloadCompanyBindings,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -87,6 +88,7 @@ export const seedCommercePortalCoreRealm = Effect.fnUntraced(function* seedComme
       dataAccessEvents,
       evidenceReferences,
       actionInvocations,
+      accessWorkloadCompanyBindings,
       accessWorkloadBindings,
       principalAuthBindings,
       tenantModuleStates,
@@ -181,6 +183,33 @@ export const seedCommercePortalCoreRealm = Effect.fnUntraced(function* seedComme
       status: 'active',
       tenantId: realm.tenantId,
       workloadKey: 'commerce.storefront-client',
+    })
+    .onConflictDoNothing();
+  // The storefront acts only for the company it is registered for (D6): a binding with no registration is refused in
+  // every company. Register the realm's one company against whichever storefront binding is active.
+  const [storefrontBinding] = yield* admin
+    .select({ bindingId: accessWorkloadBindings.bindingId })
+    .from(accessWorkloadBindings)
+    .where(
+      and(
+        eq(accessWorkloadBindings.tenantId, realm.tenantId),
+        eq(accessWorkloadBindings.principalId, realm.storefront.principalId),
+        eq(accessWorkloadBindings.workloadKey, 'commerce.storefront-client'),
+        eq(accessWorkloadBindings.status, 'active'),
+      ),
+    );
+  if (storefrontBinding === undefined) {
+    return yield* Effect.die('The realm storefront has no active commerce.storefront-client binding');
+  }
+  yield* admin
+    .insert(accessWorkloadCompanyBindings)
+    .values({
+      companyBindingId: randomUUID(),
+      incarnation: randomUUID(),
+      legalEntityId: realm.legalEntityId,
+      status: 'active',
+      tenantId: realm.tenantId,
+      workloadBindingId: storefrontBinding.bindingId,
     })
     .onConflictDoNothing();
   yield* admin.insert(principalAuthBindings).values([

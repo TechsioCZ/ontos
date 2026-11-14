@@ -16,8 +16,12 @@ import { AgentProposalCommandPreparation } from '../../auth/agent-proposal-comma
 import { proposalCommandsFromTransaction } from '../../auth/agent-proposal-command-persistence.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+type ConsumeInput = Parameters<(typeof AgentProposalCommandPreparation)['Service']['consume']>[0];
 type Services = ReturnType<typeof proposalCommandsFromTransaction> & {
-  readonly consumePreparation: (typeof AgentProposalCommandPreparation)['Service']['consume'];
+  /** The preparation of this invocation, consumed inside its own transaction (a lifecycle question is re-asked there). */
+  readonly consumePreparation: (
+    input: Omit<ConsumeInput, 'transaction'>,
+  ) => ReturnType<(typeof AgentProposalCommandPreparation)['Service']['consume']>;
 };
 const handleMutateAgentProposals = Effect.fn('MutateAgentProposalsAction.handle')(function* handle(
   payload: AgentProposalCommandPayload,
@@ -92,6 +96,9 @@ export const mutateAgentProposalsAction = defineAction(
   handleMutateAgentProposals,
   Effect.fn('MutateAgentProposalsAction.services')(function* services(transaction) {
     const preparation = yield* AgentProposalCommandPreparation;
-    return { ...proposalCommandsFromTransaction(transaction), consumePreparation: preparation.consume };
+    return {
+      ...proposalCommandsFromTransaction(transaction),
+      consumePreparation: (input: Omit<ConsumeInput, 'transaction'>) => preparation.consume({ ...input, transaction }),
+    };
   }),
 );

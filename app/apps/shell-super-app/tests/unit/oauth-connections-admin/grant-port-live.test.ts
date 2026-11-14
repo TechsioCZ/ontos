@@ -36,6 +36,7 @@ import { makeCompositionSnapshot } from '../../fixtures/application-composition.
 import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-registry-fixture.ts';
 import { administrationScopeLayer } from './administration-runtime.fixture.ts';
 import { subjectInspectionFixture } from './subject-inspection.fixture.ts';
+import { agentConnectionStoreDouble } from '../../support/agent-connection-store-double.ts';
 
 const principal: GrantAdminRequest['principal'] = {
   authBindingId: '00000000-0000-4000-8000-000000000007',
@@ -204,6 +205,7 @@ const fixture = (options: FixtureOptions = {}) =>
     });
     const dependencies = Layer.mergeAll(
       owners,
+      agentConnectionStoreDouble().layer,
       OAuthGrantOwnersLive.pipe(Layer.provide(owners)),
       Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
       administrationScopeLayer(options.request ?? request),

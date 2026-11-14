@@ -353,6 +353,59 @@ it.effect('does no owner I/O for unrelated, malformed or forged preflight input'
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
+it.effect(
+  'prepares no actor-bound Party read for a source Ensure, which proves its Party in the owner transaction',
+  () =>
+    Effect.gen(function* sourceEnsureSkipsRetailRead() {
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+      const server = yield* serveNativePartyContract(snapshot.composition.revision);
+      const execution = yield* prepareResolution(snapshot, server.executor);
+      const sourcePreflight = {
+        ...nativePreflight,
+        payload: {
+          ...nativePreflight.payload,
+          partySourceReference: {
+            occurrenceId: 'person-001-r1',
+            recordId: 'person-001',
+            source: { issuer: 'internal-party-source', namespace: 'identity', recordType: 'person', routeRef: 'party' },
+          },
+          source: {
+            effectId: 'profile-effect-1',
+            issuer: 'internal-ebs',
+            mappingRevision: 'mapping-1',
+            namespace: 'customers',
+            occurrenceId: 'customer-001-r1',
+            order: 1,
+            recordId: 'customer-001',
+            recordType: 'customer',
+            revision: 'r1',
+            route: { id: 'source-profiles', revision: 'route-1' },
+          },
+        },
+      };
+      expect(yield* execution.preflight.prepare(sourcePreflight).pipe(Effect.provide(server.layer))).toEqual({
+        outcome: 'not_applicable',
+      });
+      // The same scope fences still deny a forged source invocation before any owner I/O.
+      expect(
+        yield* execution.preflight.prepare({
+          ...sourcePreflight,
+          scope: { ...sourcePreflight.scope, tenantId: otherTenantId },
+        }),
+      ).toEqual({ outcome: 'denied' });
+      expect(server.delegations).toHaveLength(0);
+      expect(server.requests).toHaveLength(0);
+      // Nothing was prepared, so the in-transaction persistence path still fails closed for a Retail read.
+      expect(
+        Schema.is(ProfilePersistenceDependencyFailure)(
+          yield* Effect.flip(
+            execution.factory.make(scope)({ ...request, compositionRevision: snapshot.composition.revision }),
+          ),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
 it.effect('fails closed without an actor-bound Party transport instead of reading as a workload', () =>
   Effect.gen(function* failClosedWithoutTransport() {
     const snapshot = yield* makeApplicationCompositionSnapshotFixture();
