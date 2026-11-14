@@ -591,6 +591,9 @@ it.live(
           SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
         };
         const installedSnapshot = yield* compositionSnapshot(clock, { installedOwner: true });
+        expect(
+          installedSnapshot.composition.modules.find(({ deployment }) => deployment.appId === 'commerce-cart')?.moduleId,
+        ).toBe('commerce.cart');
         const expiredSnapshot = yield* compositionSnapshot(clock, { expired: true });
         const snapshotJson = Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema);
         const cases = [

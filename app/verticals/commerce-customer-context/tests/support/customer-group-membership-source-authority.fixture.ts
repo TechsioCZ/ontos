@@ -74,7 +74,12 @@ export const seedCustomerGroupMembershipSourceAuthority = Effect.fn('MembershipS
         ownedDatabase: input.fixture,
         tenantId: route.tenantId,
       },
-      Effect.fn('MembershipSourceAuthorityFixture.store')(function* store(transaction, database, operatorScope) {
+      Effect.fn('MembershipSourceAuthorityFixture.store')(function* store(
+        transaction,
+        database,
+        operatorScope,
+        inspection,
+      ) {
         const enrolled = yield* makeSystemPrincipalContextResolver({ executor: database }).resolveEnrolled({
           registration: sourceWriter,
           runReference: 'membership-source-authority-fixture',
@@ -89,7 +94,7 @@ export const seedCustomerGroupMembershipSourceAuthority = Effect.fn('MembershipS
           tenantId: route.tenantId,
         });
         const state = yield* makeOperationalScopeRepository(
-          { executor: transaction },
+          { executor: inspection },
           FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         ).load(target);
         if (
@@ -101,7 +106,7 @@ export const seedCustomerGroupMembershipSourceAuthority = Effect.fn('MembershipS
         ) {
           return yield* unavailable();
         }
-        yield* installOperationalScope(transaction, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+        yield* installOperationalScope(inspection, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         yield* transaction
           .insert(customerGroupMembershipSourceRoutes)
           .values({

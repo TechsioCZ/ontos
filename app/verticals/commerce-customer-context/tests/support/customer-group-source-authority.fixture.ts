@@ -60,6 +60,7 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
     yield* requireOwnedNativeDatabaseFixture(input.fixture, {
       adminConnectionString: input.adminConnectionString,
       purpose: 'implementation-1096-registered-workload-gateway',
+      runtimeConnectionString: Redacted.make(input.fixture.connections.runtime.connectionString),
     }).pipe(Effect.mapError(unavailable));
     const route = yield* Schema.decodeUnknownEffect(CustomerGroupSourceAuthorityFixtureRouteSchema, {
       onExcessProperty: 'error',
@@ -86,6 +87,13 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
       Effect.provideService(PgClient.PgClient, client),
       Effect.mapError(unavailable),
     );
+    const runtimeClient = yield* PgClient.make({
+      url: Redacted.make(input.fixture.connections.runtime.connectionString),
+    }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.mapError(unavailable));
+    const runtimeDatabase = yield* testCoreDatabase.pipe(
+      Effect.provideService(PgClient.PgClient, runtimeClient),
+      Effect.mapError(unavailable),
+    );
     yield* database
       .transaction(
         Effect.fn('CustomerGroupSourceAuthorityFixture.store')(function* storeRoute(transaction) {
@@ -100,38 +108,42 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
           ) {
             return yield* unavailable();
           }
-          yield* installOperationalScope(transaction, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
-          const identity = yield* makePrincipalResolver(
-            { executor: database },
-            { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
-          ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, route.tenantId);
-          if (
-            identity.principalId !== input.operatorPrincipalId ||
-            identity.principalKind !== 'human' ||
-            identity.tenantId !== route.tenantId
-          ) {
-            return yield* unavailable();
-          }
-          const repository = makeOperationalScopeRepository(
-            { executor: transaction },
-            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-          );
-          yield* Effect.forEach(
-            [operatorScope, targetScope],
-            Effect.fn('CustomerGroupSourceAuthorityFixture.verifyScope')(function* verifyScope(inspectionScope) {
-              const persisted = yield* repository.load(inspectionScope);
+          yield* runtimeDatabase.transaction((inspection) =>
+            Effect.gen(function* inspectRuntimeScope() {
+              yield* installOperationalScope(inspection, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+              const identity = yield* makePrincipalResolver(
+                { executor: inspection },
+                { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
+              ).resolveBetterAuthUserForTenant(input.operatorProviderUserId, route.tenantId);
               if (
-                persisted.tenantStatus !== 'active' ||
-                persisted.principalStatus !== 'active' ||
-                persisted.principalTenantId !== route.tenantId ||
-                persisted.legalEntityStatus !== 'active' ||
-                persisted.legalEntityTenantId !== route.tenantId
+                identity.principalId !== input.operatorPrincipalId ||
+                identity.principalKind !== 'human' ||
+                identity.tenantId !== route.tenantId
               ) {
                 return yield* unavailable();
               }
-              return yield* Effect.void;
+              const repository = makeOperationalScopeRepository(
+                { executor: inspection },
+                FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              );
+              yield* Effect.forEach(
+                [operatorScope, targetScope],
+                Effect.fn('CustomerGroupSourceAuthorityFixture.verifyScope')(function* verifyScope(inspectionScope) {
+                  const persisted = yield* repository.load(inspectionScope);
+                  if (
+                    persisted.tenantStatus !== 'active' ||
+                    persisted.principalStatus !== 'active' ||
+                    persisted.principalTenantId !== route.tenantId ||
+                    persisted.legalEntityStatus !== 'active' ||
+                    persisted.legalEntityTenantId !== route.tenantId
+                  ) {
+                    return yield* unavailable();
+                  }
+                  return yield* Effect.void;
+                }),
+                { concurrency: 1, discard: true },
+              );
             }),
-            { concurrency: 1, discard: true },
           );
           yield* requireOwnedNativeDatabaseFixture(input.fixture, {
             adminConnectionString: input.adminConnectionString,
