@@ -97,7 +97,8 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
           Effect.provideService(Reactivity.Reactivity, reactivity),
         );
         const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
-        return yield* database.transaction(
+        const storage = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, client));
+        yield* database.transaction(
           Effect.fn('SymmyAcceptedEffectNative.readOnlyTransaction')(function* readOnlyTransaction(transaction) {
             yield* ownership;
             yield* transaction.execute(sql`set transaction read only`, 'objects');
@@ -135,7 +136,25 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
             ) {
               return yield* unavailable();
             }
-            const rows = yield* transaction.execute<{ readonly effectId: string }>(
+            yield* ownership;
+          }),
+        );
+        return yield* storage.transaction(
+          Effect.fn('SymmyAcceptedEffectNative.observeStorage')(function* observeStorage(administrative) {
+            yield* ownership;
+            yield* administrative.execute(sql`set transaction read only`, 'objects');
+            const [connection] = yield* administrative.execute<ConnectionFacts>(
+              sql`select current_database()::text as database,current_user::text as "roleName",session_user::text as "sessionRoleName"`,
+              'objects',
+            );
+            if (
+              connection?.database !== configuration.database ||
+              connection.roleName !== configuration.user ||
+              connection.sessionRoleName !== configuration.user
+            ) {
+              return yield* unavailable();
+            }
+            const rows = yield* administrative.execute<{ readonly effectId: string }>(
               sql`
               select e.effect_id::text as "effectId"
               from symmy_integration.import_jobs j
