@@ -40,7 +40,7 @@ it('applies the calendar range together with the other report filters', () => {
 
 describe('sales report calendar period', () => {
   it('derives presets from the Prague day across winter and summer month and year boundaries', () => {
-    for (const { instant, from, previous, today, year } of [
+    for (const { from, instant, previous, today, year } of [
       {
         from: '2027-01-01',
         instant: '2026-12-31T23:30:00Z',
