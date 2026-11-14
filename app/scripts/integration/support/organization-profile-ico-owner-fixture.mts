@@ -276,11 +276,12 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
               });
             }),
           ),
-          Effect.mapError((cause) =>
-            new SymmyC14ProductFixtureUnavailable({
-              cause: Redacted.make(cause),
-              message: 'Actual public RecordPrivacyApplicability failed with current owner facts',
-            }),
+          Effect.mapError(
+            (cause) =>
+              new SymmyC14ProductFixtureUnavailable({
+                cause: Redacted.make(cause),
+                message: 'Actual public RecordPrivacyApplicability failed with current owner facts',
+              }),
           ),
         );
         decisions.push(decision);
