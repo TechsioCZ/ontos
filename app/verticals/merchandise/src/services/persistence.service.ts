@@ -47,6 +47,7 @@ import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } f
 import {
   EntityIdSchema,
   OrderIdSchema,
+  OrderLineSchema,
   PartyIdSchema,
   ProductIdReferenceSchema,
   ProductIdSchema,
@@ -1535,6 +1536,8 @@ export const describeLines = (
     .map((line) => describeLine(line, order.pricesIncludeVat === true, currencyOf(order.market), withVat))
     .join('; ');
 
+const sameOrderLines = Schema.toEquivalence(Schema.Array(OrderLineSchema));
+
 /** Whether two line lists carry the same VAT snapshot (rate, classification and Tax rule revision) line by line. */
 const sameLineTax = (left: readonly OrderLine[], right: readonly OrderLine[]) =>
   left.length === right.length &&
@@ -1808,7 +1811,7 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       { lines: nextLines, market: existing.market, pricesIncludeVat: existing.pricesIncludeVat },
       withVat,
     );
-    if (before !== after) {
+    if (!sameOrderLines(existing.lines, nextLines)) {
       if (orderMovesStock(state, existing)) {
         movements = yield* reconciledOrderMovements(state, existing, nextLines, input);
       }

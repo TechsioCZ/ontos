@@ -305,3 +305,53 @@ it.effect('a line added back with the same quantity and price still takes the VA
     expect(edited.state.orders[0]?.history?.at(-1)?.after).toContain('DPH 12 %');
   }),
 );
+
+
+it.effect('replaces a same-named variant at the same price and reconciles its own stock', () =>
+  Effect.gen(function* sameDescriptionReplacement() {
+    const current = yield* seeded;
+    const sameNames: MerchandiseState = {
+      ...current,
+      products: current.products.map((product) => ({
+        ...product,
+        variants: product.variants?.map((variant) => ({ ...variant, name: '250 g' })),
+      })),
+    };
+    const edited = yield* editOf(
+      sameNames,
+      [{ productId: 'p1', quantity: 2, unitPriceMinor: 28_900, variantId: 'u1-v2' }],
+      'replace-same-description',
+    );
+    expect(edited.state.orders[0]?.lines[0]?.variantId).toBe('u1-v2');
+    expect(edited.state.movements.slice(-2).map((movement) => [movement.variantId, movement.delta])).toEqual([
+      ['u1-v1', 2],
+      ['u1-v2', -2],
+    ]);
+    const unchanged = yield* editOf(
+      edited.state,
+      [{ productId: 'p1', quantity: 2, variantId: 'u1-v2' }],
+      'repeat-same-lines',
+    );
+    expect(unchanged.state).toBe(edited.state);
+  }),
+);
+
+it.effect('retains a refreshed Tax rule even when the displayed VAT rate stays the same', () =>
+  Effect.gen(function* sameRateNewRevision() {
+    const current = yield* seeded;
+    const withoutRevision: MerchandiseState = {
+      ...current,
+      orders: current.orders.map((order) => ({
+        ...order,
+        lines: order.lines.map(({ taxRuleRevisionId: _oldRevision, ...line }) => line),
+      })),
+    };
+    const edited = yield* editOf(
+      withoutRevision,
+      [{ ...existingLine, offeredUnitPriceMinor: 28_900 }],
+      'refresh-rule-only',
+    );
+    expect(edited.state.orders[0]?.lines[0]?.taxRuleRevisionId).toBeDefined();
+    expect(edited.state.orders[0]?.history?.at(-1)?.kind).toBe('LINES');
+  }),
+);
