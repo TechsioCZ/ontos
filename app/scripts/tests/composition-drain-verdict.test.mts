@@ -6,12 +6,19 @@ import { Effect, Fiber, Ref, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { publicationVerdict } from '../../packages/core-runtime/src/outbox/drain-preflight.ts';
 import type { PublicationVerdictInput } from '../../packages/core-runtime/src/outbox/drain-preflight.ts';
+import { describeUndrainableOutboxWork } from '../../packages/core-runtime/src/outbox/undrainable-work.ts';
+import type { UndrainableOutboxDelivery } from '../../packages/core-runtime/src/outbox/undrainable-work.ts';
 import {
   abandonedTransitionMessage,
+  drainWindow,
+  remainingInDrainWindow,
   retryWhileLockNotAvailable,
+  waitUntilOutboxDrained,
 } from '../application-composition-authority-publication.mts';
+import type { DrainPoll } from '../application-composition-authority-publication.mts';
 
 const noBlockers = { deliveries: 0, durable: 0, unmatched: 0 } as const;
 const quiet = {
@@ -133,4 +140,101 @@ describe('restore of a draining authority while a lock is busy', () => {
       expect(yield* Ref.get(attempts)).toBe(1);
     }),
   );
+});
+
+const IN_FLIGHT: DrainPoll = { drained: false, refusals: [] };
+const DRAINED: DrainPoll = { drained: true, refusals: [] };
+const DIED: DrainPoll = { drained: false, refusals: ['Outbox work that this drain could never finish: dead: …'] };
+
+/** A drain whose polls answer `answers` in order, the last one forever; counts the polls. */
+const scriptedPoll = (polls: Ref.Ref<number>, answers: readonly DrainPoll[]) =>
+  Ref.updateAndGet(polls, (count) => count + 1).pipe(
+    Effect.map((poll) => answers[Math.min(poll, answers.length) - 1] ?? DRAINED),
+  );
+
+describe('Outbox drain wait', () => {
+  it.effect('ends at once with the refusal when outstanding work can never finish', () =>
+    Effect.gen(function* stopsAtOnce() {
+      const polls = yield* Ref.make(0);
+      const failure = yield* waitUntilOutboxDrained(scriptedPoll(polls, [DIED])).pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+      expect(failure.reason).toContain('The Application Composition drain was stopped');
+      expect(failure.reason).toContain('dead: …');
+      expect(yield* Ref.get(polls)).toBe(1);
+    }),
+  );
+
+  it.effect('stops on the first poll after work became undrainable mid-drain', () =>
+    Effect.gen(function* stopsMidDrain() {
+      const polls = yield* Ref.make(0);
+      const wait = yield* waitUntilOutboxDrained(scriptedPoll(polls, [IN_FLIGHT, IN_FLIGHT, DIED])).pipe(
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust('10 minutes');
+      expect((yield* Fiber.join(wait)).reason).toContain('The Application Composition drain was stopped');
+      expect(yield* Ref.get(polls)).toBe(3);
+    }),
+  );
+
+  it.effect('keeps waiting for work that is merely in flight', () =>
+    Effect.gen(function* waitsForDrainable() {
+      const polls = yield* Ref.make(0);
+      const wait = yield* waitUntilOutboxDrained(scriptedPoll(polls, [IN_FLIGHT, IN_FLIGHT, IN_FLIGHT, DRAINED])).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust('5 seconds');
+      expect(yield* Ref.get(polls)).toBe(2);
+      yield* TestClock.adjust('1 minute');
+      yield* Fiber.join(wait);
+      expect(yield* Ref.get(polls)).toBe(4);
+    }),
+  );
+});
+
+describe('drain window', () => {
+  const startedAtMs = 1_000_000;
+
+  it('ends when the budget runs out, measured from when the budget clock started', () => {
+    const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 3_600_000, startedAtMs });
+    expect(window).toEqual({ budgetMs: 300_000, deadlineMs: startedAtMs + 300_000 });
+    // Time spent before the pre-flight, the durable wait or the fence retries counts against the same budget.
+    expect(remainingInDrainWindow(window, startedAtMs + 120_000)).toBe(180_000);
+  });
+
+  it('never runs past the retiring lease less its margin', () => {
+    const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 90_000, startedAtMs });
+    expect(window.deadlineMs).toBe(startedAtMs + 60_000);
+  });
+
+  it('never reports less than nothing left', () => {
+    const window = drainWindow({ budgetMs: 300_000, leaseRemainingMs: 3_600_000, startedAtMs });
+    expect(remainingInDrainWindow(window, startedAtMs + 400_000)).toBe(0);
+  });
+});
+
+describe('undrainable work description', () => {
+  const scheduled: UndrainableOutboxDelivery = {
+    attemptsCount: 0,
+    availableAt: new Date('2026-11-15T09:30:00.000Z'),
+    consumerModuleKey: 'payment',
+    deferred: true,
+    outboxMessageId: 'message',
+    reason: 'scheduled-beyond-budget',
+    status: 'pending',
+    tenantId: 'tenant',
+    workerKey: 'payment.execute-gateway-operation',
+  };
+
+  it('says when the owner itself deferred the delivery, and until when', () => {
+    expect(describeUndrainableOutboxWork([scheduled])).toContain(
+      'scheduled-beyond-budget (deferred by its owner until 2026-11-15T09:30:00.000Z): --tenant-id tenant',
+    );
+  });
+
+  it('does not call a failure backing off a deferral', () => {
+    const described = describeUndrainableOutboxWork([{ ...scheduled, attemptsCount: 3, deferred: false }]);
+    expect(described).toContain('scheduled-beyond-budget: --tenant-id tenant');
+    expect(described).not.toContain('deferred');
+  });
 });

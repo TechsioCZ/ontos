@@ -448,6 +448,41 @@ const reportDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.rep
 
 /** How every refusal to start a drain begins, so an operator and a test can tell it from a drain that ran. */
 const DRAIN_NOT_STARTED = 'The Application Composition drain was not started';
+/** How a drain that met work it could never finish ends, so the restore runs at once rather than at its deadline. */
+const DRAIN_STOPPED =
+  'The Application Composition drain was stopped: Outbox work arrived during it that it could never finish';
+
+/** How far before the retiring release's lease expires every drain must end. */
+const DRAIN_LEASE_MARGIN_MS = 30_000;
+
+/**
+ * The one clock a drain is judged on: its budget (`budgetMs`, also the age after which unclaimed work counts as
+ * stalled) and the epoch instant by which it must be over (`deadlineMs`). Every check of the drain — the
+ * pre-flight, the fence and each poll of the wait — asks what is due after that same instant.
+ */
+export interface DrainWindow {
+  readonly budgetMs: number;
+  readonly deadlineMs: number;
+}
+
+/**
+ * The window of a drain that starts its budget clock at `startedAtMs`: over when its budget runs out, and never past
+ * the retiring release's lease (`leaseRemainingMs` from that same moment) less its margin.
+ */
+export const drainWindow = (input: {
+  readonly budgetMs: number;
+  readonly leaseRemainingMs: number;
+  readonly startedAtMs: number;
+}): DrainWindow => ({
+  budgetMs: input.budgetMs,
+  deadlineMs: input.startedAtMs + Math.min(input.budgetMs, input.leaseRemainingMs - DRAIN_LEASE_MARGIN_MS),
+});
+
+/** What is left of `window` at `nowMs`, never below zero. */
+export const remainingInDrainWindow = (window: DrainWindow, nowMs: number) => Math.max(0, window.deadlineMs - nowMs);
+
+const drainRemainingMs = (window: DrainWindow) =>
+  Clock.currentTimeMillis.pipe(Effect.map((nowMs) => remainingInDrainWindow(window, nowMs)));
 
 /**
  * Everything that decides whether a drain may start, read in one transaction with the drain's own predicates:
@@ -457,15 +492,16 @@ const DRAIN_NOT_STARTED = 'The Application Composition drain was not started';
  */
 const assessDrainStart = Effect.fn('ApplicationCompositionAuthority.assessDrainStart')(function* assessDrainStart(
   transaction: CoreTransaction,
-  budgetMs: number,
+  window: DrainWindow,
 ) {
   const { carriedOverWorkerKeys, liveCoreSystemConsumers } = yield* carriedOverCoreSystemWorkerKeys(transaction);
   const undrainable = yield* listUndrainableOutboxWork(transaction, {
-    budgetMs,
+    budgetMs: window.budgetMs,
     carriedOverWorkerKeys,
     coreSystemConsumers: liveCoreSystemConsumers,
+    remainingMs: yield* drainRemainingMs(window),
   });
-  const stalledMessages = yield* countStalledUnmatchedMessages(transaction, budgetMs);
+  const stalledMessages = yield* countStalledUnmatchedMessages(transaction, window.budgetMs);
   const [unmatched] = yield* transaction.execute<{ readonly count: number }>(
     sql`select count(*)::int as count from ${outboxMessages} where ${outboxMessages.matchedAt} is null`,
     'objects',
@@ -509,13 +545,13 @@ const drainStartRefusals = Effect.fn('ApplicationCompositionAuthority.drainStart
  * release keeps serving reads and writes. Work that is merely in flight still drains.
  */
 const refuseUndrainableWork = Effect.fn('ApplicationCompositionAuthority.refuseUndrainableWork')(
-  function* refuseUndrainableWorkEffect(budgetMs: number) {
+  function* refuseUndrainableWorkEffect(window: DrainWindow) {
     const database = yield* CoreDatabase;
     const unreadable = unavailable(
       `${DRAIN_NOT_STARTED}: its pre-flight could not read the outstanding Outbox work. Durable admission is unchanged and the authority stays active, so the running release keeps serving.`,
     );
     const assessment = yield* database.executor
-      .transaction((transaction) => assessDrainStart(transaction, budgetMs))
+      .transaction((transaction) => assessDrainStart(transaction, window))
       .pipe(
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(unreadable) : Effect.die(defect))),
         Effect.mapError(() => unreadable),
@@ -589,8 +625,8 @@ const FENCE_ATTEMPTS = 5;
  * traffic committed while the lock waited, so it fails with `UNMATCHED_AT_FENCE` and the caller tries again.
  */
 const enterDrainingIfDrainable = Effect.fn('ApplicationCompositionAuthority.enterDrainingIfDrainable')(
-  function* enterDrainingIfDrainable(transaction: CoreTransaction, revision: string, budgetMs: number) {
-    const assessment = yield* assessDrainStart(transaction, budgetMs);
+  function* enterDrainingIfDrainable(transaction: CoreTransaction, revision: string, window: DrainWindow) {
+    const assessment = yield* assessDrainStart(transaction, window);
     const refusals = yield* drainStartRefusals(assessment);
     if (refusals.length > 0) {
       return yield* unavailable([`${DRAIN_NOT_STARTED}:`, ...refusals].join(' '));
@@ -632,7 +668,11 @@ const failureReason = <Failure,>(failure: Failure): string => {
 /** PostgreSQL's `lock_not_available`: the restore's `lock_timeout` expired while another session held a lock. */
 const LOCK_NOT_AVAILABLE = '55P03';
 
-/** Four more attempts after the first, from 250 ms apart and doubling: with the 5 s lock timeout, about 30 s at most. */
+/**
+ * Four more attempts after the first, from 250 ms apart and doubling. One attempt can wait on two locks in turn (the
+ * publication lock, then the authority row's `FOR UPDATE`), each for just under the 5 s lock timeout, so all five take
+ * about 55 s at most.
+ */
 const RESTORE_LOCK_RETRIES = 4;
 
 /**
@@ -807,17 +847,56 @@ const waitForDurablePublicationWork = Effect.fn('ApplicationCompositionAuthority
   },
 );
 
-const waitForOutboxPublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForOutboxWork')(
-  function* waitForOutboxPublicationWork(revision: string, reported: Ref.Ref<string>) {
-    const database = yield* CoreDatabase;
-    while (
-      !(yield* database.executor.transaction((transaction) =>
-        isApplicationCompositionWorkDrained(transaction, revision),
-      ))
-    ) {
-      yield* reportDeadDrainDeliveries(null, reported);
-      yield* Effect.sleep(Duration.seconds(3));
+/** One poll of a running Outbox drain: whether it is over, and what it holds that it could never finish. */
+export interface DrainPoll {
+  readonly drained: boolean;
+  /** Why outstanding work can never drain inside the drain's window; empty while it is merely in flight. */
+  readonly refusals: readonly string[];
+}
+
+const DRAIN_POLL_SPACING = Duration.seconds(3);
+
+/**
+ * Polls until the drain is over. Work that can no longer finish inside the drain's window — a delivery that died, or
+ * that its owner deferred or a failure backed off past the deadline — ends the wait at once with the refusal, so the
+ * publisher returns the authority to `active` now instead of when its budget runs out. Work merely in flight keeps
+ * the wait going; the caller's own deadline still bounds it.
+ */
+export const waitUntilOutboxDrained = <Failure, Requirements>(poll: Effect.Effect<DrainPoll, Failure, Requirements>) =>
+  Effect.gen(function* waitUntilOutboxDrainedEffect() {
+    let progress = yield* poll;
+    while (!progress.drained) {
+      if (progress.refusals.length > 0) {
+        return yield* unavailable([`${DRAIN_STOPPED}.`, ...progress.refusals].join(' '));
+      }
+      yield* Effect.sleep(DRAIN_POLL_SPACING);
+      progress = yield* poll;
     }
+    return yield* Effect.void;
+  });
+
+/** Only the refusal of a drain that met work it could never finish; a drain that merely ran out of time is not one. */
+const isStoppedDrain = <Failure,>(failure: Failure) =>
+  Schema.is(ApplicationCompositionAuthorityError)(failure) && failure.reason.startsWith(DRAIN_STOPPED);
+
+/**
+ * Waits for the Outbox of the draining `revision`. Each poll that finds work outstanding asks, in the same
+ * transaction, the very questions of the pre-flight and the fence against what is left of `window`.
+ */
+const waitForOutboxPublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForOutboxWork')(
+  function* waitForOutboxPublicationWork(revision: string, window: DrainWindow) {
+    const database = yield* CoreDatabase;
+    return yield* waitUntilOutboxDrained(
+      database.executor.transaction((transaction) =>
+        Effect.gen(function* pollOutboxDrain() {
+          if (yield* isApplicationCompositionWorkDrained(transaction, revision)) {
+            return { drained: true, refusals: [] } satisfies DrainPoll;
+          }
+          const refusals = yield* drainStartRefusals(yield* assessDrainStart(transaction, window));
+          return { drained: false, refusals } satisfies DrainPoll;
+        }),
+      ),
+    );
   },
 );
 
@@ -857,15 +936,18 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
         ),
       );
     return yield* Effect.gen(function* boundedDrain() {
+      // The budget's timeout below starts now, so every check of this drain is judged from this same instant.
+      const startedAtMs = yield* Clock.currentTimeMillis;
       const database = yield* CoreDatabase;
       progressState.phase = DURABLE_DRAIN;
       const [lease] = yield* database.executor.execute<{ readonly remaining: number }>(
         sql`select (extract(epoch from (${current.validUntil}::timestamptz - clock_timestamp())) * 1000)::double precision as remaining`,
         'objects',
       );
-      if (lease === undefined || !Number.isFinite(lease.remaining) || lease.remaining <= 30_000) {
+      if (lease === undefined || !Number.isFinite(lease.remaining) || lease.remaining <= DRAIN_LEASE_MARGIN_MS) {
         return yield* unavailable('The old Application Composition lease must be renewed before draining');
       }
+      const window = drainWindow({ budgetMs, leaseRemainingMs: lease.remaining, startedAtMs });
       yield* Effect.gen(function* finishOldCompositionWork() {
         if (current.phase === 'active') {
           // Before the authority fence moves: a drain that waits for work nothing can finish would refuse every
@@ -873,7 +955,7 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           // the authority active, so the old release keeps serving. (Earlier boot steps — the migrator, workload
           // registration, credential provisioning and the expand-only completion-schema expansion — have already
           // run and stay applied; they are safe under the old release.)
-          yield* refuseUndrainableWork(budgetMs);
+          yield* refuseUndrainableWork(window);
           progressState.phase = 'close-admission';
           yield* withApplicationCompositionPublicationProgress(
             'close durable admission (authority fence)',
@@ -900,7 +982,7 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
             // Owner locks remain held until the nested Core transaction actually COMMITs.
             Effect.andThen(
               withVerifiedLegacyTransition(current.revision, (transaction) =>
-                enterDrainingIfDrainable(transaction, current.revision, budgetMs),
+                enterDrainingIfDrainable(transaction, current.revision, window),
               ),
             ),
             Effect.retry({
@@ -919,12 +1001,12 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
         progressState.phase = 'outbox-drain';
         yield* withApplicationCompositionPublicationProgress(
           'drain unmatched messages and unfinished deliveries',
-          waitForOutboxPublicationWork(current.revision, reported),
+          waitForOutboxPublicationWork(current.revision, window),
           logApplicationCompositionDrainBlockers,
         );
       }).pipe(
         Effect.timeoutOrElse({
-          duration: Duration.millis(Math.max(1, lease.remaining - 30_000)),
+          duration: Duration.millis(Math.max(1, lease.remaining - DRAIN_LEASE_MARGIN_MS)),
           orElse: () =>
             deadDeliveries.pipe(
               Effect.flatMap((described) =>
@@ -983,7 +1065,6 @@ const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthor
     current: CurrentApplicationCompositionAuthority,
     transition: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Requirements>,
   ) {
-    const reported = yield* Ref.make('');
     const failures = yield* Ref.make(0);
     // One deadline for every re-drain together: never past the retiring lease (less its margin), and never longer
     // than one drain budget in total, however many retries there are.
@@ -992,12 +1073,17 @@ const withDrainedCompositionTransition = Effect.fn('ApplicationCompositionAuthor
       leaseMillis - Duration.toMillis(DRAINED_TRANSITION_LEASE_MARGIN),
       (yield* Clock.currentTimeMillis) + APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
     );
+    const redrainWindow: DrainWindow = {
+      budgetMs: APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
+      deadlineMs: redrainDeadline,
+    };
     const redrain = Effect.gen(function* waitForFreshWork() {
-      const remaining = redrainDeadline - (yield* Clock.currentTimeMillis);
-      yield* waitForOutboxPublicationWork(current.revision, reported).pipe(
+      const remaining = remainingInDrainWindow(redrainWindow, yield* Clock.currentTimeMillis);
+      yield* waitForOutboxPublicationWork(current.revision, redrainWindow).pipe(
         Effect.timeout(Duration.millis(Math.max(1, remaining))),
-        // The original refusal is the operator's evidence: a wait that cannot finish must never replace it.
-        Effect.ignore,
+        // The original refusal is the operator's evidence: a wait that cannot finish must never replace it. Work
+        // that can never finish is better evidence still, and ends the transition at once.
+        Effect.catch((error) => (isStoppedDrain(error) ? Effect.fail(error) : Effect.void)),
       );
     });
     return yield* withVerifiedLegacyTransition(current.revision, transition).pipe(
