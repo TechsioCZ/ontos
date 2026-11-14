@@ -216,7 +216,7 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     plan.integration
       .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
       .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
+  ).toEqual(['1/4', '2/4', '3/4', '4/4']);
 });
 
 it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
@@ -286,7 +286,7 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
   }
 });
 
-it('uses all six customer-context shards for any selected customer-context package change', () => {
+it('uses every customer-context shard for any selected customer-context package change', () => {
   const plan = planCiChecks({
     applyAffected: true,
     changedPaths: ['app/verticals/commerce-customer-context/src/service.ts'],
@@ -295,7 +295,7 @@ it('uses all six customer-context shards for any selected customer-context packa
   });
   expect(
     plan.integration.filter((entry) => entry['rstest-shard'] !== undefined).map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
+  ).toEqual(['1/4', '2/4', '3/4', '4/4']);
   expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
 });
 

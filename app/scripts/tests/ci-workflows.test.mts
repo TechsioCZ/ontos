@@ -638,11 +638,12 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     .map((entry) => entry.commands.trim())
     .filter((command) => command.includes(`${WEIGHTED_SHARD_SCRIPT} `) && command.includes(' scripts '));
   const toolingCount = toolingShards.length;
-  // The weighted shards together run what `pnpm test:scripts` runs, over the same project and options.
+  // The weighted shards together run what `pnpm test:scripts` runs, over the same project, with two file workers:
+  // the scripts suite was reviewed safe in parallel.
   expect(toolingShards).toEqual(
     Array.from(
       { length: toolingCount },
-      (_, index) => `bash ${WEIGHTED_SHARD_SCRIPT} ${index + 1}/${toolingCount} scripts --pool.maxWorkers 1`,
+      (_, index) => `bash ${WEIGHTED_SHARD_SCRIPT} ${index + 1}/${toolingCount} scripts --pool.maxWorkers 2`,
     ),
   );
   const { scripts } = readRootScripts();
@@ -798,11 +799,20 @@ it('runs the root integration suite once and every package integration suite in 
     `mise exec -- bash ${WEIGHTED_SHARD_SCRIPT} "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?`,
   );
   expect(run?.run).toContain(
-    `mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/${WEIGHTED_SHARD_SCRIPT}" "$RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?`,
+    `mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/${WEIGHTED_SHARD_SCRIPT}" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?`,
   );
   expect(run?.run).toContain(
     'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?',
   );
+  expect(run?.env?.RSTEST_WORKERS).toBe(expression('matrix.rstest-workers || 1'));
+  // Only the Shell and Customer Context suites, reviewed safe for parallel file workers, run two of them.
+  const parallelRows = Schema.decodeUnknownSync(MatricesFileSchema)(
+    JSON.parse(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')),
+  ).integration.filter((row) => row['rstest-workers'] !== undefined);
+  expect(
+    new Set(parallelRows.map((row) => `${String(row['package-filters'])}:${String(row['rstest-workers'])}`)),
+  ).toEqual(new Set(['--filter ./apps/shell-super-app:2', '--filter ./verticals/commerce-customer-context:2']));
+  expect(parallelRows.every((row) => row['rstest-shard'] !== undefined)).toBe(true);
   // One suite's failure never hides another's: every status is kept and the step fails only at the end.
   expect(run?.run).toContain('exit "$status"');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
@@ -1071,7 +1081,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const customerContext = integration.strategy.matrix.include.filter((shard) =>
     shardFilters(shard).includes('./verticals/commerce-customer-context'),
   );
-  expect(customerContext).toHaveLength(6);
+  expect(customerContext).toHaveLength(4);
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
   // The browser suite reads no built output: its own job needs only the plan.
   expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(false);

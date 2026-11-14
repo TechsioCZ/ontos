@@ -22,6 +22,8 @@ const IntegrationEntrySchema = Schema.Struct({
   'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
+  /** Rstest file workers; 2 only for suites reviewed safe in parallel (unique template databases, UUID tenants). */
+  'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
   suite: Schema.Literals(['integration', 'browser']),
 }).check(
   Schema.makeFilter((entry) =>

@@ -1,11 +1,30 @@
 {
   "test-weights": {
-    "module-entrypoint-boundaries": 587,
-    "purchase-approval-fresh-proof-postgres": 581,
-    "access-admin-people-writes": 342,
-    "price-group-effective-period-postgres": 259,
-    "access-admin-real-gate": 183,
-    "agent-caller-authority-full-catalog": 154
+    "module-entrypoint-boundaries.governance": 15,
+    "module-entrypoint-boundaries.recovery": 201,
+    "module-entrypoint-boundaries.catalog": 49,
+    "module-entrypoint-boundaries.customer-context": 98,
+    "module-entrypoint-boundaries.pricing": 51,
+    "module-entrypoint-boundaries.clients": 85,
+    "module-entrypoint-boundaries.aggregate": 91,
+    "purchase-approval-fresh-proof-postgres.identity": 97,
+    "purchase-approval-fresh-proof-postgres.order": 75,
+    "purchase-approval-fresh-proof-postgres.expiry": 106,
+    "purchase-approval-fresh-proof-postgres.scope": 107,
+    "purchase-approval-fresh-proof-postgres.consumption": 105,
+    "purchase-approval-fresh-proof-postgres.reconciliation": 95,
+    "access-admin-people-writes.admission": 110,
+    "access-admin-people-writes.membership": 111,
+    "access-admin-people-writes.delegation": 61,
+    "access-admin-people-writes.ownership": 58,
+    "access-admin-real-gate.administration": 72,
+    "access-admin-real-gate.scope": 109,
+    "agent-caller-authority-full-catalog.batch": 58,
+    "agent-caller-authority-full-catalog.installed": 54,
+    "agent-caller-authority-full-catalog.actions": 39,
+    "price-group-effective-period-postgres.receipts": 86,
+    "price-group-effective-period-postgres.history": 86,
+    "price-group-effective-period-postgres.resolution": 86
   },
   "source": [
     {
@@ -14,24 +33,20 @@
       "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
     },
     {
-      "name": "Repository Tooling Tests (1/5)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 1/5 scripts --pool.maxWorkers 1\n"
+      "name": "Repository Tooling Tests (1/4)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 1/4 scripts --pool.maxWorkers 2\n"
     },
     {
-      "name": "Repository Tooling Tests (2/5)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 2/5 scripts --pool.maxWorkers 1\n"
+      "name": "Repository Tooling Tests (2/4)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 2/4 scripts --pool.maxWorkers 2\n"
     },
     {
-      "name": "Repository Tooling Tests (3/5)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 3/5 scripts --pool.maxWorkers 1\n"
+      "name": "Repository Tooling Tests (3/4)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 3/4 scripts --pool.maxWorkers 2\n"
     },
     {
-      "name": "Repository Tooling Tests (4/5)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 4/5 scripts --pool.maxWorkers 1\n"
-    },
-    {
-      "name": "Repository Tooling Tests (5/5)",
-      "commands": "bash scripts/ci/rstest-weighted-shard.sh 5/5 scripts --pool.maxWorkers 1\n"
+      "name": "Repository Tooling Tests (4/4)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 4/4 scripts --pool.maxWorkers 2\n"
     },
     {
       "name": "Module Entrypoint and Codesmith Generation Tests",
@@ -84,75 +99,59 @@
   "integration": [
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (1/6)",
+      "name": "Commerce Customer Context Integration (1/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "1/6"
+      "rstest-shard": "1/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (2/6)",
+      "name": "Commerce Customer Context Integration (2/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "2/6"
+      "rstest-shard": "2/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (3/6)",
+      "name": "Commerce Customer Context Integration (3/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "3/6"
+      "rstest-shard": "3/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (4/6)",
+      "name": "Commerce Customer Context Integration (4/4)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "4/6"
+      "rstest-shard": "4/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (5/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "5/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (6/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "6/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (1/6)",
+      "name": "Shell Integration (1/4)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "1/6"
+      "rstest-shard": "1/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (2/6)",
+      "name": "Shell Integration (2/4)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "2/6"
+      "rstest-shard": "2/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (3/6)",
+      "name": "Shell Integration (3/4)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "3/6"
+      "rstest-shard": "3/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",
-      "name": "Shell Integration (4/6)",
+      "name": "Shell Integration (4/4)",
       "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "4/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (5/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "5/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Shell Integration (6/6)",
-      "package-filters": "--filter ./apps/shell-super-app",
-      "rstest-shard": "6/6"
+      "rstest-shard": "4/4",
+      "rstest-workers": 2
     },
     {
       "suite": "integration",

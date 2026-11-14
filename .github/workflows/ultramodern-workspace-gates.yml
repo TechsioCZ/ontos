@@ -767,6 +767,8 @@ jobs:
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
+          # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
+          RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
         # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
         # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
         # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
@@ -781,7 +783,7 @@ jobs:
           fi
           if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
+            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
           elif [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
             mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
