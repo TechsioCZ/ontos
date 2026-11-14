@@ -81,7 +81,7 @@ it.effect('allows ordinary tests and refuses every must-migrate file before rest
       testFiles: [rootFile],
     });
     for (const jobName of [
-      'Commerce Customer Context Integration (1/5)',
+      'Commerce Customer Context Integration (1/7)',
       'Core Runtime Integration (1/2)',
       'Party Registry Integration',
     ]) {

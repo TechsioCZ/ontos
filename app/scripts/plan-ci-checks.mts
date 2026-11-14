@@ -22,7 +22,7 @@ const IntegrationEntrySchema = Schema.Struct({
   'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
-  /** Rstest file workers; 2 only for suites reviewed safe in parallel (unique template databases, UUID tenants). */
+  /** Rstest file workers; integration rows share one job database and its composition authority, so they run 1. */
   'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
   /** skip: leave out, only: run just the files that must migrate their own database (rstest-weighted-shard.sh). */
   'fresh-database-tests': Schema.optionalKey(Schema.Literals(['skip', 'only'])),

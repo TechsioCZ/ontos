@@ -225,7 +225,7 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     plan.integration
       .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
       .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/5', '2/5', '3/5', '4/5', '5/5']);
+  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
 });
 
 it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
@@ -306,7 +306,7 @@ it('uses every customer-context shard for any selected customer-context package 
     plan.integration
       .filter((entry) => entry['rstest-shard'] !== undefined && entry['fresh-database-tests'] !== 'only')
       .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/5', '2/5', '3/5', '4/5', '5/5']);
+  ).toEqual(['1/7', '2/7', '3/7', '4/7', '5/7', '6/7', '7/7']);
   // Its files that migrate their own database still run, in the Fresh Database rows.
   expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
   expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);

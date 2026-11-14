@@ -946,14 +946,12 @@ it('runs the root integration suite once and every package integration suite in 
     'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?',
   );
   expect(run?.env?.RSTEST_WORKERS).toBe(expression('matrix.rstest-workers || 1'));
-  // Only the Shell and Customer Context suites, reviewed safe for parallel file workers, run two of them.
+  // No integration row runs two file workers: in round 5 the Shell and Customer Context files run side by side
+  // contended for the job database's one composition authority and timed out, so every row runs one file at a time.
   const parallelRows = Schema.decodeUnknownSync(MatricesFileSchema)(
     JSON.parse(readFileSync(new URL(CI_MATRICES_PATH, import.meta.url), 'utf-8')),
-  ).integration.filter((row) => row['rstest-workers'] !== undefined);
-  expect(
-    new Set(parallelRows.map((row) => `${String(row['package-filters'])}:${String(row['rstest-workers'])}`)),
-  ).toEqual(new Set(['--filter ./apps/shell-super-app:2', '--filter ./verticals/commerce-customer-context:2']));
-  expect(parallelRows.every((row) => row['rstest-shard'] !== undefined)).toBe(true);
+  ).integration.filter((row) => row['rstest-workers'] !== undefined && row['rstest-workers'] !== 1);
+  expect(parallelRows).toEqual([]);
   // One suite's failure never hides another's: every status is kept and the step fails only at the end.
   expect(run?.run).toContain('exit "$status"');
   expectNativePreproposalRow(job);
@@ -1236,7 +1234,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const customerContext = ordinary.filter((shard) =>
     shardFilters(shard).includes('./verticals/commerce-customer-context'),
   );
-  expect(customerContext).toHaveLength(5);
+  expect(customerContext).toHaveLength(7);
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
   // The browser suite reads no built output: its own job needs only the plan.
   expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(false);
