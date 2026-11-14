@@ -163,7 +163,8 @@ it.effect('keeps verification mandatory for changed services and records sources
     expect(source).toContain('fetch-depth: 0');
     expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
     const buildScript = yield* fs.readFileString(path.join(import.meta.dirname, 'build-app.sh'));
-    expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digest "$1"');
+    expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"');
+    expect(buildScript).toContain('export ZEROPS_UNIT_DIGESTS');
     expect(buildScript).toContain(`[ "\${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1`);
     expect(source).toContain("needs.plan.outputs.app == 'false' || needs.build.result == 'success'");
     expect(source).toContain(`AKROS_TEST_BASE_URL: \${{ env.STAGE_SHOP_URL }}`);

@@ -50,15 +50,22 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
 
 # Use the same committed dependency closure as the delivery planner. Common/unknown inputs fail closed,
 # including root dependency policy, patches, installer and migration scripts, not just a short build-file list.
+# Children reuse the same immutable table; never put it in the checkout (release identities require a clean tree).
+if [ -z "${ZEROPS_UNIT_DIGESTS:-}" ]; then
+  ZEROPS_UNIT_DIGESTS="$(mktemp "${TMPDIR:-/tmp}/zerops-unit-digests.XXXXXX")"
+  trap 'rm -f "$ZEROPS_UNIT_DIGESTS"' EXIT HUP INT TERM
+  node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"
+  export ZEROPS_UNIT_DIGESTS
+fi
 unit_digest() {
-  node "$root/scripts/zerops/delivery-plan-cli.mts" digest "$1"
+  awk -F '\t' -v unit="$1" '$1 == unit { value=$2; count++ } END { if (count != 1 || value == "") exit 1; print value }' "$ZEROPS_UNIT_DIGESTS"
 }
 
 # Restores a unit's cached build when its inputs are unchanged; succeeds only when the unit can be kept.
 keep_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
-  digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
+  digest="$(unit_digest "$unit")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
   # CI full/unknown/manual delivery bypasses cached artifacts. The provider still keeps the NEW prebuilt
   # archive CI supplies, so this flag is intentionally not part of zerops.yaml's provider environment.
   [ "${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1
