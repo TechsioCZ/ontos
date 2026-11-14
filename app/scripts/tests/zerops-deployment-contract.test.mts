@@ -513,7 +513,7 @@ it('binds the attempted delivery to the current run and persists it before any r
     expect(ledger?.run).toContain('.runAttempt=$runAttempt');
     for (const proof of [
       'scripts/ops/stage-warmup.mts',
-      'scripts/ops/stage-demo-verify.mjs',
+      'scripts/zerops/verify-service.mjs app',
       'scripts/demo/prove-mcp-oauth.mts',
     ]) {
       const step = workflow.jobs.verify.steps.find(({ run }) => run?.includes(proof) === true);

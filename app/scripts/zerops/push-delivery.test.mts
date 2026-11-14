@@ -146,19 +146,25 @@ it.effect('keeps verification mandatory for changed services and records sources
     );
     const workflow = yield* Schema.decodeUnknownEffect(WorkflowSchema)(parse(source));
     expect(workflow.jobs.build?.if).toBe("needs.plan.outputs.app == 'true'");
-    expect(workflow.jobs.verify?.if).toBe("always() && needs.deploy.result == 'success'");
+    expect(workflow.jobs.verify?.needs).toEqual(['plan', 'deploy', 'deploy_app']);
+    expect(workflow.jobs.verify?.if).toContain("needs.deploy_app.result == 'success'");
     expect(workflow.jobs.record?.if).toContain("needs.verify.result == 'success'");
-    for (const name of [
-      'Download the unit builds',
-      'Pack the unit builds for the push',
-      'Sync the owner secret bundle to the app service',
-    ]) {
-      expect(workflow.jobs.deploy?.steps.find((step) => step.name === name)?.if).toBe(
+    for (const name of ['Download the unit builds', 'Pack the unit builds for the push']) {
+      expect(workflow.jobs.deploy_app?.steps.find((step) => step.name === name)?.if).toBe(
         "needs.plan.outputs.app == 'true'",
       );
     }
-    expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('stage-demo-verify.mjs') === true)).toBe(true);
+    expect(workflow.jobs.deploy?.steps.find((step) => step.name === 'Sync the owner secret bundle to the app service')?.if).toBe(
+      "needs.plan.outputs.app == 'true'",
+    );
+    expect(workflow.jobs.deploy?.needs).toEqual(['plan']);
+    expect(workflow.jobs.deploy_app?.needs).toEqual(['plan', 'deploy', 'build']);
+    expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(true);
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('prove-mcp-oauth.mts') === true)).toBe(true);
+    for (const service of ['storefront', 'shop', 'n1']) {
+      expect(workflow.jobs[`deploy_${service}`]?.needs).toEqual(['plan', 'deploy']);
+      expect(workflow.jobs.record?.if).toContain(`needs.deploy_${service}.result == 'success'`);
+    }
     expect(source).toContain('zerops-verified-delivery');
     expect(source).toContain('fetch-depth: 0');
     expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
@@ -166,7 +172,7 @@ it.effect('keeps verification mandatory for changed services and records sources
     expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"');
     expect(buildScript).toContain('export ZEROPS_UNIT_DIGESTS');
     expect(buildScript).toContain(`[ "\${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1`);
-    expect(source).toContain("needs.plan.outputs.app == 'false' || needs.build.result == 'success'");
+    expect(workflow.jobs.deploy_app?.if).toContain("needs.build.result == 'success'");
     expect(source).toContain(`AKROS_TEST_BASE_URL: \${{ env.STAGE_SHOP_URL }}`);
     expect(source).toContain(
       `NEWSLETTER_PURPOSE_READ_FILE: \${{ runner.temp }}/newsletter-native/processing-purposes.json`,
