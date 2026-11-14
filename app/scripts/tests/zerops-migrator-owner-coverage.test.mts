@@ -55,18 +55,16 @@ for (const owner of [
   });
 }
 
-it('the migrator verifies only after every migration, and activates access only after the foundation is verified', () => {
-  expect(migrator).toContain("const VERIFY_APPLICATION_DATABASE = 'scripts/verify-application-db-schema.mts';");
+it('the migrator verifies every owner schema after every migration, and only then activates access', () => {
   expect(migrator).toContain('yield* Effect.andThen(migrations, verificationAndActivation)');
   const phase = migrator.slice(migrator.indexOf('const verificationAndActivation = Effect.gen('));
-  const foundation = phase.indexOf("yield* runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation'])");
-  const together = phase.indexOf('return yield* Effect.all(');
-  expect(foundation).toBeGreaterThan(-1);
-  expect(together).toBeGreaterThan(foundation);
-  const parallel = phase.slice(together, phase.indexOf('concurrency: 2'));
-  expect(parallel).toContain("runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=owners'])");
-  expect(parallel).toContain('activateAccessRelease');
-  // The activation appears nowhere else: it never runs before the foundation is proven.
+  const verification = phase.indexOf("yield* runAppScript('scripts/verify-application-db-schema.mts', [");
+  const activation = phase.indexOf('return yield* activateAccessRelease;');
+  expect(verification).toBeGreaterThan(-1);
+  expect(activation).toBeGreaterThan(verification);
+  // Serial: nothing runs the activation beside the schema check, and no partial verification exists.
+  expect(phase.slice(0, activation)).not.toContain('Effect.all(');
+  expect(migrator).not.toContain('--part');
   expect(migrator.split('activateAccessRelease').length).toBe(3);
 });
 

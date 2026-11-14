@@ -103,10 +103,9 @@ it('the access catalog activation runs inside the migrator, before the release s
   // The migrator's last step is the activation: the same boot's activation can never heal the release step's work,
   // which is why the step reconciles an already active module itself.
   const phase = migrator.slice(migrator.indexOf('const verificationAndActivation = Effect.gen('));
-  expect(phase.indexOf('activateAccessRelease')).toBeGreaterThan(
-    phase.indexOf("runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation'])"),
-  );
-  expect(phase.indexOf("runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation'])")).toBeGreaterThan(-1);
+  const verification = phase.indexOf("runAppScript('scripts/verify-application-db-schema.mts'");
+  expect(verification).toBeGreaterThan(-1);
+  expect(phase.indexOf('activateAccessRelease')).toBeGreaterThan(verification);
   expect(migrator).toContain('yield* Effect.andThen(migrations, verificationAndActivation)');
   const migrated = host.indexOf("runChild('migrator', node, ['scripts/run-zerops-migrator.mjs']");
   expect(migrated).toBeGreaterThan(0);

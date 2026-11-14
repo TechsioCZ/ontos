@@ -196,35 +196,25 @@ export const verifyOwnerSchema = Effect.fn('ApplicationDatabase.verifyOwnerSchem
   return yield* Effect.void;
 });
 
+/**
+ * Each owner verifier is its own Node process holding one or two admin connections for read-only catalog queries.
+ * The ceiling bounds both the connections the check adds beside a release that still serves and the memory of the
+ * processes it starts at once; the default stays at four for local and CI runs, the stage migrator asks for more.
+ */
+export const MAX_VERIFIER_CONCURRENCY = 8;
+
 export const validateVerifierConcurrency = (
   value: number,
 ): Effect.Effect<number, ApplicationDatabaseVerificationError> =>
-  Number.isInteger(value) && value >= 1 && value <= 4
+  Number.isInteger(value) && value >= 1 && value <= MAX_VERIFIER_CONCURRENCY
     ? Effect.succeed(value)
-    : Effect.fail(verificationFailure('Expected --concurrency with an integer between 1 and 4'));
+    : Effect.fail(
+        verificationFailure(`Expected --concurrency with an integer between 1 and ${String(MAX_VERIFIER_CONCURRENCY)}`),
+      );
 
 /** Preserve canonical source order while joining every isolated child, including on cancellation. */
 export const verifyOwnerSchemas = (paths: readonly string[], concurrency = 4) =>
   Effect.forEach(paths, verifyOwnerSchema, { concurrency, discard: true });
-
-/**
- * What one run verifies. `all` is the whole closure. `foundation` is the catalog, the role manifest and Core's own
- * verifier: everything the access catalog release activation reads or writes (Core's access tables, as the runtime
- * role). `owners` is every other selected owner's verifier. `foundation` then `owners` checks exactly what `all`
- * checks, with the same messages.
- */
-const VERIFICATION_PARTS = ['all', 'foundation', 'owners'] as const;
-type VerificationPart = (typeof VERIFICATION_PARTS)[number];
-const FOUNDATION_OWNER = 'core-runtime';
-
-/** The selected owners whose verifiers one part runs, in canonical source order. */
-export const verifierPathsOfPart = (
-  streams: readonly ApplicationMigrationStream[],
-  part: VerificationPart,
-): readonly string[] =>
-  streams
-    .filter((stream) => part === 'all' || (stream.ownerId === FOUNDATION_OWNER) === (part === 'foundation'))
-    .flatMap((stream) => stream.verifierPaths);
 
 const verifyRoleManifest = (client: PgClient.PgClient) =>
   assertDatabaseRoleManifestComplete(client).pipe(Effect.mapError((failure) => verificationFailure(failure.reason)));
@@ -233,7 +223,6 @@ const verifyApplicationDatabase = (
   ownersOption: Option.Option<string>,
   requirementsOption: Option.Option<string>,
   concurrency: number,
-  part: VerificationPart = 'all',
 ) =>
   Effect.gen(function* verifyApplicationDatabaseEffect() {
     const inventory = yield* loadApplicationMigrationInventory().pipe(
@@ -255,7 +244,7 @@ const verifyApplicationDatabase = (
     if (selection.streams.length === 0) {
       return yield* Console.log('No application database verification required');
     }
-    if (part !== 'owners' && selection.streams.some((stream) => stream.database === 'primary')) {
+    if (selection.streams.some((stream) => stream.database === 'primary')) {
       const configuration = yield* loadAdministrativeDatabaseConnection().pipe(
         Effect.mapError((cause) => verificationFailure('Unable to load the primary database configuration', cause)),
       );
@@ -299,7 +288,13 @@ const verifyApplicationDatabase = (
       );
       yield* Console.log('Verified application schemas and migration journals for the selected owner closure');
     }
-    yield* verifyOwnerSchemas(verifierPathsOfPart(selection.streams, part), concurrency);
+    const paths: string[] = [];
+    for (const stream of selection.streams) {
+      for (const path of stream.verifierPaths) {
+        paths.push(path);
+      }
+    }
+    yield* verifyOwnerSchemas(paths, concurrency);
     return yield* Effect.void;
   }).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
 
@@ -308,12 +303,11 @@ export const verifyApplicationDatabaseCommand = Command.make(
   {
     concurrency: Flag.Int('concurrency').pipe(Flag.withDefault(4)),
     owners: Flag.String('owners').pipe(Flag.optional),
-    part: Flag.Literals('part', VERIFICATION_PARTS).pipe(Flag.withDefault('all')),
     requirements: Flag.String('requirements').pipe(Flag.optional),
   },
-  ({ concurrency, owners, part, requirements }) =>
+  ({ concurrency, owners, requirements }) =>
     validateVerifierConcurrency(concurrency).pipe(
-      Effect.flatMap((bounded) => verifyApplicationDatabase(owners, requirements, bounded, part)),
+      Effect.flatMap((bounded) => verifyApplicationDatabase(owners, requirements, bounded)),
     ),
 );
 export const main = Command.run(verifyApplicationDatabaseCommand, { version: '1.0.0' });

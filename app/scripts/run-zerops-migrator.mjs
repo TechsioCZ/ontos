@@ -197,9 +197,6 @@ const serveReadiness = Effect.fn('serveReadiness')(
   },
 );
 
-/** The schema verifier, as one part of its owner closure (`verify-application-db-schema.mts --part`). */
-const VERIFY_APPLICATION_DATABASE = 'scripts/verify-application-db-schema.mts';
-
 /**
  * Access catalog release activation: publishes the deployed catalog when it is newer, lets "Plný přístup" follow it
  * and records Novinky for every other role. It never fails the release: authorization then stays at the previous
@@ -283,25 +280,23 @@ const migrations = Effect.gen(function* migrationsEffect() {
 }).pipe(Effect.provide(OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))));
 
 /**
- * The foundation the activation stands on is proven first: the application catalog and journals, the database role
- * manifest and Core's own schema verifier, which together cover every table and grant the activation reads or writes
- * (Core's access tables, as the runtime role). The other owners' verifiers check schemas the activation never touches,
- * so they and the activation run side by side. A failed owner verifier still fails this migrator, and so the boot,
- * before anything is published and with the same message as before; the activation is then stopped like any child.
+ * Owner schema verifiers at once on stage. Each is one Node process with one or two admin connections for read-only
+ * catalog queries, so six add at most twelve connections to db18 (150 slots) while the old release still serves from
+ * its pools of six per process and role, and about 1 GiB of short-lived processes beside the starting owners.
+ */
+const OWNER_VERIFIER_CONCURRENCY = 6;
+
+/**
+ * The old gate order, serial: every owner's schema is verified, and only then does the access catalog release
+ * activation start. A schema that fails its check stops the boot before the activation can publish a catalog,
+ * extend "Plný přístup" or reconcile SpiceDB.
  */
 const verificationAndActivation = Effect.gen(function* verificationAndActivationEffect() {
-  yield* runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation']).pipe(
-    timedBootStage('migrator.schema-verification-foundation'),
-  );
-  return yield* Effect.all(
-    [
-      runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=owners']).pipe(
-        timedBootStage('migrator.schema-verification-owners'),
-      ),
-      activateAccessRelease,
-    ],
-    { concurrency: 2, discard: true },
-  );
+  yield* runAppScript('scripts/verify-application-db-schema.mts', [
+    '--concurrency',
+    String(OWNER_VERIFIER_CONCURRENCY),
+  ]).pipe(timedBootStage('migrator.schema-verification'));
+  return yield* activateAccessRelease;
 });
 
 const main = Effect.scoped(
