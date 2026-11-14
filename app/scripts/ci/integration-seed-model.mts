@@ -4,7 +4,12 @@ import { Effect, Schema } from 'effect';
 
 export class IntegrationSeedError extends Schema.TaggedError<IntegrationSeedError>()('IntegrationSeedError', {
   reason: Schema.String,
-}) {}
+}) {
+  /** The reason is the message, so a failed seed step names itself in the log instead of an empty error. */
+  override get message() {
+    return this.reason;
+  }
+}
 
 export const seedFailure = (reason: string) => new IntegrationSeedError({ reason });
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');

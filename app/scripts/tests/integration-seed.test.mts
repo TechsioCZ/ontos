@@ -2,6 +2,7 @@ import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  seedFailure,
   FRESH_JOB,
   MUST_MIGRATE_TESTS,
   SEAL_TABLE,
@@ -125,3 +126,9 @@ it.effect('ignores only randomized pg_dump restrict markers, not ownership or gr
     return yield* Effect.void;
   }),
 );
+
+it('names the failed seed step in the error message, so the log shows which step failed', () => {
+  const failure = seedFailure('pnpm CI seed operation failed; child diagnostics withheld to protect credentials');
+  expect(failure.message).toBe('pnpm CI seed operation failed; child diagnostics withheld to protect credentials');
+  expect(String(failure)).toContain('pnpm CI seed operation failed');
+});
