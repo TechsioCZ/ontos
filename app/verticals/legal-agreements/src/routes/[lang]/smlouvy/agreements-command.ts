@@ -13,6 +13,8 @@ import {
   newContractRecord,
   periodUnchangedSince,
   updatePeriodCommand,
+  renewalCommandOf,
+  renewalPeriodValid,
 } from './agreement-draft.ts';
 import type { CreateDraft, CreateReferences, PeriodDraft } from './agreement-draft.ts';
 
@@ -153,6 +155,28 @@ export const createAgreement = (
       }),
     }),
   );
+
+export const renewAgreement = (
+  draft: CreateDraft,
+  input: { readonly previous: Contract; readonly expectedRevision: number },
+): Effect.Effect<AgreementOutcome> => {
+  if (!renewalPeriodValid(draft, input.previous)) {
+    return Effect.succeed(failedWith('validation'));
+  }
+  return newUuid.pipe(
+    Effect.matchEffect({
+      onFailure: (failure) => failure.pipe(failureFeedback, failedWith, Effect.succeed),
+      onSuccess: (resourceId) =>
+        sendAgreementsCommand(
+          renewalCommandOf(draft, { previous: input.previous, resourceId }),
+          input.expectedRevision,
+          {
+            audiences: contractReferenceAudiences(input.previous),
+          },
+        ),
+    }),
+  );
+};
 
 /**
  * The Save button of the period form: the contract as the draft read it, with the typed period, against the

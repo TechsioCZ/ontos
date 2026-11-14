@@ -30,6 +30,8 @@ import {
   SecurityStateSchema,
   emptySecurityState,
   isOpenIncident,
+  inspectionNoteLimit,
+  securityHistorySummaryLimit,
 } from '../domain/security.ts';
 import type {
   SecurityDevice,
@@ -114,7 +116,12 @@ const historyEntry = (
   input: OpsCommandInput,
   event: SecurityHistoryEntry['event'],
   summary: string,
-): SecurityHistoryEntry => ({ at: input.now, by: input.actor, event, summary: summary.slice(0, 500) });
+): SecurityHistoryEntry => ({
+  at: input.now,
+  by: input.actor,
+  event,
+  summary: summary.slice(0, securityHistorySummaryLimit),
+});
 
 const withHistory = (device: SecurityDevice, entry: SecurityHistoryEntry): SecurityDevice => ({
   ...device,
@@ -203,13 +210,21 @@ const recordInspection = Effect.fn('FacilityOperations.Security.recordInspection
   if (value.nextInspectionDate !== undefined && value.nextInspectionDate <= value.inspectionDate) {
     return yield* opsConflict('Další kontrola musí být po datu provedené kontroly.');
   }
+  if (device.lastInspectionDate !== undefined && value.inspectionDate < device.lastInspectionDate) {
+    return yield* opsConflict('Starší kontrolu připojte jako protokol; datum poslední kontroly nelze posunout zpět.');
+  }
   const next: SecurityDevice = {
-    ...auditUpdated(device, input),
+    ...auditUpdated(Struct.omit(device, ['nextInspectionDate']), input),
     lastInspectionDate: value.inspectionDate,
     ...optionalField('nextInspectionDate', value.nextInspectionDate),
   };
   const inspectionNote = value.note === undefined || value.note === '' ? '' : `: ${value.note}`;
   const summary = `Kontrola provedena ${value.inspectionDate}${inspectionNote}`;
+  if (summary.length > securityHistorySummaryLimit) {
+    return yield* opsConflict(
+      `Poznámku nelze uložit celou. Zkraťte ji na ${inspectionNoteLimit} znaků a úplný zápis připojte jako protokol.`,
+    );
+  }
   return {
     entityIds: [yield* entityIdOf(device.id)],
     state: replaceDevice(state, withHistory(next, historyEntry(input, 'inspection', summary))),

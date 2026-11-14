@@ -13,14 +13,14 @@ import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
-import { Effect, Match, Option } from 'effect';
+import { DateTime, Effect, Match, Option } from 'effect';
 import { useRef, useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { failureReasonOf } from './agreements-command.ts';
 import type { AgreementOutcome } from './agreements-command.ts';
-import { createDraftComplete, createDraftOf } from './agreement-draft.ts';
+import { createDraftComplete, createDraftOf, renewalDraftOf, renewalPeriodValid } from './agreement-draft.ts';
 import type { CreateDraft, CreateReferences } from './agreement-draft.ts';
 
 const KINDS = ['OTHER', 'LEASE'] as const;
@@ -105,6 +105,7 @@ export interface ContractCreatePanelProps {
   /** The person picked another kind; the page reads what that kind needs. */
   readonly onKindChange: (kind: Contract['kind']) => void;
   readonly references: CreateReferences;
+  readonly renewal?: Contract;
   /** Why the leases could not be read, when they could not. */
   readonly rentalFeedback?: string | undefined;
 }
@@ -118,14 +119,24 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   /** The form as it opens: the draft starts from it, and it is what discarding goes back to. */
-  const opening = createDraftOf(props.kind);
+  const [opening] = useState(() =>
+    props.renewal === undefined
+      ? createDraftOf(props.kind)
+      : renewalDraftOf(
+          props.renewal,
+          new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' }).format(
+            DateTime.toEpochMillis(DateTime.nowUnsafe()),
+          ),
+        ),
+  );
   const [draft, setDraft] = useState(opening);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   /** The contract the last save created. */
   const created = useRef(nothingCreated);
   const record = useDraftSave<CreateDraft, never>({
     initial: opening,
-    isValid: (value) => createDraftComplete(value, references),
+    isValid: (value) =>
+      props.renewal === undefined ? createDraftComplete(value, references) : renewalPeriodValid(value, props.renewal),
     runtime: browserRuntime,
     save: (value) =>
       onCreate(value).pipe(
@@ -203,7 +214,7 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
       open
       resizeLabel={t('legal-agreements.detail.resizePanel')}
       size="lg"
-      title={t('legal-agreements.demo.create')}
+      title={t(props.renewal === undefined ? 'legal-agreements.demo.create' : 'legal-agreements.demo.renew')}
     >
       <form
         className="legalagreements:space-y-4 legalagreements:py-2"
@@ -213,13 +224,15 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
           event.preventDefault();
         }}
       >
-        <ChoiceSelect
-          items={KINDS.map((value) => ({ label: t(`legal-agreements.demo.kinds.${value}`), value }))}
-          label={t('legal-agreements.demo.contractKind')}
-          onChange={handleKindChange}
-          value={draft.kind}
-        />
-        {draft.kind === 'OTHER' && (
+        {props.renewal === undefined && (
+          <ChoiceSelect
+            items={KINDS.map((value) => ({ label: t(`legal-agreements.demo.kinds.${value}`), value }))}
+            label={t('legal-agreements.demo.contractKind')}
+            onChange={handleKindChange}
+            value={draft.kind}
+          />
+        )}
+        {props.renewal === undefined && draft.kind === 'OTHER' && (
           <ChoiceSelect
             items={customers}
             label={t('legal-agreements.demo.customer')}
@@ -228,8 +241,10 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
             value={draft.customerId}
           />
         )}
-        {draft.kind === 'LEASE' && rentalFeedback !== undefined && <output aria-live="polite">{rentalFeedback}</output>}
-        {draft.kind === 'LEASE' && (
+        {props.renewal === undefined && draft.kind === 'LEASE' && rentalFeedback !== undefined && (
+          <output aria-live="polite">{rentalFeedback}</output>
+        )}
+        {props.renewal === undefined && draft.kind === 'LEASE' && (
           <ChoiceSelect
             items={leases}
             label={t('legal-agreements.demo.occupancy')}

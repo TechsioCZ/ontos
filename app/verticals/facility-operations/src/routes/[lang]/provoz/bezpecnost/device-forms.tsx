@@ -29,6 +29,7 @@ import {
   securityDeviceStates,
   securityDeviceTypes,
   securitySeverities,
+  inspectionNoteLimit,
 } from '../../../../../shared/domain/security.ts';
 import type { SecurityDevice, SecurityIncident, SecuritySeverity } from '../../../../../shared/domain/security.ts';
 import { usePropertyOptions } from '../../../../ui/property-options.ts';
@@ -51,17 +52,22 @@ type MutableReportCommand = { -readonly [Key in keyof ReportCommand]: ReportComm
 type ResolveCommand = Extract<OpsCommand, { readonly _tag: 'SecurityIncidentChangeState' }>;
 type MutableResolveCommand = { -readonly [Key in keyof ResolveCommand]: ResolveCommand[Key] };
 
-type FormError = FailureReason | 'required';
+const INSPECTION_NOTE_TOO_LONG = 'inspection_note_too_long';
+type FormError = FailureReason | 'inspection_note_too_long' | 'required';
 const NONE = 'none';
 const CANCEL_LABEL = 'facility-operations.common.cancel';
 
 /** The text of a form error, for the error line and the save bar. */
 const useErrorText = () => {
   const { t } = useModernI18n();
-  return (error: FormError | undefined) =>
-    error === undefined
+  return (error: FormError | undefined) => {
+    if (error === INSPECTION_NOTE_TOO_LONG) {
+      return t('facility-operations.security.inspection.noteTooLong', { limit: inspectionNoteLimit });
+    }
+    return error === undefined
       ? error
       : t(error === 'required' ? 'facility-operations.common.required' : `facility-operations.common.errors.${error}`);
+  };
 };
 
 const ErrorLine = ({ error }: { readonly error: FormError | undefined }) => {
@@ -801,6 +807,10 @@ const submitSecurityInspection = Effect.fn('Facility.submitSecurityInspection')(
     setError('required');
     return 'failed' as const;
   }
+  if (note.trim().length > inspectionNoteLimit) {
+    setError(INSPECTION_NOTE_TOO_LONG);
+    return yield* Effect.succeed('failed' as const);
+  }
   setError(undefined);
   const command: MutableInspectionCommand = {
     _tag: 'SecurityDeviceRecordInspection',
@@ -885,6 +895,7 @@ const InspectionSession = ({
         />
       </div>
       <FormTextarea
+        helpText={k('inspection.noteLimit', { limit: inspectionNoteLimit })}
         id="security-inspection-note"
         label={k('fields.note')}
         maxLength={4000}

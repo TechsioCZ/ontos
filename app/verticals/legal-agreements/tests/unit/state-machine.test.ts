@@ -251,6 +251,32 @@ describe('Agreements state transitions', () => {
       expect(Schema.is(AgreementsRejected)(invalid)).toBe(true);
     }),
   );
+  it.effect('accepts signatures dated today in Prague before UTC midnight but refuses Prague tomorrow', () =>
+    Effect.gen(function* signatureBusinessDate() {
+      const initial: AgreementsState = { ...empty, contracts: [draft] };
+      const command = {
+        _tag: 'RecordSignedDocument',
+        contractRef,
+        document,
+        signedBy: 'Jan Novák',
+        signedOn: '2026-10-16',
+      } as const;
+      for (const instant of ['2026-10-15T22:30:00.000Z', '2026-12-15T23:30:00.000Z']) {
+        yield* TestClock.setTime(Date.parse(instant));
+        const signedOn = instant.startsWith('2026-10') ? '2026-10-16' : '2026-12-16';
+        const recorded = yield* transitionAgreements(initial, { ...command, signedOn }, scope, validators);
+        expect(recorded.snapshot.documents[0]?.signedOn).toBe(signedOn);
+        const tomorrow = instant.startsWith('2026-10') ? '2026-10-17' : '2026-12-17';
+        const failure = yield* transitionAgreements(
+          initial,
+          { ...command, signedOn: tomorrow },
+          scope,
+          validators,
+        ).pipe(Effect.flip);
+        expect(Schema.is(AgreementsRejected)(failure)).toBe(true);
+      }
+    }),
+  );
   it.effect(
     'resolves renewal attention with one successor draft while preserving the active contract expiry indicator',
     () =>
@@ -312,6 +338,84 @@ describe('Agreements state transitions', () => {
       yield* rejected(
         transitionAgreements(empty, { _tag: 'CreateContract', record: draft }, scope, unavailableAgreementsValidators),
       );
+    }),
+  );
+  it.effect('an activated successor still prevents a second renewal of its predecessor', () =>
+    Effect.gen(function* activeSuccessorBlocksRenewal() {
+      const previous: Contract = { ...draft, lifecycleState: 'ACTIVE' };
+      const successor: Contract = {
+        ...draft,
+        contractRef: { ...contractRef, resourceId: propertyRef.resourceId },
+        endDate: '2999-10-25',
+        startDate: '2026-10-25',
+        supersedesContractRef: contractRef,
+      };
+      const renewed = yield* transitionAgreements(
+        { ...empty, contracts: [previous] },
+        { _tag: 'RenewContract', contractRef, successor },
+        scope,
+        validators,
+      );
+      const activated = yield* transitionAgreements(
+        renewed.snapshot,
+        { _tag: 'ActivateContract', contractRef: successor.contractRef },
+        scope,
+        validators,
+      );
+      expect(activated.snapshot.contracts[1]?.lifecycleState).toBe('ACTIVE');
+      const failure = yield* transitionAgreements(
+        activated.snapshot,
+        {
+          _tag: 'RenewContract',
+          contractRef,
+          successor: { ...successor, contractRef: { ...contractRef, resourceId: documentRef.resourceId } },
+        },
+        scope,
+        validators,
+      ).pipe(Effect.flip);
+      expect(Schema.is(AgreementsConflict)(failure)).toBe(true);
+      expect(activated.snapshot.contracts).toHaveLength(2);
+    }),
+  );
+  it.effect('rechecks predecessor period and anchors on renewal draft edits and activation', () =>
+    Effect.gen(function* recheckSuccessor() {
+      const previous: Contract = { ...draft, lifecycleState: 'ACTIVE' };
+      const successor: Contract = {
+        ...draft,
+        contractRef: { ...contractRef, resourceId: propertyRef.resourceId },
+        endDate: '2999-10-25',
+        startDate: '2026-10-25',
+        supersedesContractRef: contractRef,
+      };
+      const initial = { ...empty, contracts: [previous, successor] };
+      const updated = yield* transitionAgreements(
+        initial,
+        { _tag: 'UpdateContract', record: { ...successor, endDate: '2999-11-25' } },
+        scope,
+        validators,
+      );
+      expect(updated.snapshot.contracts[1]?.endDate).toBe('2999-11-25');
+      for (const record of [
+        { ...successor, startDate: '2026-10-24' },
+        { ...successor, counterpartyRef: { ...counterpartyRef, resourceId: documentRef.resourceId } },
+        { ...successor, kind: 'OTHER' as const },
+        { ...successor, unitRef: { ...unitRef, resourceId: documentRef.resourceId } },
+      ]) {
+        const updateFailure = yield* transitionAgreements(
+          initial,
+          { _tag: 'UpdateContract', record },
+          scope,
+          validators,
+        ).pipe(Effect.flip);
+        expect(Schema.is(AgreementsRejected)(updateFailure)).toBe(true);
+        const activationFailure = yield* transitionAgreements(
+          { ...empty, contracts: [previous, record] },
+          { _tag: 'ActivateContract', contractRef: record.contractRef },
+          scope,
+          validators,
+        ).pipe(Effect.flip);
+        expect(Schema.is(AgreementsRejected)(activationFailure)).toBe(true);
+      }
     }),
   );
   it.effect('resolves optional occupancy links through the owner and rejects a different unit or customer', () =>

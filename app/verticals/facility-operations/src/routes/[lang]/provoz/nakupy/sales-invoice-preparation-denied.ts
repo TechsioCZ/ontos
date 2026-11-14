@@ -5,3 +5,8 @@ export class SalesInvoicePreparationDenied extends Schema.TaggedError<SalesInvoi
   'SalesInvoicePreparationDenied',
   { orderId: SalesOrderIdSchema },
 ) {}
+
+export class SalesInvoiceVatUnresolved extends Schema.TaggedError<SalesInvoiceVatUnresolved>()(
+  'SalesInvoiceVatUnresolved',
+  { orderId: SalesOrderIdSchema },
+) {}

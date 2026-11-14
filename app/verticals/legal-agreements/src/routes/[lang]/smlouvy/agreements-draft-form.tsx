@@ -6,12 +6,20 @@ import type { useRecordsPage } from './use-agreements-records.ts';
 
 type PageState = ReturnType<typeof useRecordsPage>;
 
-const ContractCreateForm = ({ kind, state }: { readonly kind: Contract['kind']; readonly state: PageState }) => {
+const ContractCreateForm = ({
+  kind,
+  renewal,
+  state,
+}: {
+  readonly kind: Contract['kind'];
+  readonly renewal?: Contract;
+  readonly state: PageState;
+}) => {
   const { t, unitName } = state;
   const confirmedLeases = (state.occupancies?.occupancies ?? []).filter(
     (record) => record.kind === 'LONG_TERM_LEASE' && record.state === 'CONFIRMED',
   );
-  const handleCreate = state.createContract;
+  const handleCreate = renewal === undefined ? state.createContract : state.renewContract;
   const handleClose = state.closeDraftForm;
   const handleCreated = state.openCreated;
   const handleKindChange = state.selectContractKind;
@@ -41,6 +49,7 @@ const ContractCreateForm = ({ kind, state }: { readonly kind: Contract['kind']; 
       rentalFeedback={
         state.rentalFeedback === undefined ? undefined : t(`legal-agreements.demo.feedback.${state.rentalFeedback}`)
       }
+      {...(renewal === undefined ? {} : { renewal })}
     />
   );
 };
@@ -53,6 +62,16 @@ export const AgreementsDraftForm = ({ state }: { readonly state: PageState }) =>
   }
   if (form.mode === 'create') {
     return <ContractCreateForm kind={form.kind} state={state} />;
+  }
+  if (form.mode === 'renew') {
+    return (
+      <ContractCreateForm
+        key={form.contract.contractRef.resourceId}
+        kind={form.contract.kind}
+        renewal={form.contract}
+        state={state}
+      />
+    );
   }
   const { contractRef } = form.contract;
   // The page's newest read of the contract; the one the form was opened with while the page hides its data.

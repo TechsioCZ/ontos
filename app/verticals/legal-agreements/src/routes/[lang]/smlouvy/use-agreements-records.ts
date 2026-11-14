@@ -12,15 +12,16 @@ import type { Contract, Document } from '../../../../shared/apis/records.ts';
 import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
 import type { ContractRef } from '../../../../shared/resources/contract.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { createAgreement, failedWith, newUuid, savePeriodDraft, sendAgreementsCommand } from './agreements-command.ts';
-import type { AgreementOutcome } from './agreements-command.ts';
 import {
-  DEFAULT_END_DATE,
-  DEFAULT_START_DATE,
-  contractReferenceAudiences,
-  contractTerms,
-  editableDraft,
-} from './agreement-draft.ts';
+  createAgreement,
+  failedWith,
+  newUuid,
+  renewAgreement,
+  savePeriodDraft,
+  sendAgreementsCommand,
+} from './agreements-command.ts';
+import type { AgreementOutcome } from './agreements-command.ts';
+import { contractReferenceAudiences, editableDraft } from './agreement-draft.ts';
 import type { CreateDraft, PeriodDraft } from './agreement-draft.ts';
 import {
   agreements,
@@ -100,6 +101,7 @@ const stillUnsigned = (record: Contract) => (item: Contract) =>
 /** The open contract form: a new contract, or the period of the draft contract it was opened for. */
 export type DraftForm =
   | { readonly kind: Contract['kind']; readonly mode: 'create' }
+  | { readonly contract: Contract; readonly mode: 'renew' }
   | { readonly contract: Contract; readonly mode: 'edit' };
 export const useRecordsPage = (input: AgreementsInput) => {
   const { language, t } = useModernI18n();
@@ -311,6 +313,13 @@ export const useRecordsPage = (input: AgreementsInput) => {
       expectedRevision: snapshot?.revision ?? 0,
       references: { customers, occupancies: occupancies?.occupancies ?? [], units: properties?.units ?? [] },
     }).pipe(Effect.ensuring(invalidate), Effect.flatMap(settleForm));
+  const renewContract = (draft: CreateDraft): Effect.Effect<AgreementOutcome> =>
+    draftForm?.mode === 'renew'
+      ? renewAgreement(draft, { previous: draftForm.contract, expectedRevision: snapshot?.revision ?? 0 }).pipe(
+          Effect.ensuring(invalidate),
+          Effect.flatMap(settleForm),
+        )
+      : Effect.succeed(failedWith('validation'));
   const savePeriod = (
     draft: PeriodDraft,
     expectedRevision: number,
@@ -385,34 +394,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
       Effect.flatMap(settleForm),
     );
   const renew = (record: Contract) => {
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) =>
-            runCommand({
-              _tag: 'RenewContract',
-              contractRef: record.contractRef,
-              successor: {
-                ...contractTerms(record),
-                contractRef: { ...record.contractRef, resourceId },
-                counterpartyRef: record.counterpartyRef,
-                endDate: DEFAULT_END_DATE,
-                kind: record.kind,
-                lifecycleState: 'DRAFT',
-                note: record.note,
-                occupancyRef: record.occupancyRef,
-                propertyRef: record.propertyRef,
-                renewalNoticeDate: null,
-                signatureState: 'NOT_SENT',
-                startDate: record.endDate ?? DEFAULT_START_DATE,
-                supersedesContractRef: record.contractRef,
-                unitRef: record.unitRef,
-              },
-            }),
-        }),
-      ),
-    );
+    setDraftForm({ contract: record, mode: 'renew' });
   };
   const unitName = (resourceId: string | undefined) =>
     properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ??
@@ -445,6 +427,7 @@ export const useRecordsPage = (input: AgreementsInput) => {
   };
   return {
     busy,
+    renewContract,
     closeDraftForm,
     contractKind,
     counterpartyOf,
