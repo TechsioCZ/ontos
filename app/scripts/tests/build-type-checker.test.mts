@@ -98,13 +98,13 @@ const expectSharedBrowserTargets = (outputs: typeof BuildOutputsSchema.Type) => 
 };
 
 it.live(
-  'every application build uses the browser baseline and keeps the published workspace preset TypeScript checker',
+  'every application build uses the browser baseline and leaves type checking to the gate',
   Effect.fn(function* testEffect() {
     expect(modernConfigs.length).toBeGreaterThan(0);
     const outputs = yield* resolveBuildOutputs({ NODE_ENV: 'production' });
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
-      expect(output.disableTsChecker, `${config} must keep output.disableTsChecker: false`).toBe(false);
+      expect(output.disableTsChecker, `${config} must leave diagnostics to pnpm typecheck`).toBe(true);
     }
   }),
 );
@@ -121,17 +121,18 @@ it.live(
   }),
 );
 
-// The unit build runs its own TS-Go reference build first, which
-// fails on a transitive type error (typecheck-project-references.test.mts), so its bundler skips the second check.
+// Builds must not re-enable the checker, regardless of the old opt-in environment flag.
 it.live(
-  'every application build skips the bundler checker after the unit TS-Go reference build',
+  'the legacy build-checker flag does not control whether builds type-check',
   Effect.fn(function* testEffect() {
-    const outputs = yield* resolveBuildOutputs({
-      NODE_ENV: 'production',
-      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
-    });
-    for (const [config, output] of Object.entries(outputs)) {
-      expect(output.disableTsChecker, `${config} must honor ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1`).toBe(true);
+    for (const flag of ['0', '1']) {
+      const outputs = yield* resolveBuildOutputs({
+        NODE_ENV: 'production',
+        ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: flag,
+      });
+      for (const [config, output] of Object.entries(outputs)) {
+        expect(output.disableTsChecker, `${config} must not type-check when the legacy flag is ${flag}`).toBe(true);
+      }
     }
   }),
 );

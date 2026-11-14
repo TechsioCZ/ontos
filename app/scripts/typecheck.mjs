@@ -10,18 +10,15 @@ const args = process.argv.slice(2);
 if ((args.includes('--build') || args.includes('-b')) && !args.includes('--verbose')) {
   args.push('--verbose');
 }
-const result = spawnSync(
-  'pnpm',
-  ['exec', 'ultramodern-create', 'ultramodern', 'typecheck', ...args],
-  {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      EFFECT_TSGO_BIN: compiler,
-      ULTRAMODERN_WORKSPACE_ROOT: fileURLToPath(new URL('..', import.meta.url)),
-    },
+const result = spawnSync('pnpm', ['exec', 'ultramodern-create', 'ultramodern', 'typecheck', ...args], {
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    EFFECT_TSGO_BIN: compiler,
+    ULTRAMODERN_WORKSPACE_ROOT:
+      process.env.ULTRAMODERN_WORKSPACE_ROOT ?? fileURLToPath(new URL('..', import.meta.url)),
   },
-);
+});
 if (result.error) {
   throw result.error;
 }
