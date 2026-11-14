@@ -1,5 +1,7 @@
 {
   "imports": {
+    "moneyConflict": "Columns castka, mena and polozky: the currency differs from the stored order. No amounts or currency were filled. Verify the source currency and import again.",
+    "incompleteMoney": "Columns castka, mena and polozky: a stored amount has no currency. A new currency cannot safely be assigned to an old amount. Verify the original monetary data.",
     "csv": {
       "unterminatedQuote": "Row {{row}}, column {{column}}: missing closing quote. Correct the CSV and import it again.",
       "surplusCells": "Row {{row}}: extra values follow the last column {{column}}. Correct the delimiters or quotes.",

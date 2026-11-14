@@ -1,4 +1,5 @@
 import { DateTime, Schema } from 'effect';
+import csImports from '../../locales/cs/crm-imports.json';
 import { ShortTextSchema } from '../domain/common.ts';
 import type { EntityId, PrincipalId } from '../domain/common.ts';
 // AREA: imports (C03, C04) — owned by the crm-imports lane.
@@ -168,6 +169,30 @@ const eventReviewReason = (existing: ImportedOrder, event: OrderStatusEvent): st
   return undefined;
 };
 
+/** An amount is meaningful only in its own snapshot's currency, including amounts on order lines. */
+const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow) => {
+  const preserved = definedEntries({
+    amount: existing.amount,
+    currency: existing.currency,
+    lines: existing.lines,
+  });
+  const existingHasAmount = existing.amount !== undefined || existing.lines?.some((line) => line.amount !== undefined);
+  if (existing.currency === undefined && existingHasAmount) {
+    return { fields: preserved, reviewReason: csImports.imports.incompleteMoney };
+  }
+  if (existing.currency !== undefined && row.currency !== undefined && existing.currency !== row.currency) {
+    return { fields: preserved, reviewReason: csImports.imports.moneyConflict };
+  }
+  return {
+    fields: definedEntries({
+      amount: existing.amount ?? row.amount,
+      currency: existing.currency ?? row.currency,
+      lines: existing.lines ?? row.lines,
+    }),
+    reviewReason: undefined,
+  };
+};
+
 /** Applies parsed rows to the slice. Pure; the caller persists the returned slice. */
 export const importOrders = (
   slice: ImportsSlice,
@@ -268,22 +293,22 @@ export const importOrders = (
   };
 
   const updateOrder = (existing: ImportedOrder, row: ParsedOrderRow, event: OrderStatusEvent) => {
-    if (existing.statusHistory.some((entry) => sameEvent(entry, event))) {
+    const money = fillMoney(existing, row);
+    const repeated = existing.statusHistory.find((entry) => sameEvent(entry, event));
+    if (repeated !== undefined && (money.reviewReason === undefined || repeated.reviewReason === money.reviewReason)) {
       return {
         message: 'Stejná událost už byla importována, nic se nezměnilo',
         orderId: existing.id,
         outcome: 'duplicate' as const,
       };
     }
-    const reviewReason = eventReviewReason(existing, event);
+    const reviewReason = money.reviewReason ?? eventReviewReason(existing, event);
     const filled = definedEntries({
-      amount: existing.amount ?? row.amount,
-      currency: existing.currency ?? row.currency,
+      ...money.fields,
       customerEmail: existing.customerEmail ?? row.customerEmail,
       customerName: existing.customerName ?? row.customerName,
       customerRegNo: existing.customerRegNo ?? row.customerRegNo,
       externalCustomerId: existing.externalCustomerId ?? row.externalCustomerId,
-      lines: existing.lines ?? row.lines,
       number: existing.number ?? row.number,
       orderedAt: existing.orderedAt ?? row.orderedAt,
     });

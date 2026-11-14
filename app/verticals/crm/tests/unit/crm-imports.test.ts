@@ -245,6 +245,91 @@ describe('CRM order CSV parser', () => {
 });
 
 describe('CRM order import (C03)', () => {
+  it.effect('fills missing monetary snapshots only when their currencies agree, including priced lines', () =>
+    Effect.gen(function* monetarySnapshots() {
+      const header = 'source;order_id;status;event_time;amount;currency;lines\n';
+      for (const { currency, review } of [
+        { currency: 'CZK', review: false },
+        { currency: 'EUR', review: true },
+      ]) {
+        const first = yield* runOk(base, {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}E-shop;money;nova;2026-10-19T09:00:00Z;;CZK;\n`,
+          fileName: 'money-first.csv',
+        });
+        const next = yield* runOk(first, {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}E-shop;money;paid;2026-10-19T10:00:00Z;25.00;${currency};SKU:Name:1:25.00\n`,
+          fileName: 'money-next.csv',
+        });
+        const imported = order(next, 'money');
+        expect(imported.currency).toBe('CZK');
+        expect(imported.amount).toBe(review ? undefined : '25.00');
+        expect(imported.lines?.[0]?.amount).toBe(review ? undefined : '25.00');
+        expect(imported.rawStatus).toBe(review ? 'nova' : 'paid');
+        expect(needsReview(imported)).toBe(review);
+        expect(next.imports.batches[0]).toMatchObject({ review: review ? 1 : 0, updated: review ? 0 : 1 });
+      }
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('does not attach a new currency to old order or line amounts without a currency', () =>
+    Effect.gen(function* incompleteMonetarySnapshots() {
+      for (const monetary of [{ amount: '50.00' }, { lines: [{ amount: '50.00', name: 'Name', quantity: '1' }] }]) {
+        const first = Schema.decodeUnknownSync(CrmStateSchema)({
+          ...Schema.encodeSync(CrmStateSchema)(base),
+          imports: {
+            ...Schema.encodeSync(CrmStateSchema)(base).imports,
+            orders: [
+              {
+                externalId: 'incomplete',
+                id: 'incomplete-order',
+                lastEventAt: '2026-10-19T09:00:00Z',
+                pairing: 'unpaired',
+                rawStatus: 'nova',
+                receivedAt: at,
+                source: 'E-shop',
+                statusHistory: [],
+                ...monetary,
+              },
+            ],
+          },
+        });
+        const next = yield* runOk(first, {
+          _tag: 'ImportOrdersCsv',
+          csv: 'source;order_id;status;event_time;amount;currency;lines\nE-shop;incomplete;paid;2026-10-19T10:00:00Z;10.00;EUR;SKU:New:1:10.00\n',
+          fileName: 'incomplete-money.csv',
+        });
+        expect(order(next, 'incomplete')).toMatchObject(monetary);
+        expect(order(next, 'incomplete').currency).toBeUndefined();
+        expect(order(next, 'incomplete').rawStatus).toBe('nova');
+        expect(needsReview(order(next, 'incomplete'))).toBe(true);
+      }
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('takes amount and currency together when no monetary snapshot exists', () =>
+    Effect.gen(function* freshMonetarySnapshot() {
+      const header = 'source;order_id;status;event_time;amount;currency;lines\n';
+      const first = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;fresh-money;nova;2026-10-19T09:00:00Z;;;\n`,
+        fileName: 'no-money.csv',
+      });
+      const next = yield* runOk(first, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;fresh-money;paid;2026-10-19T10:00:00Z;25.00;EUR;SKU:Name:1:25.00\n`,
+        fileName: 'fresh-money.csv',
+      });
+      expect(order(next, 'fresh-money')).toMatchObject({
+        amount: '25.00',
+        currency: 'EUR',
+        lines: [{ amount: '25.00' }],
+      });
+      expect(needsReview(order(next, 'fresh-money'))).toBe(false);
+      return yield* Effect.void;
+    }),
+  );
   it.effect('persists a multi-source import whose combined source names exceed the batch limit', () =>
     Effect.gen(function* boundedBatchSource() {
       const sources = ['a'.repeat(120), 'b'.repeat(120)];
