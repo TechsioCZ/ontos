@@ -189,7 +189,7 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     plan.integration
       .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
       .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/3', '2/3', '3/3']);
+  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
 });
 
 it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
