@@ -166,7 +166,24 @@ const FederationManifest = Schema.Struct({
   metaData: Schema.Struct({ name: NONEMPTY }),
   name: NONEMPTY,
 });
-const BackendManifest = Schema.Struct({ backendFederation: Schema.Struct({ deliveryUnit: IdentitySchema }) });
+/**
+ * The backend federation manifest names its unit with UltraModern's delivery-unit contract block, which carries the
+ * build's marker and source revision but neither the app id nor the build alias of the build metadata.
+ */
+const BackendManifest = Schema.Struct({
+  backendFederation: Schema.Struct({
+    deliveryUnit: Schema.Struct({
+      buildMarker: NONEMPTY,
+      sourceRevision: REVISION,
+      unitId: NONEMPTY.pipe(Schema.brand('BackendFederationUnitId')),
+    }),
+  }),
+});
+/** The remote names the build it belongs to: the same marker and source revision as the unit's build metadata. */
+export const sameBackendBuild = (
+  identity: CacheIdentity,
+  remote: { readonly buildMarker: string; readonly sourceRevision: string },
+) => remote.buildMarker === identity.buildMarker && remote.sourceRevision === identity.sourceRevision;
 const PlanSchema = Schema.Struct({ build: Schema.Array(Schema.String), keep: Schema.Array(Schema.String) });
 export class UnitOutputCacheError extends Schema.TaggedError<UnitOutputCacheError>()('UnitOutputCacheError', {
   message: Schema.String,
@@ -467,7 +484,7 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
     }
     if (remote) {
       const backend = yield* readJson(path.join(root, DIST, BACKEND_MANIFEST), BackendManifest);
-      if (!sameIdentity(identity, backend.backendFederation.deliveryUnit)) {
+      if (!sameBackendBuild(identity, backend.backendFederation.deliveryUnit)) {
         return yield* invalid(unit.id, 'backend federation identity mismatch');
       }
     }

@@ -11,6 +11,7 @@ import {
   inventory,
   planOutputCache,
   requiredOutputs,
+  sameBackendBuild,
   requiredOutputMismatch,
   typeBundleMismatch,
 } from '../ci/unit-output-cache.mts';
@@ -273,4 +274,12 @@ it('requires the backend federation remote of every module, and none of the Shel
   expect(requiredOutputs(UNIT)).toContain('dist/backend-mf-manifest.json');
   expect(requiredOutputs(UNIT)).toContain('dist/backendRemoteEntry.cjs');
   expect(requiredOutputs('shell-super-app')).toEqual([OUTPUT_ENTRY, '.output/package.json', FILE]);
+});
+
+it("matches a module's backend federation remote to its build by marker and source revision", () => {
+  // UltraModern's contract block names the unit without the build metadata's app id and build alias.
+  const remote = { buildMarker: identity.buildMarker, sourceRevision: identity.sourceRevision };
+  expect(sameBackendBuild(identity, remote)).toBe(true);
+  expect(sameBackendBuild(identity, { ...remote, buildMarker: OTHER_HASH })).toBe(false);
+  expect(sameBackendBuild(identity, { ...remote, sourceRevision: CURRENT_REVISION })).toBe(false);
 });
