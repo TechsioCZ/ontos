@@ -119,7 +119,8 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import {
   buildAccessGraph,
   replacedDatabase,
-  templateDatabaseLayer,
+  ACCESS_ADMIN_TEMPLATE_DATABASE as TEMPLATE_DATABASE,
+  accessAdminTemplateLayer,
 } from '../support/access-admin-real-gate-fixture.ts';
 
 /*
@@ -140,7 +141,6 @@ const catalogArtifactPath = new URL('../../../../topology/authorization-catalog.
 const ReleaseIntentSchema = Schema.fromJsonString(
   Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })) }),
 );
-const TEMPLATE_DATABASE = 'p14_access_admin_template';
 const reportPath = Config.option(Config.String('STAGE_SHAPE_REPORT'));
 const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeReport = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -1595,7 +1595,7 @@ const measurePeopleSearch = Effect.fn('test.measurePeopleSearch')(function* meas
   return warm.report;
 });
 
-it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
+it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '900 seconds' })(
   'agent approval path in the shape of stage',
   (suite) => {
     suite.effect(

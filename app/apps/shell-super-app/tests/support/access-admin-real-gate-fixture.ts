@@ -86,16 +86,10 @@ import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/perm
 const UNREACHABLE_SPICEDB_ENDPOINT = '127.0.0.1:1';
 
 /**
- * The fixed template the full-catalog authority suites still clone by name (`templateDatabaseLayer`).
- * Every process that builds it first drops it, so two sessions running those suites against one
- * PostgreSQL server can still destroy each other's template.
+ * Every administration suite clones this process's own template. The UUID also isolates independent
+ * module instances in one worker, and the scoped layer drops only its own template.
  */
-const SHARED_TEMPLATE_DATABASE = 'p14_access_admin_template';
-/**
- * This process's own template (`accessAdminTemplateLayer`): no other session can drop it while a case
- * clones it, and the layer drops it when the suite ends.
- */
-export const ACCESS_ADMIN_TEMPLATE_DATABASE = `${SHARED_TEMPLATE_DATABASE}_${process.pid}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
+export const ACCESS_ADMIN_TEMPLATE_DATABASE = `p14_access_admin_template_${process.pid}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
 const CASE_DATABASE_PREFIX = 'p14_access_admin_';
 const LOGIN_ROLES = ['ontos_runtime', 'party_registry_runtime', 'party_registry_worker'] as const;
 
@@ -320,23 +314,29 @@ const makeClient = (connectionString: string, maxConnections: number) =>
     );
   }).pipe(Effect.orDie);
 
-/** The suite's template: the committed core and staff-auth schemas plus the runtime login roles. */
-const buildTemplateDatabase = (admin: PgClient.PgClient) =>
-  Effect.gen(function* buildTemplate() {
-    yield* Effect.forEach(
-      LOGIN_ROLES,
-      (role) =>
-        admin
-          .unsafe(
+/** Login roles are cluster-wide; initialize them under one lock on the shared admin database. */
+const prepareLoginRoles = (admin: PgClient.PgClient) =>
+  admin.withTransaction(
+    Effect.gen(function* prepareRoles() {
+      yield* admin.unsafe("select pg_advisory_xact_lock(hashtextextended('p14.access-admin.login-roles', 0))");
+      return yield* Effect.forEach(
+        LOGIN_ROLES,
+        (role) =>
+          admin.unsafe(
             `do $$ begin
                if not exists (select 1 from pg_roles where rolname = '${role}') then
                  create role ${role} login password '${role}';
                end if;
              end $$`,
-          )
-          .pipe(Effect.orDie),
-      { concurrency: 1, discard: true },
-    );
+          ),
+        { concurrency: 1, discard: true },
+      );
+    }),
+  );
+
+/** The suite's template: the committed core and staff-auth schemas and database-local grants. */
+const buildTemplateDatabase = (admin: PgClient.PgClient) =>
+  Effect.gen(function* buildTemplate() {
     yield* runStatements(admin, yield* migrationStatements(coreMigrationDirectory, retiredCoreMigrationDirectories));
     yield* runStatements(admin, yield* migrationStatements(authMigrationDirectory));
     yield* runStatements(admin, [
@@ -362,6 +362,7 @@ const prepareTemplateDatabase = (name: string) =>
   Effect.gen(function* prepareTemplate() {
     const adminUrl = yield* serverAdminUrl;
     const admin = yield* makeClient(adminUrl, 1);
+    yield* prepareLoginRoles(admin);
     yield* dropDatabase(admin, name);
     yield* admin.unsafe(`create database "${name}"`).pipe(Effect.orDie);
     const template = yield* makeClient(replacedDatabase(adminUrl, name), 1);
@@ -377,9 +378,6 @@ const dropTemplateDatabase = (name: string) =>
   Effect.gen(function* dropTemplate() {
     yield* dropDatabase(yield* makeClient(yield* serverAdminUrl, 1), name);
   }).pipe(Effect.scoped);
-
-/** The shared, fixed-name template of the full-catalog authority suites, which clone it by that name. */
-export const templateDatabaseLayer = Layer.effectDiscard(prepareTemplateDatabase(SHARED_TEMPLATE_DATABASE));
 
 /** Whether this process's own template exists: `withAccessAdminCase` clones nothing else. */
 let accessAdminTemplateReady = false;

@@ -32,9 +32,7 @@ import {
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import type { PgClient } from '@effect/sql-pg';
-import { Config, Crypto, DateTime, Effect, FileSystem, Layer, Option, Path, Ref, Schema, Tracer } from 'effect';
-import { expect, it } from 'effect-rstest';
-
+import { Config, Crypto, DateTime, Effect, FileSystem, Layer, Path, Schema, Tracer } from 'effect';
 import { withOptional } from '../../../../packages/core-runtime/src/access/decision/optional.ts';
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
 import type { DecisionCheckPort } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
@@ -49,7 +47,7 @@ import { spiceDbTransport } from '../../../../packages/core-runtime/src/permissi
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { callerModuleAccess, emptyCallerAccessTrace, moduleCarriers } from '../../api/agent-platform/caller.ts';
+import { moduleCarriers } from '../../api/agent-platform/caller.ts';
 import {
   ShellInstalledModuleCatalog,
   ShellInstalledModuleCatalogLive,
@@ -59,7 +57,7 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import {
   buildAccessGraph,
   replacedDatabase,
-  templateDatabaseLayer,
+  ACCESS_ADMIN_TEMPLATE_DATABASE as TEMPLATE_DATABASE,
 } from '../support/access-admin-real-gate-fixture.ts';
 
 /*
@@ -75,7 +73,7 @@ const ReleaseIntentSchema = Schema.fromJsonString(
   Schema.Struct({ modules: Schema.Array(Schema.Struct({ appId: OntosDeploymentAppIdSchema })) }),
 );
 
-const installedComposition = Effect.gen(function* installedComposition() {
+export const installedComposition = Effect.gen(function* installedComposition() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const intent = yield* Schema.decodeUnknownEffect(ReleaseIntentSchema)(
@@ -183,7 +181,6 @@ const gateLayer = (input: {
 
 const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const catalogArtifactPath = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
-const TEMPLATE_DATABASE = 'p14_access_admin_template';
 
 const publishedCatalog = Effect.gen(function* publishedCatalog() {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -195,7 +192,7 @@ const publishedCatalog = Effect.gen(function* publishedCatalog() {
 }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
 
 /** A signed-in staff session's trusted scope; `correlationId` tags the evidence rows its reads write. */
-const sessionScope = (input: {
+export const sessionScope = (input: {
   readonly correlationId: string;
   readonly legalEntityId?: string;
   readonly principalId: string;
@@ -255,7 +252,7 @@ const runCellsOf = (catalog: typeof AccessCatalogModulesSchema.Type, moduleKey: 
         : [],
     );
 
-const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>) =>
+export const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>) =>
   Effect.scoped(
     Effect.gen(function* authorityCase() {
       const crypto = yield* Crypto.Crypto;
@@ -406,7 +403,7 @@ const tally = (records: readonly SpanRecord[]) => {
 const countOf = (spans: ReadonlyMap<string, { readonly count: number }>, name: string) => spans.get(name)?.count ?? 0;
 
 /** One measured read: what it answered, the round trips it made and the evidence rows it left. */
-const measured = <A, E, R>(input: {
+export const measured = <A, E, R>(input: {
   readonly authorityCase: AuthorityCase;
   readonly correlationId: string;
   readonly read: Effect.Effect<A, E, R>;
@@ -445,7 +442,7 @@ const measured = <A, E, R>(input: {
     };
   });
 
-const reportOf = (result: Effect.Success<ReturnType<typeof measured>>) => ({
+export const reportOf = (result: Effect.Success<ReturnType<typeof measured>>) => ({
   cellReads: result.cellReads,
   counters: result.counters,
   decisionRows: result.decisionRows,
@@ -482,7 +479,7 @@ const questionOf = (
 });
 
 /** The Action authority as it was: one gate decision per Action, one at a time. */
-const actionsOneAtATime = (actionKeys: readonly string[], scope: OperationalScope) =>
+export const actionsOneAtATime = (actionKeys: readonly string[], scope: OperationalScope) =>
   Effect.gen(function* askActionsOneAtATime() {
     const installed = yield* (yield* ShellInstalledModuleCatalog).load;
     const { declared } = actionQuestionsOf(installed);
@@ -503,7 +500,7 @@ const actionsOneAtATime = (actionKeys: readonly string[], scope: OperationalScop
   });
 
 /** `callerModuleAccess` as it was: one carrier batch, every LIST one at a time, every Action one at a time. */
-const callerAccessOneAtATime = (scope: OperationalScope) =>
+export const callerAccessOneAtATime = (scope: OperationalScope) =>
   Effect.gen(function* askCallerAccessOneAtATime() {
     const installed = yield* (yield* ShellInstalledModuleCatalog).load;
     const gate = yield* AccessDecisionGate;
@@ -555,7 +552,7 @@ const callerAccessOneAtATime = (scope: OperationalScope) =>
   });
 
 /** The Action authority a proposal queue read asks in its preparation: every own Action of every installed module. */
-const queueReadActionKeys = Effect.gen(function* queueReadActionKeys() {
+export const queueReadActionKeys = Effect.gen(function* queueReadActionKeys() {
   const installed = yield* (yield* ShellInstalledModuleCatalog).load;
   return installed.contracts.flatMap(({ manifest }) =>
     manifest.publicSurface.actions.flatMap((action) =>
@@ -565,10 +562,11 @@ const queueReadActionKeys = Effect.gen(function* queueReadActionKeys() {
 });
 
 /** Each separately asked batch's answers, in asking order. */
-const valuesOfEach = <A>(results: readonly { readonly value: readonly A[] }[]) => results.flatMap(({ value }) => value);
+export const valuesOfEach = <A>(results: readonly { readonly value: readonly A[] }[]) =>
+  results.flatMap(({ value }) => value);
 
 /** Each separately asked batch's evidence rows, sorted as one measured read sorts its own. */
-const rowsOfEach = (results: readonly { readonly decisionRowContents: readonly string[] }[]) =>
+export const rowsOfEach = (results: readonly { readonly decisionRowContents: readonly string[] }[]) =>
   results.flatMap(({ decisionRowContents }) => decisionRowContents).toSorted();
 
 /**
@@ -597,7 +595,7 @@ const firstActionsOf = (keys: readonly string[], modules: readonly string[]) =>
  * The first person-runnable Action of each of `modules`, asked of the real gate in one batch by `person` in
  * `legalEntityId`.
  */
-const firstActionsAsked = (input: {
+export const firstActionsAsked = (input: {
   readonly authorityCase: AuthorityCase;
   readonly correlationId: string;
   readonly legalEntityId: string;
@@ -621,234 +619,20 @@ const firstActionsAsked = (input: {
   });
 
 /** The first work-tasks Action key: what one work-tasks proposal batch names. */
-const firstTaskAction = (keys: readonly string[]) => keys.filter((key) => key.startsWith('work.tasks.')).slice(0, 1);
+export const firstTaskAction = (keys: readonly string[]) =>
+  keys.filter((key) => key.startsWith('work.tasks.')).slice(0, 1);
 
-const sorted = (values: Iterable<string>) => [...values].toSorted();
+export const sorted = (values: Iterable<string>) => [...values].toSorted();
 
 /** The members of `modules` that are in `kept`, sorted. */
-const keptIn = (kept: readonly string[], modules: ReadonlySet<string>) => sorted(kept.filter((id) => modules.has(id)));
+export const keptIn = (kept: readonly string[], modules: ReadonlySet<string>) =>
+  sorted(kept.filter((id) => modules.has(id)));
 
-const reportPath = Config.option(Config.String('CALLER_AUTHORITY_REPORT'));
+export const reportPath = Config.option(Config.String('CALLER_AUTHORITY_REPORT'));
 
 /**
  * Bounds of a stage tenant's caller authority load: one engine snapshot each for the carriers, the LISTs and the
  * Actions, with one kind and scope read for all LISTs. Asking every composed module took 86 transactions; one LIST
  * call at a time, 36 and 6 snapshots; one call with a preamble per LIST, 30.
  */
-const CALLER_INSTALLED_BOUNDS = { checkBulk: 3, transactions: 20 };
-
-it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
-  'agent platform caller authority over the installed release',
-  (suite) => {
-    suite.effect(
-      "asks a tenant owner's caller authority and a queue read's Action authority in batches, with identical answers and evidence",
-      () =>
-        withAuthorityCase('work.tasks', (authorityCase) =>
-          Effect.gen(function* batchedCallerAuthority() {
-            const snapshot = yield* installedComposition;
-            const { companyId, owner, tenantId } = authorityCase;
-            const ownerScope = (correlationId: string) =>
-              sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
-
-            // (a) one caller authority load.
-            const trace = yield* Ref.make(emptyCallerAccessTrace);
-            const callerScope = yield* ownerScope('caller-authority-batch');
-            const caller = yield* measured({
-              authorityCase,
-              correlationId: 'caller-authority-batch',
-              read: callerModuleAccess({ scope: callerScope }, trace),
-              snapshot,
-            });
-            const callerBefore = yield* measured({
-              authorityCase,
-              correlationId: 'caller-authority-single',
-              read: callerAccessOneAtATime(yield* ownerScope('caller-authority-single')),
-              snapshot,
-            });
-            // Every module of the release is installed and active in this tenant, so the filter removes nothing here.
-            expect(sorted(caller.value.access)).toEqual(sorted(callerBefore.value.access));
-            expect(sorted(caller.value.propose)).toEqual(sorted(callerBefore.value.propose));
-            expect(sorted(caller.value.write)).toEqual(sorted(callerBefore.value.write));
-            expect(caller.decisionRows).toBeGreaterThan(0);
-            expect(caller.decisionRows).toBe(callerBefore.decisionRows);
-            expect(caller.decisionRowContents).toEqual(callerBefore.decisionRowContents);
-            expect(caller.transactions).toBeLessThan(callerBefore.transactions);
-
-            // (b) the Action authority one proposal queue read asks; a decide runs that read twice.
-            const queueScope = yield* ownerScope('queue-authority-batch');
-            const queue = yield* measured({
-              authorityCase,
-              correlationId: 'queue-authority-batch',
-              read: Effect.gen(function* batchedQueueAuthority() {
-                const actionKeys = yield* queueReadActionKeys;
-                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: queueScope });
-              }),
-              snapshot,
-            });
-            const queueBefore = yield* measured({
-              authorityCase,
-              correlationId: 'queue-authority-single',
-              read: Effect.gen(function* singleQueueAuthority() {
-                return yield* actionsOneAtATime(
-                  yield* queueReadActionKeys,
-                  yield* ownerScope('queue-authority-single'),
-                );
-              }),
-              snapshot,
-            });
-            expect(queue.value).toEqual(queueBefore.value);
-            expect(queue.decisionRows).toBe(queueBefore.decisionRows);
-            expect(queue.decisionRowContents).toEqual(queueBefore.decisionRowContents);
-            expect(queue.transactions).toBeLessThan(queueBefore.transactions);
-
-            const path = yield* reportPath;
-            if (Option.isSome(path)) {
-              const fileSystem = yield* FileSystem.FileSystem;
-              yield* fileSystem.writeFileString(
-                path.value,
-                yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-                  caller: { after: reportOf(caller), before: reportOf(callerBefore) },
-                  modules: snapshot.composition.modules.length,
-                  queue: { after: reportOf(queue), before: reportOf(queueBefore) },
-                  queueActions: queue.value.length,
-                  trace: yield* Ref.get(trace),
-                }),
-              );
-            }
-          }).pipe(Effect.provide(NodeServices.layer)),
-        ),
-      900_000,
-    );
-
-    suite.effect(
-      "asks a stage tenant owner's caller authority only about the modules the tenant installed",
-      () =>
-        withAuthorityCase('work.tasks', (authorityCase) =>
-          Effect.gen(function* installedCallerAuthority() {
-            const snapshot = yield* installedComposition;
-            const { companyId, owner, tenantId } = authorityCase;
-            // Stage's N1 demo tenant: 6 of the release's modules installed, the owner holding full access.
-            const installed = [
-              'commerce.customer-context',
-              'commerce.market-catalog',
-              'commerce.storefront-registry',
-              'demo.merchandise',
-              'party.registry',
-              'work.tasks',
-            ];
-            yield* authorityCase.reinstall(installed);
-            const ownerScope = (correlationId: string) =>
-              sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
-            const trace = yield* Ref.make(emptyCallerAccessTrace);
-            const caller = yield* measured({
-              authorityCase,
-              correlationId: 'installed-caller-authority',
-              read: callerModuleAccess({ scope: yield* ownerScope('installed-caller-authority') }, trace),
-              snapshot,
-            });
-            // Asking every composed module, as before, then dropping the uninstalled ones (all installed ones are
-            // active, which admits reads and writes) gives the same rights.
-            const everything = yield* measured({
-              authorityCase,
-              correlationId: 'installed-caller-reference',
-              read: callerAccessOneAtATime(yield* ownerScope('installed-caller-reference')),
-              snapshot,
-            });
-            expect(sorted(caller.value.access)).toEqual(keptIn(installed, everything.value.access));
-            expect(sorted(caller.value.propose)).toEqual(keptIn(installed, everything.value.propose));
-            expect(sorted(caller.value.write)).toEqual(keptIn(installed, everything.value.write));
-            const remaining = [...everything.decisionRowContents];
-            for (const row of caller.decisionRowContents) {
-              const at = remaining.indexOf(row);
-              expect(at).toBeGreaterThanOrEqual(0);
-              remaining.splice(at, 1);
-            }
-            // One exact proposal batch read's Action authority: every Action of the release (as it asked before) or
-            // only the one its rows name (a work-tasks proposal), as an approval's five batch reads now ask it.
-            const batchScope = yield* ownerScope('installed-batch-authority');
-            const everyAction = yield* measured({
-              authorityCase,
-              correlationId: 'installed-batch-every-action',
-              read: Effect.gen(function* everyActionAuthority() {
-                const actionKeys = yield* queueReadActionKeys;
-                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: batchScope });
-              }),
-              snapshot,
-            });
-            const oneAction = yield* measured({
-              authorityCase,
-              correlationId: 'installed-batch-one-action',
-              read: Effect.gen(function* oneActionAuthority() {
-                const actionKeys = firstTaskAction(yield* queueReadActionKeys);
-                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: batchScope });
-              }),
-              snapshot,
-            });
-            const [taskAction] = oneAction.value;
-            expect(oneAction.value).toEqual(
-              everyAction.value.filter(({ actionKey }) => actionKey === taskAction?.actionKey),
-            );
-            expect(oneAction.counters.checkItems).toBeLessThan(everyAction.counters.checkItems);
-            const path = yield* reportPath;
-            if (Option.isSome(path)) {
-              yield* (yield* FileSystem.FileSystem).writeFileString(
-                `${path.value}.installed.json`,
-                yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-                  after: reportOf(caller),
-                  batchAuthorityEvery: reportOf(everyAction),
-                  batchAuthorityOne: reportOf(oneAction),
-                  everything: reportOf(everything),
-                  trace: yield* Ref.get(trace),
-                }),
-              );
-            }
-            // Asking every composed module: 16 SpiceDB calls (14 of them one LIST each) and 478 evidence rows.
-            expect(caller.counters.checkBulk).toBeLessThanOrEqual(CALLER_INSTALLED_BOUNDS.checkBulk);
-            expect(caller.transactions).toBeLessThanOrEqual(CALLER_INSTALLED_BOUNDS.transactions);
-            expect(caller.decisionRows).toBeLessThan(everything.decisionRows);
-          }).pipe(Effect.provide(NodeServices.layer)),
-        ),
-      300_000,
-    );
-
-    suite.effect(
-      'gives every Action the same allow/deny answer through the real gate batch as when asked alone, with the same rows',
-      () =>
-        withAuthorityCase('work.tasks', (authorityCase) =>
-          Effect.gen(function* independentAnswers() {
-            const snapshot = yield* installedComposition;
-            const { companyId, otherCompanyId } = authorityCase;
-            yield* authorityCase.reinstall([
-              'commerce.customer-context',
-              'commerce.market-catalog',
-              'commerce.storefront-registry',
-              'demo.merchandise',
-              'party.registry',
-              'work.tasks',
-            ]);
-            // Granted in this company but its module is not installed (never projected), and granted only in the other.
-            yield* authorityCase.grant('facility.operations', companyId);
-            yield* authorityCase.grant('party.registry', otherCompanyId);
-            const askIn = (legalEntityId: string, correlationId: string, modules: readonly string[]) =>
-              firstActionsAsked({ authorityCase, correlationId, legalEntityId, modules, snapshot });
-            const modules = ['work.tasks', 'facility.operations', 'party.registry'];
-            const together = yield* askIn(companyId, 'independent-together', modules);
-            const alone = yield* Effect.forEach(
-              modules,
-              (moduleKey) => askIn(companyId, `independent-${moduleKey}`, [moduleKey]),
-              { concurrency: 1 },
-            );
-            expect(together.value).toEqual(valuesOfEach(alone));
-            expect(together.value.map(({ execute }) => execute)).toEqual(['allowed', 'denied', 'denied']);
-            // The same evidence rows, row for row: each denial is recorded whatever was asked beside it.
-            expect(together.decisionRowContents).toEqual(rowsOfEach(alone));
-            expect(together.decisionRowContents.filter((row) => row.includes('|DENIED|'))).toHaveLength(2);
-            // The other company's grant is real: there the same Action runs.
-            const elsewhere = yield* askIn(otherCompanyId, 'independent-elsewhere', ['party.registry']);
-            expect(elsewhere.value.map(({ execute }) => execute)).toEqual(['allowed']);
-          }).pipe(Effect.provide(NodeServices.layer)),
-        ),
-      300_000,
-    );
-  },
-);
+export const CALLER_INSTALLED_BOUNDS = { checkBulk: 3, transactions: 20 };
