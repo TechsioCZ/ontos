@@ -100,6 +100,7 @@ export interface SymmyC14CustomerFixtureScopeInput {
   readonly admin: PgClient.PgClient;
   readonly legalEntityId: string;
   readonly principalId: string;
+  readonly runtime: PgClient.PgClient;
   readonly tenantId: string;
 }
 export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = never> {
@@ -253,6 +254,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       purpose: 'implementation-1096-registered-workload-gateway',
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+    const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
     const ownerAppIds = appIds.filter((appId) => appId !== symmyAppId);
     const shell = yield* makeApiKeyGatewayNativeFixture({
       additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
@@ -277,13 +279,15 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     for (const module of snapshot.composition.modules) {
       yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
     }
-    yield* options.initializeScopes({ admin, legalEntityId, principalId: governancePrincipalId, tenantId });
+    yield* options.initializeScopes({ admin, legalEntityId, principalId: governancePrincipalId, runtime, tenantId });
     for (const principalId of [integration.principalId, systemId]) {
       for (const workload of configuration.workloads) {
         const bindingId = yield* uuid;
         const incarnation = yield* uuid;
         yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
               values(${bindingId},${incarnation},${tenantId},${principalId},${workload},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+              values(${yield* uuid},${yield* uuid},${tenantId},${bindingId},${legalEntityId},'active')`;
       }
     }
     const key = yield* shell.issueFixtureProviderKey(integration);

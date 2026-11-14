@@ -78,12 +78,14 @@ const bindPrincipal = (
 interface FixtureScope {
   readonly admin: PgClient.PgClient;
   readonly principalId: string;
+  readonly runtime: PgClient.PgClient;
   readonly sellerId: string;
   readonly tenantId: string;
 }
 
-export const initializePolicyFixtureScopes = ({ principalId, sellerId, tenantId }: FixtureScope) =>
+export const initializePolicyFixtureScopes = ({ principalId, runtime, sellerId, tenantId }: FixtureScope) =>
   testCoreDatabase.pipe(
+    Effect.provideService(PgClient.PgClient, runtime),
     Effect.flatMap((core) => writeTestTenantScopes(core, { legalEntityIds: [sellerId], principalId, tenantId })),
   );
 
@@ -137,6 +139,7 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
     purpose: 'implementation-1096-registered-workload-gateway',
   });
   const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+  const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
     ...(owner === 'assortment' && {
       additionalRelaySources: assortmentCallingOwners.map((sourceAppId) => ({ sourceAppId })),
@@ -161,7 +164,7 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   const issuer = yield* addPrincipal(admin, tenantId, 'human');
   const integration = yield* addPrincipal(admin, tenantId, 'integration');
   const system = yield* addPrincipal(admin, tenantId, 'system');
-  yield* initializeScopes({ admin, principalId: issuer.principalId, sellerId, tenantId });
+  yield* initializeScopes({ admin, principalId: issuer.principalId, runtime, sellerId, tenantId });
   yield* bindPrincipal(admin, issuer, 'user', shell.providerUserId);
   for (const [principalId, workload] of [
     [integration.principalId, 'integration.symmy-admit'],
@@ -176,8 +179,11 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
         ]
       : []),
   ]) {
+    const bindingId = randomUUID();
     yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-      values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+      values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+    yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+      values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${sellerId},'active')`;
   }
   const key = yield* shell.issueFixtureProviderKey({ ...integration, issuerPrincipalId: issuer.principalId });
   yield* bindPrincipal(admin, integration, 'api_key', key.providerKeyId);

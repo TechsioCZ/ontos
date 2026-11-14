@@ -55,8 +55,11 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
     [systemPrincipalId, [internalSyncJobKey, groupWrite, groupRead, inventoryWrite, inventoryRead]],
   ] as const) {
     for (const workloadKey of workloadKeys) {
+      const bindingId = randomUUID();
       yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-          values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workloadKey},'active')`;
+          values(${bindingId},${randomUUID()},${tenantId},${principalId},${workloadKey},'active')`;
+      yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${legalEntityId},'active')`;
     }
   }
   const ingressKey = yield* shell.issueFixtureProviderKey(integration);

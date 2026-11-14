@@ -67,9 +67,9 @@ it.live(
       Effect.gen(function* assignmentConformance() {
         const fixture = yield* makeAssignmentFixture({
           includePriceGroup: true,
-          initializeScopes: ({ admin, legalEntityId, principalId, tenantId }) =>
+          initializeScopes: ({ legalEntityId, principalId, runtime, tenantId }) =>
             testCoreDatabase.pipe(
-              Effect.provideService(PgClient.PgClient, admin),
+              Effect.provideService(PgClient.PgClient, runtime),
               Effect.flatMap((core) =>
                 writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId, tenantId }),
               ),

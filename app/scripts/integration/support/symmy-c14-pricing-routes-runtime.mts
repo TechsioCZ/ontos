@@ -153,8 +153,11 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     ];
     for (const principalId of [integration.principalId, systemId]) {
       for (const workload of principalId === systemId ? [workerKey, ...workloads] : workloads) {
+        const bindingId = randomUUID();
         yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
-          values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+          values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${legalEntityId},'active')`;
       }
     }
     const key = yield* shell.issueFixtureProviderKey({

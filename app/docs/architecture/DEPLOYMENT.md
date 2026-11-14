@@ -578,6 +578,8 @@ When `main` merges into `demo/sales-crm`, main's design wins except for these re
 
 Zerops-only deployment: the demo keeps main's GATES and none of main's deploy jobs or Cloudflare/edge workflows; it deploys through `zerops-stage.yml`. The deploy chain behind `MAIN_DEPLOY_ENABLED` in `ultramodern-workspace-gates.yml` and the workflows `active-application-composition-refresh.yml`, `initial-composition-cutover.yml` and `stage-edge-cost-guard.yml` are absent on purpose.
 
+The owner generator no longer scaffolds a Cloudflare build script.
+
 Upstream risk when the demo merges back into `main`: Tax keeps the demo's migrations `20261023223119_gateway-assertion-redemptions` and `20261030121613_gateway-assertion-redemption-main-shape` instead of main's `20261109213238_tax_gateway_assertion_redemptions`. A database that already ran main's migration would replay the demo's two by name. Reconcile the Tax migration history before that merge lands.
 
 ## Pull-request and release hygiene
