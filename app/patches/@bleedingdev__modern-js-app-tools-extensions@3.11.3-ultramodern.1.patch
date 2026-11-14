@@ -115,3 +115,54 @@ index 5044182017076d65170ede4b6162b5bc3589a8e9..e04332f2506dbff5e3a9d6a52b1f0b5e
          write: false
      });
      const output = result.outputFiles[0];
+diff --git a/dist/cjs/build-config/internal-effect-discovery.js b/dist/cjs/build-config/internal-effect-discovery.js
+--- a/dist/cjs/build-config/internal-effect-discovery.js
++++ b/dist/cjs/build-config/internal-effect-discovery.js
+@@ -43,11 +43,12 @@ const NATIVE_TYPESCRIPT_PACKAGES = [
+     "typescript",
+     "@typescript/native"
+ ];
+-const EFFECT_TSRS_PROVIDER_VERSION = '0.67.0';
++const EFFECT_TSRS_PROVIDER_VERSION = '0.69.0';
+ const EFFECT_TSRS_TARGETS = new Set([
+     '@tsrs/darwin-arm64',
+     '@tsrs/darwin-x64',
+     '@tsrs/win32-x64',
++    '@tsrs/win32-arm64',
+     '@tsrs/linux-x64-gnu',
+     '@tsrs/linux-arm64-gnu'
+ ]);
+diff --git a/dist/esm/build-config/internal-effect-discovery.mjs b/dist/esm/build-config/internal-effect-discovery.mjs
+--- a/dist/esm/build-config/internal-effect-discovery.mjs
++++ b/dist/esm/build-config/internal-effect-discovery.mjs
+@@ -9,11 +9,12 @@ const NATIVE_TYPESCRIPT_PACKAGES = [
+     "typescript",
+     "@typescript/native"
+ ];
+-const EFFECT_TSRS_PROVIDER_VERSION = '0.67.0';
++const EFFECT_TSRS_PROVIDER_VERSION = '0.69.0';
+ const EFFECT_TSRS_TARGETS = new Set([
+     '@tsrs/darwin-arm64',
+     '@tsrs/darwin-x64',
+     '@tsrs/win32-x64',
++    '@tsrs/win32-arm64',
+     '@tsrs/linux-x64-gnu',
+     '@tsrs/linux-arm64-gnu'
+ ]);
+diff --git a/dist/esm-node/build-config/internal-effect-discovery.mjs b/dist/esm-node/build-config/internal-effect-discovery.mjs
+--- a/dist/esm-node/build-config/internal-effect-discovery.mjs
++++ b/dist/esm-node/build-config/internal-effect-discovery.mjs
+@@ -10,11 +10,12 @@ const NATIVE_TYPESCRIPT_PACKAGES = [
+     "typescript",
+     "@typescript/native"
+ ];
+-const EFFECT_TSRS_PROVIDER_VERSION = '0.67.0';
++const EFFECT_TSRS_PROVIDER_VERSION = '0.69.0';
+ const EFFECT_TSRS_TARGETS = new Set([
+     '@tsrs/darwin-arm64',
+     '@tsrs/darwin-x64',
+     '@tsrs/win32-x64',
++    '@tsrs/win32-arm64',
+     '@tsrs/linux-x64-gnu',
+     '@tsrs/linux-arm64-gnu'
+ ]);

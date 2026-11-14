@@ -254,7 +254,7 @@ overrides:
   '@techsio/ui-kit': 0.59.3
 
 patchedDependencies:
-  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1': 7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a
+  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1': 906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96
   '@bleedingdev/modern-js-code-tools@3.11.3-ultramodern.1': be97a32dec92a3c781917822f8fc761b011340e1e047e5b84a39e8a800e8e03f
   '@bleedingdev/modern-js-server-core@3.11.3-ultramodern.1': d67f3a0d1d74ddb813dc19d68810683d9706f61a96d9b3a4b4d4ba01940cfafe
   '@bleedingdev/modern-js-server-runtime-extensions@3.11.3-ultramodern.1': c21a06b77bb3ec97720fbef01e07df6dc110af287f29f381b576143a5ed51148
@@ -399,7 +399,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/bff-effect':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-bff-effect@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -746,7 +746,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(f871ad5607b2df76334c2da3e3f64e43)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(54d8679d839f14bbd15f167634db4f52)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(54d8679d839f14bbd15f167634db4f52)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(f871ad5607b2df76334c2da3e3f64e43))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -1372,7 +1372,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -1472,7 +1472,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -1593,7 +1593,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -1705,7 +1705,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -1853,7 +1853,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -1998,7 +1998,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -2113,7 +2113,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -2231,7 +2231,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -2379,7 +2379,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -2545,7 +2545,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -2720,7 +2720,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -2865,7 +2865,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3022,7 +3022,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3173,7 +3173,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3333,7 +3333,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3448,7 +3448,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3530,7 +3530,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3615,7 +3615,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3715,7 +3715,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3860,7 +3860,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -3999,7 +3999,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4096,7 +4096,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4235,7 +4235,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4392,7 +4392,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4555,7 +4555,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4715,7 +4715,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4809,7 +4809,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -4912,7 +4912,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -5048,7 +5048,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -5145,7 +5145,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -5287,7 +5287,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -5432,7 +5432,7 @@ importers:
         version: '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
       '@modern-js/app-tools-extensions':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/plugin-bff-build-extensions':
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974))(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@swc/helpers@0.5.23)(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
@@ -16024,7 +16024,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)':
+  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)':
     dependencies:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
@@ -16080,7 +16080,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(54d8679d839f14bbd15f167634db4f52)':
+  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(54d8679d839f14bbd15f167634db4f52)':
     dependencies:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
@@ -16136,7 +16136,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)':
+  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)':
     dependencies:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
@@ -16192,7 +16192,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)':
+  '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)':
     dependencies:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
@@ -16253,7 +16253,7 @@ snapshots:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
       '@babel/types': 8.0.6
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.4))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.11.3-ultramodern.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)'
       '@modern-js/plugin': '@bleedingdev/modern-js-plugin@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -16324,7 +16324,7 @@ snapshots:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
       '@babel/types': 8.0.6
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.3))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.11.3-ultramodern.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)'
       '@modern-js/plugin': '@bleedingdev/modern-js-plugin@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -16395,7 +16395,7 @@ snapshots:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
       '@babel/types': 8.0.6
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.3))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.11.3-ultramodern.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)'
       '@modern-js/plugin': '@bleedingdev/modern-js-plugin@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -16466,7 +16466,7 @@ snapshots:
       '@babel/parser': 8.0.7
       '@babel/traverse': 8.0.7
       '@babel/types': 8.0.6
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(54d8679d839f14bbd15f167634db4f52)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(54d8679d839f14bbd15f167634db4f52)'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.3))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.11.3-ultramodern.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)'
       '@modern-js/plugin': '@bleedingdev/modern-js-plugin@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
@@ -17577,7 +17577,7 @@ snapshots:
   '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(56fae1b23292d38551a7f880962b0e99)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.3))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/federation-runtime': '@bleedingdev/modern-js-federation-runtime@3.11.3-ultramodern.1(@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2))(react@19.3.1)'
@@ -17652,7 +17652,7 @@ snapshots:
   '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(58e856ff0785fdd9bd9c9a08a1f1bd53)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(36a581596dbcabf9b9322b66c220cf53)'
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(c7f118f7554bce70b74b2ab5e24627f3)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(c7f118f7554bce70b74b2ab5e24627f3)'
       '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.3))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/federation-runtime': '@bleedingdev/modern-js-federation-runtime@3.11.3-ultramodern.1(@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2))(react@19.3.1)'
@@ -17727,7 +17727,7 @@ snapshots:
   '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(5e32d111868a3f99b291dd342213add1)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(f871ad5607b2df76334c2da3e3f64e43)'
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(54d8679d839f14bbd15f167634db4f52)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(54d8679d839f14bbd15f167634db4f52)'
       '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.3))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/federation-runtime': '@bleedingdev/modern-js-federation-runtime@3.11.3-ultramodern.1(@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2))(react@19.3.1)'
@@ -17802,7 +17802,7 @@ snapshots:
   '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(c11e0bf648d9d12bb4fa70ca22574603)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.4))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/federation-runtime': '@bleedingdev/modern-js-federation-runtime@3.11.3-ultramodern.1(@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2))(react@19.3.1)'
@@ -17877,7 +17877,7 @@ snapshots:
   '@bleedingdev/modern-js-ultramodern-app-tools@3.11.3-ultramodern.1(fc8ecf67988dbd67a68c96218f78455a)':
     dependencies:
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(0ea112f87478d5ebd06108277215a974)'
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(8ffc546d176022ab84f9ec357d1de957)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(8ffc546d176022ab84f9ec357d1de957)'
       '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
       '@modern-js/builder': '@bleedingdev/modern-js-builder@3.11.3-ultramodern.1(@rsbuild/plugin-react@2.1.1(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23)))(@rsbuild/plugin-svgr@2.0.5(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(typescript@7.0.2))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(csso@5.0.5)(esbuild@0.28.2)(lightningcss@1.33.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(sharp@0.35.5(@types/node@26.6.4))(supports-color@10.2.2)(svgo@4.1.0)'
       '@modern-js/federation-runtime': '@bleedingdev/modern-js-federation-runtime@3.11.3-ultramodern.1(@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2))(react@19.3.1)'
@@ -17955,7 +17955,7 @@ snapshots:
       '@babel/parser': 8.0.7
       '@effect/tsgo': 0.69.0
       '@modern-js/app-tools': '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362)'
-      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=7161bbe45df4a9572c7850e9aafb507d025266067c1f48217e671595840a085a)(4346bc47f084a9bd415a4e7dd923b7b1)'
+      '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1(patch_hash=906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96)(4346bc47f084a9bd415a4e7dd923b7b1)'
       '@modern-js/backend-federation-contracts': '@bleedingdev/modern-js-backend-federation-contracts@3.11.3-ultramodern.1'
       '@modern-js/codesmith': 2.6.9(supports-color@10.2.2)
       '@modern-js/i18n-integration': '@bleedingdev/modern-js-i18n-integration@3.11.3-ultramodern.1(@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1(90662adcfcf0252e5b518e5b23396362))(@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@rspack/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(@types/react@19.3.0)(core-js@3.50.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(supports-color@10.2.2)(typescript@7.0.2))(@rsbuild/core@2.3.2(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0))(@types/react@19.3.0)(core-js@3.50.0)(i18next@26.4.6(typescript@7.0.2))(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)'
