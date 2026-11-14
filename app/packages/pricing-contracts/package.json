@@ -64,7 +64,7 @@
   },
   "scripts": {
     "test:unit": "rstest --project unit",
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "@app/catalog": "workspace:*",

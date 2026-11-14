@@ -25,7 +25,7 @@
     "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
-    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical payment --target dist && ultramodern-create ultramodern public-surface --app payment --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical payment --target dist && ultramodern-create ultramodern public-surface --app payment --target dist && modern deploy --skip-build --deploy-target node",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
@@ -36,7 +36,7 @@
     "test:integration": "rstest --project integration",
     "test:sandbox": "rstest --project sandbox",
     "test:unit": "rstest --project unit",
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {

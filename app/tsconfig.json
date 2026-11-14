@@ -2,175 +2,148 @@
   "files": [],
   "references": [
     {
-      "path": "./tsconfig.sources.json"
+      "path": "packages/core-runtime"
     },
     {
-      "path": "./tsconfig.tooling-declarations.json"
+      "path": "packages/gateway-principal-verifier"
     },
     {
-      "path": "apps/shell-super-app/tsconfig.typecheck.json"
+      "path": "packages/better-auth-effect-drizzle"
     },
     {
-      "path": "verticals/assortment/tsconfig.typecheck.json"
+      "path": "packages/customer-payment-term-contracts"
     },
     {
-      "path": "verticals/availability/tsconfig.typecheck.json"
+      "path": "packages/payment-term-catalog-contracts"
     },
     {
-      "path": "verticals/catalog/tsconfig.typecheck.json"
+      "path": "packages/shared-contracts"
     },
     {
-      "path": "verticals/commerce-cart/tsconfig.typecheck.json"
+      "path": "packages/shared-design-tokens"
     },
     {
-      "path": "verticals/commerce-customer-context/tsconfig.typecheck.json"
+      "path": "packages/admin-ui"
     },
     {
-      "path": "verticals/commerce-market-catalog/tsconfig.typecheck.json"
+      "path": "apps/shell-super-app"
     },
     {
-      "path": "verticals/commerce-order/tsconfig.typecheck.json"
+      "path": "verticals/party-registry"
     },
     {
-      "path": "verticals/crm/tsconfig.typecheck.json"
+      "path": "verticals/commerce-customer-context"
     },
     {
-      "path": "verticals/crm-activities/tsconfig.typecheck.json"
+      "path": "verticals/commerce-market-catalog"
     },
     {
-      "path": "verticals/facility-operations/tsconfig.typecheck.json"
+      "path": "verticals/payment-term-catalog"
     },
     {
-      "path": "verticals/finance-billing/tsconfig.typecheck.json"
+      "path": "verticals/payment"
     },
     {
-      "path": "verticals/inventory/tsconfig.typecheck.json"
+      "path": "verticals/catalog"
     },
     {
-      "path": "verticals/legal-agreements/tsconfig.typecheck.json"
+      "path": "verticals/pricing"
     },
     {
-      "path": "verticals/merchandise/tsconfig.typecheck.json"
+      "path": "verticals/storefront-registry"
     },
     {
-      "path": "verticals/party-registry/tsconfig.typecheck.json"
+      "path": "packages/email-delivery"
     },
     {
-      "path": "verticals/payment/tsconfig.typecheck.json"
+      "path": "packages/price-group-catalog-contracts"
     },
     {
-      "path": "verticals/payment-term-catalog/tsconfig.typecheck.json"
+      "path": "verticals/price-group-catalog"
     },
     {
-      "path": "verticals/price-group-catalog/tsconfig.typecheck.json"
+      "path": "verticals/assortment"
     },
     {
-      "path": "verticals/pricing/tsconfig.typecheck.json"
+      "path": "verticals/inventory"
     },
     {
-      "path": "verticals/privacy/tsconfig.typecheck.json"
+      "path": "verticals/availability"
     },
     {
-      "path": "verticals/projects/tsconfig.typecheck.json"
+      "path": "verticals/tax"
     },
     {
-      "path": "verticals/promotion/tsconfig.typecheck.json"
+      "path": "verticals/privacy"
     },
     {
-      "path": "verticals/property-leasing/tsconfig.typecheck.json"
+      "path": "verticals/property-portfolio"
     },
     {
-      "path": "verticals/property-portfolio/tsconfig.typecheck.json"
+      "path": "verticals/property-leasing"
     },
     {
-      "path": "verticals/sales-insights/tsconfig.typecheck.json"
+      "path": "verticals/legal-agreements"
     },
     {
-      "path": "verticals/sales-pipeline/tsconfig.typecheck.json"
+      "path": "verticals/work-tasks"
     },
     {
-      "path": "verticals/storefront-registry/tsconfig.typecheck.json"
+      "path": "verticals/workforce"
     },
     {
-      "path": "verticals/symmy-integration/tsconfig.typecheck.json"
+      "path": "verticals/tagging"
     },
     {
-      "path": "verticals/tagging/tsconfig.typecheck.json"
+      "path": "verticals/crm"
     },
     {
-      "path": "verticals/tax/tsconfig.typecheck.json"
+      "path": "verticals/sales-pipeline"
     },
     {
-      "path": "verticals/work-tasks/tsconfig.typecheck.json"
+      "path": "verticals/merchandise"
     },
     {
-      "path": "verticals/workforce/tsconfig.typecheck.json"
+      "path": "verticals/facility-operations"
     },
     {
-      "path": "packages/admin-ui/tsconfig.typecheck.json"
+      "path": "verticals/sales-insights"
     },
     {
-      "path": "packages/core-runtime/tsconfig.typecheck.json"
+      "path": "verticals/finance-billing"
     },
     {
-      "path": "packages/customer-market-retirement-contracts/tsconfig.typecheck.json"
+      "path": "verticals/crm-activities"
     },
     {
-      "path": "packages/customer-payment-term-contracts/tsconfig.typecheck.json"
+      "path": "./verticals/projects"
     },
     {
-      "path": "packages/email-delivery/tsconfig.typecheck.json"
+      "path": "packages/catalog-selection-contracts"
     },
     {
-      "path": "packages/gateway-principal-verifier/tsconfig.typecheck.json"
+      "path": "packages/commerce-cart-contracts"
     },
     {
-      "path": "packages/payment-term-catalog-contracts/tsconfig.typecheck.json"
+      "path": "verticals/commerce-cart"
     },
     {
-      "path": "packages/price-group-catalog-contracts/tsconfig.typecheck.json"
+      "path": "packages/commerce-cart-finalization-contracts"
     },
     {
-      "path": "packages/pricing-contracts/tsconfig.typecheck.json"
+      "path": "packages/commerce-order-contracts"
     },
     {
-      "path": "packages/shared-contracts/tsconfig.typecheck.json"
+      "path": "verticals/commerce-order"
     },
     {
-      "path": "packages/storefront-registry-contracts/tsconfig.typecheck.json"
+      "path": "packages/party-registry-identity-contracts"
     },
     {
-      "path": "scripts"
+      "path": "verticals/promotion"
     },
     {
-      "path": "tools/oxlint/effect-native"
-    },
-    {
-      "path": "tools/oxlint"
-    },
-    {
-      "path": "./tsconfig.tooling.json"
-    },
-    {
-      "path": "scripts/scaffolding"
-    },
-    {
-      "path": "scripts/demo/email-dispatcher"
-    },
-    {
-      "path": "packages/shared-contracts/tooling"
-    },
-    {
-      "path": "apps/shell-super-app/tests"
-    },
-    {
-      "path": "apps/shell-super-app/tests/integration"
-    },
-    {
-      "path": "packages/shared-contracts/tests"
-    },
-    {
-      "path": "verticals/work-tasks/tests"
+      "path": "verticals/symmy-integration"
     }
   ]
 }

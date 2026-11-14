@@ -2,25 +2,7 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": [
-      "node"
-    ],
-    "skipLibCheck": true,
-    "disableSourceOfProjectReferenceRedirect": true
+    "types": ["node"]
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx"
-  ],
-  "exclude": [
-    "**/node_modules/**"
-  ],
-  "references": [
-    {
-      "path": "../../../tsconfig.sources.json"
-    },
-    {
-      "path": "../../../tsconfig.tooling-declarations.json"
-    }
-  ]
+  "include": ["**/*.ts", "**/*.tsx"]
 }

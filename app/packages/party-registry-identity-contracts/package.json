@@ -8,7 +8,7 @@
     "./data": "./src/database-identity-data.ts"
   },
   "scripts": {
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*"

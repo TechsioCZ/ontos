@@ -39,31 +39,21 @@ const packageJson = Schema.decodeUnknownSync(Schema.fromJsonString(PackageJsonSc
 const typecheckExecutable = path.join(workspaceRoot, 'node_modules/.bin/ultramodern-create');
 const executablePath = path.join(workspaceRoot, 'node_modules/.bin');
 
-const runTypecheck = (
-  fixture: string,
-  commandArguments: readonly string[],
-  entrypoint: 'generator' | 'workspace' = 'generator',
-) =>
+const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
   Effect.gen(function* runTypecheckEffect() {
     const inheritedPath = yield* Config.String('PATH').pipe(Config.withDefault(''));
     return yield* collectToolingProcess(
-      ChildProcess.make(
-        entrypoint === 'workspace' ? process.execPath : typecheckExecutable,
-        entrypoint === 'workspace'
-          ? [path.join(workspaceRoot, 'scripts/typecheck.mjs'), ...commandArguments]
-          : ['ultramodern', 'typecheck', ...commandArguments],
-        {
-          cwd: fixture,
-          env: {
-            PATH: `${executablePath}${path.delimiter}${inheritedPath}`,
-            ULTRAMODERN_WORKSPACE_ROOT: fixture,
-          },
-          extendEnv: true,
-          stderr: 'pipe',
-          stdin: 'ignore',
-          stdout: 'pipe',
+      ChildProcess.make(typecheckExecutable, ['ultramodern', 'typecheck', ...commandArguments], {
+        cwd: fixture,
+        env: {
+          PATH: `${executablePath}${path.delimiter}${inheritedPath}`,
+          ULTRAMODERN_WORKSPACE_ROOT: fixture,
         },
-      ),
+        extendEnv: true,
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      }),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -223,18 +213,15 @@ it.live(
     );
     const sourceFile = path.join(fixture, 'referenced/index.ts');
     writeFileSync(sourceFile, 'export const referenceGateFixture: number = 1;\n');
-    expect(packageJson.scripts.typecheck).toBe('node ./scripts/typecheck.mjs --build tsconfig.json');
-    const args = ['--build', tsconfigFile];
-    const initial = yield* runTypecheck(fixture, args, 'workspace');
-    expect(initial.stdout).toContain('[OntOS typecheck] Version');
-    expect(initial.stdout).toContain('(tsrs ');
+    const args = packageJson.scripts.typecheck.split(' ').slice(3);
+    const initial = yield* runTypecheck(fixture, args);
     expect(initial.status, initial.stdout + initial.stderr).toBe(0);
     expect(
       readFileSync(path.join(fixture, 'referenced/output/index.d.ts'), 'utf-8').includes('referenceGateFixture'),
       'the referenced project must actually be built; a root files:[] project check is a no-op',
     ).toBe(true);
     writeFileSync(sourceFile, 'export const referenceGateFixture: number = "invalid";\n');
-    const invalid = yield* runTypecheck(fixture, args, 'workspace');
+    const invalid = yield* runTypecheck(fixture, args);
     expect(invalid.status, 'a referenced source type error must fail the root gate').not.toBe(0);
     expect(invalid.stdout + invalid.stderr).toMatch(/referenced[/\\]index\.ts.*TS2322/u);
   }),
@@ -246,8 +233,7 @@ it('Shell and Party reference the narrow identity contracts, and the root checks
     Schema.decodeUnknownSync(Schema.fromJsonString(ReferencesSchema))(
       readFileSync(path.join(workspaceRoot, file), 'utf-8'),
     ).references.map((reference) => reference.path);
-  expect(references('tsconfig.json')).toContain('./tsconfig.sources.json');
-  expect(references('tsconfig.sources.json')).toContain('packages/party-registry-identity-contracts');
+  expect(references('tsconfig.json')).toContain('packages/party-registry-identity-contracts');
   expect(references('apps/shell-super-app/tsconfig.json')).toContain(
     '../../packages/party-registry-identity-contracts',
   );
@@ -256,29 +242,4 @@ it('Shell and Party reference the narrow identity contracts, and the root checks
     '../../packages/party-registry-identity-contracts',
   );
   expect(references('packages/party-registry-identity-contracts/tsconfig.json')).toEqual(['../core-runtime']);
-});
-
-it('supplemental compiler environments do not inherit application-only strictness', () => {
-  const OptionsSchema = Schema.Struct({
-    compilerOptions: Schema.Struct({
-      exactOptionalPropertyTypes: Schema.optionalKey(Schema.Boolean),
-      noPropertyAccessFromIndexSignature: Schema.optionalKey(Schema.Boolean),
-      noUncheckedIndexedAccess: Schema.optionalKey(Schema.Boolean),
-      skipLibCheck: Schema.optionalKey(Schema.Boolean),
-      strictNullChecks: Schema.optionalKey(Schema.Boolean),
-    }),
-  });
-  const options = (file: string) =>
-    Schema.decodeUnknownSync(Schema.fromJsonString(OptionsSchema))(
-      readFileSync(path.join(workspaceRoot, file), 'utf-8'),
-    ).compilerOptions;
-
-  expect(options('tsconfig.base.json').noPropertyAccessFromIndexSignature).toBe(true);
-  for (const file of ['tsconfig.node-tooling.json', 'tsconfig.lint-defaults.json']) {
-    expect(options(file).noPropertyAccessFromIndexSignature).toBeUndefined();
-    expect(options(file).noUncheckedIndexedAccess).toBeUndefined();
-    expect(options(file).exactOptionalPropertyTypes).toBeUndefined();
-    expect(options(file).skipLibCheck).toBe(true);
-  }
-  expect(options('tsconfig.lint-defaults.json').strictNullChecks).toBe(true);
 });

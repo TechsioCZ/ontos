@@ -2,23 +2,11 @@
   "extends": "../tsconfig.node-tooling.json",
   "include": [
     "**/*.ts",
-    "**/*.tsx",
     "**/*.mts"
   ],
   "exclude": [
     "scaffolding",
     "demo/email-dispatcher",
-    "integration/tests/*.old-release.mts",
-    "**/node_modules/**"
-  ],
-  "compilerOptions": {
-    "incremental": true,
-    "tsBuildInfoFile": "../node_modules/.cache/tsrs/scripts.tsbuildinfo",
-    "disableSourceOfProjectReferenceRedirect": true
-  },
-  "references": [
-    {
-      "path": "../tsconfig.sources.json"
-    }
+    "integration/tests/*.old-release.mts"
   ]
 }

@@ -11,9 +11,9 @@
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts availability && modern dev",
-    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical availability --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app availability --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical availability --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app availability --target dist && modern deploy --skip-build --deploy-target node",
     "serve": "modern serve",
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "test:unit": "rstest --project unit"
   },
   "dependencies": {

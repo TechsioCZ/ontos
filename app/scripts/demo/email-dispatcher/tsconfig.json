@@ -1,24 +1,8 @@
 {
-  "extends": "../../../tsconfig.node-tooling.json",
+  "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": [
-      "node"
-    ],
-    "incremental": true,
-    "tsBuildInfoFile": "../../../node_modules/.cache/tsrs/scripts__demo__email-dispatcher__tsconfig.tsbuildinfo",
-    "disableSourceOfProjectReferenceRedirect": true
+    "types": ["node"]
   },
-  "include": [
-    "*.ts",
-    "*.mts"
-  ],
-  "exclude": [
-    "**/node_modules/**"
-  ],
-  "references": [
-    {
-      "path": "../../../tsconfig.sources.json"
-    }
-  ]
+  "include": ["*.ts", "*.mts", "../../../packages/email-delivery/src/smtp.ts"]
 }

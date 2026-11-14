@@ -34,9 +34,9 @@
     "./shell-gateway-url": "./src/shell-gateway-url.ts"
   },
   "scripts": {
-    "test:types": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
-    "test:unit": "rstest --project unit",
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json"
+    "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",
+    "test:unit": "rstest --project unit && pnpm test:types",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "@effect/opentelemetry": "4.0.7",

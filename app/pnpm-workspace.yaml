@@ -156,14 +156,6 @@ overrides:
   'seroval@<1.6.8': 1.6.9
   'seroval-plugins@<1.6.8': 1.6.9
 allowBuilds:
-  tsrs: true
-  '@tsrs/darwin-arm64': true
-  '@tsrs/darwin-x64': true
-  '@tsrs/linux-arm64-gnu': true
-  '@tsrs/linux-arm64-musl': true
-  '@tsrs/linux-x64-gnu': true
-  '@tsrs/linux-x64-musl': true
-  '@tsrs/win32-x64': true
   '@parcel/watcher': true
   '@swc/core': true
   core-js: true

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 
+import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import {
   decodeUnknownSync as decodePackageVersion,
@@ -8,8 +9,6 @@ import {
 } from 'effect/Schema';
 
 import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
-import { resolveDeclarationCompiler } from '../../scripts/typecheck-compiler.mjs';
-
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
@@ -21,7 +20,7 @@ const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
-const tsgoCompilerInstance = resolveDeclarationCompiler({ from: import.meta.url });
+const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {

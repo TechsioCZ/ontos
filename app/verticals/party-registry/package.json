@@ -68,7 +68,7 @@
     "./apis/organization-business-name-export/client": "./src/api/organization-business-name-export-client.ts"
   },
   "scripts": {
-    "build": "cross-env ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts && drizzle-kit generate --config drizzle.contacts.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts && drizzle-kit check --config drizzle.contacts.config.ts",
     "db:migrate": "node ../../scripts/migration-convergence-cli.mts party",
@@ -79,7 +79,7 @@
     "test:component": "rstest --project component",
     "test:integration": "pnpm run test:integration:shared && pnpm run test:integration:worker-cycle",
     "test:unit": "rstest --project unit",
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.typecheck.json",
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts",
     "test:integration:reconciliation": "rstest run --config tests/support/party-reconciliation.rstest.config.ts --project integration",
     "test:integration:shared": "rstest --project integration",

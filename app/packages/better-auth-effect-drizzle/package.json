@@ -8,7 +8,7 @@
     "./server": "./src/server.ts"
   },
   "scripts": {
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
     "better-auth": "1.7.23",

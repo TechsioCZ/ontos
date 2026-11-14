@@ -9,6 +9,6 @@
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": {
-    "typecheck": "node ../../scripts/typecheck.mjs --build tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   }
 }
