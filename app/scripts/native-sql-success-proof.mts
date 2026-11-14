@@ -361,7 +361,7 @@ const coreDatabaseExports = new Map([
 const reviewedCoreDatabaseGuardModules = new Map([
   ['database-client.ts', '227325c0b8730b20cd2363ea1796af5876e826353af3d548ed127ba8803cf111'],
   ['session-identity.ts', 'f3f193b79b717163ec79197fb3db7abc829a86d6939c13cab5e6f374fca01223'],
-  [transactionIoGuardModule, '4417b2144e1b7b549e5fe0d842f6191076ddb94f12a8538e154dab7ec7499599'],
+  [transactionIoGuardModule, '64121170dc1b892e24d799d513a70adf4253dc0041959295ac35c99393f2e380'],
 ]);
 /**
  * Security fence: guarded Core pool. Core's pool configuration decides every setting of the guarded pool (URL,
