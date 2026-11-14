@@ -471,10 +471,11 @@ describe('derivedEnvironment', () => {
 
 describe('ownerEntrySource', () => {
   const createUnitServer = '  const app = await createProdServer(prodServerOptions);';
+  const nodeModuleImport = "import { createRequire } from 'node:module';";
   const generated = [
     "import app from '/abs/app/node_modules/x/y.js';",
     "import { thing } from 'pkg/sub';",
-    "import { createRequire } from 'node:module';",
+    nodeModuleImport,
     'async function main() {',
     createUnitServer,
     '  const port = process.env.PORT || 8080;',
@@ -502,7 +503,7 @@ describe('ownerEntrySource', () => {
     const source = ownerEntrySource(generated, DIST, resolvePackage);
     expect(source).toContain("import app from '../node_modules/x/y.js';");
     expect(source).toContain("import { thing } from '../node_modules/pkg/sub/index.js';");
-    expect(source).toContain("import { createRequire } from 'node:module';");
+    expect(source).toContain(nodeModuleImport);
   });
 
   it('hands the unit server to configureServer before it listens', () => {
@@ -512,10 +513,36 @@ describe('ownerEntrySource', () => {
     expect(configured).toBeLessThan(source.indexOf('app.listen('));
   });
 
+  it('resolves start only once the server listens, and fails it when listening fails', () => {
+    const source = ownerEntrySource(generated, DIST, resolvePackage) ?? '';
+    const listen = source.indexOf('app.listen(');
+    // Both outcomes are observed before listen is called, and start awaits them after it.
+    expect(source.indexOf('app.once("listening", onListening);')).toBeGreaterThan(
+      source.indexOf('configureServer(app);'),
+    );
+    expect(source.indexOf('app.once("error", onError);')).toBeLessThan(listen);
+    expect(source.indexOf('await listening;')).toBeGreaterThan(listen);
+    expect(source.trimEnd().endsWith('await listening;\n}')).toBe(true);
+    // A server that listened keeps its later errors: the start-time error listener leaves on listening.
+    expect(source).toContain('app.off("error", onError);');
+  });
+
+  it('keeps the CommonJS export after the awaited listen', () => {
+    const commonJs = generated.replace(
+      nodeModuleImport,
+      "const { createProdServer } = require('@modern-js/prod-server');",
+    );
+    const source = ownerEntrySource(commonJs, DIST, resolvePackage) ?? '';
+    expect(source).toContain('async function start(port, configureServer) {');
+    expect(source.trimEnd().endsWith('await listening;\n}\nmodule.exports = { start };')).toBe(true);
+  });
+
   it('returns undefined for an unexpected entry shape', () => {
     expect(ownerEntrySource('export const unrelated = 1;\n', DIST, resolvePackage)).toBeUndefined();
     // Without the server construction the host could not configure its keep-alive.
     expect(ownerEntrySource(generated.replace(`${createUnitServer}\n`, ''), DIST, resolvePackage)).toBeUndefined();
+    // Without main's closing brace right before its call, start could not wait for the listen.
+    expect(ownerEntrySource(generated.replace('}\nmain();', '}\n\nmain();'), DIST, resolvePackage)).toBeUndefined();
   });
 });
 
