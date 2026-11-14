@@ -73,12 +73,21 @@ const grossOf = (state: MerchandiseState, rates = TEST_RATES) => {
     : toProductRecord(product, stockLevelsOf(state.movements, product.id), rates, {}).grossPriceMinor;
 };
 
-const storefrontOrder = (expectedUnitPriceMinor: number): CommandInput => ({
+/** Two units of one storefront line, of the product itself or of one of its variants. */
+const storefrontLine = (expectedUnitPriceMinor: number, productId: string, variantId?: string) => {
+  const line = { expectedUnitPriceMinor, productId, quantity: 2 };
+  return variantId === undefined ? line : { ...line, variantId };
+};
+
+const storefrontOrder = (
+  expectedUnitPriceMinor: number,
+  lines = [storefrontLine(expectedUnitPriceMinor, 'book-it')],
+): CommandInput => ({
   _tag: 'PlaceStorefrontOrder',
   clientRequestId: 'client-request-book-it',
   contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
   deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12' },
-  lines: [{ expectedUnitPriceMinor, productId: 'book-it', quantity: 2 }],
+  lines,
   partyId: 'test-customer-party',
   shippingMethod: 'ZASILKOVNA',
 });
@@ -180,12 +189,12 @@ it.effect('never hydrates a missing base gross from the first-tier projection co
   Effect.scoped(
     Effect.gen(function* tierProjectionIsNotBase() {
       const seeded = yield* bookIt;
-      const original = seeded.products[0];
+      const [original] = seeded.products;
       if (original === undefined) {
         return yield* Effect.die('Expected the seeded product');
       }
       const { grossPriceMinor: _missingBase, ...withoutBase } = original;
-      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
+      const scope = { legalEntityId: '30000000-0000-4000-8000-000000000001', tenantId: actor.tenantId };
       const projectedGross = 22_400;
       for (const variantMode of [false, true]) {
         const services = yield* Layer.build(
@@ -246,17 +255,9 @@ it.effect('never hydrates a missing base gross from the first-tier projection co
         expect(loaded[0]?.product.variants?.[0]?.grossPriceMinor).toBeUndefined();
         const quoted = yield* apply(
           { ...seeded, products: loaded.map(({ product }) => product) },
-          {
-            ...storefrontOrder(projectedGross),
-            lines: [
-              {
-                productId: original.id,
-                quantity: 2,
-                expectedUnitPriceMinor: projectedGross,
-                ...(variantMode ? { variantId: 'tier-only-variant' } : {}),
-              },
-            ],
-          },
+          storefrontOrder(projectedGross, [
+            storefrontLine(projectedGross, original.id, variantMode ? 'tier-only-variant' : undefined),
+          ]),
           'tier-only-quote',
         );
         expect(quoted.storefrontOrder?.issues[0]?.code).toBe('PRICE_UNAVAILABLE');

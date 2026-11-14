@@ -918,9 +918,9 @@ it.effect('records fractional manual receipts and issues without rounding the qu
       received.state,
       {
         _tag: 'RecordStockMovement',
+        delta: -0.1,
         productId: 'fraction-product',
         reason: 'ISSUE',
-        delta: -0.1,
       },
       'fraction-issue-1',
     );
@@ -928,9 +928,9 @@ it.effect('records fractional manual receipts and issues without rounding the qu
       first.state,
       {
         _tag: 'RecordStockMovement',
+        delta: -0.2,
         productId: 'fraction-product',
         reason: 'ISSUE',
-        delta: -0.2,
       },
       'fraction-issue-2',
     );
@@ -940,9 +940,9 @@ it.effect('records fractional manual receipts and issues without rounding the qu
       second.state,
       {
         _tag: 'RecordStockMovement',
+        delta: -0.001,
         productId: 'fraction-product',
         reason: 'ISSUE',
-        delta: -0.001,
       },
       'fraction-overdraw',
     ).pipe(Effect.flip);
@@ -980,10 +980,10 @@ it.effect('requires an explicit bounded SKU when a generated variant SKU would e
       accepted.state,
       {
         _tag: 'RecordStockMovement',
-        productId: 'long-sku-product',
-        variantId: variant.id,
-        reason: 'RECEIPT',
         delta: 1,
+        productId: 'long-sku-product',
+        reason: 'RECEIPT',
+        variantId: variant.id,
       },
       'bounded-sku-stock',
     );
@@ -992,8 +992,8 @@ it.effect('requires an explicit bounded SKU when a generated variant SKU would e
       {
         _tag: 'CreateOrder',
         id: 'bounded-sku-order',
+        lines: [{ productId: 'long-sku-product', quantity: 1, variantId: variant.id }],
         partyId: 'party-1',
-        lines: [{ productId: 'long-sku-product', variantId: variant.id, quantity: 1 }],
       },
       'bounded-sku-order',
     );

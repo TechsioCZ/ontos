@@ -276,7 +276,7 @@ export const MovementForm = ({
           onValueChange={(details) => {
             onDraftChange({ quantity: details.valueAsNumber, quantityText: details.value });
           }}
-          step={MIN_STOCK_QUANTITY}
+          step={1}
           value={quantityText}
           {...fieldError(submitted, errorKey === undefined ? undefined : k(errorKey))}
         >

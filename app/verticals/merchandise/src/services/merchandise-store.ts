@@ -382,35 +382,41 @@ const tiersFor = (tiers: ReadonlyMap<string, readonly StoredTier[]>, productId: 
   (tiers.get(`${productId}|${position}`) ?? []).toSorted((a, b) => a.position - b.position).map(tierValue);
 
 // Relational rows replace only the document fields they own. Without replacement rows, legacy inline arrays remain.
-const decodeStoredProduct = (row: StoredProduct, keepVariants: boolean, keepTiers: boolean) => {
-  if (keepVariants) {
-    return keepTiers
-      ? Schema.decodeUnknownEffect(fullProductDocumentSchema)(row.document)
-      : Schema.decodeUnknownEffect(productDocumentWithVariantsSchema)(row.document);
+// A tiered price's stored gross column projects its first tier (`storedGrossOf`), so only an untiered document may
+// take its base gross from the column.
+const hasTiers = (document: { readonly priceTiers?: readonly unknown[] | undefined }) =>
+  (document.priceTiers?.length ?? 0) > 0;
+const decodeStoredProduct = Effect.fn('MerchandiseStore.decodeStoredProduct')(function* decodeStoredProduct(
+  row: StoredProduct,
+  keepVariants: boolean,
+  keepTiers: boolean,
+) {
+  if (!keepTiers) {
+    const document = keepVariants
+      ? yield* Schema.decodeUnknownEffect(productDocumentWithVariantsSchema)(row.document)
+      : yield* Schema.decodeUnknownEffect(productDocumentSchema)(row.document);
+    return { document, tiered: true };
   }
-  return keepTiers
-    ? Schema.decodeUnknownEffect(productDocumentWithTiersSchema)(row.document)
-    : Schema.decodeUnknownEffect(productDocumentSchema)(row.document);
-};
+  const document = keepVariants
+    ? yield* Schema.decodeUnknownEffect(fullProductDocumentSchema)(row.document)
+    : yield* Schema.decodeUnknownEffect(productDocumentWithTiersSchema)(row.document);
+  return { document, tiered: hasTiers(document) };
+});
 const hydrateStoredVariant = Effect.fn('MerchandiseStore.hydrateVariant')(function* hydrateVariant(
   variant: StoredVariant,
   tiers: ReadonlyMap<string, readonly StoredTier[]>,
 ) {
   const variantTiers = tiersFor(tiers, variant.productId, variant.position);
-  const decoded = yield* Schema.decodeUnknownEffect(
-    variantTiers.length === 0 ? fullVariantDocumentSchema : variantDocumentSchema,
-  )(variant.document);
+  if (variantTiers.length > 0) {
+    const decoded = yield* Schema.decodeUnknownEffect(variantDocumentSchema)(variant.document);
+    return { ...decoded, priceTiers: variantTiers };
+  }
+  const decoded = yield* Schema.decodeUnknownEffect(fullVariantDocumentSchema)(variant.document);
   // The stored gross column is the variant's price as it was entered; documents written before stored gross carry it
   // only there.
-  const hasInlineTiers = 'priceTiers' in decoded && (decoded.priceTiers?.length ?? 0) > 0;
-  const document =
-    decoded.grossPriceMinor === undefined &&
-    variant.grossPriceMinor !== null &&
-    variantTiers.length === 0 &&
-    !hasInlineTiers
-      ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
-      : decoded;
-  return variantTiers.length === 0 ? document : { ...document, priceTiers: variantTiers };
+  return decoded.grossPriceMinor === undefined && variant.grossPriceMinor !== null && !hasTiers(decoded)
+    ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
+    : decoded;
 });
 const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(function* hydrateProduct(
   row: StoredProduct,
@@ -419,15 +425,17 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
 ) {
   const variants = (variantRows.get(row.id) ?? []).toSorted((a, b) => a.position - b.position);
   const productTiers = tiersFor(tiers, row.id, -1);
-  const decoded = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
+  const { document: decoded, tiered } = yield* decodeStoredProduct(
+    row,
+    variants.length === 0,
+    productTiers.length === 0,
+  );
   // A product without real variants: its stored gross column is its price as entered (with real variants the column
   // is their lowest price, never the product's own).
-  const hasInlineTiers = 'priceTiers' in decoded && (decoded.priceTiers?.length ?? 0) > 0;
   const stored =
     decoded.grossPriceMinor === undefined &&
     row.grossPriceMinor !== null &&
-    productTiers.length === 0 &&
-    !hasInlineTiers &&
+    !tiered &&
     !variants.some((variant) => variant.variantId !== null)
       ? { ...decoded, grossPriceMinor: row.grossPriceMinor }
       : decoded;
@@ -1360,6 +1368,27 @@ const categoryIdsForWorkingSet = (request: WorkingSetRequest, loadedProducts: re
   ];
 };
 
+/** The categories a working set loads: those `request` names plus any scoped holder of the slug being created. */
+const workingSetCategoryIds = Effect.fn('MerchandiseStore.workingSetCategoryIds')(function* workingSetCategoryIds(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  request: WorkingSetRequest,
+  loadedProducts: readonly Product[],
+) {
+  const named = categoryIdsForWorkingSet(request, loadedProducts);
+  if (request.categorySlug === undefined) {
+    return named;
+  }
+  const holders = yield* query(
+    db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(whereScope(categories, scope), eq(categories.slug, request.categorySlug))),
+    'Category slug collisions could not be read',
+  );
+  return [...(named ?? []), ...holders.map((category) => category.id)];
+});
+
 /** Loads the rows `request` names under the locked head row. */
 /** The lines of one order as stored; none when the company has no such order. */
 export const loadOrderLines = Effect.fn('MerchandiseStore.loadOrderLines')(function* loadOrderLines(
@@ -1453,24 +1482,16 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
           'Stock movements could not be read',
         )
       : [];
-  const categoryIds = categoryIdsForWorkingSet(
+  const categoryIds = yield* workingSetCategoryIds(
+    db,
+    scope,
     request,
     loaded.map(({ product }) => product),
   );
-  const slugCategoryIds =
-    request.categorySlug === undefined
-      ? []
-      : yield* query(
-          db
-            .select({ id: categories.id })
-            .from(categories)
-            .where(and(whereScope(categories, scope), eq(categories.slug, request.categorySlug))),
-          'Category slug collisions could not be read',
-        );
   const [movements, loadedCategories] = yield* Effect.all(
     [
       query(Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 }), 'Stored movement does not decode'),
-      loadAncestorCategories(db, scope, [...(categoryIds ?? []), ...slugCategoryIds.map((category) => category.id)]),
+      loadAncestorCategories(db, scope, categoryIds),
     ],
     { concurrency: 1 },
   );
@@ -1497,7 +1518,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
         )).length > 0
       : undefined;
   let state: MerchandiseState = { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) };
-  if (categoryIds !== undefined || request.categorySlug !== undefined) {
+  if (categoryIds !== undefined) {
     state = { ...state, categories: loadedCategories };
   }
   if (request.aiChanges === true && head.aiChanges !== undefined) {

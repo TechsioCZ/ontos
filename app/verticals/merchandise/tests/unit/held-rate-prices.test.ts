@@ -111,7 +111,13 @@ it.effect('a price entered for a held product stores its gross at the held rate,
 
 it.effect('a variant entered or repriced for a held product stores its gross at the held rate', () =>
   Effect.gen(function* heldVariants() {
-    const state = yield* bookIt;
+    const inStock = yield* bookIt;
+    // The product's own stock is reconciled first: the first sellable variant would strand it.
+    const { state } = yield* apply(
+      inStock,
+      { _tag: 'RecordStockMovement', delta: -10, productId: 'book-it', reason: 'ADJUSTMENT' },
+      'reconcile',
+    );
     // A variant entered with a price: 30 000 net, 33 000 with 10 %.
     const edited = yield* apply(
       state,

@@ -3,7 +3,7 @@
 // leave question (Zůstat / Zahodit změny, Uložit offered but disabled), never an older dialog of its own. Its own
 // button stays disabled until a product and a valid quantity are filled in.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
@@ -18,20 +18,21 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 interface PickedReceiptProduct {
   current: ProductRecord | null;
 }
-const { picked, reads } = rstest.hoisted(() => ({
-  picked: { current: null } as PickedReceiptProduct,
-  reads: [] as ((record: ProductRecordState) => void)[],
-}));
+const { picked, reads } = rstest.hoisted(() => {
+  const pickedProduct: PickedReceiptProduct = { current: null };
+  const pendingReads: ((record: ProductRecordState) => void)[] = [];
+  return { picked: pickedProduct, reads: pendingReads };
+});
 rstest.mock('../../src/routes/[lang]/provoz/produkty/product-search.tsx', () => ({
   ProductSearchCombobox: (props: { readonly onSelect: (product: ProductRecord | null) => void }) =>
     createElement('button', { onClick: () => props.onSelect(picked.current), type: 'button' }, 'pick product'),
 }));
 rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
-  SEARCH_DEBOUNCE: '0 millis',
-  searchCategoryTrails: () => Effect.succeed({ matches: [], total: 0 }),
   loadProductRecord: (_productId: string, answer: (record: ProductRecordState) => void) => {
     reads.push(answer);
   },
+  SEARCH_DEBOUNCE: '0 millis',
+  searchCategoryTrails: () => Effect.succeed({ matches: [], total: 0 }),
 }));
 rstest.mock('@app/admin-ui/select-template', () => ({
   SelectTemplate: (props: { readonly onValueChange: (details: { value: string[] }) => void }) =>
@@ -55,6 +56,7 @@ const labels = saveLabelsFor('cs');
 const copy = {
   cancel: 'merchandise.pages.products.common.cancel',
   oldKeep: 'merchandise.pages.products.detail.discardKeep',
+  retry: 'merchandise.pages.products.common.retry',
   submit: 'merchandise.pages.products.receipt.submit',
   typed: 'typed-note',
 } as const;
@@ -226,8 +228,9 @@ it.effect('waits for the full product and an explicit variant, then submits that
     );
     expect(button(copy.submit).disabled).toBe(false);
     yield* click(button(copy.submit));
-    expect(rstest.mocked(executeRecordStockMovement).mock.calls[0]?.[0].command).toEqual({
-      _tag: 'RecordStockMovement',
+    const sent = rstest.mocked(executeRecordStockMovement).mock.calls[0]?.[0].command;
+    expect(Predicate.isTagged(sent, 'RecordStockMovement')).toBe(true);
+    expect(sent).toMatchObject({
       delta: 0.125,
       productId: receiptProduct.id,
       reason: 'RECEIPT',
@@ -249,6 +252,17 @@ it.effect('does not permit a receipt when the selected product record cannot be 
     );
     expect(button(copy.submit).disabled).toBe(true);
     expect(rstest.mocked(executeRecordStockMovement).mock.calls).toHaveLength(0);
+    // The retry reads the same product again; its record then lets the receipt choose a variant.
+    yield* click(button(copy.retry));
+    expect(reads).toHaveLength(2);
+    yield* Effect.promise(() =>
+      act(async () => {
+        reads[1]?.({ product: receiptProduct, status: 'ready' });
+        await settle();
+      }),
+    );
+    expect(buttons(copy.retry)).toHaveLength(0);
+    expect(buttons('pick variant')).toHaveLength(1);
   }),
 );
 
@@ -280,12 +294,10 @@ it.effect('ignores a stale product response and permits a variant-free receipt o
     expect(button(copy.submit).disabled).toBe(false);
     expect(buttons('pick variant')).toHaveLength(0);
     yield* click(button(copy.submit));
-    expect(rstest.mocked(executeRecordStockMovement).mock.calls[0]?.[0].command).toEqual({
-      _tag: 'RecordStockMovement',
-      delta: 1,
-      productId: plain.id,
-      reason: 'RECEIPT',
-    });
+    const sent = rstest.mocked(executeRecordStockMovement).mock.calls[0]?.[0].command;
+    expect(Predicate.isTagged(sent, 'RecordStockMovement')).toBe(true);
+    expect(sent).toMatchObject({ delta: 1, productId: plain.id, reason: 'RECEIPT' });
+    expect(sent).not.toHaveProperty('variantId');
     return yield* Effect.void;
   }),
 );
