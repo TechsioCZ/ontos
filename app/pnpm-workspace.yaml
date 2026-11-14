@@ -14,7 +14,6 @@ catalogs:
     '@modern-js/plugin-bff-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-extensions@3.11.3-ultramodern.1'
     '@modern-js/plugin-i18n': 'npm:@bleedingdev/modern-js-plugin-i18n@3.11.3-ultramodern.1'
     '@modern-js/plugin-tanstack': 'npm:@bleedingdev/modern-js-plugin-tanstack@3.11.3-ultramodern.1'
-    '@modern-js/renderer-core': 'npm:@bleedingdev/modern-js-renderer-core@3.11.3-ultramodern.1'
     '@modern-js/runtime': 'npm:@bleedingdev/modern-js-runtime@3.11.3-ultramodern.1'
     '@modern-js/runtime-extensions': 'npm:@bleedingdev/modern-js-runtime-extensions@3.11.3-ultramodern.1'
     '@modern-js/runtime-renderer-extensions': 'npm:@bleedingdev/modern-js-runtime-renderer-extensions@3.11.3-ultramodern.1'
