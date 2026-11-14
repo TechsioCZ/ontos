@@ -144,7 +144,7 @@ it.layer(services, { excludeTestServices: true })('Inventory durable gateway red
   );
 
   suite.effect(
-    'inventory atomically rejects concurrent and cross-instance replay while separating audience identities',
+    'inventory atomically rejects concurrent and cross-instance replay and foreign audiences',
     () =>
       fixture().pipe(
         Effect.flatMap((test) =>
@@ -169,11 +169,17 @@ it.layer(services, { excludeTestServices: true })('Inventory durable gateway red
             if (Result.isFailure(replay)) {
               expect(Schema.is(GatewayAssertionReplayError)(replay.failure)).toBe(true);
             }
-            yield* restarted.consume({ ...input, audience: 'other-owned-audience' });
+            const foreignAudience = yield* restarted
+              .consume({ ...input, audience: 'other-owned-audience' })
+              .pipe(Effect.result);
+            expect(Result.isFailure(foreignAudience)).toBe(true);
+            if (Result.isFailure(foreignAudience)) {
+              expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(foreignAudience.failure)).toBe(true);
+            }
             const rows = yield* test.runtime.unsafe(
               'select audience from inventory.gateway_assertion_redemptions order by audience',
             );
-            expect(rows).toHaveLength(2);
+            expect(rows).toEqual([{ audience: 'inventory' }]);
           }),
         ),
         Effect.scoped,
