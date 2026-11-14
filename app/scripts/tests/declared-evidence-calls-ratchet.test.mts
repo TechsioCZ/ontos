@@ -153,7 +153,10 @@ const registryOfSpecifier = (file: string, specifier: string): Registry | 'unres
   if (!specifier.startsWith('.')) {
     return 'unresolved';
   }
-  const target = nodePath.relative(appRoot, nodePath.resolve(nodePath.dirname(nodePath.join(appRoot, file)), specifier));
+  const target = nodePath.relative(
+    appRoot,
+    nodePath.resolve(nodePath.dirname(nodePath.join(appRoot, file)), specifier),
+  );
   return REGISTRIES.find((registry) => registryFile(registry) === target) ?? 'unresolved';
 };
 
@@ -168,7 +171,8 @@ const importProblems = (file: string, statement: ImportStatement, registry: Regi
     return [`${file} imports its registry for side effects`];
   }
   return statement.entries.flatMap((entry) => {
-    if (entry.importName.kind !== 'Name' || entry.importName.name !== registry.combinator) {
+    // A default or namespace import has no name; only the named combinator import is allowed.
+    if (entry.importName.name !== registry.combinator) {
       return [`${file} imports ${entry.importName.name ?? entry.importName.kind} from its registry`];
     }
     return entry.localName.value === registry.combinator ? [] : [`${file} renames ${registry.combinator}`];
@@ -198,13 +202,13 @@ const usesOf = (file: string): string[] => {
       return [];
     }
     const problems = importProblems(file, statement, registry);
-    return problems.length > 0 || registry === 'unresolved'
-      ? problems
-      : keyedUses(file, source, registry.combinator);
+    return problems.length > 0 || registry === 'unresolved' ? problems : keyedUses(file, source, registry.combinator);
   });
   const reExported = module.staticExports
     .flatMap((statement) => statement.entries)
-    .filter((entry) => entry.moduleRequest !== null && registryOfSpecifier(file, entry.moduleRequest.value) !== undefined)
+    .filter(
+      (entry) => entry.moduleRequest !== null && registryOfSpecifier(file, entry.moduleRequest.value) !== undefined,
+    )
     .map(() => `${file} re-exports a registry`);
   const dynamic = module.dynamicImports
     .filter(({ moduleRequest }) => source.slice(moduleRequest.start, moduleRequest.end).includes(REGISTRY_BASENAME))

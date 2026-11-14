@@ -152,9 +152,9 @@ export const checkAssortmentFixtureOwnerCurrentness = (
       tenantId: storefrontRef.tenantId,
     });
     const product = yield* ownerClient(AssortmentProductClassificationV1Api, ownerReads.product, scope, crypto);
-    const classification = yield* product.assortmentProductClassificationV1.execute({ payload: productRequest }).pipe(
-      assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness,
-    );
+    const classification = yield* product.assortmentProductClassificationV1
+      .execute({ payload: productRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     if (
       classification.operation !== 'OBSERVE' ||
       classification.observation.productRef.resourceId !== command.rule.selector.productRef.resourceId ||
@@ -164,9 +164,9 @@ export const checkAssortmentFixtureOwnerCurrentness = (
       return 'unavailable' as const;
     }
     const commerce = yield* ownerClient(CustomerGroupDetailApi, ownerReads.group, scope, crypto);
-    const { group } = yield* commerce.customerGroupDetail.execute({ payload: groupRequest }).pipe(
-      assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness,
-    );
+    const { group } = yield* commerce.customerGroupDetail
+      .execute({ payload: groupRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     if (
       group.groupRef.resourceId !== groupRequest.groupRef.resourceId ||
       group.groupRef.tenantId !== scope.tenantId ||
@@ -176,16 +176,16 @@ export const checkAssortmentFixtureOwnerCurrentness = (
       return 'unavailable' as const;
     }
     const market = yield* ownerClient(AssortmentFixtureMarketAssociationApi, ownerReads.market, scope, crypto);
-    const association = yield* market.assortmentFixtureMarketAssociation.execute({ payload: marketRequest }).pipe(
-      assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness,
-    );
+    const association = yield* market.assortmentFixtureMarketAssociation
+      .execute({ payload: marketRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     if (association.state !== 'CURRENT') {
       return 'unavailable' as const;
     }
     const storefront = yield* ownerClient(CurrentStorefrontApplicationApi, ownerReads.storefront, scope, crypto);
-    const current = yield* storefront.currentStorefrontApplication.execute({ payload: storefrontRequest }).pipe(
-      assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness,
-    );
+    const current = yield* storefront.currentStorefrontApplication
+      .execute({ payload: storefrontRequest })
+      .pipe(assortmentEvidenceCall.symmyRuleFixtureOwnerCurrentness);
     return current.outcome === 'CURRENT' &&
       current.tenantId === scope.tenantId &&
       current.effectiveAt === effectiveAt &&
