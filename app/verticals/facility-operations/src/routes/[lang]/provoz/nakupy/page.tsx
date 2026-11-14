@@ -10,7 +10,8 @@ import { Option, Schema, SchemaGetter } from 'effect';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { RunCommand } from './purchasing-model.ts';
 import type { PurchasingState } from '../../../../../shared/domain/purchasing.ts';
@@ -193,12 +194,14 @@ const PurchasingTabs = ({
 };
 
 interface PurchasingPanelsProps extends PurchasingNavigationProps {
+  readonly pendingSalesInvoices: Map<string, FinanceInvoiceView>;
   readonly close: () => void;
   readonly onInvoiceCreated: () => void;
   readonly panel: Panel | undefined;
   readonly run: RunCommand;
 }
 const PurchasingPanels = ({
+  pendingSalesInvoices,
   canWrite,
   close,
   me,
@@ -296,6 +299,7 @@ const PurchasingPanels = ({
           onClose={close}
           onOpenQuote={(id) => setPanel({ id, kind: panelKinds.salesQuote })}
           orderId={panel.id}
+          pendingInvoices={pendingSalesInvoices}
           run={run}
           state={state}
         />
@@ -342,6 +346,8 @@ const PurchasingView = () => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const ops = useAgendaRecords(['purchasing']);
+  // A conflict reload temporarily unmounts the detail panel. Its created invoices must survive that reload.
+  const pendingSalesInvoices = useRef(new Map<string, FinanceInvoiceView>());
   const envelope = ops.data?.agendas.purchasing;
   const state = envelope?.state;
   const canWrite = envelope?.canWrite === true;
@@ -448,6 +454,7 @@ const PurchasingView = () => {
               openOrder={openOrder}
               openQuote={openQuote}
               panel={panel}
+              pendingSalesInvoices={pendingSalesInvoices.current}
               run={ops.run}
               setPanel={setPanel}
               state={state}

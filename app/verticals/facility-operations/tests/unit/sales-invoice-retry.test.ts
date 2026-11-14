@@ -89,7 +89,7 @@ beforeEach(() => {
   );
 });
 
-it.effect('after a failed link Save retries only the retained invoice and never creates another', () =>
+it.effect('after a failed link a remounted panel retries only the retained invoice and never creates another', () =>
   Effect.gen(function* retryOnlyLink() {
     const runner = recordingRunner(['unavailable']);
     const pending = new Map<string, FinanceInvoiceView>();
@@ -100,7 +100,7 @@ it.effect('after a failed link Save retries only the retained invoice and never 
     expect(pending.get(order.id)?.ref.resourceId).toBe(invoice.ref.resourceId);
     expect(busy.current).toBe(false);
     read.mockReturnValue(Effect.succeed(snapshot([invoice])));
-    const linked = yield* issueSalesInvoice({ ...input, dueDate: '2026-12-01' });
+    const linked = yield* issueSalesInvoice({ ...input, busy: { current: false }, dueDate: '2026-12-01' });
     expect(linked).toMatchObject({ number: invoice.number, ok: true });
     expect(create.mock.calls).toHaveLength(1);
     expect(vat.mock.calls).toHaveLength(1);

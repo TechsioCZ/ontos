@@ -1061,11 +1061,10 @@ export const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueS
   },
 );
 
-const useIssueInvoice = (run: RunCommand) => {
+const useIssueInvoice = (run: RunCommand, pending: Map<string, FinanceInvoiceView>) => {
   const busy = useRef(false);
-  const pending = useRef(new Map<string, FinanceInvoiceView>());
   return (order: SalesOrder, issueDate: string, dueDate: string) =>
-    issueSalesInvoice({ busy, dueDate, issueDate, order, pending: pending.current, run });
+    issueSalesInvoice({ busy, dueDate, issueDate, order, pending, run });
 };
 
 const OrderActionSchema = Schema.Literals(['deliver', 'close', 'invoice']);
@@ -1219,6 +1218,7 @@ export const SalesOrderPanel = ({
   onClose,
   onOpenQuote,
   orderId,
+  pendingInvoices,
   run,
   state,
 }: {
@@ -1226,13 +1226,14 @@ export const SalesOrderPanel = ({
   readonly onClose: () => void;
   readonly onOpenQuote: (id: string) => void;
   readonly orderId: string;
+  readonly pendingInvoices: Map<string, FinanceInvoiceView>;
   readonly run: RunCommand;
   readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { language, t } = useModernI18n();
   const toast = useToast();
-  const issueInvoice = useIssueInvoice(run);
+  const issueInvoice = useIssueInvoice(run, pendingInvoices);
   // Finance decides who may create invoice drafts; read-only Finance roles get no invoice action at all.
   const finance = useIncomingInvoiceLinks();
   const [busy, setBusy] = useState(false);
