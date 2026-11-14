@@ -25,7 +25,7 @@ import {
   addMonths,
   budgetActualMinor,
   budgetVariance,
-  cashFlowMonths,
+  cashFlowForecast,
   invoiceActualMinor,
   monthOf,
 } from '../../../../shared/domain/finance-planning.ts';
@@ -112,8 +112,7 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
   const businessDate = vm.referenceDate === '' ? '2026-10-20' : vm.referenceDate;
   const currentMonth = monthOf(businessDate);
   const opening = state?.cashFlowOpening;
-  const fromMonth = opening === undefined ? addMonths(currentMonth, -1) : monthOf(opening.openingDate);
-  const months = state === undefined ? [] : cashFlowMonths(state, { businessDate, fromMonth, months: Math.max(6, 0) });
+  const months = state === undefined ? [] : cashFlowForecast(state, businessDate);
   const [budgetMonth, setBudgetMonth] = useState(currentMonth);
   const [draft, setDraft] = useState<BudgetDraft>();
   const [deleteTarget, setDeleteTarget] = useState<BudgetLine>();
@@ -177,7 +176,6 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     deleteTarget,
     draft,
     flowData,
-    fromMonth,
     invoices,
     last,
     months,

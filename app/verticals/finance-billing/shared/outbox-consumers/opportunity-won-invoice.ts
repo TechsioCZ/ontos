@@ -48,6 +48,15 @@ export const opportunityWonInvoiceCommand = (
 };
 
 /**
+ * Whether a WON message misses part of what was sold. The message carries only catalog lines, while `amountMinor` is
+ * the whole opportunity, free-text lines included; a draft from the lines alone would bill less than was won, so
+ * Finance drafts nothing instead of a partial invoice.
+ */
+export const wonOpportunityLinesIncomplete = (payload: OutboxPayload): boolean =>
+  payload.toStage === 'WON' &&
+  payload.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0) !== payload.amountMinor;
+
+/**
  * A stage change that takes a won opportunity out of WON (lost, or reopened to an earlier stage), stamped with the
  * Sales Pipeline revision of that change. Sales Pipeline publishes every transition on this one topic, so the won
  * message and the later change reach the same worker; none for every other change.
