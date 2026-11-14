@@ -33,7 +33,8 @@ import {
   products,
   stockMovements,
 } from '../database/schema.ts';
-import { grossPriceOf, productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
+import { shownGrossOf } from '../../shared/domain/unit-price.ts';
+import { productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
 import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
@@ -255,10 +256,10 @@ const ROLLBACK_RATES = { [CZ_VAT_REDUCED]: [10, 12], [CZ_VAT_STANDARD]: [21] } a
 
 /**
  * Every price the release before classifications computes from the document's `vatRate`, with what this release
- * charges for it now: each real variant, or the product itself when it has none. That release sells a tiered price at
- * its first tier on the storefront, but a line staff add to a VAT-inclusive order it prices from net + `vatRate`,
- * ignoring tiers; this release charges the first tier's price for both (`storedGrossOf`). So a tiered price counts too,
- * compared with its first tier.
+ * charges for it now below the first quantity break: each real variant, or the product itself when it has none. That
+ * release prices a line staff add to a VAT-inclusive order from net + `vatRate`, ignoring tiers; this release charges
+ * the gross its record shows there (`shownGrossOf`), so a tiered price counts too, compared with that base. A unit without a
+ * base gross is sold by this release only at its breaks and adds no comparison.
  */
 const recomputedPricesOf = (product: Product, rate: number | undefined) => {
   const variants = realVariantsOf(product);
@@ -267,7 +268,7 @@ const recomputedPricesOf = (product: Product, rate: number | undefined) => {
       ? variants.map((variant) => ({ net: variant.priceMinor, priced: variant }))
       : [{ net: product.currentPriceMinor, priced: product }];
   return entries.flatMap(({ net, priced }) => {
-    const charged = grossPriceOf(priced, net, rate);
+    const charged = shownGrossOf(priced, net, rate);
     return charged === undefined ? [] : [{ charged, net }];
   });
 };
@@ -337,7 +338,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
       active: variant.active !== false,
       document: variantDocument,
       grossPriceMinor:
-        variant.priceMinor === undefined ? null : (grossPriceOf(variant, variant.priceMinor, rate) ?? null),
+        variant.priceMinor === undefined ? null : (shownGrossOf(variant, variant.priceMinor, rate) ?? null),
       name: variant.name,
       position,
       priceMinor: variant.priceMinor ?? null,
@@ -382,8 +383,8 @@ const tiersFor = (tiers: ReadonlyMap<string, readonly StoredTier[]>, productId: 
   (tiers.get(`${productId}|${position}`) ?? []).toSorted((a, b) => a.position - b.position).map(tierValue);
 
 // Relational rows replace only the document fields they own. Without replacement rows, legacy inline arrays remain.
-// A tiered price's stored gross column projects its first tier (`storedGrossOf`), so only an untiered document may
-// take its base gross from the column.
+// A tiered price's gross column projects the gross its record shows (`shownGrossOf`), never one entered with
+// its net price, so only an untiered document may take its base gross from the column.
 const hasTiers = (document: { readonly priceTiers?: readonly unknown[] | undefined }) =>
   (document.priceTiers?.length ?? 0) > 0;
 const decodeStoredProduct = Effect.fn('MerchandiseStore.decodeStoredProduct')(function* decodeStoredProduct(

@@ -141,16 +141,10 @@ import type {
   TaxRateBook,
   TaxRatesDecision,
 } from './tax-rates.ts';
+import { baseGrossOf, grossForQuantity } from '../../shared/domain/unit-price.ts';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
-import {
-  storedGrossOf,
-  realVariantsOf,
-  stockLevelsOf,
-  stockOnHandOf,
-  toProductRecord,
-  variantStockOf,
-} from './stock-levels.ts';
+import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
 import { isMediaImageReference, mediaImageReference } from '../../shared/domain/product-images.ts';
@@ -523,7 +517,7 @@ const repriced = Effect.fn('Merchandise.repriced')(function* repricedProduct(
       ? undefined
       : yield* repriceTiers(product.priceTiers, {
           newNet: priceMinor,
-          oldGross: product.grossPriceMinor,
+          oldGross: baseGrossOf(product, product.currentPriceMinor, enteredRateOf(input.tax, product)),
           oldNet: product.currentPriceMinor,
           rate: enteredRateOf(input.tax, product),
         });
@@ -612,6 +606,20 @@ const checkedVariantSku = (product: Product, variant: ProductVariant, id: Produc
       );
 };
 
+/** A variant's previous tiers, scaled to its new price when an edit sends none of its own. */
+const carriedVariantTiers = (
+  previous: ProductVariant,
+  tiers: NonNullable<ProductVariant['priceTiers']>,
+  newNet: number | undefined,
+  rate: number | undefined,
+) =>
+  repriceTiers(tiers, {
+    newNet,
+    oldGross: previous.priceMinor === undefined ? undefined : baseGrossOf(previous, previous.priceMinor, rate),
+    oldNet: previous.priceMinor,
+    rate,
+  });
+
 const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
   product: Product,
   incoming: readonly ProductVariant[],
@@ -663,12 +671,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         variant.priceTiers === undefined && previous?.priceTiers !== undefined
           ? {
               ...withGross,
-              priceTiers: yield* repriceTiers(previous.priceTiers, {
-                newNet: variant.priceMinor,
-                oldGross: previous.grossPriceMinor,
-                oldNet: previous.priceMinor,
-                rate: enteredRateOf(input.tax, product),
-              }),
+              priceTiers: yield* carriedVariantTiers(previous, previous.priceTiers, variant.priceMinor, rate),
             }
           : withGross;
       const withId = id === undefined ? withTiers : { ...withTiers, id };
@@ -843,7 +846,10 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       ? undefined
       : yield* repriceTiers(variant.priceTiers, {
           newNet: value.priceMinor,
-          oldGross: variant.grossPriceMinor,
+          oldGross:
+            variant.priceMinor === undefined
+              ? undefined
+              : baseGrossOf(variant, variant.priceMinor, enteredRateOf(input.tax, product)),
           oldNet: variant.priceMinor,
           rate: enteredRateOf(input.tax, product),
         });
@@ -1202,30 +1208,6 @@ interface PricedUnit {
   readonly variantName?: string;
 }
 
-export const tierPriceForQuantity = (tiers: Product['priceTiers'], quantity: number): number | undefined =>
-  tiers?.filter((tier) => tier.minimumQuantity <= quantity).toSorted((a, b) => b.minimumQuantity - a.minimumQuantity)[0]
-    ?.priceMinor;
-
-/**
- * A tiered catalog needs an actual base gross; a discount is not evidence of the price below its break. An imported
- * catalog states its base price as a tier at the unit's own net price (AKROS: a tier from 1 above a 0,5 minimum), so
- * that tier's stored gross is the base gross.
- */
-const baseGrossForCheckout = (
-  priced: { readonly grossPriceMinor?: number; readonly priceTiers?: Product['priceTiers'] },
-  net: number,
-  rate: number,
-) => {
-  if (priced.grossPriceMinor !== undefined) {
-    return priced.grossPriceMinor;
-  }
-  const tiers = priced.priceTiers ?? [];
-  if (tiers.length === 0) {
-    return grossUnitPriceMinor(net, rate);
-  }
-  return tiers.find((tier) => tier.priceExcludingVatMinor === net)?.priceMinor ?? 0;
-};
-
 /** Resolves the sellable unit (product or variant) of one storefront line, or the issue blocking it. */
 const sellableUnitOf = (
   products: readonly Product[],
@@ -1267,13 +1249,14 @@ const sellableUnitOf = (
       tax,
       unit: {
         availability: variant.availability,
+        // The price its record shows below the first break (`baseGrossOf`); a missing one is refused below.
         grossPriceMinor:
-          tierPriceForQuantity(variant.priceTiers, line.quantity) ??
-          baseGrossForCheckout(
+          grossForQuantity(
             product.variants?.find((entry) => entry.id === variant.id) ?? variant,
             variant.priceMinor,
             tax.vatRate,
-          ),
+            line.quantity,
+          ) ?? 0,
         minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
         packageQuantity: variant.packageQuantity,
@@ -1291,9 +1274,7 @@ const sellableUnitOf = (
     unit: {
       availability: record.availability ?? 'UNKNOWN',
       // A missing gross price is refused below as PRICE_UNAVAILABLE, never sold at 0 %.
-      grossPriceMinor:
-        tierPriceForQuantity(product.priceTiers, line.quantity) ??
-        baseGrossForCheckout(product, product.currentPriceMinor, tax.vatRate),
+      grossPriceMinor: grossForQuantity(product, product.currentPriceMinor, tax.vatRate, line.quantity) ?? 0,
       minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
       packageQuantity: product.packageQuantity,
@@ -1731,10 +1712,12 @@ const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOr
   }
   const tax = yield* lineTaxOf(input, product);
   const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-  // A gross-priced order takes the stored gross price (as the storefront sells it), never one recomputed from net.
+  // A gross-priced order takes the price the storefront sells this quantity at (the break it reaches, else the base
+  // gross); only a unit without either is priced from its net at the line's rate, as the editor offered it.
   const czkPrice =
     existing.pricesIncludeVat === true
-      ? (storedGrossOf(variant ?? product) ?? grossUnitPriceMinor(netPrice, tax.vatRate))
+      ? (grossForQuantity(variant ?? product, netPrice, tax.vatRate, request.quantity) ??
+        grossUnitPriceMinor(netPrice, tax.vatRate))
       : netPrice;
   // A market order keeps its own price list (snapshot on the order) for lines added later.
   const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);

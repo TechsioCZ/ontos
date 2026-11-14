@@ -693,39 +693,6 @@ it.effect('refuses below-tier checkout when the tiered catalog has no authoritat
   }),
 );
 
-/** As AKROS imports it: no stored gross, the base price listed as a tier (here from 10) at the unit's own net. */
-const baseTier = (net: number) => [{ minimumQuantity: 10, priceExcludingVatMinor: net, priceMinor: 31_100 }];
-
-it.effect("a tier at the unit's own net price is its base gross below the first break", () =>
-  Effect.gen(function* baseTierBelowBreak() {
-    const current = yield* seeded;
-    for (const variantProduct of [true, false]) {
-      const tiered: MerchandiseState = {
-        ...current,
-        products: current.products.map(({ grossPriceMinor: _product, ...product }) => ({
-          ...product,
-          priceTiers: baseTier(product.currentPriceMinor),
-          variants: variantProduct
-            ? product.variants?.map(({ grossPriceMinor: _variant, ...variant }) => ({
-                ...variant,
-                priceTiers: baseTier(variant.priceMinor ?? 0),
-              }))
-            : [],
-        })),
-      };
-      const identity = variantProduct ? { variantId: 'u1-v1' } : {};
-      const accepted = yield* apply(
-        tiered,
-        guestOrder({ lines: [{ expectedUnitPriceMinor: 31_100, productId: 'p1', quantity: 2, ...identity }] }),
-        'base-tier-order',
-      );
-      expect(accepted.storefrontOrder?.outcome).toBe('PLACED');
-      expect(accepted.state.orders[0]?.lines[0]?.unitPriceMinor).toBe(31_100);
-    }
-    return yield* Effect.void;
-  }),
-);
-
 it.effect('owner checkout uses variant-only minimum and package constraints, independently of the parent', () =>
   Effect.gen(function* variantOnlyPurchaseConstraints() {
     const current = yield* seeded;
