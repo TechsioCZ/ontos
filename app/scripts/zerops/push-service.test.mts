@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { Config, Effect, FileSystem, Layer } from 'effect';
@@ -252,3 +253,15 @@ it.live('a deploy still running at its deadline fails and names the service', ()
     expect(result.polls).toBe(1);
   }),
 );
+
+it('omits non-build inputs per service without mutating the runner index or weakening the upload guard', () => {
+  const source = readFileSync(new URL('./push-service.sh', import.meta.url), 'utf8');
+  for (const exclusion of ['*/tests', 'docs', 'app/docs', '*/.codex', '*/.next']) {
+    expect(source).toContain(`--exclude='${exclusion}'`);
+  }
+  expect(source).toContain('app/n1-storefront/src');
+  expect(source).toContain('app/akros-storefront/src');
+  expect(source).toContain('git -C "$work/source" update-index --skip-worktree -z --stdin');
+  expect(source).toContain('upload_limit_seconds="${UPLOAD_LIMIT_SECONDS:-25}"');
+  expect(source).toContain('((took <= upload_limit_seconds)) && break');
+});
