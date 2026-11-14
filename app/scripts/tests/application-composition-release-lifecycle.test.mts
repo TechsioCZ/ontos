@@ -505,9 +505,30 @@ it.effect('requires quiescent database transactions before the first migration',
   }),
 );
 
-it.effect('bounds durable draining by the lease and leaves the current release active with admission closed', () =>
+/** How the publisher's restore reports that it reopened the durable admission its own run had closed. */
+const REOPENED = 'Durable admission was reopened and the authority stays active.';
+
+/**
+ * The restore's rule for a publication that closed durable admission and then failed before entering `draining`:
+ * this run closed admission, then reopened it, and the authority never left `active`. Nothing was drained, so no
+ * drain abandonment is recorded: the ledger only records a return from `draining`.
+ */
+const expectAdmissionReopenedByThisRun = (fixture: ReturnType<typeof migrationFixture>) => {
+  expect(fixture.phase()).toBe('active');
+  expect(fixture.admission()).toBe('open');
+  const closedAt = fixture.events.indexOf('COMMITTED admission closed');
+  expect(closedAt).toBeGreaterThanOrEqual(0);
+  expect(fixture.events.indexOf('COMMITTED admission open', closedAt)).toBeGreaterThan(closedAt);
+  expect(fixture.events).not.toContain(COMMITTED_DRAINING);
+  expect(fixture.statements.some((statement) => statement.includes('application_composition_drain_abandonments'))).toBe(
+    false,
+  );
+};
+
+it.effect('bounds durable draining by the lease, then reopens the admission it closed and stays active', () =>
   Effect.gen(function* preservesActiveReleaseAfterDrainTimeout() {
-    const fixture = migrationFixture({ leaseRemainingMillis: 35_000, ownerWorkPending: true });
+    // The drain ends 75 s before the lease expires (the restore's worst case plus slack), so this bounds it at 5 s.
+    const fixture = migrationFixture({ leaseRemainingMillis: 80_000, ownerWorkPending: true });
     const fiber = yield* runApplicationCompositionMigration(
       Effect.sync(() => {
         fixture.events.push(MIGRATION_EVENT);
@@ -518,39 +539,40 @@ it.effect('bounds durable draining by the lease and leaves the current release a
     const failure = yield* Fiber.join(fiber);
 
     expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-    expect(fixture.phase()).toBe('active');
-    expect(fixture.admission()).toBe('closed');
-    expect(fixture.events).not.toContain(COMMITTED_DRAINING);
+    expect(Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '').toContain(REOPENED);
+    expectAdmissionReopenedByThisRun(fixture);
     expect(fixture.events).not.toContain(MIGRATION_EVENT);
     expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
 
+    // The operator resumption is no longer needed, and stays harmless on the reopened authority.
     yield* resumeApplicationCompositionDurableWork(OLD_REVISION).pipe(Effect.provide(fixture.layer));
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('open');
-    expect(fixture.events).toContain('COMMITTED admission open');
   }),
 );
 
-it.effect('bounds durable draining by its phase budget inside a fresh lease and reports the drain phase', () =>
-  Effect.gen(function* reportsDrainBudgetTimeout() {
-    const fixture = migrationFixture({ ownerWorkPending: true });
-    const fiber = yield* runApplicationCompositionMigration(
-      Effect.sync(() => {
-        fixture.events.push(MIGRATION_EVENT);
-      }),
-      Effect.void,
-      { drainMs: 5000 },
-    ).pipe(Effect.provide(fixture.layer), Effect.flip, Effect.forkChild);
-    yield* TestClock.adjust('5 seconds');
-    const failure = yield* Fiber.join(fiber);
+it.effect(
+  'bounds durable draining by its phase budget, reports the drain phase, and reopens the admission it closed',
+  () =>
+    Effect.gen(function* reportsDrainBudgetTimeout() {
+      const fixture = migrationFixture({ ownerWorkPending: true });
+      const fiber = yield* runApplicationCompositionMigration(
+        Effect.sync(() => {
+          fixture.events.push(MIGRATION_EVENT);
+        }),
+        Effect.void,
+        { drainMs: 5000 },
+      ).pipe(Effect.provide(fixture.layer), Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('5 seconds');
+      const failure = yield* Fiber.join(fiber);
 
-    expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure)).toBe(true);
-    expect(failure).toMatchObject({ budgetMs: 5000, migrationStarted: false, phase: 'durable-drain' });
-    expect(fixture.phase()).toBe('active');
-    expect(fixture.admission()).toBe('closed');
-    expect(fixture.events).not.toContain(MIGRATION_EVENT);
-    expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
-  }),
+      expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure)).toBe(true);
+      expect(failure).toMatchObject({ budgetMs: 5000, migrationStarted: false, phase: 'durable-drain' });
+      expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure) ? failure.message : '').toContain(REOPENED);
+      expectAdmissionReopenedByThisRun(fixture);
+      expect(fixture.events).not.toContain(MIGRATION_EVENT);
+      expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
+    }),
 );
 
 it.effect('refuses operator resumption for an expired, different, or already retired authority', () =>
@@ -645,7 +667,7 @@ it.effect('keeps the committed bytes across a crash before renewal commits and r
 );
 
 it.effect(
-  'refuses missing, empty, unresolved, replayed, mismatched, unretained, or expired legacy owner evidence',
+  'refuses missing, empty, unresolved, replayed, mismatched, unretained, or expired legacy owner evidence, and reopens the admission it closed',
   () =>
     Effect.gen(function* rejectsUnverifiedOwnerTransitions() {
       const controls: readonly LegacyPublicationControl[] = [
@@ -673,9 +695,8 @@ it.effect(
           control: legacyControl,
           refused: true,
         });
-        expect(fixture.phase()).toBe('active');
-        expect(fixture.admission()).toBe('closed');
-        expect(fixture.events).not.toContain(COMMITTED_DRAINING);
+        // The evidence is checked at the enter-draining fence, after this run closed durable admission.
+        expectAdmissionReopenedByThisRun(fixture);
         expect(fixture.events).not.toContain(MIGRATION_EVENT);
         expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
         if (legacyControl === 'missing' || legacyControl === 'empty') {
