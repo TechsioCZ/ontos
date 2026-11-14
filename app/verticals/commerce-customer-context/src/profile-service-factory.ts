@@ -201,6 +201,43 @@ const ensureWithSourceCarrier = (
   }),
 });
 
+/** The Counterparty Profile counterpart of {@link ensureWithSourceCarrier}, bound to the same verified scope object. */
+export const createWithSourceCarrier = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+  service: ProfilePersistenceServices['createCounterpartyPurchasingProfile'],
+): ProfilePersistenceServices['createCounterpartyPurchasingProfile'] => ({
+  create: Effect.fn('SourceProfile.createWithCarrier')(function* createWithCarrier(payload, context) {
+    if (payload.source === undefined) {
+      const sourceSelected = yield* readScopedAdmittedWorkload(
+        transaction,
+        scope,
+        'commerce.customer-context.source-write',
+      ).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new CreateCounterpartyPurchasingProfileRejected({
+              code: 'DEPENDENCY_UNAVAILABLE',
+              reason: 'Current Profile carrier authority is unavailable',
+              retryable: true,
+            }),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      );
+      if (sourceSelected) {
+        return yield* new CreateCounterpartyPurchasingProfileRejected({
+          code: 'SOURCE_AUTHORITY_DENIED',
+          reason: 'Source workloads require an exact admitted source assertion',
+          retryable: false,
+        });
+      }
+    }
+    return yield* service.create(payload, context);
+  }),
+});
+
 /**
  * The Ensure services of one prepared invocation (D14): an ordinary Retail Profile consumes the Party evidence its
  * preflight prepared for the Action's own actor; a source Profile proves its Party and Privacy through the source
@@ -528,37 +565,11 @@ const profileServicesFor = (
     );
     return {
       ...services,
-      createCounterpartyPurchasingProfile: {
-        create: Effect.fn('SourceProfile.createWithCarrier')(function* createWithCarrier(payload, context) {
-          if (payload.source === undefined) {
-            const sourceSelected = yield* readScopedAdmittedWorkload(
-              transaction,
-              scope,
-              'commerce.customer-context.source-write',
-            ).pipe(
-              Effect.mapError((cause) =>
-                Object.defineProperty(
-                  new CreateCounterpartyPurchasingProfileRejected({
-                    code: 'DEPENDENCY_UNAVAILABLE',
-                    reason: 'Current Profile carrier authority is unavailable',
-                    retryable: true,
-                  }),
-                  'cause',
-                  { value: cause },
-                ),
-              ),
-            );
-            if (sourceSelected) {
-              return yield* new CreateCounterpartyPurchasingProfileRejected({
-                code: 'SOURCE_AUTHORITY_DENIED',
-                reason: 'Source workloads require an exact admitted source assertion',
-                retryable: false,
-              });
-            }
-          }
-          return yield* services.createCounterpartyPurchasingProfile.create(payload, context);
-        }),
-      },
+      createCounterpartyPurchasingProfile: createWithSourceCarrier(
+        transaction,
+        scope,
+        services.createCounterpartyPurchasingProfile,
+      ),
       ensureRetailCustomerProfile: ensureWithSourceCarrier(transaction, scope, services.ensureRetailCustomerProfile),
     } satisfies ProfilePersistenceServices;
   });
