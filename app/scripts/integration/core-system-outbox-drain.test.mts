@@ -22,6 +22,7 @@ import {
   applicationCompositionAuthority,
   applicationCompositionDrainAbandonments,
   domainEvents,
+  outboxAttempts,
   outboxDeliveries,
   outboxDeliveryResolutions,
   outboxMessages,
@@ -54,6 +55,7 @@ import {
   corePeopleSearchOutboxWorkers,
   coreSystemOutboxWorkers,
 } from '../../packages/core-runtime/src/outbox/core-system-worker-entry.ts';
+import { OUTBOX_DEFERRED_ATTEMPT_MESSAGE } from '../../packages/core-runtime/src/outbox/outbox-worker-deferred.ts';
 import { makeOutboxRepository } from '../../packages/core-runtime/src/outbox/repository.ts';
 import { withWorkerRuntimeBinding } from '../../packages/core-runtime/src/outbox/worker-runtime-binding.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../packages/core-runtime/src/testing/isolated-native-database.ts';
@@ -79,6 +81,8 @@ const ABSENT_WORKER_KEY = 'commerce.merchandise.project-offer';
 const ABSENT_CONSUMER = 'commerce.merchandise';
 /** How every refusal before admission closes reads. */
 const REFUSED_BEFORE_ADMISSION = 'drain was not started: durable admission is unchanged';
+/** How a drain that ran out of the old release's lease reports it. */
+const LEASE_EXHAUSTED = 'did not finish within its freshness lease';
 /** How a failed publication reports that it returned the authority itself. */
 const RETURNED_TO_ACTIVE = 'returned to active with durable admission open';
 
@@ -323,6 +327,56 @@ const reasonOf = <Failure,>(failure: Failure) =>
     ? failure.reason
     : '';
 
+/** How a drain that met work it could never finish reports it. */
+const STOPPED_DRAIN = 'The Application Composition drain was stopped';
+
+/** A lease long enough that the drain's own bound (the lease less its 75 s margin) is a whole minute away. */
+const MINUTE_BOUND_LEASE = sql`clock_timestamp() + interval '135 seconds'`;
+
+/**
+ * Publishes the next release over a held lifecycle delivery and runs `midDrain` once the authority is `draining`.
+ * Returns the failure's reason and how long after `midDrain` the publication ended.
+ */
+const publishChangingWorkMidDrain = <MidFailure, MidRequirements>(
+  f: DrainFixture,
+  midDrain: Effect.Effect<void, MidFailure, MidRequirements>,
+) =>
+  Effect.gen(function* publishChangingWorkMidDrainEffect() {
+    const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+    const publication = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
+      Effect.provide(f.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* untilPhase(f, 'draining');
+    yield* midDrain;
+    const changedAt = yield* Clock.currentTimeMillis;
+    const failure = yield* Fiber.join(publication);
+    return { elapsedMs: (yield* Clock.currentTimeMillis) - changedAt, reason: reasonOf(failure) };
+  });
+
+/** The held lifecycle delivery's id, for the attempt a deferral settles. */
+const lifecycleDeliveryId = (f: DrainFixture) =>
+  f.admin.executor
+    .select({ id: outboxDeliveries.outboxDeliveryId })
+    .from(outboxDeliveries)
+    .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey))
+    .pipe(Effect.map((rows) => Option.getOrThrow(Option.fromNullishOr(rows[0])).id));
+
+/** Asserts the failing publisher returned the old revision to `active` itself and recorded it once. */
+const expectReturnedToActive = (f: DrainFixture) =>
+  Effect.gen(function* expectReturnedToActiveEffect() {
+    expect(yield* authorityRow(f.runtime)).toMatchObject({
+      durableWorkAdmission: 'open',
+      phase: 'active',
+      revision: f.old.composition.revision,
+    });
+    const recorded = yield* f.admin.executor.select().from(applicationCompositionDrainAbandonments);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ initiatedBy: 'publisher', revision: f.old.composition.revision });
+    return yield* Effect.void;
+  });
+
 it.layer(services, { excludeTestServices: true })('core-system Outbox claim, carry-over and drain', (suite) => {
   suite.effect('claims core lifecycle work in a tenant that has no core module state', () =>
     Effect.gen(function* claimsCoreSystemWork() {
@@ -454,7 +508,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A short freshness lease bounds the wait, so without the refusal this test fails fast instead of hanging.
       yield* f.admin.executor
         .update(applicationCompositionAuthority)
-        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+        .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
       // The retiring authority approved a different descriptor under this worker key, so identity is not proven.
       yield* f.admin.executor.execute(
         sql`update ${applicationCompositionAuthority}
@@ -611,7 +665,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A short freshness lease bounds the wait, so without the refusal this test fails fast rather than hanging.
       yield* f.admin.executor
         .update(applicationCompositionAuthority)
-        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+        .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
       const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, Effect.void).pipe(
         Effect.provide(f.layer),
@@ -753,7 +807,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A short freshness lease bounds the drain wait at about ten seconds.
       yield* f.admin.executor
         .update(applicationCompositionAuthority)
-        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+        .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
       // When did the running release last see its authority refuse reads?
       const lastRefused = yield* Ref.make(0);
@@ -777,7 +831,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       // The pre-flight admitted it (work in flight drains); the drain then waited for it and ran out of lease.
       expect(reason).not.toContain('drain was not started');
-      expect(reason).toContain('did not finish within its freshness lease');
+      expect(reason).toContain(LEASE_EXHAUSTED);
       // The failing publisher returned the same revision to active before it exited, and said so.
       expect(reason).toContain(RETURNED_TO_ACTIVE);
       expect(yield* authorityRow(f.runtime)).toMatchObject({
@@ -792,8 +846,119 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         operatorName: 'application-composition-publisher',
         revision: f.old.composition.revision,
       });
-      expect(recorded?.reason).toContain('did not finish within its freshness lease');
+      expect(recorded?.reason).toContain(LEASE_EXHAUSTED);
       expect(yield* deliveryRow(f.runtime)).toMatchObject({ status: 'processing' });
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('stops a running drain at once when a delivery it waits for dies', () =>
+    Effect.gen(function* stopsOnDeadDelivery() {
+      const f = yield* fixture();
+      yield* holdLifecycleDelivery(f);
+      yield* f.admin.executor.update(applicationCompositionAuthority).set({ validUntil: MINUTE_BOUND_LEASE });
+      // The retiring host settles its claim as dead while the drain waits for it: no one will ever finish it.
+      const { elapsedMs, reason } = yield* publishChangingWorkMidDrain(
+        f,
+        f.admin.executor
+          .update(outboxDeliveries)
+          .set({ attemptsCount: 3, claimedAt: null, claimedBy: null, claimExpiresAt: null, status: 'dead' })
+          .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey))
+          .pipe(Effect.asVoid),
+      );
+      expect(reason.startsWith(STOPPED_DRAIN)).toBe(true);
+      expect(reason).toContain(corePrincipalLifecycleSubscription.workerKey);
+      expect(reason).toContain(RETURNED_TO_ACTIVE);
+      expect(reason).not.toContain(LEASE_EXHAUSTED);
+      // The drain's own bound is a minute away; the next poll (every 3 s) stops it.
+      expect(elapsedMs).toBeLessThan(20_000);
+      yield* expectReturnedToActive(f);
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('stops a running drain at once when its owner defers a delivery past the deadline', () =>
+    Effect.gen(function* stopsOnDeferredDelivery() {
+      const f = yield* fixture();
+      yield* holdLifecycleDelivery(f);
+      yield* f.admin.executor.update(applicationCompositionAuthority).set({ validUntil: MINUTE_BOUND_LEASE });
+      const deliveryId = yield* lifecycleDeliveryId(f);
+      // Exactly what the Outbox runtime writes when a handler defers: the attempt settled with the deferral message,
+      // the delivery pending again and due at the owner's wake time, two hours away.
+      const defer = f.admin.executor.transaction((transaction) =>
+        Effect.gen(function* settleAsDeferred() {
+          yield* transaction.insert(outboxAttempts).values({
+            errorMessage: OUTBOX_DEFERRED_ATTEMPT_MESSAGE,
+            finishedAt: sql`clock_timestamp()`,
+            outboxDeliveryId: deliveryId,
+          });
+          yield* transaction
+            .update(outboxDeliveries)
+            .set({
+              availableAt: sql`clock_timestamp() + interval '2 hours'`,
+              claimedAt: null,
+              claimedBy: null,
+              claimExpiresAt: null,
+              status: 'pending',
+            })
+            .where(eq(outboxDeliveries.outboxDeliveryId, deliveryId));
+          return yield* Effect.void;
+        }),
+      );
+      const { elapsedMs, reason } = yield* publishChangingWorkMidDrain(f, defer);
+      expect(reason.startsWith(STOPPED_DRAIN)).toBe(true);
+      expect(reason).toContain('scheduled-beyond-budget (deferred by its owner until ');
+      expect(reason).toContain(RETURNED_TO_ACTIVE);
+      expect(elapsedMs).toBeLessThan(20_000);
+      yield* expectReturnedToActive(f);
+      return yield* Effect.void;
+    }),
+  );
+
+  suite.effect('keeps waiting when a changed-descriptor core row returns to pending mid-drain', () =>
+    Effect.gen(function* keepsWaitingForRetiringHost() {
+      const f = yield* fixture();
+      // The retiring authority approved a different descriptor under this worker key, so the row does not carry
+      // over. Claimed by the retiring host, it passes the pre-flight and the fence: that host is finishing it.
+      yield* f.admin.executor.execute(
+        sql`update ${applicationCompositionAuthority}
+            set subscriptions_json = (
+              select jsonb_agg(case when entry->>'workerKey' = ${corePrincipalLifecycleSubscription.workerKey}
+                then jsonb_set(entry, '{topic}', '"core.identity.principal-lifecycle-changed.v2"')
+                else entry end)
+              from jsonb_array_elements(subscriptions_json::jsonb) as entry
+            )::json
+            where ${applicationCompositionAuthority.authorityKey} = 'active'`,
+        'objects',
+      );
+      yield* holdLifecycleDelivery(f);
+      // A short freshness lease bounds the drain wait at about ten seconds.
+      yield* f.admin.executor
+        .update(applicationCompositionAuthority)
+        .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
+      // Its handler fails transiently: the row is pending again with a short backoff, and the retiring host, which
+      // approved this key, would retry it. That is no reason to stop the drain.
+      const { reason } = yield* publishChangingWorkMidDrain(
+        f,
+        f.admin.executor
+          .update(outboxDeliveries)
+          .set({
+            attemptsCount: 1,
+            availableAt: sql`clock_timestamp() + interval '1 second'`,
+            claimedAt: null,
+            claimedBy: null,
+            claimExpiresAt: null,
+            status: 'pending',
+          })
+          .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey))
+          .pipe(Effect.asVoid),
+      );
+      // No host runs in this test, so the drain waits to its own bound, exactly as before the per-poll check.
+      expect(reason).not.toContain(STOPPED_DRAIN);
+      expect(reason).toContain(LEASE_EXHAUSTED);
+      expect(reason).toContain(RETURNED_TO_ACTIVE);
+      yield* expectReturnedToActive(f);
+      expect(yield* deliveryRow(f.runtime)).toMatchObject({ attempts: 1, status: 'pending' });
       return yield* Effect.void;
     }),
   );
@@ -900,7 +1065,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         // A short freshness lease bounds the wait, so without the re-check this test fails fast instead of hanging.
         yield* f.admin.executor
           .update(applicationCompositionAuthority)
-          .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+          .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
         const calls = yield* Ref.make(0);
         // `verifyInitialCutover` runs first right before the enter-draining fence, after the pre-flight passed and
         // durable admission closed: exactly the window in which new work escapes a point-in-time check.
@@ -935,7 +1100,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A short lease makes every re-drain deadline pass at once, so all retries run within seconds.
       yield* f.admin.executor
         .update(applicationCompositionAuthority)
-        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+        .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
       const calls = yield* Ref.make(0);
       // On the call right before the promote, a retiring host claims a carried-over row and never finishes it.
       const claimAndHold = Effect.gen(function* claimOnSecondCall() {
