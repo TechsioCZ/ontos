@@ -44,22 +44,23 @@ minimumReleaseAgeExclude:
   - '@effect/platform-node-shared@4.0.7'
   - '@effect/sql-pg@4.0.7'
   # Exact compiler identities from the reviewed UltraModern compiler contract.
-  - '@effect/tsgo-darwin-arm64@0.67.0'
-  - '@effect/tsgo-darwin-x64@0.67.0'
-  - '@effect/tsgo-linux-arm64@0.67.0'
-  - '@effect/tsgo-linux-arm@0.67.0'
-  - '@effect/tsgo-linux-x64@0.67.0'
-  - '@effect/tsgo-win32-arm64@0.67.0'
-  - '@effect/tsgo-win32-x64@0.67.0'
-  - '@effect/tsgo@0.67.0'
-  - '@tsrs/darwin-arm64@0.21.0-ts7.1.0-beta'
-  - '@tsrs/darwin-x64@0.21.0-ts7.1.0-beta'
-  - '@tsrs/linux-arm64-gnu@0.21.0-ts7.1.0-beta'
-  - '@tsrs/linux-arm64-musl@0.21.0-ts7.1.0-beta'
-  - '@tsrs/linux-x64-gnu@0.21.0-ts7.1.0-beta'
-  - '@tsrs/linux-x64-musl@0.21.0-ts7.1.0-beta'
-  - '@tsrs/win32-x64@0.21.0-ts7.1.0-beta'
-  - 'tsrs@0.21.0-ts7.1.0-beta'
+  - '@effect/tsgo-darwin-arm64@0.69.0'
+  - '@effect/tsgo-darwin-x64@0.69.0'
+  - '@effect/tsgo-linux-arm64@0.69.0'
+  - '@effect/tsgo-linux-arm@0.69.0'
+  - '@effect/tsgo-linux-x64@0.69.0'
+  - '@effect/tsgo-win32-arm64@0.69.0'
+  - '@effect/tsgo-win32-x64@0.69.0'
+  - '@effect/tsgo@0.69.0'
+  - '@tsrs/darwin-arm64@0.25.0-ts7.1.0-beta'
+  - '@tsrs/darwin-x64@0.25.0-ts7.1.0-beta'
+  - '@tsrs/linux-arm64-gnu@0.25.0-ts7.1.0-beta'
+  - '@tsrs/linux-arm64-musl@0.25.0-ts7.1.0-beta'
+  - '@tsrs/linux-x64-gnu@0.25.0-ts7.1.0-beta'
+  - '@tsrs/linux-x64-musl@0.25.0-ts7.1.0-beta'
+  - '@tsrs/win32-arm64@0.25.0-ts7.1.0-beta'
+  - '@tsrs/win32-x64@0.25.0-ts7.1.0-beta'
+  - 'tsrs@0.25.0-ts7.1.0-beta'
   - '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.19'
   - '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.19'
   - '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.19'
@@ -120,7 +121,7 @@ minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade
 trustPolicyExclude:
-  - 'tsrs@0.21.0-ts7.1.0-beta'
+  - 'tsrs@0.25.0-ts7.1.0-beta'
 trustPolicyIgnoreAfter: 1440
 blockExoticSubdeps: true
 engineStrict: true
@@ -130,9 +131,11 @@ strictDepBuilds: true
 peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
+    # The effect-rstest fork build (cbbf87e) declares ^0.11.11; Rstest 0.12 keeps the test API it uses.
+    'effect-rstest>@rstest/core': '0.12'
 overrides:
-  '@effect/tsgo': 0.67.0
-  tsrs: 0.21.0-ts7.1.0-beta
+  '@effect/tsgo': 0.69.0
+  tsrs: 0.25.0-ts7.1.0-beta
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
   '@effect/opentelemetry': 4.0.7
@@ -173,6 +176,7 @@ patchedDependencies:
   # skips the BFF server declaration emit and TS-Go check in deploy builds; CI gates typecheck every unit)
   '@bleedingdev/modern-js-server-utils@3.9.3-ultramodern.19': patches/@bleedingdev__modern-js-server-utils@3.9.3-ultramodern.19.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
+  # compiler-prepare accepts the reviewed @effect/tsgo 0.69.0 tsrs contract (tsrs 0.25.0, Oxlint 1.91-1.93; adds win32-arm64).
   '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.19': patches/@bleedingdev__modern-js-ultramodern-create@3.9.3-ultramodern.19.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
