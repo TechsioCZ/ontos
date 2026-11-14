@@ -897,6 +897,23 @@ jobs:
           DROP ROLE ontos_runtime;
           SQL
 
+      # The app artifact ships an explicit runtime list (app/zerops.yaml deployFiles), including the Outbox Worker host
+      # runtime and Bun, which the Zerops build creates. The assembled-artifact proof copies every listed path, so
+      # this runner provisions the same two: the materialized worker host and the pinned Bun (a musl build, hence the
+      # musl loader on this glibc runner).
+      - name: Provision the worker host runtime and Bun that the app artifact ships
+        if: matrix.suite == 'integration'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          if [ ! -f .zerops/runtime/outbox-worker-host/worker.mjs ]; then
+            mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
+          fi
+          command -v /lib/ld-musl-x86_64.so.1 >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends musl
+          sh scripts/install-zerops-bun.sh 1.4.4
+          mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
+
       - name: Run the assembled stage migrator artifact against the fresh database
         if: matrix.suite == 'integration'
         working-directory: app
@@ -1081,6 +1098,22 @@ jobs:
         run: |
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
+
+      # The app artifact ships an explicit runtime list (app/zerops.yaml deployFiles), including the Outbox Worker host
+      # runtime and Bun, which the Zerops build creates. The assembled-artifact proof copies every listed path, so
+      # this runner provisions the same two: the materialized worker host and the pinned Bun (a musl build, hence the
+      # musl loader on this glibc runner).
+      - name: Provision the worker host runtime and Bun that the app artifact ships
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          if [ ! -f .zerops/runtime/outbox-worker-host/worker.mjs ]; then
+            mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
+          fi
+          command -v /lib/ld-musl-x86_64.so.1 >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends musl
+          sh scripts/install-zerops-bun.sh 1.4.4
+          mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
 
       - name: Prove the fresh-database preparation and dump the seed
         working-directory: app
