@@ -37,7 +37,7 @@ const businessDateFormat = new Intl.DateTimeFormat('sv-SE', {
   timeZone: 'Europe/Prague',
   year: 'numeric',
 });
-const currentBusinessDate = () => businessDateFormat.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+const currentBusinessDate = (now = DateTime.nowUnsafe()) => businessDateFormat.format(DateTime.toEpochMillis(now));
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 export interface AgreementsGuardScope {
@@ -434,8 +434,9 @@ export const transitionAgreements = (
         if (state.documents.some((value) => refMatches(value.documentRef, document.documentRef))) {
           return yield* conflict('signed_document_already_exists');
         }
-        const now = DateTime.formatIso(yield* DateTime.now);
-        if (signedOn > now.slice(0, 10)) {
+        const signedAt = yield* DateTime.now;
+        const now = DateTime.formatIso(signedAt);
+        if (signedOn > currentBusinessDate(signedAt)) {
           return yield* rejected('signature_date_in_future');
         }
         const changed = replaceContract(state, { ...record, signatureState: 'SIGNED' });

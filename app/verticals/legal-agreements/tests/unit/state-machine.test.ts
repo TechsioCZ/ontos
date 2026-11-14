@@ -251,6 +251,32 @@ describe('Agreements state transitions', () => {
       expect(Schema.is(AgreementsRejected)(invalid)).toBe(true);
     }),
   );
+  it.effect('accepts signatures dated today in Prague before UTC midnight but refuses Prague tomorrow', () =>
+    Effect.gen(function* signatureBusinessDate() {
+      const initial: AgreementsState = { ...empty, contracts: [draft] };
+      const command = {
+        _tag: 'RecordSignedDocument',
+        contractRef,
+        document,
+        signedBy: 'Jan Novák',
+        signedOn: '2026-10-16',
+      } as const;
+      for (const instant of ['2026-10-15T22:30:00.000Z', '2026-12-15T23:30:00.000Z']) {
+        yield* TestClock.setTime(Date.parse(instant));
+        const signedOn = instant.startsWith('2026-10') ? '2026-10-16' : '2026-12-16';
+        const recorded = yield* transitionAgreements(initial, { ...command, signedOn }, scope, validators);
+        expect(recorded.snapshot.documents[0]?.signedOn).toBe(signedOn);
+        const tomorrow = instant.startsWith('2026-10') ? '2026-10-17' : '2026-12-17';
+        const failure = yield* transitionAgreements(
+          initial,
+          { ...command, signedOn: tomorrow },
+          scope,
+          validators,
+        ).pipe(Effect.flip);
+        expect(Schema.is(AgreementsRejected)(failure)).toBe(true);
+      }
+    }),
+  );
   it.effect(
     'resolves renewal attention with one successor draft while preserving the active contract expiry indicator',
     () =>
