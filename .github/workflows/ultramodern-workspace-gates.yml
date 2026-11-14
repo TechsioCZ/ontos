@@ -759,11 +759,14 @@ jobs:
         run: mise exec -- pnpm authorization:catalog:artifact:check
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
-  # over every tracked file. Type-aware lint of the whole tree took over four minutes on one runner, so
-  # each shard runs the hook over every other tracked file (`--all-files` is `git ls-files`): together
-  # they cover every file once, and the hook's own globs still choose what each tool checks.
+  # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
+  # Since tsrs 0.23 a type-aware lint run checks the whole program of every tsconfig its files touch, so two
+  # shards paid that check twice; one job pays it once. TSRS_FAST=1 is tsrs' fast whole-program mode, which still
+  # reports type errors; the separate Typecheck gate keeps the authoritative TS-Go check of the whole workspace.
+  # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
+  # candidate check, over every file.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/2)
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/1)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-latest
@@ -771,7 +774,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -790,7 +793,8 @@ jobs:
       - name: Format and Lint the shard's files through the pre-commit hook
         env:
           SHARD: ${{ matrix.shard }}
-          SHARDS: 2
+          SHARDS: 1
+          TSRS_FAST: '1'
         run: |
           index=0
           git ls-files -z | while IFS= read -r -d '' file; do
