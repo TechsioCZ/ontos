@@ -167,6 +167,19 @@ export const dumpDatabase = (database: string, index: number, directory: string,
       source,
     ]);
     yield* runSeedCommand('docker', ['compose', 'cp', `${PG_SERVICE}:${source}`, path.join(directory, archive)]);
+    // A restore re-parses every expression pg_dump wrote, so a CHECK the migrations built as nested ANDs comes back
+    // flattened, with other parentheses. The evidence is taken from this archive restored once, here, exactly as a
+    // row restores it, so the fingerprint is the restored schema's and a row's restore compares like with like.
+    yield* seedSql(MAINTENANCE_DB, `DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`);
+    yield* postgresCommand('pg_restore', [
+      USERNAME_FLAG,
+      user,
+      DATABASE_FLAG,
+      MAINTENANCE_DB,
+      CREATE_FLAG,
+      '--exit-on-error',
+      source,
+    ]);
     const schema = yield* schemaDump(database);
     const fs = yield* FileSystem.FileSystem;
     yield* fs.writeFileString(path.join(directory, schemaFile(archive)), schema);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 
 export class IntegrationSeedError extends Schema.TaggedError<IntegrationSeedError>()('IntegrationSeedError', {
   reason: Schema.String,
@@ -172,7 +172,13 @@ export const assertDatabaseEvidence = (expected: DatabaseEvidence, actual: Datab
 /** pg_dump adds random restrict keys; everything else, including owners/ACLs/policies, is hashed. */
 /** The schema dump as fingerprinted: pg_dump's per-run `\\restrict` keys removed. */
 export const normalizedSchema = (dump: string) => dump.replaceAll(/^\\(?:un)?restrict .*\n/gmu, '');
-export const schemaFingerprint = (dump: string) => sha256(normalizedSchema(dump));
+/**
+ * The fingerprint of a schema dump: every line, pg_dump's per-run `\\restrict` keys left out, in sorted order. Any
+ * object, column, constraint, index, policy, grant or owner that differs changes it; the order pg_dump happens to
+ * emit them in does not.
+ */
+export const schemaFingerprint = (dump: string) =>
+  sha256(EffectArray.sort(normalizedSchema(dump).split('\n'), Order.String).join('\n'));
 
 const lineCounts = (text: string) => {
   const lines = new Map<string, number>();

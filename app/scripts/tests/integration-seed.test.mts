@@ -151,3 +151,14 @@ it('names the schema lines a restored database lacks or gained, without the per-
   expect(difference).toContain('+ GRANT SELECT ON a TO s;');
   expect(difference).not.toContain('restrict');
 });
+
+it('fingerprints a schema regardless of the order pg_dump emits it and of its per-run restrict keys', () => {
+  const first =
+    '\\restrict k1\nCREATE TABLE a (id int);\nCREATE TABLE b (id int);\nGRANT SELECT ON a TO r;\n\\unrestrict k1\n';
+  const reordered =
+    '\\restrict k2\nGRANT SELECT ON a TO r;\nCREATE TABLE b (id int);\nCREATE TABLE a (id int);\n\\unrestrict k2\n';
+  expect(schemaFingerprint(reordered)).toBe(schemaFingerprint(first));
+  // A changed column, constraint or grant still changes it.
+  expect(schemaFingerprint(first.replace('TO r', 'TO s'))).not.toBe(schemaFingerprint(first));
+  expect(schemaFingerprint(first.replace('b (id int)', 'b (id bigint)'))).not.toBe(schemaFingerprint(first));
+});
