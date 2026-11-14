@@ -104,10 +104,13 @@ export const withCiTopologyDependencies = (
 const gateIds = [
   'workspace-gate',
   'workspace-unit',
+  'workspace-unit-artifacts',
   'static-contracts',
   'format-and-lint',
   'service-integration',
+  'browser-integration',
   'node-artifact-build',
+  'node-artifact-proof',
 ] as const;
 
 const rootDocumentation = (changedPath: string) =>
@@ -226,9 +229,35 @@ export const planCiChecks = (input: {
   // A malformed/empty unit mapping never becomes a green no-op.
   const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
   const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
-  const expected = Object.fromEntries(
-    gateIds.map((gate) => [gate, gate === 'service-integration' && integration.length === 0 ? 'skipped' : 'success']),
-  );
+  const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
+  // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
+  // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
+  const jobs = {
+    browser: integration.filter(({ suite }) => suite === 'browser'),
+    services: integration.filter(({ suite }) => suite === 'integration'),
+    unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
+    unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
+  };
+  const rows = (gate: (typeof gateIds)[number]) => {
+    switch (gate) {
+      case 'browser-integration': {
+        return jobs.browser.length;
+      }
+      case 'service-integration': {
+        return jobs.services.length;
+      }
+      case 'workspace-unit': {
+        return jobs.unitPlain.length;
+      }
+      case 'workspace-unit-artifacts': {
+        return jobs.unitArtifacts.length;
+      }
+      default: {
+        return 1;
+      }
+    }
+  };
+  const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows(gate) === 0 ? 'skipped' : 'success']));
   let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
     reason = input.applyAffected
@@ -240,10 +269,11 @@ export const planCiChecks = (input: {
     candidateIntegration: broad ? templates.integration : selectedIntegration,
     expected,
     integration,
+    jobs,
     mode: effectiveMode,
     reason,
     source: templates.source,
-    unit: effectiveMode === 'full' ? templates.unit : selectedUnit,
+    unit,
   };
 };
 
@@ -355,10 +385,12 @@ const cli = Command.make(
       });
       const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
       const encoded = yield* Effect.all({
+        browser: encode(plan.jobs.browser),
         expected: encode(plan.expected),
-        integration: encode(plan.integration),
+        integration: encode(plan.jobs.services),
         source: encode(plan.source),
-        unit: encode(plan.unit),
+        unit: encode(plan.jobs.unitPlain),
+        'unit-artifacts': encode(plan.jobs.unitArtifacts),
       });
       const output = yield* Config.String('GITHUB_OUTPUT');
       const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);

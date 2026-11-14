@@ -45,10 +45,10 @@ printf 'mode=%s\n' "$mode" >>"$GITHUB_OUTPUT"
 printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
 if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
-    "workspace-gate":"skipped", "workspace-unit":"skipped", "static-contracts":"skipped",
-    "format-and-lint":"skipped", "service-integration":"skipped",
-    "node-artifact-build":"skipped"
+    "workspace-gate":"skipped", "workspace-unit":"skipped", "workspace-unit-artifacts":"skipped",
+    "static-contracts":"skipped", "format-and-lint":"skipped", "service-integration":"skipped",
+    "browser-integration":"skipped", "node-artifact-build":"skipped", "node-artifact-proof":"skipped"
   }' | sed 's/^/expected=/' >>"$GITHUB_OUTPUT"
-  printf 'source=[]\nunit=[]\nintegration=[]\n' >>"$GITHUB_OUTPUT"
+  printf 'source=[]\nunit=[]\nunit-artifacts=[]\nintegration=[]\nbrowser=[]\n' >>"$GITHUB_OUTPUT"
 fi
 printf '%s\n' "$reason"
