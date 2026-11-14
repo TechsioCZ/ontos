@@ -212,6 +212,29 @@ const findDocument = (state: AgreementsState, ref: DocumentRef, scope: Agreement
       )
     : Effect.succeed(record);
 };
+const validateSuccessor = Effect.fn('Agreements.validateSuccessor')(function* validateSuccessor(
+  state: AgreementsState,
+  record: Contract,
+  scope: AgreementsGuardScope,
+) {
+  if (record.supersedesContractRef === null) {
+    return yield* Effect.void;
+  }
+  const previous = yield* findContract(state, record.supersedesContractRef, scope);
+  if (
+    refMatches(record.contractRef, previous.contractRef) ||
+    !refMatches(record.counterpartyRef, previous.counterpartyRef) ||
+    record.kind !== previous.kind ||
+    (previous.unitRef === null
+      ? record.unitRef !== null
+      : record.unitRef === null || !refMatches(previous.unitRef, record.unitRef)) ||
+    record.startDate <= previous.startDate ||
+    (previous.endDate !== null && record.startDate < previous.endDate)
+  ) {
+    return yield* rejected('invalid_successor');
+  }
+  return yield* Effect.void;
+});
 export interface AgreementsTransition {
   readonly resourceRef: ContractRef | DocumentRef;
   readonly snapshot: AgreementsState;
@@ -291,6 +314,7 @@ export const transitionAgreements = (
           return yield* conflict('update_requires_unsigned_draft');
         }
         yield* validateContract(record, scope, validators);
+        yield* validateSuccessor(state, record, scope);
         return replaceContract(state, record);
       }),
     ),
@@ -328,6 +352,7 @@ export const transitionAgreements = (
           return yield* rejected('cannot_activate_expired_contract');
         }
         yield* validateContract(record, scope, validators);
+        yield* validateSuccessor(state, record, scope);
         return replaceContract(state, { ...record, lifecycleState: 'ACTIVE' });
       }),
     ),
@@ -359,7 +384,7 @@ export const transitionAgreements = (
               refMatches(value.contractRef, successor.contractRef) ||
               (value.supersedesContractRef !== null &&
                 refMatches(value.supersedesContractRef, contractRef) &&
-                value.lifecycleState === 'DRAFT'),
+                (value.lifecycleState === 'DRAFT' || value.lifecycleState === 'ACTIVE')),
           )
         ) {
           return yield* conflict('successor_already_exists');
@@ -368,17 +393,12 @@ export const transitionAgreements = (
           successor.lifecycleState !== 'DRAFT' ||
           successor.signatureState !== 'NOT_SENT' ||
           successor.supersedesContractRef === null ||
-          !refMatches(successor.supersedesContractRef, previous.contractRef) ||
-          !refMatches(successor.counterpartyRef, previous.counterpartyRef) ||
-          successor.kind !== previous.kind ||
-          (previous.unitRef === null
-            ? successor.unitRef !== null
-            : successor.unitRef === null || !refMatches(previous.unitRef, successor.unitRef)) ||
-          (previous.endDate !== null && successor.startDate < previous.endDate)
+          !refMatches(successor.supersedesContractRef, previous.contractRef)
         ) {
           return yield* rejected('invalid_successor');
         }
         yield* validateContract(successor, scope, validators);
+        yield* validateSuccessor(state, successor, scope);
         return {
           resourceRef: successor.contractRef,
           snapshot: { ...state, contracts: [...state.contracts, successor] },
