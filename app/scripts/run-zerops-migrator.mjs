@@ -5,10 +5,12 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { NodeRuntime } from '@effect/platform-node';
-import { Cause, Config, Duration, Effect, Option } from 'effect';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Cause, Config, Console, Duration, Effect, Layer, Option } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 
 import { accessReleaseActivationArguments } from './access-release-activation-child.mts';
+import { OwnerMigrationPlanner, OwnerMigrationPlannerLive } from './application-migration-pending.mts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -103,25 +105,41 @@ const run = Effect.fn('run')(
   },
 );
 
-/** @param {string} relativePath - Application-relative script path. */
-const runAppScript = (relativePath) => run(process.execPath, [path.join(appDirectory, relativePath)]);
+/**
+ * @param {string} relativePath - Application-relative script path.
+ * @param {readonly string[]} [scriptArguments] - Arguments after the script path.
+ */
+const runAppScript = (relativePath, scriptArguments = []) =>
+  run(process.execPath, [path.join(appDirectory, relativePath), ...scriptArguments]);
 
 /** @param {'core' | 'party'} owner - Reviewed owner whose histories converge as one ordered group. */
 const migrateConvergentOwner = (owner) =>
   run(process.execPath, [path.join(appDirectory, 'scripts/migration-convergence-cli.mts'), owner]);
 
 /**
+ * One owner's native migration. `drizzle-kit migrate` starts only when its journal does not provably hold every local
+ * migration by name and SQL hash (`application-migration-pending.mts`, Drizzle's own name rule); any doubt starts it
+ * exactly as before. Either way the owner gets one line: what it found, and what it applied.
  * @param {string} relativeDirectory - Application-relative package directory.
  * @param {string} config - Drizzle configuration filename.
  */
-const migrate = (relativeDirectory, config) => {
-  const workingDirectory = path.join(appDirectory, relativeDirectory);
-  return run(
-    path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
-    ['migrate', '--config', config],
-    workingDirectory,
-  );
-};
+const migrate = (relativeDirectory, config) =>
+  Effect.gen(function* migrateOwner() {
+    const owner = `${relativeDirectory} (${config})`;
+    const decision = yield* (yield* OwnerMigrationPlanner).decide(relativeDirectory, config);
+    if (decision.nothingToApply) {
+      return yield* Console.log(`[migrator] ${owner}: ${decision.reason}; drizzle-kit not started`);
+    }
+    yield* Console.log(`[migrator] ${owner}: ${decision.reason}; running drizzle-kit migrate`);
+    const workingDirectory = path.join(appDirectory, relativeDirectory);
+    yield* run(
+      path.join(workingDirectory, 'node_modules', '.bin', 'drizzle-kit'),
+      ['migrate', '--config', config],
+      workingDirectory,
+    );
+    const applied = decision.pending.length > 0 ? `applied ${String(decision.pending.length)}` : 'migrate finished';
+    return yield* Console.log(`[migrator] ${owner}: ${applied}`);
+  });
 
 /** @param {ReturnType<typeof createServer>} server - Readiness server owned by the Effect scope. */
 const closeServer = (server) =>
@@ -178,73 +196,99 @@ const serveReadiness = Effect.fn('serveReadiness')(
   },
 );
 
-const main = Effect.scoped(
-  Effect.gen(function* migratorEffect() {
-    // Validate the optional owner's complete configuration before any migration writes.
-    const portalAuthDatabase = yield* loadOptionalCommercePortalAuthDatabaseConfig();
-    yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
-    yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-    yield* migrateConvergentOwner('core');
-    yield* migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
-    yield* migrateConvergentOwner('party');
-    yield* migrate('verticals/payment-term-catalog', 'drizzle.config.ts');
-    yield* migrate('verticals/price-group-catalog', 'drizzle.config.ts');
-    yield* migrate('verticals/assortment', 'drizzle.config.ts');
-    yield* migrate('verticals/commerce-customer-context', 'drizzle.config.ts');
-    yield* migrate('verticals/commerce-market-catalog', 'drizzle.config.ts');
-    yield* migrate('verticals/catalog', 'drizzle.config.ts');
-    yield* migrate('verticals/inventory', 'drizzle.config.ts');
-    yield* migrate('verticals/pricing', 'drizzle.config.ts');
-    yield* migrate('verticals/privacy', 'drizzle.config.ts');
-    yield* migrate('verticals/storefront-registry', 'drizzle.config.ts');
-    yield* migrate('verticals/tax', 'drizzle.config.ts');
-    // <generated-vertical-provider-migrations>
-    yield* migrate('verticals/property-portfolio', 'drizzle.config.ts');
-    yield* migrate('verticals/property-leasing', 'drizzle.config.ts');
-    yield* migrate('verticals/legal-agreements', 'drizzle.config.ts');
-    yield* migrate('verticals/work-tasks', 'drizzle.config.ts');
-    yield* migrate('verticals/workforce', 'drizzle.config.ts');
-    yield* migrate('verticals/tagging', 'drizzle.config.ts');
-    yield* migrate('verticals/sales-pipeline', 'drizzle.config.ts');
-    yield* migrate('verticals/merchandise', 'drizzle.config.ts');
-    yield* migrate('verticals/facility-operations', 'drizzle.config.ts');
-    yield* migrate('verticals/sales-insights', 'drizzle.config.ts');
-    yield* migrate('verticals/finance-billing', 'drizzle.config.ts');
-    yield* migrate('verticals/crm-activities', 'drizzle.config.ts');
-    yield* migrate('verticals/crm', 'drizzle.config.ts');
-    yield* migrate('verticals/projects', 'drizzle.config.ts');
-    yield* migrate('verticals/commerce-cart', 'drizzle.config.ts');
-    yield* migrate('verticals/commerce-order', 'drizzle.config.ts');
-    yield* migrate('verticals/payment', 'drizzle.config.ts');
-    yield* migrate('verticals/promotion', 'drizzle.config.ts');
-    yield* migrate('verticals/symmy-integration', 'drizzle.config.ts');
-    // </generated-vertical-provider-migrations>
-    yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-    if (Option.isSome(portalAuthDatabase)) {
+/**
+ * Access catalog release activation: publishes the deployed catalog when it is newer, lets "Plný přístup" follow it
+ * and records Novinky for every other role. It never fails the release: authorization then stays at the previous
+ * release, which keeps every new capability denied, and the next activation retries. It is bounded, and its child
+ * process is stopped on expiry, so an unreachable engine never holds a deployment.
+ */
+const activateAccessRelease = Effect.scoped(
+  run(process.execPath, [...accessReleaseActivationArguments(appDirectory)]),
+).pipe(
+  Effect.timeoutOrElse({
+    duration: ACCESS_RELEASE_ACTIVATION_BUDGET,
+    orElse: () => Effect.fail(new MigratorError('the activation exceeded its time budget')),
+  }),
+  Effect.catch((error) =>
+    Effect.logError(
+      `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
+    ),
+  ),
+);
+
+const ownerMigrations = Effect.gen(function* ownerMigrationsEffect() {
+  yield* migrateConvergentOwner('core');
+  yield* migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
+  yield* migrateConvergentOwner('party');
+  yield* migrate('verticals/payment-term-catalog', 'drizzle.config.ts');
+  yield* migrate('verticals/price-group-catalog', 'drizzle.config.ts');
+  yield* migrate('verticals/assortment', 'drizzle.config.ts');
+  yield* migrate('verticals/commerce-customer-context', 'drizzle.config.ts');
+  yield* migrate('verticals/commerce-market-catalog', 'drizzle.config.ts');
+  yield* migrate('verticals/catalog', 'drizzle.config.ts');
+  yield* migrate('verticals/inventory', 'drizzle.config.ts');
+  yield* migrate('verticals/pricing', 'drizzle.config.ts');
+  yield* migrate('verticals/privacy', 'drizzle.config.ts');
+  yield* migrate('verticals/storefront-registry', 'drizzle.config.ts');
+  yield* migrate('verticals/tax', 'drizzle.config.ts');
+  // <generated-vertical-provider-migrations>
+  yield* migrate('verticals/property-portfolio', 'drizzle.config.ts');
+  yield* migrate('verticals/property-leasing', 'drizzle.config.ts');
+  yield* migrate('verticals/legal-agreements', 'drizzle.config.ts');
+  yield* migrate('verticals/work-tasks', 'drizzle.config.ts');
+  yield* migrate('verticals/workforce', 'drizzle.config.ts');
+  yield* migrate('verticals/tagging', 'drizzle.config.ts');
+  yield* migrate('verticals/sales-pipeline', 'drizzle.config.ts');
+  yield* migrate('verticals/merchandise', 'drizzle.config.ts');
+  yield* migrate('verticals/facility-operations', 'drizzle.config.ts');
+  yield* migrate('verticals/sales-insights', 'drizzle.config.ts');
+  yield* migrate('verticals/finance-billing', 'drizzle.config.ts');
+  yield* migrate('verticals/crm-activities', 'drizzle.config.ts');
+  yield* migrate('verticals/crm', 'drizzle.config.ts');
+  yield* migrate('verticals/projects', 'drizzle.config.ts');
+  yield* migrate('verticals/commerce-cart', 'drizzle.config.ts');
+  yield* migrate('verticals/commerce-order', 'drizzle.config.ts');
+  yield* migrate('verticals/payment', 'drizzle.config.ts');
+  yield* migrate('verticals/promotion', 'drizzle.config.ts');
+  yield* migrate('verticals/symmy-integration', 'drizzle.config.ts');
+  // </generated-vertical-provider-migrations>
+  return yield* Effect.void;
+});
+
+/** Role bootstrap, every owner's migrations, the role bootstrap again and the optional portal-auth database. */
+const migrations = Effect.gen(function* migrationsEffect() {
+  // Validate the optional owner's complete configuration before any migration writes.
+  const portalAuthDatabase = yield* loadOptionalCommercePortalAuthDatabaseConfig();
+  yield* runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
+  yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
+  yield* ownerMigrations;
+  yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
+  if (Option.isSome(portalAuthDatabase)) {
+    yield* Effect.gen(function* portalAuthDatabaseEffect() {
       yield* migrate('verticals/commerce-customer-context', 'drizzle.portal-auth.config.ts');
       yield* runAppScript('verticals/commerce-customer-context/scripts/bootstrap-portal-auth-runtime-role.mts');
       yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
-    }
-    yield* runAppScript('scripts/verify-application-db-schema.mts');
-    // Access catalog release activation: publishes the deployed catalog when it is newer, lets "Plný přístup"
-    // follow it and records Novinky for every other role. It never fails the release: authorization then stays
-    // at the previous release, which keeps every new capability denied, and the next activation retries. It is
-    // bounded, and its child process is stopped on expiry, so an unreachable engine never holds a deployment.
-    yield* Effect.scoped(run(process.execPath, [...accessReleaseActivationArguments(appDirectory)])).pipe(
-      Effect.timeoutOrElse({
-        duration: ACCESS_RELEASE_ACTIVATION_BUDGET,
-        orElse: () => Effect.fail(new MigratorError('the activation exceeded its time budget')),
-      }),
-      Effect.catch((error) =>
-        Effect.logError(
-          `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
-        ),
-      ),
-    );
+    });
+  }
+  return yield* Effect.void;
+}).pipe(Effect.provide(OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))));
+
+/** Every owner's schema is verified before the access catalog release activation runs. */
+const verificationAndActivation = Effect.gen(function* verificationAndActivationEffect() {
+  yield* runAppScript('scripts/verify-application-db-schema.mts');
+  return yield* activateAccessRelease;
+});
+
+const main = Effect.scoped(
+  Effect.gen(function* migratorEffect() {
+    yield* Effect.andThen(migrations, verificationAndActivation);
     if (!(yield* migrateOnce)) {
       yield* serveReadiness(yield* migratorPort);
     }
-  }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause))),
+  ),
 );
 
 // SIGTERM (a container stop) interrupts the migrator instead of killing it, so its running child is stopped
