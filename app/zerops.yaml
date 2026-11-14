@@ -64,7 +64,8 @@ zerops:
           port: 3070
           path: /robots.txt
         failureTimeout: 3m
-        retryPeriod: 10s
+        # A Next standalone server answers within seconds; a 10 s probe period added up to 10 s to every switch.
+        retryPeriod: 2s
     run:
       base: alpine/nodejs@26
       ports:
@@ -120,7 +121,8 @@ zerops:
           port: 3071
           path: /robots.txt
         failureTimeout: 3m
-        retryPeriod: 10s
+        # A Next standalone server answers within seconds; a 10 s probe period added up to 10 s to every switch.
+        retryPeriod: 2s
     run:
       base: alpine/nodejs@26
       ports:
