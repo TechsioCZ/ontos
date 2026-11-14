@@ -161,8 +161,9 @@ jobs:
         working-directory: app
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
-          # Candidate dispatches apply affected selection without the repository setting; others follow it.
-          APPLY_AFFECTED: ${{ (vars.CI_AFFECTED_ENABLED == 'true' || steps.candidate.outputs.base != '') && 'true' || 'false' }}
+          # Only a candidate/* dispatch without force-ci-full narrows the gates to the changed owners (the candidate step
+          # sets a base only then). Pull requests, merge groups and trunk pushes always run the complete suite.
+          APPLY_AFFECTED: ${{ steps.candidate.outputs.base != '' && 'true' || 'false' }}
         run: |
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)

@@ -24,7 +24,8 @@ const PRIVACY_DIRECTORY = 'verticals/privacy';
 const PRIVACY = '@app/privacy';
 const SHELL_DIRECTORY = 'apps/shell-super-app';
 const packages = [
-  { dependencies: [], directory: CATALOG_DIRECTORY, name: CATALOG },
+  // The fixture's changed catalog file is one its exports map names: other packages consume it.
+  { dependencies: [], directory: CATALOG_DIRECTORY, exportTargets: ['src/service.ts'], name: CATALOG },
   { dependencies: [CATALOG], directory: 'verticals/pricing', name: PRICING },
   { dependencies: [], directory: PRIVACY_DIRECTORY, name: PRIVACY },
   { dependencies: [], directory: SHELL_DIRECTORY, name: SHELL },
@@ -48,10 +49,91 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
     'Pricing and Inventory Integration',
     'Catalog Integration',
     'Native Preproposal Basis and Approval Proof',
+    'Fresh Database Integration (1/2)',
+    'Fresh Database Integration (2/2)',
   ]);
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
   );
+});
+
+const FINANCE_BILLING = '@app/finance-billing';
+const FINANCE_DIRECTORY = 'verticals/finance-billing';
+const FACILITY_OPERATIONS = '@app/facility-operations';
+const narrowPackages = [
+  ...packages.filter(({ name }) => name !== SHELL),
+  {
+    dependencies: [],
+    directory: FINANCE_DIRECTORY,
+    exportTargets: ['src/worker-host/entry.ts'],
+    name: FINANCE_BILLING,
+  },
+  { dependencies: [FINANCE_BILLING], directory: 'verticals/facility-operations', name: FACILITY_OPERATIONS },
+  // The Shell and the root suites consume every vertical.
+  {
+    dependencies: [CATALOG, FINANCE_BILLING, FACILITY_OPERATIONS],
+    directory: SHELL_DIRECTORY,
+    name: SHELL,
+  },
+  { dependencies: [SHELL], directory: '.', name: 'app' },
+];
+const narrowPlan = (changedPath: string) =>
+  planCiChecks({ applyAffected: true, changedPaths: [changedPath], packages: narrowPackages, templates });
+const SHELL_OR_ROOT = (entry: { readonly 'package-filters'?: string; readonly 'root-suite'?: boolean }) =>
+  (entry['package-filters'] ?? '').includes('./apps/shell-super-app') || entry['root-suite'] === true;
+
+it('narrows a change inside one vertical to its own rows, the fresh-database rows and the source gates', () => {
+  const plan = narrowPlan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
+  expect(plan.mode).toBe('affected');
+  expect(plan.affectedPackages).toEqual([FINANCE_BILLING]);
+  const ordinary = plan.integration.filter((entry) => entry['fresh-database-tests'] !== 'only');
+  expect(ordinary.map(({ name }) => name)).toEqual(['Database, Migration, RLS, Authorization, and Outbox Integration']);
+  expect(ordinary[0]?.['package-filters']).toBe(`--filter ./${FINANCE_DIRECTORY}`);
+  // Neither the Shell nor a root suite consumes a vertical's internals; only its public surface.
+  expect(ordinary.some(SHELL_OR_ROOT)).toBe(false);
+  expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(false);
+  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
+  expect(plan.source).toEqual(templates.source);
+  expect(plan.unit.map(({ name }) => name)).toEqual(['Unit and Component Tests (every other package)']);
+  // Its tests are its own as well.
+  expect(narrowPlan(`app/${FINANCE_DIRECTORY}/tests/unit/totals.test.ts`).affectedPackages).toEqual([FINANCE_BILLING]);
+});
+
+it('selects every consumer when a change reaches a vertical public surface, and widens what is shared', () => {
+  // A file its exports map names, its runtime declaration and its locales are consumed: the Shell and root follow.
+  for (const surface of ['src/worker-host/entry.ts', 'vertical.runtime-declaration.ts', 'locales/cs/finance.json']) {
+    const plan = narrowPlan(`app/${FINANCE_DIRECTORY}/${surface}`);
+    expect(plan.mode, surface).toBe('affected');
+    expect(plan.affectedPackages, surface).toEqual(
+      expect.arrayContaining([FINANCE_BILLING, FACILITY_OPERATIONS, SHELL, 'app']),
+    );
+    expect(plan.integration.some(SHELL_OR_ROOT), surface).toBe(true);
+  }
+  // Shared code, the manifest, the registration, migrations and core packages run the complete suite.
+  for (const changedPath of [
+    `app/${FINANCE_DIRECTORY}/shared/domain/invoice.ts`,
+    `app/${FINANCE_DIRECTORY}/vertical.manifest.ts`,
+    `app/${FINANCE_DIRECTORY}/vertical.registration.ts`,
+    `app/${FINANCE_DIRECTORY}/drizzle/0001_invoice.sql`,
+    'app/packages/core-runtime/src/actions/runtime.ts',
+  ]) {
+    expect(narrowPlan(changedPath).mode, changedPath).toBe('full');
+  }
+});
+
+it('selects the Shell rows and the browser checks for a change inside the Shell', () => {
+  const plan = narrowPlan(`app/${SHELL_DIRECTORY}/src/routes/home.tsx`);
+  expect(plan.mode).toBe('affected');
+  expect(plan.affectedPackages).toEqual([SHELL]);
+  expect(
+    plan.integration
+      .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
+      .map((entry) => entry['rstest-shard']),
+  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
+  expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
+  expect(
+    plan.integration.some((entry) => entry['root-suite'] === true && entry['fresh-database-tests'] !== 'only'),
+  ).toBe(false);
 });
 
 it('retains the native preproposal proof for each runtime owner even without ordinary package-filter matches', () => {

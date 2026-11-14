@@ -1,4 +1,4 @@
-import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Schema } from 'effect';
+import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Predicate, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { runQualityCli } from './quality-cli-lifecycle.mts';
@@ -62,6 +62,8 @@ export interface CiWorkspacePackage {
   readonly contractProducer?: string;
   readonly dependencies: readonly string[];
   readonly directory: string;
+  /** Package-relative files the manifest's `exports` map points at: what other packages consume from it. */
+  readonly exportTargets?: readonly string[];
   readonly name: string;
   readonly uncertain?: boolean;
 }
@@ -170,6 +172,22 @@ const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage
   );
 };
 
+/**
+ * Whether a change reaches the package's consumers. Everything the broad-path rule does not already widen to the
+ * complete suite and that is not part of the package's public surface (its runtime declaration, locales and the
+ * files its `exports` map points at) is the package's own: only its own tests select it. The Shell and the root
+ * suites consume every vertical through that surface, so a change confined to a vertical's internals no longer
+ * selects them.
+ */
+const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
+  const relative = changedPath.slice(`app/${owner.directory}/`.length);
+  return (
+    owner.directory === '.' ||
+    /^(?:vertical\.runtime-declaration\.[cm]?[jt]sx?|locales\/.*)$/u.test(relative) ||
+    (owner.exportTargets ?? []).includes(relative)
+  );
+};
+
 export const planCiChecks = (input: {
   readonly applyAffected: boolean;
   readonly changedPaths: readonly string[];
@@ -178,12 +196,19 @@ export const planCiChecks = (input: {
   readonly templates: Templates;
 }) => {
   const { packages, templates } = input;
-  const seeds = input.changedPaths.flatMap((changedPath) =>
+  const owned = input.changedPaths.flatMap((changedPath) =>
     packages
       .filter(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`))
-      .map(({ name }) => name),
+      .map((owner) => ({ consumed: reachesConsumers(changedPath, owner), name: owner.name })),
   );
-  const affectedNames = workspaceConsumerClosure(packages, seeds);
+  const seeds = owned.map(({ name }) => name);
+  const affectedNames = new Set([
+    ...workspaceConsumerClosure(
+      packages,
+      owned.filter(({ consumed }) => consumed).map(({ name }) => name),
+    ),
+    ...seeds,
+  ]);
   const affected = packages.filter(({ name }) => affectedNames.has(name));
   const affectedPackages = EffectArray.sort([...affectedNames], Order.String);
   const uncertain = packages.some(
@@ -216,6 +241,10 @@ export const planCiChecks = (input: {
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
     if (entry.suite === 'browser') {
       return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
+    }
+    // The files that migrate or recover their own database run in every affected round, from a fresh preparation.
+    if (entry['fresh-database-tests'] === 'only') {
+      return [entry];
     }
     const packageFilters = entry['package-filters'] ?? '';
     const selected = packageFilters.length === 0 ? [] : matchingPackages(packageFilters, affected);
@@ -295,14 +324,32 @@ export const planCiChecks = (input: {
   };
 };
 
+/** A package `exports` target: a path, a condition map, or a fallback list of either. */
+type ExportTarget = string | readonly ExportTarget[] | { readonly [condition: string]: ExportTarget };
+const ExportTargetSchema: Schema.Codec<ExportTarget> = Schema.suspend(() =>
+  Schema.Union([Schema.String, Schema.Array(ExportTargetSchema), Schema.Record(Schema.String, ExportTargetSchema)]),
+);
+
 const ManifestSchema = Schema.Struct({
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   devDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  exports: Schema.optionalKey(ExportTargetSchema),
   name: Schema.String,
   ontosContractOwner: Schema.optionalKey(Schema.Struct({ packageName: Schema.String })),
   optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
+
+/** Every file an `exports` map points at, package-relative, through conditions and fallback lists. */
+const exportTargets = (exports: ExportTarget | undefined): readonly string[] => {
+  if (exports === undefined) {
+    return [];
+  }
+  if (Predicate.isString(exports)) {
+    return [exports.replace(/^\.\//u, '')];
+  }
+  return (Array.isArray(exports) ? exports : Object.values(exports)).flatMap(exportTargets);
+};
 
 const readWorkspace = Effect.gen(function* readCiWorkspace() {
   const fs = yield* FileSystem.FileSystem;
@@ -355,6 +402,7 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
         ),
       ],
       directory,
+      exportTargets: exportTargets(manifest.exports),
       name: manifest.name,
       uncertain:
         (directory !== '.' &&
@@ -426,7 +474,7 @@ const cli = Command.make(
           `Affected-plan integration shards: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
           '',
           'Node artifact proof, static policy, compiler diagnostics and lint enforcement remain blocking.',
-          'Set the CI_AFFECTED_ENABLED repository variable to true only after reviewing shadow plans.',
+          'Only a candidate/* dispatch without force-ci-full applies affected selection; every other run is complete.',
           '',
         ].join('\n'),
         { flag: 'a' },

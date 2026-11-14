@@ -306,7 +306,7 @@ it('classifies documentation before installation and schedules full regression w
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
   expect(steps[install]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
   expect(selection?.env?.APPLY_AFFECTED).toBe(
-    expression("(vars.CI_AFFECTED_ENABLED == 'true' || steps.candidate.outputs.base != '') && 'true' || 'false'"),
+    expression("steps.candidate.outputs.base != '' && 'true' || 'false'"),
   );
   // Only a candidate dispatch that is not forced full resolves a comparison point, before the classification.
   const candidate = steps.findIndex(({ id }) => id === 'candidate');
