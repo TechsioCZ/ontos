@@ -21,6 +21,7 @@ import {
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import {
   budgetVariance,
+  cashFlowForecast,
   cashFlowMonths,
   isInvoiceOverdue,
   paymentEvents,
@@ -333,6 +334,44 @@ describe('S09 planning', () => {
     );
     expect(months[0]?.forecastBalanceMinor).toBe(1_200_000);
     expect(months[1]?.forecastBalanceMinor).toBe(1_200_000);
+  });
+
+  it('an opening set long ago still forecasts this month and the next ones, carrying every payment since', () => {
+    const paidInMarch = invoice('march', { issueDate: '2026-03-01', paidMinor: 100_000, paymentState: 'PAID' });
+    const dueInNovember = invoice('november', { dueDate: '2026-11-15', issueDate: '2026-10-15', totalMinor: 50_000 });
+    const months = cashFlowForecast(
+      {
+        ...empty,
+        cashFlowOpening: { confirmedAt: now, openingBalanceMinor: 0, openingDate: '2026-01-01' },
+        invoices: [paidInMarch, dueInNovember],
+        manualPayments: [
+          {
+            amountMinor: 100_000,
+            id: 'march-payment',
+            invoiceResourceId: Schema.decodeSync(FinanceInvoiceResourceIdSchema)('march'),
+            paidOn: '2026-03-10',
+            recordedAt: now,
+          },
+        ],
+      },
+      '2026-10-20',
+    );
+    // Not January to June after the opening: the previous month, this one and four ahead.
+    expect(months.map((entry) => entry.month)).toEqual([
+      '2026-09',
+      '2026-10',
+      '2026-11',
+      '2026-12',
+      '2027-01',
+      '2027-02',
+    ]);
+    expect(months[0]?.forecastBalanceMinor).toBe(100_000);
+    expect(months[2]?.expectedInMinor).toBe(50_000);
+    expect(months.at(-1)?.forecastBalanceMinor).toBe(150_000);
+    // Without an opening the window is the same and carries no balance.
+    const unopened = cashFlowForecast({ ...empty, invoices: [dueInNovember] }, '2026-10-20');
+    expect(unopened.map((entry) => entry.month)[0]).toBe('2026-09');
+    expect(unopened.every((entry) => entry.forecastBalanceMinor === undefined)).toBe(true);
   });
 
   it('S09-02 an invoice of 1 000 that becomes paid is counted exactly once', () => {

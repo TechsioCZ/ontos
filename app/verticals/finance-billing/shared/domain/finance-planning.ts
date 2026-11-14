@@ -288,6 +288,27 @@ export const cashFlowMonths = (
   });
 };
 
+/** Months the cash-flow view shows: the previous month, the current one and four ahead. */
+const FORECAST_WINDOW_MONTHS = 6;
+const monthIndex = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
+
+/**
+ * The cash-flow view's months: from the previous month through four months ahead of `businessDate`. The forecast
+ * balance accumulates every month from the opening balance up to there, so an opening set long ago still carries
+ * all later payments and obligations instead of the view stopping six months after the opening.
+ */
+export const cashFlowForecast = (
+  state: Parameters<typeof cashFlowMonths>[0],
+  businessDate: string,
+): readonly CashFlowMonth[] => {
+  const windowStart = addMonths(monthOf(businessDate), -1);
+  const openingDate = state.cashFlowOpening?.openingDate;
+  const openingMonth = openingDate === undefined ? windowStart : monthOf(openingDate);
+  const fromMonth = openingMonth < windowStart ? openingMonth : windowStart;
+  const months = monthIndex(windowStart) - monthIndex(fromMonth) + FORECAST_WINDOW_MONTHS;
+  return cashFlowMonths(state, { businessDate, fromMonth, months }).filter((entry) => entry.month >= windowStart);
+};
+
 const csvCell = (value: string | number | undefined) => {
   const text = value === undefined ? '' : String(value);
   return /[";\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
