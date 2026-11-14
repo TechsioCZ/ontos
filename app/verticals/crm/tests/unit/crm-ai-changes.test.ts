@@ -170,6 +170,7 @@ describe('AI level C governed pending batches', () => {
       expect(applied.entityIds).toEqual([created?.id]);
       expect(applied.entityIds).not.toContain(proposedId);
       expect(applied.entityIds).not.toContain(applied.state.clients.contacts[0]?.id);
+      expect(created?.id).not.toBe(pending.aiChanges?.changes[0]?.target.id);
       expect(applied.state.aiChanges?.changes[0]?.target.id).toBe(created?.id);
       return yield* Effect.void;
     }),
