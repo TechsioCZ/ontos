@@ -176,6 +176,8 @@ it.live(
             const incarnation = yield* uuid;
             yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
               values(${bindingId},${incarnation},${tenantId},${principalId},${workload},'active')`;
+            yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+              values(${yield* uuid},${yield* uuid},${tenantId},${bindingId},${legalEntityId},'active')`;
           }
         }
         const key = yield* shell.issueFixtureProviderKey(integration);

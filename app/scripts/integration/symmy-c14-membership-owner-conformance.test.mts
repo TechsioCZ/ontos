@@ -94,9 +94,9 @@ it.live(
     Effect.scoped(
       Effect.gen(function* membershipConformance() {
         const fixture = yield* makeSymmyC14CustomerFixture({
-          initializeScopes: ({ admin, legalEntityId, principalId, tenantId }) =>
+          initializeScopes: ({ legalEntityId, principalId, runtime, tenantId }) =>
             testCoreDatabase.pipe(
-              Effect.provideService(PgClient.PgClient, admin),
+              Effect.provideService(PgClient.PgClient, runtime),
               Effect.flatMap((core) =>
                 writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId, tenantId }),
               ),

@@ -101,13 +101,13 @@ it.live(
             schemaVersion: '1',
           })),
           initializeScopes: ({
-            admin: scopeAdmin,
             legalEntityId: scopeLegalEntityId,
             principalId,
+            runtime,
             tenantId: scopeTenantId,
           }) =>
             testCoreDatabase.pipe(
-              Effect.provideService(PgClient.PgClient, scopeAdmin),
+              Effect.provideService(PgClient.PgClient, runtime),
               Effect.flatMap((core) =>
                 writeTestTenantScopes(core, {
                   legalEntityIds: [scopeLegalEntityId],

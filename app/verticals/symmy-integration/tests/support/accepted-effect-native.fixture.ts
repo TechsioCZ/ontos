@@ -83,7 +83,20 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
         const client = yield* PgClient.make({ url: input.adminConnectionString }).pipe(
           Effect.provideService(Reactivity.Reactivity, reactivity),
         );
-        const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, client));
+        const [adminConnection] = yield* client<ConnectionFacts>`
+          select current_database()::text as database,current_user::text as "roleName",session_user::text as "sessionRoleName"`;
+        if (
+          adminConnection?.database !== configuration.database ||
+          adminConnection.roleName !== configuration.user ||
+          adminConnection.sessionRoleName !== configuration.user
+        ) {
+          return yield* unavailable();
+        }
+        const runtimeConfiguration = input.ownedDatabase.connections.runtime;
+        const runtime = yield* PgClient.make({ url: Redacted.make(runtimeConfiguration.connectionString) }).pipe(
+          Effect.provideService(Reactivity.Reactivity, reactivity),
+        );
+        const database = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtime));
         return yield* database.transaction(
           Effect.fn('SymmyAcceptedEffectNative.readOnlyTransaction')(function* readOnlyTransaction(transaction) {
             yield* ownership;
@@ -93,9 +106,9 @@ export const observeAcceptedEffectIdNativeFixture = Effect.fn('SymmyAcceptedEffe
               'objects',
             );
             if (
-              connection?.database !== configuration.database ||
-              connection.roleName !== configuration.user ||
-              connection.sessionRoleName !== configuration.user
+              connection?.database !== runtimeConfiguration.database ||
+              connection.roleName !== runtimeConfiguration.user ||
+              connection.sessionRoleName !== runtimeConfiguration.user
             ) {
               return yield* unavailable();
             }

@@ -165,8 +165,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* nativeAssortmentConformance() {
         const runtime = yield* makeSymmyC14PolicyFixture({
-          initializeScopes: (scope) =>
-            initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.admin)),
+          initializeScopes: initializePolicyFixtureScopes,
           lifecyclePolicy,
           owner: 'assortment',
           workloadKey,

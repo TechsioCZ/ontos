@@ -551,8 +551,6 @@ const ownerPackage = (clientTarget: JsonValue, shared: boolean) => ({
   private: true,
   scripts: {
     build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
-    'cloudflare:build':
-      'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
   },
   type: 'module',
   version: '0.1.0',

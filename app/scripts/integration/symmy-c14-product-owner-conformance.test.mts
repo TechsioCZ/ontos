@@ -399,7 +399,10 @@ it.live(
           [integration.principalId, marketRead],
           [systemId, marketRead],
         ]) {
-          yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+          const bindingId = randomUUID();
+          yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${bindingId},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
+          yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+            values(${randomUUID()},${randomUUID()},${tenantId},${bindingId},${governanceLegalEntityId},'active')`;
         }
         const key = yield* shell.issueFixtureProviderKey({
           ...integration,
@@ -1358,7 +1361,10 @@ it.live(
         const recoveryReaderId = randomUUID();
         yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${recoveryReaderId},${tenantId},'system','active','INTERNAL_C14 separate current recovery reader')`;
         yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=now() where tenant_id=${tenantId} and ((principal_id=${systemId} and workload_key in (${catalogImport},${catalogRead})) or (principal_id=${integration.principalId} and workload_key=${catalogImport}))`;
-        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${recoveryReaderId},${catalogRead},'active')`;
+        const recoveryBindingId = randomUUID();
+        yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${recoveryBindingId},${randomUUID()},${tenantId},${recoveryReaderId},${catalogRead},'active')`;
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${recoveryBindingId},${governanceLegalEntityId},'active')`;
         const issueRecovery = (tuple: typeof originalTuple, deliveryId: string, invocationId: string) =>
           issueSymmyC14RecoveryAssertion({
             audience: catalogApp,

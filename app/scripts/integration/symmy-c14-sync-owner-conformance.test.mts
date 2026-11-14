@@ -422,6 +422,8 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
         );
         const reboundGroupWriter = yield* groupWriter.rebind();
+        yield* admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+          values(${randomUUID()},${randomUUID()},${tenantId},${reboundGroupWriter.bindingId},${legalEntityId},'active')`;
         expect(reboundGroupWriter.bindingId).not.toBe(groupWriter.originalBinding.bindingId);
         expect(reboundGroupWriter.incarnation).not.toBe(groupWriter.originalBinding.incarnation);
         const groups =
