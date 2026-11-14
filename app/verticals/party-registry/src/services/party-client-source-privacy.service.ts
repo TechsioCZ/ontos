@@ -215,13 +215,19 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
   const credential = yield* acquireDelegatedGatewayContext(
     { audience: 'privacy', callingAppId: 'party-registry', legalEntityScope: 'subject', requestCorrelation, subject },
     crypto,
-  ).pipe(partyRegistryEvidenceCall('clientSourceOrganizationPrivacy'), Effect.catch((error) => failUnavailable('delegation', error)));
+  ).pipe(
+    partyRegistryEvidenceCall('clientSourceOrganizationPrivacy'),
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
   const result = yield* executeOrganizationBusinessApplicabilityWithAuthorization(
     nativeRequest,
     credential.authorization,
     requestCorrelation,
     { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
-  ).pipe(partyRegistryEvidenceCall('clientSourceOrganizationPrivacy'), Effect.catch((error) => failUnavailable('privacy-read', error)));
+  ).pipe(
+    partyRegistryEvidenceCall('clientSourceOrganizationPrivacy'),
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
   if (result.outcome === 'INDETERMINATE') {
     return yield* failUnavailable('privacy-read');
   }
@@ -771,7 +777,10 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
       subject,
     },
     crypto.value,
-  ).pipe(partyRegistryEvidenceCall('clientSourcePrivacy'), Effect.catch((error) => failUnavailable('delegation', error)));
+  ).pipe(
+    partyRegistryEvidenceCall('clientSourcePrivacy'),
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
   const result = yield* executeSourceProcessingEligibilityWithAuthorization(
     payload,
     credential.authorization,
@@ -780,6 +789,9 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
       baseUrl: credential.apiBaseUrl,
       compositionRevision: credential.compositionRevision,
     },
-  ).pipe(partyRegistryEvidenceCall('clientSourcePrivacy'), Effect.catch((error) => failUnavailable('privacy-read', error)));
+  ).pipe(
+    partyRegistryEvidenceCall('clientSourcePrivacy'),
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
   return result.outcome;
 });

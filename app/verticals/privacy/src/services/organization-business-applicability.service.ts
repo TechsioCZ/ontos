@@ -587,7 +587,8 @@ const readSourceOwnerProof = Effect.fn('Privacy.organizationBusinessReadSource')
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(privacyEvidenceCall('organizationSourceOwnerFacts'), 
+  ).pipe(
+    privacyEvidenceCall('organizationSourceOwnerFacts'),
     Effect.flatMap((value) => Schema.decodeUnknownEffect(SymmySourceOrganizationFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
   );
@@ -620,7 +621,10 @@ export const readOrganizationProfileOwnerFacts = (
   executeCustomerProfileOrganizationIcoFactsWithAuthorization(request, issued.authorization, scope.correlationId, {
     baseUrl: issued.apiBaseUrl,
     compositionRevision: issued.compositionRevision,
-  }).pipe(privacyEvidenceCall('organizationProfileOwnerFacts'), Effect.flatMap(Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)));
+  }).pipe(
+    privacyEvidenceCall('organizationProfileOwnerFacts'),
+    Effect.flatMap(Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)),
+  );
 
 const readProfileOwnerProof = Effect.fn('Privacy.organizationBusinessReadProfile')(function* readProfile(
   intent: Extract<Intent, { kind: 'COUNTERPARTY_PROFILE' }>,
@@ -701,7 +705,8 @@ const readPartyOwnerProof = Effect.fn('Privacy.organizationBusinessReadParty')(f
       baseUrl: issued.apiBaseUrl,
       compositionRevision: issued.compositionRevision,
     },
-  ).pipe(privacyEvidenceCall('organizationPartyRecordFacts'), 
+  ).pipe(
+    privacyEvidenceCall('organizationPartyRecordFacts'),
     Effect.flatMap((value) => Schema.decodeUnknownEffect(OrganizationRecordFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
     Effect.tap((value) =>
@@ -1298,7 +1303,8 @@ export const organizationBusinessApplicabilityService = Effect.fn('Privacy.organ
         Option.match(owner, {
           onNone: () => publicOwnerFacts(context, scope, 'READ', sourceAuthority, request, asOf),
           onSome: (provider) =>
-            provider.resolve(request, scope).pipe(privacyEvidenceCall('organizationBusinessOwnerFacts'), 
+            provider.resolve(request, scope).pipe(
+              privacyEvidenceCall('organizationBusinessOwnerFacts'),
               Effect.flatMap((proof) =>
                 Schema.decodeUnknownEffect(OrganizationBusinessApplicabilityLiveProofSchema)(proof),
               ),

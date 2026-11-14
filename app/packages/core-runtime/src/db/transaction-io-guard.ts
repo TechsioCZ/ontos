@@ -119,21 +119,21 @@ export const insideDatabaseTransaction =
     Effect.flatMap(
       Effect.all([Effect.service(OpenDatabaseTransaction), Effect.service(FetchHttpClient.Fetch)]),
       ([outer, currentFetch]) => {
-      const open: OpenTransaction = {
-        operationKey,
-        // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
-        originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
-        refusedFetches: [],
-      };
-      return effect.pipe(
-        Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
-        Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
-        Effect.exit,
-        Effect.flatMap((exit) => {
-          const [refusal] = open.refusedFetches;
-          return refusal === undefined ? exit : Effect.die(refusal);
-        }),
-      );
+        const open: OpenTransaction = {
+          operationKey,
+          // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
+          originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
+          refusedFetches: [],
+        };
+        return effect.pipe(
+          Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
+          Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
+          Effect.exit,
+          Effect.flatMap((exit) => {
+            const [refusal] = open.refusedFetches;
+            return refusal === undefined ? exit : Effect.die(refusal);
+          }),
+        );
       },
     );
 

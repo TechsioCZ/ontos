@@ -154,7 +154,8 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(privacyEvidenceCall('organizationIcoOwnerFacts'), 
+  ).pipe(
+    privacyEvidenceCall('organizationIcoOwnerFacts'),
     Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationIcoFactsResponseSchema)(proof)),
     Effect.mapError(unavailable),
   );
@@ -514,7 +515,8 @@ export const organizationIcoApplicabilityService = Effect.fn('Privacy.organizati
               ),
             ),
           onSome: (provider) =>
-            provider.resolve(request, scope).pipe(privacyEvidenceCall('organizationIcoOwnerFacts'), 
+            provider.resolve(request, scope).pipe(
+              privacyEvidenceCall('organizationIcoOwnerFacts'),
               Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationIcoFactsResponseSchema)(proof)),
               Effect.mapError(unavailable),
             ),

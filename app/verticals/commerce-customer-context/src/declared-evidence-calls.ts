@@ -21,9 +21,15 @@ export const commerceCustomerContextDeclaredEvidenceCalls = {
     evidence: 'commerce.organization-profile-ico-eligibility',
     owner: 'commerce.customer-context',
   },
-  sourceCounterpartyAdmission: { evidence: 'commerce.source-counterparty-admission', owner: 'commerce.customer-context' },
+  sourceCounterpartyAdmission: {
+    evidence: 'commerce.source-counterparty-admission',
+    owner: 'commerce.customer-context',
+  },
   sourcePersonAdmission: { evidence: 'commerce.source-person-admission', owner: 'commerce.customer-context' },
-  sourceProcessingEligibility: { evidence: 'commerce.source-processing-eligibility', owner: 'commerce.customer-context' },
+  sourceProcessingEligibility: {
+    evidence: 'commerce.source-processing-eligibility',
+    owner: 'commerce.customer-context',
+  },
 } as const satisfies Record<string, DeclaredEvidenceCall>;
 
 export const commerceCustomerContextEvidenceCall = (name: keyof typeof commerceCustomerContextDeclaredEvidenceCalls) =>

@@ -110,7 +110,9 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       });
       const privacy = yield* SymmyJobPrivacy;
       // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
-      const authority = yield* privacy.current(handoff, scope).pipe(symmyIntegrationEvidenceCall('retentionPrivacyCurrent'));
+      const authority = yield* privacy
+        .current(handoff, scope)
+        .pipe(symmyIntegrationEvidenceCall('retentionPrivacyCurrent'));
       if (authority.status === 'INDETERMINATE') {
         return yield* new SymmyJobPrivacyError({ code: 'retention_privacy_unavailable' });
       }

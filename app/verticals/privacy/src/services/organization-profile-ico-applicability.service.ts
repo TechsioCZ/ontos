@@ -215,7 +215,8 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(privacyEvidenceCall('organizationProfileIcoOwnerFacts'), 
+  ).pipe(
+    privacyEvidenceCall('organizationProfileIcoOwnerFacts'),
     Effect.flatMap((value) => Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
     Effect.flatMap((value) =>
@@ -451,7 +452,8 @@ export const organizationProfileIcoApplicabilityService = Effect.fn(
       Option.match(owner, {
         onNone: () => publicOwnerFacts(request, scope, 'READ', crypto),
         onSome: (provider) =>
-          provider.resolve(request, scope, 'READ').pipe(privacyEvidenceCall('organizationProfileIcoOwnerFacts'), 
+          provider.resolve(request, scope, 'READ').pipe(
+            privacyEvidenceCall('organizationProfileIcoOwnerFacts'),
             Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationProfileIcoOwnerEvidenceSchema)(proof)),
             Effect.mapError(unavailable),
           ),

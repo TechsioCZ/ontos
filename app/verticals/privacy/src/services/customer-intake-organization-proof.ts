@@ -109,7 +109,8 @@ export const hasCurrentCustomerIntakeOrganizationProof = Effect.fn('Privacy.cust
       gateway.authorization,
       scope.correlationId,
       { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
-    ).pipe(privacyEvidenceCall('organizationPartyRecordFacts'), 
+    ).pipe(
+      privacyEvidenceCall('organizationPartyRecordFacts'),
       Effect.flatMap(Schema.decodeUnknownEffect(OrganizationRecordFactsResponseSchema)),
       Effect.mapError(unavailable),
     );

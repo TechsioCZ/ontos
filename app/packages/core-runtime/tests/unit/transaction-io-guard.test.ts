@@ -2,7 +2,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import nodePath from 'node:path';
 
-import { Cause, Effect, Exit, Option, Redacted } from 'effect';
+import { Cause, Data, Effect, Exit, Option, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -115,9 +115,10 @@ it.effect('restores transaction references after nested marks and defects', () =
 );
 
 const evidence = declaredEvidenceCallInsideTransaction({ evidence: 'test.owner-proof', owner: 'test.owner' });
+class ProofFetchFailed extends Data.TaggedError('ProofFetchFailed')<{ readonly cause: unknown }> {}
 const callFetch = (url: string) =>
   Effect.flatMap(Effect.service(FetchHttpClient.Fetch), (fetch) =>
-    Effect.tryPromise({ catch: (cause) => cause, try: () => fetch(url) }),
+    Effect.tryPromise({ catch: (cause) => new ProofFetchFailed({ cause }), try: () => fetch(url) }),
   );
 const withStubFetch = <Value, Failure, Requirements>(
   effect: (calls: string[]) => Effect.Effect<Value, Failure, Requirements>,
@@ -166,25 +167,23 @@ it.effect('lets a declared evidence call reach the fetch the mark replaced, then
 
 it.effect('lifts SpiceDB and module-transport refusals only inside the declared effect', () =>
   Effect.gen(function* transportRefusals() {
-    yield* Effect.gen(function* insideMark() {
-      expect(defectOf(yield* Effect.exit(refuseInsideDatabaseTransaction('spicedb', 'CheckPermission')))).toMatchObject({
-        io: 'spicedb',
-      });
-      expect(
-        Exit.isSuccess(
-          yield* Effect.exit(
-            Effect.all([
-              refuseInsideDatabaseTransaction('spicedb', 'CheckPermission'),
-              refuseInsideDatabaseTransaction('module-transport', 'test.module'),
-            ]).pipe(evidence),
-          ),
+    expect(defectOf(yield* Effect.exit(refuseInsideDatabaseTransaction('spicedb', 'CheckPermission')))).toMatchObject({
+      io: 'spicedb',
+    });
+    expect(
+      Exit.isSuccess(
+        yield* Effect.exit(
+          Effect.all([
+            refuseInsideDatabaseTransaction('spicedb', 'CheckPermission'),
+            refuseInsideDatabaseTransaction('module-transport', 'test.module'),
+          ]).pipe(evidence),
         ),
-      ).toBe(true);
-      expect(
-        defectOf(yield* Effect.exit(refuseInsideDatabaseTransaction('module-transport', 'test.module'))),
-      ).toMatchObject({ io: 'module-transport', operationKey: 'test.transports' });
-    }).pipe(insideDatabaseTransaction('test.transports'));
-  }),
+      ),
+    ).toBe(true);
+    expect(
+      defectOf(yield* Effect.exit(refuseInsideDatabaseTransaction('module-transport', 'test.module'))),
+    ).toMatchObject({ io: 'module-transport', operationKey: 'test.transports' });
+  }).pipe(insideDatabaseTransaction('test.transports')),
 );
 
 it.effect('keeps refusing a second pool acquisition inside a declared evidence call', () =>
@@ -222,9 +221,10 @@ it.effect('is the identity outside any marked transaction', () =>
   withStubFetch((calls) =>
     Effect.gen(function* identity() {
       const fetch = yield* FetchHttpClient.Fetch;
-      const observed = yield* Effect.all([Effect.service(OpenDatabaseTransaction), Effect.service(FetchHttpClient.Fetch)]).pipe(
-        evidence,
-      );
+      const observed = yield* Effect.all([
+        Effect.service(OpenDatabaseTransaction),
+        Effect.service(FetchHttpClient.Fetch),
+      ]).pipe(evidence);
       expect(Option.isNone(observed[0])).toBe(true);
       expect(observed[1]).toBe(fetch);
       yield* callFetch('https://owner.test/outside').pipe(evidence);
