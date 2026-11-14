@@ -260,7 +260,11 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
         // Every refusal or failure of the owned result (a denied current source Privacy included) answers the one
         // data-only 503 problem, as main's governed read servers do. A failure value must stay data: attaching the
         // read's failure chain let Effect structurally hash runtime objects when it merged causes.
-        Effect.catch(() => failPartyCommandProblem(partyCommandProblem.unavailable())),
+        Effect.catch((error) =>
+          Effect.logWarning('The owned Party Create result is unavailable', { reason: error._tag }).pipe(
+            Effect.andThen(failPartyCommandProblem(partyCommandProblem.unavailable())),
+          ),
+        ),
       );
     const result = { _tag: 'PartyCommandCommitResolution' as const, ...commitResolution };
     return createResult === undefined ? result : { ...result, createResult };
