@@ -170,11 +170,19 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
       ),
     );
 
-    suite.effect('release hint: only for those tenant-context page dispatch admits', () =>
+    /*
+     * Tenant-context page dispatch is part of the Shell frame, which every member of the tenant may load (the member
+     * baseline), so a plain member gets the hint too. It says only which release is current and which module serves a
+     * page; the page, its contributions and its records are each still decided by their own right. A person of the
+     * company directory who holds no access membership is not a member, and another tenant's owner is not of this
+     * tenant at all: neither gets it.
+     */
+    suite.effect('release hint: for every member of the tenant, and for no one else', () =>
       withAccessAdminCase((accessCase) =>
         Effect.gen(function* releaseHint() {
           expect(yield* releaseHintFor(accessCase, 'owner')).toBe(true);
-          expect(yield* releaseHintFor(accessCase, 'member')).toBe(false);
+          expect(yield* releaseHintFor(accessCase, 'member')).toBe(true);
+          expect(yield* releaseHintFor(accessCase, 'directoryMember')).toBe(false);
           expect(yield* releaseHintFor(accessCase, 'foreignOwner')).toBe(false);
         }).pipe(withGate(accessCase)),
       ),
