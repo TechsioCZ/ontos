@@ -10,7 +10,9 @@ import { withPostgresSessionAdvisoryLock } from '../../src/db/session-advisory-l
 import {
   IoInsideDatabaseTransaction,
   OpenDatabaseTransaction,
+  declaredEvidenceCallInsideTransaction,
   insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
 } from '../../src/db/transaction-io-guard.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
@@ -110,4 +112,124 @@ it.effect('restores transaction references after nested marks and defects', () =
     expect(yield* OpenDatabaseTransaction).toBe(originalMark);
     expect(yield* FetchHttpClient.Fetch).toBe(originalFetch);
   }),
+);
+
+const evidence = declaredEvidenceCallInsideTransaction({ evidence: 'test.owner-proof', owner: 'test.owner' });
+const callFetch = (url: string) =>
+  Effect.flatMap(Effect.service(FetchHttpClient.Fetch), (fetch) =>
+    Effect.tryPromise({ catch: (cause) => cause, try: () => fetch(url) }),
+  );
+const withStubFetch = <Value, Failure, Requirements>(
+  effect: (calls: string[]) => Effect.Effect<Value, Failure, Requirements>,
+) => {
+  const calls: string[] = [];
+  const stub: typeof globalThis.fetch = (input) => {
+    calls.push(String(input));
+    return Promise.resolve(new Response('owner proof'));
+  };
+  return effect(calls).pipe(Effect.provideService(FetchHttpClient.Fetch, stub));
+};
+const defectOf = <Value, Failure>(exit: Exit.Exit<Value, Failure>) =>
+  Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+
+it.effect('still refuses an undeclared fetch inside a marked transaction', () =>
+  withStubFetch((calls) =>
+    Effect.gen(function* undeclaredFetch() {
+      const exit = yield* callFetch('https://owner.test/proof').pipe(
+        insideDatabaseTransaction('test.undeclared'),
+        Effect.exit,
+      );
+      expect(defectOf(exit)).toBeInstanceOf(IoInsideDatabaseTransaction);
+      expect(defectOf(exit)).toMatchObject({ io: 'outbound-fetch', operationKey: 'test.undeclared' });
+      expect(calls).toEqual([]);
+    }),
+  ),
+);
+
+it.effect('lets a declared evidence call reach the fetch the mark replaced, then restores the mark', () =>
+  withStubFetch((calls) =>
+    Effect.gen(function* declaredFetch() {
+      const original = yield* FetchHttpClient.Fetch;
+      yield* Effect.gen(function* insideMark() {
+        const mark = yield* OpenDatabaseTransaction;
+        const refusing = yield* FetchHttpClient.Fetch;
+        const response = yield* callFetch('https://owner.test/proof').pipe(evidence);
+        expect(response.status).toBe(200);
+        expect(calls).toEqual(['https://owner.test/proof']);
+        expect(yield* OpenDatabaseTransaction).toBe(mark);
+        expect(yield* FetchHttpClient.Fetch).toBe(refusing);
+        expect(refusing).not.toBe(original);
+      }).pipe(insideDatabaseTransaction('test.declared'));
+    }),
+  ),
+);
+
+it.effect('lifts SpiceDB and module-transport refusals only inside the declared effect', () =>
+  Effect.gen(function* transportRefusals() {
+    yield* Effect.gen(function* insideMark() {
+      expect(defectOf(yield* Effect.exit(refuseInsideDatabaseTransaction('spicedb', 'CheckPermission')))).toMatchObject({
+        io: 'spicedb',
+      });
+      expect(
+        Exit.isSuccess(
+          yield* Effect.exit(
+            Effect.all([
+              refuseInsideDatabaseTransaction('spicedb', 'CheckPermission'),
+              refuseInsideDatabaseTransaction('module-transport', 'test.module'),
+            ]).pipe(evidence),
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        defectOf(yield* Effect.exit(refuseInsideDatabaseTransaction('module-transport', 'test.module'))),
+      ).toMatchObject({ io: 'module-transport', operationKey: 'test.transports' });
+    }).pipe(insideDatabaseTransaction('test.transports'));
+  }),
+);
+
+it.effect('keeps refusing a second pool acquisition inside a declared evidence call', () =>
+  Effect.gen(function* poolStillGuarded() {
+    const exit = yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool').pipe(
+      evidence,
+      insideDatabaseTransaction('test.pool'),
+      Effect.exit,
+    );
+    expect(defectOf(exit)).toBeInstanceOf(IoInsideDatabaseTransaction);
+    expect(defectOf(exit)).toMatchObject({ io: 'pool-acquisition', operationKey: 'test.pool' });
+  }),
+);
+
+it.effect('gives a declared call inside nested marks the outermost original fetch', () =>
+  withStubFetch((calls) =>
+    Effect.gen(function* nestedMarks() {
+      yield* callFetch('https://owner.test/nested').pipe(
+        evidence,
+        insideDatabaseTransaction('test.inner'),
+        insideDatabaseTransaction('test.outer'),
+      );
+      expect(calls).toEqual(['https://owner.test/nested']);
+      const inner = yield* Effect.service(OpenDatabaseTransaction).pipe(
+        insideDatabaseTransaction('test.inner-after'),
+        evidence,
+        insideDatabaseTransaction('test.outer-after'),
+      );
+      expect(inner.pipe(Option.map((mark) => mark.operationKey))).toEqual(Option.some('test.inner-after'));
+    }),
+  ),
+);
+
+it.effect('is the identity outside any marked transaction', () =>
+  withStubFetch((calls) =>
+    Effect.gen(function* identity() {
+      const fetch = yield* FetchHttpClient.Fetch;
+      const observed = yield* Effect.all([Effect.service(OpenDatabaseTransaction), Effect.service(FetchHttpClient.Fetch)]).pipe(
+        evidence,
+      );
+      expect(Option.isNone(observed[0])).toBe(true);
+      expect(observed[1]).toBe(fetch);
+      yield* callFetch('https://owner.test/outside').pipe(evidence);
+      yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool').pipe(evidence);
+      expect(calls).toEqual(['https://owner.test/outside']);
+    }),
+  ),
 );

@@ -19,6 +19,7 @@ import type {
 } from '../../shared/apis/customer-profile-organization-ico-facts.ts';
 import { CommerceCustomerProfileStateSchema } from '../../shared/domain/profile-contracts.ts';
 import { commerceSourceDelegationSubject } from '../integrations/source-delegation-subject.ts';
+import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
 const organizationProfileFactsRoutine = defineScopedRoutine({
   name: 'read_customer_profile_organization_ico_facts',
@@ -119,6 +120,7 @@ export const customerProfileOrganizationIcoFactsServices: ReadServiceFactory<
             tenantId: scope.tenantId,
           },
         }).pipe(Effect.mapError(unavailable));
+        // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience: 'party-registry',
@@ -133,13 +135,13 @@ export const customerProfileOrganizationIcoFactsServices: ReadServiceFactory<
             ),
           },
           crypto,
-        ).pipe(Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'), Effect.mapError(unavailable));
         const response = yield* executeCounterpartyOrganizationIcoFactsWithAuthorization(
           request,
           issued.authorization,
           scope.correlationId,
           { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-        ).pipe(Effect.mapError(unavailable));
+        ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'), Effect.mapError(unavailable));
         const facts = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsResponseSchema, {
           onExcessProperty: 'error',
         })(response).pipe(Effect.mapError(unavailable));

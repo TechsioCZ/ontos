@@ -42,6 +42,7 @@ import {
   organizationIcoOwnerReceipt,
 } from './organization-ico-applicability.service.ts';
 import type { OrganizationIcoApplicabilityServices } from './organization-ico-applicability.service.ts';
+import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 export const OrganizationProfileIcoOwnerEvidenceSchema = Schema.Struct({
@@ -187,6 +188,7 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
       ? requireModuleOperation('privacy.core.requirement.record-organization-profile-ico-owner-facts')
       : requireModuleOperation('privacy.core.requirement.organization-profile-ico-owner-facts')
   ).pipe(Effect.mapError(unavailable));
+  // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   const issued = yield* acquireDelegatedGatewayContext(
     {
       audience: 'commerce-customer-context',
@@ -207,13 +209,13 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
           : { _tag: 'Assertion', scope },
     },
     crypto,
-  ).pipe(Effect.mapError(unavailable));
+  ).pipe(privacyEvidenceCall('organizationProfileIcoOwnerFacts'), Effect.mapError(unavailable));
   const profile = yield* executeCustomerProfileOrganizationIcoFactsWithAuthorization(
     { profileRef: request.profileRef },
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(
+  ).pipe(privacyEvidenceCall('organizationProfileIcoOwnerFacts'), 
     Effect.flatMap((value) => Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
     Effect.flatMap((value) =>
@@ -449,7 +451,7 @@ export const organizationProfileIcoApplicabilityService = Effect.fn(
       Option.match(owner, {
         onNone: () => publicOwnerFacts(request, scope, 'READ', crypto),
         onSome: (provider) =>
-          provider.resolve(request, scope, 'READ').pipe(
+          provider.resolve(request, scope, 'READ').pipe(privacyEvidenceCall('organizationProfileIcoOwnerFacts'), 
             Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationProfileIcoOwnerEvidenceSchema)(proof)),
             Effect.mapError(unavailable),
           ),

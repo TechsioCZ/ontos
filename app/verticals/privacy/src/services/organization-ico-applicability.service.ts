@@ -43,6 +43,7 @@ import type {
   PrivacyApplicabilityBusinessFactAuthorityRequest,
   TrustedPrivacyApplicabilityBusinessFactAuthorityResult,
 } from '../actions/privacy-applicability-business-fact-authority.ts';
+import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
 
 export const organizationIcoContexts = Config.schema(
   Schema.fromJsonString(Schema.Array(OrganizationIcoApplicabilityContextSchema).check(Schema.isMaxLength(4096))),
@@ -129,6 +130,7 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
     | 'privacy.core.requirement.organization-profile-ico-party-facts'
     | 'privacy.core.requirement.record-organization-profile-ico-party-facts',
 ) {
+  // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   const issued = yield* acquireDelegatedGatewayContext(
     {
       audience: 'party-registry',
@@ -146,13 +148,13 @@ export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizati
           : { _tag: 'Assertion', scope },
     },
     crypto,
-  ).pipe(Effect.mapError(unavailable));
+  ).pipe(privacyEvidenceCall('organizationIcoOwnerFacts'), Effect.mapError(unavailable));
   return yield* executeOrganizationIcoFactsWithAuthorization(
     { fieldContractVersion: OrganizationIcoFieldContractVersion, partyRef: request.partyRef },
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(
+  ).pipe(privacyEvidenceCall('organizationIcoOwnerFacts'), 
     Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationIcoFactsResponseSchema)(proof)),
     Effect.mapError(unavailable),
   );
@@ -512,7 +514,7 @@ export const organizationIcoApplicabilityService = Effect.fn('Privacy.organizati
               ),
             ),
           onSome: (provider) =>
-            provider.resolve(request, scope).pipe(
+            provider.resolve(request, scope).pipe(privacyEvidenceCall('organizationIcoOwnerFacts'), 
               Effect.flatMap((proof) => Schema.decodeUnknownEffect(OrganizationIcoFactsResponseSchema)(proof)),
               Effect.mapError(unavailable),
             ),

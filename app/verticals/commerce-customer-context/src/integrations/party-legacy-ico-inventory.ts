@@ -24,6 +24,7 @@ import type { CounterpartyRef } from '@app/party-registry/resources/counterparty
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { CustomerProfileIcoMigrationRejected } from '../../shared/domain/customer-profile-ico-migration.ts';
+import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
 /** Delegated calls present this module's own credential. */
 const OWN_APP_ID = 'commerce-customer-context';
@@ -103,6 +104,7 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
               const request = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsRequestSchema)(
                 candidate,
               );
+              // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
               const issued = yield* acquireDelegatedGatewayContext(
                 {
                   audience: partyAudience,
@@ -117,13 +119,13 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
                   ),
                 },
                 crypto,
-              );
+              ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'));
               const raw = yield* executeCounterpartyOrganizationIcoFactsWithAuthorization(
                 request,
                 issued.authorization,
                 scope.correlationId,
                 { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-              );
+              ).pipe(commerceCustomerContextEvidenceCall('counterpartyOrganizationIcoFacts'));
               const result = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsResponseSchema)(raw);
               if (
                 result.outcome !== 'CURRENT_ORGANIZATION_CUSTOMER' ||
@@ -173,13 +175,13 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
                         ),
                 },
                 crypto,
-              );
+              ).pipe(commerceCustomerContextEvidenceCall('migrationCorrelation'));
               const raw = yield* executeCounterpartyMigrationCorrelationWithAuthorization(
                 request,
                 issued.authorization,
                 scope.correlationId,
                 { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
-              );
+              ).pipe(commerceCustomerContextEvidenceCall('migrationCorrelation'));
               const result = yield* Schema.decodeUnknownEffect(CounterpartyMigrationCorrelationResponseSchema)(raw);
               return result.counterpartyRef.resourceId === ref.resourceId &&
                 result.counterpartyRef.tenantId === scope.tenantId &&
@@ -246,6 +248,7 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
               compositionRevision: issued.compositionRevision,
             }),
           ),
+          commerceCustomerContextEvidenceCall('legacyIcoInventory'),
           Effect.mapError((cause) =>
             Object.defineProperty(
               new CustomerProfileIcoMigrationRejected({
