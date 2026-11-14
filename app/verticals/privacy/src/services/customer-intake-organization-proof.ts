@@ -10,6 +10,7 @@ import { Effect, Option, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
 import { readOrganizationProfileOwnerFacts } from './organization-business-applicability.service.ts';
+import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
 
 const unavailable = (cause: unknown) =>
   Object.defineProperty(
@@ -31,6 +32,7 @@ const acquire = Effect.fn('Privacy.customerIntakeOrganizationAuthority')(functio
       ? 'privacy.core.requirement.customer-intake-organization-profile'
       : 'privacy.core.requirement.customer-intake-organization-party',
   );
+  // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   return yield* acquireDelegatedGatewayContext(
     {
       audience,
@@ -40,7 +42,7 @@ const acquire = Effect.fn('Privacy.customerIntakeOrganizationAuthority')(functio
       subject: { _tag: 'Assertion', scope },
     },
     crypto,
-  );
+  ).pipe(privacyEvidenceCall('customerIntakeOwnerContext'));
 });
 
 const profileParty = Effect.fn('Privacy.customerIntakeOrganizationProfileParty')(function* profileParty(
@@ -107,7 +109,7 @@ export const hasCurrentCustomerIntakeOrganizationProof = Effect.fn('Privacy.cust
       gateway.authorization,
       scope.correlationId,
       { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
-    ).pipe(
+    ).pipe(privacyEvidenceCall('organizationPartyRecordFacts'), 
       Effect.flatMap(Schema.decodeUnknownEffect(OrganizationRecordFactsResponseSchema)),
       Effect.mapError(unavailable),
     );

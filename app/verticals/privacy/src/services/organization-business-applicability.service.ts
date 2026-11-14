@@ -80,6 +80,7 @@ import {
   organizationIcoNativeEvidenceForScope,
 } from './organization-ico-applicability.service.ts';
 import type { OrganizationIcoApplicabilityServices } from './organization-ico-applicability.service.ts';
+import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
 
 type Intent = OrganizationBusinessApplicabilityIntent;
 type LiveProof = OrganizationBusinessApplicabilityCurrent['liveProof'];
@@ -378,6 +379,7 @@ const providerContext = Effect.fn('Privacy.organizationBusinessProviderContext')
       workloadPresent,
     });
   }
+  // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
   return yield* acquireDelegatedGatewayContext(
     {
       audience: target.audience,
@@ -387,7 +389,7 @@ const providerContext = Effect.fn('Privacy.organizationBusinessProviderContext')
       subject,
     },
     yield* Crypto.Crypto,
-  ).pipe(Effect.mapError(unavailable));
+  ).pipe(privacyEvidenceCall('organizationBusinessOwnerContext'), Effect.mapError(unavailable));
 });
 
 const currentOrganization = (
@@ -585,7 +587,7 @@ const readSourceOwnerProof = Effect.fn('Privacy.organizationBusinessReadSource')
     issued.authorization,
     scope.correlationId,
     { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(
+  ).pipe(privacyEvidenceCall('organizationSourceOwnerFacts'), 
     Effect.flatMap((value) => Schema.decodeUnknownEffect(SymmySourceOrganizationFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
   );
@@ -618,7 +620,7 @@ export const readOrganizationProfileOwnerFacts = (
   executeCustomerProfileOrganizationIcoFactsWithAuthorization(request, issued.authorization, scope.correlationId, {
     baseUrl: issued.apiBaseUrl,
     compositionRevision: issued.compositionRevision,
-  }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)));
+  }).pipe(privacyEvidenceCall('organizationProfileOwnerFacts'), Effect.flatMap(Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)));
 
 const readProfileOwnerProof = Effect.fn('Privacy.organizationBusinessReadProfile')(function* readProfile(
   intent: Extract<Intent, { kind: 'COUNTERPARTY_PROFILE' }>,
@@ -699,7 +701,7 @@ const readPartyOwnerProof = Effect.fn('Privacy.organizationBusinessReadParty')(f
       baseUrl: issued.apiBaseUrl,
       compositionRevision: issued.compositionRevision,
     },
-  ).pipe(
+  ).pipe(privacyEvidenceCall('organizationPartyRecordFacts'), 
     Effect.flatMap((value) => Schema.decodeUnknownEffect(OrganizationRecordFactsResponseSchema)(value)),
     Effect.mapError(unavailable),
     Effect.tap((value) =>
@@ -1296,7 +1298,7 @@ export const organizationBusinessApplicabilityService = Effect.fn('Privacy.organ
         Option.match(owner, {
           onNone: () => publicOwnerFacts(context, scope, 'READ', sourceAuthority, request, asOf),
           onSome: (provider) =>
-            provider.resolve(request, scope).pipe(
+            provider.resolve(request, scope).pipe(privacyEvidenceCall('organizationBusinessOwnerFacts'), 
               Effect.flatMap((proof) =>
                 Schema.decodeUnknownEffect(OrganizationBusinessApplicabilityLiveProofSchema)(proof),
               ),
