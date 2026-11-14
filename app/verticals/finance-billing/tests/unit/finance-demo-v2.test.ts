@@ -5,6 +5,7 @@ import {
   AccountingExportSchema,
   AccountingSetupSchema,
   CalendarMonthSchema,
+  FinanceCompanyIdSchema,
   FinanceDocumentSchema,
   FinanceInvoiceResourceIdSchema,
   FinanceRecurringTemplateIdSchema,
@@ -25,7 +26,7 @@ import {
   paymentEvents,
 } from '../../shared/domain/finance-planning.ts';
 import { alignRentalTemplates } from '../../scripts/align-rental-templates.ts';
-import { transitionFinance } from '../../src/services/persistence.service.ts';
+import { MANUAL_COUNTERPARTY_ID, transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceValidators } from '../../src/services/persistence.service.ts';
 import { baselineVatChoices } from '../support/finance-tax-rates.ts';
 
@@ -450,6 +451,162 @@ describe('Finance wire compatibility', () => {
       expect(wire.invoices[0]?.totalMinor).toBe(100_000);
       const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(FinanceStateSchema))(json);
       expect(Schema.toEquivalence(FinanceStateSchema)(decoded, state)).toBe(true);
+    }),
+  );
+});
+
+describe('Document numbers and supplier identity', () => {
+  const manualRef = { ...counterpartyRef, resourceId: MANUAL_COUNTERPARTY_ID };
+  const otherCustomerRef = { ...counterpartyRef, resourceId: 'a0000000-0000-4000-8000-000000000013' };
+  const supplierIco = Schema.decodeSync(FinanceCompanyIdSchema)('27232433');
+  const received = (documentNumber: string) => ({
+    _tag: 'RecordIncomingInvoice' as const,
+    documentNumber,
+    dueDate: '2026-10-30',
+    issueDate: '2026-10-05',
+    supplierName: 'ČEZ Prodej, a.s.',
+    totalMinor: 100_000,
+  });
+  const outgoingDraft = {
+    _tag: 'CreateInvoiceDraft',
+    counterpartyRef,
+    currency: 'CZK',
+    direction: 'OUTGOING',
+    dueDate: '2026-10-30',
+    issueDate: '2026-10-20',
+    totalMinor: 100_000,
+  } satisfies FinanceCommand;
+
+  it.effect("a supplier's number never blocks our series, and Finance allocates our number from the whole ledger", () =>
+    Effect.gen(function* supplierNumberAndSeries() {
+      // A supplier happens to number its invoice exactly like our next one.
+      const recorded = yield* run(empty, received('FV-2026-0002'));
+      const ledger = {
+        ...recorded.state,
+        invoices: [...recorded.state.invoices, invoice('ours', { number: 'FV-2026-0001' })],
+      };
+      const draft = yield* run(ledger, outgoingDraft);
+      expect(draft.invoice).toMatchObject({ documentNumber: 'FV-2026-0002', number: 'FV-2026-0002' });
+      // The same for a won opportunity's invoice.
+      const won = yield* run(ledger, {
+        _tag: 'CreateInvoiceFromOpportunity',
+        issueDate: '2026-10-20',
+        lines: [{ description: 'Servis', quantity: 1, unitPriceMinor: 100_000, vatRate: 21 }],
+        opportunityId: 'opportunity-1',
+        partyId: 'a0000000-0000-4000-8000-000000000012',
+      });
+      expect(won.invoice?.documentNumber).toBe('FV-2026-0002');
+      // Our own series still refuses a number it already issued.
+      const taken = yield* Effect.flip(run(draft.state, { ...outgoingDraft, documentNumber: 'FV-2026-0002' }));
+      expect(taken).toMatchObject({ reason: 'invoice_already_exists' });
+      // A received draft needs its supplier's number; Finance never invents one.
+      const unnumbered = yield* Effect.flip(run(empty, { ...outgoingDraft, direction: 'INCOMING' }));
+      expect(unnumbered).toMatchObject({ reason: 'supplier_document_number_required' });
+    }),
+  );
+
+  it.effect("updating a received draft compares its number with that supplier's invoices only", () =>
+    Effect.gen(function* incomingDraftUpdate() {
+      const other = invoice('other-supplier', {
+        counterpartyRef: otherCustomerRef,
+        direction: 'INCOMING',
+        documentNumber: '2026-001',
+      });
+      const created = yield* run(
+        { ...empty, invoices: [other] },
+        { ...outgoingDraft, direction: 'INCOMING', documentNumber: '2026-777' },
+      );
+      if (created.invoice === undefined) {
+        expect.unreachable('The draft transition must return its invoice');
+      }
+      const update = {
+        ...outgoingDraft,
+        _tag: 'UpdateInvoiceDraft' as const,
+        direction: 'INCOMING' as const,
+        invoiceRef: created.invoice.ref,
+      };
+      const renumbered = yield* run(created.state, { ...update, documentNumber: '2026-001' });
+      expect(renumbered.invoice?.documentNumber).toBe('2026-001');
+      const second = yield* run(renumbered.state, {
+        ...outgoingDraft,
+        direction: 'INCOMING',
+        documentNumber: '2026-002',
+      });
+      if (second.invoice === undefined) {
+        expect.unreachable('The draft transition must return its invoice');
+      }
+      const clash = yield* Effect.flip(
+        run(second.state, { ...update, documentNumber: '2026-001', invoiceRef: second.invoice.ref }),
+      );
+      expect(clash).toMatchObject({ reason: 'document_number_already_exists' });
+    }),
+  );
+
+  it.effect(
+    'the same received invoice is refused whether its supplier was typed by hand or picked from the registry',
+    () =>
+      Effect.gen(function* duplicateAcrossIdentities() {
+        const manual = yield* run(empty, { ...received('2026-0918774'), supplierCompanyId: supplierIco });
+        // The registry counterparty of the same company, with the same IČO on the document and another name.
+        const byIco = yield* Effect.flip(
+          run(manual.state, {
+            ...received('2026-0918774'),
+            counterpartyRef,
+            supplierCompanyId: supplierIco,
+            supplierName: 'ČEZ Prodej',
+          }),
+        );
+        expect(byIco).toMatchObject({ reason: 'incoming_invoice_already_recorded' });
+        // No IČO on the new one: the supplier's name still identifies it.
+        const byName = yield* Effect.flip(run(manual.state, { ...received('2026-0918774'), counterpartyRef }));
+        expect(byName).toMatchObject({ reason: 'incoming_invoice_already_recorded' });
+        // Another supplier may use the same number.
+        const otherSupplier = yield* run(manual.state, {
+          ...received('2026-0918774'),
+          supplierCompanyId: Schema.decodeSync(FinanceCompanyIdSchema)('45274649'),
+          supplierName: 'Pražská energetika, a.s.',
+        });
+        expect(otherSupplier.state.invoices.length).toBe(2);
+      }),
+  );
+
+  it.effect("changing a draft's counterparty drops the previous counterparty's name and IČO", () =>
+    Effect.gen(function* staleSnapshots() {
+      const draft = invoice('draft-1', {
+        businessState: 'DRAFT',
+        counterpartyCompanyId: supplierIco,
+        counterpartyName: 'Původní odběratel s.r.o.',
+        number: 'FV-2026-0001',
+      });
+      const update = {
+        ...outgoingDraft,
+        _tag: 'UpdateInvoiceDraft' as const,
+        documentNumber: draft.documentNumber,
+        invoiceRef: draft.ref,
+      };
+      const same = yield* run({ ...empty, invoices: [draft] }, update);
+      expect(same.invoice).toMatchObject({
+        counterpartyCompanyId: '27232433',
+        counterpartyName: 'Původní odběratel s.r.o.',
+      });
+      const moved = yield* run({ ...empty, invoices: [draft] }, { ...update, counterpartyRef: otherCustomerRef });
+      expect(moved.invoice?.counterpartyRef.resourceId).toBe(otherCustomerRef.resourceId);
+      expect(moved.invoice?.counterpartyName).toBeUndefined();
+      expect(moved.invoice?.counterpartyCompanyId).toBeUndefined();
+    }),
+  );
+
+  it.effect('only a received invoice may name a hand-typed supplier', () =>
+    Effect.gen(function* manualSupplierSentinel() {
+      const outgoing = yield* Effect.flip(run(empty, { ...outgoingDraft, counterpartyRef: manualRef }));
+      expect(outgoing).toMatchObject({ reason: 'manual_counterparty_requires_received_invoice' });
+      // A received draft naming the hand-typed supplier without its name is refused too.
+      const unnamed = yield* Effect.flip(
+        run(empty, { ...outgoingDraft, counterpartyRef: manualRef, direction: 'INCOMING', documentNumber: 'X-1' }),
+      );
+      expect(unnamed).toMatchObject({ reason: 'manual_counterparty_requires_received_invoice' });
+      const typed = yield* run(empty, received('2026-118'));
+      expect(typed.invoice?.counterpartyRef.resourceId).toBe(MANUAL_COUNTERPARTY_ID);
     }),
   );
 });

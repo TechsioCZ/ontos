@@ -164,6 +164,8 @@ const reasonText = {
   incoming_invoice_already_recorded: 'Faktura s tímto číslem od stejného dodavatele už je zaevidovaná.',
   invalid_invoice_anchors_or_dates: 'Splatnost nesmí být dřív než datum vystavení.',
   invalid_line_discount: 'Sleva musí být 1–100 % nebo částka nejvýše do výše položky a musí mít důvod.',
+  manual_counterparty_requires_received_invoice:
+    'Ručně zapsaného dodavatele lze použít jen u přijaté faktury s vyplněným názvem dodavatele. Vlastní fakturu vystavte odběrateli z evidence.',
   payment_exceeds_remaining_amount: 'Úhrada je vyšší než zbývající částka faktury.',
   payment_requires_confirmed_invoice: 'Úhradu lze zaznamenat jen u potvrzené faktury.',
   pohoda_document_number_too_long:
@@ -184,6 +186,7 @@ const reasonText = {
   recurring_period_already_generated: 'Pro toto období už faktura z této šablony existuje.',
   recurring_template_inactive: 'Šablona je pozastavená.',
   reminder_requires_open_invoice: 'Upomínku lze připravit jen k neuhrazené potvrzené faktuře.',
+  supplier_document_number_required: 'U přijaté faktury vyplňte číslo dokladu dodavatele.',
   unit_property_mismatch: 'Vybraná jednotka nepatří k vybrané nemovitosti.',
 } satisfies Readonly<Record<string, string>>;
 

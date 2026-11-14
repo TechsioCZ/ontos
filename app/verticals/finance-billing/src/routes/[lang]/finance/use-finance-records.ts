@@ -24,7 +24,6 @@ import type {
   InvoiceLineSchema,
   RecordsResponse,
 } from '../../../../shared/apis/records.ts';
-import { nextInvoiceNumber } from '../../../../shared/domain/invoice-totals.ts';
 import { commandReferenceAudiences } from '../../../../shared/domain/reference-audiences.ts';
 import { InvoiceRefSchema } from '../../../../shared/resources/invoice.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
@@ -508,8 +507,9 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
     Option.isSome(ledgerInput) ? financeRecords.refresh(ledgerInput.value) : Effect.void;
 
   /**
-   * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
-   * number is the next one in the series; the backend stores the lines as given (price snapshots).
+   * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer. Finance
+   * allocates the number from the company's complete ledger (this view may be filtered to one customer); the backend
+   * stores the lines as given (price snapshots).
    */
   const createDraft = (input: DraftInvoiceInput): Effect.Effect<DraftInvoiceOutcome> => {
     if (snapshot === undefined || !canWrite) {
@@ -520,7 +520,6 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
       counterpartyRef: input.customer.counterpartyRef,
       currency: 'CZK',
       direction: 'OUTGOING',
-      documentNumber: nextInvoiceNumber(snapshot.state.invoices),
       dueDate: input.dueDate,
       issueDate: input.issueDate,
       lines: [...input.lines],

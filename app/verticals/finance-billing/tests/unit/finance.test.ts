@@ -91,7 +91,7 @@ it.effect('rejects stale aggregate revisions before applying a fresh command', (
 describe('Finance owner transitions', () => {
   it.effect('creates and updates only drafts and rejects unavailable/foreign references', () =>
     Effect.gen(function* financeCase4() {
-      const create: FinanceCommand = {
+      const create = {
         _tag: 'CreateInvoiceDraft',
         counterpartyRef,
         currency: 'CZK',
@@ -101,7 +101,7 @@ describe('Finance owner transitions', () => {
         issueDate: '2026-10-05',
         note: 'Preserve the supplier note',
         totalMinor: 420_000,
-      };
+      } satisfies FinanceCommand;
       const draft = yield* run(state, create);
       if (draft.invoice === undefined) {
         expect.unreachable('The draft transition must return its invoice');
