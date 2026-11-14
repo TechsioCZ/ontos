@@ -22,7 +22,7 @@ const callers = {
   'party-registry': 4,
   pricing: 2,
   privacy: 9,
-  'symmy-integration': 49,
+  'symmy-integration': 50,
 } as const;
 const receivers = ['catalog', 'commerce-market-catalog', 'inventory', 'price-group-catalog', 'storefront-registry'];
 type Contract = Parameters<typeof assertRegisteredWorkloadCallsReceived>[0][number];
