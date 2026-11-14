@@ -49,6 +49,10 @@ zerops:
         - cp -a 'app/akros-storefront/public' 'app/.zerops/runtime/akros-storefront/akros-storefront/public'
       deployFiles:
         - app/.zerops/runtime/akros-storefront
+      # Next's webpack cache: entries are keyed by file content, the Next version and the config, so a stale entry is
+      # never reused; a changed module recompiles alone.
+      cache:
+        - app/akros-storefront/.next/cache
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -84,9 +88,6 @@ zerops:
       base: alpine/nodejs@26
       envVariables:
         NEXT_TELEMETRY_DISABLED: '1'
-        # Next's type check of N1 holds the owner API types it imports: about 3.3 GiB resident. Node's default
-        # heap (about 2 GiB) ran out there; the build container has a fixed 8 GB.
-        NODE_OPTIONS: --max-old-space-size=4096
       prepareCommands:
         - sudo npm install --global pnpm@12.16.1
       buildCommands:
@@ -97,6 +98,10 @@ zerops:
         - cp -a 'app/n1-storefront/public' 'app/.zerops/runtime/n1-storefront/n1-storefront/public'
       deployFiles:
         - app/.zerops/runtime/n1-storefront
+      # Next's webpack cache: entries are keyed by file content, the Next version and the config, so a stale entry is
+      # never reused; a changed module recompiles alone.
+      cache:
+        - app/n1-storefront/.next/cache
     deploy:
       temporaryShutdown: false
       readinessCheck:
