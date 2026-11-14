@@ -449,7 +449,8 @@ it('the relay resolves the app service name the project declares, and the new ho
   const host = readFileSync(path.join(workspaceRoot, 'scripts/zerops/app-host.mts'), 'utf-8');
   const startup = host.slice(host.indexOf('function* startupSequence()'));
   const publish = startup.indexOf('yield* publishSnapshot(');
-  const open = startup.indexOf('yield* openPublicPort;');
+  // The port may be opened through a timing wrapper (`yield* openPublicPort.pipe(…)`); the order is what counts.
+  const open = startup.indexOf('yield* openPublicPort');
   const ready = startup.indexOf('yield* Ref.set(published, true);');
   const drain = startup.indexOf('yield* drainWhenSuperseded(revision)');
   expect(publish).toBeGreaterThan(0);
