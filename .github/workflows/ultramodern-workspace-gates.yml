@@ -1023,7 +1023,7 @@ jobs:
       # The app artifact ships an explicit runtime list (app/zerops.yaml deployFiles), including the Outbox Worker host
       # runtime and Bun, which the Zerops build creates. The assembled-artifact proof copies every listed path, so a row
       # that prepares its own database provisions the same two before it, once the build outputs are here: the
-      # materialized worker host and the pinned Bun (a musl build, hence the musl loader on this glibc runner). The
+      # materialized worker host and the pinned Bun (its glibc build here; Zerops runs the musl build). The
       # migrator, migrations and grant audit therefore run after the build wait on such rows.
       - name: Provision the worker host runtime and Bun that the app artifact ships
         if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
@@ -1034,8 +1034,7 @@ jobs:
           if [ ! -f .zerops/runtime/outbox-worker-host/worker.mjs ]; then
             mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
           fi
-          command -v /lib/ld-musl-x86_64.so.1 >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends musl
-          sh scripts/install-zerops-bun.sh 1.4.4
+          sh scripts/install-zerops-bun.sh 1.4.4 glibc
           mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
 
       - name: Run the assembled stage migrator artifact against the fresh database
@@ -1243,7 +1242,7 @@ jobs:
       # The app artifact ships an explicit runtime list (app/zerops.yaml deployFiles), including the Outbox Worker host
       # runtime and Bun, which the Zerops build creates. The assembled-artifact proof copies every listed path, so the
       # producer provisions the same two before it: the
-      # materialized worker host and the pinned Bun (a musl build, hence the musl loader on this glibc runner). The
+      # materialized worker host and the pinned Bun (its glibc build here; Zerops runs the musl build). The
       # migrator, migrations and grant audit therefore run after the build wait on such rows.
       - name: Provision the worker host runtime and Bun that the app artifact ships
         if: needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'
@@ -1254,8 +1253,7 @@ jobs:
           if [ ! -f .zerops/runtime/outbox-worker-host/worker.mjs ]; then
             mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
           fi
-          command -v /lib/ld-musl-x86_64.so.1 >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends musl
-          sh scripts/install-zerops-bun.sh 1.4.4
+          sh scripts/install-zerops-bun.sh 1.4.4 glibc
           mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
 
       - name: Prove the fresh-database preparation and dump the seed

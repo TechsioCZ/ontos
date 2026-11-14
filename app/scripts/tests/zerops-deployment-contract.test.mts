@@ -191,6 +191,8 @@ it('ships checksum-pinned Bun with the native Node Shell default and no runtime 
   const installer = readFileSync(new URL('../install-zerops-bun.sh', import.meta.url), 'utf-8');
   expect(installer).toContain('bun-linux-x64-musl-baseline');
   expect(installer).toContain('6e9c37098b293920aed28bfb51ab240e26d23bfdd9bbfecb3ad428ac166549bc');
+  // Zerops builds on Alpine and names no C library, so the installer's default stays the musl build.
+  expect(installer).toContain(':-musl}');
   expect(installer).toContain('sha256sum -c -');
   expect(installer.indexOf('sha256sum -c -')).toBeLessThan(installer.indexOf('unzip -q'));
 });

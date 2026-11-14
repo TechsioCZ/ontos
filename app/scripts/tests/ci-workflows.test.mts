@@ -1592,7 +1592,9 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
     );
     expect(provision, job).toBeGreaterThan(-1);
     expect(provision, job).toBeLessThan(steps.findIndex(({ name }) => name === proofStep));
-    expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4');
+    // The runner is glibc: the musl build Zerops runs cannot load its C++ runtime here.
+    expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4 glibc');
+    expect(steps[provision]?.run).not.toContain('musl');
     expect(steps[provision]?.run).toContain('zerops:materialize --app outbox-worker-host');
   }
   const artifact = mkdtempSync(path.join(os.tmpdir(), 'ontos-existing-migrator-artifact-'));
