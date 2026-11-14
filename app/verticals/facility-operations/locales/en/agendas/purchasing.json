@@ -432,6 +432,7 @@
       "dueDate": "The due date cannot be before the issue date.",
       "invoiceIntro": "Finance creates an issued invoice draft for {{customer}} with a copy of this order’s lines and prices. The invoice links to the order and the order to the invoice.",
       "invoiceFailed": "The invoice draft could not be created or linked. Check the document in Finance before creating another.",
+      "invoiceLinkFailed": "The invoice exists in Finance, but linking it to the order failed. Save again to retry only the link; keep this panel open.",
       "invoiceVatUnresolved": "The order VAT cannot be verified unambiguously for the issue date. Check the VAT settings and prepare the invoice in Finance with the appropriate tax treatment."
     },
     "messages": {

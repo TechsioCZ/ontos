@@ -42,6 +42,7 @@ import { salesTotals } from '../../../../../shared/domain/purchasing.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
 import { readFinance, readFinanceVatChoices } from '../../../../ui/finance-reads.ts';
+import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';
 import { salesLineVat } from './invoice-vat.ts';
 import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -913,15 +914,30 @@ export const SalesQuotePanel = ({
 
 /** Creates the issued invoice draft in Finance from a snapshot of the order, then links it back to the order. */
 const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSalesInvoice')(
-  function* prepareSalesInvoice(order: SalesOrder, issueDate: string, dueDate: string) {
+  function* prepareSalesInvoice(input: IssueSalesInvoiceInput) {
+    const { order, issueDate, dueDate, pending } = input;
     if (!canInvoiceSalesOrder(order)) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
     }
-    const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
-    const idempotencyKey = `sales-invoice:${order.id}:${parts.join(':')}`;
     const snapshot = yield* readFinance('facility-operations.sales-invoice.read');
     if (!snapshot.canWrite) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
+    }
+    const retained = pending.get(order.id);
+    if (retained !== undefined) {
+      const current = snapshot.state.invoices.find(
+        (invoice) =>
+          invoice.ref.resourceId === retained.ref.resourceId &&
+          invoice.documentNumber === retained.documentNumber &&
+          invoice.counterpartyRef.resourceId === order.customer.counterpartyId &&
+          invoice.totalMinor === retained.totalMinor &&
+          invoice.direction === 'OUTGOING' &&
+          invoice.businessState !== 'VOIDED',
+      );
+      if (current === undefined) {
+        return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
+      }
+      return yield* Effect.succeed(current);
     }
     const choices = yield* readFinanceVatChoices(issueDate);
     const lines = yield* pipe(
@@ -942,6 +958,8 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
       ),
     );
     const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
+    const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
+    const idempotencyKey = `sales-invoice:${order.id}:${parts.join(':')}`;
     const quoteSuffix = order.quoteNumber === undefined ? '' : ` (nabídka ${order.quoteNumber})`;
     const result = yield* applyFinanceCommand(
       {
@@ -972,12 +990,13 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
     if (Predicate.isTagged(result, 'ActionProposalAccepted') || result.invoice === undefined) {
       return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
     }
-    return result.invoice;
+    pending.set(order.id, result.invoice);
+    return yield* Effect.succeed(result.invoice);
   },
 );
 
 interface InvoiceIssueOutcome {
-  readonly reason?: 'vat';
+  readonly reason?: 'link' | 'vat';
   readonly failure?:
     | Effect.Error<ReturnType<typeof prepareSalesInvoice>>
     | Extract<Effect.Success<ReturnType<RunCommand>>, { readonly ok: false }>;
@@ -992,29 +1011,23 @@ const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIss
 
 interface IssueSalesInvoiceInput {
   readonly busy: { current: boolean };
+  readonly dueDate: string;
+  readonly issueDate: string;
+  readonly order: SalesOrder;
+  readonly pending: Map<string, FinanceInvoiceView>;
   readonly run: RunCommand;
 }
-const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueSalesInvoice')(
-  function* issueAndLinkSalesInvoice(
-    input: IssueSalesInvoiceInput,
-    order: SalesOrder,
-    issueDate: string,
-    dueDate: string,
-  ) {
-    const { busy, run } = input;
-    if (busy.current) {
-      return invoiceNotCreated();
-    }
-    busy.current = true;
-    const created = yield* prepareSalesInvoice(order, issueDate, dueDate).pipe(
+const linkPreparedInvoice = Effect.fn('FacilityOperations.Purchasing.linkPreparedInvoice')(
+  function* linkPreparedInvoice(input: IssueSalesInvoiceInput) {
+    const { order, run } = input;
+    const created = yield* prepareSalesInvoice(input).pipe(
       Effect.match({
         onFailure: (failure) => ({ failure, ok: false as const }),
         onSuccess: (invoice) => ({ invoice, ok: true as const }),
       }),
     );
     if (!created.ok) {
-      busy.current = false;
-      return invoiceNotCreated(created.failure);
+      return yield* Effect.succeed(invoiceNotCreated(created.failure));
     }
     const { invoice } = created;
     const number = invoice.number ?? invoice.documentNumber;
@@ -1025,15 +1038,34 @@ const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueSalesInv
       orderId: order.id,
       totalMinor: invoice.totalMinor,
     });
-    busy.current = false;
-    return linked.ok ? { number, ok: true as const } : { failure: linked, number, ok: false as const };
+    if (!linked.ok) {
+      return yield* Effect.succeed({ failure: linked, number, ok: false as const, reason: 'link' as const });
+    }
+    return yield* Effect.succeed({ number, ok: true as const });
+  },
+);
+
+export const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueSalesInvoice')(
+  function* issueSalesInvoice(input: IssueSalesInvoiceInput) {
+    if (input.busy.current) {
+      return yield* Effect.succeed(invoiceNotCreated());
+    }
+    input.busy.current = true;
+    return yield* linkPreparedInvoice(input).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          input.busy.current = false;
+        }),
+      ),
+    );
   },
 );
 
 const useIssueInvoice = (run: RunCommand) => {
   const busy = useRef(false);
+  const pending = useRef(new Map<string, FinanceInvoiceView>());
   return (order: SalesOrder, issueDate: string, dueDate: string) =>
-    issueSalesInvoice({ busy, run }, order, issueDate, dueDate);
+    issueSalesInvoice({ busy, dueDate, issueDate, order, pending: pending.current, run });
 };
 
 const OrderActionSchema = Schema.Literals(['deliver', 'close', 'invoice']);
