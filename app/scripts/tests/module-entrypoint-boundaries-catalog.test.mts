@@ -28,10 +28,9 @@ for (const owner of [CATALOG_VERTICAL_PATH]) {
       );
       const runtimeDeclarationFile = `${owner}/vertical.runtime-declaration.ts`;
       const hasRuntimeDeclaration = yield* Effect.promise(() =>
-        readFile(path.join(root, runtimeDeclarationFile), 'utf-8').then(
-          () => true,
-          () => false,
-        ),
+        readFile(path.join(root, runtimeDeclarationFile), 'utf-8')
+          .then(() => true)
+          .catch(() => false),
       );
       const metadata = yield* Effect.all(
         [

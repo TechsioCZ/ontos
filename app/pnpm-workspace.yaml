@@ -155,7 +155,6 @@ overrides:
   'dompurify@>=3.0.0 <3.4.17': 3.4.17
   'seroval@<1.6.8': 1.6.9
   'seroval-plugins@<1.6.8': 1.6.9
-  '@techsio/ui-kit': 'catalog:'
 allowBuilds:
   '@parcel/watcher': true
   '@swc/core': true

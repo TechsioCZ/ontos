@@ -7,7 +7,7 @@
  * as the empty text a trailing comma produces or as the explicit `undefined` placeholders that keep a
  * later executable-policy argument in position. The callback layer of the same seam (where those slots
  * accept only an absent value, never a substitution) is covered end to end by the Pricing seam test in
- * `module-entrypoint-boundaries.test.mts`.
+ * `module-entrypoint-boundaries-*.test.mts`.
  */
 import { expect, it } from 'effect-rstest';
 

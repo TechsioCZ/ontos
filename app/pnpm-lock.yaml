@@ -173,6 +173,9 @@ catalogs:
     '@app/work-tasks':
       specifier: workspace:*
       version: workspace:*
+    '@techsio/ui-kit':
+      specifier: 0.59.3
+      version: 0.59.3
   ultramodern:
     '@modern-js/adapter-rstest':
       specifier: npm:@bleedingdev/modern-js-adapter-rstest@3.11.3-ultramodern.1
@@ -251,7 +254,6 @@ overrides:
   dompurify@>=3.0.0 <3.4.17: 3.4.17
   seroval@<1.6.8: 1.6.9
   seroval-plugins@<1.6.8: 1.6.9
-  '@techsio/ui-kit': 0.59.3
 
 patchedDependencies:
   '@bleedingdev/modern-js-app-tools-extensions@3.11.3-ultramodern.1': 906e374246efe8bc83f1da82a287076cdb8abaa5861c59a8d0dc29e2c83f4e96
@@ -518,7 +520,7 @@ importers:
   akros-storefront:
     dependencies:
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       next:
         specifier: 16.4.6
@@ -702,7 +704,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       better-auth:
         specifier: 1.7.23
@@ -820,7 +822,7 @@ importers:
         specifier: catalog:ultramodern
         version: '@bleedingdev/modern-js-bff-effect@3.11.3-ultramodern.1(@bleedingdev/mf-runtime-tools@2.9.3)(@effect/opentelemetry@4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7))(@types/react@19.3.0)(core-js@3.50.0)(effect@4.0.7)(react-dom@19.3.1(react@19.3.1))(react-helmet-async@3.0.0(react@19.3.1))(react-router@7.18.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(zod@4.6.7)'
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       '@zag-js/dom-query':
         specifier: 1.47.0
@@ -885,7 +887,7 @@ importers:
         specifier: 0.12.6
         version: 0.12.6(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@21.0.4)(jsdom@30.1.1(@noble/hashes@2.2.0))
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       '@testing-library/react':
         specifier: 16.3.2
@@ -1966,7 +1968,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -2205,7 +2207,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -2353,7 +2355,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -2516,7 +2518,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -2694,7 +2696,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -2996,7 +2998,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -3147,7 +3149,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -3301,7 +3303,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -3973,7 +3975,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -4209,7 +4211,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -4366,7 +4368,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -4529,7 +4531,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -4689,7 +4691,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -5022,7 +5024,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -5261,7 +5263,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
@@ -5406,7 +5408,7 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.59.3
+        specifier: 'catalog:'
         version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
