@@ -538,7 +538,13 @@ it.effect('variant base-price editing omits inherited tiers while metadata-only 
     yield* Effect.promise(mount);
     yield* Effect.promise(() => typeInto('variant-price-v1', '20'));
     yield* Effect.promise(() => typeInto('variant-label-v2', 'Renamed'));
-    yield* Effect.promise(() => click(button('Uložit')));
+    // Every mounted tab has its own save bar; the variants tab saves its own drafts.
+    const variantsPanel = fieldById('variant-price-v1').closest('[role="tabpanel"]');
+    const saveVariants = [...(variantsPanel?.querySelectorAll('button') ?? [])].find(
+      (entry) => entry.textContent?.trim() === 'Uložit',
+    );
+    expect(saveVariants?.disabled).toBe(false);
+    yield* Effect.promise(() => click(saveVariants ?? document.createElement('button')));
     yield* Effect.promise(() => waitUntil(() => rstest.mocked(executeManageCatalog).mock.calls.length === 1));
     const command = rstest.mocked(executeManageCatalog).mock.calls[0]?.[0].command;
     expect(Predicate.isTagged(command, 'UpdateProduct')).toBe(true);

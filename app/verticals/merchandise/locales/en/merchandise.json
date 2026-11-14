@@ -277,6 +277,7 @@
           "deactivateConfirm": "Deactivate ({{total}})"
         },
         "category": {
+          "missing": "The selected category no longer exists. Choose another category.",
           "field": "New category",
           "title": "Change category"
         },
@@ -411,7 +412,7 @@
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
-          "tierBasePriceRequired": "Quantity tiers need the original base price and a valid gross price to be scaled. Check the VAT rate and set replacement tiers explicitly, or remove them before changing the base price.",
+          "tierBasePriceRequired": "The quantity prices cannot be recalculated: the original price or a valid VAT rate is missing. Check the product’s VAT classification and save the price again.",
           "categorySlugTaken": "Another category already uses this storefront address. Choose a different address.",
           "variantSkuRequired": "The generated variant SKU is too long. Enter an explicit variant SKU of at most 64 characters.",
           "variantBulkPriceUnsupported": "Bulk prices cannot be changed for products with sellable variants. Select only products without variants, or change each variant’s price in the product details.",
@@ -440,6 +441,7 @@
           "tab": "Price history"
         },
         "priceDialog": {
+          "variantProducts": "A bulk price change cannot be used for products with sellable variants: {{names}}. Deselect them, or change the variant prices in the product details.",
           "affected": "Products affected: {{total}}",
           "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
           "field": "Price change (%)",
@@ -448,6 +450,7 @@
         },
         "receipt": {
           "description": "Record stock received. On-hand stock is recalculated from movements.",
+          "productFailed": "The product could not be loaded. Try again.",
           "submit": "Record receipt",
           "title": "Goods receipt"
         },
@@ -589,6 +592,7 @@
       "scheduled": "From {{date}} {{rate}}"
     },
     "ui": {
+      "variantTiersRescaled": "When the new price is saved, the quantity prices are recalculated in the same ratio.",
       "offeredPriceChanged": "The price of an added item changed in the meantime; nothing was saved. The lines now carry the current price — {{lines}}. Check it and save again.",
       "offeredPriceUnreadable": "The price of an added item changed in the meantime and the new price could not be loaded. Remove the line and add it again. Affected: {{lines}}.",
       "storefrontBadge": "Online store",

@@ -277,6 +277,7 @@
           "deactivateConfirm": "Deaktivovat ({{total}})"
         },
         "category": {
+          "missing": "Vybraná kategorie už neexistuje. Vyberte jinou kategorii.",
           "field": "Nová kategorie",
           "title": "Změnit kategorii"
         },
@@ -415,7 +416,7 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
-          "tierBasePriceRequired": "Množstevní ceny nelze přepočítat bez původní základní ceny a platné ceny s DPH. Ověřte sazbu DPH a zadejte nové množstevní ceny nebo je nejprve odeberte.",
+          "tierBasePriceRequired": "Množstevní ceny nelze přepočítat: chybí původní cena nebo platná sazba DPH. Zkontrolujte klasifikaci DPH produktu a uložte cenu znovu.",
           "categorySlugTaken": "Tuto adresu v e-shopu už používá jiná kategorie. Zvolte jinou adresu.",
           "variantSkuRequired": "Automatické SKU varianty je příliš dlouhé. Zadejte vlastní SKU varianty o délce nejvýše 64 znaků.",
           "variantBulkPriceUnsupported": "Hromadnou cenu nelze změnit u produktů s prodejními variantami. Vyberte pouze produkty bez variant, nebo změňte cenu každé varianty v detailu produktu.",
@@ -444,6 +445,7 @@
           "tab": "Historie cen"
         },
         "priceDialog": {
+          "variantProducts": "Hromadnou změnu ceny nelze použít pro produkty s prodejními variantami: {{names}}. Zrušte jejich výběr, nebo změňte ceny variant v detailu produktu.",
           "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
@@ -452,6 +454,7 @@
         },
         "receipt": {
           "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
+          "productFailed": "Produkt se nepodařilo načíst. Zkuste to znovu.",
           "submit": "Zaznamenat příjem",
           "title": "Příjem zboží"
         },
@@ -593,6 +596,7 @@
       "scheduled": "Od {{date}} {{rate}}"
     },
     "ui": {
+      "variantTiersRescaled": "Po uložení nové ceny se množstevní ceny přepočítají ve stejném poměru.",
       "offeredPriceChanged": "Cena přidaného zboží se mezitím změnila, nic se neuložilo. Řádky teď nesou aktuální cenu — {{lines}}. Zkontrolujte ji a uložte znovu.",
       "offeredPriceUnreadable": "Cena přidaného zboží se mezitím změnila a novou cenu se nepodařilo načíst. Řádek odeberte a přidejte znovu. Týká se: {{lines}}.",
       "storefrontBadge": "E-shop",

@@ -22,6 +22,8 @@ import type {
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, QUANTITY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
+import { fieldError } from './product-form-validation.ts';
+import { formatDelta } from './products-format.ts';
 import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
@@ -128,11 +130,14 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   const [quantityText, setQuantityText] = useState('10');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A refused quantity is marked on its field until it is typed again.
+  const [quantityRefused, setQuantityRefused] = useState(false);
   const firstVariant = variants[0]?.id ?? '';
   const clear = () => {
     setVariantId(firstVariant);
     setReason('RECEIPT');
     setQuantityText('10');
+    setQuantityRefused(false);
   };
   // The movement keeps its own button; leaving with a half-filled one asks before the input is lost.
   const typed = variantId !== firstVariant || reason !== 'RECEIPT' || quantityText !== '10';
@@ -142,11 +147,14 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   }
   const variant = variants.find((entry) => entry.id === variantId);
   const quantity = Number(quantityText.replaceAll(/\s/gu, '').replace(',', '.'));
-  const valid = variant !== undefined && isStockQuantity(quantity) && (reason === 'ADJUSTMENT' || quantity > 0);
+  const quantityValid = isStockQuantity(quantity) && (reason === 'ADJUSTMENT' || quantity > 0);
+  const quantityError = t(
+    reason === 'ADJUSTMENT' ? 'merchandise.pages.products.validation.delta' : 'merchandise.pages.products.validation.quantity',
+  );
 
   const submit = () => {
-    if (!valid || variant === undefined || busy) {
-      setError(t('merchandise.pages.products.validation.delta'));
+    if (!quantityValid || variant === undefined || busy) {
+      setQuantityRefused(!quantityValid);
       return;
     }
     const delta = variantMovementDelta(reason, quantity);
@@ -174,7 +182,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
         }
         onStockCommitted?.(revision, outcome.revision);
         clear();
-        onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
+        onCommitted(`Pohyb zapsán: ${variant.name} ${formatDelta(delta)} ks`);
       },
     );
   };
@@ -206,18 +214,22 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           value={[reason]}
         />
         <FormNumericInput
+          clampValueOnBlur={false}
           formatOptions={QUANTITY_FORMAT}
           id="variant-stock-quantity"
           label={t('merchandise.ui.quantityPieces')}
           locale="cs-CZ"
-          clampValueOnBlur={false}
           max={MAX_QUANTITY}
           min={reason === 'ADJUSTMENT' ? -MAX_QUANTITY : MIN_STOCK_QUANTITY}
           name="variantStockQuantity"
-          step={MIN_STOCK_QUANTITY}
-          onValueChange={(details) => setQuantityText(details.value)}
+          onValueChange={(details) => {
+            setQuantityText(details.value);
+            setQuantityRefused(false);
+          }}
           size="sm"
+          step={1}
           value={quantityText}
+          {...fieldError(quantityRefused && !quantityValid, quantityError)}
         >
           <NumericInput.Control>
             <NumericInput.Input aria-valuemax={undefined} />
@@ -439,7 +451,12 @@ const variantStockText = (record: VariantRecord | undefined, unit: ProductRecord
     `${record.stockOnHand} ${record.sourceUnit ?? unit}`
   );
 
-const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: ProductRecord['unit']) => {
+/** The variant's quantity tiers; a changed base price says the tiers follow it when it is saved. */
+const renderVariantPriceTiers = (
+  record: VariantRecord | undefined,
+  unit: ProductRecord['unit'],
+  rescaledNote: string | null,
+) => {
   if (record?.priceTiers === undefined) {
     return null;
   }
@@ -455,6 +472,7 @@ const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: Produc
           {formatMoney(tier.priceExcludingVatMinor)} bez DPH
         </p>
       ))}
+      {rescaledNote === null ? null : <p className="text-fg-primary">{rescaledNote}</p>}
     </div>
   );
 };
@@ -617,7 +635,13 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
                             size="sm"
                             value={draft.attributes}
                           />
-                          {renderVariantPriceTiers(record, product.unit)}
+                          {renderVariantPriceTiers(
+                            record,
+                            product.unit,
+                            record !== undefined && price !== null && price !== record.priceMinor
+                              ? t('merchandise.ui.variantTiersRescaled')
+                              : null,
+                          )}
                         </div>
                       </Table.Cell>
                       <Table.Cell>
