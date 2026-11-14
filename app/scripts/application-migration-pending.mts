@@ -36,12 +36,12 @@ export interface JournalRow {
 }
 
 /** The journal as PostgreSQL holds it: its columns (none when the table does not exist) and its rows. */
-export interface JournalEvidence {
+interface JournalEvidence {
   readonly columns: readonly string[];
   readonly rows: readonly JournalRow[];
 }
 
-export interface OwnerMigrationDecision {
+interface OwnerMigrationDecision {
   /** True only when Drizzle provably runs nothing: the journal holds exactly the local migrations. */
   readonly nothingToApply: boolean;
   /** The local migrations Drizzle would run, by its own name rule; empty when the evidence was uncertain. */
@@ -172,7 +172,7 @@ const readJournal = Effect.fn('OwnerMigrationPending.readJournal')(function* rea
   return { columns: names, rows: rows.map(({ hash, name }) => ({ hash, name })) } satisfies JournalEvidence;
 });
 
-export interface OwnerMigrationPlannerService {
+interface OwnerMigrationPlannerService {
   /** Never fails: missing evidence is a decision to run the child. */
   readonly decide: (relativeDirectory: string, config: string) => Effect.Effect<OwnerMigrationDecision>;
 }

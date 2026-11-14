@@ -213,8 +213,8 @@ export const verifyOwnerSchemas = (paths: readonly string[], concurrency = 4) =>
  * role). `owners` is every other selected owner's verifier. `foundation` then `owners` checks exactly what `all`
  * checks, with the same messages.
  */
-export const VERIFICATION_PARTS = ['all', 'foundation', 'owners'] as const;
-export type VerificationPart = (typeof VERIFICATION_PARTS)[number];
+const VERIFICATION_PARTS = ['all', 'foundation', 'owners'] as const;
+type VerificationPart = (typeof VERIFICATION_PARTS)[number];
 const FOUNDATION_OWNER = 'core-runtime';
 
 /** The selected owners whose verifiers one part runs, in canonical source order. */
