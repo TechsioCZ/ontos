@@ -1,9 +1,8 @@
-import { createServer, connect } from 'node:net';
-import type { Server, Socket } from 'node:net';
-
-import { NodeServices } from '@effect/platform-node';
+import { NodeServices, NodeSocket, NodeSocketServer } from '@effect/platform-node';
 import { parseDatabaseConnectionPair } from '@app/core-runtime';
 import { Config, Duration, Effect, FileSystem, Option, Schema } from 'effect';
+import { NetAddress } from 'effect/net';
+import { Socket } from 'effect/socket';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -83,7 +82,7 @@ const frontendReader = () => {
     pending = pending.subarray(length + 1);
     return true;
   };
-  return (chunk: Buffer) => {
+  return (chunk: Uint8Array) => {
     pending = Buffer.concat([pending, chunk]);
     while (pending.length >= (started ? 5 : 8) && (started ? typed() : untyped())) {
       // Each complete message is consumed by the step that framed it.
@@ -91,58 +90,62 @@ const frontendReader = () => {
   };
 };
 
-/** Relays one client connection to PostgreSQL unchanged, reading its frontend messages on the way. */
-const relayConnection = (target: { readonly host: string; readonly port: number }, sockets: Set<Socket>) => {
-  const read = frontendReader();
-  return (client: Socket) => {
-    const upstream = connect(target.port, target.host);
-    sockets.add(client).add(upstream);
-    client.on('data', (chunk: Buffer) => {
-      read(chunk);
-      upstream.write(chunk);
+/**
+ * A loopback relay to the integration PostgreSQL for this scope: an Effect-owned listener on an ephemeral port that
+ * forwards every connection unchanged both ways, reading its frontend messages on the way. The listener, each relayed
+ * connection and its upstream socket close with the scope.
+ */
+const countingRelay = Effect.fn('test.countingRelay')(function* countingRelay(target: {
+  readonly host: string;
+  readonly port: number;
+}) {
+  const server = yield* NodeSocketServer.make({ host: '127.0.0.1', port: 0 }).pipe(Effect.orDie);
+  const { address } = server;
+  if (!NetAddress.isInetAddress(address)) {
+    return yield* Effect.die('The counting relay did not bind a TCP listener');
+  }
+  const relayConnection = Effect.fn('test.countingRelay.connection')(function* relayConnection(
+    downstream: Socket.Socket,
+  ) {
+    const upstream = yield* NodeSocket.makeNet({
+      host: target.host,
+      noDelay: true,
+      openTimeout: '2 seconds',
+      port: target.port,
     });
-    upstream.on('data', (chunk: Buffer) => {
-      client.write(chunk);
+    const { downstreamPull, upstreamPull } = yield* Effect.all({
+      downstreamPull: Socket.readerBytes(downstream),
+      upstreamPull: Socket.readerBytes(upstream),
     });
-    for (const [from, to] of [
-      [client, upstream],
-      [upstream, client],
-    ] as const) {
-      from.on('close', () => {
-        to.destroy();
-      });
-      from.on('error', () => {
-        to.destroy();
-      });
-    }
-  };
-};
-
-/** A loopback port for the relay: one suite at a time per process, so the process id keeps it its own. */
-const RELAY_PORT = 40_000 + (process.pid % 20_000);
-
-/** A loopback relay to the integration PostgreSQL, for this scope. */
-const countingRelay = (target: { readonly host: string; readonly port: number }) =>
-  Effect.acquireRelease(
-    Effect.callback<{ readonly port: number; readonly server: Server; readonly sockets: Set<Socket> }>((resume) => {
-      const sockets = new Set<Socket>();
-      const server = createServer((client) => {
-        relayConnection(target, sockets)(client);
-      });
-      server.listen({ host: '127.0.0.1', port: RELAY_PORT }, () => {
-        resume(Effect.succeed({ port: RELAY_PORT, server, sockets }));
-      });
-    }),
-    ({ server, sockets }) =>
-      Effect.callback<boolean>((resume) => {
-        for (const socket of sockets) {
-          socket.destroy();
-        }
-        server.close(() => {
-          resume(Effect.succeed(true));
-        });
-      }),
-  );
+    const { downstreamWriter, upstreamWriter } = yield* Effect.all({
+      downstreamWriter: downstream.writer,
+      upstreamWriter: upstream.writer,
+    });
+    const read = frontendReader();
+    const forwardFrontend = downstreamPull.pipe(
+      Effect.tap((chunks) =>
+        Effect.sync(() => {
+          for (const chunk of chunks) {
+            read(chunk);
+          }
+        }),
+      ),
+      Effect.flatMap((chunks) => upstreamWriter.writeAll(chunks)),
+      Effect.forever,
+    );
+    const forwardBackend = upstreamPull.pipe(
+      Effect.flatMap((chunks) => downstreamWriter.writeAll(chunks)),
+      Effect.forever,
+    );
+    yield* Effect.raceFirst(forwardFrontend, forwardBackend);
+  });
+  yield* server
+    .run((downstream) =>
+      Effect.scoped(relayConnection(downstream)).pipe(Effect.catchTag('SocketError', () => Effect.void)),
+    )
+    .pipe(Effect.forkScoped);
+  return { port: address.port };
+});
 
 /** The case's own database pair, reached through the relay on `port`. */
 const relayedDatabases = (accessCase: AccessAdminCase, port: number) => {
