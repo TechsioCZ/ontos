@@ -278,11 +278,7 @@ import {
   SwitchTenantResponseSchema,
   SwitchToTenantContextResponseSchema,
 } from '../shared/browser-api.ts';
-import {
-  moduleTargetSourceHeader,
-  moduleTargetSourcePathHeader,
-  moduleTargetSourceHints,
-} from '../shared/module-target-diagnostics.ts';
+import { moduleTargetSourceHints } from '../shared/module-target-diagnostics.ts';
 import { moduleTargetLogAnnotations } from './modules/module-target-log.ts';
 import type {
   AuthenticationInternalProblem,
@@ -1736,9 +1732,8 @@ const documentTarget = Effect.fn('shell.composition.documentTarget')(function* d
         request,
         error,
         moduleTargetLogAnnotations(catalog, {
-          reportedSource: request.headers[moduleTargetSourceHeader],
+          ...moduleTargetSourceHints(request.headers),
           selector,
-          sourcePath: request.headers[moduleTargetSourcePathHeader],
         }),
       ),
     ),
@@ -1890,7 +1885,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             ? withHome
             : { ...withHome, target: yield* Fiber.join(captured.target.value) };
         }),
-        tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.option),
+        tenantContextAvailable: Effect.option(canSelectTenantContext(context.principal)),
       },
       { concurrency: 2 },
     );
@@ -1908,7 +1903,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         }),
       );
       if (admitted) {
-        const tenantCatalog = yield* captureShellRelease(payload.compositionRevision).pipe(Effect.option);
+        const tenantCatalog = yield* Effect.option(captureShellRelease(payload.compositionRevision));
         tenantRelease = tenantCatalog.pipe(Option.map((catalog) => catalog.composition.revision));
         // A page target counts only beside the release hint; without it the page shows "select a company".
         if (Option.isSome(tenantCatalog) && payload.target !== undefined) {
