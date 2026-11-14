@@ -26,6 +26,7 @@ import {
 } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { withModuleOperationExecution } from '../../../../packages/core-runtime/src/modules/module-operation-execution.ts';
 import { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
+import { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
 import { PriceGroupCompatibilityEvidenceSchema } from '../../shared/domain/price-group-contracts.ts';
 import type { PriceGroupCompatibilityEvidence } from '../../shared/domain/price-group-contracts.ts';
 import { CustomerPriceGroupOverlapConflict } from '../../shared/domain/price-group-errors.ts';
@@ -566,6 +567,65 @@ it('binds the complete assignment intent and invocation but permits a fresh fina
       },
     }),
   ).toBe(false);
+});
+
+it('binds a source or Organization assignment to the owner write its handler issues, route included', () => {
+  const source = {
+    effectId: 'price-assignment-effect-1',
+    issuer: 'internal-c14',
+    mappingRevision: 'mapping-1',
+    namespace: 'customers',
+    occurrenceId: 'customer-001-r1',
+    order: 1,
+    recordId: 'customer-001',
+    recordType: 'customer',
+    revision: 'r1',
+    route: { id: 'source-price-assignments', revision: 'route-1' },
+  };
+  const sourceRetail = Schema.decodeUnknownSync(AssignCustomerPriceGroupPayloadSchema)({
+    ...payload,
+    processingKind: 'PERSONAL_DATA',
+    source,
+  });
+  const retailMatches = (actual: AssignCustomerPriceGroupStoreInput) =>
+    preparedPriceGroupAssignmentMatches(sourceRetail, invocation, scope, compatibility, actual);
+  expect(retailMatches(input)).toBe(true);
+  expect(retailMatches({ ...input, organizationBusiness: true })).toBe(false);
+  expect(retailMatches({ ...input, reason: 'A different intent' })).toBe(false);
+
+  const counterpartyProfile = {
+    ...profile,
+    kind: 'COUNTERPARTY',
+    resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+  } as const;
+  const { reason: _reason, ...withoutReason } = payload;
+  const organization = Schema.decodeUnknownSync(AssignCounterpartyPriceGroupPayloadSchema)({
+    ...withoutReason,
+    counterpartyRef,
+    processingKind: 'ORGANIZATION_BUSINESS',
+    profile: counterpartyProfile,
+    source,
+  });
+  const organizationInput: AssignCustomerPriceGroupStoreInput = {
+    ...input,
+    counterpartyRef,
+    organizationBusiness: true,
+    profile: counterpartyProfile,
+    reason: null,
+  };
+  const organizationMatches = (actual: AssignCustomerPriceGroupStoreInput) =>
+    preparedPriceGroupAssignmentMatches(organization, invocation, scope, compatibility, actual);
+  expect(organizationMatches(organizationInput)).toBe(true);
+  // The Organization route is part of the write: the personal routine never runs under Organization evidence.
+  expect(organizationMatches({ ...organizationInput, organizationBusiness: false })).toBe(false);
+  expect(organizationMatches({ ...organizationInput, reason: 'A personal reason' })).toBe(false);
+  expect(
+    organizationMatches({
+      ...organizationInput,
+      counterpartyRef: { ...counterpartyRef, resourceId: 'another-counterparty' },
+    }),
+  ).toBe(false);
+  expect(organizationMatches({ ...organizationInput, profile })).toBe(false);
 });
 
 it('binds every migration target revision, source, order, and Counterparty association', () => {

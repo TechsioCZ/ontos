@@ -10,9 +10,15 @@ import { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assi
 import { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
 import { MigrateCustomerPriceGroupPayloadSchema } from '../../shared/actions/migrate-customer-price-group.ts';
 import { MigrateCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/migrate-counterparty-price-group.ts';
+import { CounterpartyRefSchema } from '../../shared/domain/access-contract.ts';
+import { OrganizationPriceGroupAssignmentPayloadSchema } from '../../shared/domain/organization-price-assignment.ts';
 import {
+  CommerceCustomerProfileTargetSchema,
   PriceGroupCompatibilityEvidenceSchema,
   PriceGroupInstantJsonSchema,
+  PriceGroupReasonSchema,
+  PriceGroupRefSchema,
+  PriceGroupRevisionSchema,
   samePriceGroupRef,
 } from '../../shared/domain/price-group-contracts.ts';
 import type {
@@ -53,6 +59,24 @@ const MutationPayloadSchema = Schema.Union([
   MigrateCounterpartyPriceGroupPayloadSchema,
 ]);
 type MutationPayload = typeof MutationPayloadSchema.Type;
+type AssignmentPayload = typeof AssignmentPayloadSchema.Type;
+/**
+ * What an assignment's owner write carries: its period, revision, target, reason and processing route. A source
+ * assertion or Organization intent is proven by the handler inside the owner transaction against the same payload,
+ * exactly as on main; the store receives only this projection, so the prepared Catalog evidence binds to it.
+ */
+const AssignmentWriteSchema = Schema.Struct({
+  counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
+  effectiveFrom: PriceGroupInstantJsonSchema,
+  effectiveTo: Schema.optionalKey(PriceGroupInstantJsonSchema),
+  expectedProfileRevision: PriceGroupRevisionSchema,
+  organizationBusiness: Schema.Boolean,
+  priceGroupRef: PriceGroupRefSchema,
+  profile: CommerceCustomerProfileTargetSchema,
+  reason: Schema.NullOr(PriceGroupReasonSchema),
+});
+const isAssignmentWrite = Schema.is(AssignmentWriteSchema);
+const sameAssignmentWrite = Schema.toEquivalence(AssignmentWriteSchema);
 type UsableCatalogOutcome = Extract<PriceGroupCatalogOutcome, { readonly _tag: 'USABLE' }>;
 type MutationInput = AssignCustomerPriceGroupStoreInput | MigrateCustomerPriceGroupStoreInput;
 type AssignmentCandidate = Pick<
@@ -211,10 +235,25 @@ export const priceGroupMutationCanReachCatalog = (
     )
   );
 };
-const assignmentPayload = (input: AssignCustomerPriceGroupStoreInput): AssignmentCandidate => {
+/** The owner write an assignment handler issues for this exact prepared intent. */
+const assignmentWriteOfIntent = (payload: AssignmentPayload) => {
+  const base = {
+    effectiveFrom: payload.effectiveFrom,
+    expectedProfileRevision: payload.expectedProfileRevision,
+    organizationBusiness: Schema.is(OrganizationPriceGroupAssignmentPayloadSchema)(payload),
+    priceGroupRef: payload.priceGroupRef,
+    profile: payload.profile,
+    reason: payload.reason ?? null,
+  };
+  const period = payload.effectiveTo === undefined ? base : { ...base, effectiveTo: payload.effectiveTo };
+  const counterpartyRef = counterpartyForMutation(payload);
+  return counterpartyRef === undefined ? period : { ...period, counterpartyRef };
+};
+const assignmentWriteOfInput = (input: AssignCustomerPriceGroupStoreInput) => {
   const base = {
     effectiveFrom: input.effectiveFrom,
     expectedProfileRevision: input.expectedProfileRevision,
+    organizationBusiness: input.organizationBusiness === true,
     priceGroupRef: input.priceGroupRef,
     profile: input.profile,
     reason: input.reason,
@@ -232,18 +271,15 @@ const migrationPayload = (input: MigrateCustomerPriceGroupStoreInput): Migration
   };
   return input.counterpartyRef === undefined ? base : { ...base, counterpartyRef: input.counterpartyRef };
 };
-const mutationMatches = (
-  payload: MutationPayload,
+const invocationMatches = (
   actionInvocationId: string,
   scope: OperationalScope,
   compatibility: PriceGroupCompatibilityEvidence,
   input: MutationInput,
-  candidate: MutationCandidate,
 ): boolean =>
   input.actionInvocationId === actionInvocationId &&
   input.principalId === scope.principalId &&
   input.tenantId === scope.tenantId &&
-  preparedPriceGroupPayloadMatches(payload, candidate) &&
   Schema.is(PriceGroupCompatibilityEvidenceSchema)(input.compatibility) &&
   Schema.toEquivalence(PriceGroupCompatibilityEvidenceSchema)(compatibility, input.compatibility);
 export const preparedPriceGroupAssignmentMatches = (
@@ -252,14 +288,28 @@ export const preparedPriceGroupAssignmentMatches = (
   scope: OperationalScope,
   compatibility: PriceGroupCompatibilityEvidence,
   input: AssignCustomerPriceGroupStoreInput,
-): boolean => mutationMatches(payload, invocation, scope, compatibility, input, assignmentPayload(input));
+): boolean => {
+  if (!Schema.is(AssignmentPayloadSchema)(payload)) {
+    return false;
+  }
+  const expected = assignmentWriteOfIntent(payload);
+  const actual = assignmentWriteOfInput(input);
+  return (
+    invocationMatches(invocation, scope, compatibility, input) &&
+    isAssignmentWrite(expected) &&
+    isAssignmentWrite(actual) &&
+    sameAssignmentWrite(expected, actual)
+  );
+};
 export const preparedPriceGroupMigrationMatches = (
   payload: MutationPayload,
   invocation: string,
   scope: OperationalScope,
   compatibility: PriceGroupCompatibilityEvidence,
   input: MigrateCustomerPriceGroupStoreInput,
-): boolean => mutationMatches(payload, invocation, scope, compatibility, input, migrationPayload(input));
+): boolean =>
+  invocationMatches(invocation, scope, compatibility, input) &&
+  preparedPriceGroupPayloadMatches(payload, migrationPayload(input));
 const exactCatalogEvidence = (
   outcome: UsableCatalogOutcome,
   payload: MutationPayload,
