@@ -1,8 +1,12 @@
-import { Duration, Effect, Option, Ref } from 'effect';
+import { readFileSync } from 'node:fs';
+
+import { ConfigProvider, Duration, Effect, Option, Ref } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  BOOT_COMPILE_CACHE,
+  containerCompileCache,
   awaitSupersedingRevision,
   CONTROL_PORT,
   derivedEnvironment,
@@ -19,6 +23,8 @@ import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
 import { makeSupersedeDrain } from '../zerops/supersede-drain.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
 import { ownerEntrySource } from '../zerops/owner-entry.mts';
+
+const CONTAINER_COMPILE_CACHE = '/var/cache/container';
 
 const PARTY_REGISTRY = 'party-registry';
 const SHELL_ID = 'shell-super-app';
@@ -266,8 +272,42 @@ describe('finiteProcessEnvironment', () => {
   it('overrides inherited sharing without changing other operator settings', () => {
     expect(finiteProcessEnvironment({ MIGRATOR_ONCE: 'true' })).toEqual({
       MIGRATOR_ONCE: 'true',
+      NODE_COMPILE_CACHE: BOOT_COMPILE_CACHE,
       ONTOS_DATABASE_POOL_SHARED: 'false',
     });
+  });
+
+  it("shares the boot's compile cache unless the child or the container names one", () => {
+    expect(finiteProcessEnvironment({}).NODE_COMPILE_CACHE).toBe(BOOT_COMPILE_CACHE);
+    expect(finiteProcessEnvironment({}, Option.some(CONTAINER_COMPILE_CACHE)).NODE_COMPILE_CACHE).toBe(
+      CONTAINER_COMPILE_CACHE,
+    );
+    expect(
+      finiteProcessEnvironment({ NODE_COMPILE_CACHE: '/var/cache/child' }, Option.some(CONTAINER_COMPILE_CACHE))
+        .NODE_COMPILE_CACHE,
+    ).toBe('/var/cache/child');
+  });
+
+  it.effect("reads the container's compile cache setting, and none when it is absent", () =>
+    Effect.gen(function* readsContainerSetting() {
+      const withSetting = yield* containerCompileCache.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({ NODE_COMPILE_CACHE: CONTAINER_COMPILE_CACHE }),
+        ),
+      );
+      expect(withSetting).toEqual(Option.some(CONTAINER_COMPILE_CACHE));
+      const without = yield* containerCompileCache.pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+      );
+      expect(without).toEqual(Option.none());
+    }),
+  );
+
+  it('gives every finite child the container setting', () => {
+    const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
+    expect(host.split('finiteProcessEnvironment(env, yield* containerCompileCache)').length).toBe(3);
+    expect(host).not.toContain('finiteProcessEnvironment(env)');
   });
 });
 

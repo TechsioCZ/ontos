@@ -62,10 +62,16 @@ it('no repaired module imports a retired authorization module', () => {
 it('the release gate is read-only and the deploy host runs it before publishing', () => {
   const host = readFileSync(script('zerops/app-host.mts'), 'utf-8');
   const gate = readFileSync(script('zerops/release-access-verification.mts'), 'utf-8');
-  const verify = host.indexOf('yield* verifyReleaseAccessIntent(releaseSnapshot)');
+  const startup = host.indexOf('const startup = Effect.gen(function* startupSequence()');
+  const verify = host.indexOf('verifyReleaseAccessIntent(releaseSnapshot)', startup);
+  // The proof runs beside the key issuing; its held outcome is raised before anything is published.
+  const proven = host.indexOf('yield* releaseAccessProof;');
   const publish = host.indexOf('yield* publishSnapshot(releaseSnapshot)');
-  expect(verify).toBeGreaterThan(-1);
-  expect(publish).toBeGreaterThan(verify);
+  expect(startup).toBeGreaterThan(-1);
+  expect(verify).toBeGreaterThan(startup);
+  expect(host.slice(host.lastIndexOf('Effect.all(', verify), verify)).toContain('Effect.exit(');
+  expect(proven).toBeGreaterThan(verify);
+  expect(publish).toBeGreaterThan(proven);
   expect(gate).not.toContain('writeRelationships');
   expect(gate).not.toContain('.reconcile(');
 });

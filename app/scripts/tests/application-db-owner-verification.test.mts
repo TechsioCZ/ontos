@@ -8,6 +8,7 @@ import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
+  MAX_VERIFIER_CONCURRENCY,
   validateVerifierConcurrency,
   verifyOwnerSchema,
   verifyOwnerSchemas,
@@ -198,9 +199,10 @@ it.effect('rejects unbounded concurrency without replacing canonical source inve
   Effect.gen(function* validateConcurrency() {
     expect(yield* validateVerifierConcurrency(4)).toBe(4);
     expect(yield* validateVerifierConcurrency(2)).toBe(2);
-    for (const value of [0, 5, -1, 1.5]) {
+    expect(yield* validateVerifierConcurrency(MAX_VERIFIER_CONCURRENCY)).toBe(8);
+    for (const value of [0, 9, -1, 1.5]) {
       const failure = yield* validateVerifierConcurrency(value).pipe(Effect.flip);
-      expect(failure.reason).toContain('between 1 and 4');
+      expect(failure.reason).toContain('between 1 and 8');
     }
   }),
 );

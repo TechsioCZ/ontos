@@ -162,15 +162,21 @@ it.effect('refuses outside stage and against any SpiceDB other than the fixed st
 
 it('app-host verifies the release before publishing it, does not ignore a failure, and never writes', () => {
   const host = readFileSync(new URL('app-host.mts', import.meta.url), 'utf-8');
-  const verify = host.indexOf('yield* verifyReleaseAccessIntent(releaseSnapshot)');
+  const startup = host.indexOf('const startup = Effect.gen(function* startupSequence()');
+  const verify = host.indexOf('verifyReleaseAccessIntent(releaseSnapshot)', startup);
+  const proven = host.indexOf('yield* releaseAccessProof;');
   const publish = host.indexOf('yield* publishSnapshot(releaseSnapshot)');
-  const openPort = host.indexOf(
-    'yield* openPublicPort;\n    yield* Ref.set(published, true);\n    yield* drainWhenSuperseded',
-  );
-  expect(verify).toBeGreaterThan(-1);
-  expect(publish).toBeGreaterThan(verify);
+  const openPort = host.indexOf('yield* openPublicPort', publish);
+  expect(startup).toBeGreaterThan(-1);
+  expect(verify).toBeGreaterThan(startup);
+  // Its outcome is held (`Effect.exit`) while the keys are issued, never dropped.
+  expect(host.slice(host.lastIndexOf('Effect.all(', verify), verify)).toContain('Effect.exit(');
+  // Held beside the key issuing, then raised: a refusal stops the boot before publication.
+  expect(proven).toBeGreaterThan(verify);
+  expect(publish).toBeGreaterThan(proven);
   expect(openPort).toBeGreaterThan(publish);
-  const step = host.slice(host.indexOf('const verifyReleaseAccessIntent'), verify);
+  expect(host.slice(verify, proven)).not.toContain('Effect.ignore');
+  const step = host.slice(host.indexOf('const verifyReleaseAccessIntent'), host.indexOf('// ONTOS_APP_HOST_PUBLISH'));
   expect(step).not.toContain('Effect.ignore');
   // The gate is read-only: it reads intent and verifies the projection, and it has no write path at all.
   const source = readFileSync(new URL('release-access-verification.mts', import.meta.url), 'utf-8');

@@ -45,6 +45,7 @@ import {
 } from './supersede-drain.mts';
 import type { DrainPeer, SupersedeDrain } from './supersede-drain.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
+import { bootTimingLine, timedBootStage, timedBootStageJudged } from './boot-stage-timing.mts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
   earliestExpiryOf,
@@ -89,7 +90,7 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
@@ -526,9 +527,28 @@ export const workloadKeysDiffer = (
   return wanted.size !== holding.size || [...wanted].some((entry) => !holding.has(entry));
 };
 
-/** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
-export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
+/**
+ * One V8 compile cache for every finite child of this boot and the children they start (the migrator's ~40 Node
+ * processes load the same Effect, Drizzle and Core modules). Node validates each entry against its source, so a stale,
+ * torn or foreign entry is recompiled, never run; an unwritable directory only turns the cache off.
+ */
+export const BOOT_COMPILE_CACHE = path.join(tmpdir(), 'ontos-boot-compile-cache');
+
+/** A compile cache the container itself sets (`NODE_COMPILE_CACHE`) wins over the boot's own directory. */
+export const containerCompileCache = Effect.gen(function* readContainerCompileCache() {
+  return yield* Config.option(Config.String('NODE_COMPILE_CACHE'));
+}).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+/**
+ * Finite operator commands own private pools; only long-running hosts install a shared-pool registry. The compile
+ * cache is the child's own setting, else the container's, else the boot's directory.
+ */
+export const finiteProcessEnvironment = (
+  environment: ChildEnvironment,
+  container: Option.Option<string> = Option.none(),
+): ChildEnvironment => ({
   ...environment,
+  NODE_COMPILE_CACHE: environment.NODE_COMPILE_CACHE ?? Option.getOrElse(container, () => BOOT_COMPILE_CACHE),
   ONTOS_DATABASE_POOL_SHARED: 'false',
 });
 
@@ -552,7 +572,7 @@ const runChild = (
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
         cwd,
-        env: finiteProcessEnvironment(env),
+        env: finiteProcessEnvironment(env, yield* containerCompileCache),
         extendEnv,
         forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER,
         stderr: 'inherit',
@@ -572,7 +592,7 @@ const runChild = (
 /**
  * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
  * only. It never holds or fails the boot: a failure is one loud line, and the registrations stay as they were until
- * the next run.
+ * the next run. It answers whether the run succeeded, so its boot timing line can say so.
  */
 export const registerInternalWorkloads = (release: { readonly compositionRevision: string }) =>
   Effect.gen(function* registerWorkloads() {
@@ -583,17 +603,18 @@ export const registerInternalWorkloads = (release: { readonly compositionRevisio
         settings[key] = value.value;
       }
     }
-    yield* runChild(
+    return yield* runChild(
       'release-internal-workloads',
       process.execPath,
       [RELEASE_INTERNAL_WORKLOADS_SCRIPT, '--run', release.compositionRevision],
       workspaceRoot,
       settings,
     ).pipe(
+      Effect.as(true),
       Effect.catchTag('AppHostError', ({ reason }) =>
         Console.error(
           `[app-host] INTERNAL WORKLOAD REGISTRATION FAILED (${reason}); the registrations stay as they were until the next run`,
-        ),
+        ).pipe(Effect.as(false)),
       ),
     );
   });
@@ -618,7 +639,7 @@ export const captureChannel = (name: string, args: readonly string[], env: Child
       const handle = yield* ChildProcess.make(process.execPath, [...args], {
         additionalFds: { fd3: { type: 'output' } },
         cwd: workspaceRoot,
-        env: finiteProcessEnvironment(env),
+        env: finiteProcessEnvironment(env, yield* containerCompileCache),
         extendEnv: true,
         stderr: 'inherit',
         stdin: 'ignore',
@@ -1869,7 +1890,11 @@ const recordReleaseAccessStatus = (status: Omit<Parameters<typeof recordReleaseA
 // ---------------------------------------------------------------------------------------------------------------
 // Host
 
+/** A provisioning pass succeeded only when no caller was left without its key. */
+const provisionedEveryKey = (provisioned: ProvisioningOutput) => provisioned.failedAppIds.length === 0;
+
 export const runAppHost = Effect.gen(function* runAppHost() {
+  const hostStarted = yield* Clock.monotonicTimeNanos;
   yield* startProcessObservability('supervisor');
   // First thing: a restart inside this container must know when the container first booted (restartMayPublish).
   const boot = yield* Config.String('ONTOS_APP_HOST_BOOT_MARKER').pipe(
@@ -2179,15 +2204,20 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* withOutboxDeadStartupGate(
       startupDeadOutboxInventory(coreSchemaExists, listDeadOutboxDeliveries(database.executor, { limit: 10 })),
       Effect.void,
-    ).pipe(Effect.mapError((problem) => failure(problem.reason)));
+    ).pipe(
+      Effect.mapError((problem) => failure(problem.reason)),
+      timedBootStage('host.dead-outbox-gate'),
+    );
     yield* Effect.all(
       [
-        runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, { MIGRATOR_ONCE: 'true' }),
-        waitForUnits(units),
+        runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, {
+          MIGRATOR_ONCE: 'true',
+        }).pipe(timedBootStage('host.migrator')),
+        waitForUnits(units).pipe(timedBootStage('host.units-serving')),
       ],
       { concurrency: 'unbounded' },
     );
-    const releaseSnapshot = yield* observeOwners(units, publicOrigin);
+    const releaseSnapshot = yield* observeOwners(units, publicOrigin).pipe(timedBootStage('host.observe-owners'));
     // A process restarted inside a container that a newer release superseded never publishes its old release again.
     const holder = Option.map(EffectArray.head(yield* readAuthority), ({ activatedAtMillis, revision }) => ({
       activatedAtMillis,
@@ -2204,14 +2234,34 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     const release = hostReleaseOf(releaseSnapshot);
     // Keys can only be issued for registrations that exist: the platform registers every module's declared internal
     // workloads first (per tenant and company), so the boot's provisioning keys them in the same pass.
-    yield* registerInternalWorkloads(release);
-    yield* provisionForRelease(release);
-    yield* verifyReleaseAccessIntent(releaseSnapshot);
-    const revision = yield* publishSnapshot(releaseSnapshot);
+    yield* registerInternalWorkloads(release).pipe(
+      timedBootStageJudged('host.register-internal-workloads', (registered: boolean) => registered),
+    );
+    // The release access proof and the key issuing run side by side. The proof reads every Tenant that serves people
+    // (intent in PostgreSQL, the projection in SpiceDB) after the registrations above, and writes nothing; the issuing
+    // writes only the Shell's key store and the platform tenant's module principals, which the proof never reads, and
+    // no relationship. The proof's outcome is held until the keys are handed over, as they were before it ran, and a
+    // refusal then stops this boot here, before publication, with the same failure.
+    const [, releaseAccessProof] = yield* Effect.all(
+      [
+        // Provisioning reports a failed pass as callers without a key instead of failing; the line says so.
+        provisionForRelease(release).pipe(timedBootStageJudged('host.module-credentials', provisionedEveryKey)),
+        Effect.exit(
+          verifyReleaseAccessIntent(releaseSnapshot).pipe(timedBootStage('host.release-access-verification')),
+        ),
+      ],
+      { concurrency: 2 },
+    );
+    yield* releaseAccessProof;
+    const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
-    yield* openPublicPort;
+    yield* openPublicPort.pipe(timedBootStage('host.open-public-port'));
     yield* Ref.set(published, true);
+    const servingAt = yield* Clock.monotonicTimeNanos;
+    yield* Console.log(
+      bootTimingLine('host.start-to-serving', Duration.toMillis(Duration.nanos(servingAt - hostStarted)), 'ok'),
+    );
     yield* drainWhenSuperseded(revision).pipe(Effect.forkChild);
     // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row

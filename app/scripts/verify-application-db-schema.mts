@@ -196,12 +196,21 @@ export const verifyOwnerSchema = Effect.fn('ApplicationDatabase.verifyOwnerSchem
   return yield* Effect.void;
 });
 
+/**
+ * Each owner verifier is its own Node process holding one or two admin connections for read-only catalog queries.
+ * The ceiling bounds both the connections the check adds beside a release that still serves and the memory of the
+ * processes it starts at once; the default stays at four for local and CI runs, the stage migrator asks for more.
+ */
+export const MAX_VERIFIER_CONCURRENCY = 8;
+
 export const validateVerifierConcurrency = (
   value: number,
 ): Effect.Effect<number, ApplicationDatabaseVerificationError> =>
-  Number.isInteger(value) && value >= 1 && value <= 4
+  Number.isInteger(value) && value >= 1 && value <= MAX_VERIFIER_CONCURRENCY
     ? Effect.succeed(value)
-    : Effect.fail(verificationFailure('Expected --concurrency with an integer between 1 and 4'));
+    : Effect.fail(
+        verificationFailure(`Expected --concurrency with an integer between 1 and ${String(MAX_VERIFIER_CONCURRENCY)}`),
+      );
 
 /** Preserve canonical source order while joining every isolated child, including on cancellation. */
 export const verifyOwnerSchemas = (paths: readonly string[], concurrency = 4) =>
