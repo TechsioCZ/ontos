@@ -12,6 +12,7 @@ import {
   SeedRoleSchema,
   SeedSettingSchema,
   assertDatabaseEvidence,
+  schemaDifference,
   quoteIdentifier,
   quoteLiteral,
   schemaFingerprint,
@@ -87,10 +88,11 @@ export const assertDatabaseNames = (names: readonly string[]) =>
     return yield* Effect.void;
   });
 
-export const databaseEvidence = (database: string) =>
-  Effect.gen(function* readDatabaseEvidence() {
+/** The schema dump the fingerprint is taken from; DDL only. */
+const schemaDump = (database: string) =>
+  Effect.gen(function* readSchemaDump() {
     const user = yield* requiredEnvironment(POSTGRES_USER_KEY);
-    const schema = yield* postgresCommand('pg_dump', [
+    return yield* postgresCommand('pg_dump', [
       USERNAME_FLAG,
       user,
       DATABASE_FLAG,
@@ -98,6 +100,13 @@ export const databaseEvidence = (database: string) =>
       '--schema-only',
       CREATE_FLAG,
     ]);
+  });
+/** The producer's schema dump beside each archive, so a restore that differs can say how. */
+const schemaFile = (archive: string) => `${archive}.schema.sql`;
+
+export const databaseEvidence = (database: string, dumped?: string) =>
+  Effect.gen(function* readDatabaseEvidence() {
+    const schema = dumped ?? (yield* schemaDump(database));
     const tables = yield* queryJson(database, TABLES_QUERY, Schema.Array(Schema.String));
     const queries = tables.map(
       (table) => `select ${quoteLiteral(table)} as "table", count(*)::int as rows from ${table}`,
@@ -158,10 +167,13 @@ export const dumpDatabase = (database: string, index: number, directory: string,
       source,
     ]);
     yield* runSeedCommand('docker', ['compose', 'cp', `${PG_SERVICE}:${source}`, path.join(directory, archive)]);
+    const schema = yield* schemaDump(database);
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(path.join(directory, schemaFile(archive)), schema);
     return yield* Effect.succeed({
       archive,
       digest: yield* archiveDigest(path.join(directory, archive)),
-      evidence: yield* databaseEvidence(database),
+      evidence: yield* databaseEvidence(database, schema),
     } satisfies SeedDatabase);
   });
 
@@ -299,7 +311,19 @@ export const restoreDatabase = (database: SeedDatabase, directory: string, conta
     ) {
       yield* seedSql(database.evidence.name, REGENERATE_SEAL_SQL);
     }
-    return yield* assertDatabaseEvidence(database.evidence, yield* databaseEvidence(database.evidence.name));
+    const restored = yield* schemaDump(database.evidence.name);
+    const evidence = yield* databaseEvidence(database.evidence.name, restored);
+    const fs = yield* FileSystem.FileSystem;
+    const expected = path.join(directory, schemaFile(database.archive));
+    if (evidence.fingerprint !== database.evidence.fingerprint && (yield* fs.exists(expected))) {
+      return yield* seedFailure(
+        `Seed schema fingerprint mismatch for ${database.evidence.name}; refusing migrations fallback\n${schemaDifference(
+          yield* fs.readFileString(expected),
+          restored,
+        )}`,
+      );
+    }
+    return yield* assertDatabaseEvidence(database.evidence, evidence);
   });
 
 export const restoreSettings = (settings: readonly SeedSetting[]) =>

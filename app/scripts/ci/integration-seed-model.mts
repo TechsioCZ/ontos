@@ -170,7 +170,37 @@ export const assertDatabaseEvidence = (expected: DatabaseEvidence, actual: Datab
 };
 
 /** pg_dump adds random restrict keys; everything else, including owners/ACLs/policies, is hashed. */
-export const schemaFingerprint = (dump: string) => sha256(dump.replaceAll(/^\\(?:un)?restrict .*\n/gmu, ''));
+/** The schema dump as fingerprinted: pg_dump's per-run `\\restrict` keys removed. */
+export const normalizedSchema = (dump: string) => dump.replaceAll(/^\\(?:un)?restrict .*\n/gmu, '');
+export const schemaFingerprint = (dump: string) => sha256(normalizedSchema(dump));
+
+const lineCounts = (text: string) => {
+  const lines = new Map<string, number>();
+  for (const line of normalizedSchema(text).split('\n')) {
+    lines.set(line, (lines.get(line) ?? 0) + 1);
+  }
+  return lines;
+};
+const linesOnlyIn = (from: Map<string, number>, other: Map<string, number>, sign: string) =>
+  [...from].flatMap(([line, times]) =>
+    Array.from({ length: Math.max(0, times - (other.get(line) ?? 0)) }, () => `${sign} ${line}`),
+  );
+
+/**
+ * The lines only one of two schema dumps has, at most `limit` of each, so a fingerprint mismatch names what
+ * differs. Schema dumps carry DDL only: no role passwords, no table data.
+ */
+export const schemaDifference = (expected: string, actual: string, limit = 30): string => {
+  const before = lineCounts(expected);
+  const after = lineCounts(actual);
+  const removed = linesOnlyIn(before, after, '-');
+  const added = linesOnlyIn(after, before, '+');
+  return [
+    `${String(removed.length)} line(s) only in the seed, ${String(added.length)} only after restore`,
+    ...removed.slice(0, limit),
+    ...added.slice(0, limit),
+  ].join('\n');
+};
 
 /** Exactly the migration's HMAC pad construction, but fresh in each consumer. Never export the pads. */
 export const REGENERATE_SEAL_SQL = `DO $$

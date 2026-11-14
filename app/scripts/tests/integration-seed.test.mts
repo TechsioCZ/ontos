@@ -2,6 +2,7 @@ import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  schemaDifference,
   seedFailure,
   seedRestoreRefusal,
   FRESH_JOB,
@@ -139,4 +140,14 @@ it('restores a seed from another run or revision under the same key, never one a
   // The cache key names every input of the migrated database; a later run on a later commit reuses it.
   expect(seedRestoreRefusal(dumped, { postgresVersion: '18.6' })).toBeUndefined();
   expect(seedRestoreRefusal(dumped, { postgresVersion: '18.7' })).toContain('PostgreSQL 18.6');
+});
+
+it('names the schema lines a restored database lacks or gained, without the per-run restrict keys', () => {
+  const seed = '\\restrict aaa\nCREATE TABLE a ();\nGRANT SELECT ON a TO r;\n\\unrestrict aaa\n';
+  const restored = '\\restrict bbb\nCREATE TABLE a ();\nGRANT SELECT ON a TO s;\n\\unrestrict bbb\n';
+  expect(schemaDifference(seed, seed)).toBe('0 line(s) only in the seed, 0 only after restore');
+  const difference = schemaDifference(seed, restored);
+  expect(difference).toContain('- GRANT SELECT ON a TO r;');
+  expect(difference).toContain('+ GRANT SELECT ON a TO s;');
+  expect(difference).not.toContain('restrict');
 });
