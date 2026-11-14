@@ -1,1 +1,38 @@
-{ "imports": {} }
+{
+  "imports": {
+    "csv": {
+      "column": {
+        "cas_udalosti": "Event time",
+        "castka": "Amount",
+        "cislo_objednavky": "Order number",
+        "datum_objednavky": "Order date",
+        "email_zakaznika": "Customer email",
+        "ico_zakaznika": "Customer company ID",
+        "id_objednavky": "Order ID",
+        "id_udalosti": "Event ID",
+        "id_zakaznika": "Customer ID",
+        "mena": "Currency",
+        "nazev_zakaznika": "Customer name",
+        "polozky": "Items",
+        "stav": "Status",
+        "zdroj": "Source"
+      },
+      "problem": {
+        "AmountWithoutCurrency": "Row {{row}}: the amount has no currency. Fill in the “Currency” column.",
+        "DuplicateHeader": "Row 1, column “{{column}}” appears more than once (including aliases). Keep it only once.",
+        "EmptyFile": "The file is empty.",
+        "InvalidAmount": "Row {{row}}, column “Amount”: “{{value}}” is not a valid decimal number.",
+        "InvalidCurrency": "Row {{row}}, column “Currency”: “{{value}}” is not an ISO 4217 code (e.g. CZK, EUR).",
+        "InvalidHeaderCell": "Row 1, column {{position}}: text must contain 1 to {{maxLength}} characters.",
+        "InvalidLine": "Row {{row}}, column “Items”, item {{item}}: check the name and SKU (at most {{maxLength}} characters), decimal quantity and amount.",
+        "InvalidText": "Row {{row}}, column “{{column}}”: text must contain 1 to {{maxLength}} characters.",
+        "InvalidTime": "Row {{row}}, column “{{column}}”: enter a valid date or time with at most three fractional second digits. Times without an offset use Europe/Prague.",
+        "LineAmountWithoutCurrency": "Row {{row}}: an item amount has no currency. Fill in the “Currency” column.",
+        "MissingColumns": "Row 1: the header is missing the required columns {{columns}}.",
+        "MissingValue": "Row {{row}}, column “{{column}}”: the value is missing.",
+        "SurplusCells": "Row {{row}}: extra values follow the last column {{position}}. Correct the delimiters or quotes.",
+        "UnterminatedQuote": "Row {{row}}, column {{position}}: missing closing quote. Correct the CSV and import it again."
+      }
+    }
+  }
+}

@@ -84,7 +84,9 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
     Match.tag('CreateClient', ({ partyRef }) =>
       partyRef === undefined ? Option.some(result.entityIds) : Option.none(),
     ),
-    Match.tag('AiDecideChanges', () => Option.some(result.entityIds)),
+    Match.tag('AiDecideChanges', ({ decision }) =>
+      decision === 'approve' && result.entityIds.length > 0 ? Option.some(result.entityIds) : Option.none(),
+    ),
     Match.tag('SyncClientParties', ({ clientIds }) => Option.some(clientIds)),
     Match.tag('RestoreClient', () => Option.some(result.entityIds)),
     Match.orElse(() => Option.none()),

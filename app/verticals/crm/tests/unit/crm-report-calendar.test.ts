@@ -39,6 +39,29 @@ it('applies the calendar range together with the other report filters', () => {
 });
 
 describe('sales report calendar period', () => {
+  it('derives presets from the Prague day across winter and summer month and year boundaries', () => {
+    for (const { from, instant, previous, today, year } of [
+      {
+        from: '2027-01-01',
+        instant: '2026-12-31T23:30:00Z',
+        previous: { from: '2026-12-01', to: '2026-12-31' },
+        today: '2027-01-01',
+        year: '2027-01-01',
+      },
+      {
+        from: '2026-07-01',
+        instant: '2026-06-30T22:30:00Z',
+        previous: { from: '2026-06-01', to: '2026-06-30' },
+        today: '2026-07-01',
+        year: '2026-01-01',
+      },
+    ]) {
+      const localPeriods = periodOptions(DateTime.makeUnsafe(instant), []);
+      expect(periodOf('tento-mesic', localPeriods)).toEqual({ from, to: today });
+      expect(periodOf('minuly-mesic', localPeriods)).toEqual(previous);
+      expect(periodOf('letos', localPeriods)).toEqual({ from: year, to: today });
+    }
+  });
   it('restores a custom inclusive date range from the URL', () => {
     expect(periodOf('2026-10-05:2026-10-07', periods)).toEqual({ from: '2026-10-05', to: '2026-10-07' });
   });

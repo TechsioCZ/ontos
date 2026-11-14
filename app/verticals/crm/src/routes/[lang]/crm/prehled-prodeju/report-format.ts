@@ -69,7 +69,7 @@ const shiftMonth = (month: string, delta: number) => {
 
 /** Presets relative to the server's "now", then one entry per month that has data (newest first). */
 export const periodOptions = (now: DateTime.Utc, monthsWithData: readonly string[]): PeriodOption[] => {
-  const today = CalendarDateSchema.make(DateTime.formatIsoDateUtc(now));
+  const today = CalendarDateSchema.make(now.pipe(DateTime.setZoneNamedUnsafe('Europe/Prague'), DateTime.formatIsoDate));
   const thisMonth = today.slice(0, 7);
   const presets: PeriodOption[] = [
     { label: 'Celé období', period: {}, value: 'vse' },

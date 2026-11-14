@@ -33,6 +33,7 @@ import { canSeeEverything } from '../../../../../shared/domain/access.ts';
 
 import { ORDERS_CSV_FORMAT, ordersCsvColumns, ordersCsvTemplate } from '../../../../../shared/imports/csv.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
+import { useCsvProblemText } from '../../../../crm/csv-problem-text.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import {
   CrmScopeNote,
@@ -218,6 +219,7 @@ const BatchPanel = ({
   readonly onClose: () => void;
   readonly records: RecordsResponse;
 }) => {
+  const problemText = useCsvProblemText();
   if (batch === undefined) {
     return null;
   }
@@ -269,7 +271,11 @@ const BatchPanel = ({
             <span className="font-medium text-sm">{`Chybné řádky (${String(batch.errors.length)}) – ostatní řádky se uložily`}</span>
             <ul className="flex flex-col gap-50 text-sm">
               {batch.errors.map((error) => (
-                <li key={`${String(error.row)}-${error.message}`}>{`Řádek ${String(error.row)}: ${error.message}`}</li>
+                <li key={`${String(error.row)}-${error.message}`}>
+                  {error.problem === undefined
+                    ? `Řádek ${String(error.row)}: ${error.message}`
+                    : problemText(error.problem)}
+                </li>
               ))}
             </ul>
           </div>
