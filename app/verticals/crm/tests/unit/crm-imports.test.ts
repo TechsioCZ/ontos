@@ -129,7 +129,7 @@ describe('CRM order CSV parser', () => {
     ]) {
       expect(parseCsvTime(local, true)).toBe(utc);
       const parsed = parseOrdersCsv(`source;order_id;status;order_date;event_time\nE-shop;1;nova;${local};${local}`);
-      const first = parsed.rows[0];
+      const [first] = parsed.rows;
       expect(first).toMatchObject({ kind: 'ok' });
       if (first?.kind === 'ok') {
         expect(orderDateText(first.value.orderedAt)).toBe(utc);
@@ -160,7 +160,7 @@ describe('CRM order CSV parser', () => {
       const header = [...new Set(['zdroj', 'id_objednavky', 'stav', column])];
       const cells = header.map((key) => (key === column ? 'x'.repeat(4001) : 'valid'));
       const parsed = parseOrdersCsv(`${header.join(';')}\n${cells.join(';')}\n`);
-      const rejected = parsed.rows[0];
+      const [rejected] = parsed.rows;
       expect(rejected).toMatchObject({ kind: 'error', row: 2 });
       if (rejected?.kind === 'error') {
         expect(rejected.message).toContain(column);
@@ -173,7 +173,7 @@ describe('CRM order CSV parser', () => {
     for (const line of [`SKU:${'x'.repeat(4001)}:1`, `${'x'.repeat(4001)}:Name:1`]) {
       const parsed = parseOrdersCsv(`source;order_id;status;lines\nE-shop;1;nova;${line}\n`);
       expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
-      const rejected = parsed.rows[0];
+      const [rejected] = parsed.rows;
       expect(rejected?.kind === 'error' ? rejected.message : '').toContain('polozky');
       expect(rejected?.kind === 'error' ? rejected.message.length : 0).toBeLessThan(300);
     }
