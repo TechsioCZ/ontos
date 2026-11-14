@@ -689,6 +689,17 @@ Core's own system work crosses the release boundary instead of blocking the drai
 
 The descriptor equivalence proves the topic and the entrypoint — not the payload schema and not the handler body. The rest rests on the handler being a whole-tenant reconcile that ignores its message payload and is idempotent, and on one rule: **a core-system payload schema change requires a new topic version.** `scripts/tests/core-system-carry-over.test.mts` pins each core-system worker key to its versioned topic so reusing a topic for a changed shape has to be a reviewed edit. Such work is not old-release work in flight: the handler is a whole-tenant reconcile owned by Core and identical in both releases, so the next release's own Outbox host finishes it under the new authority. A core-system descriptor that changed between releases does not carry over and is drained by the release that approved it.
 
+### First deploy with the fail-closed pre-flight
+
+The first deploy of a release with this pre-flight refuses to start its drain, leaving the running release serving,
+on any of: a `dead` delivery; a `pending` delivery with no eligible consumer (consumer module not background-eligible
+in its tenant, or tenant not active); a `pending` core-system delivery that does not carry over (attempted, redriven,
+or under a changed descriptor) — this refusal can be transient, since a retiring release that claims core-system work
+finishes the row and the next deploy proceeds; a delivery due after the drain's deadline, including one its owner
+deferred (the refusal says `deferred by its owner until …`); a delivery nothing has picked up for longer than a whole
+drain budget; and an Outbox message unmatched for longer than a whole drain budget. Before pushing, run the read-only
+check below, `pnpm composition:drain-preflight`, against the target environment.
+
 ### Checking before a deploy
 
 Run this from a checkout of the release you are about to deploy, whenever anything looks stuck, before the deploy rather than during it. It writes nothing, takes no advisory lock, and so cannot stall a running publisher or release; its verdict is advisory for that reason, and the publisher re-asks under its own publication lock before it acts. It prints identifiers, worker keys, statuses and times only, never a payload.
@@ -709,13 +720,23 @@ also an interruption (the platform's SIGTERM after its readiness timeout, an out
 message ends with `The authority was returned to active with durable admission open (drain abandonment …)`; an
 interruption is recorded in the ledger as one. The restore is bounded by the database (`lock_timeout` 5 s,
 `statement_timeout` 10 s) and commits whole or not at all. When it fails only because a lock was not available in time
-(SQLSTATE `55P03`), it tries the whole transaction again, up to four more times with a doubling backoff from 250 ms
-(about 30 s at most, lock waits included); a rolled-back attempt leaves no ledger row, so a restore that succeeds is
+(SQLSTATE `55P03`), it tries the whole transaction again, up to four more times with a doubling backoff from 250 ms.
+One attempt can wait on two locks in turn — the publication lock, then the authority row — each for just under 5 s,
+so all five attempts take about 55 s at most; a rolled-back attempt leaves no ledger row, so a restore that succeeds is
 recorded once, and one that never succeeds reports that the authority could not be returned.
+
+A drain also ends early on its own when it meets Outbox work it could never finish. Each poll of the Outbox wait asks
+the pre-flight's questions again, against what is left of the drain's budget: a delivery that died during the drain,
+or one deferred or backed off past the drain's deadline, stops the wait at once (`The Application Composition drain
+was stopped: …`, naming the rows), and the restore above runs then rather than when the budget expires. The
+pre-flight, the fence and every poll measure that deadline from the same moment, when the drain's budget clock
+started.
 
 What it cannot cover is a process that never runs its exit hook: a `SIGKILL`, an out-of-memory kill, a lost
 container, or a database the publisher can no longer reach. Then the authority stays `draining` and an operator
-returns it with the command below.
+returns it with the command below. A container that vanished without closing its connection can leave its database
+session holding the publication lock for a while; see
+[A publisher that is gone still holds the lock](#a-publisher-that-is-gone-still-holds-the-lock).
 
 The rule, enforced by the database rather than by the caller: a revision returns from `draining` to `active` only
 through a row in `core.application_composition_drain_abandonments`, and only while the authority row is exactly that
@@ -740,7 +761,8 @@ mise exec -- pnpm composition:abandon-drain --revision <the revision the old rel
 
 - It proves no publisher is alive: on the session it holds for the whole run it takes the publication lock without
   waiting, and refuses at once (`A publisher is alive`) when another session holds it. A live publisher restores the
-  authority itself when it fails.
+  authority itself when it fails. If you are sure the publisher is gone and it still refuses, see
+  [A publisher that is gone still holds the lock](#a-publisher-that-is-gone-still-holds-the-lock).
 - It refuses unless the authority row is exactly `--revision`, `draining` and unexpired, writes exactly one ledger
   row, and prints the abandonment's id, who recorded it, when, and the lease — never a payload.
 
@@ -767,6 +789,8 @@ Preconditions, all checked by the block before it writes, and all of which must 
 
 ```sql
 \set ON_ERROR_STOP on
+-- Never wait on a lock for long: a statement that cannot get one in 5 s fails and the block stops.
+set lock_timeout = '5s';
 -- 0. Prove no publisher is alive; this session holds the lock until step 4.
 select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0)) as no_publisher \gset
 \if :no_publisher
@@ -802,6 +826,10 @@ exclusive authority lock, stamp the session user, transaction, time and the real
 is replaced), and return the revision to `active` with durable admission open in the same statement; any refusal
 there aborts the block with nothing written.
 
+Cancelling the block (Ctrl-C), or a statement stopped by its `lock_timeout`, is always safe: each statement is its own
+transaction, the insert writes its ledger row and moves the authority together or not at all, and closing the session
+releases the publication lock. Read the authority row and run the block again.
+
 If it refuses because the lease has expired, **renew first, then run the command again**:
 
 1. Restart the OLD app container — the one serving the revision in the row — and nothing else. Its host boots, finds
@@ -815,3 +843,28 @@ If it refuses because the lease has expired, **renew first, then run the command
 Do not try to recover an expired lease by deploying again: a replacement publication refuses an expired authority, and
 a fresh deploy waits on the same `draining` row. A refusal for another revision or phase means the situation is not
 the one this command is for; read the row before doing anything else.
+
+### A publisher that is gone still holds the lock
+
+A container that vanished without closing its connection — a lost host, a network cut — can leave its PostgreSQL
+session alive until TCP keepalive notices, holding the publication lock. Then both the command and the plain-SQL
+block answer `A publisher is alive` while the release still refuses reads. Nothing ends that session automatically;
+an operator does, and only under this precondition: **the container that holds the lock is verifiably gone.**
+
+1. Find the session holding the publication lock, with the administrative identity:
+
+   ```sql
+   with k as (select hashtextextended('ontos.application-composition-publication', 0) as key)
+   select a.pid, a.usename, a.application_name, a.client_addr, a.backend_start, a.state, a.state_change
+     from k, pg_locks l join pg_stat_activity a on a.pid = l.pid
+     where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+       and l.classid = ((k.key >> 32) & 4294967295)::oid
+       and l.objid = (k.key & 4294967295)::oid;
+   ```
+
+2. Confirm its container is gone: no running container of the project has its `client_addr` (check the service's
+   containers in Zerops), and no deploy or publication is in progress. If the address belongs to a running container,
+   that is a live publisher: stop, and let it finish and restore the authority itself.
+3. End that one session: `select pg_terminate_backend(<pid>);`. Its open transaction, if any, rolls back, and the
+   lock is released.
+4. Run `composition:abandon-drain` (or the plain-SQL block) again.
