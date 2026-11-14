@@ -20,6 +20,11 @@ import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import {
+  collectFixtureDiagnostics,
+  describeFixtureDiagnostics,
+  fixtureDiagnosticTail,
+} from './fixture-diagnostics.mts';
+import {
   bindCustomerFixtureProviderKey as bindProviderKey,
   customerFixtureUuid as uuid,
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
@@ -545,7 +550,12 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       Effect.gen(function* submitCustomer() {
         const response = yield* submitResponse(idempotencyKey, submittedPlan);
         if (response.status !== 202) {
-          return yield* unavailable(`Actual customer admission returned ${response.status}: ${yield* response.text}`);
+          const problem = fixtureDiagnosticTail(yield* response.text);
+          const owners = yield* collectFixtureDiagnostics(ownerDiagnostics);
+          const gateway = yield* describeFixtureDiagnostics(shell.gatewayDiagnostics());
+          return yield* unavailable(
+            `Actual customer admission returned ${response.status}: ${problem}; owners: ${JSON.stringify(owners)}; gateway: ${gateway}`,
+          );
         }
         return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
       });
