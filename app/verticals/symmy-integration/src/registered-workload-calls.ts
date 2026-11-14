@@ -561,6 +561,17 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: 'commerce.assortment.symmy-fixture-rule-import',
   },
+  // origin/main 5118b15eb: symmy-c14-policy-fixture.mts — recovers one dated seller VAT declaration through Shell and C14 after response loss and authority revocation
+  {
+    audience: 'tax',
+    declarationKey: 'commerce.tax.seller-vat-regime-declaration.import',
+    entrypointKey: 'commerce.tax.import-seller-vat-regime-declarations',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: 'commerce.tax.symmy-seller-vat-fixture-import',
+  },
   // origin/main 5608aae1d: organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
     audience: commerceCustomerContext,

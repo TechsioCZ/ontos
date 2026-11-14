@@ -688,6 +688,7 @@ export const REVIEWED_REGISTERED_WORKLOAD_CALLERS: ReadonlyMap<string, readonly 
   ['commerce.market-catalog.source-read', ['pricing']],
   ['commerce.pricing.source-read', [symmyIntegration]],
   ['commerce.pricing.source-write', [symmyIntegration]],
+  ['commerce.tax.symmy-seller-vat-fixture-import', [symmyIntegration]],
   ['integration.symmy.source-organization-facts.read', ['privacy']],
   ['party.registry.source-read', [customerContext, 'privacy']],
   ['party.registry.source-write', [symmyIntegration]],
