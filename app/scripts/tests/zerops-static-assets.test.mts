@@ -41,8 +41,8 @@ try {
   await writeFile(path.join(outside, 'private.txt'), 'private');
   await symlink(path.join(outside, 'private.txt'), path.join(directory, 'public/escape.txt'));
   let stats = 0, probes = 0;
-  const originalStat = fs.lstat, originalExists = fs.pathExists;
-  fs.lstat = (...args) => { if (args[0] === filename) stats++; return originalStat(...args); };
+  const originalStat = fs.stat, originalExists = fs.pathExists;
+  fs.stat = (...args) => { if (args[0] === filename) stats++; return originalStat(...args); };
   fs.pathExists = (...args) => { if (args[0] === filename + '.br' || args[0] === filename + '.gz') probes++; return originalExists(...args); };
   const app = new Hono();
   app.use('*', core.createStaticMiddleware({
@@ -79,7 +79,7 @@ try {
   assert.equal(escaped, null);
   if (optimized) {
     let syntheticStats = 0;
-    fs.lstat = () => { syntheticStats++; return Promise.resolve({ size: 1 }); };
+    fs.stat = () => { syntheticStats++; return Promise.resolve({ isFile: () => true, size: 1 }); };
     const context = { header() {} };
     const synthetic = index => core.serveStaticAsset(context, {
       filename: path.join(directory, 'bounded', String(index) + '.js'), kind: 'static',

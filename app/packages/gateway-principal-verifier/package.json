@@ -20,7 +20,7 @@
   "devDependencies": {
     "@effect/platform-node": "4.0.7",
     "@types/node": "^26.4.1",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
-    "@rstest/core": "0.11.12"
+    "effect-rstest": "1.0.0",
+    "@rstest/core": "0.12.6"
   }
 }

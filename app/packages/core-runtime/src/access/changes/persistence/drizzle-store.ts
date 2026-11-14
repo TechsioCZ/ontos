@@ -1033,6 +1033,7 @@ const readPublishedCatalog = Effect.fn('AccessChangesStore.readPublishedCatalog'
 /**
  * Publishing is all-or-nothing and repaired by retry (D3): the digest is the release identity, so the
  * same digest writes nothing twice and a different snapshot under a known digest is refused.
+ * Arbitrate both unique keys before validating the stored identity and entries.
  */
 const publishRelease = Effect.fn('AccessChangesStore.publishRelease')(function* publishReleaseEffect(
   transaction: CoreTransaction,
@@ -1041,7 +1042,7 @@ const publishRelease = Effect.fn('AccessChangesStore.publishRelease')(function* 
   const insertedRows = yield* transaction
     .insert(accessCatalogSnapshots)
     .values({ catalogSnapshotId: snapshot.id, digest: snapshot.digest, publishedAt: snapshot.publishedAt })
-    .onConflictDoNothing({ target: accessCatalogSnapshots.digest })
+    .onConflictDoNothing()
     .returning({ catalogSnapshotId: accessCatalogSnapshots.catalogSnapshotId });
   const inserted = insertedRows.at(0);
   if (inserted === undefined) {
@@ -1056,7 +1057,7 @@ const publishRelease = Effect.fn('AccessChangesStore.publishRelease')(function* 
       );
     }
   }
-  if (snapshot.entries.length > 0) {
+  if (inserted !== undefined && snapshot.entries.length > 0) {
     yield* transaction
       .insert(accessCatalogEntries)
       .values(
