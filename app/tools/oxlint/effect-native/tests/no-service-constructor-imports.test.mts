@@ -653,6 +653,14 @@ it('proves Set membership, spreads and owned collection reads without admitting 
 const decodedEntriesFactory = (entries: string, parameter: string, input: string): string =>
   `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: ${entries} })); export const makeData = (${parameter}) => decode({ entries: ${input} });`;
 
+/** A factory that returns the values of a decoded `Record(String, value)`. */
+const recordValuesFactory = (value: string): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: Schema.Record(Schema.String, ${value}) })); export const makeData = (value: string) => Object.values(decode({ entries: { key: value } }).entries);`;
+
+/** A factory that reads `member` from a decoded `Record(String, String)`. */
+const recordMemberFactory = (member: string): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ entries: Schema.Record(Schema.String, Schema.String) })); export const makeData = (value: string) => decode({ entries: { key: value } }).entries${member};`;
+
 const stringParameter = 'value: string';
 const stringEntry = [stringParameter, '{ key: value }'] as const;
 
@@ -681,6 +689,7 @@ it('proves a Record only when its key is a closed string schema and its value is
         '{ key: { nested: value } }',
       ),
       decodedEntriesFactory('Schema.Record(Schema.String, Schema.Json)', ...stringEntry),
+      recordValuesFactory('Schema.String'),
       decodedEntriesFactory(
         'Schema.Record(Schema.TemplateLiteral(["key-", Schema.String]), Schema.String)',
         ...stringEntry,
@@ -703,12 +712,28 @@ it('proves a Record only when its key is a closed string schema and its value is
         'Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))',
         ...stringEntry,
       ),
+      // `Object.values` keeps only own fields, so only the value guard on the Record keeps this open value out.
+      recordValuesFactory('Schema.Unknown'),
       // A key that is not closed string data must never prove.
       decodedEntriesFactory('Schema.Record(Schema.Number, Schema.String)', ...stringEntry),
       decodedEntriesFactory('Schema.Record(Schema.Literal(1), Schema.String)', ...stringEntry),
       decodedEntriesFactory('Schema.Record(Schema.Symbol, Schema.String)', ...stringEntry),
       decodedEntriesFactory('Schema.Record(Schema.Unknown, Schema.String)', ...stringEntry),
       decodedEntriesFactory('Schema.Record(Schema.Json, Schema.String)', ...stringEntry),
+    ],
+  );
+});
+
+it('proves own Record entries without admitting inherited Object members as data', () => {
+  expectDataFactoryProofs(
+    [recordMemberFactory('.key'), recordMemberFactory('["key"]')],
+    [
+      recordMemberFactory('.toString'),
+      recordMemberFactory('.valueOf'),
+      recordMemberFactory('.hasOwnProperty'),
+      recordMemberFactory('.constructor'),
+      recordMemberFactory('["toString"]'),
+      recordMemberFactory('["__proto__"]'),
     ],
   );
 });
@@ -746,6 +771,8 @@ it('proves a TemplateLiteral only when every part is a string literal or a close
       iconFactory('["icon-[", Schema.Struct({ id: Schema.String }), "]"]'),
       iconFactory('["icon-[", Schema.Json, "]"]'),
       'import { Schema } from "effect"; const parts = ["icon-[", Schema.String, "]"] as const; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral([...parts, Schema.Unknown]) })); export const makeData = (value: string) => decode({ icon: value });',
+      // A spread has no per-part fields, so even closed parts are not modelled.
+      'import { Schema } from "effect"; const parts = ["icon-[", Schema.String, "]"] as const; const decode = Schema.decodeUnknownSync(Schema.Struct({ icon: Schema.TemplateLiteral([...parts]) })); export const makeData = (value: string) => decode({ icon: value });',
     ],
   );
 });

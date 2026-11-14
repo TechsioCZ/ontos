@@ -2457,7 +2457,9 @@ class DataFactoryProof {
       return { kind: 'native', native: `${value.native}:pipe`, payload: value };
     if (value.kind === 'record') {
       if (value.omittedFields?.has(name)) return { kind: 'data', literal: undefined };
-      const field = value.fields?.get(name) ?? value.element;
+      // A record's element only stands for its own keys. An inherited Object member (`toString`,
+      // `constructor`, `__proto__`, ...) is not one of them, so it falls through to the guard below.
+      const field = value.fields?.get(name) ?? (name in Object.prototype ? undefined : value.element);
       if (field !== undefined) return field;
       // A closed plain-data record has no other own field. Inherited Object members and the members
       // of a native object behind a record stay unmodeled.
