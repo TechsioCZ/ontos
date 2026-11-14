@@ -113,8 +113,16 @@ interface Value {
   /** Own properties excluded by an actual rest projection, including on an open record. */
   readonly omittedFields?: ReadonlySet<string>;
   readonly validationInputs?: readonly Value[];
+  /** Opaque data known to be a string: the payload of a native string schema or of a closed template literal. */
+  readonly stringData?: boolean;
 }
 type Completion = 'bad' | 'falls' | 'returns';
+/** Closed string data: a string literal, or data a native string schema or closed template literal produced. */
+const isClosedString = (value: Value): boolean =>
+  !metadataOnly(value) && value.kind === 'data' && (value.stringData === true || ('literal' in value && typeof value.literal === 'string'));
+/** A schema whose decoded and encoded values are both closed strings. */
+const isClosedStringSchema = (value: Value): boolean =>
+  value.kind === 'schema' && isClosedString(value.payload ?? BAD) && isClosedString(value.encoded ?? value.payload ?? BAD);
 const isFactoryResult = (value: Value): boolean =>
   isClosedData(value) || (value.kind === 'codec-effect' && isClosedData(value.payload ?? BAD));
 const BAD: Value = { kind: 'bad' };
@@ -558,6 +566,8 @@ class DataFactoryProof {
             'Union',
             'Literal',
             'Literals',
+            'TemplateLiteral',
+            'Json',
             'fromJsonString',
             ...(this.publicCodecs ? ['suspend'] : []),
             'decodeUnknownSync',
@@ -3243,6 +3253,25 @@ class DataFactoryProof {
     if (this.publicCodecs && operation === 'Record' && args.length === 2 && args.every((value) => value.kind === 'schema'))
       return schema({ ...record(new Map()), native: 'json-object', element: args[1].payload ?? BAD },
         { ...record(new Map()), native: 'json-object', element: args[1].encoded ?? args[1].payload ?? BAD });
+    // In data-factory mode a record is admitted only when its key is a closed string schema and its value is closed
+    // data both decoded and encoded; an open, unknown, function or class-instance value, or any other key, stays
+    // unmodelled.
+    if (!this.publicCodecs && operation === 'Record' && args.length === 2 && args[1]?.kind === 'schema') {
+      const decoded = args[1].payload ?? BAD;
+      const encoded = args[1].encoded ?? decoded;
+      return isClosedStringSchema(args[0]) && isClosedData(decoded) && isClosedData(encoded)
+        ? schema({ ...record(new Map()), native: 'json-object', element: decoded },
+          { ...record(new Map()), native: 'json-object', element: encoded })
+        : BAD;
+    }
+    // In data-factory mode a template literal is a string. It is closed string data when every part is a string literal or a closed string
+    // schema; a number, unknown, open or structured part leaves it unmodelled.
+    if (!this.publicCodecs && operation === 'TemplateLiteral' && args.length === 1 && args[0]?.kind === 'array' && args[0].fields !== undefined) {
+      const parts = [...args[0].fields.values()];
+      return parts.every((part) => (part.kind === 'data' && isClosedString(part)) || isClosedStringSchema(part))
+        ? schema({ kind: 'data', stringData: true })
+        : BAD;
+    }
     if (operation === 'TaggedStruct' && args.length === 2 && isData(args[0]) && args[1]?.kind === 'record') {
       const fields = new Map<string, Value>([['_tag', args[0]]]);
       for (const [field, value] of args[1].fields ?? []) {
@@ -3509,7 +3538,10 @@ class DataFactoryProof {
             ? values[0].element
             : BAD,
       };
-    if (this.publicCodecs && name === 'effect:Schema.Json') return schema({ kind: 'data', native: 'json' });
+    // A Json value is an acyclic tree of null, strings, booleans, finite numbers, arrays and plain (Object.prototype or
+    // null-prototype) objects: effect's `SchemaAST.isJson` rejects functions, class instances, symbols, undefined and
+    // bigints. That is inert closed data in every mode, so the opaque data leaf models it soundly.
+    if (name === 'effect:Schema.Json') return schema({ kind: 'data', native: 'json' });
     if (name === 'effect:Schema.Unknown') return schema(BAD);
     if (this.strictSchemaExports && ['effect:Schema.Finite', 'effect:Schema.Int'].includes(name)) return { ...schema(DATA), astTag: 'Number', astChecks: [this.nativeSchemaFilter(name.endsWith('.Int') ? 'isInt' : 'isFinite', [])] };
     if (
@@ -3517,7 +3549,8 @@ class DataFactoryProof {
         name,
       )
     )
-      return { ...schema(DATA), ...(this.strictSchemaExports ? { astTag: name.slice('effect:Schema.'.length) } : {}),
+      return { ...schema(/^effect:Schema\.(String|Trim|NonEmptyString)$/u.test(name) ? { kind: 'data', stringData: true } : DATA),
+        ...(this.strictSchemaExports ? { astTag: name.slice('effect:Schema.'.length) } : {}),
         ...(this.defaultStructEquivalence && name === 'effect:Schema.String' ? {defaultEquivalenceKind: 'string'} : {}) };
     if (name === 'effect:Order.String' || name === 'effect:Order.Number')
       return { kind: 'function', apply: (args) => (args.every(isData) ? DATA : BAD) };
