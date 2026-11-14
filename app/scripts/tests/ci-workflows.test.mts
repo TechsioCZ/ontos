@@ -39,6 +39,7 @@ const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
 const WORKSPACE_GATES_JOB = 'workspace-gates';
 const DOWNLOAD_ARTIFACT_ACTION = 'actions/download-artifact@';
+const INITIALIZE_IDENTITIES_STEP = 'Initialize fresh local database login identities';
 const ASSEMBLED_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
 const CI_MATRICES_PATH = '../ci-matrices.json';
 const MATRIX_SHARD = 'matrix.shard';
@@ -162,7 +163,7 @@ const isPackageTestStep = ({
   env,
   name,
 }: {
-  readonly env?: Readonly<Record<string, unknown>> | undefined;
+  readonly env?: { readonly PACKAGE_FILTERS?: unknown } | undefined;
   readonly name?: string | undefined;
 }) => env?.PACKAGE_FILTERS !== undefined && name?.startsWith('Run ') === true;
 const DERIVE_BUILT_COMPOSITION_COMMAND = 'node scripts/derive-built-application-composition.mts --snapshot-output';
@@ -1138,7 +1139,7 @@ it('gives every CI database tool a separate login per runtime identity and audit
   expect([...source.matchAll(IDENTITY_STEP_ENV_FILTER)]).toHaveLength(0);
   const { steps } = integration;
   const start = steps.findIndex(({ name }) => name === 'Start fresh PostgreSQL and SpiceDB services');
-  const initialize = steps.findIndex(({ name }) => name === 'Initialize fresh local database login identities');
+  const initialize = steps.findIndex(({ name }) => name === INITIALIZE_IDENTITIES_STEP);
   const removeRuntime = steps.findIndex(({ name }) => name.startsWith('Remove the pre-seeded runtime role'));
   const stageMigrator = steps.findIndex(({ name }) => name === ASSEMBLED_MIGRATOR_STEP);
   expect(start).toBeGreaterThanOrEqual(0);
@@ -1317,7 +1318,7 @@ const expectSeedConsumer = (
   expect(seeded?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
   expect(seeded?.run).toContain('mise exec -- pnpm db:verify');
   for (const name of [
-    'Initialize fresh local database login identities',
+    INITIALIZE_IDENTITIES_STEP,
     'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
   ]) {
     expect(steps.find((step) => step.name === name)?.if, `${job}: ${name}`).toContain(
@@ -1406,14 +1407,14 @@ it('prepares every integration row before it waits, with a deadline, for the bui
   for (const name of [
     'Start fresh PostgreSQL and SpiceDB services',
     'Restore the proven seed databases',
-    ASSEMBLED_MIGRATOR_STEP,
-    AUDIT_STEP,
+    INITIALIZE_IDENTITIES_STEP,
   ]) {
     expect(at(name), name).toBeGreaterThan(-1);
     expect(at(name), name).toBeLessThan(wait);
   }
   for (const name of [
     'Download the same-run Node artifacts for native owner fixtures',
+    'Run the assembled stage migrator artifact against the fresh database',
     'Build and run the Outbox Worker host artifact against the fresh database',
   ]) {
     expect(at(name), name).toBeGreaterThan(wait);
@@ -1545,7 +1546,31 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
       ),
     }),
   )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8')));
-  expect(packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles).toEqual(['app/']);
+  const deployFiles = packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles ?? [];
+  expect(deployFiles.length).toBeGreaterThan(0);
+  expect(deployFiles.every((file) => file.startsWith('app/'))).toBe(true);
+  // The Zerops build creates these two; every job that assembles the artifact provisions them before the proof.
+  expect(deployFiles).toEqual(expect.arrayContaining(['app/.zerops/runtime/outbox-worker-host', 'app/.zerops/bun']));
+  const ProofJobsSchema = Schema.Struct({
+    jobs: Schema.Struct({
+      [INTEGRATION_SEED_PROOF_JOB]: Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) }),
+      [SERVICE_INTEGRATION_JOB]: Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) }),
+    }),
+  });
+  const { jobs } = Schema.decodeUnknownSync(ProofJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  for (const [job, proofStep] of [
+    [SERVICE_INTEGRATION_JOB, ASSEMBLED_MIGRATOR_STEP],
+    [INTEGRATION_SEED_PROOF_JOB, 'Prove the fresh-database preparation and dump the seed'],
+  ] as const) {
+    const { steps } = jobs[job];
+    const provision = steps.findIndex(
+      ({ name }) => name === 'Provision the worker host runtime and Bun that the app artifact ships',
+    );
+    expect(provision, job).toBeGreaterThan(-1);
+    expect(provision, job).toBeLessThan(steps.findIndex(({ name }) => name === proofStep));
+    expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4');
+    expect(steps[provision]?.run).toContain('zerops:materialize --app outbox-worker-host');
+  }
   const artifact = mkdtempSync(path.join(os.tmpdir(), 'ontos-existing-migrator-artifact-'));
   const marker = path.join(artifact, 'preserved-owner-data');
   try {

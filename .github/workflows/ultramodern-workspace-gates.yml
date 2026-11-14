@@ -962,45 +962,6 @@ jobs:
           DROP ROLE ontos_runtime;
           SQL
 
-      - name: Run the assembled stage migrator artifact against the fresh database
-        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
-        working-directory: app
-        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
-        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
-        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
-        env:
-          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
-          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-          MIGRATOR_PORT: '8080'
-          NODE_ENV: production
-          SPICEDB_DATABASE_PASSWORD: spicedb
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-          ULTRAMODERN_ZEROPS_SERVICE: migrator
-        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
-
-      - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
-        if: steps.seed-cache.outputs.cache-hit != 'true'
-        working-directory: app
-        # The Commerce portal authentication realm is optional and owns its own Drizzle
-        # configuration, migration journal and runtime role. Naming its database pair here is what
-        # opts this workspace in, so `db:migrate` applies the `commerce_auth` migrations, grants the
-        # provider runtime role and verifies the realm — the schema the portal-auth provider
-        # integration tests read. Development-only values, exactly as the primary database above.
-        # The pair stays scoped to this step: a realm is opted into completely or not at all, and no
-        # later step should see a half-named one.
-        env:
-          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
-          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
-        run: |
-          mise exec -- pnpm db:migrate
-          mise exec -- pnpm db:verify
-
-      # Every runtime login role must hold exactly the grants the checked-in manifest assigns it.
-      - name: Audit runtime database identities against the checked-in grant manifest
-        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
-        working-directory: app
-        run: mise exec -- pnpm database-trust:audit
-
       # The services and the fresh database are ready before the build outputs are needed: this row started right after
       # planning (via build-lease), so its preparation ran while the build shards built. It now needs those outputs.
       - name: Wait for this run's Node build shards
@@ -1046,6 +1007,63 @@ jobs:
         env:
           APP_ENV_PATH: /dev/null
         run: mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
+
+      # The app artifact ships an explicit runtime list (app/zerops.yaml deployFiles), including the Outbox Worker host
+      # runtime and Bun, which the Zerops build creates. The assembled-artifact proof copies every listed path, so a row
+      # that prepares its own database provisions the same two before it, once the build outputs are here: the
+      # materialized worker host and the pinned Bun (a musl build, hence the musl loader on this glibc runner). The
+      # migrator, migrations and grant audit therefore run after the build wait on such rows.
+      - name: Provision the worker host runtime and Bun that the app artifact ships
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          if [ ! -f .zerops/runtime/outbox-worker-host/worker.mjs ]; then
+            mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
+          fi
+          command -v /lib/ld-musl-x86_64.so.1 >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends musl
+          sh scripts/install-zerops-bun.sh 1.4.4
+          mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
+
+      - name: Run the assembled stage migrator artifact against the fresh database
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
+        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
+        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+          MIGRATOR_PORT: '8080'
+          NODE_ENV: production
+          SPICEDB_DATABASE_PASSWORD: spicedb
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ULTRAMODERN_ZEROPS_SERVICE: migrator
+        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
+
+      - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
+        if: steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        # The Commerce portal authentication realm is optional and owns its own Drizzle
+        # configuration, migration journal and runtime role. Naming its database pair here is what
+        # opts this workspace in, so `db:migrate` applies the `commerce_auth` migrations, grants the
+        # provider runtime role and verifies the realm — the schema the portal-auth provider
+        # integration tests read. Development-only values, exactly as the primary database above.
+        # The pair stays scoped to this step: a realm is opted into completely or not at all, and no
+        # later step should see a half-named one.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+        run: |
+          mise exec -- pnpm db:migrate
+          mise exec -- pnpm db:verify
+
+      # Every runtime login role must hold exactly the grants the checked-in manifest assigns it.
+      - name: Audit runtime database identities against the checked-in grant manifest
+        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        run: mise exec -- pnpm database-trust:audit
 
       # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
@@ -1209,6 +1227,24 @@ jobs:
         run: |
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
+
+      # The app artifact ships an explicit runtime list (app/zerops.yaml deployFiles), including the Outbox Worker host
+      # runtime and Bun, which the Zerops build creates. The assembled-artifact proof copies every listed path, so the
+      # producer provisions the same two before it: the
+      # materialized worker host and the pinned Bun (a musl build, hence the musl loader on this glibc runner). The
+      # migrator, migrations and grant audit therefore run after the build wait on such rows.
+      - name: Provision the worker host runtime and Bun that the app artifact ships
+        if: needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          if [ ! -f .zerops/runtime/outbox-worker-host/worker.mjs ]; then
+            mise exec -- pnpm zerops:materialize --app outbox-worker-host --package app --package-dir . --worker
+          fi
+          command -v /lib/ld-musl-x86_64.so.1 >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends musl
+          sh scripts/install-zerops-bun.sh 1.4.4
+          mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
 
       - name: Prove the fresh-database preparation and dump the seed
         if: needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'
