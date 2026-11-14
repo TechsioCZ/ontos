@@ -439,6 +439,11 @@ describe('S07.R2 final invoice takes earlier advances into account by hand', () 
       expect(failsWith(unprepared, 'confirm_requires_prepared')).toBe(true);
       const approved = yield* run(ready.state, { _tag: 'ConfirmInvoice', invoiceRef: final.ref });
       expect(approved.invoice).toMatchObject({ paidMinor: 30_000, paymentState: 'PARTIALLY_PAID' });
+      // The advance already counts in the budget actual; the final invoice adds only what it still bills.
+      const categorized = approved.state.invoices.map((record) => ({ ...record, budgetCategory: 'Služby' }));
+      expect(invoiceActualMinor({ category: 'Služby', kind: 'REVENUE', period: '2026-10' }, categorized)).toBe(
+        advance.totalMinor + final.totalMinor - 30_000,
+      );
       const events = paymentEvents(approved.state).filter((event) => event.invoiceResourceId === 'fin-1');
       expect(events.map((event) => event.source)).toEqual(['PRIOR']);
       const months = cashFlowMonths(approved.state, { businessDate: '2026-10-21', fromMonth: '2026-10', months: 2 });

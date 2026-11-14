@@ -131,8 +131,16 @@ export const budgetVariance = (plannedMinor: number, actualMinor: number) => ({
 });
 
 /**
- * Invoice actual for a budget line: confirmed invoices of that month, category and direction; a budget for a
- * property, unit or středisko only counts invoices assigned to that same object.
+ * What an invoice adds to budget actuals: its total without the earlier advances or partial invoices it takes into
+ * account, since those documents are confirmed invoices of their own and already count where they were issued.
+ */
+const ownActualMinor = (invoice: Pick<Invoice, 'priorSettlement' | 'totalMinor'>): number =>
+  invoice.totalMinor - (invoice.priorSettlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
+
+/**
+ * Invoice actual for a budget line: confirmed invoices of that month, category and direction, each without what an
+ * earlier advance already counted; a budget for a property, unit or středisko only counts invoices assigned to that
+ * same object.
  */
 export const invoiceActualMinor = (
   budget: Pick<BudgetLine, 'category' | 'kind' | 'period'> &
@@ -150,7 +158,7 @@ export const invoiceActualMinor = (
         (budget.unitRef === undefined || invoice.unitRef?.resourceId === budget.unitRef.resourceId) &&
         (budget.costCenter === undefined || invoice.costCenter === budget.costCenter),
     )
-    .reduce((sum, invoice) => sum + invoice.totalMinor, 0);
+    .reduce((sum, invoice) => sum + ownActualMinor(invoice), 0);
 
 /** The manual actual wins when entered; otherwise the matching confirmed invoices are the actual. */
 export const budgetActualMinor = (budget: BudgetLine, invoices: readonly Invoice[]) =>
