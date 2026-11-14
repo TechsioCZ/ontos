@@ -2947,13 +2947,14 @@ const storefrontRetailStart = (company: string, email: string) => ({
 });
 
 /**
- * A Counterparty-invitation start for one company. It carries no retail registration, so the start may run in the
- * tenant context with the company named only in the payload — the one path the start's preparation guards (D6).
+ * A Counterparty-invitation start for one company's claimable invitation. It carries no retail registration, so the
+ * start may run in the tenant context with the company named only in the payload — the one path the start's
+ * preparation guards (D6). The route refuses an unclaimable invitation before any Action runs, so it must be real.
  */
-const storefrontInvitationStart = (company: string) => ({
+const storefrontInvitationStart = (company: string, invitationId: string) => ({
   displayName: START_DISPLAY_NAME,
   email: `enrollment-storefront-${randomUUID()}@example.test`,
-  invitationId: randomUUID(),
+  invitationId,
   journey: 'COUNTERPARTY_INVITATION',
   password: PORTAL_OWNER_PASSWORD,
   sellingLegalEntityId: company,
@@ -2964,9 +2965,8 @@ const storefrontInvitationStart = (company: string) => ({
  *
  * A Retail start carries the visitor's registration, which the start Action accepts only in a company context whose
  * company is the target, so the client presents its company in its scope and the gate's own workload rule decides it:
- * a key bound with no registration, or registered for another company, is refused there. A start with no retail
- * registration may run in the tenant context, naming its company only in the payload; there the start's preparation
- * refuses a company the client is not registered for, before any Attempt exists.
+ * a key bound with no registration, or registered for another company, is refused there. The tenant-context rule the
+ * start's preparation guards has its own scenario below, because it needs a claimable invitation.
  *
  * The route answers every refusal with the same `enrollment_rejected` problem on purpose: a public start never says
  * why it refused. The reason a refused workload gets (`deny.workload_unbound`, or `action_permission_check_failed`
@@ -3061,10 +3061,6 @@ it.live(
         // The client registered for company A is refused in company B of the same Tenant (D6, at the gate).
         yield* refusedWithoutAttempt(yield* start(registered, retailIn(companyB), companyB));
 
-        // In the tenant context the company is named only in the payload, and the start's preparation refuses one the
-        // client is not registered for before any Attempt exists (D6, `deny.workload_unbound` at the preparation).
-        yield* refusedWithoutAttempt(yield* start(registered, storefrontInvitationStart(companyB)));
-
         // An unreadable registry is never an admission: the start answers a refusal and writes nothing
         // (`action_permission_check_failed`). Only the read privilege on the registry is taken away, and it is given
         // back exactly when this scope closes.
@@ -3100,5 +3096,71 @@ it.live(
         expect(yield* enrollmentAttemptCount(fixture)).toBe(1);
       }),
     ).pipe(Effect.provide(tenantAccessServices)),
+  180_000,
+);
+
+/**
+ * The tenant-context rule the start's preparation guards (D6): a Counterparty-invitation start names its company only in
+ * the payload, so the gate admits the bound key in the tenant context and the preparation alone refuses a company the
+ * client is not registered for. The invitation is real and claimable for that company, so the route's own invitation
+ * check passes and nothing but the workload rule can refuse the start.
+ */
+it.live(
+  'refuses a Storefront client an invitation start for a company it is not registered for, in the tenant context',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* storefrontInvitationOutsideItsCompany() {
+        const tenantId = randomUUID();
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
+        // Company B is the realm's own: the company the claimable invitation belongs to.
+        const realm = yield* makeCounterpartyInvitationRealm(fixture);
+        const capture = makeCapturingCounterpartyInvitationProofDelivery();
+        const issued = yield* issueCounterpartyAccessInvitation(
+          realm,
+          capture,
+          `enrollment-storefront-invitation-${randomUUID()}`,
+        );
+        // Company A, a second company of the same Tenant, is the only one the client is registered for.
+        const companyA = randomUUID();
+        const connections = yield* loadDatabaseConnectionPair();
+        const admin = yield* makeCoreDatabase(connections.admin);
+        yield* admin.executor.insert(legalEntities).values({
+          legalEntityId: companyA,
+          legalName: 'Enrollment storefront registered company',
+          registrationCountry: 'CZ',
+          registrationNumber: `enrollment-storefront-${companyA}`,
+          status: 'active',
+          tenantId,
+        });
+        const client = yield* seedStorefrontClient(tenantId, 'registered-elsewhere');
+        yield* bindStorefrontWorkload(fixture, client, [companyA]);
+
+        const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
+        const runtime = yield* authenticatedRuntime(gateway);
+        const assertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, READ_AUDIENCE, {
+          authBindingId: client.authBindingId,
+          authContextRef: `better-auth-api-key:${client.principalId}`,
+          authenticationNamespaceId: STOREFRONT_KEY_NAMESPACE_ID,
+          authMethod: 'api_key',
+          // The tenant context: the company is named only in the payload.
+          principalId: client.principalId,
+          tenantId,
+        });
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              governedStartRequest(storefrontInvitationStart(realm.legalEntityId, issued.invitationId), assertion),
+            ),
+        );
+        expect(response.status, yield* Effect.promise(async () => await response.clone().text())).toBe(403);
+        expect(yield* Effect.promise(async () => await response.clone().json())).toMatchObject({
+          code: 'enrollment_rejected',
+        });
+        expect(yield* enrollmentAttemptCount(fixture)).toBe(0);
+      }),
+    ),
   180_000,
 );
