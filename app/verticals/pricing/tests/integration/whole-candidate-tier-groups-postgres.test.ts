@@ -1269,7 +1269,7 @@ const exerciseRealCatalogConsumer1262 = Effect.fn('CatalogConsumer1262.exercise'
     const observedFetch: typeof globalThis.fetch = (...args) =>
       baseFetch(...args)
         .then(observeResponse)
-        .then(undefined, failCatalog);
+        .catch(failCatalog);
     let credentialIndex = 0;
     const catalogAcquire: OwnerGatewayConnectionAcquire = (requested) =>
       Effect.sync(() => {

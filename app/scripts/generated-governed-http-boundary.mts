@@ -19078,7 +19078,8 @@ const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
     if (serviceIndex >= 0 && callArguments?.[serviceIndex] !== input.services) {
       return false;
     }
-    const service = serviceIndex >= 0 ? names[serviceIndex] : undefined;
+    // A missing services parameter is index -1, which reads as undefined.
+    const service: string | undefined = names[serviceIndex];
     const forwarded: NativeReadProgramForwarded = {};
     if (servicesType !== undefined && service !== undefined) {
       forwarded.services = service;

@@ -909,6 +909,7 @@ export default defineConfig({
       files: [
         'apps/shell-super-app/drizzle.auth.config.ts',
         'apps/shell-super-app/modern.rstest.config.ts',
+        'verticals/commerce-customer-context/drizzle.portal-auth.config.ts',
         'verticals/party-registry/modern.rstest.config.ts',
         'verticals/party-registry/src/federation/page-customers-list.runtime.d.ts',
         'verticals/party-registry/tests/unit/ares-subject.service.test.ts',
