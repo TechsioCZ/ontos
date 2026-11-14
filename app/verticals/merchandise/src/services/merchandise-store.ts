@@ -402,8 +402,12 @@ const hydrateStoredVariant = Effect.fn('MerchandiseStore.hydrateVariant')(functi
   )(variant.document);
   // The stored gross column is the variant's price as it was entered; documents written before stored gross carry it
   // only there.
+  const hasInlineTiers = 'priceTiers' in decoded && (decoded.priceTiers?.length ?? 0) > 0;
   const document =
-    decoded.grossPriceMinor === undefined && variant.grossPriceMinor !== null
+    decoded.grossPriceMinor === undefined &&
+    variant.grossPriceMinor !== null &&
+    variantTiers.length === 0 &&
+    !hasInlineTiers
       ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
       : decoded;
   return variantTiers.length === 0 ? document : { ...document, priceTiers: variantTiers };
@@ -418,9 +422,12 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
   const decoded = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
   // A product without real variants: its stored gross column is its price as entered (with real variants the column
   // is their lowest price, never the product's own).
+  const hasInlineTiers = 'priceTiers' in decoded && (decoded.priceTiers?.length ?? 0) > 0;
   const stored =
     decoded.grossPriceMinor === undefined &&
     row.grossPriceMinor !== null &&
+    productTiers.length === 0 &&
+    !hasInlineTiers &&
     !variants.some((variant) => variant.variantId !== null)
       ? { ...decoded, grossPriceMinor: row.grossPriceMinor }
       : decoded;
