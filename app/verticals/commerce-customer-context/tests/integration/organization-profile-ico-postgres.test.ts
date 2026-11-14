@@ -48,6 +48,7 @@ import {
 } from '../../src/database/schema.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const platform = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -117,17 +118,13 @@ it.live(
             make:
               () =>
               ({ counterpartyResourceId, tenantId }) =>
-                Effect.succeed(
-                  counterpartyResourceId === counterpartyId && tenantId === fixture.tenantId
-                    ? {
-                        managedLegalEntityId: fixture.legalEntityId,
-                        outcome: 'ELIGIBLE' as const,
-                        partyResourceId: companyPartyId,
-                        roleResourceId: customerRoleId,
-                        roleResourceRevision: '2026-11-07T00:00:00.000Z',
-                      }
-                    : { outcome: 'INDETERMINATE' as const },
-                ),
+                counterpartyResourceId === counterpartyId && tenantId === fixture.tenantId
+                  ? observedEligibleCounterpartyRole({
+                      managedLegalEntityId: fixture.legalEntityId,
+                      roleResourceId: customerRoleId,
+                      roleResourceRevision: '2026-11-07T00:00:00.000Z',
+                    })
+                  : Effect.succeed({ outcome: 'INDETERMINATE' as const }),
           }),
           Layer.succeed(CommerceOrganizationProfileIcoEligibility, {
             check: (scope, input, requirementKey) => {

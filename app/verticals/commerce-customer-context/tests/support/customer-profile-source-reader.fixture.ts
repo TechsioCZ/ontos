@@ -33,7 +33,7 @@ export const enrollCustomerProfileSourceReaderNativeFixture = Effect.fn('Custome
     })(input.authority);
     const tenantId = yield* Schema.decodeUnknownEffect(TenantIdSchema)(input.tenantId);
     const readerId = yield* Schema.decodeUnknownEffect(PrincipalIdSchema)(input.readerPrincipalId);
-    return yield* withVerifiedCustomerContextFixture(input, (transaction, database, operatorScope) =>
+    return yield* withVerifiedCustomerContextFixture(input, (transaction, database, operatorScope, inspection) =>
       Effect.gen(function* enrollReader() {
         const readerScope = yield* stageScopeOf({
           legalEntityId: input.legalEntityId,
@@ -41,7 +41,7 @@ export const enrollCustomerProfileSourceReaderNativeFixture = Effect.fn('Custome
           tenantId: input.tenantId,
         });
         const reader = yield* makeOperationalScopeRepository(
-          { executor: transaction },
+          { executor: inspection },
           FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         ).load(readerScope);
         const kind = yield* makeDrizzleAccessPrincipalKinds({
@@ -53,9 +53,9 @@ export const enrollCustomerProfileSourceReaderNativeFixture = Effect.fn('Custome
             scope: readerScope,
             tenantId,
           },
-          transaction,
+          inspection,
         );
-        yield* installOperationalScope(transaction, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+        yield* installOperationalScope(inspection, operatorScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         if (
           Option.isNone(kind) ||
           kind.value !== 'integration' ||

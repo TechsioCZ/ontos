@@ -56,7 +56,12 @@ it.live(
           ),
         );
         const admin = Context.get(adminContext, PgClient.PgClient);
-        const coreDatabase = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
+        const runtimeContext = yield* Layer.build(
+          PgClient.layer({ url: Redacted.make(isolated.connections.runtime.connectionString) }).pipe(
+            Layer.provideMerge(Reactivity.layer),
+          ),
+        );
+        const coreDatabase = yield* testCoreDatabase.pipe(Effect.provide(runtimeContext));
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             access: 'allowed',
