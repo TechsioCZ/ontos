@@ -210,6 +210,11 @@ const recordInspection = Effect.fn('FacilityOperations.Security.recordInspection
   };
   const inspectionNote = value.note === undefined || value.note === '' ? '' : `: ${value.note}`;
   const summary = `Kontrola provedena ${value.inspectionDate}${inspectionNote}`;
+  if (summary.length > 500) {
+    return yield* opsConflict(
+      `Poznámku nelze uložit celou. Zkraťte ji na ${500 - `Kontrola provedena ${value.inspectionDate}: `.length} znaků a úplný zápis připojte jako protokol.`,
+    );
+  }
   return {
     entityIds: [yield* entityIdOf(device.id)],
     state: replaceDevice(state, withHistory(next, historyEntry(input, 'inspection', summary))),

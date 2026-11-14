@@ -39,6 +39,26 @@ const withCamera = Effect.gen(function* withCamera() {
   );
 });
 
+it.effect('retains the complete inspection note at the history limit and refuses any excess', () =>
+  Effect.gen(function* boundedInspectionNote() {
+    const created = yield* withCamera;
+    const inspectionDate = '2026-10-20';
+    const prefix = `Kontrola provedena ${inspectionDate}: `;
+    const note = 'x'.repeat(500 - prefix.length);
+    const command = {
+      _tag: 'SecurityDeviceRecordInspection',
+      deviceId: 'device-1',
+      inspectionDate,
+      note,
+    } as const;
+    const inspected = yield* apply(created.state, command);
+    expect(inspected.state.devices[0]?.history?.at(-1)?.summary).toBe(`${prefix}${note}`);
+    const refused = yield* apply(created.state, { ...command, note: `${note}x` }).pipe(Effect.flip);
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(refused)).toBe(true);
+    expect(created.state.devices[0]?.lastInspectionDate).toBeUndefined();
+  }),
+);
+
 it.effect('creates a device card in operation with an audit stamp and history', () =>
   Effect.gen(function* createCard() {
     const change = yield* withCamera;
