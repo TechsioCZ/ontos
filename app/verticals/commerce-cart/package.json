@@ -56,8 +56,8 @@
     "typescript": "7.0.2",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "pg": "8.22.0",
-    "@rstest/core": "0.11.12",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "@rstest/core": "0.12.6",
+    "effect-rstest": "1.0.0",
     "wrangler": "4.137.0"
   },
   "engines": {
