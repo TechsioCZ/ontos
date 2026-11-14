@@ -85,7 +85,7 @@ const V2_MARKER = '// Authorization v2 engine';
 const V2_DEFINITIONS: ReadonlySet<string> = new Set(
   [
     ...ONTOS_SPICEDB_SCHEMA.slice(ONTOS_SPICEDB_SCHEMA.indexOf(V2_MARKER)).matchAll(/^definition (?<name>[a-z_]+)/gmu),
-  ].flatMap((match) => match.groups?.name ?? []),
+  ].flatMap((match) => match.groups?.['name'] ?? []),
 );
 
 /** Every SpiceDB object type a scenario's gate and projection named, and how many SpiceDB calls they made. */
