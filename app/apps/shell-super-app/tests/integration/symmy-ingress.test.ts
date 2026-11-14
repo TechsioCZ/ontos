@@ -43,6 +43,7 @@ import {
 import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy/transport.ts';
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
+import { SymmyPriceListsResponseSchema } from '../../api/symmy/price-lists-public-contract.ts';
 import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
 import { SymmyInternalRegionsProjectionSchema } from '../../api/symmy/regions-projection-contract.ts';
 
@@ -75,6 +76,54 @@ const regionsProjection = Schema.decodeUnknownSync(SymmyInternalRegionsProjectio
   ],
   unsupported_fields: ['name', 'tax_rate', 'tax_included', 'payment_providers'],
 });
+const priceListsProjection = Schema.decodeUnknownSync(SymmyInternalPriceListsProjectionSchema)({
+  contractVersion: 'INTERNAL_C14',
+  count: 1,
+  limit: 50,
+  offset: 0,
+  price_lists: [
+    {
+      description: 'Wholesale prices',
+      id: `~c14s1.${'a'.repeat(43)}.${regionsMarketRef.resourceId}`,
+      name: 'CZ wholesale',
+      priceGroupRef: {
+        moduleId: 'pricing.price-group-catalog',
+        resourceId: regionsMarketRef.resourceId,
+        resourceType: 'pricing.price-group-catalog.price-group',
+        tenantId: regionsMarketRef.tenantId,
+      },
+      source_record_id: 'CZ wholesale',
+      starts_at: '2026-01-01T00:00:00.000Z',
+    },
+  ],
+  projection: 'price_lists',
+  unsupported_fields: ['prices'],
+});
+const publicPriceListsBody = {
+  count: 1,
+  limit: 50,
+  offset: 0,
+  priceLists: [
+    {
+      code: 'CZ wholesale',
+      description: 'Wholesale prices',
+      name: 'CZ wholesale',
+      priceGroupRef: {
+        moduleId: 'pricing.price-group-catalog',
+        resourceId: regionsMarketRef.resourceId,
+        resourceType: 'pricing.price-group-catalog.price-group',
+        tenantId: regionsMarketRef.tenantId,
+      },
+      startsAt: '2026-01-01T00:00:00.000Z',
+    },
+  ],
+};
+const readFixture = (route: string, references: readonly string[]) => {
+  if (route === 'adminRegions') {
+    return regionsProjection;
+  }
+  return route === 'priceLists' ? priceListsProjection : references;
+};
 const publicRegionsBody = {
   count: 2,
   limit: 50,
@@ -89,6 +138,12 @@ const publicRegionsBody = {
       sourceRecordId: 'source-region-a',
     },
   ],
+};
+const publicReadBody = (path: string, references: readonly string[]) => {
+  if (path === SYMMY_ROUTES.adminRegions.path) {
+    return publicRegionsBody;
+  }
+  return path === SYMMY_ROUTES.priceLists.path ? publicPriceListsBody : { references };
 };
 const idempotencyKey = 'fixture-job-attempt';
 const validKey = 'fedcba9876543210fedcba9876543210';
@@ -645,43 +700,48 @@ it.effect(
             (fixture) => Effect.promise(fixture.dispose),
           );
         const server = yield* startIssuer(internalRoute.issuerId);
+        const qualifiedCodeFor = (issuerId: string) =>
+          encodeSymmySourceSelector(
+            {
+              issuerId,
+              routeId: logicalRouteId,
+              selectorKind: 'PRICE_GROUP',
+              sourceNamespace: priceGroupNamespace,
+              tenantId: internalRoute.tenantId,
+            },
+            sourceRecordId,
+            nativePriceGroupRef.resourceId,
+          );
         const get = yield* Effect.promise(() =>
-          server.request(`${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&limit=1`, {
+          server.request(`${SYMMY_ROUTES.priceLists.path}?limit=1`, {
             headers: { 'x-api-key': validKey },
             method: 'GET',
           }),
         );
         expect(get.status).toBe(200);
         const body = yield* Effect.promise(() => get.json());
-        const projection = yield* Schema.decodeUnknownEffect(SymmyInternalPriceListsProjectionSchema, {
+        const publicBody = yield* Schema.decodeUnknownEffect(SymmyPriceListsResponseSchema, {
           onExcessProperty: 'error',
         })(body);
-        const [item] = projection.price_lists;
-        expect(item?.source_record_id).toBe(sourceRecordId);
-        const filtered = yield* Effect.promise(() =>
-          server.request(
-            `${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&sourceRecordId=${encodeURIComponent(sourceRecordId)}&limit=1`,
-            { headers: { 'x-api-key': validKey }, method: 'GET' },
-          ),
-        );
-        expect(filtered.status).toBe(200);
+        const [item] = publicBody.priceLists;
+        expect(item?.code).toBe(sourceRecordId);
+        expect(item?.priceGroupRef).toEqual(nativePriceGroupRef);
+        for (const rejected of [
+          `sourceRecordId=${encodeURIComponent(sourceRecordId)}`,
+          `code=${encodeURIComponent(sourceRecordId)}`,
+          'afterRecordId=x',
+          'contractVersion=INTERNAL_C14',
+        ]) {
+          const refused = yield* Effect.promise(() =>
+            server.request(`${SYMMY_ROUTES.priceLists.path}?${rejected}&limit=1`, {
+              headers: { 'x-api-key': validKey },
+              method: 'GET',
+            }),
+          );
+          expect(refused.status, rejected).toBe(400);
+        }
 
-        const code = yield* Effect.fromNullishOr(item?.id).pipe(Effect.orDie);
-        const unsupportedAliasFilter = yield* Effect.promise(() =>
-          server.request(`${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&code=${code}`, {
-            headers: { 'x-api-key': validKey },
-            method: 'GET',
-          }),
-        );
-        expect(unsupportedAliasFilter.status).toBe(422);
-        const conflictingFilters = yield* Effect.promise(() =>
-          server.request(
-            `${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&code=legacy&sourceRecordId=raw`,
-            { headers: { 'x-api-key': validKey }, method: 'GET' },
-          ),
-        );
-        expect(conflictingFilters.status).toBe(400);
-
+        const code = qualifiedCodeFor(internalRoute.issuerId);
         const post = yield* Effect.promise(() =>
           server.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
             ...fixtureJson,
@@ -694,19 +754,19 @@ it.effect(
 
         const otherServer = yield* startIssuer('other-authorized-issuer');
         const otherGet = yield* Effect.promise(() =>
-          otherServer.request(`${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&limit=1`, {
+          otherServer.request(`${SYMMY_ROUTES.priceLists.path}?limit=1`, {
             headers: { 'x-api-key': validKey },
             method: 'GET',
           }),
         );
         expect(otherGet.status).toBe(200);
         const otherBody = yield* Effect.promise(() => otherGet.json());
-        const otherProjection = yield* Schema.decodeUnknownEffect(SymmyInternalPriceListsProjectionSchema, {
+        const otherPublicBody = yield* Schema.decodeUnknownEffect(SymmyPriceListsResponseSchema, {
           onExcessProperty: 'error',
         })(otherBody);
-        const [otherItem] = otherProjection.price_lists;
-        expect(otherItem?.source_record_id).toBe(sourceRecordId);
-        expect(otherItem?.id).not.toBe(code);
+        const [otherItem] = otherPublicBody.priceLists;
+        expect(otherItem?.code).toBe(sourceRecordId);
+        expect(qualifiedCodeFor('other-authorized-issuer')).not.toBe(code);
         const crossIssuerPost = yield* Effect.promise(() =>
           otherServer.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
             ...fixtureJson,
@@ -1098,7 +1158,7 @@ it.effect('uses each approved route’s declared success status for internal fix
               request.id === admittedJobId
                 ? Effect.succeed({ items, phase: 'completed' })
                 : Effect.fail(symmyFixtureJobNotFoundProblem),
-            read: ({ request }) => Effect.succeed(request.route === 'adminRegions' ? regionsProjection : references),
+            read: ({ request }) => Effect.succeed(readFixture(request.route, references)),
             submit: () => Effect.succeed(admittedJobId),
           },
           observe: (request) => {
@@ -1127,7 +1187,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       expect(response.headers.get('cache-control')).toBe('no-store');
       const body = yield* Effect.promise(() => response.json());
       const expectedBodies = {
-        business_read: path === SYMMY_ROUTES.adminRegions.path ? publicRegionsBody : { references },
+        business_read: publicReadBody(path, references),
         durable_job: { jobId, status: 'queued' },
         item_results: { items: expectedItems },
         job_read: { items: expectedItems, jobId, status: 'indeterminate' },
@@ -1146,7 +1206,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       { fixtureId, route: 'inventoryStockBatch' },
       { id: jobId, route: 'job' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'priceListPricesBatch' },
-      { query: {}, route: 'priceLists' },
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
       { fixtureId, idempotencyKey, route: 'priceListsBatchUpsert' },
       { fixtureId, idempotencyKey, route: 'productsBatch' },
     ]);
@@ -1232,6 +1292,92 @@ it.effect('serves the public regions body from its own query', () =>
 
     const reflected = yield* get(`?q=${validKey}`);
     expect(reflected.status).toBe(400);
+  }),
+);
+
+it.effect('serves the public price lists body from its own query', () =>
+  Effect.gen(function* servesPublicPriceLists() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(priceListsProjection),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const get = (query: string) =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.priceLists.path}${query}`, {
+          headers: { 'x-api-key': validKey },
+          method: 'GET',
+        }),
+      );
+    for (const query of [
+      'code=a',
+      'sourceRecordId=a',
+      'afterRecordId=a',
+      'contractVersion=INTERNAL_C14',
+      'q=a',
+      'fields=name',
+      'unknown=1',
+      'limit=0',
+      'limit=101',
+      'limit=abc',
+      'offset=-1',
+      'priceLimit=0',
+      'priceLimit=101',
+      'priceOffset=-1',
+    ]) {
+      const response = yield* get(`?${query}`);
+      expect(response.status, query).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/problem+json');
+    }
+    expect(forwarded).toEqual([]);
+
+    const plain = yield* get('');
+    expect(plain.status).toBe(200);
+    expect(yield* Effect.promise(() => plain.json())).toEqual(publicPriceListsBody);
+    const paged = yield* get('?limit=1&offset=1&priceLimit=2&priceOffset=3');
+    expect(paged.status).toBe(200);
+    expect(forwarded).toEqual([
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
+      {
+        query: { contractVersion: 'INTERNAL_C14', limit: 1, offset: 1, priceLimit: 2, priceOffset: 3 },
+        route: 'priceLists',
+      },
+    ]);
+  }),
+);
+
+it.effect('never answers the price lists read with anything but the public body', () =>
+  Effect.gen(function* refusesNonPriceListProjection() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(['10000000-0000-4000-8000-000000000001']),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.priceLists.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
+    );
+    expect(response.status).toBe(503);
+    expect(yield* Effect.promise(() => response.text())).not.toContain('references');
   }),
 );
 

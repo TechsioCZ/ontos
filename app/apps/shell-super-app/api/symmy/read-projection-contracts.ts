@@ -1,5 +1,6 @@
 import { ProductSchema, ProductUuidSchema } from '@app/catalog/domain/product';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
+import { PriceGroupSourceAssociationSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceGroupSourcePricesResponseSchema } from '@app/pricing/apis/price-group-source-prices';
 import { CustomerProfileSourceItemSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { SourceProfileExportResponseSchema } from '@app/party-registry/apis/source-profile-export';
@@ -97,6 +98,7 @@ export const SymmyInternalPriceListsProjectionSchema = Schema.Struct({
       ends_at: Schema.optionalKey(PricingInstantSchema),
       id: Schema.toEncoded(SymmyEncodedSourceCodeSchema),
       name: Schema.String,
+      priceGroupRef: PriceGroupSourceAssociationSchema.fields.priceGroupRef,
       prices: Schema.optionalKey(PriceGroupSourcePricesResponseSchema),
       source_record_id: sourceId,
       starts_at: PricingInstantSchema,

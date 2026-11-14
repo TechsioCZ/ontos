@@ -44,6 +44,7 @@ import type {
   SymmyInternalWritePayloadSchema,
 } from './contract.ts';
 import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import { mapSymmyPriceListsProjection, SymmyPriceListsResponseSchema } from './price-lists-public-contract.ts';
 import {
   mapSymmyRegionsProjection,
   selectSymmyRegionFields,
@@ -52,9 +53,9 @@ import {
 } from './regions-public-contract.ts';
 import {
   SymmyInternalProductsProjectionSchema,
-  SymmyInternalPriceListsProjectionSchema,
   SymmyInternalCustomersProjectionSchema,
 } from './read-projection-contracts.ts';
+import type { SymmyInternalPriceListsProjectionSchema } from './read-projection-contracts.ts';
 
 import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
 
@@ -380,8 +381,17 @@ const handleRegionsRead = handle(SymmyRegionsSuccessSchema, (ingress, input: Fix
       ),
     ),
 );
-const handlePriceListsRead = makeReadHandler(
-  Schema.Union([SymmyFixtureReadSchema, SymmyInternalPriceListsProjectionSchema]),
+/** The price lists read answers only the public body. Anything but a price list projection is unavailable. */
+const handlePriceListsRead = handle(SymmyPriceListsResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
+  ingress.dispatch
+    .read(input)
+    .pipe(
+      Effect.flatMap((result) =>
+        'projection' in result && result.projection === 'price_lists'
+          ? Effect.succeed(mapSymmyPriceListsProjection(result))
+          : Effect.fail(symmyUnavailableProblem),
+      ),
+    ),
 );
 const handleApply = handle(SymmyFixtureItemResultsSchema, (ingress, input: FixtureInput<FixtureApply>) =>
   (Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(input.request) && input.request.idempotencyKey === undefined
@@ -490,7 +500,11 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       ),
     )
     .handle('priceLists', ({ headers, query, request }) =>
-      handlePriceListsRead(headers['x-api-key'], { query, route: 'priceLists' }, request),
+      handlePriceListsRead(
+        headers['x-api-key'],
+        { query: { ...query, contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
+        request,
+      ),
     )
     .handle('priceListsBatchUpsert', ({ headers, payload, request }) =>
       handleSubmit(

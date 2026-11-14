@@ -5,6 +5,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { OpenApi } from 'effect/http-api';
 import {
   SymmyFixtureReadSchema,
+  SymmyPriceListsReadQuerySchema,
   SymmyRegionsReadQuerySchema,
   SymmySchemaError,
   symmyCodeParams,
@@ -20,9 +21,9 @@ import { PaymentNotificationsGroup } from '../api/payment-gateway/notification-c
 import { PaymentReconciliationBoundary } from '../api/payment-gateway/reconciliation-boundary.ts';
 import {
   SymmyInternalCustomersProjectionSchema,
-  SymmyInternalPriceListsProjectionSchema,
   SymmyInternalProductsProjectionSchema,
 } from '../api/symmy/read-projection-contracts.ts';
+import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
 import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
 import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';
 
@@ -73,7 +74,8 @@ const priceListPricesBatchEndpoint = HttpApiEndpoint.post(
 );
 const priceListsEndpoint = HttpApiEndpoint.get('priceLists', SYMMY_ROUTES.priceLists.path, {
   ...symmyReadOptions,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalPriceListsProjectionSchema]),
+  query: SymmyPriceListsReadQuerySchema,
+  success: SymmyPriceListsResponseSchema,
 });
 const priceListsBatchUpsertEndpoint = HttpApiEndpoint.post(
   'priceListsBatchUpsert',

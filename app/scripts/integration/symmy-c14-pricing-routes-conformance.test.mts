@@ -9,7 +9,8 @@ import { PriceGroupSourcePricesResponseSchema } from '@app/pricing/apis/price-gr
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
-import { decodeSymmySourceSelector, encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
+import { PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
+import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
@@ -72,22 +73,38 @@ const statusSchema = Schema.Struct({
   status: Schema.String,
 });
 const projectionSchema = Schema.Struct({
-  contractVersion: Schema.Literal('INTERNAL_C14'),
   count: Schema.Int,
   limit: Schema.Int,
   offset: Schema.Int,
-  price_lists: Schema.Array(
+  priceLists: Schema.Array(
     Schema.Struct({
-      id: Schema.String,
+      code: Schema.String,
+      description: Schema.String,
+      endsAt: Schema.optionalKey(PricingInstantSchema),
       name: Schema.String,
-      priceGroupRef: Schema.optionalKey(PriceGroupRefSchema),
+      priceGroupRef: PriceGroupRefSchema,
       prices: Schema.optionalKey(PriceGroupSourcePricesResponseSchema),
-      source_record_id: Schema.String,
+      startsAt: PricingInstantSchema,
     }),
   ),
-  projection: Schema.Literal('price_lists'),
-  unsupported_fields: Schema.Array(Schema.String),
 });
+type ListedPriceList = (typeof projectionSchema.Type)['priceLists'][number];
+/** The route addresses a list by its qualified selector, which the public list no longer returns. */
+const qualifiedListCode = (
+  fixture: { readonly sourceRouteId: string; readonly tenantId: string },
+  list: ListedPriceList,
+) =>
+  encodeSymmySourceSelector(
+    {
+      issuerId: internalPricingRouteSource.issuerId,
+      routeId: fixture.sourceRouteId,
+      selectorKind: 'PRICE_GROUP',
+      sourceNamespace: internalPricingRouteSource.namespace,
+      tenantId: fixture.tenantId,
+    },
+    list.code,
+    list.priceGroupRef.resourceId,
+  );
 const observe = <A, E, R>(reason: string, read: Effect.Effect<A, E, R>, done: (value: A) => boolean) =>
   Effect.gen(function* observeNativeResult() {
     for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -218,26 +235,6 @@ const assertSelectedPriceRefusals = Effect.fn('InternalC14PricingRoutes.selected
   );
   expect(yield* ownerCounts).toEqual(before);
   return yield* Effect.void;
-});
-
-const groupLookupRef = Effect.fn('InternalC14PricingRoutes.groupLookupRef')(function* lookupRef(
-  id: string,
-  tenantId: string,
-) {
-  return yield* Match.value(yield* decodeSymmySourceSelector(id)).pipe(
-    Match.tag('Legacy', () =>
-      Effect.fail(new SymmyC14ProductFixtureUnavailable({ message: 'The projected list has no qualified selector' })),
-    ),
-    Match.tag('Qualified', ({ targetResourceId }) =>
-      Schema.decodeUnknownEffect(PriceGroupRefSchema)({
-        moduleId: 'pricing.price-group-catalog',
-        resourceId: targetResourceId,
-        resourceType: 'pricing.price-group-catalog.price-group',
-        tenantId,
-      }),
-    ),
-    Match.exhaustive,
-  );
 });
 
 const assertWrongGroupRefused = Effect.fn('InternalC14PricingRoutes.wrongGroupRefusal')(function* wrongGroupRefusal<
@@ -390,10 +387,9 @@ it.live(
         yield* waitUntil(DateTime.makeUnsafe(fixture.at));
         const get = (query: string, expectedStatus = 200) =>
           Effect.gen(function* readActualPriceListProjection() {
-            const response = yield* client.get(
-              `${fixture.shell.baseUrl}/api/symmy/v1/price-lists?contractVersion=INTERNAL_C14&${query}`,
-              { headers },
-            );
+            const response = yield* client.get(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists?${query}`, {
+              headers,
+            });
             if (response.status !== expectedStatus) {
               const problem = yield* response.json.pipe(
                 Effect.flatMap(
@@ -428,7 +424,7 @@ it.live(
           limit: 1,
           offset: 0,
         });
-        expect(first.price_lists).toHaveLength(1);
+        expect(first.priceLists).toHaveLength(1);
         const secondResponse = yield* get('limit=1&offset=1');
         expect(secondResponse.status).toBe(200);
         const second = yield* secondResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)));
@@ -437,26 +433,20 @@ it.live(
           limit: 1,
           offset: 1,
         });
-        expect(second.price_lists).toHaveLength(1);
-        const all = [...first.price_lists, ...second.price_lists];
+        expect(second.priceLists).toHaveLength(1);
+        const all = [...first.priceLists, ...second.priceLists];
         expect(
           EffectArray.sort(
-            all.map(({ source_record_id }) => source_record_id),
+            all.map(({ code }) => code),
             Order.String,
           ),
         ).toEqual(EffectArray.sort([fixture.firstRecordId, fixture.secondRecordId], Order.String));
-        expect(new Set(all.map(({ id }) => id)).size).toBe(2);
+        expect(new Set(all.map(({ code }) => code)).size).toBe(2);
         for (const list of all) {
-          expect(list.id).toHaveLength(87);
-          expect(list).not.toHaveProperty('priceGroupRef');
-          const filteredResponse = yield* get(`code=${encodeURIComponent(list.source_record_id)}&limit=1&offset=0`);
-          expect(filteredResponse.status).toBe(200);
-          const filtered = yield* filteredResponse.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
-          );
-          expect(filtered.count).toBe(1);
-          expect(filtered.price_lists).toEqual([list]);
+          expect(list.priceGroupRef.resourceType).toBe('pricing.price-group-catalog.price-group');
+          expect(list.priceGroupRef.tenantId).toBe(fixture.tenantId);
         }
+        expect(new Set(all.map(({ priceGroupRef }) => priceGroupRef.resourceId)).size).toBe(2);
         const [forbidden] = yield* fixture.admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} and (action_key like 'commerce.customer-context.%' or action_key like '%promotion%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
@@ -478,10 +468,12 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
         expect(replayProjection.count).toBe(2);
-        expect(replayProjection.price_lists.map(({ id }) => id)).toEqual(all.map(({ id }) => id));
-        const originalGroup = all.find(({ source_record_id }) => source_record_id === fixture.firstRecordId);
+        expect(replayProjection.priceLists.map(({ priceGroupRef }) => priceGroupRef)).toEqual(
+          all.map(({ priceGroupRef }) => priceGroupRef),
+        );
+        const originalGroup = all.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(originalGroup);
-        const originalGroupRef = yield* groupLookupRef(originalGroup.id, fixture.tenantId);
+        const originalGroupRef = originalGroup.priceGroupRef;
         const current = yield* readNativeCurrentGroup(fixture, originalGroupRef);
         const expectedCurrent = yield* Schema.decodeUnknownEffect(
           CreatePriceGroupDefinitionRevisionPayloadSchema.fields.expectedCurrent,
@@ -505,12 +497,15 @@ it.live(
           'accepted_change',
         ]);
         yield* waitUntil(revisionAt);
-        const revisedResponse = yield* get(`code=${encodeURIComponent(fixture.firstRecordId)}&limit=1&offset=0`);
+        const revisedResponse = yield* get('limit=100&offset=0');
         expect(revisedResponse.status).toBe(200);
         const revisedProjection = yield* revisedResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        expect(revisedProjection.price_lists).toEqual([{ ...originalGroup, name: 'Internal revised group A' }]);
+        expect(revisedProjection.priceLists.find(({ code }) => code === fixture.firstRecordId)).toEqual({
+          ...originalGroup,
+          name: 'Internal revised group A',
+        });
         const beforeHeld = yield* readNativeCurrentGroup(fixture, originalGroupRef);
         const heldImportedAt = DateTime.formatIso(yield* DateTime.now);
         const heldEffectiveAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
@@ -555,15 +550,15 @@ it.live(
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
         expect(afterHeld?.count).toBe(0);
         yield* waitUntil(DateTime.makeUnsafe(heldEffectiveAt));
-        const heldGroupResponse = yield* get('code=INTERNAL_C14_HELD_PRICE_LIST&limit=1&offset=0');
+        const heldGroupResponse = yield* get('limit=100&offset=0');
         expect(heldGroupResponse.status).toBe(200);
         const heldGroups = yield* heldGroupResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        expect(heldGroups.price_lists).toHaveLength(1);
-        const [heldGroup] = heldGroups.price_lists;
+        const heldGroup = heldGroups.priceLists.find(({ code }) => code === 'INTERNAL_C14_HELD_PRICE_LIST');
+        assert.isOk(heldGroup);
         // Current evidence is per Group: use the most recently created Group's actual fence.
-        const heldGroupRef = yield* groupLookupRef(heldGroup.id, fixture.tenantId);
+        const heldGroupRef = heldGroup.priceGroupRef;
         const refreshed = yield* readNativeCurrentGroup(fixture, heldGroupRef);
         const importedAt = DateTime.formatIso(yield* DateTime.now);
         const groupEffectiveAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
@@ -759,14 +754,14 @@ it.live(
         yield* enrollInternalC14SelectedPriceRoute(fixture, selectedPrice);
         yield* assertSelectedPriceRefusals(
           fixture,
-          { id: originalGroup.id, priceGroupRef: originalGroupRef },
+          { id: qualifiedListCode(fixture, originalGroup), priceGroupRef: originalGroupRef },
           selectedPrice.plan,
         );
-        const otherGroup = all.find(({ source_record_id }) => source_record_id === fixture.secondRecordId);
+        const otherGroup = all.find(({ code }) => code === fixture.secondRecordId);
         assert.isOk(otherGroup);
         const wrongGroupPrice = yield* decodeInternalC14SourcePricePlan({
           ...selectedPriceFacts,
-          groupRef: yield* groupLookupRef(otherGroup.id, fixture.tenantId),
+          groupRef: otherGroup.priceGroupRef,
           occurrenceId: randomUUID(),
           priceId: randomUUID(),
         });
@@ -792,7 +787,7 @@ it.live(
           plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(wrongGroupPrice.plan),
         };
         const wrongGroupSelected = yield* client.post(
-          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${originalGroup.id}/prices/batch`,
+          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${qualifiedListCode(fixture, originalGroup)}/prices/batch`,
           {
             body: yield* HttpBody.json(wrongGroupBody),
             headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_REFUSED_OTHER_GROUP_SELECTED' },
@@ -811,7 +806,7 @@ it.live(
           plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(selectedPrice.plan),
         };
         const selectedResponse = yield* client.post(
-          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${originalGroup.id}/prices/batch`,
+          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${qualifiedListCode(fixture, originalGroup)}/prices/batch`,
           {
             body: yield* HttpBody.json(selectedBody),
             headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_SELECTED_PRICE' },
@@ -828,14 +823,12 @@ it.live(
         expect((selectedResult.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
           'accepted_change',
         ]);
-        const withPricesResponse = yield* get(
-          `code=${encodeURIComponent(fixture.firstRecordId)}&limit=1&offset=0&priceLimit=1&priceOffset=0`,
-        );
+        const withPricesResponse = yield* get('limit=100&offset=0&priceLimit=1&priceOffset=0');
         expect(withPricesResponse.status).toBe(200);
         const withPrices = yield* withPricesResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        const priced = withPrices.price_lists.find(({ id }) => id === originalGroup.id);
+        const priced = withPrices.priceLists.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(priced?.prices);
         expect(priced.prices.count).toBe(1);
         expect(priced.prices.prices).toHaveLength(1);
@@ -849,14 +842,17 @@ it.live(
           kind: 'PRICE_GROUP',
           priceGroupRef: originalGroupRef,
         });
-        const emptyPricePageResponse = yield* get(
-          `code=${encodeURIComponent(fixture.firstRecordId)}&limit=1&offset=0&priceLimit=1&priceOffset=1`,
-        );
+        const emptyPricePageResponse = yield* get('limit=100&offset=0&priceLimit=1&priceOffset=1');
         expect(emptyPricePageResponse.status).toBe(200);
         const emptyPricePage = yield* emptyPricePageResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        expect(emptyPricePage.price_lists[0]?.prices).toMatchObject({ count: 1, limit: 1, offset: 1, prices: [] });
+        expect(emptyPricePage.priceLists.find(({ code }) => code === fixture.firstRecordId)?.prices).toMatchObject({
+          count: 1,
+          limit: 1,
+          offset: 1,
+          prices: [],
+        });
         const [actualPrices] = yield* fixture.admin<{
           count: number;
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
@@ -1002,7 +998,7 @@ it.live(
         yield* fixture.groupOwner.child.exitCode;
         const unavailable = yield* get(firstPageQuery, 503);
         expect(unavailable.status).toBe(503);
-        assert.isTrue(all.every(({ source_record_id }) => source_record_id.length > 0));
+        assert.isTrue(all.every(({ code }) => code.length > 0));
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
