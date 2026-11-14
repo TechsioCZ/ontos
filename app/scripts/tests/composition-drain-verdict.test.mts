@@ -59,11 +59,13 @@ describe('composition drain pre-flight verdict', () => {
 });
 
 describe('abandoned drained transition message', () => {
-  it('names draining and the documented recovery when the transition began on an active or draining authority', () => {
+  it('leaves the outcome to the restore that follows when the transition began on an active or draining authority', () => {
+    // The publisher then returns that authority to active and appends what happened; this message must not
+    // claim an outcome of its own.
     for (const phase of ['active', 'draining'] as const) {
       const message = abandonedTransitionMessage(phase);
-      expect(message).toContain('left in draining');
-      expect(message).toContain('Returning a stuck authority to active');
+      expect(message).toContain('re-drains, so the Application Composition transition was abandoned');
+      expect(message).not.toContain('left in draining');
     }
   });
 

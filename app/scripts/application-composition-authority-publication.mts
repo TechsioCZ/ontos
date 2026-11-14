@@ -46,6 +46,7 @@ import {
   listUndrainableOutboxWork,
 } from '../packages/core-runtime/src/outbox/undrainable-work.ts';
 import {
+  abandonApplicationCompositionDrain,
   ApplicationCompositionAuthorityError,
   carriedOverCoreSystemWorkerKeys,
   closeApplicationCompositionDurableAdmission,
@@ -250,7 +251,7 @@ export const ApplicationCompositionAuthorityAdminDatabaseLive = CoreDatabaseLive
 /** One session-level advisory lock, held on a reserved native session for exactly the given effect. */
 const withSessionAdvisoryLock = Effect.fn('ApplicationCompositionAuthority.withSessionAdvisoryLock')(
   function* withSessionAdvisoryLock<Value, Failure, Requirements>(
-    lock: { readonly key: string; readonly params: readonly string[] },
+    lock: { readonly key: string; readonly mode?: 'try' | 'wait'; readonly params: readonly string[] },
     publication: Effect.Effect<Value, Failure, Requirements>,
   ) {
     const database = yield* CoreDatabase;
@@ -282,10 +283,22 @@ const withSessionAdvisoryLock = Effect.fn('ApplicationCompositionAuthority.withS
             ),
           ),
         );
-        yield* withApplicationCompositionPublicationProgress(
-          'acquire publication serialization lock',
-          connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
-        );
+        if (lock.mode === 'try') {
+          // Proof, on this very session, that no other holder exists: never waits, and fails if one does.
+          const [granted] = yield* connection.executeValues(`select pg_try_advisory_lock(${lock.key})`, [
+            ...lock.params,
+          ]);
+          if (granted?.[0] !== true) {
+            return yield* unavailable(
+              'A publisher is alive: it holds the Application Composition publication lock, so nothing was changed',
+            );
+          }
+        } else {
+          yield* withApplicationCompositionPublicationProgress(
+            'acquire publication serialization lock',
+            connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
+          );
+        }
         acquired = true;
         return yield* publication;
       }),
@@ -298,14 +311,20 @@ const withSessionAdvisoryLock = Effect.fn('ApplicationCompositionAuthority.withS
   },
 );
 
+const PUBLICATION_LOCK_KEY = "hashtextextended('ontos.application-composition-publication', 0)";
+
+/**
+ * Runs `operation` only if no publisher is alive: it takes the environment-wide publication lock without waiting, on
+ * a reserved session it holds until `operation` ends, and refuses at once when another session holds it.
+ */
+export const withApplicationCompositionPublicationTryLock = <Value, Failure, Requirements>(
+  operation: Effect.Effect<Value, Failure, Requirements>,
+) => withSessionAdvisoryLock({ key: PUBLICATION_LOCK_KEY, mode: 'try', params: [] }, operation);
+
 /** Every composition publisher and Shell artifact upload uses this same environment-wide database lock. */
 export const withApplicationCompositionPublicationLock = <Value, Failure, Requirements>(
   publication: Effect.Effect<Value, Failure, Requirements>,
-) =>
-  withSessionAdvisoryLock(
-    { key: "hashtextextended('ontos.application-composition-publication', 0)", params: [] },
-    publication,
-  );
+) => withSessionAdvisoryLock({ key: PUBLICATION_LOCK_KEY, params: [] }, publication);
 
 // Live runtimes keep running short transactions, such as the Outbox matcher, so one snapshot can
 // catch one in flight. Waiting for a quiet snapshot is still only an observation; owner locks fence.
@@ -585,6 +604,117 @@ const enterDrainingIfDrainable = Effect.fn('ApplicationCompositionAuthority.ente
 const reopenWhenRefused = (revision: string) => (error: ApplicationCompositionAuthorityError) =>
   error.reason.startsWith(DRAIN_NOT_STARTED) ? reopenAfterRefusedDrain(revision, error.reason) : Effect.fail(error);
 
+/** Who the publisher's own drain abandonments are recorded as. */
+const DRAIN_PUBLISHER = 'application-composition-publisher';
+
+interface DrainRestoreOutcome {
+  readonly authorityPhase: PublicationState['authorityPhase'];
+  /** What happened to the authority, for the failure message; empty when nothing needed restoring. */
+  readonly description: string;
+}
+
+/** The failure's own words, for the ledger's reason. */
+const failureReason = <Failure,>(failure: Failure): string => {
+  if (Schema.is(ApplicationCompositionPublicationTimeout)(failure)) {
+    return failure.message;
+  }
+  return Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : 'The publication failed';
+};
+
+/**
+ * After a publication failed in or after its drain, while nothing was sealed and its own migration never started,
+ * return the SAME revision to `active` with durable admission open, so the running release serves again:
+ * - `draining` → a recorded drain abandonment (`abandonApplicationCompositionDrain`), in one transaction under the
+ *   exclusive authority lock;
+ * - `active` with durable admission closed (the drain had not begun) → admission reopened;
+ * - anything else — another revision holds the authority, or it is `sealed`/`migrated` — is left exactly as it is.
+ * The publication session lock is still held, so no second publisher can run between the failure and this.
+ */
+const restoreAfterFailedDrain = Effect.fn('ApplicationCompositionAuthority.restoreAfterFailedDrain')(
+  function* restoreAfterFailedDrain(revision: string, reason: string) {
+    const database = yield* CoreDatabase;
+    return yield* database.executor
+      .transaction((transaction) =>
+        Effect.gen(function* restoreHeldAuthority() {
+          yield* lockApplicationCompositionPublication(transaction);
+          const [row] = yield* transaction
+            .select({
+              durableWorkAdmission: applicationCompositionAuthority.durableWorkAdmission,
+              phase: applicationCompositionAuthority.phase,
+              revision: applicationCompositionAuthority.revision,
+            })
+            .from(applicationCompositionAuthority)
+            .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+          if (row === undefined || row.revision !== revision) {
+            return { authorityPhase: 'unknown', description: '' } satisfies DrainRestoreOutcome;
+          }
+          if (row.phase === 'draining') {
+            const recorded = yield* abandonApplicationCompositionDrain(transaction, {
+              initiatedBy: 'publisher',
+              operatorName: DRAIN_PUBLISHER,
+              reason: reason.slice(0, 2000),
+              revision,
+            });
+            return {
+              authorityPhase: 'active',
+              description: `The authority was returned to active with durable admission open (drain abandonment ${recorded.drainAbandonmentId}), so the running release serves reads and writes again.`,
+            } satisfies DrainRestoreOutcome;
+          }
+          if (row.phase === 'active' && row.durableWorkAdmission === 'closed') {
+            yield* resumeApplicationCompositionDurableAdmission(transaction, revision);
+            return {
+              authorityPhase: 'active',
+              description: 'Durable admission was reopened and the authority stays active.',
+            } satisfies DrainRestoreOutcome;
+          }
+          return { authorityPhase: row.phase, description: '' } satisfies DrainRestoreOutcome;
+        }),
+      )
+      .pipe(
+        Effect.catch((error) =>
+          Effect.succeed({
+            authorityPhase: 'unknown',
+            description: `The authority could not be returned to active (${failureReason(error)}): run \`pnpm composition:abandon-drain\` as described in docs/architecture/DEPLOYMENT.md.`,
+          } satisfies DrainRestoreOutcome),
+        ),
+      );
+  },
+);
+
+/** The original failure with the restore's outcome appended, so the operator sees both. */
+const withRestoreOutcome = <Failure,>(failure: Failure, outcome: DrainRestoreOutcome) => {
+  if (outcome.description === '') {
+    return failure;
+  }
+  if (Schema.is(ApplicationCompositionPublicationTimeout)(failure)) {
+    return new ApplicationCompositionPublicationTimeout({
+      authorityPhase: outcome.authorityPhase,
+      budgetMs: failure.budgetMs,
+      message: `${failure.message} ${outcome.description}`,
+      migrationsCompleted: failure.migrationsCompleted,
+      migrationStarted: failure.migrationStarted,
+      phase: failure.phase,
+    });
+  }
+  return Schema.is(ApplicationCompositionAuthorityError)(failure)
+    ? unavailable(`${failure.reason} ${outcome.description}`)
+    : failure;
+};
+
+/** On any failure of `effect`, restore the authority (`restoreAfterFailedDrain`) and fail with both stories. */
+const restoringAuthorityOnFailure =
+  (revision: string) =>
+  <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+    effect.pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          restoreAfterFailedDrain(revision, failureReason(error)).pipe(
+            Effect.flatMap((outcome) => Effect.fail(withRestoreOutcome(error, outcome))),
+          ),
+        onSuccess: Effect.succeed,
+      }),
+    );
+
 interface CurrentApplicationCompositionAuthority {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -650,7 +780,7 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
               ...progressState,
               budgetMs,
               message: [
-                "The bounded drain deadline expired; pending work is not proof of a dead owner. This release's own sealed schema migration did not start and admission was not reopened. The owner migrations of this release ran before the publication and stay applied; they are expand-only and the old release is rehearsed against the migrated database, so it keeps serving.",
+                "The bounded drain deadline expired; pending work is not proof of a dead owner. This release's own sealed schema migration did not start. The owner migrations of this release ran before the publication and stay applied; they are expand-only and the old release is rehearsed against the migrated database, so it keeps serving.",
                 ...(described === '' ? [] : [described]),
               ].join(' '),
             }),
@@ -731,7 +861,10 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
         }),
       );
       return yield* Effect.void;
-    }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }));
+    }).pipe(
+      Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: budgetExpired }),
+      restoringAuthorityOnFailure(current.revision),
+    );
   },
 );
 
@@ -745,15 +878,16 @@ const FRESH_OUTBOX_WORK = 'Outstanding Outbox work';
 const isFreshOutboxWork = (reason: string) => reason.includes(FRESH_OUTBOX_WORK);
 
 /**
- * Why a drained transition gave up, naming the phase the authority is really left in. A promote or seal that
- * began on an `active` or `draining` authority leaves it `draining`; a promote from a `migrated` authority leaves
- * it `migrated`, which the draining recovery does not apply to.
+ * Why a drained transition gave up. A promote or seal that began on an `active` or `draining` authority is followed
+ * by the publisher's return of that authority to `active` (`restoreAfterFailedDrain`), whose outcome is appended; a
+ * promote from a `migrated` authority leaves it `migrated`, which no abandonment applies to.
  */
 export const abandonedTransitionMessage = (startedFrom: CurrentApplicationCompositionAuthority['phase']) => {
   const giveUp = `Outbox work kept arriving after ${String(DRAINED_TRANSITION_RETRIES)} re-drains, so the Application Composition transition was abandoned.`;
+  // From `active` or `draining` the publisher then returns the authority to `active`, and says so after this.
   return startedFrom === 'migrated'
     ? `${giveUp} The authority stays migrated, which admits no work of the retired release; deploy again once the work finished.`
-    : `${giveUp} The authority is left in draining and the running release refuses reads: follow "Returning a stuck authority to active" in docs/architecture/DEPLOYMENT.md, or deploy again once the work finished.`;
+    : giveUp;
 };
 
 /**
@@ -920,7 +1054,7 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
           yield* requireNoLegacyRuntimeTransactions();
           yield* withDrainedCompositionTransition(current, (transaction) =>
             sealApplicationCompositionAuthority(transaction, current.revision),
-          );
+          ).pipe(restoringAuthorityOnFailure(current.revision));
           state.authorityPhase = 'sealed';
         }
         if (current?.phase === 'sealed') {
@@ -1096,7 +1230,9 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       'promote native authority and publish provider pointer',
       current === undefined
         ? withVerifiedLegacyTransition(null, promoteAndPublish)
-        : withDrainedCompositionTransition(current, promoteAndPublish),
+        : withDrainedCompositionTransition(current, promoteAndPublish).pipe(
+            restoringAuthorityOnFailure(current.revision),
+          ),
     );
   });
   return yield* withApplicationCompositionPublicationLock(publication);
