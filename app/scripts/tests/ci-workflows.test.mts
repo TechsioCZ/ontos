@@ -31,6 +31,8 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const WORKSPACE_UNIT_ARTIFACTS_JOB = 'workspace-unit-artifacts';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
+const SEEDED_INTEGRATION_JOB = 'seeded-integration';
+const INTEGRATION_SEED_PROOF_JOB = 'integration-seed-proof';
 const BROWSER_INTEGRATION_JOB = 'browser-integration';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
@@ -55,7 +57,16 @@ const readGateWorkflow = () => {
     [WORKSPACE_GATE_JOB, 'source', matrices.source],
     [WORKSPACE_UNIT_JOB, 'unit', matrices.unit.filter((row) => row['node-artifacts'] !== true)],
     [WORKSPACE_UNIT_ARTIFACTS_JOB, 'unit-artifacts', matrices.unit.filter((row) => row['node-artifacts'] === true)],
-    [SERVICE_INTEGRATION_JOB, 'integration', matrices.integration.filter((row) => row.suite === 'integration')],
+    [
+      SERVICE_INTEGRATION_JOB,
+      'integration',
+      matrices.integration.filter((row) => row.suite === 'integration' && row.seed !== true),
+    ],
+    [
+      SEEDED_INTEGRATION_JOB,
+      'seeded-integration',
+      matrices.integration.filter((row) => row.suite === 'integration' && row.seed === true),
+    ],
     [BROWSER_INTEGRATION_JOB, 'browser', matrices.integration.filter((row) => row.suite === 'browser')],
   ] as const) {
     const entry = record(jobs[job]);
@@ -152,6 +163,8 @@ const ROOT_GATE_JOBS = [
   'static-contracts',
   FORMAT_AND_LINT_JOB,
   SERVICE_INTEGRATION_JOB,
+  SEEDED_INTEGRATION_JOB,
+  INTEGRATION_SEED_PROOF_JOB,
   BROWSER_INTEGRATION_JOB,
   NODE_ARTIFACT_BUILD_JOB,
   NODE_ARTIFACT_PROOF_JOB,
@@ -162,6 +175,7 @@ const GATE_JOBS = ROOT_GATE_JOBS;
 const ARTIFACT_CONSUMER_JOBS: readonly string[] = [
   WORKSPACE_UNIT_ARTIFACTS_JOB,
   SERVICE_INTEGRATION_JOB,
+  INTEGRATION_SEED_PROOF_JOB,
   NODE_ARTIFACT_PROOF_JOB,
 ];
 const GatedJobsSchema = Schema.Struct({
@@ -193,7 +207,18 @@ it('selects work before gates and starts source checks without waiting for artif
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
-  for (const gate of ROOT_GATE_JOBS) {
+  // Seeded rows also wait for the seed producer, and only for it.
+  expect(jobs[SEEDED_INTEGRATION_JOB]?.needs).toEqual([
+    CI_PLAN_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
+    INTEGRATION_SEED_PROOF_JOB,
+  ]);
+  expect(jobs[SEEDED_INTEGRATION_JOB]?.if).toBe(
+    expression(
+      `!cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.integration-seed-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SEEDED_INTEGRATION_JOB}'] == 'success'`,
+    ),
+  );
+  for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SEEDED_INTEGRATION_JOB)) {
     const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.includes(gate);
     expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
     expect(jobs[gate]?.if).toBe(
@@ -323,6 +348,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_UNIT_JOB,
     WORKSPACE_UNIT_ARTIFACTS_JOB,
     SERVICE_INTEGRATION_JOB,
+    SEEDED_INTEGRATION_JOB,
+    INTEGRATION_SEED_PROOF_JOB,
     BROWSER_INTEGRATION_JOB,
   ];
   const planned = (skippedGates: readonly string[]) => {
@@ -336,6 +363,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     };
   };
   expect(passes(planned([WORKSPACE_UNIT_JOB, BROWSER_INTEGRATION_JOB]))).toBe(true);
+  expect(passes(planned([SEEDED_INTEGRATION_JOB, INTEGRATION_SEED_PROOF_JOB]))).toBe(true);
   expect(passes(planned(testMatrices))).toBe(false);
   expect(passes(planned([NODE_ARTIFACT_PROOF_JOB]))).toBe(false);
   expect(passes(planned([NODE_ARTIFACT_BUILD_JOB]))).toBe(false);
@@ -778,34 +806,37 @@ it('runs the root unit and component tests of every workspace package in exactly
   }
 });
 
-const IntegrationShardsWorkflowSchema = Schema.Struct({
-  jobs: Schema.Struct({
-    [SERVICE_INTEGRATION_JOB]: Schema.Struct({
-      needs: Schema.Array(Schema.String),
-      steps: Schema.Array(
+const IntegrationJobSchema = Schema.Struct({
+  needs: Schema.Array(Schema.String),
+  steps: Schema.Array(
+    Schema.Struct({
+      ...WorkflowStepSchema.fields,
+      uses: Schema.optional(Schema.String),
+      with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+  strategy: Schema.Struct({
+    matrix: Schema.Struct({
+      include: Schema.Array(
         Schema.Struct({
-          ...WorkflowStepSchema.fields,
-          uses: Schema.optional(Schema.String),
-          with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          name: Schema.String,
+          'native-composition': Schema.optional(Schema.Boolean),
+          'native-preproposal': Schema.optional(Schema.Boolean),
+          'package-filters': Schema.optional(Schema.String),
+          'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
+          'root-suite': Schema.optional(Schema.Boolean),
+          'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
+          seed: Schema.optional(Schema.Boolean),
+          suite: Schema.Literals(['integration', 'browser']),
         }),
       ),
-      strategy: Schema.Struct({
-        matrix: Schema.Struct({
-          include: Schema.Array(
-            Schema.Struct({
-              name: Schema.String,
-              'native-composition': Schema.optional(Schema.Boolean),
-              'native-preproposal': Schema.optional(Schema.Boolean),
-              'package-filters': Schema.optional(Schema.String),
-              'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-              'root-suite': Schema.optional(Schema.Boolean),
-              'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-              suite: Schema.Literals(['integration', 'browser']),
-            }),
-          ),
-        }),
-      }),
     }),
+  }),
+});
+const IntegrationShardsWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    [SEEDED_INTEGRATION_JOB]: IntegrationJobSchema,
+    [SERVICE_INTEGRATION_JOB]: IntegrationJobSchema,
   }),
 });
 
@@ -866,7 +897,14 @@ it('runs the root integration suite once and every package integration suite in 
   expect(commerceScripts['test:integration:native-preproposal']).toBe(
     'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
   );
-  const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
+  const seededJob = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    SEEDED_INTEGRATION_JOB
+  ];
+  // Seeded rows run the very same test step; together both jobs cover every package once.
+  expect(seededJob.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined)).toEqual(run);
+  const shards = [...job.strategy.matrix.include, ...seededJob.strategy.matrix.include].filter(
+    ({ suite }) => suite === 'integration',
+  );
   const roots = shards.filter((shard) => shard['root-suite'] === true);
   expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
@@ -1164,6 +1202,63 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(preproposal).toHaveLength(1);
   expect(preproposal[0]?.suite).toBe('integration');
+});
+
+it('proves the fresh-database preparation once and restores it only in rows that cover no migration behaviour', () => {
+  const source = readGateWorkflow();
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source);
+  const seeded = jobs[SEEDED_INTEGRATION_JOB];
+  // The seed model refuses these rows; they keep today's complete fresh preparation in service-integration.
+  for (const row of seeded.strategy.matrix.include) {
+    expect(row.name).not.toMatch(
+      /Database, Migration|Root Integration|Core Runtime Integration|Party Registry Integration|Commerce Customer Context/u,
+    );
+    expect(row['root-suite']).toBeUndefined();
+    expect(row['native-preproposal']).toBeUndefined();
+  }
+  expect(seeded.strategy.matrix.include.map(({ name }) => name)).toEqual([
+    'Shell Integration (1/4)',
+    'Shell Integration (2/4)',
+    'Shell Integration (3/4)',
+    'Shell Integration (4/4)',
+    'Privacy Integration (1/3)',
+    'Privacy Integration (2/3)',
+    'Privacy Integration (3/3)',
+    'Pricing and Inventory Integration',
+    'Catalog Integration',
+    'Market, Order, Payment Term, Price Group, and Storefront Integration',
+  ]);
+  const names = seeded.steps.map(({ name }) => name);
+  for (const replaced of [
+    'Initialize fresh local database login identities',
+    'Run the assembled stage migrator artifact against the fresh database',
+    'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
+    AUDIT_STEP,
+    'Build and run the Outbox Worker host artifact against the fresh database',
+  ]) {
+    expect(names).not.toContain(replaced);
+  }
+  const restore = seeded.steps.findIndex(({ run }) => run?.includes('integration-seed.mts restore') === true);
+  const worker = seeded.steps.findIndex(({ run }) => run?.includes('worker-host-artifact.mts use') === true);
+  const tests = seeded.steps.findIndex(
+    ({ env }) => env?.PACKAGE_FILTERS !== undefined && env.ROOT_RSTEST_SHARD !== undefined,
+  );
+  expect(restore > -1 && restore < worker && worker < tests).toBe(true);
+  expect(seeded.steps[restore]?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
+  expect(seeded.steps[restore]?.run).toContain('--test-files "$CI_TEST_FILES"');
+  const producer = Schema.decodeUnknownSync(
+    Schema.Struct({ jobs: Schema.Struct({ [INTEGRATION_SEED_PROOF_JOB]: IdentityGateJobSchema }) }),
+  )(source).jobs[INTEGRATION_SEED_PROOF_JOB];
+  const produce = producer.steps.findIndex(
+    ({ run }) =>
+      run ===
+      'mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed" --disposable',
+  );
+  const build = producer.steps.findIndex(({ run }) => run?.includes('worker-host-artifact.mts build') === true);
+  expect(produce > -1 && produce < build).toBe(true);
+  expect(producer.env?.INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL).toBe(
+    'postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci',
+  );
 });
 
 it('exports the built Composition path to native tests only after its derivation succeeds', () => {

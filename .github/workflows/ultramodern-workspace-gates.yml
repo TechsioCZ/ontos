@@ -100,6 +100,7 @@ jobs:
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       unit-artifacts: ${{ steps.selection.outputs.unit-artifacts || steps.changes.outputs.unit-artifacts }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
+      seeded-integration: ${{ steps.selection.outputs.seeded-integration || steps.changes.outputs.seeded-integration }}
       browser: ${{ steps.selection.outputs.browser || steps.changes.outputs.browser }}
     steps:
       - name: Harden Runner
@@ -811,6 +812,317 @@ jobs:
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
+  # Runs today's complete fresh-database preparation once, with every proof it carries (login initialization, the
+  # removed runtime role, the assembled stage migrator, migrations and verification, the grant audit and the Outbox
+  # Worker host build-and-run proof), then publishes the migrated databases and the built worker host to this run's
+  # seeded rows (scripts/ci/integration-seed.mts, scripts/ci/worker-host-artifact.mts). Only full runs plan it.
+  integration-seed-proof:
+    name: Prove and publish the integration seed database
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['integration-seed-proof'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: '5433'
+      POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
+      APP_ENV_PATH: /dev/null
+      SPICEDB_DATABASE_PASSWORD: spicedb
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      # The seed producer and its consumers connect the Commerce portal realm's runtime role with this local
+      # development-only password; the seed itself carries no credentials.
+      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts of every delivery unit
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Prove the fresh-database preparation and dump the seed
+        working-directory: app
+        run: mise exec -- node scripts/ci/integration-seed.mts produce --directory "$RUNNER_TEMP/integration-seed" --disposable
+
+      - name: Package the proven Outbox Worker host
+        working-directory: app
+        run: >-
+          mise exec -- node scripts/ci/worker-host-artifact.mts build --directory "$RUNNER_TEMP/worker-host"
+          --from-proof "$RUNNER_TEMP/integration-seed-proof/outbox-worker-host-artifact"
+
+      # The proof directory holds logs and is never uploaded.
+      - name: Upload the integration seed
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-seed-${{ github.run_id }}
+          path: ${{ runner.temp }}/integration-seed
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload the Outbox Worker host
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-worker-host-${{ github.run_id }}
+          path: ${{ runner.temp }}/worker-host
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Show bounded service diagnostics after failure
+        if: failure()
+        working-directory: app
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Remove isolated service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
+
+
+  # Rows whose suites need only an ordinary migrated database restore the seed this run's producer proved, instead
+  # of repeating its preparation; the producer keeps every proof. The seed model refuses migration and recovery
+  # coverage: the Database aggregate, Root, Core Runtime, Party Registry and Customer Context rows never seed.
+  seeded-integration:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build, integration-seed-proof]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.integration-seed-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['seeded-integration'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.seeded-integration) }}
+    env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # One login per runtime database identity, each with its own development-only password.
+      PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
+      PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: '5433'
+      POSTGRES_USER: ontos_ci_admin
+      SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:shell_gateway_issuer@localhost:5433/ontos_ci
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      # The seed producer and its consumers connect the Commerce portal realm's runtime role with this local
+      # development-only password; the seed itself carries no credentials.
+      INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        if: matrix.suite == 'integration'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      # The stage migrator, the Outbox Worker host and the derived Composition read every unit, so a row names a
+      # smaller `artifact-units` set only when none of those run on it; without it every unit is required.
+      - name: Unpack the Node artifacts for native owner fixtures
+        if: matrix.suite == 'integration'
+        working-directory: app
+        env:
+          REQUIRED_UNITS: ${{ matrix.artifact-units }}
+        # shellcheck disable=SC2086 # REQUIRED_UNITS is a list of separate unit paths.
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS
+
+      # The native owner fixtures (Inventory's confirmation-protection suite) read the Composition these exact built
+      # artifacts form; the path is exported only after the derivation decoded it as consumers decode it.
+      - name: Derive the fresh built Composition for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- node scripts/derive-built-application-composition.mts --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
+          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Download the integration seed
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-seed-${{ github.run_id }}
+          path: ${{ runner.temp }}/integration-seed
+
+      - name: Download the Outbox Worker host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-worker-host-${{ github.run_id }}
+          path: ${{ runner.temp }}/worker-host
+
+      # The seed model checks the row's name and every integration test file it may run before it restores.
+      - name: Restore the proven seed databases
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          CI_MATRIX_NAME: ${{ matrix.name }}
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_SUITE: ${{ matrix.root-suite || false }}
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: |
+          files=()
+          for directory in $(sed -E 's/--filter +//g; s#\./##g' <<<"$PACKAGE_FILTERS"); do
+            while IFS= read -r file; do
+              files+=("$file")
+            done < <(git ls-files -- "$directory/tests/integration" | grep -E '\.test\.[cm]?[jt]sx?$')
+          done
+          CI_TEST_FILES="$(IFS=,; echo "${files[*]}")"
+          echo "Seed check over ${#files[@]} integration test files."
+          mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
+            --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite "$ROOT_SUITE" \
+            --test-files "$CI_TEST_FILES" --jobs 4
+
+      - name: Install the proven Outbox Worker host
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: mise exec -- node scripts/ci/worker-host-artifact.mts use --directory "$RUNNER_TEMP/worker-host"
+
+      - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
+        if: matrix.suite == 'integration'
+        working-directory: app
+        # The job environment above is the whole configuration. Native fixtures refuse to start unless
+        # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
+        env:
+          APP_ENV_PATH: /dev/null
+          MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
+          MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
+          SPICEDB_DATABASE_PASSWORD: spicedb
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
+          ROOT_SUITE: ${{ matrix.root-suite }}
+          RSTEST_SHARD: ${{ matrix.rstest-shard }}
+          # Two Rstest file workers only on rows whose suites were reviewed safe in parallel; every other row runs one.
+          RSTEST_WORKERS: ${{ matrix.rstest-workers || 1 }}
+        # Same commands as `pnpm test:integration`. The root suite and a large package (one package per row, whose
+        # test:integration script is exactly `rstest --project integration`) run as duration-weighted shards that deal
+        # the files of a split giant test family across the shards (scripts/ci/rstest-weighted-shard.sh).
+        # Every suite runs even when an earlier one fails (--no-bail; the root suite's failure is kept, not fatal), so
+        # one package's failure never hides another's; the step fails at the end if any of them failed.
+        run: |
+          status=0
+          if [[ "$ROOT_SUITE" == true && -n "$ROOT_RSTEST_SHARD" ]]; then
+            mise exec -- bash scripts/ci/rstest-weighted-shard.sh "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?
+          elif [[ "$ROOT_SUITE" == true ]]; then
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?
+          fi
+          if [[ -n "$PACKAGE_FILTERS" && -n "$RSTEST_SHARD" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" "$RSTEST_SHARD" integration --pool.maxWorkers "$RSTEST_WORKERS" || status=$?
+          elif [[ -n "$PACKAGE_FILTERS" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?
+          fi
+          exit "$status"
+
+      - name: Show bounded service diagnostics after failure
+        if: failure()
+        working-directory: app
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Remove isolated service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
+
+
   # The authenticated browser tests and the recovery into a newly published release, on fresh services. They read no
   # build output, so they need only the plan.
   browser-integration:
@@ -1266,6 +1578,8 @@ jobs:
         static-contracts,
         format-and-lint,
         service-integration,
+        integration-seed-proof,
+        seeded-integration,
         browser-integration,
         node-artifact-build,
         node-artifact-proof,

@@ -24,6 +24,8 @@ const IntegrationEntrySchema = Schema.Struct({
   'rstest-shard': Schema.optionalKey(Schema.String),
   /** Rstest file workers; 2 only for suites reviewed safe in parallel (unique template databases, UUID tenants). */
   'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
+  /** The row may restore the same-run seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
+  seed: Schema.optionalKey(Schema.Boolean),
   suite: Schema.Literals(['integration', 'browser']),
 }).check(
   Schema.makeFilter((entry) =>
@@ -115,6 +117,8 @@ const gateIds = [
   'static-contracts',
   'format-and-lint',
   'service-integration',
+  'seeded-integration',
+  'integration-seed-proof',
   'browser-integration',
   'node-artifact-build',
   'node-artifact-proof',
@@ -244,9 +248,13 @@ export const planCiChecks = (input: {
   const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
   // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
   // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
+  // Seed restoring saves runner minutes but waits for the seed producer, so it pays off only on a full run that
+  // fills every runner; an affected round lets each row prepare its own database right after the builds.
+  const seeded = (entry: IntegrationEntry) => effectiveMode === 'full' && entry.seed === true;
   const jobs = {
     browser: integration.filter(({ suite }) => suite === 'browser'),
-    services: integration.filter(({ suite }) => suite === 'integration'),
+    seeded: integration.filter((entry) => entry.suite === 'integration' && seeded(entry)),
+    services: integration.filter((entry) => entry.suite === 'integration' && !seeded(entry)),
     unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
     unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
   };
@@ -257,6 +265,10 @@ export const planCiChecks = (input: {
       }
       case 'service-integration': {
         return jobs.services.length;
+      }
+      case 'integration-seed-proof':
+      case 'seeded-integration': {
+        return jobs.seeded.length;
       }
       case 'workspace-unit': {
         return jobs.unitPlain.length;
@@ -400,6 +412,7 @@ const cli = Command.make(
         browser: encode(plan.jobs.browser),
         expected: encode(plan.expected),
         integration: encode(plan.jobs.services),
+        'seeded-integration': encode(plan.jobs.seeded),
         source: encode(plan.source),
         unit: encode(plan.jobs.unitPlain),
         'unit-artifacts': encode(plan.jobs.unitArtifacts),
