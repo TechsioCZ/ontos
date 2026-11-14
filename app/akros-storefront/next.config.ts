@@ -40,10 +40,6 @@ const nextConfig: NextConfig = {
     ],
   },
   reactStrictMode: true,
-  // Types are proven by tsrs before this build: the workspace `pnpm typecheck` gate (root
-  // tsconfig.json references tsconfig.typecheck.json) and `pnpm typecheck` here. Next's own type
-  // step (tsc) checked the same files again.
-  typescript: { ignoreBuildErrors: true },
   // Catalog responses already have a strict ten-second owner-read window. Never extend it in the router.
   experimental: { staleTimes: { static: 0, dynamic: 0 } },
   async headers() {

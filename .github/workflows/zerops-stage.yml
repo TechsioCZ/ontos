@@ -236,8 +236,8 @@ jobs:
             next-cache-v1-${{ matrix.package }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-
             next-cache-v1-${{ matrix.package }}-
 
-      # `next typegen`, then tsrs over Next's tsconfig.json with the generated route types. The build below skips
-      # Next's own type step (typescript.ignoreBuildErrors), so this is where a deploy proves the storefront's types.
+      # `next typegen`, then tsrs over Next's tsconfig.json with the generated route types. The build below still runs
+      # Next's own type step too, until the storefronts emit declarations cleanly under the workspace typecheck.
       - name: Typecheck with tsrs
         working-directory: app
         run: mise exec -- pnpm --filter "$PKG" run typecheck

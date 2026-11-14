@@ -26,10 +26,6 @@ const config: NextConfig = {
   // pnpm resolves dependencies through the workspace virtual store above this app.
   outputFileTracingRoot: path.resolve(process.cwd(), ".."),
   reactStrictMode: true,
-  // Types are proven by tsrs before this build: the workspace `pnpm typecheck` gate (the root
-  // tsconfig.json references tsconfig.typecheck.json) and `pnpm typecheck` here. Next's own type
-  // step (tsc) took 2.8 minutes of the Zerops build and checked the same files again.
-  typescript: { ignoreBuildErrors: true },
 };
 
 export default config;

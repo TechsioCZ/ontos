@@ -144,12 +144,6 @@
     },
     {
       "path": "verticals/symmy-integration"
-    },
-    {
-      "path": "akros-storefront/tsconfig.typecheck.json"
-    },
-    {
-      "path": "n1-storefront/tsconfig.typecheck.json"
     }
   ]
 }
