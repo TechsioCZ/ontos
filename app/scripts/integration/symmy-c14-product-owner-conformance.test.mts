@@ -240,13 +240,20 @@ const services = NodeChildProcessSpawner.layer.pipe(
 );
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const publicJobStatusSchema = Schema.Struct({
-  items: Schema.optionalKey(Schema.Array(SymmyItemOutcomeSchema)),
+  items: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        ...SymmyItemOutcomeSchema.fields,
+        outcome: Schema.Literals(['accepted', 'partial', 'not_accepted']),
+      }),
+    ),
+  ),
   jobId: receiptSchema.fields.jobId,
   status: Schema.Literals([
-    'admitted',
+    'queued',
     'running',
     'blocked',
     'completed_all',
@@ -819,7 +826,7 @@ it.live(
               Effect.flatMap(Schema.decodeUnknownEffect(publicJobStatusSchema)),
             );
             expect(enrolled.jobId).toBe(accepted.jobId);
-            expect(enrolled.status).toBe('admitted');
+            expect(enrolled.status).toBe('queued');
             const compiled = yield* shell.startCompiledShell();
             expect(compiled.apiPrefix).toBe('/shell-super-app-api');
             const compiledPoll = yield* client.get(`${compiled.origin}/api/symmy/v1/jobs/${accepted.jobId}`, {

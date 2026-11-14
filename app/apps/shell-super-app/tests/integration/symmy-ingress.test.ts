@@ -246,7 +246,7 @@ it.effect('accepts a versioned typed business input and preserves its source ide
       }),
     );
     expect(response.status).toBe(202);
-    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'admitted' });
+    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
     expect(forwarded).toEqual([{ ...internalProductInput, idempotencyKey, route: 'productsBatch' }]);
   }),
 );
@@ -1088,7 +1088,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       const body = yield* Effect.promise(() => response.json());
       const expectedBodies = {
         business_read: { references: path === SYMMY_ROUTES.adminRegions.path ? [] : references },
-        durable_job: { jobId, status: 'admitted' },
+        durable_job: { jobId, status: 'queued' },
         item_results: { items: expectedItems },
         job_read: { items: expectedItems, jobId, status: 'indeterminate' },
       };
@@ -1161,7 +1161,7 @@ it.effect('keeps job progress separate from whether completed items succeeded', 
       itemId: '30000000-0000-4000-8000-000000000002',
     });
     const cases = [
-      { body: { status: 'admitted' }, id: jobId, state: { phase: 'admitted' } },
+      { body: { status: 'queued' }, id: jobId, state: { phase: 'admitted' } },
       {
         body: { status: 'running' },
         id: '10000000-0000-4000-8000-000000000002',
@@ -1176,6 +1176,17 @@ it.effect('keeps job progress separate from whether completed items succeeded', 
         body: { items: [{ ...denied, outcome: 'not_accepted' }], status: 'completed_none' },
         id: '10000000-0000-4000-8000-000000000004',
         state: { items: [denied], phase: 'completed' },
+      },
+      {
+        body: {
+          items: [
+            { ...denied, outcome: 'not_accepted' },
+            { ...accepted, outcome: 'accepted' },
+          ],
+          status: 'completed_partial',
+        },
+        id: '10000000-0000-4000-8000-000000000006',
+        state: { items: [denied, accepted], phase: 'completed' },
       },
     ] as const;
     const server = yield* Effect.acquireRelease(
@@ -1216,6 +1227,20 @@ it.effect('keeps job progress separate from whether completed items succeeded', 
     expect(missing.headers.get('content-type')).toContain('application/problem+json');
     expect(missingBody).toContain('SymmyFixtureJobNotFoundProblem');
     expect(missingBody).not.toContain(missingJobId);
+    const malformedId = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.job.path.replace('{id}', 'not-a-uuid'), {
+        headers: { 'x-api-key': validKey },
+        method: 'GET',
+      }),
+    );
+    expect(malformedId.status).toBe(400);
+    const withQuery = yield* Effect.promise(() =>
+      server.request(`${SYMMY_ROUTES.job.path.replace('{id}', jobId)}?x=1`, {
+        headers: { 'x-api-key': validKey },
+        method: 'GET',
+      }),
+    );
+    expect(withQuery.status).toBe(400);
   }),
 );
 
@@ -1408,9 +1433,9 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
     const first = yield* submit();
     const retry = yield* submit();
     expect([poll.status, first.status, retry.status]).toEqual([200, 202, 202]);
-    expect(yield* Effect.promise(() => poll.json())).toEqual({ jobId, status: 'admitted' });
-    expect(yield* Effect.promise(() => first.json())).toEqual({ jobId, status: 'admitted' });
-    expect(yield* Effect.promise(() => retry.json())).toEqual({ jobId, status: 'admitted' });
+    expect(yield* Effect.promise(() => poll.json())).toEqual({ jobId, status: 'queued' });
+    expect(yield* Effect.promise(() => first.json())).toEqual({ jobId, status: 'queued' });
+    expect(yield* Effect.promise(() => retry.json())).toEqual({ jobId, status: 'queued' });
     expect(calls.map(({ path }) => path)).toEqual([
       `${releasePath}/reads/symmy-job-status`,
       `${releasePath}/symmy-integration/actions/admit-symmy-job`,
@@ -1468,7 +1493,7 @@ it.effect('preserves governed execution outcomes and pending recovery without ow
     const deniedResult = { ...denied, outcome: 'not_accepted' };
     const uncertainResult = { ...uncertain, outcome: 'not_accepted' };
     const cases = [
-      { expected: { items: [], status: 'admitted' }, items: [], phase: 'admitted' },
+      { expected: { items: [], status: 'queued' }, items: [], phase: 'admitted' },
       { expected: { items: [acceptedResult], status: 'running' }, items: [accepted], phase: 'running' },
       {
         expected: { items: [acceptedResult, deniedResult], status: 'blocked' },

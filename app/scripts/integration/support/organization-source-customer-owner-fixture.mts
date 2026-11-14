@@ -310,7 +310,7 @@ export const organizationSourceFixture = {
 } as const;
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 export const OrganizationSourceEffectObservationSchema = Schema.Struct({
   effectId: SymmyEffectIdSchema,
