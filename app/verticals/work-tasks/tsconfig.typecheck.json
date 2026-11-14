@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tsconfig.lint-defaults.json",
   "compilerOptions": {
     "noEmit": true,
     "incremental": true,
@@ -10,7 +10,7 @@
     "*.ts",
     "*.tsx",
     "scripts",
-    "tests"
+    "tests/**/*.tsx"
   ],
   "exclude": [
     "node_modules",

@@ -1,13 +1,9 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tsconfig.lint-defaults.json",
   "compilerOptions": {
     "noEmit": true,
     "incremental": true,
-    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__core-runtime__typecheck.tsbuildinfo",
-    "customConditions": [
-      "node"
-    ],
-    "skipLibCheck": true
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__core-runtime__typecheck.tsbuildinfo"
   },
   "include": [
     "*.mts",

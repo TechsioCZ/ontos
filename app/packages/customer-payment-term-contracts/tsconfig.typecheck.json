@@ -1,12 +1,9 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tsconfig.lint-defaults.json",
   "compilerOptions": {
     "noEmit": true,
     "incremental": true,
-    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__customer-payment-term-contracts__typecheck.tsbuildinfo",
-    "types": [
-      "node"
-    ]
+    "tsBuildInfoFile": "../../node_modules/.cache/tsrs/packages__customer-payment-term-contracts__typecheck.tsbuildinfo"
   },
   "include": [
     "*.mts",

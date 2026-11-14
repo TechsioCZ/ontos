@@ -309,6 +309,18 @@
     },
     {
       "path": "packages/shared-contracts/tooling"
+    },
+    {
+      "path": "apps/shell-super-app/tests"
+    },
+    {
+      "path": "apps/shell-super-app/tests/integration"
+    },
+    {
+      "path": "packages/shared-contracts/tests"
+    },
+    {
+      "path": "verticals/work-tasks/tests"
     }
   ]
 }
