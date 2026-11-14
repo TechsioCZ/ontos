@@ -226,7 +226,7 @@
     "lefthook": "^2.1.10",
     "miniflare": "5.20260921.0-alpha",
     "oxc-parser": "0.147.0",
-    "oxfmt": "0.78.0",
+    "oxfmt": "0.66.0",
     "oxlint": "1.93.0",
     "oxlint-plugin-react-doctor": "0.9.12",
     "tsrs": "0.25.0-ts7.1.0-beta",
