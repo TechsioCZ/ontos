@@ -153,6 +153,7 @@ it('runs the whole application in the app container through native Node, from th
     'app/akros-storefront/src/catalog-import',
     'app/.zerops/runtime/outbox-worker-host',
     'app/.zerops/bun',
+    'app/.zerops/state',
   ]);
   for (const branch of [
     ['deploy', 'readinessCheck'],
@@ -207,6 +208,10 @@ it('ships checksum-pinned Bun with the native Node Shell default and no runtime 
   );
   expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
     `mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'`,
+  );
+  // The boot record's directory ships with an empty record; the running container never creates it.
+  expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
+    `mkdir -p 'app/.zerops/state' && printf '[]' >'app/.zerops/state/module-credential-boots.json'`,
   );
   expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME_DEFAULT'])).toBe('node');
   expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBeUndefined();

@@ -1037,6 +1037,7 @@ jobs:
           fi
           sh scripts/install-zerops-bun.sh 1.4.4 glibc
           mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
+          mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json
 
       - name: Run the assembled stage migrator artifact against the fresh database
         if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
@@ -1256,6 +1257,7 @@ jobs:
           fi
           sh scripts/install-zerops-bun.sh 1.4.4 glibc
           mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
+          mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json
 
       - name: Prove the fresh-database preparation and dump the seed
         if: needs.ci-plan.outputs.mode == 'full' || steps.seed-cache.outputs.cache-hit != 'true'

@@ -1573,8 +1573,10 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
   const deployFiles = packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles ?? [];
   expect(deployFiles.length).toBeGreaterThan(0);
   expect(deployFiles.every((file) => file.startsWith('app/'))).toBe(true);
-  // The Zerops build creates these two; every job that assembles the artifact provisions them before the proof.
-  expect(deployFiles).toEqual(expect.arrayContaining(['app/.zerops/runtime/outbox-worker-host', 'app/.zerops/bun']));
+  // The Zerops build creates these three; every job that assembles the artifact provisions them before the proof.
+  expect(deployFiles).toEqual(
+    expect.arrayContaining(['app/.zerops/runtime/outbox-worker-host', 'app/.zerops/bun', 'app/.zerops/state']),
+  );
   const ProofJobsSchema = Schema.Struct({
     jobs: Schema.Struct({
       [INTEGRATION_SEED_PROOF_JOB]: Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) }),
@@ -1596,6 +1598,9 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
     expect(steps[provision]?.run).toContain('sh scripts/install-zerops-bun.sh 1.4.4 glibc');
     expect(steps[provision]?.run).not.toContain('musl');
     expect(steps[provision]?.run).toContain('zerops:materialize --app outbox-worker-host');
+    expect(steps[provision]?.run).toContain(
+      "mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json",
+    );
   }
   const artifact = mkdtempSync(path.join(os.tmpdir(), 'ontos-existing-migrator-artifact-'));
   const marker = path.join(artifact, 'preserved-owner-data');

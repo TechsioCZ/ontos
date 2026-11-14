@@ -156,6 +156,9 @@ zerops:
         - cd app && node scripts/verify-zerops-workspace-install.mts
         - cd app && sh scripts/zerops/build-app.sh
         - mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'
+        # The app host records its boots in .zerops/state (scripts/zerops/app-host.mts, HOST_BOOT_RECORD). It ships with an
+        # empty record, so the running container never has to create the directory.
+        - mkdir -p 'app/.zerops/state' && printf '[]' >'app/.zerops/state/module-credential-boots.json'
       # Keep native TS imports, migrations and owner-local drizzle-kit executables, including dev dependencies.
       # Do NOT ship the unit cache, build logs, storefront source/builds, docs or agent workspaces.
       deployFiles:
@@ -179,6 +182,7 @@ zerops:
         - app/akros-storefront/src/catalog-import
         - app/.zerops/runtime/outbox-worker-host
         - app/.zerops/bun
+        - app/.zerops/state
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
       cache:
         - app/.zerops/unit-cache

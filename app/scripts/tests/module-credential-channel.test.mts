@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -6,6 +6,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, Exit, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
+import { parse } from 'yaml';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 import { HostedModuleCredentialsSchema } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
@@ -17,6 +18,7 @@ import {
   AppHostError,
   captureChannel,
   healModuleCredentialsOnce,
+  HOST_BOOT_RECORD,
   makeCredentialHolder,
   makeReplacedKeyLedger,
   planModuleCredentialHealing,
@@ -601,21 +603,29 @@ describe('module credential healing', () => {
   );
 });
 
+const BOOTS_PREFIX = 'module-credential-boots-';
+const BOOTS_FILE = 'boots.json';
+const AppDeployFilesSchema = Schema.Struct({
+  zerops: Schema.Array(
+    Schema.Struct({ build: Schema.Struct({ deployFiles: Schema.Array(Schema.String) }), setup: Schema.String }),
+  ),
+});
+
 const boot = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 
 describe("a container's record of its host boots", () => {
   it.live('names only the ended boots this container recorded, never another container’s', () =>
     Effect.acquireUseRelease(
-      Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'module-credential-boots-'))),
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), BOOTS_PREFIX))),
       (directory) =>
         Effect.gen(function* bootRecord() {
-          const file = path.join(directory, 'state', 'boots.json');
+          const file = path.join(directory, 'state', BOOTS_FILE);
           // A new container (every deploy) has no record: it names no earlier boot.
           expect(yield* recordHostBoot(file, boot(1))).toEqual([]);
           expect(yield* recordHostBoot(file, boot(2))).toEqual([boot(1)]);
           expect(yield* recordHostBoot(file, boot(3))).toEqual([boot(1), boot(2)]);
           // Another container's record is its own file: it never sees these boots.
-          expect(yield* recordHostBoot(path.join(directory, 'other', 'boots.json'), boot(9))).toEqual([]);
+          expect(yield* recordHostBoot(path.join(directory, 'other', BOOTS_FILE), boot(9))).toEqual([]);
           // The record stays bounded.
           for (let index = 4; index <= 30; index += 1) {
             yield* recordHostBoot(file, boot(index));
@@ -628,6 +638,39 @@ describe("a container's record of its host boots", () => {
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live('a boot it cannot write is reported and the host goes on, naming the boots it could read', () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), BOOTS_PREFIX))),
+      (directory) =>
+        Effect.gen(function* unwritableRecord() {
+          const state = path.join(directory, 'state');
+          mkdirSync(state);
+          const file = path.join(state, BOOTS_FILE);
+          writeFileSync(file, JSON.stringify([boot(1)]));
+          chmodSync(file, 0o400);
+          chmodSync(state, 0o500);
+          expect(yield* recordHostBoot(file, boot(2))).toEqual([boot(1)]);
+          expect(readFileSync(file, 'utf-8')).toBe(JSON.stringify([boot(1)]));
+          // A directory it may not create in fails the same way: no earlier boot, and no failure.
+          expect(yield* recordHostBoot(path.join(state, 'nested', BOOTS_FILE), boot(3))).toEqual([]);
+        }),
+      (directory) =>
+        Effect.sync(() => {
+          chmodSync(path.join(directory, 'state'), 0o700);
+          rmSync(directory, { force: true, recursive: true });
+        }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("ships the record's directory with the app, so the running container never creates it", () => {
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    expect(path.relative(workspace, path.dirname(HOST_BOOT_RECORD))).toBe('.zerops/state');
+    const zerops = Schema.decodeUnknownSync(AppDeployFilesSchema)(
+      parse(readFileSync(path.join(workspace, 'zerops.yaml'), 'utf-8')),
+    );
+    expect(zerops.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles).toContain('app/.zerops/state');
+  });
 });
 
 const BOOT_ORDER_KEY = 'boot-order-key';
