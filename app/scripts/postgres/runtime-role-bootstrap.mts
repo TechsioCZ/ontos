@@ -329,6 +329,14 @@ export const grantSharedRuntimeRole = (
       yield* query(client, 'revoke all on table core.application_composition_durable_work from public, ontos_runtime');
       yield* query(client, 'grant select on table core.application_composition_durable_work to ontos_runtime');
     }
+    // The drain abandonment ledger, like the resolution ledger below, is readable but never writable by runtimes.
+    if (yield* exists(client, tableExistsQuery, 'core.application_composition_drain_abandonments')) {
+      yield* query(
+        client,
+        'revoke all on table core.application_composition_drain_abandonments from public, ontos_runtime',
+      );
+      yield* query(client, 'grant select on table core.application_composition_drain_abandonments to ontos_runtime');
+    }
     // The operator-only dead-delivery resolution ledger stays readable but never writable by runtimes.
     if (yield* exists(client, tableExistsQuery, 'core.outbox_delivery_resolutions')) {
       yield* query(client, 'revoke all on table core.outbox_delivery_resolutions from public, ontos_runtime');
