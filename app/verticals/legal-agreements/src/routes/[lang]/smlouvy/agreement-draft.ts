@@ -1,6 +1,6 @@
 // The draft of the contract form: a new contract, or the period of a draft contract. Pure, so the form and its
 // tests share one definition of what is sent.
-import { Option, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import type { AgreementsCommand } from '../../../../shared/actions/apply-command.ts';
 import { ContractSchema } from '../../../../shared/apis/records.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
@@ -26,6 +26,48 @@ export const createDraftOf = (kind: Contract['kind']): CreateDraft => ({
   kind,
   occupancyId: '',
   startDate: DEFAULT_START_DATE,
+});
+
+/** A successor gets its own period, never the new-contract form's fixed demonstration dates. */
+export const renewalDraftOf = (record: Contract, today: string): CreateDraft => {
+  const earliest = DateTime.makeUnsafe(record.startDate).pipe(DateTime.add({ days: 1 }), DateTime.formatIsoDateUtc);
+  const startDate = record.endDate ?? (today > earliest ? today : earliest);
+  return {
+    customerId: '',
+    endDate: DateTime.makeUnsafe(startDate).pipe(DateTime.add({ years: 1 }), DateTime.formatIsoDateUtc),
+    kind: record.kind,
+    occupancyId: '',
+    startDate,
+  };
+};
+
+export const renewalPeriodValid = (draft: CreateDraft, previous: Contract): boolean =>
+  draft.startDate > previous.startDate &&
+  (previous.endDate === null || draft.startDate >= previous.endDate) &&
+  draft.endDate > draft.startDate;
+
+export const renewalCommandOf = (
+  draft: CreateDraft,
+  input: { readonly previous: Contract; readonly resourceId: string },
+): AgreementsCommand => ({
+  _tag: 'RenewContract',
+  contractRef: input.previous.contractRef,
+  successor: {
+    ...contractTerms(input.previous),
+    contractRef: { ...input.previous.contractRef, resourceId: input.resourceId },
+    counterpartyRef: input.previous.counterpartyRef,
+    endDate: draft.endDate,
+    kind: input.previous.kind,
+    lifecycleState: 'DRAFT',
+    note: input.previous.note,
+    occupancyRef: input.previous.occupancyRef,
+    propertyRef: input.previous.propertyRef,
+    renewalNoticeDate: null,
+    signatureState: 'NOT_SENT',
+    startDate: draft.startDate,
+    supersedesContractRef: input.previous.contractRef,
+    unitRef: input.previous.unitRef,
+  },
 });
 
 /**

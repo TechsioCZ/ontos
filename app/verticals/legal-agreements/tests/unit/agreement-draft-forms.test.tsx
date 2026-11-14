@@ -8,7 +8,12 @@ import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import type { Contract } from '../../shared/apis/records.ts';
-import { createAgreement, savePeriodDraft } from '../../src/routes/[lang]/smlouvy/agreements-command.ts';
+import {
+  createAgreement,
+  renewAgreement,
+  savePeriodDraft,
+} from '../../src/routes/[lang]/smlouvy/agreements-command.ts';
+import { renewalDraftOf } from '../../src/routes/[lang]/smlouvy/agreement-draft.ts';
 import type { CreateReferences } from '../../src/routes/[lang]/smlouvy/agreement-draft.ts';
 import { ContractCreatePanel } from '../../src/routes/[lang]/smlouvy/contract-create-panel.tsx';
 import { ContractPeriodPanel } from '../../src/routes/[lang]/smlouvy/contract-period-panel.tsx';
@@ -242,6 +247,57 @@ describe('period of a draft contract', () => {
 });
 
 describe('new contract', () => {
+  it.effect('renewal opens an independent valid period and sends only the dates the person saves', () =>
+    Effect.gen(function* renewalPeriodForm() {
+      const previous: Contract = { ...draftContract, endDate: '2030-01-31', lifecycleState: 'ACTIVE' };
+      yield* mount(
+        <ContractCreatePanel
+          customers={[]}
+          kind={previous.kind}
+          leases={[]}
+          onClose={() => {}}
+          onCreate={(draft) => renewAgreement(draft, { expectedRevision: 4, previous })}
+          onCreated={(resourceId) => created.push(resourceId)}
+          onKindChange={() => {}}
+          references={references}
+          renewal={previous}
+        />,
+      );
+      expect(field('contract-start-date').value).toBe('2030-01-31');
+      expect(field(endDate).value).toBe('2031-01-31');
+      expect(sent()).toEqual([]);
+      yield* type(endDate, '2027-10-05');
+      expect(button(labels.save).disabled).toBe(true);
+      yield* type(endDate, '2032-02-01');
+      yield* click(button(labels.save));
+      yield* waitUntil(() => created.length === 1);
+      expect(sent()).toHaveLength(1);
+      expect(sent()[0]).toMatchObject({
+        command: {
+          _tag: 'RenewContract',
+          contractRef,
+          successor: {
+            counterpartyRef,
+            endDate: '2032-02-01',
+            lifecycleState: 'DRAFT',
+            startDate: '2030-01-31',
+            supersedesContractRef: contractRef,
+          },
+        },
+      });
+    }),
+  );
+
+  it('initializes open-ended and leap-day renewals with valid independent dates', () => {
+    expect(renewalDraftOf({ ...draftContract, endDate: null }, '2030-02-01')).toMatchObject({
+      endDate: '2031-02-01',
+      startDate: '2030-02-01',
+    });
+    expect(renewalDraftOf({ ...draftContract, endDate: '2028-02-29' }, '2026-11-14')).toMatchObject({
+      endDate: '2029-02-28',
+      startDate: '2028-02-29',
+    });
+  });
   it.effect('an untouched form closes without asking', () =>
     Effect.gen(function* untouched() {
       yield* mountCreate();
