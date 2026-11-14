@@ -176,7 +176,6 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     deleteTarget,
     draft,
     flowData,
-    fromMonth,
     invoices,
     last,
     months,
