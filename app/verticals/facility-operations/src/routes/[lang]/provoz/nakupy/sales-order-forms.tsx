@@ -147,8 +147,14 @@ export const SalesInvoiceForm = ({
   issueInvoice,
   onDone,
   order,
+  retainedNumber,
   totalLabel,
-}: Omit<SalesOrderFormProps, 'run'> & { readonly issueInvoice: IssueInvoice; readonly totalLabel: string }) => {
+}: Omit<SalesOrderFormProps, 'run'> & {
+  readonly issueInvoice: IssueInvoice;
+  /** An invoice Finance already created for this order whose link failed: Uložit only links it, the dates are kept. */
+  readonly retainedNumber?: string | undefined;
+  readonly totalLabel: string;
+}) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const toast = useToast();
@@ -182,23 +188,29 @@ export const SalesInvoiceForm = ({
   });
   return (
     <SectionCard title={k('sales.actions.invoice')}>
-      <p className="text-fg-secondary text-sm">{k('sales.form.invoiceIntro', { customer: order.customer.name })}</p>
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          id="sales-invoice-issue"
-          label={k('sales.fields.issueDate')}
-          onChange={(event) => setIssueDate(event.target.value)}
-          type="date"
-          value={issueDate}
-        />
-        <FormInput
-          id="sales-invoice-due"
-          label={k('sales.fields.dueDate')}
-          onChange={(event) => setDueDate(event.target.value)}
-          type="date"
-          value={dueDate}
-        />
-      </div>
+      {retainedNumber === undefined ? (
+        <>
+          <p className="text-fg-secondary text-sm">{k('sales.form.invoiceIntro', { customer: order.customer.name })}</p>
+          <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+            <FormInput
+              id="sales-invoice-issue"
+              label={k('sales.fields.issueDate')}
+              onChange={(event) => setIssueDate(event.target.value)}
+              type="date"
+              value={issueDate}
+            />
+            <FormInput
+              id="sales-invoice-due"
+              label={k('sales.fields.dueDate')}
+              onChange={(event) => setDueDate(event.target.value)}
+              type="date"
+              value={dueDate}
+            />
+          </div>
+        </>
+      ) : (
+        <p className="text-fg-secondary text-sm">{k('sales.form.invoiceRetained', { number: retainedNumber })}</p>
+      )}
       <p className="font-semibold text-sm">{totalLabel}</p>
       <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>

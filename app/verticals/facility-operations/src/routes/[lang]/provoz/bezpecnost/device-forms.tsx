@@ -901,6 +901,8 @@ const InspectionSession = ({
         maxLength={4000}
         onChange={(event) => setNote(event.target.value)}
         rows={3}
+        // Marked while typing once the note is longer than what is kept; the typed text itself is never cut.
+        validateStatus={note.trim().length > inspectionNoteLimit ? 'error' : 'default'}
         value={note}
       />
     </PanelFrame>

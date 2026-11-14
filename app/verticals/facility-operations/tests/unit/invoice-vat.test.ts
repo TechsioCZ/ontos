@@ -14,14 +14,14 @@ const reference = {
   resourceType: 'commerce.tax.tax-rule-revision',
   tenantId: '70000000-0000-4000-8000-000000000020',
 };
-const taxRuleRevisionRef = Schema.decodeUnknownSync(InvoiceLineSchema)({
+const { taxRuleRevisionRef } = Schema.decodeUnknownSync(InvoiceLineSchema)({
   description: 'Service',
   quantity: 1,
   taxRuleRevisionRef: reference,
   unitPriceMinor: 10_000,
   vatClassification: CZ_VAT_STANDARD,
   vatRate: 21,
-}).taxRuleRevisionRef;
+});
 if (taxRuleRevisionRef === undefined) {
   throw new Error('The VAT fixture must carry its published revision');
 }

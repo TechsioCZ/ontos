@@ -92,6 +92,7 @@
       "issueDate": "Issue date",
       "dueDate": "Due date",
       "supplierDocumentNumber": "Supplier document number",
+      "supplierDocumentNumberRequired": "Enter the document number the supplier shows on the invoice.",
       "supplierDocumentVat": "VAT according to the supplier document",
       "selectVatRate": "Select a VAT rate",
       "vat": {
@@ -100,6 +101,7 @@
         "EXEMPT": "Exempt from VAT",
         "REVERSE_CHARGE": "Reverse charge",
         "NON_PAYER": "Supplier is not a VAT payer",
+        "loading": "Loading the VAT rates valid on the issue date…",
         "unavailable": "VAT cannot be verified for the issue date. Check the VAT settings in Finance."
       },
       "leaseAgreement": "Lease agreement",

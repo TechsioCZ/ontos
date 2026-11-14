@@ -19,6 +19,37 @@ import { formatAmount, todayIso } from './purchasing-model.ts';
 import { purchaseInvoiceCommandOf } from './purchase-invoice-command.ts';
 
 const saveFailure = 'Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.';
+
+type VatRead =
+  | { readonly choices: FinanceVatChoices; readonly on: string; readonly status: 'ready' }
+  | {
+      readonly cause: Effect.Error<ReturnType<typeof readFinanceVatChoices>>;
+      readonly on: string;
+      readonly status: 'unavailable';
+    };
+type Translate = ReturnType<typeof useModernI18n>['t'];
+interface FieldHint {
+  readonly helpText?: string;
+  readonly validateStatus?: 'error';
+}
+const noHint: FieldHint = {};
+
+/** What the VAT field says under itself: still reading, the read failed, or a choice is still missing. */
+const vatHint = (input: {
+  readonly issueDate: string;
+  readonly missing: boolean;
+  readonly read: VatRead | undefined;
+  readonly t: Translate;
+}): FieldHint => {
+  const { issueDate, missing, read, t } = input;
+  if (read?.status === 'unavailable') {
+    return { helpText: t('facility-operations.ui.vat.unavailable'), validateStatus: 'error' };
+  }
+  if (issueDate !== '' && read === undefined) {
+    return { helpText: t('facility-operations.ui.vat.loading') };
+  }
+  return missing ? { helpText: t('facility-operations.ui.selectVatRate'), validateStatus: 'error' } : noHint;
+};
 interface SubmitInvoiceDraftInput {
   readonly documentNumber: string;
   readonly dueDate: IsoDate;
@@ -30,11 +61,11 @@ interface SubmitInvoiceDraftInput {
   } & InvoiceVat)[];
   readonly onCreated: () => void;
   readonly order: PurchaseOrder;
-  readonly vat: InvoiceVat | undefined;
   readonly setError: (value: string | undefined) => void;
   readonly submitting: { current: boolean };
   readonly supplier: Supplier;
   readonly totalMinor: number;
+  readonly vat: InvoiceVat | undefined;
 }
 const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoiceDraft')(
   function* submitPurchaseInvoiceDraft(input: SubmitInvoiceDraftInput) {
@@ -45,11 +76,11 @@ const submitInvoiceDraft = Effect.fn('FacilityOperations.Purchasing.submitInvoic
       lines,
       onCreated,
       order,
-      vat,
       setError,
       submitting,
       supplier,
       totalMinor,
+      vat,
     } = input;
     if (submitting.current) {
       return 'failed' as const;
@@ -124,18 +155,16 @@ export const InvoiceDraftForm = ({
   const [documentNumber, setDocumentNumber] = useState('');
   const [dueDate, setDueDate] = useState(todayIso);
   const [vatKey, setVatKey] = useState('');
-  const [choices, setChoices] = useState<FinanceVatChoices>();
-  const [vatUnavailable, setVatUnavailable] = useState(false);
+  // The VAT choices Finance published for one issue date; a read for an older date is never shown for a newer one.
+  const [vatRead, setVatRead] = useState<VatRead>();
   useEffect(() => {
     const controller = new AbortController();
-    setChoices(undefined);
-    setVatUnavailable(false);
     if (issueDate !== '') {
       void browserRuntime.runPromiseExit(
         readFinanceVatChoices(issueDate).pipe(
           Effect.match({
-            onFailure: () => setVatUnavailable(true),
-            onSuccess: setChoices,
+            onFailure: (cause) => setVatRead({ cause, on: issueDate, status: 'unavailable' }),
+            onSuccess: (choices) => setVatRead({ choices, on: issueDate, status: 'ready' }),
           }),
         ),
         { signal: controller.signal },
@@ -143,7 +172,8 @@ export const InvoiceDraftForm = ({
     }
     return () => controller.abort();
   }, [issueDate]);
-  const vatOptions = choices?.on === issueDate ? incomingVatOptions(choices) : [];
+  const currentRead = vatRead?.on === issueDate ? vatRead : undefined;
+  const vatOptions = currentRead?.status === 'ready' ? incomingVatOptions(currentRead.choices) : [];
   const vat = vatOptions.find((candidate) => candidate.key === vatKey)?.vat;
   const submitting = useRef(false);
   const [error, setError] = useState<string>();
@@ -169,14 +199,20 @@ export const InvoiceDraftForm = ({
         lines,
         onCreated,
         order,
-        vat,
         setError,
         submitting,
         supplier,
         totalMinor,
+        vat,
       }),
     value: { documentNumber, dueDate, issueDate, vatKey },
   });
+  // Uložit stays held back until both are filled in; the save bar then points at the fields that say what is missing.
+  const missing = form.draft.status === 'invalid';
+  const documentNumberHint: FieldHint =
+    missing && documentNumber.trim() === ''
+      ? { helpText: t('facility-operations.ui.supplierDocumentNumberRequired'), validateStatus: 'error' }
+      : noHint;
   return (
     <SectionCard title={t('facility-operations.ui.prepareIncomingInvoice')}>
       <p className="text-fg-secondary text-sm">
@@ -194,6 +230,7 @@ export const InvoiceDraftForm = ({
         onChange={(event) => setDocumentNumber(event.target.value)}
         required
         value={documentNumber}
+        {...documentNumberHint}
       />
       <div className="flex flex-col gap-100">
         {order.lines.map((line) => (
@@ -227,6 +264,7 @@ export const InvoiceDraftForm = ({
         />
       </div>
       <Select
+        disabled={issueDate !== '' && currentRead === undefined}
         items={vatOptions.map((option) => ({
           displayValue: t(option.labelKey, { rate: option.vat.vatRate }),
           label: t(option.labelKey, { rate: option.vat.vatRate }),
@@ -237,8 +275,8 @@ export const InvoiceDraftForm = ({
         onValueChange={({ value }) => setVatKey(value[0] ?? '')}
         placeholder={t('facility-operations.ui.selectVatRate')}
         value={vatKey === '' ? [] : [vatKey]}
+        {...vatHint({ issueDate, missing: missing && vat === undefined, read: currentRead, t })}
       />
-      {vatUnavailable && <StatusText status="error">{t('facility-operations.ui.vat.unavailable')}</StatusText>}
       <p className="text-fg-secondary text-xs">
         Ceny objednávky se přebírají beze změny jako základ bez DPH. Zvolená sazba se použije pro všechny řádky; ověřte
         ji podle skutečného dokladu dodavatele.

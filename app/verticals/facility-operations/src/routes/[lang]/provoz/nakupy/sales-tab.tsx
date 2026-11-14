@@ -1,8 +1,9 @@
 import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
-import { SalesInvoicePreparationDenied, SalesInvoiceVatUnresolved } from './sales-invoice-preparation-denied.ts';
+import { SalesInvoicePreparationDenied } from './sales-invoice-preparation-denied.ts';
+import { SalesInvoiceVatUnresolved } from './sales-invoice-vat-unresolved.ts';
 import { SalesInvoiceSnapshotMissing } from './sales-invoice-snapshot-missing.ts';
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
-import { optionalField } from '../../../../../shared/domain/common.ts';
+import { IsoDateSchema, optionalField } from '../../../../../shared/domain/common.ts';
 // S06 prodej: nabídky zákazníkům → prodejní objednávky → dodání → vystavená faktura (návrh ve Financích).
 // The customer is a party-registry counterparty; the invoice is created by Finance from a snapshot of the order lines
 // and counterparty (CreateInvoiceDraft), so a later quote edit never changes an issued invoice.
@@ -28,7 +29,7 @@ import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Option, Predicate, Random, Result, Schema, pipe } from 'effect';
+import { Effect, Option, Predicate, Random, Result, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { canInvoiceSalesOrder, salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type {
@@ -915,7 +916,7 @@ export const SalesQuotePanel = ({
 /** Creates the issued invoice draft in Finance from a snapshot of the order, then links it back to the order. */
 const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSalesInvoice')(
   function* prepareSalesInvoice(input: IssueSalesInvoiceInput) {
-    const { order, issueDate, dueDate, pending } = input;
+    const { dueDate, issueDate, order, pending } = input;
     if (!canInvoiceSalesOrder(order)) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
     }
@@ -940,9 +941,9 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
       return yield* Effect.succeed(current);
     }
     const choices = yield* readFinanceVatChoices(issueDate);
-    const lines = yield* pipe(
+    const lines = yield* Effect.forEach(
       order.lines,
-      Effect.forEach((line) =>
+      (line) =>
         salesLineVat({ choices, issueDate, vatRate: line.vatRate }).pipe(
           Option.match({
             onNone: () => Effect.fail(new SalesInvoiceVatUnresolved({ orderId: order.id })),
@@ -955,7 +956,7 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
               }),
           }),
         ),
-      ),
+      { concurrency: 1 },
     );
     const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
     const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt], { concurrency: 1 });
@@ -996,25 +997,40 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
 );
 
 interface InvoiceIssueOutcome {
-  readonly reason?: 'link' | 'vat';
   readonly failure?:
     | Effect.Error<ReturnType<typeof prepareSalesInvoice>>
     | Extract<Effect.Success<ReturnType<RunCommand>>, { readonly ok: false }>;
   readonly number?: string;
   readonly ok: boolean;
+  readonly reason?: 'link' | 'vat';
 }
-const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIssueOutcome => ({
-  ok: false,
-  ...(failure !== undefined && Schema.is(SalesInvoiceVatUnresolved)(failure) ? { reason: 'vat' as const } : {}),
-  ...optionalField('failure', failure),
-});
+const isVatUnresolved = Schema.is(SalesInvoiceVatUnresolved);
+const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIssueOutcome => {
+  if (failure === undefined) {
+    return { ok: false };
+  }
+  if (isVatUnresolved(failure)) {
+    return { failure, ok: false, reason: 'vat' };
+  }
+  return { failure, ok: false };
+};
 
-interface IssueSalesInvoiceInput {
+/**
+ * Invoices Finance created for an order whose link back to the order has not gone through yet. The page keeps them,
+ * so the next Uložit links the same invoice even after the order panel was closed or reloaded.
+ */
+export interface RetainedSalesInvoices {
+  readonly get: (orderId: string) => FinanceInvoiceView | undefined;
+  readonly set: (orderId: string, invoice: FinanceInvoiceView) => void;
+}
+
+const SalesInvoiceDatesSchema = Schema.Struct({ dueDate: IsoDateSchema, issueDate: IsoDateSchema });
+type SalesInvoiceDates = typeof SalesInvoiceDatesSchema.Type;
+
+interface IssueSalesInvoiceInput extends SalesInvoiceDates {
   readonly busy: { current: boolean };
-  readonly dueDate: string;
-  readonly issueDate: string;
   readonly order: SalesOrder;
-  readonly pending: Map<string, FinanceInvoiceView>;
+  readonly pending: RetainedSalesInvoices;
   readonly run: RunCommand;
 }
 const linkPreparedInvoice = Effect.fn('FacilityOperations.Purchasing.linkPreparedInvoice')(
@@ -1061,7 +1077,7 @@ export const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueS
   },
 );
 
-const useIssueInvoice = (run: RunCommand, pending: Map<string, FinanceInvoiceView>) => {
+const useIssueInvoice = (run: RunCommand, pending: RetainedSalesInvoices) => {
   const busy = useRef(false);
   return (order: SalesOrder, issueDate: string, dueDate: string) =>
     issueSalesInvoice({ busy, dueDate, issueDate, order, pending, run });
@@ -1208,9 +1224,51 @@ const salesOrderCapabilities = (
       order.deliveries.length === 0,
     deliverable: (order.status === 'ordered' || order.status === 'partially_delivered') && remainingCount > 0,
     hasRemaining: remainingCount > 0 && persisted,
+    // An order is invoiced in full once; where the action was, the person reads which invoice already covers it.
+    invoiced: canWrite && financeWritable && persisted && order.invoices.length > 0,
     invoiceReadOnly: canWrite && financeReadOnly && persisted,
     invoiceWritable: canWrite && financeWritable && canInvoiceSalesOrder(order),
   };
+};
+
+/** The number of an invoice Finance already created for `order` whose link back to it failed, if there is one. */
+const retainedInvoiceNumber = (order: SalesOrder, pending: RetainedSalesInvoices): string | undefined => {
+  const retained = order.invoices.length === 0 ? pending.get(order.id) : undefined;
+  return retained === undefined ? undefined : (retained.number ?? retained.documentNumber);
+};
+
+/** Where the invoice action is, or was: an invoice still waiting for its link, the invoice that covers the order. */
+const SalesInvoiceNotices = ({
+  capabilities,
+  formOpen,
+  order,
+  retainedNumber,
+}: {
+  readonly capabilities: ReturnType<typeof salesOrderCapabilities>;
+  readonly formOpen: boolean;
+  readonly order: SalesOrder;
+  readonly retainedNumber: string | undefined;
+}) => {
+  const k = usePurchasingT();
+  return (
+    <>
+      {retainedNumber !== undefined && !formOpen && (
+        <StatusText showIcon status="warning">
+          {k('sales.invoicePendingLink', { number: retainedNumber })}
+        </StatusText>
+      )}
+      {capabilities.invoiced && (
+        <p className="text-fg-secondary text-xs">
+          {k('sales.invoiceAlreadyLinked', { numbers: order.invoices.map((entry) => entry.number).join(', ') })}
+        </p>
+      )}
+      {capabilities.invoiceReadOnly && (
+        <p className="text-fg-secondary text-xs" data-testid="sales-invoice-readonly">
+          Fakturu k této objednávce vystaví účetní nebo vedení ve Financích. Vaše role má ve Financích jen čtení.
+        </p>
+      )}
+    </>
+  );
 };
 
 export const SalesOrderPanel = ({
@@ -1226,7 +1284,7 @@ export const SalesOrderPanel = ({
   readonly onClose: () => void;
   readonly onOpenQuote: (id: string) => void;
   readonly orderId: string;
-  readonly pendingInvoices: Map<string, FinanceInvoiceView>;
+  readonly pendingInvoices: RetainedSalesInvoices;
   readonly run: RunCommand;
   readonly state: PurchasingState;
 }) => {
@@ -1249,6 +1307,7 @@ export const SalesOrderPanel = ({
   const done = (command: Parameters<RunCommand>[0], success: string) =>
     submitSalesOrderCommand({ k, run, setAction, setBusy, setError, t, toast }, command, success);
   const capabilities = salesOrderCapabilities(order, finance, canWrite, remainder.length);
+  const retainedNumber = retainedInvoiceNumber(order, pendingInvoices);
   return (
     <SidePanel
       description={order.customer.name}
@@ -1370,11 +1429,12 @@ export const SalesOrderPanel = ({
             )}
           </div>
         )}
-        {capabilities.invoiceReadOnly && (
-          <p className="text-fg-secondary text-xs" data-testid="sales-invoice-readonly">
-            Fakturu k této objednávce vystaví účetní nebo vedení ve Financích. Vaše role má ve Financích jen čtení.
-          </p>
-        )}
+        <SalesInvoiceNotices
+          capabilities={capabilities}
+          formOpen={action === 'invoice'}
+          order={order}
+          retainedNumber={retainedNumber}
+        />
         {action === 'deliver' && (
           <SalesDeliverForm onDone={() => setAction(undefined)} order={order} remainder={remainder} run={run} />
         )}
@@ -1386,6 +1446,7 @@ export const SalesOrderPanel = ({
             issueInvoice={issueInvoice}
             onDone={() => setAction(undefined)}
             order={order}
+            retainedNumber={retainedNumber}
             totalLabel={k(withVatKey, { total: formatAmount(totals.totalMinor) })}
           />
         )}

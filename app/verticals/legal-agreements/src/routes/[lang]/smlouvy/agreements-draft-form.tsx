@@ -1,5 +1,6 @@
 // The contract form of the agreements page: a new contract, or the period of a draft contract.
 import type { Contract } from '../../../../shared/apis/records.ts';
+import type { RenewalDraft } from './agreement-draft.ts';
 import { ContractCreatePanel } from './contract-create-panel.tsx';
 import { ContractPeriodPanel } from './contract-period-panel.tsx';
 import type { useRecordsPage } from './use-agreements-records.ts';
@@ -12,7 +13,7 @@ const ContractCreateForm = ({
   state,
 }: {
   readonly kind: Contract['kind'];
-  readonly renewal?: Contract;
+  readonly renewal?: RenewalDraft | undefined;
   readonly state: PageState;
 }) => {
   const { t, unitName } = state;
@@ -46,10 +47,10 @@ const ContractCreateForm = ({
         occupancies: state.occupancies?.occupancies ?? [],
         units: state.properties?.units ?? [],
       }}
+      renewal={renewal}
       rentalFeedback={
         state.rentalFeedback === undefined ? undefined : t(`legal-agreements.demo.feedback.${state.rentalFeedback}`)
       }
-      {...(renewal === undefined ? {} : { renewal })}
     />
   );
 };
@@ -66,9 +67,9 @@ export const AgreementsDraftForm = ({ state }: { readonly state: PageState }) =>
   if (form.mode === 'renew') {
     return (
       <ContractCreateForm
-        key={form.contract.contractRef.resourceId}
-        kind={form.contract.kind}
-        renewal={form.contract}
+        key={form.renewal.previous.contractRef.resourceId}
+        kind={form.renewal.previous.kind}
+        renewal={form.renewal}
         state={state}
       />
     );
