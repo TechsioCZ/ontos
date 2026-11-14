@@ -196,6 +196,9 @@ const serveReadiness = Effect.fn('serveReadiness')(
   },
 );
 
+/** The schema verifier, as one part of its owner closure (`verify-application-db-schema.mts --part`). */
+const VERIFY_APPLICATION_DATABASE = 'scripts/verify-application-db-schema.mts';
+
 /**
  * Access catalog release activation: publishes the deployed catalog when it is newer, lets "Plný přístup" follow it
  * and records Novinky for every other role. It never fails the release: authorization then stays at the previous
@@ -273,10 +276,19 @@ const migrations = Effect.gen(function* migrationsEffect() {
   return yield* Effect.void;
 }).pipe(Effect.provide(OwnerMigrationPlannerLive(appDirectory).pipe(Layer.provide(Reactivity.layer))));
 
-/** Every owner's schema is verified before the access catalog release activation runs. */
+/**
+ * The foundation the activation stands on is proven first: the application catalog and journals, the database role
+ * manifest and Core's own schema verifier, which together cover every table and grant the activation reads or writes
+ * (Core's access tables, as the runtime role). The other owners' verifiers check schemas the activation never touches,
+ * so they and the activation run side by side. A failed owner verifier still fails this migrator, and so the boot,
+ * before anything is published and with the same message as before; the activation is then stopped like any child.
+ */
 const verificationAndActivation = Effect.gen(function* verificationAndActivationEffect() {
-  yield* runAppScript('scripts/verify-application-db-schema.mts');
-  return yield* activateAccessRelease;
+  yield* runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation']);
+  return yield* Effect.all([runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=owners']), activateAccessRelease], {
+    concurrency: 2,
+    discard: true,
+  });
 });
 
 const main = Effect.scoped(

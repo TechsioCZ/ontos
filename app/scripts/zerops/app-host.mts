@@ -2205,8 +2205,16 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // Keys can only be issued for registrations that exist: the platform registers every module's declared internal
     // workloads first (per tenant and company), so the boot's provisioning keys them in the same pass.
     yield* registerInternalWorkloads(release);
-    yield* provisionForRelease(release);
-    yield* verifyReleaseAccessIntent(releaseSnapshot);
+    // The release access proof and the key issuing run side by side. The proof reads every Tenant that serves people
+    // (intent in PostgreSQL, the projection in SpiceDB) after the registrations above, and writes nothing; the issuing
+    // writes only the Shell's key store and the platform tenant's module principals, which the proof never reads, and
+    // no relationship. The proof's outcome is held until the keys are handed over, as they were before it ran, and a
+    // refusal then stops this boot here, before publication, with the same failure.
+    const [, releaseAccessProof] = yield* Effect.all(
+      [provisionForRelease(release), Effect.exit(verifyReleaseAccessIntent(releaseSnapshot))],
+      { concurrency: 2 },
+    );
+    yield* releaseAccessProof;
     const revision = yield* publishSnapshot(releaseSnapshot);
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.

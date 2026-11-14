@@ -6,6 +6,7 @@ import {
   applicationCatalogExpectation,
   applicationCatalogMismatch,
   resolveApplicationVerificationSelection,
+  verifierPathsOfPart,
 } from '../verify-application-db-schema.mts';
 
 const stream = (ownerId: string, options: Partial<ApplicationMigrationStream> = {}): ApplicationMigrationStream => ({
@@ -169,4 +170,14 @@ it('preserves exact all-owner catalogs and only includes portal auth in primary 
       colocatedPortal,
     ),
   ).toBeUndefined();
+});
+
+it('splits the verifiers into the foundation (Core) and the other owners, together exactly the whole closure', () => {
+  const all = verifierPathsOfPart(inventory, 'all');
+  const foundation = verifierPathsOfPart(inventory, 'foundation');
+  const owners = verifierPathsOfPart(inventory, 'owners');
+  expect(all).toEqual(inventory.flatMap((owner) => owner.verifierPaths));
+  expect(foundation).toEqual(core.verifierPaths);
+  expect(owners).toEqual([...a.verifierPaths, ...b.verifierPaths, ...portal.verifierPaths]);
+  expect([...foundation, ...owners].toSorted()).toEqual([...all].toSorted());
 });

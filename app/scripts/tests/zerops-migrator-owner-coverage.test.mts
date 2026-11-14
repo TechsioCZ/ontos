@@ -55,12 +55,19 @@ for (const owner of [
   });
 }
 
-it('the migrator verifies only after every migration, then activates access', () => {
+it('the migrator verifies only after every migration, and activates access only after the foundation is verified', () => {
+  expect(migrator).toContain("const VERIFY_APPLICATION_DATABASE = 'scripts/verify-application-db-schema.mts';");
   expect(migrator).toContain('yield* Effect.andThen(migrations, verificationAndActivation)');
   const phase = migrator.slice(migrator.indexOf('const verificationAndActivation = Effect.gen('));
-  const verification = phase.indexOf("yield* runAppScript('scripts/verify-application-db-schema.mts');");
-  expect(verification).toBeGreaterThan(-1);
-  expect(phase.indexOf('return yield* activateAccessRelease;')).toBeGreaterThan(verification);
+  const foundation = phase.indexOf("yield* runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=foundation'])");
+  const together = phase.indexOf('return yield* Effect.all(');
+  expect(foundation).toBeGreaterThan(-1);
+  expect(together).toBeGreaterThan(foundation);
+  const parallel = phase.slice(together, phase.indexOf('concurrency: 2'));
+  expect(parallel).toContain("runAppScript(VERIFY_APPLICATION_DATABASE, ['--part=owners'])");
+  expect(parallel).toContain('activateAccessRelease');
+  // The activation appears nowhere else: it never runs before the foundation is proven.
+  expect(migrator.split('activateAccessRelease').length).toBe(3);
 });
 
 it('the migrator asks the pending-migration planner before every native owner migration', () => {
