@@ -941,3 +941,46 @@ it('rejects manual movements that are non-finite, unbounded or more precise than
     expect(encodedCommand({ ...command, delta })).toBe(false);
   }
 });
+
+it.effect('requires an explicit bounded SKU when a generated variant SKU would exceed the order contract', () =>
+  Effect.gen(function* boundedVariantSku() {
+    const created = yield* addProduct(empty, 'long-sku-product', 'P'.repeat(64), 1000);
+    const variant = { attributes: '', id: 'V'.repeat(300), name: 'Long identity', priceMinor: 1000 };
+    const command: CommandInput = { _tag: 'UpdateProduct', id: 'long-sku-product', patch: { variants: [variant] } };
+    const refused = yield* apply(created.state, command, 'too-long-generated-sku').pipe(Effect.flip);
+    expect(isConflict(refused)).toBe(true);
+    const accepted = yield* apply(
+      created.state,
+      {
+        _tag: 'UpdateProduct',
+        id: 'long-sku-product',
+        patch: { variants: [{ ...variant, sku: 'S'.repeat(64) }] },
+      },
+      'explicit-bounded-sku',
+    );
+    expect(accepted.state.products[0]?.variants?.[0]?.sku).toHaveLength(64);
+    const stocked = yield* apply(
+      accepted.state,
+      {
+        _tag: 'RecordStockMovement',
+        productId: 'long-sku-product',
+        variantId: variant.id,
+        reason: 'RECEIPT',
+        delta: 1,
+      },
+      'bounded-sku-stock',
+    );
+    const ordered = yield* apply(
+      stocked.state,
+      {
+        _tag: 'CreateOrder',
+        id: 'bounded-sku-order',
+        partyId: 'party-1',
+        lines: [{ productId: 'long-sku-product', variantId: variant.id, quantity: 1 }],
+      },
+      'bounded-sku-order',
+    );
+    expect(Schema.is(MerchandiseStateSchema)(ordered.state)).toBe(true);
+    expect(ordered.state.orders[0]?.lines[0]?.sku).toHaveLength(64);
+  }),
+);

@@ -567,6 +567,20 @@ const nextVariantPriceHistory = (
     previous?.priceMinor === undefined ? change : { ...change, previousPriceMinor: previous.priceMinor };
   return Option.some([...(previous?.priceHistory ?? variant.priceHistory ?? []), entry]);
 };
+const variantSkuRequiredReason = 'Zadejte SKU varianty o délce nejvýše 64 znaků; automatické SKU je příliš dlouhé.';
+const orderSkuValid = Schema.is(OrderLineSchema.fields.sku);
+const checkedVariantSku = (product: Product, variant: ProductVariant, id: ProductVariant['id']) => {
+  const sku = variant.sku ?? `${product.sku}-${id ?? ''}`;
+  return orderSkuValid(sku)
+    ? Effect.succeed(sku)
+    : Effect.fail(
+        new MerchandiseLifecycleConflict({
+          code: 'merchandise_variant_sku_required',
+          reason: variantSkuRequiredReason,
+        }),
+      );
+};
+
 const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
   product: Product,
   incoming: readonly ProductVariant[],
@@ -590,8 +604,9 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
         }
         ids.add(id);
       }
-      if (variant.sku !== undefined) {
-        const key = variant.sku.trim().toLowerCase();
+      const sku = variant.priceMinor === undefined ? variant.sku : yield* checkedVariantSku(product, variant, id);
+      if (sku !== undefined) {
+        const key = sku.trim().toLowerCase();
         if (skus.has(key)) {
           return yield* conflict('Variant SKUs must be unique within the product');
         }
@@ -1167,6 +1182,9 @@ const sellableUnitOf = (
       return {
         issue: { ...ids, code: 'VARIANT_REQUIRED', message: `Vyberte prosím variantu produktu ${product.name}.` },
       };
+    }
+    if (!orderSkuValid(variant.sku)) {
+      return { issue: { ...ids, code: 'NOT_AVAILABLE', message: variantSkuRequiredReason } };
     }
     if (!variant.active) {
       return {

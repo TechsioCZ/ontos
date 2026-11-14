@@ -411,6 +411,7 @@
           "movementRecorded": "Movement recorded",
           "priceChanged": "Price changed",
           "receiptRecorded": "Receipt recorded",
+          "variantSkuRequired": "The generated variant SKU is too long. Enter an explicit variant SKU of at most 64 characters.",
           "variantBulkPriceUnsupported": "Bulk prices cannot be changed for products with sellable variants. Select only products without variants, or change each variant’s price in the product details.",
           "stockReconciliationRequired": "Reconcile the product stock before adding its first sellable variant. Reconcile a variant’s stock with a stock movement before removing it.",
           "rejected": "The action is not possible in the current state, for example because of insufficient stock. Check the values you entered.",

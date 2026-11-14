@@ -23,6 +23,9 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'variant-sku-required') {
+      return label('messages.variantSkuRequired');
+    }
     if (reason === 'variant-bulk-price-unsupported') {
       return label('messages.variantBulkPriceUnsupported');
     }
