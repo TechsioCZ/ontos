@@ -321,3 +321,23 @@ it('loads products by primary category for a rename, but not for an unrelated ca
   );
   expect(repositioned.productPrimaryCategoryIds).toBeUndefined();
 });
+
+it.effect('rejects a category slug already used elsewhere in the company, including unpublished categories', () =>
+  Effect.gen(function* categorySlugCollision() {
+    const create = {
+      _tag: 'CreateCategory',
+      id: categoryId('new-slug'),
+      name: 'New category',
+      parentId: Option.none(),
+      slug: 'srouby',
+    } as const;
+    expect(workingSetRequestOf(create, 'create-slug').categorySlug).toBe('srouby');
+    const refused = yield* createCategoryCommand(state, create).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+    const hidden = { ...state, categories: categories.map((category) => ({ ...category, published: false })) };
+    const hiddenRefusal = yield* createCategoryCommand(hidden, create).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(hiddenRefusal)).toBe(true);
+    const accepted = yield* createCategoryCommand(state, { ...create, slug: 'new-unique-slug' });
+    expect(accepted.state.categories?.at(-1)?.slug).toBe('new-unique-slug');
+  }),
+);

@@ -55,6 +55,7 @@ const FailureReasonSchema = Schema.Literals([
   'stock-reconciliation-required',
   'variant-bulk-price-unsupported',
   'variant-sku-required',
+  'category-slug-taken',
   RELOAD_REQUIRED,
   'unavailable',
 ]);
@@ -116,6 +117,9 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
       (problem): FailureReason => {
+        if (problem.code === 'merchandise_category_slug_taken') {
+          return 'category-slug-taken';
+        }
         if (problem.code === 'merchandise_variant_sku_required') {
           return 'variant-sku-required';
         }

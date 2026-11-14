@@ -23,6 +23,9 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'category-slug-taken') {
+      return label('messages.categorySlugTaken');
+    }
     if (reason === 'variant-sku-required') {
       return label('messages.variantSkuRequired');
     }

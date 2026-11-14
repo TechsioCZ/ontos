@@ -1245,6 +1245,8 @@ export interface WorkingSetRequest {
   readonly aiChanges?: boolean;
   /** Category rows by id, each with its ancestor chain (category path of a product move). */
   readonly categoryIds?: readonly string[];
+  /** Load scoped category slug collisions before creation. */
+  readonly categorySlug?: string;
   readonly lastOrderNumber?: boolean;
   /** Load every movement of the loaded products (stock checks and order ledgers). */
   readonly movements?: boolean;
@@ -1455,10 +1457,20 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
     request,
     loaded.map(({ product }) => product),
   );
+  const slugCategoryIds =
+    request.categorySlug === undefined
+      ? []
+      : yield* query(
+          db
+            .select({ id: categories.id })
+            .from(categories)
+            .where(and(whereScope(categories, scope), eq(categories.slug, request.categorySlug))),
+          'Category slug collisions could not be read',
+        );
   const [movements, loadedCategories] = yield* Effect.all(
     [
       query(Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 }), 'Stored movement does not decode'),
-      loadAncestorCategories(db, scope, categoryIds),
+      loadAncestorCategories(db, scope, [...(categoryIds ?? []), ...slugCategoryIds.map((category) => category.id)]),
     ],
     { concurrency: 1 },
   );
@@ -1485,7 +1497,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
         )).length > 0
       : undefined;
   let state: MerchandiseState = { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) };
-  if (categoryIds !== undefined) {
+  if (categoryIds !== undefined || request.categorySlug !== undefined) {
     state = { ...state, categories: loadedCategories };
   }
   if (request.aiChanges === true && head.aiChanges !== undefined) {

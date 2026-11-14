@@ -2158,6 +2158,7 @@ export const workingSetRequestOf = (
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       CreateCategory: (value): WorkingSetRequest => ({
+        categorySlug: value.slug,
         categoryIds: Option.match(value.parentId, {
           onNone: () => [value.id],
           onSome: (parentId) => [value.id, parentId],
