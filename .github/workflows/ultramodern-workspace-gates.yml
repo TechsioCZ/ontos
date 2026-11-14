@@ -26,6 +26,10 @@ on:
         description: Run every CI gate even if the merge queue already proved this commit.
         type: boolean
         default: false
+      keep:
+        description: On a candidate/* ref, do not let a newer candidate dispatch cancel this run, and cancel none.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,8 +41,14 @@ defaults:
   run:
     shell: bash
 
+# One candidate at a time: every candidate/* run shares one group, so a newer candidate dispatch cancels the older
+# candidate run instead of competing with it for the 20 runners. A run dispatched with `keep` gets a group of its own.
+# Every other ref keeps its own group; main is never cancelled.
 concurrency:
-  group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ startsWith(github.ref, 'refs/heads/candidate/')
+    && (inputs.keep && format('ultramodern-workspace-kept-{0}', github.run_id) || 'ultramodern-workspace-candidates')
+    || format('ultramodern-workspace-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
