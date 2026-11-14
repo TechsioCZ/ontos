@@ -114,15 +114,14 @@ const sourceCauseDescription = <E>(cause: Cause.Cause<E>): string => {
         ],
       }),
     );
-  return `${failures.join('\n').slice(0, 1_024)}\n${Cause.pretty(cause).slice(0, 3_072)}`.slice(0, 4_096);
+  return `${failures.join('\n').slice(0, 1024)}\n${Cause.pretty(cause).slice(0, 3072)}`.slice(0, 4096);
 };
 
 const createSourceConcurrently = Effect.fn('ReviewedMatchReuse.createSourceConcurrently')(
   function* createSourceConcurrently<A, E, R>(createSource: Effect.Effect<A, E, R>) {
-    const [createdExit, replayedExit] = yield* Effect.all(
-      [Effect.exit(createSource), Effect.exit(createSource)],
-      { concurrency: 2 },
-    );
+    const [createdExit, replayedExit] = yield* Effect.all([Effect.exit(createSource), Effect.exit(createSource)], {
+      concurrency: 2,
+    });
     if (Exit.isFailure(createdExit) || Exit.isFailure(replayedExit)) {
       const createdDescription = Exit.isFailure(createdExit)
         ? sourceCauseDescription(createdExit.cause)

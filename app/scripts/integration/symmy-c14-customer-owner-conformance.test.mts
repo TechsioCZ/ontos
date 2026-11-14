@@ -513,25 +513,28 @@ it.live(
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
         ).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-              admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
-                Effect.flatMap(Effect.logError),
-              ),
-              admin`select
+            Effect.all(
+              [
+                worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+                admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
+                  Effect.flatMap(Effect.logError),
+                ),
+                admin`select
                 (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
                 (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`.pipe(
-                Effect.flatMap(Effect.logError),
-              ),
-              admin`select action_key,status,count(*)::integer as count from core.action_invocations
+                  Effect.flatMap(Effect.logError),
+                ),
+                admin`select action_key,status,count(*)::integer as count from core.action_invocations
                 where tenant_id=${tenantId} and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')
                 group by action_key,status`.pipe(Effect.flatMap(Effect.logError)),
-            ], { concurrency: 1 }),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(completed.map(({ effect_key }) => effect_key)).toContain('party-create');
@@ -757,13 +760,16 @@ it.live(
           tenantId,
         }).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ], { concurrency: 1 }),
+            Effect.all(
+              [
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(dataPrivacy.personAdmission.partyRef).toEqual(partyReceipt.partyRef);
@@ -844,14 +850,17 @@ it.live(
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
         ).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              revisionWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ], { concurrency: 1 }),
+            Effect.all(
+              [
+                revisionWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(revisionEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
@@ -902,13 +911,16 @@ it.live(
             Effect.tap((response) =>
               response.status === 200
                 ? Effect.void
-                : Effect.all([
-                    shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-                    shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-                    ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                      diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-                    ),
-                  ], { concurrency: 1 }),
+                : Effect.all(
+                    [
+                      shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                      shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                      ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                        diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                      ),
+                    ],
+                    { concurrency: 1 },
+                  ),
             ),
           );
         expect(customerReadbackResponse.status).toBe(200);
@@ -1011,14 +1023,17 @@ it.live(
           (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
         ).pipe(
           Effect.tapError(() =>
-            Effect.all([
-              roundTripWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ], { concurrency: 1 }),
+            Effect.all(
+              [
+                roundTripWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+                shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+                ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                  diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+                ),
+              ],
+              { concurrency: 1 },
+            ),
           ),
         );
         expect(roundTripEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);

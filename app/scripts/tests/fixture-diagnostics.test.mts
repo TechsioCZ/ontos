@@ -8,8 +8,8 @@ const secretKey = ['pass', 'word'].join('');
 const secretValue = 'fixture-credential-value';
 
 it('strips terminal formatting without dropping the owner guard message', () => {
-  const escape = String.fromCodePoint(27);
-  expect(fixtureDiagnosticTail(`${escape}[31m${guardMessage}${escape}[0m`)).toBe(guardMessage);
+  const escapeCharacter = String.fromCodePoint(27);
+  expect(fixtureDiagnosticTail(`${escapeCharacter}[31m${guardMessage}${escapeCharacter}[0m`)).toBe(guardMessage);
 });
 
 it('keeps the final owner refusal and guard messages within a bounded diagnostic tail', () => {

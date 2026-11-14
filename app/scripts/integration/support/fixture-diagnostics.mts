@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect';
 
 const encodeDiagnosticJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 export const encodeFixtureOwnerDiagnostics = Schema.encodeEffect(
-  Schema.fromJsonString(Schema.Array(Schema.Struct({ appId: Schema.String, diagnostic: Schema.String }))),
+  Schema.fromJsonString(Schema.Array(Schema.Struct({ diagnostic: Schema.String, owner: Schema.String }))),
 );
 
 /** Redact credentials before retaining at most 60 lines and 4096 characters. */
@@ -27,7 +27,7 @@ export const collectFixtureDiagnostics = (diagnostics: ReadonlyMap<string, Effec
   Effect.forEach(
     [...diagnostics],
     ([appId, diagnostic]) =>
-      diagnostic.pipe(Effect.map((text) => ({ appId, diagnostic: fixtureDiagnosticTail(text) }))),
+      diagnostic.pipe(Effect.map((text) => ({ diagnostic: fixtureDiagnosticTail(text), owner: appId }))),
     { concurrency: 1 },
   );
 

@@ -581,24 +581,27 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
       );
-    const dependencyDiagnostics = Effect.all([
-      worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-      shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-      ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-        diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-      ),
-      admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
-        Effect.flatMap(Effect.logError),
-      ),
-      admin`select
+    const dependencyDiagnostics = Effect.all(
+      [
+        worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+        shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+        ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+          diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+        ),
+        admin`select effect_key,state,outcome->>'status' as outcome_status from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
+          Effect.flatMap(Effect.logError),
+        ),
+        admin`select
                 (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
                 (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`.pipe(
-        Effect.flatMap(Effect.logError),
-      ),
-      admin`select action_key,status,count(*)::integer as count from core.action_invocations
+          Effect.flatMap(Effect.logError),
+        ),
+        admin`select action_key,status,count(*)::integer as count from core.action_invocations
                 where tenant_id=${tenantId} and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')
                 group by action_key,status`.pipe(Effect.flatMap(Effect.logError)),
-    ], { concurrency: 1 });
+      ],
+      { concurrency: 1 },
+    );
     const completed = yield* observeCustomerFixtureUntil(
       ledger.pipe(
         Effect.flatMap((rows) =>

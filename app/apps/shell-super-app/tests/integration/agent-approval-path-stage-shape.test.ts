@@ -1356,7 +1356,11 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
-  const installed = yield* inShell(ShellInstalledModuleCatalog.use((catalog) => catalog.load));
+  const installed = yield* inShell(
+    Effect.gen(function* admittedCatalog() {
+      return yield* (yield* ShellInstalledModuleCatalog).load;
+    }),
+  );
   const carrierRows = moduleCarriers(installed).filter(
     ({ declaration, moduleId }) => admittedModule(moduleId) && leavesEvidence(declaration),
   ).length;
