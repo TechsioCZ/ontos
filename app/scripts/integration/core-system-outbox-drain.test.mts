@@ -71,6 +71,10 @@ const ALL_CORE_WORKERS = [...coreSystemOutboxWorkers, ...corePeopleSearchOutboxW
 const QUIESCENT_WINDOW_MS = 30_000;
 /** A tenant-module worker key the fixture composition never approves, so nothing can consume it. */
 const ABSENT_WORKER_KEY = 'commerce.merchandise.project-offer';
+/** The tenant module the fixture never installs. */
+const ABSENT_CONSUMER = 'commerce.merchandise';
+/** How every refusal before admission closes reads. */
+const REFUSED_BEFORE_ADMISSION = 'drain was not started: durable admission is unchanged';
 
 const snapshotFor = (buildMarker: string, validitySeconds: number) =>
   Effect.gen(function* buildSnapshot() {
@@ -242,14 +246,12 @@ const writeUnclaimableDelivery = (f: DrainFixture) =>
       return yield* Effect.die('the fixture message is missing');
     }
     yield* f.admin.executor.insert(outboxDeliveries).values({
-      consumerModuleKey: 'commerce.merchandise',
+      consumerModuleKey: ABSENT_CONSUMER,
       outboxMessageId: message.id,
       workerKey: ABSENT_WORKER_KEY,
     });
+    return yield* Effect.void;
   });
-
-const reasonOf = (failure: unknown) =>
-  Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
 
 it.layer(services, { excludeTestServices: true })('core-system Outbox claim, carry-over and drain', (suite) => {
   suite.effect('claims core lifecycle work in a tenant that has no core module state', () =>
@@ -353,7 +355,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A tenant-module delivery whose module is not installed: it can never be claimed and never carries over.
       yield* f.runtime
         .update(outboxDeliveries)
-        .set({ consumerModuleKey: 'commerce.merchandise', workerKey: ABSENT_WORKER_KEY })
+        .set({ consumerModuleKey: ABSENT_CONSUMER, workerKey: ABSENT_WORKER_KEY })
         .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
       const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
 
@@ -363,7 +365,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       );
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
-      expect(reason).toContain('drain was not started: durable admission is unchanged');
+      expect(reason).toContain(REFUSED_BEFORE_ADMISSION);
       expect(reason).toContain('no-eligible-consumer');
       expect(reason).toContain(`--worker-key ${ABSENT_WORKER_KEY}`);
 
@@ -406,7 +408,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // The descriptor differs, so this release cannot carry the row over, and nothing in the authority row says
       // whether the retiring release can claim it. The pre-flight therefore assumes no live consumer and refuses
       // before admission closes, instead of starting a drain that might stall with reads refused.
-      expect(reason).toContain('drain was not started: durable admission is unchanged');
+      expect(reason).toContain(REFUSED_BEFORE_ADMISSION);
       expect(reason).toContain(`no-eligible-consumer: --tenant-id ${f.tenantId}`);
       expect(reason).toContain(corePrincipalLifecycleSubscription.workerKey);
       expect(yield* authorityRow(f.runtime)).toMatchObject({
@@ -454,7 +456,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // A tenant-module delivery with no installed module: the pre-flight blocks and the verdict turns to no.
       yield* f.runtime
         .update(outboxDeliveries)
-        .set({ consumerModuleKey: 'commerce.merchandise', workerKey: ABSENT_WORKER_KEY })
+        .set({ consumerModuleKey: ABSENT_CONSUMER, workerKey: ABSENT_WORKER_KEY })
         .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
       const blocked = yield* listDrainWork(f.runtime, {
         budgetMs,
@@ -514,7 +516,10 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
             .insert(outboxMessages)
             .values({
               domainEventId: Option.getOrThrow(Option.fromNullishOr(event)).id,
-              payloadJson: { data: { principalId: f.tenantId, state: 'disabled', tenantId: f.tenantId }, schemaVersion: 1 },
+              payloadJson: {
+                data: { principalId: f.tenantId, state: 'disabled', tenantId: f.tenantId },
+                schemaVersion: 1,
+              },
               producerModuleKey: corePrincipalLifecycleSubscription.producerModuleKey,
               tenantId: f.tenantId,
               topic: corePrincipalLifecycleSubscription.topic,
@@ -543,7 +548,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         Effect.flip,
       );
       const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
-      expect(reason).toContain('drain was not started: durable admission is unchanged');
+      expect(reason).toContain(REFUSED_BEFORE_ADMISSION);
       expect(reason).toContain('without being matched');
       expect(yield* authorityRow(f.runtime)).toMatchObject({
         durableWorkAdmission: 'open',
@@ -715,7 +720,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
       // `outbox-dead-delivery-drain.test.mts`, which claims and settles exactly such deliveries.)
       yield* f.admin.executor
         .update(outboxDeliveries)
-        .set({ consumerModuleKey: 'commerce.merchandise' })
+        .set({ consumerModuleKey: ABSENT_CONSUMER })
         .where(eq(outboxDeliveries.workerKey, corePrincipalLifecycleSubscription.workerKey));
       expect(Option.isNone(yield* claimAsRetiringHost(f))).toBe(true);
 
@@ -776,7 +781,9 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         Effect.flip,
       );
       // An unreadable pre-flight is no evidence the drain is safe: nothing moved, and the old release serves.
-      expect(reasonOf(failure)).toContain('pre-flight could not read the outstanding Outbox work');
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '').toContain(
+        'pre-flight could not read the outstanding Outbox work',
+      );
       expect(yield* authorityRow(f.runtime)).toMatchObject({
         durableWorkAdmission: 'open',
         phase: 'active',
@@ -786,38 +793,41 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
     }),
   );
 
-  suite.effect('re-checks at the enter-draining fence and reopens admission when work arrived after the pre-flight', () =>
-    Effect.gen(function* rechecksAtTheFence() {
-      const f = yield* fixture();
-      // A short freshness lease bounds the wait, so without the re-check this test fails fast instead of hanging.
-      yield* f.admin.executor
-        .update(applicationCompositionAuthority)
-        .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
-      const calls = yield* Ref.make(0);
-      // `verifyInitialCutover` runs first right before the enter-draining fence, after the pre-flight passed and
-      // durable admission closed: exactly the window in which new work escapes a point-in-time check.
-      const arriveAfterPreflight = Effect.gen(function* arriveOnFirstCall() {
-        if ((yield* Ref.updateAndGet(calls, (seen) => seen + 1)) === 1) {
-          yield* writeUnclaimableDelivery(f);
-        }
-      });
-      const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
-      const failure = yield* publishApplicationCompositionAuthoritySnapshot(next, Effect.void, arriveAfterPreflight).pipe(
-        Effect.provide(f.layer),
-        Effect.flip,
-      );
-      const reason = reasonOf(failure);
-      expect(reason).toContain('drain was not started');
-      expect(reason).toContain(`--worker-key ${ABSENT_WORKER_KEY}`);
-      expect(reason).toContain('Durable admission was reopened');
-      // The authority is exactly as it was before the publication began: active, admission open, same revision.
-      expect(yield* authorityRow(f.runtime)).toMatchObject({
-        durableWorkAdmission: 'open',
-        phase: 'active',
-        revision: f.old.composition.revision,
-      });
-      return yield* Effect.void;
-    }),
+  suite.effect(
+    're-checks at the enter-draining fence and reopens admission when work arrived after the pre-flight',
+    () =>
+      Effect.gen(function* rechecksAtTheFence() {
+        const f = yield* fixture();
+        // A short freshness lease bounds the wait, so without the re-check this test fails fast instead of hanging.
+        yield* f.admin.executor
+          .update(applicationCompositionAuthority)
+          .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+        const calls = yield* Ref.make(0);
+        // `verifyInitialCutover` runs first right before the enter-draining fence, after the pre-flight passed and
+        // durable admission closed: exactly the window in which new work escapes a point-in-time check.
+        const arriveAfterPreflight = Effect.gen(function* arriveOnFirstCall() {
+          if ((yield* Ref.updateAndGet(calls, (seen) => seen + 1)) === 1) {
+            yield* writeUnclaimableDelivery(f);
+          }
+        });
+        const next = yield* snapshotFor(`${FIXTURE_NAME}-new`, 7200);
+        const failure = yield* publishApplicationCompositionAuthoritySnapshot(
+          next,
+          Effect.void,
+          arriveAfterPreflight,
+        ).pipe(Effect.provide(f.layer), Effect.flip);
+        const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
+        expect(reason).toContain('drain was not started');
+        expect(reason).toContain(`--worker-key ${ABSENT_WORKER_KEY}`);
+        expect(reason).toContain('Durable admission was reopened');
+        // The authority is exactly as it was before the publication began: active, admission open, same revision.
+        expect(yield* authorityRow(f.runtime)).toMatchObject({
+          durableWorkAdmission: 'open',
+          phase: 'active',
+          revision: f.old.composition.revision,
+        });
+        return yield* Effect.void;
+      }),
   );
 
   suite.effect('gives up after the last re-drain and says which phase the authority is left in', () =>
@@ -839,7 +849,7 @@ it.layer(services, { excludeTestServices: true })('core-system Outbox claim, car
         Effect.provide(f.layer),
         Effect.flip,
       );
-      const reason = reasonOf(failure);
+      const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
       expect(reason).toContain('re-drains, so the Application Composition transition was abandoned');
       expect(reason).toContain('left in draining');
       // Until the automatic return to `active` (G3) exists, an exhausted promotion leaves the authority draining;

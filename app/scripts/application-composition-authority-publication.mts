@@ -567,6 +567,24 @@ const reopenAfterRefusedDrain = Effect.fn('ApplicationCompositionAuthority.reope
   },
 );
 
+/**
+ * The enter-draining fence: under the exclusive authority lock, the same assessment as the pre-flight runs again,
+ * and the phase moves to `draining` only when nothing in it could stall the drain. Unmatched messages block here.
+ */
+const enterDrainingIfDrainable = Effect.fn('ApplicationCompositionAuthority.enterDrainingIfDrainable')(
+  function* enterDrainingIfDrainable(transaction: CoreTransaction, revision: string, budgetMs: number) {
+    const refusals = yield* drainStartRefusals(yield* assessDrainStart(transaction, budgetMs), true);
+    if (refusals.length > 0) {
+      return yield* unavailable([`${DRAIN_NOT_STARTED}:`, ...refusals].join(' '));
+    }
+    return yield* drainApplicationCompositionAuthority(transaction, revision);
+  },
+);
+
+/** Only a refusal the enter-draining fence itself raised reopens admission; any other failure passes through. */
+const reopenWhenRefused = (revision: string) => (error: ApplicationCompositionAuthorityError) =>
+  error.reason.startsWith(DRAIN_NOT_STARTED) ? reopenAfterRefusedDrain(revision, error.reason) : Effect.fail(error);
+
 interface CurrentApplicationCompositionAuthority {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -683,24 +701,8 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           yield* withApplicationCompositionPublicationProgress(
             'enter draining (authority fence)',
             withVerifiedLegacyTransition(current.revision, (transaction) =>
-              Effect.gen(function* enterDrainingIfDrainable() {
-                const refusals = yield* drainStartRefusals(yield* assessDrainStart(transaction, budgetMs), true);
-                if (refusals.length > 0) {
-                  return yield* unavailable([`${DRAIN_NOT_STARTED}:`, ...refusals].join(' '));
-                }
-                return yield* drainApplicationCompositionAuthority(transaction, current.revision);
-              }),
-            ).pipe(
-              Effect.catchIf(
-                (error) =>
-                  Schema.is(ApplicationCompositionAuthorityError)(error) && error.reason.startsWith(DRAIN_NOT_STARTED),
-                (error) =>
-                  reopenAfterRefusedDrain(
-                    current.revision,
-                    Schema.is(ApplicationCompositionAuthorityError)(error) ? error.reason : DRAIN_NOT_STARTED,
-                  ),
-              ),
-            ),
+              enterDrainingIfDrainable(transaction, current.revision, budgetMs),
+            ).pipe(Effect.catchTag('ApplicationCompositionAuthorityError', reopenWhenRefused(current.revision))),
           );
         }
         yield* Ref.set(drainScope, null);
