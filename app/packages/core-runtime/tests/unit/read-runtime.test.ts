@@ -2144,7 +2144,7 @@ it.effect(
   'admits an agent on its live connection only to its own proposal queue, never to another legacy read',
   Effect.fn(function* agentProposalQueueOnly() {
     const queue = yield* runAgentLegacyRead(agentProposalQueueReadKey, [selectedCompanyId]);
-    expect(queue.outcome).toMatchObject({ _tag: 'Success' });
+    expect(Exit.isSuccess(queue.outcome)).toBe(true);
     expect(queue.asked).toEqual([]);
     // The actors and profiles reads refuse the agent even in a company it may select, and never ask the retired
     // relation: no agent ever holds a tuple of it on v2.
