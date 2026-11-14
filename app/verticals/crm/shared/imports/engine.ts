@@ -1,4 +1,5 @@
 import { DateTime, Schema } from 'effect';
+import csImports from '../../locales/cs/crm-imports.json';
 import { ShortTextSchema } from '../domain/common.ts';
 import type { EntityId, PrincipalId } from '../domain/common.ts';
 // AREA: imports (C03, C04) — owned by the crm-imports lane.
@@ -7,7 +8,7 @@ import type { EntityId, PrincipalId } from '../domain/common.ts';
 //
 // Rules (CRM spec C03/C04):
 //  - an order is identified by source + external id; a later row for it adds a status event, never a second order;
-//  - an identical event (same event id, or same raw status + event time) is a duplicate and changes nothing;
+//  - an identical event never adds status history; newly supplied source details may still fill missing fields;
 //  - an event older than the last applied one, without an event time, or a different status at the same time is
 //    kept in the history, flagged "vyžaduje kontrolu" and NOT applied;
 //  - a new order is paired only through an approved external customer link; IČO / e-mail / name matches are only
@@ -168,6 +169,79 @@ const eventReviewReason = (existing: ImportedOrder, event: OrderStatusEvent): st
   return undefined;
 };
 
+/** An amount is meaningful only in its own snapshot's currency, including amounts on order lines. */
+const fillMoney = (existing: ImportedOrder, row: ParsedOrderRow) => {
+  const preserved = definedEntries({
+    amount: existing.amount,
+    currency: existing.currency,
+    lines: existing.lines,
+  });
+  const existingHasAmount = existing.amount !== undefined || existing.lines?.some((line) => line.amount !== undefined);
+  if (existing.currency === undefined && existingHasAmount) {
+    return { fields: preserved, reviewReason: csImports.imports.incompleteMoney };
+  }
+  if (existing.currency !== undefined && row.currency !== undefined && existing.currency !== row.currency) {
+    return { fields: preserved, reviewReason: csImports.imports.moneyConflict };
+  }
+  return {
+    fields: definedEntries({
+      amount: existing.amount ?? row.amount,
+      currency: existing.currency ?? row.currency,
+      lines: existing.lines ?? row.lines,
+    }),
+    reviewReason: undefined,
+  };
+};
+
+const crossSourceTwin = (orders: Iterable<ImportedOrder>, row: ParsedOrderRow) =>
+  row.number === undefined
+    ? undefined
+    : [...orders].find(
+        (order) => order.source !== row.source && order.number === row.number && order.duplicateOf === undefined,
+      );
+
+const duplicateReason = (twin: ImportedOrder, number: string | undefined) =>
+  `Stejné číslo objednávky ${number ?? ''} už přišlo ze zdroje ${twin.source}. Bez potvrzené korelace se nezapočítává do potvrzených souhrnů.`;
+
+const enrichmentFields = [
+  'amount',
+  'currency',
+  'customerEmail',
+  'customerName',
+  'customerRegNo',
+  'externalCustomerId',
+  'lines',
+  'number',
+  'orderedAt',
+] as const;
+
+const fillOrderDetails = (existing: ImportedOrder, row: ParsedOrderRow) =>
+  definedEntries({
+    customerEmail: existing.customerEmail ?? row.customerEmail,
+    customerName: existing.customerName ?? row.customerName,
+    customerRegNo: existing.customerRegNo ?? row.customerRegNo,
+    externalCustomerId: existing.externalCustomerId ?? row.externalCustomerId,
+    number: existing.number ?? row.number,
+    orderedAt: existing.orderedAt ?? row.orderedAt,
+  });
+
+const appendStatusEvent = (
+  order: ImportedOrder,
+  event: OrderStatusEvent,
+  reviewReason: string | undefined,
+): ImportedOrder =>
+  reviewReason === undefined
+    ? {
+        ...order,
+        lastEventAt: event.eventAt ?? order.lastEventAt ?? event.importedAt,
+        rawStatus: event.rawStatus,
+        statusHistory: [...order.statusHistory, event],
+      }
+    : {
+        ...order,
+        statusHistory: [...order.statusHistory, { ...event, review: true, reviewReason }],
+      };
+
 /** Applies parsed rows to the slice. Pure; the caller persists the returned slice. */
 export const importOrders = (
   slice: ImportsSlice,
@@ -193,12 +267,7 @@ export const importOrders = (
         : slice.customerLinks.find(
             (entry) => entry.source === row.source && entry.externalCustomerId === row.externalCustomerId,
           );
-    const twin =
-      row.number === undefined
-        ? undefined
-        : [...orders.values()].find(
-            (order) => order.source !== row.source && order.number === row.number && order.duplicateOf === undefined,
-          );
+    const twin = crossSourceTwin(orders.values(), row);
     const candidates = link === undefined ? pairingCandidates(clients, row) : [];
     let pairing: ImportedOrder['pairing'] = 'paired';
     if (link === undefined) {
@@ -226,10 +295,7 @@ export const importOrders = (
         lines: row.lines,
         number: row.number,
         orderedAt: row.orderedAt,
-        reviewReason:
-          twin === undefined
-            ? undefined
-            : `Stejné číslo objednávky ${row.number ?? ''} už přišlo ze zdroje ${twin.source}. Bez potvrzené korelace se nezapočítává do potvrzených souhrnů.`,
+        reviewReason: twin === undefined ? undefined : duplicateReason(twin, row.number),
       }),
     };
     orders.set(orderKey(row.source, row.externalId), order);
@@ -267,49 +333,75 @@ export const importOrders = (
     };
   };
 
+  const applyNewCustomerLink = (existing: ImportedOrder, row: ParsedOrderRow): ImportedOrder => {
+    if (
+      existing.externalCustomerId !== undefined ||
+      row.externalCustomerId === undefined ||
+      existing.clientId !== undefined ||
+      existing.pairing === 'paired'
+    ) {
+      return existing;
+    }
+    const lastPairing = pairingHistory.findLast((change) => change.orderId === existing.id);
+    if (lastPairing?.via === 'manual') {
+      return existing;
+    }
+    const link = slice.customerLinks.find(
+      (entry) => entry.source === row.source && entry.externalCustomerId === row.externalCustomerId,
+    );
+    if (link === undefined) {
+      return existing;
+    }
+    const clientId = linkTargetClientId(clients.items, link);
+    pairingHistory.push({
+      at: meta.now,
+      by: meta.by,
+      id: meta.newId(`p${row.row}`),
+      orderId: existing.id,
+      reason: `Schválená vazba zákazníka (${link.source})`,
+      toClientId: clientId,
+      via: 'customer_link',
+    });
+    const { candidates: _candidates, ...rest } = existing;
+    return { ...rest, clientId, pairing: 'paired' };
+  };
+
   const updateOrder = (existing: ImportedOrder, row: ParsedOrderRow, event: OrderStatusEvent) => {
-    if (existing.statusHistory.some((entry) => sameEvent(entry, event))) {
+    const money = fillMoney(existing, row);
+    const repeated = existing.statusHistory.findLast((entry) => sameEvent(entry, event));
+    const linked = applyNewCustomerLink(existing, row);
+    const twin = existing.number === undefined ? crossSourceTwin(orders.values(), row) : undefined;
+    const correlationReason = twin === undefined ? undefined : duplicateReason(twin, row.number);
+    const filled = definedEntries({
+      ...fillOrderDetails(existing, row),
+      ...money.fields,
+      duplicateOf: existing.duplicateOf ?? twin?.id,
+      reviewReason: correlationReason ?? existing.reviewReason,
+    });
+    const enriched: ImportedOrder = { ...linked, ...filled };
+    const enrichmentChanged = linked !== existing || enrichmentFields.some((key) => enriched[key] !== existing[key]);
+    const addEvent =
+      repeated === undefined || (money.reviewReason !== undefined && repeated.reviewReason !== money.reviewReason);
+    if (!enrichmentChanged && !addEvent) {
       return {
         message: 'Stejná událost už byla importována, nic se nezměnilo',
         orderId: existing.id,
         outcome: 'duplicate' as const,
       };
     }
-    const reviewReason = eventReviewReason(existing, event);
-    const filled = definedEntries({
-      amount: existing.amount ?? row.amount,
-      currency: existing.currency ?? row.currency,
-      customerEmail: existing.customerEmail ?? row.customerEmail,
-      customerName: existing.customerName ?? row.customerName,
-      customerRegNo: existing.customerRegNo ?? row.customerRegNo,
-      externalCustomerId: existing.externalCustomerId ?? row.externalCustomerId,
-      lines: existing.lines ?? row.lines,
-      number: existing.number ?? row.number,
-      orderedAt: existing.orderedAt ?? row.orderedAt,
-    });
-    const next: ImportedOrder =
-      reviewReason === undefined
-        ? {
-            ...existing,
-            ...filled,
-            lastEventAt: event.eventAt ?? existing.lastEventAt ?? meta.now,
-            rawStatus: event.rawStatus,
-            statusHistory: [...existing.statusHistory, event],
-          }
-        : {
-            ...existing,
-            ...filled,
-            statusHistory: [...existing.statusHistory, { ...event, review: true, reviewReason }],
-          };
+    const reviewReason =
+      money.reviewReason ?? (repeated === undefined ? eventReviewReason(existing, event) : undefined);
+    const next = addEvent ? appendStatusEvent(enriched, event, reviewReason) : enriched;
     orders.set(orderKey(existing.source, existing.externalId), next);
     touched.add(existing.id);
-    return reviewReason === undefined
+    const resultReviewReason = reviewReason ?? correlationReason;
+    return resultReviewReason === undefined
       ? {
-          message: `Stav ${existing.rawStatus} → ${event.rawStatus}`,
+          message: addEvent ? `Stav ${existing.rawStatus} → ${event.rawStatus}` : csImports.imports.orderEnriched,
           orderId: existing.id,
           outcome: 'updated' as const,
         }
-      : { message: `Vyžaduje kontrolu: ${reviewReason}`, orderId: existing.id, outcome: 'review' as const };
+      : { message: `Vyžaduje kontrolu: ${resultReviewReason}`, orderId: existing.id, outcome: 'review' as const };
   };
 
   for (const parsedRow of parsed.rows) {

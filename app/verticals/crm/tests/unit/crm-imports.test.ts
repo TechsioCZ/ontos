@@ -10,9 +10,10 @@ import type { CrmViewer } from '../../shared/domain/access.ts';
 import { needsReview, openReviewEvents, orderDateText } from '../../shared/domain/imports.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
-import { parseOrdersCsv } from '../../shared/imports/csv.ts';
+import { parseCsvTime, parseOrdersCsv } from '../../shared/imports/csv.ts';
 import { seedImports } from '../../shared/imports/demo-seed.ts';
 import { ordersCsvSamples } from '../../shared/imports/samples.ts';
+import { buildSalesReport } from '../../shared/domain/reports.ts';
 
 const at = '2026-10-20T08:00:00.000Z';
 const client = (
@@ -120,6 +121,118 @@ const order = (state: CrmState, externalId: string, source = 'E-shop') => {
 };
 
 describe('CRM order CSV parser', () => {
+  it('preserves local ISO fractional seconds through Prague time conversion in winter and summer', () => {
+    for (const { local, utc } of [
+      { local: '2026-01-15T14:10:20.1', utc: '2026-01-15T13:10:20.100Z' },
+      { local: '2026-07-15T14:10:20.12', utc: '2026-07-15T12:10:20.120Z' },
+      { local: '2026-07-15T14:10:20.123', utc: '2026-07-15T12:10:20.123Z' },
+    ]) {
+      expect(parseCsvTime(local, true)).toBe(utc);
+      const parsed = parseOrdersCsv(`source;order_id;status;order_date;event_time\nE-shop;1;nova;${local};${local}`);
+      const first = parsed.rows[0];
+      expect(first).toMatchObject({ kind: 'ok' });
+      if (first?.kind === 'ok') {
+        expect(orderDateText(first.value.orderedAt)).toBe(utc);
+        expect(orderDateText(first.value.eventAt)).toBe(utc);
+      }
+    }
+    expect(parseCsvTime('15. 7. 2026 14:10:20', true)).toBe('2026-07-15T12:10:20.000Z');
+    expect(parseCsvTime('2026-07-15', false)).toBe('2026-07-15');
+    expect(parseCsvTime('2026-07-15T14:10:20.123+02:00', true)).toBe('2026-07-15T12:10:20.123Z');
+  });
+  it('refuses sub-millisecond timestamp precision instead of silently losing accepted digits', () => {
+    const parsed = parseOrdersCsv('source;order_id;status;event_time\nE-shop;1;nova;2026-07-15T14:10:20.1234\n');
+    expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
+  });
+  it('rejects every overlong destination text field with a bounded column error', () => {
+    const columns = [
+      'zdroj',
+      'id_objednavky',
+      'stav',
+      'cislo_objednavky',
+      'id_zakaznika',
+      'nazev_zakaznika',
+      'ico_zakaznika',
+      'email_zakaznika',
+      'id_udalosti',
+    ];
+    for (const column of columns) {
+      const header = [...new Set(['zdroj', 'id_objednavky', 'stav', column])];
+      const cells = header.map((key) => (key === column ? 'x'.repeat(4001) : 'valid'));
+      const parsed = parseOrdersCsv(`${header.join(';')}\n${cells.join(';')}\n`);
+      const rejected = parsed.rows[0];
+      expect(rejected).toMatchObject({ kind: 'error', row: 2 });
+      if (rejected?.kind === 'error') {
+        expect(rejected.message).toContain(column);
+        expect(rejected.message.length).toBeLessThan(300);
+        expect(rejected.externalId).not.toBe('x'.repeat(4001));
+      }
+    }
+  });
+  it('rejects overlong line names and SKUs without echoing their contents', () => {
+    for (const line of [`SKU:${'x'.repeat(4001)}:1`, `${'x'.repeat(4001)}:Name:1`]) {
+      const parsed = parseOrdersCsv(`source;order_id;status;lines\nE-shop;1;nova;${line}\n`);
+      expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
+      const rejected = parsed.rows[0];
+      expect(rejected?.kind === 'error' ? rejected.message : '').toContain('polozky');
+      expect(rejected?.kind === 'error' ? rejected.message.length : 0).toBeLessThan(300);
+    }
+  });
+  it.effect('persists valid boundary-length rows beside rejected rows without corrupting CRM state', () =>
+    Effect.gen(function* boundedRowValidation() {
+      const name = 'x'.repeat(200);
+      const state = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `source;order_id;status;customer_name;lines\nE-shop;valid;nova;${name};SKU:${name}:1\nE-shop;bad;nova;${name}x;\n`,
+        fileName: 'text-boundaries.csv',
+      });
+      const persisted = yield* Schema.encodeEffect(CrmStateSchema)(state).pipe(
+        Effect.flatMap(Schema.decodeEffect(CrmStateSchema)),
+      );
+      expect(persisted.imports.batches[0]).toMatchObject({ accepted: 1, rejected: 1 });
+      expect(persisted.imports.orders).toHaveLength(1);
+      expect(order(persisted, 'valid').customerName).toBe(name);
+      expect(order(persisted, 'valid').lines?.[0]?.name).toBe(name);
+      return yield* Effect.void;
+    }),
+  );
+  it('refuses an unterminated quote instead of absorbing later orders', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova\nE-shop;2;paid\n');
+    expect(parsed.fileError).toContain('Řádek 2, sloupec 3');
+    expect(parsed.rows).toEqual([]);
+    expect(parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"nova"').rows[0]).toMatchObject({
+      kind: 'ok',
+      value: { rawStatus: 'nova' },
+    });
+  });
+  it('keeps valid quoted multiline cells and doubled quotes', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;"První\n""druhý"""\nE-shop;2;nova\n');
+    expect(parsed.fileError).toBeUndefined();
+    expect(parsed.rows).toMatchObject([
+      { kind: 'ok', value: { rawStatus: 'První\n"druhý"', row: 2 } },
+      { kind: 'ok', value: { externalId: '2', row: 4 } },
+    ]);
+  });
+  it('rejects surplus cells per row without discarding the next valid order', () => {
+    const parsed = parseOrdersCsv('zdroj;id_objednavky;stav\nE-shop;1;nova;unexpected\nE-shop;2;nova\n');
+    expect(parsed.rows[0]).toMatchObject({ kind: 'error', row: 2 });
+    expect(parsed.rows[0]?.kind === 'error' ? parsed.rows[0].message : '').toContain('sloupcem 3');
+    expect(parsed.rows[1]).toMatchObject({ kind: 'ok', value: { externalId: '2' } });
+  });
+  it('refuses duplicate canonical columns, including aliases and accented headers', () => {
+    for (const extra of ['stav', 'status', 'Stáv']) {
+      const parsed = parseOrdersCsv(`zdroj;id_objednavky;stav;${extra}\nE-shop;1;nova;paid\n`);
+      expect(parsed.fileError).toContain('sloupec stav');
+      expect(parsed.rows).toEqual([]);
+    }
+    const parsed = parseOrdersCsv('source;order_id;status\nE-shop;1;nova\n');
+    expect(parsed.fileError).toBeUndefined();
+    expect(parsed.rows[0]).toMatchObject({ kind: 'ok' });
+  });
+  it('provides the new CSV refusal messages in English too', () => {
+    expect(parseOrdersCsv('source;order_id;status\nE-shop;1;"nova', 'en').fileError).toContain('Row 2, column 3');
+    expect(parseOrdersCsv('source;order_id;status;stav\nE-shop;1;nova;paid', 'en').fileError).toContain('column stav');
+  });
   it('samples in TS are identical to demo-data files', () => {
     for (const entry of ordersCsvSamples) {
       const file = readFileSync(new URL(`../../demo-data/${entry.fileName}`, import.meta.url), 'utf-8');
@@ -156,6 +269,283 @@ describe('CRM order CSV parser', () => {
 });
 
 describe('CRM order import (C03)', () => {
+  it.effect(
+    'enriches replayed events, checks late numbers and links customers without duplicating status history',
+    () =>
+      Effect.gen(function* replayedEnrichment() {
+        const linked = yield* runOk(base, {
+          _tag: 'LinkExternalCustomer',
+          clientId: 'pekarna-mala',
+          externalCustomerId: 'known-replay-customer',
+          source: 'Accounting',
+        });
+        const header = 'source;order_id;number;customer_id;status;event_time;amount;currency\n';
+        const first = yield* runOk(linked, {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}E-shop;original-replay;REPLAY;;nova;2026-10-19T09:00:00Z;;\nAccounting;enriched-replay;;;nova;2026-10-19T09:00:00Z;;\n`,
+          fileName: 'replay-first.csv',
+        });
+        const command = {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}Accounting;enriched-replay;REPLAY;known-replay-customer;nova;2026-10-19T09:00:00Z;25.00;CZK\n`,
+          fileName: 'replay-enriched.csv',
+        } satisfies CrmCommandInput;
+        const next = yield* runOk(first, command);
+        expect(order(next, 'enriched-replay', 'Accounting')).toMatchObject({
+          amount: '25.00',
+          clientId: 'pekarna-mala',
+          currency: 'CZK',
+          duplicateOf: order(next, 'original-replay').id,
+          number: 'REPLAY',
+          pairing: 'paired',
+        });
+        expect(order(next, 'enriched-replay', 'Accounting').statusHistory).toHaveLength(1);
+        expect(next.imports.batches[0]).toMatchObject({ duplicates: 0, review: 1 });
+        const replay = yield* runOk(next, command);
+        expect(replay.imports.pairingHistory).toEqual(next.imports.pairingHistory);
+        expect(replay.imports.batches[0]).toMatchObject({ accepted: 0, duplicates: 1 });
+        return yield* Effect.void;
+      }),
+  );
+  it.effect('deduplicates monetary conflicts even when they reuse an already-confirmed status event', () =>
+    Effect.gen(function* replayedMonetaryConflict() {
+      const header = 'source;order_id;status;event_time;amount;currency\n';
+      const first = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;currency-replay;nova;2026-10-19T09:00:00Z;;CZK\n`,
+        fileName: 'currency-first.csv',
+      });
+      const command = {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;currency-replay;nova;2026-10-19T09:00:00Z;25.00;EUR\n`,
+        fileName: 'currency-conflict.csv',
+      } satisfies CrmCommandInput;
+      const next = yield* runOk(first, command);
+      expect(order(next, 'currency-replay').amount).toBeUndefined();
+      expect(needsReview(order(next, 'currency-replay'))).toBe(true);
+      const replay = yield* runOk(next, command);
+      expect(order(replay, 'currency-replay').statusHistory).toHaveLength(2);
+      expect(replay.imports.batches[0]?.duplicates).toBe(1);
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('uses an approved link when customer identity arrives later, without overwriting manual pairing', () =>
+    Effect.gen(function* lateCustomerLink() {
+      const linked = yield* runOk(base, {
+        _tag: 'LinkExternalCustomer',
+        clientId: 'pekarna-mala',
+        externalCustomerId: 'approved-customer',
+        source: 'E-shop',
+      });
+      const header = 'source;order_id;customer_id;status;event_time;customer_name\n';
+      const imported = yield* runOk(linked, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;late-customer;;nova;2026-10-19T09:00:00Z;pekarna-mala\nE-shop;manual-customer;;nova;2026-10-19T09:00:00Z;\n`,
+        fileName: 'customers-first.csv',
+      });
+      const manual = yield* runOk(imported, {
+        _tag: 'PairOrder',
+        clientId: 'zlata-husa',
+        orderId: order(imported, 'manual-customer').id,
+        reason: 'Ručně ověřený zákazník',
+      });
+      const next = yield* runOk(manual, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;late-customer;approved-customer;paid;2026-10-19T10:00:00Z;\nE-shop;manual-customer;approved-customer;paid;2026-10-19T10:00:00Z;\n`,
+        fileName: 'customers-next.csv',
+      });
+      const paired = order(next, 'late-customer');
+      expect(paired).toMatchObject({ clientId: 'pekarna-mala', pairing: 'paired' });
+      expect(paired.candidates).toBeUndefined();
+      expect(next.imports.pairingHistory.filter((change) => change.orderId === paired.id)).toMatchObject([
+        { at: DateTime.makeUnsafe(at), by: 'p-lead', toClientId: 'pekarna-mala', via: 'customer_link' },
+      ]);
+      expect(order(next, 'manual-customer')).toMatchObject({ clientId: 'zlata-husa', pairing: 'paired' });
+      expect(
+        next.imports.pairingHistory.filter((change) => change.orderId === order(next, 'manual-customer').id),
+      ).toHaveLength(1);
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('resolves late links to the current Counterparty holder and preserves a manual unpairing', () =>
+    Effect.gen(function* lateLinkOwnership() {
+      const holder = 'zlata-husa';
+      const linked = Schema.decodeUnknownSync(CrmStateSchema)({
+        ...Schema.encodeSync(CrmStateSchema)(base),
+        clients: {
+          ...Schema.encodeSync(CrmStateSchema)(base).clients,
+          items: Schema.encodeSync(CrmStateSchema)(base).clients.items.map((entry) =>
+            entry.id === holder
+              ? { ...entry, partyRef: { counterpartyId: 'current-counterparty', partyId: 'current-party' } }
+              : entry,
+          ),
+        },
+        imports: {
+          ...Schema.encodeSync(CrmStateSchema)(base).imports,
+          customerLinks: [
+            {
+              clientId: 'pekarna-mala',
+              counterpartyId: 'current-counterparty',
+              createdAt: at,
+              createdBy: 'p-lead',
+              externalCustomerId: 'moved-customer',
+              source: 'E-shop',
+            },
+          ],
+        },
+      });
+      const header = 'source;order_id;customer_id;status;event_time\n';
+      const first = yield* runOk(linked, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;current-holder;;nova;2026-10-19T09:00:00Z\nE-shop;unpaired-manually;;nova;2026-10-19T09:00:00Z\n`,
+        fileName: 'holder-first.csv',
+      });
+      const paired = yield* runOk(first, {
+        _tag: 'PairOrder',
+        clientId: holder,
+        orderId: order(first, 'unpaired-manually').id,
+        reason: 'Ověřené ruční přiřazení',
+      });
+      const manual = yield* runOk(paired, {
+        _tag: 'UnpairOrder',
+        orderId: order(paired, 'unpaired-manually').id,
+        reason: 'Ověřené ruční odebrání',
+      });
+      const next = yield* runOk(manual, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;current-holder;moved-customer;paid;2026-10-19T10:00:00Z\nE-shop;unpaired-manually;moved-customer;paid;2026-10-19T10:00:00Z\n`,
+        fileName: 'holder-next.csv',
+      });
+      expect(order(next, 'current-holder').clientId).toBe(holder);
+      expect(order(next, 'unpaired-manually').clientId).toBeUndefined();
+      expect(order(next, 'unpaired-manually').pairing).toBe('unpaired');
+      expect(
+        next.imports.pairingHistory.filter((change) => change.orderId === order(next, 'current-holder').id),
+      ).toMatchObject([{ toClientId: holder, via: 'customer_link' }]);
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('rechecks cross-source duplicates when an existing order first receives its number', () =>
+    Effect.gen(function* enrichedNumberCorrelation() {
+      const header = 'source;order_id;number;status;event_time\n';
+      const first = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;original;SHARED;nova;2026-10-19T09:00:00Z\nAccounting;late-number;;nova;2026-10-19T09:00:00Z\nAccounting;distinct;;nova;2026-10-19T09:00:00Z\n`,
+        fileName: 'numbers-first.csv',
+      });
+      const next = yield* runOk(first, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}Accounting;late-number;SHARED;paid;2026-10-19T10:00:00Z\nAccounting;distinct;UNIQUE;paid;2026-10-19T10:00:00Z\n`,
+        fileName: 'numbers-next.csv',
+      });
+      const duplicate = order(next, 'late-number', 'Accounting');
+      expect(duplicate).toMatchObject({ duplicateOf: order(next, 'original').id, number: 'SHARED' });
+      expect(needsReview(duplicate)).toBe(true);
+      expect(order(next, 'distinct', 'Accounting').duplicateOf).toBeUndefined();
+      expect(next.imports.batches[0]).toMatchObject({ review: 1, updated: 1 });
+      const paired = Schema.decodeUnknownSync(CrmStateSchema)({
+        ...Schema.encodeSync(CrmStateSchema)(next),
+        imports: {
+          ...Schema.encodeSync(CrmStateSchema)(next).imports,
+          orders: Schema.encodeSync(CrmStateSchema)(next).imports.orders.map((entry) => ({
+            ...entry,
+            clientId: 'pekarna-mala',
+            pairing: 'paired',
+          })),
+        },
+      });
+      expect(buildSalesReport(paired).count).toBe(2);
+      expect(buildSalesReport(paired).excluded).toEqual([{ count: 1, reason: 'duplicate' }]);
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('fills missing monetary snapshots only when their currencies agree, including priced lines', () =>
+    Effect.gen(function* monetarySnapshots() {
+      const header = 'source;order_id;status;event_time;amount;currency;lines\n';
+      for (const { amount, currency, review } of [
+        { amount: '25.00', currency: 'CZK', review: false },
+        { amount: '25.00', currency: 'EUR', review: true },
+        { amount: '', currency: 'CZK', review: false },
+        { amount: '', currency: 'EUR', review: true },
+      ]) {
+        const first = yield* runOk(base, {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}E-shop;money;nova;2026-10-19T09:00:00Z;;CZK;\n`,
+          fileName: 'money-first.csv',
+        });
+        const next = yield* runOk(first, {
+          _tag: 'ImportOrdersCsv',
+          csv: `${header}E-shop;money;paid;2026-10-19T10:00:00Z;${amount};${currency};SKU:Name:1:25.00\n`,
+          fileName: 'money-next.csv',
+        });
+        const imported = order(next, 'money');
+        expect(imported.currency).toBe('CZK');
+        expect(imported.amount).toBe(review || amount === '' ? undefined : '25.00');
+        expect(imported.lines?.[0]?.amount).toBe(review ? undefined : '25.00');
+        expect(imported.rawStatus).toBe(review ? 'nova' : 'paid');
+        expect(needsReview(imported)).toBe(review);
+        expect(next.imports.batches[0]).toMatchObject({ review: review ? 1 : 0, updated: review ? 0 : 1 });
+      }
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('does not attach a new currency to old order or line amounts without a currency', () =>
+    Effect.gen(function* incompleteMonetarySnapshots() {
+      for (const monetary of [{ amount: '50.00' }, { lines: [{ amount: '50.00', name: 'Name', quantity: '1' }] }]) {
+        const first = Schema.decodeUnknownSync(CrmStateSchema)({
+          ...Schema.encodeSync(CrmStateSchema)(base),
+          imports: {
+            ...Schema.encodeSync(CrmStateSchema)(base).imports,
+            orders: [
+              {
+                externalId: 'incomplete',
+                id: 'incomplete-order',
+                lastEventAt: '2026-10-19T09:00:00Z',
+                pairing: 'unpaired',
+                rawStatus: 'nova',
+                receivedAt: at,
+                source: 'E-shop',
+                statusHistory: [],
+                ...monetary,
+              },
+            ],
+          },
+        });
+        const next = yield* runOk(first, {
+          _tag: 'ImportOrdersCsv',
+          csv: 'source;order_id;status;event_time;amount;currency;lines\nE-shop;incomplete;paid;2026-10-19T10:00:00Z;10.00;EUR;SKU:New:1:10.00\n',
+          fileName: 'incomplete-money.csv',
+        });
+        expect(order(next, 'incomplete')).toMatchObject(monetary);
+        expect(order(next, 'incomplete').currency).toBeUndefined();
+        expect(order(next, 'incomplete').rawStatus).toBe('nova');
+        expect(needsReview(order(next, 'incomplete'))).toBe(true);
+      }
+      return yield* Effect.void;
+    }),
+  );
+  it.effect('takes amount and currency together when no monetary snapshot exists', () =>
+    Effect.gen(function* freshMonetarySnapshot() {
+      const header = 'source;order_id;status;event_time;amount;currency;lines\n';
+      const first = yield* runOk(base, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;fresh-money;nova;2026-10-19T09:00:00Z;;;\n`,
+        fileName: 'no-money.csv',
+      });
+      const next = yield* runOk(first, {
+        _tag: 'ImportOrdersCsv',
+        csv: `${header}E-shop;fresh-money;paid;2026-10-19T10:00:00Z;25.00;EUR;SKU:Name:1:25.00\n`,
+        fileName: 'fresh-money.csv',
+      });
+      expect(order(next, 'fresh-money')).toMatchObject({
+        amount: '25.00',
+        currency: 'EUR',
+        lines: [{ amount: '25.00' }],
+      });
+      expect(needsReview(order(next, 'fresh-money'))).toBe(false);
+      return yield* Effect.void;
+    }),
+  );
   it.effect('persists a multi-source import whose combined source names exceed the batch limit', () =>
     Effect.gen(function* boundedBatchSource() {
       const sources = ['a'.repeat(120), 'b'.repeat(120)];

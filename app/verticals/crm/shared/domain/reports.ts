@@ -645,21 +645,43 @@ export const buildCrmHomeSummary = (records: RecordsResponse) => {
 // CSV (exactly the rows the page shows)
 // ---------------------------------------------------------------------------------------------------------------
 
-const csvCell = (value: string | number | undefined) => {
-  const text = value === undefined ? '' : String(value);
-  return /[";\r\n]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+interface CsvNumber {
+  readonly decimal: string;
+}
+
+type CsvCell = string | number | CsvNumber | undefined;
+
+const csvCell = (value: CsvCell) => {
+  let text = '';
+  if (Schema.is(Schema.String)(value)) {
+    text = /^[=+\-@\u{0009}\u{000d}]/u.test(value) ? `'${value}` : value;
+  } else if (value !== undefined) {
+    text = Schema.is(Schema.Number)(value) ? String(value) : value.decimal;
+  }
+  return /[";\u{000d}\u{000a}]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
 /** Semicolon-separated CSV with CRLF line ends (opens directly in Czech Excel; prepend a BOM when saving). */
-export const toCsv = (header: readonly string[], rows: readonly (readonly (string | number | undefined)[])[]) =>
+export const toCsv = (header: readonly string[], rows: readonly (readonly CsvCell[])[]) =>
   [header, ...rows].map((row) => row.map(csvCell).join(';')).join('\r\n');
 
 /** Decimal for Czech spreadsheets: "1234.50" -> "1234,50". */
-const csvDecimal = (value: string | undefined) => value?.replace('.', ',');
+export const csvDecimal = (value: string | undefined): CsvNumber | undefined =>
+  value === undefined ? undefined : { decimal: value.replace('.', ',') };
 
 export const ordersCsv = (report: SalesReport) =>
   toCsv(
-    ['Datum objednávky', 'Číslo objednávky', 'Zdroj', 'Klient', 'Obchodník', 'Význam stavu', 'Částka', 'Měna'],
+    [
+      'Datum objednávky',
+      'Číslo objednávky',
+      'Zdroj',
+      'Klient',
+      'Obchodník',
+      'Stav ze zdroje',
+      'Význam stavu',
+      'Částka',
+      'Měna',
+    ],
     report.rows.map((row) => {
       const money = orderMoney(row.order);
       return [
@@ -668,7 +690,8 @@ export const ordersCsv = (report: SalesReport) =>
         row.order.source,
         row.clientName,
         row.salespersonName ?? 'Nepřiděleno',
-        statusMeaningLabels[row.meaning],
+        row.order.rawStatus,
+        report.mappingApproved && row.meaning !== 'unmapped' ? statusMeaningLabels[row.meaning] : undefined,
         money === undefined ? 'údaj neposkytnut' : csvDecimal(unitsToDecimal(money.units)),
         money?.currency ?? '',
       ];

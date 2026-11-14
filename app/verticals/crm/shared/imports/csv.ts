@@ -2,8 +2,10 @@
 // Pure parser of the documented CRM order CSV template (crm-orders-csv-v1). The browser uses it for the preview,
 // the server re-parses the same text inside the ImportOrdersCsv command, so the preview and the stored result match.
 import { DateTime, Option, Result, Schema } from 'effect';
-import { IsoTimeSchema } from '../domain/common.ts';
-import { OrderDateSchema } from '../domain/imports.ts';
+import csImports from '../../locales/cs/crm-imports.json';
+import enImports from '../../locales/en/crm-imports.json';
+import { IsoTimeSchema, ShortTextSchema } from '../domain/common.ts';
+import { OrderDateSchema, OrderLineSchema } from '../domain/imports.ts';
 
 export const ORDERS_CSV_FORMAT = 'crm-orders-csv-v1';
 
@@ -146,8 +148,13 @@ interface RawRecord {
   readonly line: number;
 }
 
+interface UnclosedCell {
+  readonly column: number;
+  readonly row: number;
+}
+
 /** RFC 4180 tokenizer (quoted cells, doubled quotes, CRLF/LF, BOM). */
-const tokenize = (text: string, delimiter: string): RawRecord[] => {
+const tokenize = (text: string, delimiter: string): Result.Result<RawRecord[], UnclosedCell> => {
   const source = text.startsWith('﻿') ? text.slice(1) : text;
   const records: RawRecord[] = [];
   let cells: string[] = [];
@@ -193,11 +200,14 @@ const tokenize = (text: string, delimiter: string): RawRecord[] => {
       cell += char;
     }
   }
+  if (quoted) {
+    return Result.fail({ column: cells.length + 1, row: recordLine });
+  }
   if (cell !== '' || cells.length > 0) {
     cells.push(cell);
     records.push({ cells, line: recordLine });
   }
-  return records.filter((record) => record.cells.some((value) => value.trim() !== ''));
+  return Result.succeed(records.filter((record) => record.cells.some((value) => value.trim() !== '')));
 };
 
 /** "12 450,50" / "12450.5" -> "12450.50"; undefined when not an exact decimal. */
@@ -220,10 +230,11 @@ const daysInMonth = (year: number, month: number) => {
 
 const pragueIso = (parts: {
   readonly day: number;
-  readonly hours: number;
-  readonly minutes: number;
+  readonly hour: number;
+  readonly millisecond: number;
+  readonly minute: number;
   readonly month: number;
-  readonly seconds: number;
+  readonly second: number;
   readonly year: number;
 }): string | undefined => {
   if (
@@ -231,9 +242,9 @@ const pragueIso = (parts: {
     parts.month > 12 ||
     parts.day < 1 ||
     parts.day > daysInMonth(parts.year, parts.month) ||
-    parts.hours > 23 ||
-    parts.minutes > 59 ||
-    parts.seconds > 59
+    parts.hour > 23 ||
+    parts.minute > 59 ||
+    parts.second > 59
   ) {
     return undefined;
   }
@@ -251,28 +262,28 @@ const pragueIso = (parts: {
 export const parseCsvTime = (value: string, asInstant: boolean): string | undefined => {
   const text = value.trim();
   const iso =
-    /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.\d+)?)?)?(?<zone>Z|[+-]\d{2}:?\d{2})?$/u.exec(
+    /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,3}))?)?)?(?<zone>Z|[+-]\d{2}:?\d{2})?$/u.exec(
       text,
     );
   const czech =
     /^(?<day>\d{1,2})\.\s?(?<month>\d{1,2})\.\s?(?<year>\d{4})(?:\s+(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?)?$/u.exec(
       text,
     );
-  const groups = iso ?? czech;
-  if (groups === null) {
+  const groups = (iso ?? czech)?.groups;
+  if (groups === undefined) {
     return undefined;
   }
-  const [year, month, day] =
-    iso === null
-      ? [Number(groups[3]), Number(groups[2]), Number(groups[1])]
-      : [Number(groups[1]), Number(groups[2]), Number(groups[3])];
-  const hasTime = groups[4] !== undefined;
+  const year = Number(groups['year']);
+  const month = Number(groups['month']);
+  const day = Number(groups['day']);
+  const hasTime = groups['hour'] !== undefined;
   const parts = {
     day,
-    hours: Number(groups[4] ?? 0),
-    minutes: Number(groups[5] ?? 0),
+    hour: Number(groups['hour'] ?? 0),
+    millisecond: Number((groups['fraction'] ?? '').padEnd(3, '0')),
+    minute: Number(groups['minute'] ?? 0),
     month,
-    seconds: Number(groups[6] ?? 0),
+    second: Number(groups['second'] ?? 0),
     year,
   };
   const local = pragueIso(parts);
@@ -282,14 +293,14 @@ export const parseCsvTime = (value: string, asInstant: boolean): string | undefi
   if (!hasTime && !asInstant) {
     return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
-  const offset = iso === null ? undefined : groups[7];
+  const offset = groups['zone'];
   if (offset !== undefined) {
     return Option.getOrUndefined(DateTime.make(text.replace(' ', 'T')).pipe(Option.map(DateTime.formatIso)));
   }
   return local;
 };
 
-const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
+const parseLines = (value: string, invalidLine: string): readonly ParsedOrderLine[] | string => {
   const entries = value
     .split('|')
     .map((entry) => entry.trim())
@@ -298,16 +309,16 @@ const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
   for (const [index, entry] of entries.entries()) {
     const fields = entry.split(':').map((field) => field.trim());
     if (fields.length < 3 || fields.length > 4) {
-      return `Položka ${index + 1}: očekávám SKU:název:množství:částka`;
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     const [sku = '', name = '', quantityText = '', amountText] = fields;
     const quantity = normalizeDecimal(quantityText);
     if (name === '' || quantity === undefined) {
-      return `Položka ${index + 1}: chybí název nebo množství není číslo`;
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     const amount = amountText === undefined || amountText === '' ? undefined : normalizeDecimal(amountText);
     if (amountText !== undefined && amountText !== '' && amount === undefined) {
-      return `Položka ${index + 1}: částka „${amountText}“ není číslo`;
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     const line: ParsedOrderLine = { name, quantity: quantity.replace(/\.00$/u, '') };
     if (sku !== '') {
@@ -315,6 +326,9 @@ const parseLines = (value: string): readonly ParsedOrderLine[] | string => {
     }
     if (amount !== undefined) {
       Object.assign(line, { amount });
+    }
+    if (!Schema.is(OrderLineSchema)(line)) {
+      return invalidLine.replace('{{item}}', String(index + 1));
     }
     lines.push(line);
   }
@@ -355,14 +369,17 @@ interface ParsedTimes {
 }
 
 /** An order may supply a civil day; an event supplies an instant. Do not mix these contracts. */
-const parseTimes = (get: (key: string) => string | undefined): Result.Result<ParsedTimes, string> => {
+const parseTimes = (
+  get: (key: string) => string | undefined,
+  invalidTime: string,
+): Result.Result<ParsedTimes, string> => {
   const orderedText = optional(get('datum_objednavky'));
   const orderedAt =
     orderedText === undefined
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(OrderDateSchema)(parseCsvTime(orderedText, false)));
   if (orderedText !== undefined && orderedAt === undefined) {
-    return Result.fail(`Datum objednávky „${orderedText}“ není platné datum`);
+    return Result.fail(invalidTime.replace('{{column}}', 'datum_objednavky'));
   }
   const eventText = optional(get('cas_udalosti'));
   const eventAt =
@@ -370,12 +387,17 @@ const parseTimes = (get: (key: string) => string | undefined): Result.Result<Par
       ? undefined
       : Option.getOrUndefined(Schema.decodeUnknownOption(IsoTimeSchema)(parseCsvTime(eventText, true)));
   if (eventText !== undefined && eventAt === undefined) {
-    return Result.fail(`Čas události „${eventText}“ není platné datum a čas`);
+    return Result.fail(invalidTime.replace('{{column}}', 'cas_udalosti'));
   }
   return Result.succeed({ eventAt, orderedAt });
 };
 
-const parseRecord = (line: number, get: (key: string) => string | undefined): ParsedRow => {
+const parseRecord = (input: {
+  readonly copy: { readonly invalidLine: string; readonly invalidText: string; readonly invalidTime: string };
+  readonly get: (key: string) => string | undefined;
+  readonly line: number;
+}): ParsedRow => {
+  const { copy, get, line } = input;
   const source = optional(get('zdroj'));
   const externalId = optional(get('id_objednavky'));
   const rawStatus = optional(get('stav'));
@@ -385,11 +407,21 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
       message,
       row: line,
     };
-    if (externalId !== undefined) {
+    if (Schema.is(ShortTextSchema)(externalId)) {
       Object.assign(result, { externalId });
     }
     return result;
   };
+  const invalidColumn = ordersCsvColumns.find((column) => {
+    if (column.key === 'polozky') {
+      return false;
+    }
+    const text = optional(get(column.key));
+    return text !== undefined && !Schema.is(ShortTextSchema)(text);
+  });
+  if (invalidColumn !== undefined) {
+    return fail(copy.invalidText.replace('{{row}}', String(line)).replace('{{column}}', invalidColumn.key));
+  }
   if (source === undefined) {
     return fail('Chybí zdrojový systém (sloupec zdroj)');
   }
@@ -404,13 +436,13 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
     return fail(money.failure);
   }
   const { amount, currency } = money.success;
-  const times = parseTimes(get);
+  const times = parseTimes(get, copy.invalidTime);
   if (Result.isFailure(times)) {
     return fail(times.failure);
   }
   const { eventAt, orderedAt } = times.success;
   const linesText = optional(get('polozky'));
-  const lines = linesText === undefined ? undefined : parseLines(linesText);
+  const lines = linesText === undefined ? undefined : parseLines(linesText, copy.invalidLine);
   if (Schema.is(Schema.String)(lines)) {
     return fail(lines);
   }
@@ -440,14 +472,27 @@ const parseRecord = (line: number, get: (key: string) => string | undefined): Pa
   if (lines !== undefined && lines.length > 0) {
     Object.assign(value, { lines });
   }
+  if (value.customerEmail !== undefined && !Schema.is(ShortTextSchema)(value.customerEmail)) {
+    return fail(copy.invalidText.replace('{{row}}', String(line)).replace('{{column}}', 'email_zakaznika'));
+  }
   return { kind: 'ok', value };
 };
 
 /** Parses CSV text of the crm-orders-csv-v1 template into validated rows and readable per-row errors. */
-export const parseOrdersCsv = (text: string): ParsedCsv => {
+export const parseOrdersCsv = (text: string, locale: 'cs' | 'en' = 'cs'): ParsedCsv => {
+  const copy = (locale === 'en' ? enImports : csImports).imports.csv;
   const firstLine = text.split(/\r?\n/u, 1)[0] ?? '';
   const records = tokenize(text, detectDelimiter(firstLine));
-  const [header, ...data] = records;
+  if (Result.isFailure(records)) {
+    return {
+      fileError: copy.unterminatedQuote
+        .replace('{{row}}', String(records.failure.row))
+        .replace('{{column}}', String(records.failure.column)),
+      rows: [],
+      unknownColumns: [],
+    };
+  }
+  const [header, ...data] = records.success;
   if (header === undefined) {
     return { fileError: 'Soubor je prázdný', rows: [], unknownColumns: [] };
   }
@@ -455,9 +500,25 @@ export const parseOrdersCsv = (text: string): ParsedCsv => {
     const folded = foldHeader(cell);
     return aliases.get(folded) ?? folded;
   });
+  const invalidHeader = keys.findIndex((key) => key !== '' && !Schema.is(ShortTextSchema)(key));
+  if (invalidHeader !== -1) {
+    return {
+      fileError: copy.invalidText.replace('{{row}}', '1').replace('{{column}}', String(invalidHeader + 1)),
+      rows: [],
+      unknownColumns: [],
+    };
+  }
   const known = new Set(ordersCsvColumns.map((column) => column.key));
   const missing = ordersCsvColumns.filter((column) => column.required && !keys.includes(column.key));
   const unknownColumns = keys.filter((key) => key !== '' && !known.has(key));
+  const duplicate = keys.find((key, index) => known.has(key) && keys.indexOf(key) !== index);
+  if (duplicate !== undefined) {
+    return {
+      fileError: copy.duplicateHeader.replace('{{column}}', duplicate),
+      rows: [],
+      unknownColumns,
+    };
+  }
   if (missing.length > 0) {
     return {
       fileError: `V hlavičce chybí povinné sloupce: ${missing.map((column) => column.key).join(', ')}`,
@@ -465,12 +526,23 @@ export const parseOrdersCsv = (text: string): ParsedCsv => {
       unknownColumns,
     };
   }
-  const rows = data.map((record) =>
-    parseRecord(record.line, (key) => {
-      const index = keys.indexOf(key);
-      return index === -1 ? undefined : record.cells[index];
-    }),
-  );
+  const rows = data.map((record): ParsedRow => {
+    if (record.cells.length > keys.length) {
+      return {
+        kind: 'error',
+        message: copy.surplusCells.replace('{{row}}', String(record.line)).replace('{{column}}', String(keys.length)),
+        row: record.line,
+      };
+    }
+    return parseRecord({
+      copy,
+      get: (key) => {
+        const index = keys.indexOf(key);
+        return index === -1 ? undefined : record.cells[index];
+      },
+      line: record.line,
+    });
+  });
   return { rows, unknownColumns };
 };
 

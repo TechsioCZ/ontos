@@ -13,10 +13,12 @@ import {
   ordersCsv,
   reportStatusMeaning,
   ReportPeriodSchema,
+  toCsv,
   unitsToDecimal,
 } from '../../shared/domain/reports.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
+import { summaryCsv } from '../../src/routes/[lang]/crm/prehled-prodeju/report-tables.tsx';
 
 const at = '2026-10-01T08:00:00.000Z';
 const client = (id: string, owner?: string): typeof ClientSchema.Encoded => {
@@ -93,6 +95,23 @@ const repA = Schema.decodeUnknownSync(CrmViewerSchema)({
 });
 
 describe('CRM sales report (C05)', () => {
+  it('neutralizes formula-leading text, including headers, before escaping CSV', () => {
+    for (const prefix of ['=', '+', '-', '@', '\t', '\r']) {
+      const text = `${prefix}SUM(1;2)"`;
+      expect(toCsv([text], [[text]])).toBe(`"'${prefix}SUM(1;2)"""\r\n"'${prefix}SUM(1;2)"""`);
+    }
+    expect(toCsv(['Value'], [[-12.5], [0], ['ordinary']])).toBe('Value\r\n-12.5\r\n0\r\nordinary');
+  });
+
+  it('keeps negative exact-decimal amounts numeric rather than treating them as formulas', () => {
+    const state = base([order({ amount: '-123456789012345.1234', clientId: 'x', currency: 'CZK', pairing: 'paired' })]);
+    const report = buildSalesReport(state);
+    expect(ordersCsv(report)).toContain(';-123456789012345,1234;CZK');
+    expect(groupsCsv('Klient', report.byClient, report.currencies)).toContain(';-123456789012345,1234;0');
+    expect(summaryCsv(report, 'client', state)).toContain(';1;-123456789012345,1234;');
+    expect(summaryCsv(report, 'client', state)).not.toContain("'-123456789012345,1234");
+  });
+
   for (const { day, instant, previousDay } of [
     { day: '2026-11-01', instant: '2026-11-01T00:30:00+01:00', previousDay: '2026-10-31' },
     { day: '2026-07-01', instant: '2026-07-01T00:30:00+02:00', previousDay: '2026-06-30' },
@@ -238,6 +257,8 @@ describe('CRM sales report (C05)', () => {
     expect(buildSalesReport(state, { status: { kind: 'meaning', meaning: 'cancelled' } }).count).toBe(3);
     expect(unapproved.byStatus.map((group) => group.label)).toEqual(['Ze zdroje: nova', 'Ze zdroje: Stornována']);
     expect(unapproved.rows.every((row) => row.meaning === 'unmapped')).toBe(true);
+    expect(ordersCsv(unapproved).split('\r\n')[0]).toContain(';Stav ze zdroje;Význam stavu;');
+    expect(ordersCsv(unapproved)).toContain(';Stornována;;');
     // Approved for exactly this mapping version: meaning filters and groups apply.
     const approved = Schema.decodeUnknownSync(CrmStateSchema)({
       ...Schema.encodeSync(CrmStateSchema)(state),
@@ -257,6 +278,7 @@ describe('CRM sales report (C05)', () => {
     expect(buildSalesReport(approved).mappingApproved).toBe(true);
     expect(buildSalesReport(approved, { status: { kind: 'meaning', meaning: 'cancelled' } }).count).toBe(1);
     expect(buildSalesReport(approved, { status: { kind: 'meaning', meaning: 'open' } }).count).toBe(2);
+    expect(ordersCsv(buildSalesReport(approved))).toContain(';Stornována;Stornovaná;');
     const otherVersion = Schema.decodeUnknownSync(CrmStateSchema)({
       ...Schema.encodeSync(CrmStateSchema)(approved),
       customerInputs: Schema.encodeSync(CrmStateSchema)(approved).customerInputs?.map((entry) => ({
