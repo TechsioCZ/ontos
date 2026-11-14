@@ -905,9 +905,8 @@ const handleCreateRecurringTemplate = Effect.fn('Finance.handleCreateRecurringTe
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const { _tag: _command, ...fields } = command;
-  if (computeInvoiceTotals(command.lines)?.totalMinor === undefined) {
-    return yield* rejected('invoice_amount_out_of_range');
-  }
+  // The same rules every generated invoice must pass: a template that could never generate one is refused now.
+  yield* draftTotals({ lines: command.lines });
   yield* validateLineVat(command.lines, calendarDateOf(context.input.now), 'OUTGOING', context.validators);
   return stateOnly({
     ...context.state,
@@ -943,14 +942,19 @@ const handleSetRecurringTemplateActive = Effect.fn('Finance.handleSetRecurringTe
 
 /**
  * A template's lines as the invoice of one period stores them: each classified line takes Tax's rate at that issue
- * date, so a rate change reaches the next generated invoice. Treatments and older rate-only lines stay as they are.
+ * date, so a rate change reaches the next generated invoice, and each treatment must still suit the company's VAT
+ * regime on that date (a company that registered for VAT no longer issues non-payer lines). Older rate-only lines
+ * stay as they are.
  */
 const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLines(
   lines: readonly InvoiceLine[],
   issueDate: string,
   validators: FinanceValidators,
 ) {
-  if (validators.vat === undefined || !lines.some((line) => line.vatClassification !== undefined)) {
+  if (
+    validators.vat === undefined ||
+    !lines.some((line) => line.vatClassification !== undefined || line.vatTreatment !== undefined)
+  ) {
     return lines;
   }
   const choices = yield* validators.vat(issueDate);
@@ -960,7 +964,8 @@ const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLi
     if (current === undefined) {
       return yield* rejected('vat_rate_changed');
     }
-    const issue = current.vatClassification === undefined ? undefined : lineVatIssue(current, choices, 'OUTGOING');
+    const legacyRate = current.vatClassification === undefined && current.vatTreatment === undefined;
+    const issue = legacyRate ? undefined : lineVatIssue(current, choices, 'OUTGOING');
     if (issue !== undefined) {
       return yield* rejected(issue);
     }
@@ -968,6 +973,24 @@ const recurringLines = Effect.fn('Finance.recurringLines')(function* recurringLi
   }
   return priced;
 });
+
+/** Finance notes hold at most 500 characters; a long template name is shortened so its invoice can still be made. */
+const RECURRING_NOTE_MAX_LENGTH = 500;
+const recurringNote = (templateName: string, period: string) => {
+  const note = (name: string) => `Opakovaná faktura „${name}“ za období ${period}`;
+  const room = RECURRING_NOTE_MAX_LENGTH - note('').length;
+  if (templateName.length <= room) {
+    return note(templateName);
+  }
+  let shortened = '';
+  for (const character of templateName) {
+    if (shortened.length + character.length > room - 1) {
+      break;
+    }
+    shortened += character;
+  }
+  return note(`${shortened.trimEnd()}…`);
+};
 
 const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurringInvoice')(function* generate(
   command: CommandOf<'GenerateRecurringInvoice'>,
@@ -1007,7 +1030,7 @@ const handleGenerateRecurringInvoice = Effect.fn('Finance.handleGenerateRecurrin
     documentNumber: number,
     dueDate: addCalendarDaysTo(issueDate, template.dueDays),
     issueDate,
-    note: `Opakovaná faktura „${template.name}“ za období ${command.period}`,
+    note: recurringNote(template.name, command.period),
     number,
     paidMinor: 0,
     paymentState: 'UNPAID',

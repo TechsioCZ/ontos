@@ -27,6 +27,7 @@ import {
 import { alignRentalTemplates } from '../../scripts/align-rental-templates.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceValidators } from '../../src/services/persistence.service.ts';
+import { baselineVatChoices } from '../support/finance-tax-rates.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
@@ -83,6 +84,15 @@ const run = (state: FinanceState, command: FinanceCommand) => {
     ),
   );
 };
+
+const recurringTemplate = (name: string): FinanceCommand => ({
+  _tag: 'CreateRecurringTemplate',
+  counterpartyRef,
+  dueDays: 14,
+  issueDay: 1,
+  lines: [{ description: 'Nájem jednotky A1', quantity: 1, unitPriceMinor: 2_500_000, vatRate: 21 }],
+  name,
+});
 
 describe('S07 invoices', () => {
   it('S07-01 an unpaid incoming invoice due yesterday is overdue against the real business date', () => {
@@ -159,6 +169,81 @@ describe('S07 invoices', () => {
         templateId,
       });
       expect(confirmed.state.invoices.length).toBe(2);
+    }),
+  );
+
+  it.effect('a recurring non-payer line is refused once the company has registered for VAT', () =>
+    Effect.gen(function* recurringRegimeChange() {
+      // Not a VAT payer until it registers on 5. 11. 2026; a payer from then on.
+      const withTax: FinanceValidators = {
+        ...validators,
+        vat: (on) => Effect.succeed(baselineVatChoices(tenantId, on, on < '2026-11-05' ? 'NON_PAYER' : 'VAT_PAYER')),
+      };
+      const runWithTax = (state: FinanceState, command: FinanceCommand) =>
+        transitionFinance(state, command, scope, withTax, {
+          attemptId: `attempt-${command._tag}`,
+          now,
+          resourceId: `resource-${command._tag}`,
+        });
+      const created = yield* runWithTax(empty, {
+        _tag: 'CreateRecurringTemplate',
+        counterpartyRef,
+        dueDays: 14,
+        issueDay: 1,
+        lines: [{ description: 'Nájem', quantity: 1, unitPriceMinor: 100_000, vatRate: 0, vatTreatment: 'NON_PAYER' }],
+        name: 'Nájem bez DPH',
+      });
+      const templateId = yield* Schema.decodeEffect(FinanceRecurringTemplateIdSchema)(
+        created.state.recurringTemplates?.[0]?.id ?? '',
+      );
+      const generate = (period: string) =>
+        runWithTax(created.state, {
+          _tag: 'GenerateRecurringInvoice',
+          confirmDuplicate: false,
+          period,
+          templateId,
+        });
+      const before = yield* generate('2026-11');
+      expect(before.invoice?.lines?.[0]?.vatTreatment).toBe('NON_PAYER');
+      const after = yield* Effect.flip(generate('2026-12'));
+      expect(after).toMatchObject({ reason: 'vat_treatment' });
+    }),
+  );
+
+  it.effect('a recurring template that could never generate an invoice is refused when it is created', () =>
+    Effect.gen(function* zeroTotalTemplate() {
+      const refused = yield* Effect.flip(
+        run(empty, {
+          _tag: 'CreateRecurringTemplate',
+          counterpartyRef,
+          dueDays: 14,
+          issueDay: 1,
+          lines: [{ description: 'Nájem zdarma', quantity: 1, unitPriceMinor: 0, vatRate: 21 }],
+          name: 'Nulová šablona',
+        }),
+      );
+      expect(refused).toMatchObject({ reason: 'invoice_total_must_be_positive' });
+      expect(Exit.isSuccess(yield* Effect.exit(run(empty, recurringTemplate('Nájem A1'))))).toBe(true);
+    }),
+  );
+
+  it.effect('a long template name still generates an invoice whose note fits the 500-character limit', () =>
+    Effect.gen(function* longTemplateName() {
+      const created = yield* run(empty, recurringTemplate(`Nájem ${'velmi dlouhé jednotky '.repeat(22)}`.trim()));
+      const templateId = yield* Schema.decodeEffect(FinanceRecurringTemplateIdSchema)(
+        created.state.recurringTemplates?.[0]?.id ?? '',
+      );
+      const generated = yield* run(created.state, {
+        _tag: 'GenerateRecurringInvoice',
+        confirmDuplicate: false,
+        period: '2026-11',
+        templateId,
+      });
+      const note = generated.invoice?.note ?? '';
+      expect(note.length).toBeLessThanOrEqual(500);
+      expect(note.startsWith('Opakovaná faktura „Nájem velmi dlouhé jednotky')).toBe(true);
+      expect(note.endsWith('…“ za období 2026-11')).toBe(true);
+      expect(Schema.is(InvoiceSchema)(generated.invoice)).toBe(true);
     }),
   );
 
