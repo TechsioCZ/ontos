@@ -2614,8 +2614,8 @@ export const listDuplicateCandidateCases = Effect.fn('PartyMatchingPersistenceSe
   Effect.mapError(unavailable),
 );
 
-/** Called only after native Core invocation ownership and commit have been established. */
 /**
+ * Called only after native Core invocation ownership and commit have been established.
  * The committed Create result of one invocation. Given the caller's source scope, a source-created decision is
  * recovered only through its exact source receipt and current source Privacy, as the match-decision recovery does;
  * without it a source decision stays unavailable.
