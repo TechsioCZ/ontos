@@ -29,32 +29,45 @@ const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url);
 const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
+const WORKSPACE_UNIT_ARTIFACTS_JOB = 'workspace-unit-artifacts';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
+const BROWSER_INTEGRATION_JOB = 'browser-integration';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
+const WEIGHTED_SHARD_SCRIPT = 'scripts/ci/rstest-weighted-shard.sh';
+
+const MatrixRowsSchema = Schema.Array(Schema.Record(Schema.String, Schema.Unknown));
+const MatricesFileSchema = Schema.Struct({
+  integration: MatrixRowsSchema,
+  source: MatrixRowsSchema,
+  unit: MatrixRowsSchema,
+});
 
 /** Expand only matrix references for the full-run contract tests; separately test the actual planner. */
 const readGateWorkflow = () => {
   const record = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
   const workflow = record(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   const jobs = { ...record(workflow.jobs) };
-  const matrices = record(JSON.parse(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')));
-  for (const [job, key] of [
-    [WORKSPACE_GATE_JOB, 'source'],
-    [WORKSPACE_UNIT_JOB, 'unit'],
-    [SERVICE_INTEGRATION_JOB, 'integration'],
+  const matrices = Schema.decodeUnknownSync(MatricesFileSchema)(
+    JSON.parse(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')),
+  );
+  // The planner hands each matrix job only its own rows (scripts/plan-ci-checks.mts).
+  for (const [job, key, rows] of [
+    [WORKSPACE_GATE_JOB, 'source', matrices.source],
+    [WORKSPACE_UNIT_JOB, 'unit', matrices.unit.filter((row) => row['node-artifacts'] !== true)],
+    [WORKSPACE_UNIT_ARTIFACTS_JOB, 'unit-artifacts', matrices.unit.filter((row) => row['node-artifacts'] === true)],
+    [SERVICE_INTEGRATION_JOB, 'integration', matrices.integration.filter((row) => row.suite === 'integration')],
+    [BROWSER_INTEGRATION_JOB, 'browser', matrices.integration.filter((row) => row.suite === 'browser')],
   ] as const) {
-    const entry = record(jobs[job ?? '']);
+    const entry = record(jobs[job]);
     const strategy = record(entry.strategy);
     const matrix = record(strategy.matrix);
-    expect(matrix.include).toBe(`\${{ fromJSON(needs.ci-plan.outputs.${key ?? ''}) }}`);
-    jobs[job ?? ''] = { ...entry, strategy: { ...strategy, matrix: { ...matrix, include: matrices[key ?? ''] } } };
+    expect(matrix.include).toBe(`\${{ fromJSON(needs.ci-plan.outputs.${key}) }}`);
+    jobs[job] = { ...entry, strategy: { ...strategy, matrix: { ...matrix, include: rows } } };
   }
   return { ...workflow, jobs };
 };
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
-/** The step after which a build shard's outputs are downloadable by the target's proving shards. */
-const UPLOAD_STEP = "Upload the shard's build outputs";
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
@@ -122,10 +135,12 @@ const readTargetWorkflow = () => Schema.decodeUnknownSync(TargetWorkflowSchema)(
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
+const NODE_ARTIFACT_PROOF_JOB = 'node-artifact-proof';
 const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 const RUNNER_TEMP_EXPRESSION = expression('runner.temp');
 const UNPACK_NATIVE_ARTIFACTS_SCRIPT = 'bash scripts/unpack-unit-build-outputs.sh';
-const UNPACK_NATIVE_ARTIFACTS_COMMAND = `${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/native-composition-units" .output`;
+/** Consumers pass the units their row names in `artifact-units`; an empty list requires every unit. */
+const UNPACK_NATIVE_ARTIFACTS_COMMAND = `${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/native-composition-units" .output $REQUIRED_UNITS`;
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 const DERIVE_BUILT_COMPOSITION_COMMAND = 'node scripts/derive-built-application-composition.mts --snapshot-output';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
@@ -133,13 +148,22 @@ const FORMAT_AND_LINT_JOB = 'format-and-lint';
 const ROOT_GATE_JOBS = [
   WORKSPACE_GATE_JOB,
   WORKSPACE_UNIT_JOB,
+  WORKSPACE_UNIT_ARTIFACTS_JOB,
   'static-contracts',
   FORMAT_AND_LINT_JOB,
   SERVICE_INTEGRATION_JOB,
+  BROWSER_INTEGRATION_JOB,
   NODE_ARTIFACT_BUILD_JOB,
+  NODE_ARTIFACT_PROOF_JOB,
 ] as const;
-/** Every gate job; each target's artifact proofs run inside its own build shards. */
+/** Every gate job; the Node proof is a gate job of its own that no test job waits for. */
 const GATE_JOBS = ROOT_GATE_JOBS;
+/** Gate jobs that read this run's built outputs: they wait for the build shards and nothing else. */
+const ARTIFACT_CONSUMER_JOBS: readonly string[] = [
+  WORKSPACE_UNIT_ARTIFACTS_JOB,
+  SERVICE_INTEGRATION_JOB,
+  NODE_ARTIFACT_PROOF_JOB,
+];
 const GatedJobsSchema = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.String),
   jobs: Schema.Record(
@@ -170,7 +194,7 @@ it('selects work before gates and starts source checks without waiting for artif
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
   for (const gate of ROOT_GATE_JOBS) {
-    const needsNodeArtifacts = gate === SERVICE_INTEGRATION_JOB || gate === WORKSPACE_UNIT_JOB;
+    const needsNodeArtifacts = ARTIFACT_CONSUMER_JOBS.includes(gate);
     expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
     expect(jobs[gate]?.if).toBe(
       expression(
@@ -203,7 +227,44 @@ it('classifies documentation before installation and schedules full regression w
   expect(install).toBeGreaterThan(classify);
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
   expect(steps[install]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
-  expect(selection?.env?.APPLY_AFFECTED).toBe(expression('vars.CI_AFFECTED_ENABLED'));
+  expect(selection?.env?.APPLY_AFFECTED).toBe(
+    expression("(vars.CI_AFFECTED_ENABLED == 'true' || steps.candidate.outputs.base != '') && 'true' || 'false'"),
+  );
+  // Only a candidate dispatch that is not forced full resolves a comparison point, before the classification.
+  const candidate = steps.findIndex(({ id }) => id === 'candidate');
+  expect(candidate).toBeGreaterThan(-1);
+  expect(candidate).toBeLessThan(classify);
+  expect(steps[candidate]?.if).toBe(
+    "github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/') && inputs.force-ci-full != true",
+  );
+  expect(steps[candidate]?.env).toEqual({ BASE_REF: expression('inputs.base-ref') });
+  expect(steps[classify]?.env?.BASE_SHA).toBe(
+    expression(
+      'steps.candidate.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before',
+    ),
+  );
+  expect(steps[classify]?.env?.CANDIDATE_DISPATCH).toBe(expression("steps.candidate.outputs.base != ''"));
+});
+
+it('runs one candidate at a time without changing main, pull request or merge queue concurrency', () => {
+  const ConcurrencySchema = Schema.Struct({
+    concurrency: Schema.Struct({ 'cancel-in-progress': Schema.String, group: Schema.String }),
+    on: Schema.Struct({
+      workflow_dispatch: Schema.Struct({
+        inputs: Schema.Record(Schema.String, Schema.Struct({ default: Schema.Unknown, type: Schema.String })),
+      }),
+    }),
+  });
+  const workflow = Schema.decodeUnknownSync(ConcurrencySchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  expect(workflow.concurrency['cancel-in-progress']).toBe(expression("github.ref != 'refs/heads/main'"));
+  expect(workflow.concurrency.group.replaceAll(/\s+/gu, ' ')).toBe(
+    expression(
+      "startsWith(github.ref, 'refs/heads/candidate/') && (inputs.keep && format('ultramodern-workspace-kept-{0}', github.run_id) || 'ultramodern-workspace-candidates') || format('ultramodern-workspace-{0}-{1}', github.workflow, github.ref)",
+    ),
+  );
+  expect(workflow.on.workflow_dispatch.inputs.keep).toEqual({ default: false, type: 'boolean' });
+  expect(workflow.on.workflow_dispatch.inputs['base-ref']).toMatchObject({ default: 'demo/sales-crm', type: 'string' });
+  expect(workflow.on.workflow_dispatch.inputs['force-ci-full']).toMatchObject({ default: false, type: 'boolean' });
 });
 
 it('requires the exact CI plan and rejects missing, failed or unplanned skipped gates', () => {
@@ -257,6 +318,27 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   );
   noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
   expect(passes({ ...noIntegration, [SERVICE_INTEGRATION_JOB]: { result: 'skipped' } })).toBe(true);
+  // An affected plan may leave test matrices without rows, but never every unit row, the builds or the Node proof.
+  const testMatrices: readonly string[] = [
+    WORKSPACE_UNIT_JOB,
+    WORKSPACE_UNIT_ARTIFACTS_JOB,
+    SERVICE_INTEGRATION_JOB,
+    BROWSER_INTEGRATION_JOB,
+  ];
+  const planned = (skippedGates: readonly string[]) => {
+    const value = needs('affected', passed);
+    value[CI_PLAN_JOB].outputs.expected = JSON.stringify(
+      Object.fromEntries(GATE_JOBS.map((gate) => [gate, skippedGates.includes(gate) ? 'skipped' : 'success'])),
+    );
+    return {
+      ...value,
+      ...Object.fromEntries(skippedGates.map((gate) => [gate, { result: 'skipped' }])),
+    };
+  };
+  expect(passes(planned([WORKSPACE_UNIT_JOB, BROWSER_INTEGRATION_JOB]))).toBe(true);
+  expect(passes(planned(testMatrices))).toBe(false);
+  expect(passes(planned([NODE_ARTIFACT_PROOF_JOB]))).toBe(false);
+  expect(passes(planned([NODE_ARTIFACT_BUILD_JOB]))).toBe(false);
   expect(passes(needs('affected', skipped))).toBe(false);
   expect(passes(needs('invented', passed))).toBe(false);
   const missing = needs('docs', skipped);
@@ -285,30 +367,37 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
   }
 });
 
-const ArtifactBuildJobSchema = Schema.Struct({
+const ArtifactStepSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  if: Schema.optional(Schema.String),
   name: Schema.String,
-  permissions: Schema.Record(Schema.String, Schema.String),
-  steps: Schema.Array(
-    Schema.Struct({
-      env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-      if: Schema.optional(Schema.String),
-      name: Schema.String,
-      run: Schema.optional(Schema.String),
-      uses: Schema.optional(Schema.String),
-      with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-    }),
-  ),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+const ArtifactBuildJobSchema = Schema.Struct({
+  env: Schema.Record(Schema.String, Schema.String),
+  name: Schema.String,
+  needs: Schema.Array(Schema.String),
+  permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  services: Schema.optional(Schema.Unknown),
+  steps: Schema.Array(ArtifactStepSchema),
   strategy: Schema.Struct({
     matrix: Schema.Struct({
-      include: Schema.Array(Schema.Struct({ proof: Schema.String, shard: Schema.Number, units: Schema.String })),
+      include: Schema.Array(Schema.Struct({ shard: Schema.Number, units: Schema.String })),
       shard: Schema.Array(Schema.Number),
     }),
   }),
   'timeout-minutes': Schema.Number,
 });
+const ArtifactProofJobSchema = Schema.Struct({
+  needs: Schema.Array(Schema.String),
+  steps: Schema.Array(ArtifactStepSchema),
+});
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     [NODE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
+    [NODE_ARTIFACT_PROOF_JOB]: ArtifactProofJobSchema,
   }),
 });
 const TopologyUnitsSchema = Schema.Struct({
@@ -317,128 +406,130 @@ const TopologyUnitsSchema = Schema.Struct({
 });
 
 const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
+const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
+/** The build step: each pending unit runs its own package `build` script, BUILD_JOBS at a time. */
+const UNIT_BUILD_COMMAND = 'pnpm --filter "./$unit" run build';
+const buildStep = () =>
+  readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(({ run }) => run?.includes(UNIT_BUILD_COMMAND) === true);
 
-it('builds every delivery unit of the topology in exactly one build shard of each target', () => {
-  const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow());
+it('builds every delivery unit of the topology in exactly one build shard, with the Shell alone', () => {
+  const { strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
   );
   const units = [topology.shell, ...topology.verticals].map((unit) => unit.path);
-  {
-    const { steps, strategy } = jobs[NODE_ARTIFACT_BUILD_JOB];
-    // Every shard builds units, and the Node target's shards build every unit once, with the Node script.
-    expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
-    const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
-    expect(sorted(built)).toEqual(sorted(units));
-    expect(steps.some(({ run }) => run?.includes(`"\${filters[@]}" run build\n`) === true)).toBe(true);
-  }
+  expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
+  const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
+  expect(sorted(built)).toEqual(sorted(units));
+  expect(
+    strategy.matrix.include.find(({ units: shardUnits }) => shardUnits.includes('apps/shell-super-app'))?.units,
+  ).toBe('apps/shell-super-app');
+  expect(buildStep()).toBeDefined();
 });
 
-it('gives each Node build shard room for the Shell build and the proving shard its wait for the siblings', () => {
-  const job = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs[NODE_ARTIFACT_BUILD_JOB];
-  // The Shell alone builds for about 11 minutes; at 20 minutes the Shell's shard and the proving shard were cancelled.
-  expect(job['timeout-minutes']).toBe(45);
-  // The two heaviest units never share a shard.
-  const shellShard = job.strategy.matrix.include.find(({ units }) =>
-    units.split(/\s+/u).includes('apps/shell-super-app'),
-  );
-  expect(shellShard?.units.split(/\s+/u)).not.toContain('verticals/party-registry');
+it('builds in the stage deploy mode because the typecheck gate proves the types', () => {
+  const job = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  expect(job['timeout-minutes']).toBe(30);
+  expect(job.env).toMatchObject({
+    BUILD_JOBS: '2',
+    ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
+    ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1',
+  });
+  // No public origin is baked into the gate artifacts, unlike the stage deploy.
+  expect(Object.keys(job.env).some((key) => key.startsWith('ULTRAMODERN_PUBLIC_URL_'))).toBe(false);
+  expect(job.env.ONTOS_PUBLIC_ORIGIN).toBeUndefined();
+  expect(buildStep()?.run).toContain('xargs -P "$BUILD_JOBS" -n 1');
+  // The typecheck gate that makes the build-time checkers redundant is still a source gate.
+  expect(gateCommands().flat()).toContain('pnpm typecheck');
 });
-
-const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
 it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  const build = steps.find(({ run }) => run?.includes(`"\${filters[@]}" run build\n`) === true)?.run ?? '';
+  const build = buildStep()?.run ?? '';
   // The native hosted-owner fixtures start an owner only from its dist/zerops-entry.mjs, from these same artifacts.
-  const entry = build.indexOf(`mise exec -- node scripts/zerops/owner-entry.mts "\${entries[@]}"`);
-  expect(entry).toBeGreaterThan(build.indexOf('run build\n'));
+  const entry = build.indexOf('mise exec -- node scripts/zerops/owner-entry.mts "${entries[@]}"');
+  expect(entry).toBeGreaterThan(build.indexOf(UNIT_BUILD_COMMAND));
   expect(build).toContain('require("./topology/application-release-intent.json")');
   expect(build).toContain('console.log("apps/shell-super-app")');
 });
 
-it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
+it('only builds on the shards and proves every unit together in its own job that no test waits for', () => {
   const jobs = readArtifactBuildJobs();
-  for (const [job, proofs, artifacts] of [[NODE_ARTIFACT_BUILD_JOB, ['node'], NODE_BUILD_ARTIFACT_PATTERN]] as const) {
-    const { name, permissions, steps, strategy } = jobs[job];
-    // Each proof runs on exactly one shard; the other shards only build.
-    const hosted = strategy.matrix.include.map(({ proof }) => proof).filter((proof) => proof !== 'none');
-    expect(sorted(hosted)).toEqual([...proofs]);
-    expect(permissions).toEqual({ actions: 'read', contents: 'read' });
-    // The proving shard waits for every other shard of this job, by the job's own name, before it
-    // downloads them; every step after the shard's own upload runs only on a proving shard.
-    const prefix = name.slice(0, name.indexOf('${{'));
-    const upload = steps.findIndex((step) => step.name === UPLOAD_STEP);
-    const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh') === true);
-    const download = steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
-    expect(steps[wait]?.run).toBe(
-      `bash scripts/wait-for-build-shards.sh '${prefix}' ${strategy.matrix.shard.length} '${name}'`,
-    );
-    expect(upload).toBeGreaterThan(-1);
-    expect(upload < wait && wait < download).toBe(true);
-    for (const step of steps.slice(upload + 1)) {
-      expect(`${step.name}: ${step.if ?? ''}`).toMatch(/matrix\.proof (?:!= 'none'|== '[a-z]+')$/u);
-    }
-    // Only the target's proving shards download: a single one compares by name, several by `!= 'none'`.
-    expect(steps[download]?.if).toBe(proofs.length === 1 ? `matrix.proof == '${proofs[0]}'` : "matrix.proof != 'none'");
-    expect(steps[download]?.with?.pattern).toBe(artifacts);
-  }
+  const build = jobs[NODE_ARTIFACT_BUILD_JOB];
+  expect(build.needs).toEqual([CI_PLAN_JOB]);
+  expect(build.services).toBeUndefined();
+  expect(build.permissions).toBeUndefined();
+  expect(build.steps.some(({ uses }) => uses?.startsWith('actions/download-artifact@') === true)).toBe(false);
+  expect(build.steps.some(({ run }) => run?.includes('node:proof') === true)).toBe(false);
+  expect(build.steps.at(-1)?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
+  expect(build.steps.at(-1)?.with?.name).toBe(`node-units-${expression('matrix.shard')}`);
+  const proof = jobs[NODE_ARTIFACT_PROOF_JOB];
+  expect(proof.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  const download = proof.steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
+  const unpack = proof.steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  const nodeProof = proof.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
+  expect(proof.steps[download]?.with?.pattern).toBe(NODE_BUILD_ARTIFACT_PATTERN);
+  // The proof names no unit, so the unpack helper requires every delivery unit of the topology.
+  expect(proof.steps[unpack]?.run).toBe(`${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/units" .output`);
+  expect(download < unpack && unpack < nodeProof).toBe(true);
+  // No gate job waits for the proof except the required check.
+  const { jobs: all } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
+  const waiting = Object.keys(all).filter((job) => all[job]?.needs?.includes(NODE_ARTIFACT_PROOF_JOB) === true);
+  expect(waiting).toEqual(['workspace-gates']);
 });
 
-/** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
-const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: string }[]) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
+/** Runs the weighted shard runner with a `pnpm` whose `rstest list` reports these files, and records the run. */
+const weightedShard = (shard: string, files: readonly string[]) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-weighted-shard-'));
   try {
-    const gh = path.join(directory, 'gh');
-    writeFileSync(gh, '#!/bin/sh\n[ "$1" = api ] && [ "$3" = --jq ] || exit 2\nprintf %s "$FAKE_JOBS" | jq -r "$4"\n');
-    chmodSync(gh, 0o755);
+    const pnpm = path.join(directory, 'pnpm');
+    writeFileSync(
+      pnpm,
+      [
+        '#!/bin/bash',
+        'if [ "$3" = list ]; then printf %s "$FAKE_LIST" >"${@: -1}"; exit "${FAKE_LIST_STATUS:-0}"; fi',
+        'printf "%s\\n" "$@" >"$RUN_ARGUMENTS"',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(pnpm, 0o755);
+    const runArguments = path.join(directory, 'run');
     execFileSync(
       '/bin/bash',
-      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', '3', 'Build x (1/3)'],
+      [fileURLToPath(new URL('../ci/rstest-weighted-shard.sh', import.meta.url)), shard, 'unit'],
       {
         env: {
-          FAKE_JOBS: JSON.stringify({ jobs }),
-          GITHUB_REPOSITORY: 'owner/repository',
-          GITHUB_RUN_ID: '1',
+          FAKE_LIST: JSON.stringify(files.map((file) => ({ file, type: 'file' }))),
           PATH: `${directory}:${STEP_PATH}`,
-          WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
+          RUN_ARGUMENTS: runArguments,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
       },
     );
-    return true;
-  } catch {
-    return false;
+    try {
+      return readFileSync(runArguments, 'utf-8')
+        .split('\n')
+        .filter((line) => line.startsWith('/'));
+    } catch {
+      return [];
+    }
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
 };
 
-it('waits for the other build shards of its own target and fails when one does not succeed', () => {
-  const last = 'Build x (3/3)';
-  const others = [
-    { conclusion: 'success', name: 'Build x (2/3)' },
-    { conclusion: 'success', name: last },
-  ];
-  const unrelated = [
-    { conclusion: null, name: 'Build x (1/3)' },
-    { conclusion: 'failure', name: 'Static Contracts' },
-  ];
-  expect(waitForBuildShards([...others, ...unrelated])).toBe(true);
-  // Another proving shard of the target is still running its proof, but its outputs are uploaded.
-  const proving = {
-    conclusion: null,
-    name: last,
-    steps: [
-      { conclusion: 'success', name: UPLOAD_STEP },
-      { conclusion: null, name: 'Wait for the other build shards' },
-    ],
-  };
-  expect(waitForBuildShards([others[0], proving, ...unrelated])).toBe(true);
-  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped']) {
-    expect(waitForBuildShards([others[0], { conclusion, name: last }, ...unrelated])).toBe(false);
+it('deals the files of a split giant test family over the weighted shards and runs every file exactly once', () => {
+  const family = ['consumption', 'expiry', 'identity', 'order', 'reconciliation', 'scope'].map(
+    (group) => `/w/tests/integration/purchase-approval-fresh-proof-postgres.${group}.test.ts`,
+  );
+  const files = [...Array.from({ length: 12 }, (_, index) => `/w/tests/integration/file-${index}.test.ts`), ...family];
+  const shards = ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6'].map((shard) => weightedShard(shard, files));
+  expect(sorted(shards.flat())).toEqual(sorted(files));
+  // Rstest's own --shard would keep the alphabetically adjacent parts together; the weighted deal spreads them.
+  for (const shard of shards) {
+    expect(shard.filter((file) => family.includes(file))).toHaveLength(1);
   }
+  expect(() => weightedShard('7/6', files)).toThrow();
+  expect(() => weightedShard('1/2', [])).toThrow();
 });
 
 const GateCommandStepSchema = Schema.Struct({
@@ -497,6 +588,20 @@ const GateCommandsWorkflowSchema = Schema.Struct({
         }),
       }),
     }),
+    [WORKSPACE_UNIT_ARTIFACTS_JOB]: Schema.Struct({
+      steps: Schema.Array(GateCommandStepSchema),
+      strategy: Schema.Struct({
+        matrix: Schema.Struct({
+          include: Schema.Array(
+            Schema.Struct({
+              commands: Schema.String,
+              name: Schema.String,
+              'node-artifacts': Schema.optional(Schema.Boolean),
+            }),
+          ),
+        }),
+      }),
+    }),
   }),
 });
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
@@ -508,7 +613,7 @@ const readRootScripts = () =>
 const readGateCommandJobs = () => Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(readGateWorkflow()).jobs;
 const gateCommands = () => {
   const jobs = readGateCommandJobs();
-  return ([WORKSPACE_GATE_JOB, WORKSPACE_UNIT_JOB] as const).flatMap((job) =>
+  return ([WORKSPACE_GATE_JOB, WORKSPACE_UNIT_JOB, WORKSPACE_UNIT_ARTIFACTS_JOB] as const).flatMap((job) =>
     jobs[job].strategy.matrix.include.map(({ commands }) => commands.split('\n').filter(Boolean)),
   );
 };
@@ -529,10 +634,19 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     expect(commands).toContain(check);
   }
   const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
-  expect(
-    sourceShards.map((entry) => entry.commands.trim()).filter((command) => command.startsWith('pnpm test:scripts')),
-  ).toEqual(['pnpm test:scripts --shard 1/3', 'pnpm test:scripts --shard 2/3', 'pnpm test:scripts --shard 3/3']);
+  const toolingShards = sourceShards
+    .map((entry) => entry.commands.trim())
+    .filter((command) => command.includes(`${WEIGHTED_SHARD_SCRIPT} `) && command.includes(' scripts '));
+  const toolingCount = toolingShards.length;
+  // The weighted shards together run what `pnpm test:scripts` runs, over the same project and options.
+  expect(toolingShards).toEqual(
+    Array.from(
+      { length: toolingCount },
+      (_, index) => `bash ${WEIGHTED_SHARD_SCRIPT} ${index + 1}/${toolingCount} scripts --pool.maxWorkers 1`,
+    ),
+  );
   const { scripts } = readRootScripts();
+  expect(scripts['test:scripts']).toBe('rstest --project scripts --pool.maxWorkers 1');
   // The module entrypoint boundary check is the repository's own boundary script.
   expect(scripts['module-entrypoints:check']).toContain('check-module-entrypoint-boundaries.mts');
   const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
@@ -541,12 +655,18 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
-it('restores same-run Node metadata only for unit shards that execute public contract fixtures', () => {
-  const job = readGateCommandJobs()[WORKSPACE_UNIT_JOB];
-  const restored = job.strategy.matrix.include.filter((entry) => entry['node-artifacts'] === true);
-  expect(restored.map(({ name }) => name)).toEqual([
+it('restores same-run Node metadata only for unit rows that execute public contract fixtures', () => {
+  const jobs = readGateCommandJobs();
+  // Rows that read no built output start after planning, without downloading anything.
+  const plain = jobs[WORKSPACE_UNIT_JOB];
+  expect(plain.strategy.matrix.include.some((entry) => entry['node-artifacts'] === true)).toBe(false);
+  expect(plain.steps.some(({ uses }) => uses?.startsWith('actions/download-artifact@') === true)).toBe(false);
+  const job = jobs[WORKSPACE_UNIT_ARTIFACTS_JOB];
+  expect(job.strategy.matrix.include.map(({ name }) => name)).toEqual([
+    'Unit Tests (Shell 1/2)',
+    'Unit Tests (Shell 2/2)',
     'Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)',
-    'Unit and Component Tests (every other package)',
+    'Unit and Component Tests (Pricing, Market Catalog, Privacy, and Symmy)',
   ]);
   const download = job.steps.findIndex(
     ({ name }) => name === 'Download the same-run Node artifacts for unit contract fixtures',
@@ -554,16 +674,19 @@ it('restores same-run Node metadata only for unit shards that execute public con
   const unpack = job.steps.findIndex(({ name }) => name === 'Unpack the Node artifacts for unit contract fixtures');
   const run = job.steps.findIndex(({ name }) => name === `Run ${expression('matrix.name')}`);
   expect(download !== -1 && download < unpack && unpack < run).toBe(true);
-  expect(job.steps[download]?.if).toBe('matrix.node-artifacts == true');
   expect(job.steps[download]?.uses).toBe('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
   expect(job.steps[download]?.with).toEqual({
     path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
     pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
-  expect(job.steps[unpack]?.if).toBe('matrix.node-artifacts == true');
   expect(job.steps[unpack]?.['working-directory']).toBe('app');
+  expect(job.steps[unpack]?.env).toEqual({ REQUIRED_UNITS: expression('matrix.artifact-units') });
   expect(job.steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
 });
+
+/** `pnpm --filter ./<package> exec bash "$PWD/scripts/ci/rstest-weighted-shard.sh" <k>/<n> unit`. */
+const WEIGHTED_UNIT_LINE =
+  /^pnpm --filter (?<filter>\.\/[a-z/-]+) exec bash "\$PWD\/scripts\/ci\/rstest-weighted-shard\.sh" (?<shard>\d+\/\d+) unit$/u;
 
 it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
   const { scripts } = readRootScripts();
@@ -571,8 +694,23 @@ it('runs the root unit and component tests of every workspace package in exactly
   expect(scripts['test:unit']).toBe(
     'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component',
   );
+  const weighted = new Map<string, { components: number; shards: string[] }>();
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
+    const shard = WEIGHTED_UNIT_LINE.exec(unit ?? '')?.groups;
+    if (shard !== undefined) {
+      // A weighted shard of one package's unit project, optionally followed by that package's component tests.
+      const filter = shard.filter ?? '';
+      const entry = weighted.get(filter) ?? { components: 0, shards: [] };
+      entry.shards.push(shard.shard ?? '');
+      if (component !== undefined) {
+        expect(component).toBe(`pnpm -r --no-sort --if-present --filter ${filter} run test:component`);
+        entry.components += 1;
+      }
+      expect(rest).toEqual([]);
+      weighted.set(filter, entry);
+      return [];
+    }
     if (unit === undefined || !unit.endsWith(' run test:unit')) {
       return [];
     }
@@ -584,12 +722,22 @@ it('runs the root unit and component tests of every workspace package in exactly
       [...filters.matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter?.replaceAll("'", '') ?? ''),
     ];
   });
+  for (const [filter, entry] of weighted) {
+    // The runner runs `rstest --project unit` itself, so the package's script must be exactly that.
+    const manifest = Schema.decodeUnknownSync(RootScriptsSchema)(
+      JSON.parse(readFileSync(new URL(`../../${filter}/package.json`, import.meta.url), 'utf-8')),
+    );
+    expect(manifest.scripts['test:unit'], filter).toBe('rstest --project unit');
+    const count = Number(entry.shards[0]?.split('/')[1]);
+    expect(sorted(entry.shards)).toEqual(sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)));
+    expect(entry.components, filter).toBe(manifest.scripts['test:component'] === undefined ? 0 : 1);
+  }
   const named = shards.filter((filters) => filters.every((filter) => !filter.startsWith('!')));
   const remainder = shards.filter((filters) => filters.some((filter) => filter.startsWith('!')));
   expect(named.length + remainder.length).toBe(shards.length);
   // One shard runs every package the others do not name, excluding the workspace root like `pnpm -r`.
   expect(remainder).toHaveLength(1);
-  const namedPackages = named.flat();
+  const namedPackages = [...named.flat(), ...weighted.keys()];
   expect(sorted(remainder[0] ?? [])).toEqual(sorted(['!.', ...namedPackages.map((filter) => `!${filter}`)]));
   expect(new Set(namedPackages).size).toBe(namedPackages.length);
   for (const filter of namedPackages) {
@@ -644,14 +792,18 @@ it('runs the root integration suite once and every package integration suite in 
   const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null', SPICEDB_DATABASE_PASSWORD: 'spicedb' });
-  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
+  // The root suite and the large packages run as weighted shards of the very project their scripts run.
+  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 || status=$?');
   expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
+    `mise exec -- bash ${WEIGHTED_SHARD_SCRIPT} "$ROOT_RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?`,
   );
-  expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
-  expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"');
-  // One suite's failure never hides another's: the root suite's status is kept and the step fails only at the end.
-  expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"} || status=$?');
+  expect(run?.run).toContain(
+    `mise exec -- pnpm $PACKAGE_FILTERS exec bash "$PWD/${WEIGHTED_SHARD_SCRIPT}" "$RSTEST_SHARD" integration --pool.maxWorkers 1 || status=$?`,
+  );
+  expect(run?.run).toContain(
+    'mise exec -- pnpm -r --no-bail --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 || status=$?',
+  );
+  // One suite's failure never hides another's: every status is kept and the step fails only at the end.
   expect(run?.run).toContain('exit "$status"');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
@@ -675,7 +827,7 @@ it('runs the root integration suite once and every package integration suite in 
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
-  expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/3', '2/3', '3/3']);
+  expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
   const packages = shards.filter((shard) => shard['root-suite'] !== true);
   const named = packages.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
@@ -686,6 +838,11 @@ it('runs the root integration suite once and every package integration suite in 
   const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
   for (const shard of split) {
     expect(shardFilters(shard)).toHaveLength(1);
+    // The weighted runner runs `rstest --project integration` itself, so the package's script must be exactly that.
+    const manifest = Schema.decodeUnknownSync(RootScriptsSchema)(
+      JSON.parse(readFileSync(new URL(`../../${shardFilters(shard)[0] ?? ''}/package.json`, import.meta.url), 'utf-8')),
+    );
+    expect(manifest.scripts['test:integration'], shard.name).toBe('rstest --project integration');
   }
   for (const filter of new Set(split.flatMap(shardFilters))) {
     const parts = split
@@ -797,7 +954,7 @@ const IdentityGateJobSchema = Schema.Struct({
 });
 const IdentityGateJobsSchema = Schema.Struct({
   jobs: Schema.Struct({
-    'node-artifact-build': Schema.Struct({
+    [NODE_ARTIFACT_PROOF_JOB]: Schema.Struct({
       ...IdentityGateJobSchema.fields,
       services: Schema.Record(
         Schema.String,
@@ -817,7 +974,7 @@ it('gives every CI database tool a separate login per runtime identity and audit
   const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
   const integration = jobs[SERVICE_INTEGRATION_JOB];
-  for (const environment of [integration.env, jobs['node-artifact-build'].env]) {
+  for (const environment of [integration.env, jobs[NODE_ARTIFACT_PROOF_JOB].env]) {
     const admin = Schema.decodeUnknownSync(Schema.URLFromString)(environment?.DATABASE_ADMIN_URL);
     for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
       expect(environment?.[key]).toBe(`postgresql://${role}:${role}@${admin.host}${admin.pathname}`);
@@ -855,13 +1012,11 @@ it('gives every CI database tool a separate login per runtime identity and audit
 it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
   Effect.gen(function* proveNodeDatabaseIdentities() {
     const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
-    const node = jobs['node-artifact-build'];
+    const node = jobs[NODE_ARTIFACT_PROOF_JOB];
     const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(node.env);
     const service = node.services['proof-postgres'];
     expect(service?.image).toBe(
-      expression(
-        "matrix.proof == 'node' && 'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5' || ''",
-      ),
+      'postgres:18.6-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5',
     );
     expect(service?.ports).toContain('5433:5432');
     const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
@@ -878,7 +1033,7 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     const proof = node.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
     expect(initialize).toBeGreaterThanOrEqual(0);
     expect(initialize).toBeLessThan(provision);
-    expect(node.steps[initialize]?.if).toBe("matrix.proof == 'node'");
+    expect(node.steps[initialize]?.if).toBeUndefined();
     expect(node.steps[initialize]?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
     expect(node.steps[initialize]?.env).toEqual({
       DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
@@ -888,7 +1043,7 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     expect(node.steps[provision]?.env).toBeUndefined();
     expect(provision).toBeGreaterThanOrEqual(0);
     expect(provision).toBeLessThan(proof);
-    expect(node.steps[provision]?.if).toBe("matrix.proof == 'node'");
+    expect(node.steps[provision]?.if).toBeUndefined();
     expect(node.steps[provision]?.run).toBe('mise exec -- pnpm db:migrate');
     expect(node.steps[proof]?.env).toBeUndefined();
     for (const identity of DATABASE_IDENTITIES) {
@@ -911,14 +1066,34 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
   expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
   const roots = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
-  expect(roots).toHaveLength(3);
+  expect(roots).toHaveLength(4);
   expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
   const customerContext = integration.strategy.matrix.include.filter((shard) =>
     shardFilters(shard).includes('./verticals/commerce-customer-context'),
   );
   expect(customerContext).toHaveLength(6);
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
-  expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(true);
+  // The browser suite reads no built output: its own job needs only the plan.
+  expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(false);
+  const browser = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        [BROWSER_INTEGRATION_JOB]: Schema.Struct({
+          needs: Schema.Array(Schema.String),
+          steps: Schema.Array(GateCommandStepSchema),
+          strategy: Schema.Struct({
+            matrix: Schema.Struct({ include: Schema.Array(Schema.Struct({ suite: Schema.String })) }),
+          }),
+        }),
+      }),
+    }),
+  )(source).jobs[BROWSER_INTEGRATION_JOB];
+  expect(browser.needs).toEqual([CI_PLAN_JOB]);
+  expect(browser.strategy.matrix.include.map(({ suite }) => suite)).toEqual(['browser']);
+  expect(browser.steps.some(({ uses }) => uses?.startsWith('actions/download-artifact@') === true)).toBe(false);
+  expect(browser.steps.some(({ run }) => run === 'mise exec -- pnpm --filter @app/shell-super-app test:e2e')).toBe(
+    true,
+  );
   const { steps } = integration;
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);

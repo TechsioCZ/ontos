@@ -45,9 +45,9 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
   expect(plan.integration.map(({ name }) => name)).toEqual([
-    'Catalog Integration',
     'Pricing and Inventory Integration',
-    'Market, Order, Payment Term, Price Group, and Storefront Integration',
+    'Catalog Integration',
+    'Native Preproposal Basis and Approval Proof',
   ]);
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
@@ -92,6 +92,33 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
       integration: templates.integration.map((entry) => ({ ...entry, 'proof-packages': [] })),
     }),
   ).toBe(false);
+});
+
+it('gives each matrix job only its own rows and plans a job without rows as skipped', () => {
+  const full = planCiChecks({ applyAffected: false, changedPaths: [CATALOG_SOURCE], packages, templates });
+  expect(full.jobs.browser.map(({ suite }) => suite)).toEqual(['browser']);
+  expect(full.jobs.services.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(full.jobs.services.length + full.jobs.browser.length).toBe(templates.integration.length);
+  expect(full.jobs.unitArtifacts.every((entry) => entry['node-artifacts'] === true)).toBe(true);
+  expect(full.jobs.unitPlain.some((entry) => entry['node-artifacts'] === true)).toBe(false);
+  expect(full.jobs.unitArtifacts.length + full.jobs.unitPlain.length).toBe(templates.unit.length);
+  expect(Object.values(full.expected).every((result) => result === 'success')).toBe(true);
+  const affected = planCiChecks({ applyAffected: true, changedPaths: [CATALOG_SOURCE], packages, templates });
+  // Catalog and Pricing unit rows read built outputs, and no browser row consumes them.
+  expect(affected.expected['workspace-unit-artifacts']).toBe('success');
+  expect(affected.expected['browser-integration']).toBe('skipped');
+  expect(affected.expected['node-artifact-proof']).toBe('success');
+  expect(affected.expected['node-artifact-build']).toBe('success');
+  // A sharded single-package row whose package is affected runs exactly as planned.
+  const shell = planCiChecks({
+    applyAffected: true,
+    changedPaths: ['app/apps/shell-super-app/src/service.ts'],
+    packages,
+    templates,
+  });
+  expect(shell.unit.filter(({ name }) => name.startsWith('Unit Tests (Shell')).map(({ commands }) => commands)).toEqual(
+    templates.unit.filter(({ name }) => name.startsWith('Unit Tests (Shell')).map(({ commands }) => commands),
+  );
 });
 
 it('keeps affected selection in shadow mode until explicitly enabled', () => {
@@ -181,7 +208,7 @@ it('selects browser checks, all root integration shards and every Shell shard wh
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/3', '2/3', '3/3']);
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
   // The Shell suite runs in its own shards, so the root-suite shard names no package here.
   expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
@@ -189,7 +216,7 @@ it('selects browser checks, all root integration shards and every Shell shard wh
     plan.integration
       .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
       .map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/3', '2/3', '3/3']);
+  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
 });
 
 it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
@@ -319,13 +346,14 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       const base = git('rev-parse', 'HEAD');
       writeFileSync(path.join(directory, 'README.md'), 'after\n');
       git('commit', '--quiet', '-am', 'docs');
-      const run = (event: string, comparison = base, force = 'false') => {
+      const run = (event: string, comparison = base, force = 'false', candidate = 'false') => {
         const output = path.join(directory, 'outputs');
         writeFileSync(output, '');
         execFileSync('/bin/bash', [script, path.join(directory, 'paths')], {
           cwd: directory,
           env: {
             BASE_SHA: comparison,
+            CANDIDATE_DISPATCH: candidate,
             FORCE_FULL: force,
             GITHUB_EVENT_NAME: event,
             GITHUB_OUTPUT: output,
@@ -341,6 +369,10 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
       expect(run('merge_group')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
+      // A candidate dispatch with a resolved comparison point is classified like a pull request, unless forced full.
+      expect(run('workflow_dispatch', base, 'false', 'true')).toContain('mode=docs\n');
+      expect(run('workflow_dispatch', base, 'true', 'true')).toContain('mode=full\n');
+      expect(run('workflow_dispatch', '0'.repeat(40), 'false', 'true')).toContain('mode=full\n');
       expect(run('pull_request', '0'.repeat(40))).toContain('mode=full\n');
       expect(run('pull_request', base, 'true')).toContain('mode=full\n');
       git('mv', 'README.md', 'runtime.ts');
