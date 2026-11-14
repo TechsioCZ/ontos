@@ -157,7 +157,11 @@ const PackageManifest = Schema.Struct({
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   type: Schema.optionalKey(Schema.Literals(['module', 'commonjs'])),
 });
-const FederationManifest = Schema.Struct({ exposes: Schema.Array(Schema.Unknown), metaData: JsonObject, name: NONEMPTY });
+const FederationManifest = Schema.Struct({
+  exposes: Schema.Array(Schema.Unknown),
+  metaData: JsonObject,
+  name: NONEMPTY,
+});
 const BackendManifest = Schema.Struct({ backendFederation: Schema.Struct({ deliveryUnit: IdentitySchema }) });
 const PlanSchema = Schema.Struct({ build: Schema.Array(Schema.String), keep: Schema.Array(Schema.String) });
 export class UnitOutputCacheError extends Schema.TaggedError<UnitOutputCacheError>()('UnitOutputCacheError', {
@@ -340,7 +344,9 @@ export const firstOutputMismatch = (input: {
   }
   return undefined;
 };
-export const planOutputCache = (checks: readonly { readonly unit: string; readonly mismatch: string | undefined }[]) => ({
+export const planOutputCache = (
+  checks: readonly { readonly unit: string; readonly mismatch: string | undefined }[],
+) => ({
   build: checks.filter((check) => check.mismatch !== undefined).map((check) => check.unit),
   keep: checks.filter((check) => check.mismatch === undefined).map((check) => check.unit),
 });
@@ -375,7 +381,8 @@ const requireFile = (files: readonly OutputFile[], filename: string, unit: strin
   const mismatch = requiredOutputMismatch(files, filename);
   return mismatch === undefined ? Effect.void : Effect.fail(invalid(unit, mismatch));
 };
-const readMetadata = (root: string, directory: string) => readJson(path.join(root, directory, BUILD_METADATA), MetadataSchema);
+const readMetadata = (root: string, directory: string) =>
+  readJson(path.join(root, directory, BUILD_METADATA), MetadataSchema);
 const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served: readonly string[]) =>
   Effect.gen(function* validateRequiredOutputs() {
     const fs = yield* FileSystem.FileSystem;
@@ -396,7 +403,9 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
       yield* requireFile(files, `${DIST}/zerops-entry.mjs`, unit.id);
     }
     yield* readJson(path.join(root, OUTPUT, PACKAGE_JSON), PackageManifest);
-    const [built, packaged] = yield* Effect.all([readMetadata(root, DIST), readMetadata(root, OUTPUT)], { concurrency: 1 });
+    const [built, packaged] = yield* Effect.all([readMetadata(root, DIST), readMetadata(root, OUTPUT)], {
+      concurrency: 1,
+    });
     const identity = built.deliveryUnit;
     if (
       identity.appId !== unit.id ||
@@ -477,7 +486,11 @@ const checkUnit = (context: Context, unit: CacheUnit) =>
     }
     return yield* Effect.void;
   }).pipe(Effect.mapError((cause) => invalid(unit.id, String(cause))));
-const listNames = (value: string) => value.trim().split(/\s+/u).filter((name) => name.length > 0);
+const listNames = (value: string) =>
+  value
+    .trim()
+    .split(/\s+/u)
+    .filter((name) => name.length > 0);
 const withUnits = (value: string) =>
   Effect.gen(function* loadSelectedUnits() {
     const context = yield* loadContext;
@@ -503,21 +516,15 @@ const inspectUnit = (context: Context, unit: CacheUnit) =>
 const digestCommand = Command.make('digest', { unit: Flag.String('unit').pipe(Flag.atLeast(1)) }, ({ unit }) =>
   Effect.gen(function* printDigests() {
     const { context, units } = yield* withUnits(unit.join(' '));
-    return yield* Effect.forEach(
-      units,
-      (entry) => printUnitDigest(context, entry),
-      { concurrency: 1 },
-    ).pipe(Effect.asVoid);
+    return yield* Effect.forEach(units, (entry) => printUnitDigest(context, entry), { concurrency: 1 }).pipe(
+      Effect.asVoid,
+    );
   }),
 );
 const planCommand = Command.make('plan', { units: Flag.String('units') }, ({ units: value }) =>
   Effect.gen(function* printPlan() {
     const { context, units } = yield* withUnits(value);
-    const checks = yield* Effect.forEach(
-      units,
-      (unit) => inspectUnit(context, unit),
-      { concurrency: 1 },
-    );
+    const checks = yield* Effect.forEach(units, (unit) => inspectUnit(context, unit), { concurrency: 1 });
     const plan = yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
     return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
   }),

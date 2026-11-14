@@ -61,7 +61,9 @@ const inputs = {
   ],
 };
 const changeEntry = (filepath: string): readonly GitEntry[] =>
-  inputs.entries.map((entry) => entry.path === filepath ? { ...entry, identity: `${entry.identity}-changed` } : entry);
+  inputs.entries.map((entry) =>
+    entry.path === filepath ? { ...entry, identity: `${entry.identity}-changed` } : entry,
+  );
 const identity: CacheIdentity = { appId: UNIT, build: BUILD, buildMarker: BUILD, sourceRevision: OLD_REVISION };
 const files: readonly OutputFile[] = [
   { mode: 0o644, path: FILE, sha256: HASH, size: 42 },
@@ -93,15 +95,15 @@ it.effect('changes for each committed input class, including Git modes and closu
     for (const filepath of paths) {
       expect(yield* gatesInputDigest({ ...inputs, entries: changeEntry(filepath) })).not.toBe(expected);
     }
-    const modeChanged = inputs.entries.map(
-      (entry) => entry.path === SOURCE ? { ...entry, identity: '100755 blob first' } : entry,
+    const modeChanged = inputs.entries.map((entry) =>
+      entry.path === SOURCE ? { ...entry, identity: '100755 blob first' } : entry,
     );
     expect(yield* gatesInputDigest({ ...inputs, entries: modeChanged })).not.toBe(expected);
     expect(
       yield* gatesInputDigest({ ...inputs, entries: inputs.entries.filter((entry) => entry.path !== SOURCE) }),
     ).not.toBe(expected);
-    const packages = inputs.packages.map(
-      (entry) => entry.directory === DIRECTORY ? { ...entry, workspaceDependencies: [] } : entry,
+    const packages = inputs.packages.map((entry) =>
+      entry.directory === DIRECTORY ? { ...entry, workspaceDependencies: [] } : entry,
     );
     expect(yield* gatesInputDigest({ ...inputs, packages })).not.toBe(expected);
     return yield* Effect.void;
@@ -128,8 +130,8 @@ it.effect('separates targets, modes, flags, origins, commands, policies and actu
       expect(yield* gatesInputDigest({ ...inputs, profile: { ...profile, ...change } })).not.toBe(expected);
     }
     for (const index of [0, 1, 2]) {
-      const origins = inputs.origins.map(
-        (origin, position) => position === index ? 'https://stage.example.test' : origin,
+      const origins = inputs.origins.map((origin, position) =>
+        position === index ? 'https://stage.example.test' : origin,
       );
       expect(yield* gatesInputDigest({ ...inputs, origins })).not.toBe(expected);
     }
@@ -160,7 +162,12 @@ it('keeps only exact matches; missing, truncated, changed-mode and foreign outpu
 it('requires nonempty entrypoints independently of a matching receipt', () => {
   expect(requiredOutputMismatch(files, FILE)).toBeUndefined();
   expect(requiredOutputMismatch([], FILE)).toContain(FILE);
-  expect(requiredOutputMismatch(files.map((file) => ({ ...file, size: 0 })), FILE)).toContain(FILE);
+  expect(
+    requiredOutputMismatch(
+      files.map((file) => ({ ...file, size: 0 })),
+      FILE,
+    ),
+  ).toContain(FILE);
   expect(requiredOutputMismatch(files, '.output/index.js')).toContain('.output/index.js');
 });
 
