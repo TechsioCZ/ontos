@@ -1156,7 +1156,16 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
             },
           ],
     ),
-  }).pipe(Effect.mapError(constructionUnavailable));
+  }).pipe(
+    Effect.catchTag('SchemaError', (cause) => Effect.fail(constructionUnavailable(cause))),
+    Effect.catchTag('PohodaExportRefused', (refusal) =>
+      Effect.fail(
+        rejected(
+          refusal.documentNumber === undefined ? refusal.problem : `${refusal.problem}: ${refusal.documentNumber}`,
+        ),
+      ),
+    ),
+  );
   let accountingExport: NonNullable<FinanceState['accountingExports']>[number] = {
     ...(yield* actorOf(context, command.actorLabel)),
     batchNumber,

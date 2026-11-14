@@ -119,44 +119,46 @@ describe('S07.R4 price list and discounts', () => {
     ).toBe(undefined);
   });
 
-  it('POHODA keeps item sums equal to the recap for both discount kinds', () => {
-    const lines = [
-      {
-        description: 'Úklid',
-        discount: { kind: 'AMOUNT' as const, reason: 'Reklamace', value: 333 },
-        quantity: 3,
-        unitPriceMinor: 1001,
-        vatRate: 21 as const,
-      },
-      {
-        description: 'Nájem',
-        discount: { kind: 'PERCENT' as const, reason: 'Akce', value: 5 },
-        quantity: 1,
-        unitPriceMinor: 100_000,
-        vatRate: 21 as const,
-      },
-    ];
-    const totals = computeInvoiceTotals(lines);
-    assert.isDefined(totals);
-    const xml = buildPohodaDataPack(
-      [
+  it.effect('POHODA keeps item sums equal to the recap for both discount kinds', () =>
+    Effect.gen(function* pohodaDiscounts() {
+      const lines = [
         {
-          counterpartyName: 'Nájemce',
-          documentLink: 'http://localhost/x',
-          invoice: invoice('pohoda', { lines, ...totals }),
+          description: 'Úklid',
+          discount: { kind: 'AMOUNT' as const, reason: 'Reklamace', value: 333 },
+          quantity: 3,
+          unitPriceMinor: 1001,
+          vatRate: 21 as const,
         },
-      ],
-      { batchNumber: 'UP-2026-001', createdAt: '2026-10-21T08:00:00Z', createdBy: 'test', version: 1 },
-    );
-    expect(xml).toContain('<inv:discountPercentage>5</inv:discountPercentage>');
-    expect(xml).toContain('Sleva: Reklamace');
-    const sum = (tag: string) =>
-      [...xml.matchAll(new RegExp(`<typ:${tag}>(-?[\\d.]+)</typ:${tag}>`, 'gu'))]
-        .map((match) => Math.round(Number(match[1]) * 100))
-        .reduce((left, right) => left + right, 0);
-    expect(sum('price')).toBe(totals.subtotalMinor);
-    expect(sum('priceVAT')).toBe(totals.vatMinor);
-  });
+        {
+          description: 'Nájem',
+          discount: { kind: 'PERCENT' as const, reason: 'Akce', value: 5 },
+          quantity: 1,
+          unitPriceMinor: 100_000,
+          vatRate: 21 as const,
+        },
+      ];
+      const totals = computeInvoiceTotals(lines);
+      assert.isDefined(totals);
+      const xml = yield* buildPohodaDataPack(
+        [
+          {
+            counterpartyName: 'Nájemce',
+            documentLink: 'http://localhost/x',
+            invoice: invoice('pohoda', { lines, ...totals }),
+          },
+        ],
+        { batchNumber: 'UP-2026-001', createdAt: '2026-10-21T08:00:00Z', createdBy: 'test', version: 1 },
+      );
+      expect(xml).toContain('<inv:discountPercentage>5</inv:discountPercentage>');
+      expect(xml).toContain('Sleva: Reklamace');
+      const sum = (tag: string) =>
+        [...xml.matchAll(new RegExp(`<typ:${tag}>(-?[\\d.]+)</typ:${tag}>`, 'gu'))]
+          .map((match) => Math.round(Number(match[1]) * 100))
+          .reduce((left, right) => left + right, 0);
+      expect(sum('price')).toBe(totals.subtotalMinor);
+      expect(sum('priceVAT')).toBe(totals.vatMinor);
+    }),
+  );
 
   it.effect('price-list items are stored and an invalid discount is refused with a reason code', () =>
     Effect.gen(function* priceList() {

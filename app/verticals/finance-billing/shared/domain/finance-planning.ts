@@ -16,6 +16,7 @@ import {
   IssuerVatIdSchema,
 } from '../apis/records.ts';
 import { buildPohodaDataPack } from './pohoda-xml.ts';
+import type { PohodaExportRefused } from './pohoda-xml.ts';
 
 const pragueDateFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
@@ -384,7 +385,7 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
   readonly format: AccountingExportFormat;
   readonly meta: ExportMeta;
   readonly rows: readonly ExportRow[];
-}): Effect.fn.Return<string, Schema.SchemaError> {
+}): Effect.fn.Return<string, PohodaExportRefused | Schema.SchemaError> {
   if (format === 'CSV') {
     const header = [
       'schema_version',
@@ -462,7 +463,7 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
     const content = yield* Schema.encodeUnknownEffect(AccountingExportDocumentJsonSchema)(document);
     return `${content}\n`;
   }
-  return buildPohodaDataPack(rows, meta);
+  return yield* buildPohodaDataPack(rows, meta);
 });
 
 const czk = (minor: number) => `${czkNumberFormatter.format(minor / 100)} Kč`;

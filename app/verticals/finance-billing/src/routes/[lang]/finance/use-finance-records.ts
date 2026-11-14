@@ -33,7 +33,7 @@ import { executeRecords } from '../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { financeRecordDetailConflict } from './finance-document-detail.ts';
 import { financePageScope } from './finance-page-scope.ts';
-import { reasonText } from './finance-ui.tsx';
+import { knownReasonText } from './finance-ui.tsx';
 import type { FinanceCommandDraft } from './finance-ui.tsx';
 import { useFinanceReferences } from './use-finance-references.ts';
 import { useRentalObjects } from './use-rental-objects.ts';
@@ -584,7 +584,7 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
             // The detail panel covers the page's status line, so a rejected confirm or void also raises a toast.
             // A known domain refusal (e.g. approving a draft that was not prepared) is explained in Czech.
             const reason = failureReason(error);
-            const known = Object.entries(reasonText).find(([key]) => reason?.includes(key) === true)?.[1];
+            const known = knownReasonText(reason);
 
             let notification: Parameters<typeof toaster.create>[0] = {
               title: t(`finance-billing.demo.feedback.${known === undefined ? failure : 'refused'}`),
