@@ -1,3 +1,4 @@
+import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
 import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals';
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
@@ -342,7 +343,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
       priceMinor: variant.priceMinor ?? null,
       productId: product.id,
       sku: variant.sku ?? null,
-      stockOnHand: variant.id === undefined ? 0 : (stock.variants.get(variant.id) ?? 0),
+      stockOnHand: variant.id === undefined ? 0 : normalizeQuantity(stock.variants.get(variant.id) ?? 0),
       unit: variant.unit ?? variant.sourceUnit ?? product.unit,
       variantId: variant.id ?? null,
     };
@@ -401,8 +402,12 @@ const hydrateStoredVariant = Effect.fn('MerchandiseStore.hydrateVariant')(functi
   )(variant.document);
   // The stored gross column is the variant's price as it was entered; documents written before stored gross carry it
   // only there.
+  const hasInlineTiers = 'priceTiers' in decoded && (decoded.priceTiers?.length ?? 0) > 0;
   const document =
-    decoded.grossPriceMinor === undefined && variant.grossPriceMinor !== null
+    decoded.grossPriceMinor === undefined &&
+    variant.grossPriceMinor !== null &&
+    variantTiers.length === 0 &&
+    !hasInlineTiers
       ? { ...decoded, grossPriceMinor: variant.grossPriceMinor }
       : decoded;
   return variantTiers.length === 0 ? document : { ...document, priceTiers: variantTiers };
@@ -417,9 +422,12 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
   const decoded = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
   // A product without real variants: its stored gross column is its price as entered (with real variants the column
   // is their lowest price, never the product's own).
+  const hasInlineTiers = 'priceTiers' in decoded && (decoded.priceTiers?.length ?? 0) > 0;
   const stored =
     decoded.grossPriceMinor === undefined &&
     row.grossPriceMinor !== null &&
+    productTiers.length === 0 &&
+    !hasInlineTiers &&
     !variants.some((variant) => variant.variantId !== null)
       ? { ...decoded, grossPriceMinor: row.grossPriceMinor }
       : decoded;
@@ -437,10 +445,10 @@ const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(functi
   const levels = new Map<string, number>();
   for (const variant of variants) {
     if (variant.variantId !== null) {
-      levels.set(variant.variantId, variant.stockOnHand);
+      levels.set(variant.variantId, normalizeQuantity(variant.stockOnHand));
     }
   }
-  return { product, stock: { total: row.stockOnHand, variants: levels } };
+  return { product, stock: { total: normalizeQuantity(row.stockOnHand), variants: levels } };
 });
 
 /** Products from their rows (variants/tiers grouped by product). Rows of other products are ignored. */
@@ -1244,6 +1252,8 @@ export interface WorkingSetRequest {
   readonly aiChanges?: boolean;
   /** Category rows by id, each with its ancestor chain (category path of a product move). */
   readonly categoryIds?: readonly string[];
+  /** Load scoped category slug collisions before creation. */
+  readonly categorySlug?: string;
   readonly lastOrderNumber?: boolean;
   /** Load every movement of the loaded products (stock checks and order ledgers). */
   readonly movements?: boolean;
@@ -1447,10 +1457,20 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
     request,
     loaded.map(({ product }) => product),
   );
+  const slugCategoryIds =
+    request.categorySlug === undefined
+      ? []
+      : yield* query(
+          db
+            .select({ id: categories.id })
+            .from(categories)
+            .where(and(whereScope(categories, scope), eq(categories.slug, request.categorySlug))),
+          'Category slug collisions could not be read',
+        );
   const [movements, loadedCategories] = yield* Effect.all(
     [
       query(Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 }), 'Stored movement does not decode'),
-      loadAncestorCategories(db, scope, categoryIds),
+      loadAncestorCategories(db, scope, [...(categoryIds ?? []), ...slugCategoryIds.map((category) => category.id)]),
     ],
     { concurrency: 1 },
   );
@@ -1477,7 +1497,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
         )).length > 0
       : undefined;
   let state: MerchandiseState = { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) };
-  if (categoryIds !== undefined) {
+  if (categoryIds !== undefined || request.categorySlug !== undefined) {
     state = { ...state, categories: loadedCategories };
   }
   if (request.aiChanges === true && head.aiChanges !== undefined) {
@@ -1519,9 +1539,12 @@ const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
   const deltas = new Map<string, { total: number; variants: Map<string, number> }>();
   for (const movement of newMovements) {
     const entry = deltas.get(movement.productId) ?? { total: 0, variants: new Map<string, number>() };
-    entry.total += movement.delta;
+    entry.total = normalizeQuantity(entry.total + movement.delta);
     if (movement.variantId !== undefined) {
-      entry.variants.set(movement.variantId, (entry.variants.get(movement.variantId) ?? 0) + movement.delta);
+      entry.variants.set(
+        movement.variantId,
+        normalizeQuantity((entry.variants.get(movement.variantId) ?? 0) + movement.delta),
+      );
     }
     deltas.set(movement.productId, entry);
   }
@@ -1533,9 +1556,9 @@ const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
     }
     const variants = new Map(stored.variants);
     for (const [variantId, change] of delta.variants) {
-      variants.set(variantId, (variants.get(variantId) ?? 0) + change);
+      variants.set(variantId, normalizeQuantity((variants.get(variantId) ?? 0) + change));
     }
-    return { total: stored.total + delta.total, variants };
+    return { total: normalizeQuantity(stored.total + delta.total), variants };
   };
   const changedProducts = changedEntities(before.products, after.products);
   const changedIds = new Set(changedProducts.map((product) => product.id));

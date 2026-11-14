@@ -1,3 +1,4 @@
+import { isStockQuantity, MAX_QUANTITY, MIN_STOCK_QUANTITY } from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { DateTime, Effect } from 'effect';
@@ -16,17 +17,20 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
-import { useState } from 'react';
-import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import { useEffect, useState } from 'react';
+import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, QUANTITY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { productCommandOutcome, runCommand } from './products-api.ts';
 import type { CommandOutcome, ProductCommand } from './products-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
+import { CategorySearchCombobox } from './category-search-combobox.tsx';
+import { loadProductRecord } from './product-reads.ts';
+import type { ProductRecordState } from './product-reads.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
 import {
@@ -435,13 +439,65 @@ export const CreateProductDialog = ({
   );
 };
 
+/** A receipt always resolves the full selected product before it can choose a stock identity. */
+const useReceiptSelection = () => {
+  const [product, setProduct] = useState<ProductRecord | null>(null);
+  const productId = product?.id ?? null;
+  const [variantId, setVariantId] = useState('');
+  const [readAttempt, setReadAttempt] = useState(0);
+  const [record, setRecord] = useState<{ readonly productId: string; readonly state: ProductRecordState } | null>(null);
+  useEffect(() => {
+    if (productId === null) {
+      return;
+    }
+    let active = true;
+    setRecord({ productId, state: { status: 'loading' } });
+    loadProductRecord(productId, (loaded) => {
+      if (active) {
+        setRecord({ productId, state: loaded });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [productId, readAttempt]);
+  const loaded = record?.productId === productId ? record.state : undefined;
+  const fullProduct = loaded?.status === 'ready' ? loaded.product : undefined;
+  const variants = fullProduct?.variantRecords ?? [];
+  const variant = variants.find((entry) => entry.id === variantId);
+  const variantMissing = variants.length > 0 && variant === undefined;
+  const clearSelection = () => {
+    setProduct(null);
+    setRecord(null);
+    setVariantId('');
+  };
+  const selectProduct = (picked: ProductRecord | null) => {
+    setProduct(picked);
+    setVariantId('');
+  };
+  return {
+    clearSelection,
+    failed: loaded?.status === 'error',
+    fullProduct,
+    product,
+    productId,
+    retry: () => setReadAttempt((attempt) => attempt + 1),
+    selectProduct,
+    selectVariant: setVariantId,
+    variant,
+    variantId,
+    variantMissing,
+    variants,
+  };
+};
+
 /** Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. */
 export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const failure = useCommandFailure();
-  const [product, setProduct] = useState<ProductRecord | null>(null);
-  const productId = product?.id ?? null;
+  const selection = useReceiptSelection();
+  const { product, productId, fullProduct, variants, variant, variantId, variantMissing } = selection;
   const [quantity, setQuantity] = useState(1);
   const [quantityText, setQuantityText] = useState('1');
   const [note, setNote] = useState('');
@@ -451,12 +507,17 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const dirty = productId !== null || quantityText !== '1' || note !== '';
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
-  const quantityError = Number.isInteger(quantity) && quantity >= 1 ? undefined : k('validation.quantity');
+  const quantityError = isStockQuantity(quantity) && quantity > 0 ? undefined : k('validation.quantity');
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
-  const valid = productError === undefined && quantityError === undefined && noteError === undefined;
+  const valid =
+    fullProduct !== undefined &&
+    !variantMissing &&
+    productError === undefined &&
+    quantityError === undefined &&
+    noteError === undefined;
 
   const clearForm = () => {
-    setProduct(null);
+    selection.clearSelection();
     setQuantity(1);
     setQuantityText('1');
     setNote('');
@@ -470,10 +531,11 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
       return;
     }
     setSubmitted(true);
-    if (productId === null || quantityError !== undefined || noteError !== undefined) {
+    if (productId === null || !valid) {
       // The combobox puts its id on the input as `${id}-input`.
       focusFirstInvalid([
         ['receipt-product-input', productId === null],
+        ['receipt-variant', variantMissing],
         ['receipt-quantity', quantityError !== undefined],
         ['receipt-note', noteError !== undefined],
       ]);
@@ -484,9 +546,10 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     const trimmed = note.trim();
     const receipt = {
       _tag: 'RecordStockMovement' as const,
-      delta: Math.round(quantity),
+      delta: quantity,
       productId,
       reason: 'RECEIPT' as const,
+      ...(variant === undefined ? {} : { variantId: variant.id }),
     };
     runCommand(trimmed === '' ? receipt : { ...receipt, note: trimmed }, revision, (outcome) => {
       setBusy(false);
@@ -538,25 +601,49 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
             label={k('fields.product')}
             loadingMessage={t('merchandise.loading')}
             noResultsMessage={k('states.noResults')}
-            onSelect={setProduct}
+            onSelect={selection.selectProduct}
             placeholder={k('filters.search')}
             retryLabel={k('common.retry')}
             selected={product}
             {...fieldError(submitted, productError)}
           />
+          {productId !== null && fullProduct === undefined && (
+            <StatusText status={selection.failed ? 'error' : 'info'}>
+              {selection.failed ? k('states.error') : t('merchandise.loading')}
+            </StatusText>
+          )}
+          {selection.failed && (
+            <Button onClick={selection.retry} type="button">
+              {k('common.retry')}
+            </Button>
+          )}
+          {variants.length > 0 && (
+            <SelectTemplate
+              id="receipt-variant"
+              items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
+              label={t('merchandise.ui.variant')}
+              name="receiptVariant"
+              onValueChange={(details) => selection.selectVariant(details.value[0] ?? '')}
+              placeholder={t('merchandise.ui.selectVariant')}
+              required
+              value={variantId === '' ? [] : [variantId]}
+              {...fieldError(submitted && variantMissing, k(REQUIRED_KEY))}
+            />
+          )}
           <FormNumericInput
             clampValueOnBlur={false}
-            formatOptions={WHOLE_NUMBER_FORMAT}
+            formatOptions={QUANTITY_FORMAT}
             id="receipt-quantity"
             label={k('fields.quantity')}
             locale="cs-CZ"
-            min={1}
+            max={MAX_QUANTITY}
+            min={MIN_STOCK_QUANTITY}
             name="quantity"
             onValueChange={(details) => {
               setQuantity(details.valueAsNumber);
               setQuantityText(details.value);
             }}
-            step={1}
+            step={MIN_STOCK_QUANTITY}
             value={quantityText}
             {...fieldError(submitted, quantityError)}
           >
@@ -674,10 +761,10 @@ export const PriceChangeDialog = ({
 };
 
 interface CategoryDraft {
-  readonly category: string;
+  readonly category: CategoryTrail | null;
 }
 
-const noCategory: CategoryDraft = { category: '' };
+const noCategory: CategoryDraft = { category: null };
 
 /** Bulk category change. Sends BulkUpdateProducts with the new category. */
 export const CategoryDialog = ({
@@ -691,11 +778,14 @@ export const CategoryDialog = ({
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<CategoryDraft>(noCategory);
-  const errorOf = (value: CategoryDraft) =>
-    value.category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.category, PRODUCT_LIMITS.category);
+  const errorOf = (value: CategoryDraft) => (value.category === null ? k(REQUIRED_KEY) : undefined);
   const form = useFormSave<CategoryDraft>({
-    command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { category: value.category.trim() } }),
-    equals: (left, right) => left.category === right.category,
+    command: (value) => ({
+      _tag: 'BulkUpdateProducts',
+      ids: [...ids],
+      patch: value.category === null ? {} : { categoryId: value.category.id },
+    }),
+    equals: (left, right) => left.category?.id === right.category?.id,
     initial: noCategory,
     isValid: (value) => errorOf(value) === undefined && ids.length > 0,
     onOpenChange,
@@ -723,15 +813,19 @@ export const CategoryDialog = ({
         title={k('category.title')}
       >
         <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
-          <FormInput
-            autoComplete="off"
+          <CategorySearchCombobox
+            errorMessage={k('filters.categoryError')}
             id="bulk-category"
             label={k('category.field')}
-            name="category"
-            onChange={(event) => setDraft({ category: event.target.value })}
+            loadingMessage={t('merchandise.loading')}
+            moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
+            noResultsMessage={k('filters.categoryNoResults')}
+            onSelect={(category) => setDraft({ category })}
+            placeholder={k('filters.categorySearch')}
             required
-            value={draft.category}
-            {...fieldError(form.record.status === 'invalid', errorOf(draft))}
+            retryLabel={k('filters.categoryRetry')}
+            selected={draft.category}
+            validateStatus={form.record.status === 'invalid' && draft.category === null ? 'error' : 'default'}
           />
         </form>
       </SidePanel>

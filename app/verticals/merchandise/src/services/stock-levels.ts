@@ -1,3 +1,4 @@
+import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
 // Stock levels and the derived product/variant record (availability, gross price, stock value). Pure; the
 // store keeps the levels as columns, in-memory callers derive them from the movement ledger.
 import type { MerchandiseState } from '../../shared/apis/records.ts';
@@ -27,9 +28,9 @@ export const stockLevelsOf = (movements: readonly StockMovement[], productId: st
     if (movement.productId !== productId) {
       continue;
     }
-    total += movement.delta;
+    total = normalizeQuantity(total + movement.delta);
     if (movement.variantId !== undefined) {
-      variants.set(movement.variantId, (variants.get(movement.variantId) ?? 0) + movement.delta);
+      variants.set(movement.variantId, normalizeQuantity((variants.get(movement.variantId) ?? 0) + movement.delta));
     }
   }
   return { total, variants };
@@ -48,7 +49,7 @@ export const stockOnHandOf = (movements: readonly StockMovement[], productId: Pr
   let onHand = 0;
   for (const movement of movements) {
     if (movement.productId === productId) {
-      onHand += movement.delta;
+      onHand = normalizeQuantity(onHand + movement.delta);
     }
   }
   return onHand;
@@ -59,7 +60,7 @@ export const variantStockOf = (movements: readonly StockMovement[], productId: P
   let onHand = 0;
   for (const movement of movements) {
     if (movement.productId === productId && movement.variantId === variantId) {
-      onHand += movement.delta;
+      onHand = normalizeQuantity(onHand + movement.delta);
     }
   }
   return onHand;
@@ -78,10 +79,11 @@ export const availabilityOf = (input: {
   if (!input.stockTracked) {
     return 'UNKNOWN';
   }
-  if (input.stock <= 0) {
+  const stock = normalizeQuantity(input.stock);
+  if (stock <= 0) {
     return 'OUT_OF_STOCK';
   }
-  return input.stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
+  return stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
 };
 
 const availabilityRank = {
@@ -115,7 +117,7 @@ const toVariantRecord = (
   stock: StockLevels,
   rate: number | undefined,
 ): VariantRecord => {
-  const stockOnHand = stock.variants.get(variant.id) ?? 0;
+  const stockOnHand = normalizeQuantity(stock.variants.get(variant.id) ?? 0);
   const active = product.active && variant.active !== false;
   const grossPriceMinor = grossPriceOf(variant, variant.priceMinor, rate);
   const record: VariantRecord = {
@@ -162,7 +164,7 @@ export const toProductRecord = (
   rates: SellableVatRates,
   held: HeldProductRates,
 ): ProductRecord => {
-  const stockOnHand = stock.total;
+  const stockOnHand = normalizeQuantity(stock.total);
   const rate = productRateOf(product, rates, held);
   const variants = realVariantsOf(product).map((variant) => toVariantRecord(product, variant, stock, rate));
   if (variants.length === 0) {
@@ -188,7 +190,7 @@ export const toProductRecord = (
       best = variant.availability;
     }
   }
-  const variantStock = sumOf(variants, (variant) => variant.stockOnHand);
+  const variantStock = normalizeQuantity(sumOf(variants, (variant) => variant.stockOnHand));
   const grossPrices = (sellable.length > 0 ? sellable : variants).flatMap((variant) =>
     variant.grossPriceMinor === undefined ? [] : [variant.grossPriceMinor],
   );
@@ -203,7 +205,7 @@ export const toProductRecord = (
     stockOnHand,
     stockValueMinor: Math.round(
       sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
-        (stockOnHand - variantStock) * product.currentPriceMinor,
+        normalizeQuantity(stockOnHand - variantStock) * product.currentPriceMinor,
     ),
     variantRecords: variants,
   };

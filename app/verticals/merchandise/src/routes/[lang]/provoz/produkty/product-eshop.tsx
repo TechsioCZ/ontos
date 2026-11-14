@@ -1,3 +1,4 @@
+import { isStockQuantity, MAX_QUANTITY, MIN_STOCK_QUANTITY } from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // E-shop product administration: real variants (SKU, price, stock, active), publication and availability.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -19,7 +20,7 @@ import type {
   VariantId,
 } from '../../../../../shared/domain/merchandise-model.ts';
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
+import { MONEY_FORMAT, QUANTITY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
@@ -141,12 +142,11 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   }
   const variant = variants.find((entry) => entry.id === variantId);
   const quantity = Number(quantityText.replaceAll(/\s/gu, '').replace(',', '.'));
-  const valid =
-    variant !== undefined && Number.isInteger(quantity) && quantity !== 0 && (reason === 'ADJUSTMENT' || quantity > 0);
+  const valid = variant !== undefined && isStockQuantity(quantity) && (reason === 'ADJUSTMENT' || quantity > 0);
 
   const submit = () => {
     if (!valid || variant === undefined || busy) {
-      setError('Zadejte celé nenulové množství.');
+      setError(t('merchandise.pages.products.validation.delta'));
       return;
     }
     const delta = variantMovementDelta(reason, quantity);
@@ -206,11 +206,15 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           value={[reason]}
         />
         <FormNumericInput
-          formatOptions={WHOLE_NUMBER_FORMAT}
+          formatOptions={QUANTITY_FORMAT}
           id="variant-stock-quantity"
           label={t('merchandise.ui.quantityPieces')}
           locale="cs-CZ"
+          clampValueOnBlur={false}
+          max={MAX_QUANTITY}
+          min={reason === 'ADJUSTMENT' ? -MAX_QUANTITY : MIN_STOCK_QUANTITY}
           name="variantStockQuantity"
+          step={MIN_STOCK_QUANTITY}
           onValueChange={(details) => setQuantityText(details.value)}
           size="sm"
           value={quantityText}
@@ -298,12 +302,16 @@ const variantsInvalid = (drafts: readonly VariantDraft[]) =>
 const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): ProductVariant[] => [
   ...drafts.map((draft): ProductVariant => {
     const original = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
+    const priceMinor = parseCzk(draft.priceText) ?? 0;
+    const { priceTiers: inheritedTiers, ...originalFields } = original ?? {};
+    const kept = original?.priceMinor === priceMinor ? original : originalFields;
+    void inheritedTiers;
     const variant = {
-      ...original,
+      ...kept,
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),
-      priceMinor: parseCzk(draft.priceText) ?? 0,
+      priceMinor,
       sku: draft.sku.trim(),
     } satisfies ProductVariant;
     return draft.id === undefined ? variant : { ...variant, id: draft.id };

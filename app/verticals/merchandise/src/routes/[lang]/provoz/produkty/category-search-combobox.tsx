@@ -39,6 +39,8 @@ export interface CategorySearchComboboxProps {
   readonly onSelect: (category: CategoryTrail | null) => void;
   readonly placeholder: string;
   readonly retryLabel: string;
+  readonly required?: boolean;
+  readonly validateStatus?: 'default' | 'error';
   /** The picked category, so the closed field keeps showing its path. */
   readonly selected: CategoryTrail | null;
   readonly size?: 'sm';
@@ -81,8 +83,10 @@ export const CategorySearchCombobox = ({
   onSelect,
   placeholder,
   retryLabel,
+  required = false,
   selected,
   size,
+  validateStatus = 'default',
 }: CategorySearchComboboxProps) => {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
@@ -154,6 +158,8 @@ export const CategorySearchCombobox = ({
         openOnClick
         placeholder={placeholder}
         retryLabel={retryLabel}
+        required={required}
+        validateStatus={validateStatus}
         {...(size === undefined ? {} : { size })}
         translations={comboboxTranslations}
         value={categoryValue(selected, allLabel)}

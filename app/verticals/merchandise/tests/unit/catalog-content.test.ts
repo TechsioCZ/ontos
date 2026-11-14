@@ -1,6 +1,22 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { Reactivity } from 'effect/reactivity';
+import { merchandiseRelations } from '../../src/database/schema.ts';
+import {
+  categoryRowOf,
+  EMPTY_CATALOG_HEAD,
+  loadWorkingSet,
+  persistChange,
+} from '../../src/services/merchandise-store.ts';
+import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
+import {
+  MerchandiseCommandSchema,
+  MerchandiseLifecycleConflict,
+  MerchandiseNotFound,
+} from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import {
   CatalogCategoryIdSchema,
@@ -16,7 +32,7 @@ import {
   updateCategoryCommand,
   withContentHistory,
 } from '../../src/services/catalog-content.ts';
-import { TEST_TAX } from '../support/tax-fixtures.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const now = DateTime.makeUnsafe('2026-10-20T10:00:00.000Z');
@@ -261,4 +277,158 @@ it.effect('membership derivation rejects unknown direct ids, missing ancestors a
     const cyclic = yield* Effect.flip(assignCategoryMemberships(p1, 'c', [], [cycle]));
     expect(Schema.is(MerchandiseLifecycleConflict)(cyclic)).toBe(true);
   }),
+);
+
+it.effect('CreateProduct derives primary category ancestry without additional category ids', () =>
+  Effect.gen(function* primaryCategoryOnCreation() {
+    const command = Schema.decodeUnknownSync(MerchandiseCommandSchema)({
+      _tag: 'CreateProduct',
+      active: true,
+      category: 'Untrusted label',
+      categoryId: 'c',
+      categoryPathIds: ['wrong-path'],
+      lowStockThreshold: 0,
+      name: 'Category product',
+      priceMinor: 100,
+      sku: 'CATEGORY-PRODUCT',
+      taxClassificationCode: 'cz.vat.standard',
+      unit: 'ks',
+    });
+    if (!Predicate.isTagged(command, 'CreateProduct')) {
+      return yield* Effect.die('Expected a product creation command');
+    }
+    expect(workingSetRequestOf(command, 'category-product').categoryIds).toEqual(['c']);
+    const created = yield* evolveMerchandiseState(state, command, { ...input, resourceId: 'category-product' });
+    expect(created.state.products.at(-1)).toMatchObject({
+      category: 'Metrické',
+      categoryId: 'c',
+      categoryPathIds: ['c', 'r'],
+    });
+    const incomplete = { ...state, categories: [childCategory] };
+    const refused = yield* evolveMerchandiseState(incomplete, command, { ...input, resourceId: 'orphan-product' }).pipe(
+      Effect.flip,
+    );
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+  }),
+);
+
+it.effect('rejects a category slug already used elsewhere in the company, including unpublished categories', () =>
+  Effect.gen(function* categorySlugCollision() {
+    const create = {
+      _tag: 'CreateCategory',
+      id: categoryId('new-slug'),
+      name: 'New category',
+      parentId: Option.none(),
+      slug: 'srouby',
+    } as const;
+    expect(workingSetRequestOf(create, 'create-slug').categorySlug).toBe('srouby');
+    const refused = yield* createCategoryCommand(state, create).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+    const hidden = { ...state, categories: categories.map((category) => ({ ...category, published: false })) };
+    const hiddenRefusal = yield* createCategoryCommand(hidden, create).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(hiddenRefusal)).toBe(true);
+    const accepted = yield* createCategoryCommand(state, { ...create, slug: 'new-unique-slug' });
+    expect(accepted.state.categories?.at(-1)?.slug).toBe('new-unique-slug');
+  }),
+);
+
+it.effect('a category-only working set already renames all stored primary-category labels transactionally', () =>
+  Effect.scoped(
+    Effect.gen(function* persistedCategoryRename() {
+      const statements: { readonly sql: string; readonly params: readonly unknown[] }[] = [];
+      const services = yield* Layer.build(
+        scriptedPgClientLayer(
+          Effect.succeed(
+            testSqlConnection((sql, params) => {
+              statements.push({ params, sql });
+              if (sql.startsWith('select')) {
+                return Effect.succeed([{ outcome: 'unrecorded' }]);
+              }
+              return Effect.succeed(sql.includes('returning') ? [{ revision: 1 }] : []);
+            }),
+          ),
+        ).pipe(Layer.provide(Reactivity.layer)),
+      );
+      const db = yield* makeWithDefaults({ relations: merchandiseRelations }).pipe(
+        Effect.provideService(PgClient.PgClient, Context.get(services, PgClient.PgClient)),
+      );
+      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
+      const categoryOnly = { ...state, products: [] };
+      const change = yield* updateCategoryCommand(
+        categoryOnly,
+        {
+          _tag: 'UpdateCategory',
+          id: categoryId('c'),
+          patch: { name: 'Renamed without loading products' },
+        },
+        input,
+      );
+      yield* db.transaction((transaction) =>
+        persistChange(
+          transaction,
+          scope,
+          {
+            revision: 0,
+            state: categoryOnly,
+            stock: new Map(),
+          },
+          change.state,
+          now,
+          TEST_RATES,
+          {},
+        ),
+      );
+      const productUpdates = statements.filter(({ sql }) => sql.startsWith('update "demo_merchandise"."products"'));
+      expect(productUpdates).toHaveLength(1);
+      expect(productUpdates[0]?.sql).toContain('jsonb_set(jsonb_set(');
+      expect(productUpdates[0]?.sql).toContain('"category_id"');
+      expect(productUpdates[0]?.params).toEqual(
+        expect.arrayContaining([scope.tenantId, scope.legalEntityId, 'c', 'Renamed without loading products']),
+      );
+      return yield* Effect.void;
+    }),
+  ),
+);
+
+it.effect('loads a scoped slug collision even when its category id is absent from the create request', () =>
+  Effect.scoped(
+    Effect.gen(function* scopedCategoryCollisionRead() {
+      const scope = { tenantId: actor.tenantId, legalEntityId: '30000000-0000-4000-8000-000000000001' };
+      const stored = yield* categoryRowOf(scope, rootCategory);
+      const services = yield* Layer.build(
+        scriptedPgClientLayer(
+          Effect.succeed(
+            testSqlConnection((sql, params) => {
+              expect(params).toEqual(expect.arrayContaining([scope.tenantId, scope.legalEntityId]));
+              if (sql.includes('"slug" =')) {
+                expect(params).toContain(rootCategory.slug);
+                return Effect.succeed([{ id: rootCategory.id }]);
+              }
+              return Effect.succeed(params.includes(rootCategory.id) ? [{ ...stored, ordinal: 1 }] : []);
+            }),
+          ),
+        ).pipe(Layer.provide(Reactivity.layer)),
+      );
+      const db = yield* makeWithDefaults({ relations: merchandiseRelations }).pipe(
+        Effect.provideService(PgClient.PgClient, Context.get(services, PgClient.PgClient)),
+      );
+      const command = {
+        _tag: 'CreateCategory',
+        id: categoryId('new-collision-id'),
+        name: 'Different category',
+        parentId: Option.none(),
+        slug: rootCategory.slug,
+      } as const;
+      const working = yield* loadWorkingSet(
+        db,
+        scope,
+        EMPTY_CATALOG_HEAD,
+        workingSetRequestOf(command, 'scoped-category'),
+      );
+      expect(working.state.categories?.map((category) => category.id)).toEqual([rootCategory.id]);
+      const refused = yield* createCategoryCommand(working.state, command).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
+      return yield* Effect.void;
+    }),
+  ),
 );
