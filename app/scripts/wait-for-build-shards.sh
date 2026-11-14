@@ -8,13 +8,14 @@
 #   finished - every shard succeeded, so its uploaded outputs can be downloaded.
 # Fails at once, naming the shard, when a shard ends without success; fails when the deadline passes.
 # Needs: GH_TOKEN (actions: read), GITHUB_REPOSITORY and GITHUB_RUN_ID, as in every Actions job.
-# WAIT_FOR_BUILD_SHARDS_INTERVAL (seconds, default 15) and WAIT_FOR_BUILD_SHARDS_TIMEOUT (seconds, default 1500).
+# WAIT_FOR_BUILD_SHARDS_INTERVAL (seconds, default 20: about 20 waiting rows share one 1,000 requests per hour token,
+# and a row waits at most one interval longer) and WAIT_FOR_BUILD_SHARDS_TIMEOUT (seconds, default 1500).
 set -euo pipefail
 
 mode="${1:?the state to wait for (started or finished) is required}"
 prefix="${2:?the job name prefix of the build shards is required}"
 count="${3:?the shard count is required}"
-interval="${WAIT_FOR_BUILD_SHARDS_INTERVAL:-15}"
+interval="${WAIT_FOR_BUILD_SHARDS_INTERVAL:-20}"
 timeout="${WAIT_FOR_BUILD_SHARDS_TIMEOUT:-1500}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
