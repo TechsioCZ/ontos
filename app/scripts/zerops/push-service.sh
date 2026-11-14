@@ -44,9 +44,37 @@ log_error() { log "$@" >&2; }
 # dirty, and every release identity then reads as `workspace`. Patterns are anchored at the member name, and `*`
 # spans directories.
 # Member names carry no './' prefix, as zcli writes them; Zerops cannot identify an archive of './…' members.
+# Stage a service-specific checkout, never mutate the runner's shared Git index.
+# Keep manifests/configs for the frozen workspace install, and all owner sources for N1's workspace imports.
+exclude=(--exclude='*/node_modules' --exclude='*/.output' --exclude='*.map'
+  --exclude='*/tests' --exclude='docs' --exclude='app/docs' --exclude='*/.codex'
+  --exclude='app/.zerops' --exclude='*/.next' --exclude='*/.cache'
+  --exclude="${PUSH_EXCLUDE:-}")
+case "$setup" in
+  app)
+    exclude+=(--exclude='app/akros-storefront/src' --exclude='app/akros-storefront/public'
+      --exclude='app/n1-storefront/src' --exclude='app/n1-storefront/public') ;;
+  storefront)
+    exclude+=(--exclude='app/n1-storefront/src' --exclude='app/n1-storefront/public') ;;
+  n1)
+    exclude+=(--exclude='app/akros-storefront/src' --exclude='app/akros-storefront/public') ;;
+esac
+mkdir -p "$work/source"
 mapfile -t entries < <(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
-tar --format=pax --anchored --exclude='*/node_modules' --exclude='*/.output' --exclude='*.map' \
-  --exclude="${PUSH_EXCLUDE:-}" -czf "$work/package.tar.gz" -- "${entries[@]}"
+tar --format=pax --anchored "${exclude[@]}" -cf - -- "${entries[@]}" | tar -xf - -C "$work/source"
+# Merchandise's catalog operator reads these JSON inputs directly, even in the app workspace.
+if [ "$setup" != storefront ] && [ -d app/akros-storefront/src/catalog-import ]; then
+  mkdir -p "$work/source/app/akros-storefront/src"
+  cp -a app/akros-storefront/src/catalog-import "$work/source/app/akros-storefront/src/"
+fi
+if [ -d "$work/source/.git" ]; then
+  # Omitted tracked files must not turn every release identity into `workspace`. Git objects remain available
+  # to the committed-input planner; skip-worktree affects only the service package's working-tree presence.
+  git -C "$work/source" ls-files --deleted -z |
+    git -C "$work/source" update-index --skip-worktree -z --stdin
+fi
+mapfile -t entries < <(find "$work/source" -mindepth 1 -maxdepth 1 -printf '%P\n' | sort)
+tar --format=pax -C "$work/source" -czf "$work/package.tar.gz" -- "${entries[@]}"
 log "package: $(du -h "$work/package.tar.gz" | cut -f1) ($(wc -c <"$work/package.tar.gz" | tr -d ' ') bytes)"
 
 # The host of a URL, nothing else: no scheme, user info, port, path, query or fragment (the signed query is a secret).

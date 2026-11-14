@@ -110,7 +110,27 @@ it('runs the whole application in the app container through native Node, from th
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 
   expect(app.getIn(['run', 'start'])).toBe(`sh -c 'cd app && exec node scripts/zerops/app-host.mts'`);
-  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['app/']);
+  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual([
+    'app/node_modules',
+    'app/apps',
+    'app/verticals',
+    'app/packages',
+    'app/scripts',
+    'app/database',
+    'app/topology',
+    'app/tools',
+    'app/patches',
+    'app/package.json',
+    'app/pnpm-lock.yaml',
+    'app/pnpm-workspace.yaml',
+    'app/tsconfig.json',
+    'app/tsconfig.base.json',
+    'app/tsconfig.node-tooling.json',
+    'app/module-federation.shared.ts',
+    'app/akros-storefront/src/catalog-import',
+    'app/.zerops/runtime/outbox-worker-host',
+    'app/.zerops/bun',
+  ]);
   for (const branch of [
     ['deploy', 'readinessCheck'],
     ['run', 'healthCheck'],
@@ -120,6 +140,7 @@ it('runs the whole application in the app container through native Node, from th
   }
   expect(app.getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe('/_host/live');
   expect(app.getIn(['deploy', 'readinessCheck', 'httpGet', 'path'])).toBe('/_host/ready');
+  expect(app.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('2s');
 });
 
 it('starts the storefront from its standalone bundle and keeps the Shell URL in-project', () => {
@@ -492,7 +513,7 @@ it('binds the attempted delivery to the current run and persists it before any r
     expect(ledger?.run).toContain('.runAttempt=$runAttempt');
     for (const proof of [
       'scripts/ops/stage-warmup.mts',
-      'scripts/ops/stage-demo-verify.mjs',
+      'scripts/zerops/verify-service.mjs app',
       'scripts/demo/prove-mcp-oauth.mts',
     ]) {
       const step = workflow.jobs.verify.steps.find(({ run }) => run?.includes(proof) === true);
@@ -501,4 +522,18 @@ it('binds the attempted delivery to the current run and persists it before any r
     }
   };
   assertRequiredLiveProofs();
+});
+
+it('keeps the worker only with its closure, all hosted identities, materializer inputs and flags proved', () => {
+  const script = readFileSync(new URL('../zerops/build-app.sh', import.meta.url), 'utf8');
+  const digest = readFileSync(new URL('../zerops/outbox-build-digest.mjs', import.meta.url), 'utf8');
+  expect(script).toContain("echo 'kept outbox-worker-host (inputs unchanged)'");
+  expect(script).toContain('worker_cache/node_modules');
+  expect(digest).toContain('artifact.sourceInputs');
+  expect(digest).toContain('artifact.ownerBuildIdentities');
+  expect(digest).toContain('Missing owner digest');
+  expect(digest).toContain('Worker owner build identity changed');
+  expect(digest).toContain('--app outbox-worker-host --package app --package-dir . --worker');
+  expect(digest).toContain('scripts/materialize-outbox-worker.mjs');
+  expect(digest).toContain('pnpm-lock.yaml');
 });

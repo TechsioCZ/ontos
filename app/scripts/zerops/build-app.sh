@@ -50,15 +50,22 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
 
 # Use the same committed dependency closure as the delivery planner. Common/unknown inputs fail closed,
 # including root dependency policy, patches, installer and migration scripts, not just a short build-file list.
+# Children reuse the same immutable table; never put it in the checkout (release identities require a clean tree).
+if [ -z "${ZEROPS_UNIT_DIGESTS:-}" ]; then
+  ZEROPS_UNIT_DIGESTS="$(mktemp "${TMPDIR:-/tmp}/zerops-unit-digests.XXXXXX")"
+  trap 'rm -f "$ZEROPS_UNIT_DIGESTS"' EXIT HUP INT TERM
+  node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"
+  export ZEROPS_UNIT_DIGESTS
+fi
 unit_digest() {
-  node "$root/scripts/zerops/delivery-plan-cli.mts" digest "$1"
+  awk -F '\t' -v unit="$1" '$1 == unit { value=$2; count++ } END { if (count != 1 || value == "") exit 1; print value }' "$ZEROPS_UNIT_DIGESTS"
 }
 
 # Restores a unit's cached build when its inputs are unchanged; succeeds only when the unit can be kept.
 keep_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
-  digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
+  digest="$(unit_digest "$unit")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
   # CI full/unknown/manual delivery bypasses cached artifacts. The provider still keeps the NEW prebuilt
   # archive CI supplies, so this flag is intentionally not part of zerops.yaml's provider environment.
   [ "${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1
@@ -119,6 +126,20 @@ echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(d
 # The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
 # with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
 if [ "$units" = "$all_units" ]; then
+  worker_cache="$unit_cache/outbox-worker-host"
+  worker_runtime='.zerops/runtime/outbox-worker-host'
+  worker_digest=''
+  if worker_clean="$(git status --porcelain --untracked-files=all)" && [ -z "$worker_clean" ] &&
+     [ "${ZEROPS_FORCE_BUILD:-false}" != true ] &&
+     [ -f "$worker_cache/worker.mjs" ] && [ -f "$worker_cache/package.json" ] &&
+     [ -d "$worker_cache/node_modules" ] &&
+     worker_digest="$(node scripts/zerops/outbox-build-digest.mjs "$worker_cache" "$ZEROPS_UNIT_DIGESTS")" &&
+     [ "$worker_digest" = "$(cat "$worker_cache/.zerops-build-digest" 2>/dev/null || true)" ]; then
+    mkdir -p .zerops/runtime
+    rm -rf "$worker_runtime" && cp -a "$worker_cache" "$worker_runtime"
+    echo 'kept outbox-worker-host (inputs unchanged)'
+    exit 0
+  fi
   # The host runs only the workers of the units this deployment serves: the Application Composition it publishes admits
   # no other owner. Each served owner's build identity names the revision its dist was built with.
   # shellcheck disable=SC2086 # all_units is a list of unit ids.
@@ -139,5 +160,12 @@ if [ "$units" = "$all_units" ]; then
     ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app outbox-worker-host --package app --package-dir . --worker >"$log_dir/outbox-worker-host.log" 2>&1 ||
     { tail -60 "$log_dir/outbox-worker-host.log" >&2; echo 'outbox worker host build failed' >&2; exit 1; }
+  # Cache only when the complete materialized input/identity proof can be reproduced.
+  if worker_digest="$(node scripts/zerops/outbox-build-digest.mjs "$worker_runtime" "$ZEROPS_UNIT_DIGESTS")"; then
+    printf '%s\n' "$worker_digest" >"$worker_runtime/.zerops-build-digest"
+    rm -rf "${unit_cache:?}/outbox-worker-host" && cp -a "$worker_runtime" "$worker_cache"
+  else
+    echo 'outbox worker cache disabled: incomplete input proof' >&2
+  fi
   echo "built outbox-worker-host in $(($(date +%s) - started))s"
 fi
