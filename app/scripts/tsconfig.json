@@ -8,7 +8,8 @@
   "exclude": [
     "scaffolding",
     "demo/email-dispatcher",
-    "integration/tests/*.old-release.mts"
+    "integration/tests/*.old-release.mts",
+    "**/node_modules/**"
   ],
   "compilerOptions": {
     "incremental": true,

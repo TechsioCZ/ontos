@@ -19,6 +19,7 @@
     "**/*.mts"
   ],
   "exclude": [
-    "tests/fixtures"
+    "tests/fixtures",
+    "**/node_modules/**"
   ]
 }

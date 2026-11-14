@@ -8,5 +8,8 @@
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsrs/tools__oxlint__tsconfig.tsbuildinfo"
-  }
+  },
+  "exclude": [
+    "**/node_modules/**"
+  ]
 }

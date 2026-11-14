@@ -1,8 +1,16 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "customConditions": ["node"]
+    "customConditions": [
+      "node"
+    ],
+    "skipLibCheck": true
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": []
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "**/node_modules/**"
+  ]
 }

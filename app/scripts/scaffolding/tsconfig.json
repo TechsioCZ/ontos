@@ -9,5 +9,8 @@
   },
   "include": [
     "./**/*.mts"
+  ],
+  "exclude": [
+    "**/node_modules/**"
   ]
 }

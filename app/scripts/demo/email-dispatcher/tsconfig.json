@@ -12,5 +12,8 @@
     "*.ts",
     "*.mts",
     "../../../packages/email-delivery/src/smtp.ts"
+  ],
+  "exclude": [
+    "**/node_modules/**"
   ]
 }

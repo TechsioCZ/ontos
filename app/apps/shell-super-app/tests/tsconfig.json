@@ -1,10 +1,21 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
-    "customConditions": ["node"],
+    "customConditions": [
+      "node"
+    ],
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": true
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["integration/**"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "integration/**",
+    "**/node_modules/**"
+  ]
 }

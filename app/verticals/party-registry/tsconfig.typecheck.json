@@ -15,7 +15,8 @@
     "dist",
     ".output",
     ".modern",
-    ".modernjs"
+    ".modernjs",
+    "**/node_modules/**"
   ],
   "references": [
     {
