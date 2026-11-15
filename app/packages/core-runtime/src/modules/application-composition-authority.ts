@@ -599,9 +599,56 @@ export const markApplicationCompositionMigrationComplete = Effect.fn('Applicatio
 );
 
 /**
+ * The moment the row's revision took the authority, exactly: integer microseconds since the epoch, as decimal text.
+ * PostgreSQL keeps `revision_activated_at` in microseconds; a JS Date or an epoch double would not carry them all.
+ * The writer returns it and the app host reads it with this one expression, so both compare the same text.
+ */
+export const revisionActivatedAtMicros = sql<string>`(extract(epoch from ${applicationCompositionAuthority.revisionActivatedAt}) * 1000000)::bigint::text`;
+
+/** One hold of the authority by a revision, as the publication that committed it wrote it. */
+export interface ApplicationCompositionHold {
+  readonly activatedAtMicros: string;
+  readonly revision: string;
+}
+
+/**
+ * The row one publication writes: inserted when no authority exists, else the conflict update. A renewal (the row
+ * already names this revision) keeps the admission phase and never writes `revision_activated_at`, so PostgreSQL keeps
+ * the exact moment its revision took the row. Writing back the value read through the Date-valued schema would cut it
+ * to milliseconds, and every host that recorded the hold it serves in would see a new one. A different revision takes
+ * the row now, on the database clock.
+ */
+export const applicationCompositionAuthorityUpsert = (
+  current:
+    | Pick<typeof applicationCompositionAuthority.$inferSelect, 'durableWorkAdmission' | 'phase' | 'revision'>
+    | undefined,
+  snapshot: ActiveApplicationCompositionSnapshot,
+  subscriptionsJson: readonly OutboxWorkerSubscription[],
+) => {
+  const renewal = current?.revision === snapshot.composition.revision;
+  const admission = renewal
+    ? { durableWorkAdmission: current.durableWorkAdmission, phase: current.phase }
+    : { durableWorkAdmission: 'open' as const, phase: 'active' as const };
+  const row = {
+    ...admission,
+    revision: snapshot.composition.revision,
+    subscriptionsJson,
+    validUntil: DateTime.toDateUtc(snapshot.validUntil),
+  };
+  // The renewal's update names no activation column, so PostgreSQL leaves it exactly as it is.
+  const renewed = { ...row, updatedAt: sql`clock_timestamp()` };
+  const taken = { ...renewed, revisionActivatedAt: sql`clock_timestamp()` };
+  return {
+    set: renewal ? renewed : taken,
+    values: { ...row, authorityKey: 'active', revisionActivatedAt: sql`clock_timestamp()` },
+  };
+};
+
+/**
  * Call in an admin-owned transaction. Renewal preserves release identity and admission phase.
  * A different release can become active only after the old release is fully drained.
  * Database migrations additionally require a final seal before any schema changes.
+ * Returns the hold the row names after the write; it is the caller's only once the transaction commits.
  */
 export const publishApplicationCompositionAuthority = Effect.fn('ApplicationCompositionAuthority.publish')(
   function* publishApplicationCompositionAuthorityEffect(
@@ -641,33 +688,15 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
       ...catalog.outboxSubscriptions,
       ...CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
     ]);
-    yield* transaction
+    const upsert = applicationCompositionAuthorityUpsert(current, snapshot, subscriptionsJson);
+    const [written] = yield* transaction
       .insert(applicationCompositionAuthority)
-      .values({
-        authorityKey: 'active',
-        durableWorkAdmission:
-          current?.revision === snapshot.composition.revision ? current.durableWorkAdmission : 'open',
-        phase: current?.revision === snapshot.composition.revision ? current.phase : 'active',
-        revision: snapshot.composition.revision,
-        revisionActivatedAt: sql`clock_timestamp()`,
-        subscriptionsJson,
-        validUntil: DateTime.toDateUtc(snapshot.validUntil),
-      })
-      .onConflictDoUpdate({
-        set: {
-          durableWorkAdmission:
-            current?.revision === snapshot.composition.revision ? current.durableWorkAdmission : 'open',
-          phase: current?.revision === snapshot.composition.revision ? current.phase : 'active',
-          revision: snapshot.composition.revision,
-          // A renewal keeps the moment its revision took the authority; a different revision takes it now.
-          revisionActivatedAt:
-            current?.revision === snapshot.composition.revision ? current.revisionActivatedAt : sql`clock_timestamp()`,
-          subscriptionsJson,
-          updatedAt: sql`clock_timestamp()`,
-          validUntil: DateTime.toDateUtc(snapshot.validUntil),
-        },
-        target: applicationCompositionAuthority.authorityKey,
-      });
-    return yield* Effect.void;
+      .values(upsert.values)
+      .onConflictDoUpdate({ set: upsert.set, target: applicationCompositionAuthority.authorityKey })
+      .returning({ activatedAtMicros: revisionActivatedAtMicros, revision: applicationCompositionAuthority.revision });
+    if (written === undefined) {
+      return yield* unavailable('The Application Composition authority write returned no row');
+    }
+    return written satisfies ApplicationCompositionHold;
   },
 );

@@ -1408,11 +1408,12 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
  * Renews the authority this release holds, and nothing else: under the publication lock it re-reads the row and
  * refuses unless the row still names this release's revision. A host superseded while its renewal waited for the lock
  * therefore cannot replace the newer release (a full publication would treat its later validity as newer evidence).
+ * Returns the hold its committed write left in the row.
  */
 export const renewApplicationCompositionAuthoritySnapshot = Effect.fn('ApplicationCompositionAuthority.renewSnapshot')(
-  function* renewApplicationCompositionAuthoritySnapshot<Value, Failure, Requirements>(
+  function* renewApplicationCompositionAuthoritySnapshot<Failure, Requirements>(
     snapshot: ActiveApplicationCompositionSnapshot,
-    publishProviderPointer: Effect.Effect<Value, Failure, Requirements>,
+    publishProviderPointer: Effect.Effect<unknown, Failure, Requirements>,
   ) {
     const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(
       Effect.mapError(() => unavailable('The complete Application Composition snapshot is invalid or expired')),
@@ -1434,28 +1435,22 @@ export const renewApplicationCompositionAuthoritySnapshot = Effect.fn('Applicati
       if (DateTime.toEpochMillis(approved.validUntil) < current.validUntil.getTime()) {
         return yield* unavailable('Application Composition freshness cannot regress');
       }
-      const value = yield* publishProviderPointer;
-      yield* withApplicationCompositionPublicationProgress(
+      yield* publishProviderPointer;
+      return yield* withApplicationCompositionPublicationProgress(
         'renew native authority',
         database.executor.transaction((transaction) => publishApplicationCompositionAuthority(transaction, approved)),
       );
-      return value;
     });
     return yield* withApplicationCompositionPublicationLock(renewal);
   },
 );
 
+/** Publishes this snapshot (a renewal of the same revision, or a drained replacement); returns its committed hold. */
 export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
   'ApplicationCompositionAuthority.publishSnapshot',
-)(function* publishApplicationCompositionAuthoritySnapshot<
-  Value,
-  Failure,
-  Requirements,
-  InitialFailure,
-  InitialRequirements,
->(
+)(function* publishApplicationCompositionAuthoritySnapshot<Failure, Requirements, InitialFailure, InitialRequirements>(
   snapshot: ActiveApplicationCompositionSnapshot,
-  publishProviderPointer: Effect.Effect<Value, Failure, Requirements>,
+  publishProviderPointer: Effect.Effect<unknown, Failure, Requirements>,
   verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
 ) {
   const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(
@@ -1475,15 +1470,14 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       if (DateTime.toEpochMillis(approved.validUntil) < current.validUntil.getTime()) {
         return yield* unavailable('Application Composition freshness cannot regress');
       }
-      const value = yield* publishProviderPointer;
-      yield* withApplicationCompositionPublicationProgress(
+      yield* publishProviderPointer;
+      return yield* withApplicationCompositionPublicationProgress(
         'renew native authority',
         database.executor.transaction((transaction) => publishApplicationCompositionAuthority(transaction, approved)),
       );
-      return value;
     }
     const promoteAndPublish = (transaction: CoreTransaction) =>
-      publishApplicationCompositionAuthority(transaction, approved).pipe(Effect.andThen(publishProviderPointer));
+      publishApplicationCompositionAuthority(transaction, approved).pipe(Effect.tap(() => publishProviderPointer));
     if (current === undefined) {
       // Old binaries cannot participate in the new fences. Provider quiescence is required only
       // for the first row, before any new authority or public pointer can be published.

@@ -983,8 +983,10 @@ export {
   markApplicationCompositionMigrationComplete,
   publishApplicationCompositionAuthority,
   resumeApplicationCompositionDurableAdmission,
+  revisionActivatedAtMicros,
   sealApplicationCompositionAuthority,
 } from './modules/application-composition-authority.ts';
+export type { ApplicationCompositionHold } from './modules/application-composition-authority.ts';
 export {
   ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING,
   ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY,

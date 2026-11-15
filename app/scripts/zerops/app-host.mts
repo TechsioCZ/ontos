@@ -130,9 +130,13 @@ import { ChildProcess } from 'effect/process';
 import {
   ONTOS_MODULE_CONTRACT_PATH,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  revisionActivatedAtMicros,
   validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
-import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
+import type {
+  ActiveApplicationCompositionSnapshot,
+  ApplicationCompositionHold,
+} from '../../packages/core-runtime/src/index.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
 import {
@@ -1779,24 +1783,42 @@ const withLatestFirst =
     [observation, ...current.filter(({ encoded }) => encoded !== observation.encoded)].slice(0, 2);
 
 interface CompositionPointerAuthority {
+  /** `revisionActivatedAtMicros`: the exact moment the row's revision took it, as the writer returns it. */
+  readonly activatedAtMicros: string;
   readonly phase: string;
   readonly revision: string;
   readonly validUntilMillis: number;
 }
 
 /**
- * The one approved snapshot this host serves. A value is readable only while the PostgreSQL authority names its
- * revision and lease, so the loopback source never serves a revision the database no longer admits.
+ * The one approved snapshot this host serves. A journaled snapshot is served only while the PostgreSQL authority row
+ * admits work (active or draining), names the hold this host's own committed authority write left there (`hold`: its
+ * revision and the exact moment that revision took the row) and a lease at least the one the snapshot claims, and the
+ * snapshot's own lease has not ended. There is no other path: the hold comes from this host's write alone, never from
+ * a row it read. Another container of the same release (a deploy that rebuilt no unit) renews the row in the same
+ * hold with a later lease; the revision is the digest of the content, so its snapshot is this one with that lease.
+ * A row naming another revision, or the same revision taken again in another hold, serves nothing here.
  */
 export const makeCompositionPointer = <Failure, Requirements>(
   readAuthority: Effect.Effect<readonly CompositionPointerAuthority[], Failure, Requirements>,
 ) =>
   Effect.gen(function* makePointer() {
     const journal = yield* Ref.make<readonly ApprovedCompositionObservation[]>([]);
+    const held = yield* Ref.make(Option.none<ApplicationCompositionHold>());
     const load = Effect.gen(function* loadApprovedPointer() {
       // Mutable authority is always re-read. Only immutable content validation moves to publication.
       const [authority] = yield* readAuthority;
       if (authority === undefined || (authority.phase !== 'active' && authority.phase !== 'draining')) {
+        return Option.none<string>();
+      }
+      // Only the hold this host's own committed write left: its revision and the exact moment it took the row.
+      if (
+        !Option.exists(
+          yield* Ref.get(held),
+          ({ activatedAtMicros, revision }) =>
+            revision === authority.revision && activatedAtMicros === authority.activatedAtMicros,
+        )
+      ) {
         return Option.none<string>();
       }
       for (const { encoded, snapshot } of yield* Ref.get(journal)) {
@@ -1804,7 +1826,7 @@ export const makeCompositionPointer = <Failure, Requirements>(
         if (
           Option.isSome(approved) &&
           approved.value.composition.revision === authority.revision &&
-          DateTime.toEpochMillis(approved.value.validUntil) === authority.validUntilMillis
+          DateTime.toEpochMillis(approved.value.validUntil) <= authority.validUntilMillis
         ) {
           return Option.some(encoded);
         }
@@ -1818,8 +1840,26 @@ export const makeCompositionPointer = <Failure, Requirements>(
       const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
       yield* Ref.update(journal, withLatestFirst({ encoded, snapshot: approved }));
     });
-    return { load, publish };
+    /** The hold this host's own committed authority write left in the row; set only after that commit. */
+    const hold = (committed: ApplicationCompositionHold) => Ref.set(held, Option.some(committed));
+    return { hold, load, publish };
   });
+
+/**
+ * One authority write of this host's snapshot: the pointer journals it first (the write's provider pointer), and only
+ * when the write returns, which is after its transaction committed, does the pointer hold what it wrote. A failed or
+ * rolled-back write holds nothing.
+ */
+export const writeAndHold = <JournalFailure, Failure, Requirements>(
+  pointer: {
+    readonly hold: (committed: ApplicationCompositionHold) => Effect.Effect<void>;
+    readonly publish: (snapshot: ActiveApplicationCompositionSnapshot) => Effect.Effect<void, JournalFailure>;
+  },
+  snapshot: ActiveApplicationCompositionSnapshot,
+  write: (
+    journal: Effect.Effect<void, JournalFailure>,
+  ) => Effect.Effect<ApplicationCompositionHold, Failure, Requirements>,
+) => write(pointer.publish(snapshot)).pipe(Effect.tap(pointer.hold));
 
 /**
  * Resolves with the revision that replaced `ownRevision` once the authority names another one. Only a newer release
@@ -1929,13 +1969,15 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const memoryBytes = yield* readContainerMemoryBytes;
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
+  // The restart check compares `activatedAtMillis` with the container clock; the pointer compares the exact text.
   const readAuthority = database.executor.execute<{
+    readonly activatedAtMicros: string;
     readonly activatedAtMillis: number;
     readonly phase: string;
     readonly revision: string;
     readonly validUntilMillis: number;
   }>(
-    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis", (extract(epoch from revision_activated_at) * 1000)::double precision as "activatedAtMillis" from core.application_composition_authority where authority_key = 'active'`,
+    sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis", (extract(epoch from revision_activated_at) * 1000)::double precision as "activatedAtMillis", ${revisionActivatedAtMicros} as "activatedAtMicros" from core.application_composition_authority where authority_key = 'active'`,
     'objects',
   );
   const pointer = yield* makeCompositionPointer(readAuthority);
@@ -2109,7 +2151,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       if (!allowed) {
         return yield* failure('this host was superseded and never writes the authority again');
       }
-      yield* publishApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot), Effect.void);
+      yield* writeAndHold(pointer, snapshot, (journal) =>
+        publishApplicationCompositionAuthoritySnapshot(snapshot, journal, Effect.void),
+      );
       yield* Ref.set(ownRevision, Option.some(snapshot.composition.revision));
       yield* Console.log(
         `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
@@ -2128,7 +2172,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
         if (!allowed) {
           return yield* failure('this host was superseded and never writes the authority again');
         }
-        yield* renewApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot));
+        yield* writeAndHold(pointer, snapshot, (journal) =>
+          renewApplicationCompositionAuthoritySnapshot(snapshot, journal),
+        );
         return yield* Console.log(
           `[app-host] composition ${snapshot.composition.revision} renewed, valid until ${DateTime.formatIso(snapshot.validUntil)}`,
         );
