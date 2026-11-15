@@ -370,10 +370,7 @@ jobs:
         with:
           path: ${{ steps.unit-cache-paths.outputs.paths }}
           key: ${{ steps.unit-cache-key.outputs.key }}
-          # The last v1 entries still restore once: `plan` keeps a unit only by its recorded input digest.
-          restore-keys: |
-            gates-units-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
-            gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+          restore-keys: gates-units-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
 
       - name: Keep the restored units whose inputs are unchanged
         id: cached-plan

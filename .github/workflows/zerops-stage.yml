@@ -268,10 +268,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/zerops-unit-cache
           key: ${{ steps.unit-cache-key.outputs.key || format('zerops-units-v2-{0}-unnamed', matrix.shard) }}
-          # The last entries named by commit (before v2) still restore once: reuse proves every unit by identity.
-          restore-keys: |
-            zerops-units-v2-${{ matrix.shard }}-
-            zerops-units-${{ matrix.shard }}-
+          restore-keys: zerops-units-v2-${{ matrix.shard }}-
 
       # Every unit of the shard proven unchanged by identity (scripts/zerops/reuse-shard-units.sh): no install, no
       # build. Exit 3 means some unit must build; anything else is a failure. rebuild_units always builds.

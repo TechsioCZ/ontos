@@ -76,9 +76,7 @@ it.effect('builds, caches and uploads each shard under its own shard number', ()
     expect(step("Restore the shard's unit builds")?.with?.key).toBe(
       `\${{ steps.unit-cache-key.outputs.key || format('zerops-units-v2-{0}-unnamed', matrix.shard) }}`,
     );
-    expect(step("Restore the shard's unit builds")?.with?.['restore-keys']).toBe(
-      `zerops-units-v2-${MATRIX_SHARD}-\nzerops-units-${MATRIX_SHARD}-\n`,
-    );
+    expect(step("Restore the shard's unit builds")?.with?.['restore-keys']).toBe(`zerops-units-v2-${MATRIX_SHARD}-`);
     expect(step("Save the shard's unit builds")?.with?.key).toBe(`\${{ steps.unit-cache-key.outputs.key }}`);
     expect(step("Upload the shard's unit builds")?.with?.name).toBe(`zerops-units-${MATRIX_SHARD}`);
     // The app deploy unpacks every shard's archive, whatever the shard count.
