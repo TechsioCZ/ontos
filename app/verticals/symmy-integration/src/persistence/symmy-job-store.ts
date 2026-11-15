@@ -10,7 +10,7 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { SQLWrapper } from 'drizzle-orm';
-import { Array as EffectArray, Config, Duration, Effect, Match, Option, Schema } from 'effect';
+import { Array as EffectArray, Config, DateTime, Duration, Effect, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
   SymmyFixtureExecutionPlanSchema,
@@ -42,10 +42,10 @@ import {
   materializeSymmyCatalogPricingInventorySourceOccurrence,
 } from '../services/symmy-catalog-pricing-inventory-adapters.ts';
 import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-commerce-adapters.ts';
-import {
-  SymmyCatalogPricingInventoryIntentSchema,
-  SymmyInventoryImportIntentSchema,
-} from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
+import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
+import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
+import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
+import { buildSymmyStockPlan } from './symmy-stock-plan.ts';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import type { SymmyDecodedSourceSelector } from '../../shared/domain/symmy-source-selector.ts';
@@ -68,6 +68,7 @@ export interface SymmyJobAdmissionRequest {
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
   readonly routeKey: SymmyDurableRouteKey;
+  readonly stock?: SymmyStockRows;
 }
 
 const unavailable = (cause?: unknown) => {
@@ -256,24 +257,39 @@ const materializePinnedPlan = (plan: SymmyPinnedJobPlan): SymmyPinnedJobPlan => 
   }))(plan.items),
 });
 
+const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(function* encodeCallerPayload(
+  input: SymmyJobAdmissionRequest,
+) {
+  if (input.stock !== undefined) {
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyStockRowsSchema))(input.stock).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
+  if (input.plan === undefined) {
+    return Option.none<string>();
+  }
+  return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema))(input.plan).pipe(
+    Effect.mapError(unavailable),
+    Effect.map(Option.some),
+  );
+});
+
 const encodeCallerIntent = Effect.fn('SymmyJobStore.encodeCallerIntent')(function* encodeCallerIntent(
   input: SymmyJobAdmissionRequest,
   fixtureId: string,
 ) {
-  const encodedPlan =
-    input.plan === undefined
-      ? undefined
-      : yield* Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema))(input.plan).pipe(
-          Effect.mapError(unavailable),
-        );
+  // The stock rows are the whole caller intent. Nothing the route derives from them, such as the
+  // admission time, takes part, so a replay of the same rows is the same intent.
+  const encodedPlan = yield* encodeCallerPayload(input);
   return yield* (
-    encodedPlan === undefined
+    Option.isNone(encodedPlan)
       ? Schema.encodeEffect(IntentSchema)([input.routeKey, Option.fromNullishOr(input.code), fixtureId])
       : Schema.encodeEffect(InternalIntentSchema)([
           input.routeKey,
           Option.fromNullishOr(input.code),
           fixtureId,
-          encodedPlan,
+          encodedPlan.value,
         ])
   ).pipe(Effect.mapError(unavailable));
 });
@@ -892,29 +908,6 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
   return Option.some(result);
 });
 
-type EnrolledEffects = SymmyFixtureExecutionPlan['items'][number]['effects'];
-const sameStockIntent = Schema.toEquivalence(SymmyInventoryImportIntentSchema);
-const isStockIntent = Schema.is(SymmyInventoryImportIntentSchema);
-const stockIntentMatchesEnrollment = (intent: EnrolledEffects[number]['intent'], allowed: EnrolledEffects) =>
-  isStockIntent(intent) && allowed.some(({ intent: exact }) => isStockIntent(exact) && sameStockIntent(intent, exact));
-
-const stockPlanMatchesEnrollment = (plan: SymmyFixtureExecutionPlan, template: SymmyFixtureExecutionPlan): boolean =>
-  plan.items.every((item) =>
-    template.items.some((enrolled) => {
-      if (
-        item.sourceOccurrenceId === undefined ||
-        item.sourceOccurrenceId !== enrolled.sourceOccurrenceId ||
-        item.source.issuerId !== enrolled.source.issuerId ||
-        item.source.sourceNamespace !== enrolled.source.sourceNamespace ||
-        item.source.entityKind !== enrolled.source.entityKind ||
-        item.source.sourceRecordId !== enrolled.source.sourceRecordId
-      ) {
-        return false;
-      }
-      return item.effects.every(({ intent }) => stockIntentMatchesEnrollment(intent, enrolled.effects));
-    }),
-  );
-
 const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* prepareSyncPlan(
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest,
@@ -924,21 +917,35 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
   if (template === null || !permitsNewAdmission(route, scope, input.fixtureId ?? 'INTERNAL_C14')) {
     return yield* routeDenied();
   }
-  if (input.routeKey === 'inventoryStockBatch' && template.inventoryBackendId === undefined) {
+  const isStockRoute = input.routeKey === 'inventoryStockBatch';
+  if (isStockRoute !== (input.stock !== undefined) || (isStockRoute && template.inventoryBackendId === undefined)) {
     return yield* routeDenied();
   }
   yield* requireLifecyclePolicy(
     route,
     input.plan !== undefined ||
+      input.stock !== undefined ||
       template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
   );
-  const plan = configuredPlan(input.plan ?? template, template);
   if (input.plan !== undefined && !inputPlanAllowed(template, input.plan, scope)) {
     return yield* routeDenied();
   }
-  if (input.routeKey === 'inventoryStockBatch' && !stockPlanMatchesEnrollment(plan, template)) {
+  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
+  // request before any plan is pinned, so no owner call is made for any row.
+  const source =
+    input.stock === undefined
+      ? Option.some(input.plan ?? template)
+      : yield* buildSymmyStockPlan({
+          digest: hash,
+          idempotencyKey: input.idempotencyKey,
+          receivedAt: yield* DateTime.now,
+          rows: input.stock,
+          template,
+        });
+  if (Option.isNone(source)) {
     return yield* new SymmyJobStoreError({ code: 'stock_assertion_denied' });
   }
+  const plan = configuredPlan(source.value, template);
   if (plan.items.some(({ effects }) => effects.some(({ intent }) => !syncIntentAllowed(input.routeKey, intent)))) {
     return yield* routeDenied();
   }

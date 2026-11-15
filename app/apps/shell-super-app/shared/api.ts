@@ -25,6 +25,8 @@ import {
 } from '../api/symmy/read-projection-contracts.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
 import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
+import { SymmyStockBatchResponseSchema } from '../api/symmy/stock-batch-public-contract.ts';
+import { SymmyStockBatchRequestSchema } from '../api/symmy/stock-batch-request-contract.ts';
 import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';
 
 const nativeSymmyPath = (path: `/${string}`): `/${string}` =>
@@ -58,11 +60,11 @@ const customersBatchEndpoint = HttpApiEndpoint.post(
   SYMMY_ROUTES.customersBatch.path,
   symmySubmitOptions,
 );
-const inventoryStockBatchEndpoint = HttpApiEndpoint.post(
-  'inventoryStockBatch',
-  SYMMY_ROUTES.inventoryStockBatch.path,
-  symmyWriteOptions,
-);
+const inventoryStockBatchEndpoint = HttpApiEndpoint.post('inventoryStockBatch', SYMMY_ROUTES.inventoryStockBatch.path, {
+  ...symmyWriteOptions,
+  payload: SymmyStockBatchRequestSchema,
+  success: SymmyStockBatchResponseSchema,
+});
 const jobEndpoint = HttpApiEndpoint.get('job', nativeSymmyPath(SYMMY_ROUTES.job.path), symmyJobOptions);
 const priceListPricesBatchEndpoint = HttpApiEndpoint.post(
   'priceListPricesBatch',

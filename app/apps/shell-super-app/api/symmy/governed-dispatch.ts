@@ -156,6 +156,16 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
   return { route, scoped: Option.none<SymmyOwnerAssertion>() };
 });
 
+/** The stock route sends only its rows; the group route sends a fixture identity or a versioned plan. */
+const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[0]['request']) => {
+  if ('stock' in request) {
+    return { stock: request.stock };
+  }
+  return 'fixtureId' in request
+    ? { fixtureId: request.fixtureId }
+    : { contractVersion: request.contractVersion, plan: request.plan };
+};
+
 const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* routeContext(
   admission: SymmyIngressAdmission,
   request: Exclude<
@@ -203,10 +213,7 @@ export const makeSymmyGovernedDispatch = (
     const scoped = Option.isSome(prepared.scoped)
       ? prepared.scoped.value
       : yield* acquireSymmyReadAssertion(admission, symmyAudience, prepared.route.legalEntityId);
-    const source =
-      'fixtureId' in request
-        ? { fixtureId: request.fixtureId }
-        : { contractVersion: request.contractVersion, plan: request.plan };
+    const source = syncAdmissionSource(request);
     const payload = yield* Schema.decodeUnknownEffect(AdmitSymmySyncPayloadSchema)({
       ...source,
       idempotencyKey: request.idempotencyKey ?? (yield* newRequestIdentifier),

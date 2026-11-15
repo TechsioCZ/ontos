@@ -121,6 +121,19 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
       'symmy_job_routes_fixture_ids_ck',
       sql`cardinality(${table.fixtureIds}) between 1 and 32 and array_position(${table.fixtureIds}, null) is null`,
     ),
+    // Only the stock route enrolls positions, and an enrolled stock route names at least one.
+    check(
+      'symmy_job_routes_stock_scope_ck',
+      sql`(
+        ${table.routeKey} = 'inventoryStockBatch'
+        and (
+          ${table.fixturePlan} is null
+          or (jsonb_typeof(${table.fixturePlan} -> 'stockScope') = 'array' and jsonb_array_length(${table.fixturePlan} -> 'stockScope') between 1 and 10000)
+        )
+      ) or (
+        ${table.routeKey} <> 'inventoryStockBatch' and (${table.fixturePlan} is null or not (${table.fixturePlan} ? 'stockScope'))
+      )`,
+    ),
     check(
       'symmy_job_routes_versions_ck',
       sql`char_length(${table.routeRevision}) between 1 and 80 and char_length(${table.mappingVersion}) between 1 and 80`,

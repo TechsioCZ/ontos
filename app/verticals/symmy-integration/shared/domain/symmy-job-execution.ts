@@ -21,6 +21,7 @@ import {
 } from './symmy-party-commerce-intents.ts';
 
 import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
+import { SymmyStockScopeSchema } from './symmy-stock-batch.ts';
 
 export const SymmyOwnerIntentSchema = Schema.Union([
   SymmyCatalogPricingInventoryIntentSchema,
@@ -189,6 +190,8 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
       ).check(Schema.isMaxLength(32)),
     }),
   ).check(Schema.isMaxLength(16)),
+  /** Only the stock route: the positions it is enrolled for. The row values are never enrolled. */
+  stockScope: Schema.optionalKey(SymmyStockScopeSchema),
 }).check(validPlanGraph);
 
 /** Explicit normalized internal business inputs; real Symmy wire acceptance is separate. */
