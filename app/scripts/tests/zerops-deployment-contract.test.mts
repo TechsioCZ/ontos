@@ -650,3 +650,30 @@ it('keeps the worker only with its closure, all hosted identities, materializer 
   expect(digest).toContain('scripts/materialize-outbox-worker.mjs');
   expect(digest).toContain('pnpm-lock.yaml');
 });
+
+it('plans with only the root dependencies and complete HEAD ancestry, not every ref', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        plan: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              run: Schema.optional(Schema.String),
+              uses: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
+  const { steps } = workflow.jobs.plan;
+  expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
+  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
+    '--trust-lockfile --filter app',
+  );
+  const history = steps.findIndex(({ run }) => run === 'git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
+  const plan = steps.findIndex(({ run }) => run?.includes('delivery-plan-cli.mts plan') === true);
+  expect(history).toBeGreaterThanOrEqual(0);
+  expect(plan).toBeGreaterThan(history);
+});

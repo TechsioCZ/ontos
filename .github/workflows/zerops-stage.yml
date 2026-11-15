@@ -65,16 +65,22 @@ jobs:
       full: ${{ steps.plan.outputs.full }}
       receipt: ${{ steps.plan.outputs.receipt }}
     steps:
-      - name: Checkout the complete release history
+      - name: Checkout the planned revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Install the app workspace
+      # The planner uses merge-base and diff against the verified receipt, so retain all HEAD ancestry.
+      # It reads no tags or other branches; checkout's fetch-depth: 0 would fetch every ref.
+      - name: Fetch only the planned revision's complete ancestry
+        run: git fetch --no-tags --unshallow origin "$GITHUB_SHA"
+
+      # delivery-plan-cli.mts -> delivery-plan.mts: only effect and @effect/platform-node, both root deps.
+      - name: Install the planner dependencies
         uses: ./.github/actions/install-app
         with:
-          install-args: --trust-lockfile
+          install-args: --trust-lockfile --filter app
 
       # A verified ledger is a cache hint, never proof by itself. Match it to the immediately preceding
       # successful workflow attempt; a failed/missing run, cache eviction or API failure forces all services.
