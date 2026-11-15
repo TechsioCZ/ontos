@@ -311,12 +311,16 @@ it.effect('reuses only by identity, never blocks a build, and rebuild_units alwa
     // A failed identities job leaves the shards to build; only a cancelled run or a failed plan stops them.
     expect(build.if).toBe(BUILD_SHARD_CONDITION);
     const step = (name: string) => build.steps.find((candidate) => candidate.name === name);
-    for (const name of ["Take this commit's unit identities", REUSE_STEP]) {
-      expect(step(name)?.if, name).toBe(`${IDENTITIES_READY} && ${FORCE_OFF}`);
-    }
-    for (const name of ['Install the app workspace', BUILD_STEP, "Save the shard's unit builds"]) {
+    // The identities also name the cache entry, so they are taken even when rebuild_units forces every build.
+    expect(step("Take this commit's unit identities")?.if).toBe(IDENTITIES_READY);
+    expect(step(REUSE_STEP)?.if).toBe(`${IDENTITIES_READY} && ${FORCE_OFF}`);
+    for (const name of ['Install the app workspace', BUILD_STEP]) {
       expect(step(name)?.if, name).toBe(NOT_REUSED);
     }
+    // Saved only when built, named, and not already in the cache under that name.
+    expect(step("Save the shard's unit builds")?.if).toBe(
+      `${NOT_REUSED} && steps.unit-cache-key.outputs.key != '' && steps.unit-cache.outputs.cache-hit != 'true'`,
+    );
     expect(step("Upload the shard's unit builds")?.if).toBeUndefined();
     // The identities are computed in the build environment: the same declared variables, the same values.
     for (const name of [
