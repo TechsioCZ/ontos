@@ -169,6 +169,8 @@ export const subjectInspectionFixture = (input: {
    * fails or is interrupted here counts nothing.
    */
   readonly onEvidenceWrite?: (write: number) => Effect.Effect<void, AccessDecisionUnavailable>;
+  /** Runs after the fake write committed its rows, so a test can await completion without polling. */
+  readonly onEvidenceWritten?: (write: number) => Effect.Effect<void>;
   /** Runs before each scope read of a person, with the company asked (none: the tenant context); may hold or fail it. */
   readonly onScopeRead?: (
     principalId: string,
@@ -340,7 +342,7 @@ export const subjectInspectionFixture = (input: {
                       ),
                     );
                   }
-                }),
+                }).pipe(Effect.andThen(input.onEvidenceWritten?.(attempt) ?? Effect.void)),
               ),
             ),
         }),

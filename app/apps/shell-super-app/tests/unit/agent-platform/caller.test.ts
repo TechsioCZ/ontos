@@ -20,7 +20,7 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Ref, Result, Schema } from 'effect';
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Predicate, Ref, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -1627,18 +1627,6 @@ const refusedTwoBatchCatalog = actionModulesCatalog({
   'beta.mod': [moduleAction('beta.mod', 'beta.mod.first'), moduleAction('beta.mod', 'beta.mod.second')],
 });
 
-/** Moves the test clock 5 ms at a time, letting forked work run in between, until `done` holds (at most 1 s). */
-const advanceUntil = (done: () => boolean, step = 0): Effect.Effect<void> =>
-  step >= 200 || done()
-    ? Effect.void
-    : Effect.yieldNow.pipe(
-        Effect.andThen(TestClock.adjust('5 millis')),
-        Effect.andThen(Effect.suspend(() => advanceUntil(done, step + 1))),
-      );
-
-/** Moves the test clock until `fiber` has finished (at most 1 s of test time). */
-const advanceUntilDone = (fiber: Fiber.Fiber<unknown, unknown>) => advanceUntil(() => fiber.pollUnsafe() !== undefined);
-
 it.effect('reports the failed stage, not a failed evidence write, and lets that write settle first', () =>
   Effect.gen(function* stageAndWriteFail() {
     // alpha's first Action is refused in batch one, whose evidence write then fails; batch two cannot read its key.
@@ -1647,12 +1635,14 @@ it.effect('reports the failed stage, not a failed evidence write, and lets that 
     });
     const broken = keyOf.get('alpha.mod.second') ?? '';
     const settled = { write: false };
+    const writeStarted = yield* Deferred.make<null>();
     const inspection = subjectInspectionFixture({
       capabilities: [{ key: broken, modes: ['run'] as const }],
       onCapabilityRead: (key) =>
         key === broken ? Effect.fail(accessDecisionUnavailable('second key unreadable')) : Effect.void,
       onEvidenceWrite: () =>
-        Effect.sleep('40 millis').pipe(
+        Deferred.succeed(writeStarted, null).pipe(
+          Effect.andThen(Effect.sleep('40 millis')),
           Effect.andThen(
             Effect.sync(() => {
               settled.write = true;
@@ -1669,7 +1659,8 @@ it.effect('reports the failed stage, not a failed evidence write, and lets that 
       Effect.flip,
       Effect.forkChild,
     );
-    yield* advanceUntilDone(described);
+    yield* Deferred.await(writeStarted);
+    yield* TestClock.adjust('40 millis');
     const failure = yield* Fiber.join(described);
     expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
     // The unreadable key's answer, never the write's refusal; and the write had settled before the answer.
@@ -1693,12 +1684,17 @@ it.effect('a failed evidence write never cancels the other batch write: every wr
   Effect.gen(function* failedWriteDoesNotCancel() {
     const reference = yield* referenceWrites;
     const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    const bothWritesStarted = yield* Deferred.make<null>();
     // Batch one's write fails after 20 ms; batch two's write, already started, needs 60 ms and succeeds.
     const inspection = subjectInspectionFixture({
       onEvidenceWrite: (write) =>
-        write === 1
-          ? Effect.sleep('20 millis').pipe(Effect.andThen(Effect.fail(accessDecisionUnavailable('write refused'))))
-          : Effect.sleep('60 millis'),
+        (write === 2 ? Deferred.succeed(bothWritesStarted, null) : Effect.void).pipe(
+          Effect.andThen(
+            write === 1
+              ? Effect.sleep('20 millis').pipe(Effect.andThen(Effect.fail(accessDecisionUnavailable('write refused'))))
+              : Effect.sleep('60 millis'),
+          ),
+        ),
       snapshot,
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
@@ -1708,7 +1704,8 @@ it.effect('a failed evidence write never cancels the other batch write: every wr
       Effect.flip,
       Effect.forkChild,
     );
-    yield* advanceUntilDone(described);
+    yield* Deferred.await(bothWritesStarted);
+    yield* TestClock.adjust('60 millis');
     const failure = yield* Fiber.join(described);
     expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
     // Batch two's rows were written in full, exactly as an undisturbed description writes them.
@@ -1722,12 +1719,16 @@ it.effect('a request that goes away mid-description still lets every started evi
     const reference = yield* referenceWrites;
     const { installed, snapshot } = yield* refusedTwoBatchCatalog;
     const writesStarted = { count: 0 };
+    const bothWritesStarted = yield* Deferred.make<null>();
     const releaseWrites = yield* Deferred.make<null>();
     const inspection = subjectInspectionFixture({
       onEvidenceWrite: () =>
         Effect.sync(() => {
           writesStarted.count += 1;
-        }).pipe(Effect.andThen(Deferred.await(releaseWrites))),
+        }).pipe(
+          Effect.andThen(() => (writesStarted.count === 2 ? Deferred.succeed(bothWritesStarted, null) : Effect.void)),
+          Effect.andThen(Deferred.await(releaseWrites)),
+        ),
       snapshot,
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
@@ -1737,8 +1738,8 @@ it.effect('a request that goes away mid-description still lets every started evi
       Effect.forkChild,
     );
     yield* Effect.gen(function* interruptAfterBothWritesStart() {
-      // Hold both writes until the handshake proves they started; a polling timeout must fail before interruption.
-      yield* advanceUntil(() => writesStarted.count === 2);
+      // Native catalog-digest Promises are not driven by TestClock: await the writes themselves, not clock ticks.
+      yield* Deferred.await(bothWritesStarted);
       expect({ settled: inspection.writtenRows.size, started: writesStarted.count }).toEqual({
         settled: 0,
         started: 2,
@@ -1746,7 +1747,6 @@ it.effect('a request that goes away mid-description still lets every started evi
       const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
       yield* Effect.yieldNow;
       yield* Deferred.succeed(releaseWrites, null);
-      yield* advanceUntilDone(interruption);
       yield* Fiber.join(interruption);
     }).pipe(Effect.ensuring(Deferred.succeed(releaseWrites, null)));
     // No answer is returned, but every started write committed: both batches' rows are there.
@@ -1760,9 +1760,12 @@ it.effect('a request that goes away mid-description still lets every started evi
 it.effect('fails the description when an evidence write outlives its deadline, and never answers without it', () =>
   Effect.gen(function* boundedWrite() {
     const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    const secondWriteSettled = yield* Deferred.make<null>();
     // Batch one's write waits a minute (an exhausted pool, say); nothing but its own deadline can end that wait.
     const inspection = subjectInspectionFixture({
       onEvidenceWrite: (write) => (write === 1 ? Effect.sleep('60 seconds') : Effect.void),
+      onEvidenceWritten: (write) =>
+        write === 2 ? Deferred.succeed(secondWriteSettled, null).pipe(Effect.asVoid) : Effect.void,
       snapshot,
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
@@ -1772,17 +1775,19 @@ it.effect('fails the description when an evidence write outlives its deadline, a
       Effect.flip,
       Effect.forkChild,
     );
-    yield* advanceUntil(() => inspection.writtenRows.has(2));
-    yield* TestClock.adjust('10 seconds');
-    yield* advanceUntilDone(described);
-    const answeredByDeadline = described.pollUnsafe() !== undefined;
-    // Let a write the deadline did not end finish, so the test never hangs on it.
-    yield* TestClock.adjust('60 seconds');
-    yield* advanceUntilDone(described);
-    expect(answeredByDeadline).toBe(true);
-    const failure = yield* Fiber.join(described);
-    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
-    expect(inspection.writtenRows.has(1)).toBe(false);
+    yield* Deferred.await(secondWriteSettled);
+    const deadline = (yield* Clock.currentTimeMillis) + 10_000;
+    yield* Effect.gen(function* awaitWriteDeadline() {
+      yield* TestClock.adjust('10 seconds');
+      const failure = yield* Fiber.join(described);
+      // No extra virtual time can rescue a missing deadline; native digest continuations may finish normally.
+      expect(yield* Clock.currentTimeMillis).toBe(deadline);
+      expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+      expect(inspection.writtenRows.has(1)).toBe(false);
+    }).pipe(
+      // Also release a broken implementation's long write when the runner interrupts a failing test.
+      Effect.ensuring(TestClock.adjust('60 seconds')),
+    );
   }),
 );
 
