@@ -90,13 +90,14 @@ jobs:
           minimum_release_age: 24h
 
       # Cache the installed root importer, not the pnpm store: an exact hit needs no relinking.
+      # Hash this workflow too: changing the install command or any flag must invalidate the cache.
       # No fallback key: different lockfiles, install policy, patches or toolchains must reinstall.
       - name: Restore the frozen planner dependencies
         id: planner-dependencies
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: app/node_modules
-          key: zerops-planner-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml', 'app/package.json', 'app/pnpm-workspace.yaml', 'app/patches/**') }}
+          key: zerops-planner-modules-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml', 'app/package.json', 'app/pnpm-workspace.yaml', 'app/patches/**', '.github/workflows/zerops-stage.yml') }}
 
       - name: Install the planner dependencies
         if: steps.planner-dependencies.outputs.cache-hit != 'true'
