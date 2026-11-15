@@ -25,6 +25,7 @@ import {
   projectSymmySourcePriceLists,
   projectSymmySourceProducts,
   projectSymmySourceCustomers,
+  readSymmyPriceGroupCatalogHead,
 } from './source-read-projections.ts';
 import {
   projectSymmyRegionsWithCrypto,
@@ -112,6 +113,7 @@ const verifySelectedSource = (
 
 const resolveRelayBase = (path: string) => resolveSymmyOwnerReleaseBase(path, symmyAudience);
 
+const priceGroupModule = 'pricing.price-group-catalog';
 const requireReadOperation = (
   route: typeof SymmyRouteContextResponseSchema.Type,
   moduleId: string,
@@ -165,6 +167,35 @@ const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[
     ? { fixtureId: request.fixtureId }
     : { contractVersion: request.contractVersion, plan: request.plan };
 };
+
+/**
+ * What a durable job carries besides its key and route. The price lists carry the catalog head read now, as the
+ * route enrolls that read: the owner admission fences the first created list on it and ignores it on a replay.
+ */
+const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
+  request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
+  selected: { readonly route: typeof SymmyRouteContextResponseSchema.Type } | undefined,
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
+) {
+  if ('priceLists' in request) {
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    yield* requireReadOperation(
+      selected.route,
+      priceGroupModule,
+      'pricing.price-group-catalog.api.price-group-catalog-head',
+    );
+    return {
+      catalogHead: yield* readSymmyPriceGroupCatalogHead(admission, newRequestIdentifier),
+      priceLists: request.priceLists,
+    };
+  }
+  return 'fixtureId' in request
+    ? { fixtureId: request.fixtureId }
+    : { contractVersion: request.contractVersion, plan: request.plan };
+});
 
 const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* routeContext(
   admission: SymmyIngressAdmission,
@@ -303,14 +334,10 @@ export const makeSymmyGovernedDispatch = (
     if (request.route === 'priceLists') {
       yield* requireReadOperation(
         route,
-        'pricing.price-group-catalog',
+        priceGroupModule,
         'pricing.price-group-catalog.api.price-group-source-associations',
       );
-      yield* requireReadOperation(
-        route,
-        'pricing.price-group-catalog',
-        'pricing.price-group-catalog.api.price-group-definition',
-      );
+      yield* requireReadOperation(route, priceGroupModule, 'pricing.price-group-catalog.api.price-group-definition');
       return yield* projectSymmySourcePriceLists(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'adminRegions') {
@@ -378,6 +405,7 @@ export const makeSymmyGovernedDispatch = (
   }: Parameters<SymmyIngressDispatch['submit']>[0]) {
     const needsRoute =
       Object.hasOwn(SYMMY_FIXTURE_ROUTES, request.route) ||
+      'priceLists' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;
@@ -395,9 +423,7 @@ export const makeSymmyGovernedDispatch = (
     const transportKey = yield* newRequestIdentifier;
     const { idempotencyKey, route } = request;
     const basePayload = {
-      ...('fixtureId' in request
-        ? { fixtureId: request.fixtureId }
-        : { contractVersion: request.contractVersion, plan: request.plan }),
+      ...(yield* submitSource(request, selected, admission, newRequestIdentifier)),
       idempotencyKey,
       routeKey: route,
     };

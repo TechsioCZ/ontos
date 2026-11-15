@@ -303,6 +303,49 @@ const stockBatchJson = (rows: readonly ReturnType<typeof stockRow>[]) => ({
   headers: { 'content-type': 'application/json' },
 });
 
+const priceProductRef = { ...stockUnitRef, resourceType: 'commerce.catalog.product' };
+const priceVariantRef = {
+  ...stockUnitRef,
+  resourceId: '33333333-3333-4333-8333-333333333334',
+  resourceType: 'commerce.catalog.variant',
+};
+const priceRow = {
+  amount: '25.50',
+  commercialScope: { channelId: 'B2B', marketId: 'cz-market' },
+  currencyCode: 'CZK',
+  effectiveFrom: '2026-01-01T00:00:00Z',
+  productRef: priceProductRef,
+  unitBasis: { quantity: '1', unitRef: stockUnitRef },
+  variantRef: priceVariantRef,
+};
+const priceListRow = {
+  businessCode: 'CZ_WHOLESALE',
+  code: 'cz-wholesale',
+  description: 'Wholesale prices',
+  effectiveFrom: '2026-01-01T00:00:00Z',
+  name: 'CZ wholesale',
+  prices: [priceRow],
+  purpose: 'Wholesale customers',
+};
+/** The decoder reads any ISO instant, the owner admission always receives the canonical form. */
+const priceListsBatchJson = (priceLists: readonly (typeof priceListRow)[]) => ({
+  body: JSON.stringify({ priceLists }),
+  headers: { 'content-type': 'application/json' },
+});
+const canonicalPriceList = {
+  ...priceListRow,
+  effectiveFrom: '2026-01-01T00:00:00.000Z',
+  prices: [{ ...priceRow, effectiveFrom: '2026-01-01T00:00:00.000Z' }],
+};
+
+/** The body each durable or synchronous POST route accepts: the public body, or an operator fixture identity. */
+const routeBody = (path: string) => {
+  if (path === SYMMY_ROUTES.inventoryStockBatch.path) {
+    return stockBatchJson([stockRow('item-1'), stockRow('item-2')]);
+  }
+  return path === SYMMY_ROUTES.priceListsBatchUpsert.path ? priceListsBatchJson([priceListRow]) : fixtureJson;
+};
+
 const internalProductInput = {
   contractVersion: 'INTERNAL_C14',
   plan: {
@@ -1190,10 +1233,11 @@ it.effect('uses each approved route’s declared success status for internal fix
     for (const definition of Object.values(SYMMY_ROUTES)) {
       const path = definition.path.replace('{code}', groupCode).replace('{id}', jobId);
       const isStock = path === SYMMY_ROUTES.inventoryStockBatch.path;
+      const postBody = routeBody(path);
       const init =
         definition.method === 'POST'
           ? {
-              ...(isStock ? stockBatchJson([stockRow('item-1'), stockRow('item-2')]) : fixtureJson),
+              ...postBody,
               headers:
                 definition.mode === 'durable_job' || isStock
                   ? { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey }
@@ -1239,7 +1283,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       { id: jobId, route: 'job' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'priceListPricesBatch' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
-      { fixtureId, idempotencyKey, route: 'priceListsBatchUpsert' },
+      { idempotencyKey, priceLists: [canonicalPriceList], route: 'priceListsBatchUpsert' },
       { fixtureId, idempotencyKey, route: 'productsBatch' },
     ]);
   }),
@@ -1375,6 +1419,98 @@ it.effect('answers the public stock batch route with 428 without a key and 400 f
     expect(reflected.status).toBe(400);
     expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
     expect(calls).toBe(0);
+  }),
+);
+
+it.effect('serves the public price lists batch route with 202 queued and no internal contract', () =>
+  Effect.gen(function* servesPublicPriceListsBatch() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const admittedJobId = Schema.decodeUnknownSync(SymmyFixtureJobIdSchema)(jobId);
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.fail(symmyUnavailableProblem),
+            submit: () => Effect.succeed(admittedJobId),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const post = (body: string, headers: Record<string, string>, query = '') =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.priceListsBatchUpsert.path}${query}`, {
+          body,
+          headers: { 'content-type': 'application/json', ...headers },
+          method: 'POST',
+        }),
+      );
+    const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
+    const valid = priceListsBatchJson([priceListRow]).body;
+    const accepted = yield* post(valid, authorized);
+    expect(accepted.status).toBe(202);
+    const body = yield* Effect.promise(() => accepted.json());
+    expect(body).toEqual({ jobId, status: 'queued' });
+    expect(JSON.stringify(body)).not.toContain('contractVersion');
+    expect(forwarded).toEqual([{ idempotencyKey, priceLists: [canonicalPriceList], route: 'priceListsBatchUpsert' }]);
+    expect(JSON.stringify(forwarded)).not.toContain('contractVersion');
+    const { prices: _prices, ...withoutPriceRows } = priceListRow;
+    const withoutPrices = yield* post(JSON.stringify({ priceLists: [withoutPriceRows] }), authorized);
+    expect(withoutPrices.status).toBe(202);
+
+    const before = forwarded.length;
+    expect((yield* post(valid, { 'x-api-key': validKey })).status).toBe(400);
+    expect((yield* post(valid, { 'idempotency-key': idempotencyKey })).status).toBe(401);
+    expect((yield* post(valid, { ...authorized, 'idempotency-key': 'not a key' })).status).toBe(400);
+    expect((yield* post(valid, authorized, '?limit=1')).status).toBe(400);
+    const { code: _code, ...withoutCode } = priceListRow;
+    const { commercialScope: _scope, ...withoutScope } = priceRow;
+    const { unitBasis: _basis, ...withoutBasis } = priceRow;
+    const rejected = [
+      ['an internal plan', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
+      ['a fixture identity', { fixtureId: 'internal-c14-fixture' }],
+      ['a contractVersion property', { contractVersion: 'INTERNAL_C14', priceLists: [priceListRow] }],
+      ['no price lists', {}],
+      ['an empty price list array', { priceLists: [] }],
+      ['seventeen price lists', { priceLists: Array.from({ length: 17 }, () => ({ ...priceListRow, prices: [] })) }],
+      [
+        'ten lists of ten prices',
+        {
+          priceLists: Array.from({ length: 10 }, () => ({
+            ...priceListRow,
+            prices: Array.from({ length: 10 }, () => priceRow),
+          })),
+        },
+      ],
+      ['a list without a code', { priceLists: [withoutCode] }],
+      ['a lower-case business code', { priceLists: [{ ...priceListRow, businessCode: 'cz_wholesale' }] }],
+      ['an effectiveTo', { priceLists: [{ ...priceListRow, effectiveTo: '2027-01-01T00:00:00Z' }] }],
+      ['an endsAt', { priceLists: [{ ...priceListRow, endsAt: '2027-01-01T00:00:00Z' }] }],
+      ['a type', { priceLists: [{ ...priceListRow, type: 'standard' }] }],
+      ['a status', { priceLists: [{ ...priceListRow, status: 'active' }] }],
+      ['a customerGroupCode', { priceLists: [{ ...priceListRow, customerGroupCode: 'g' }] }],
+      ['a metadata property', { priceLists: [{ ...priceListRow, metadata: {} }] }],
+      ['a negative amount', { priceLists: [{ ...priceListRow, prices: [{ ...priceRow, amount: '-1' }] }] }],
+      ['a price without a scope', { priceLists: [{ ...priceListRow, prices: [withoutScope] }] }],
+      ['a price without a unit basis', { priceLists: [{ ...priceListRow, prices: [withoutBasis] }] }],
+      [
+        'a scope without a market',
+        { priceLists: [{ ...priceListRow, prices: [{ ...priceRow, commercialScope: { channelId: 'B2B' } }] }] },
+      ],
+      ['an unknown property', { priceLists: [priceListRow], unknown: true }],
+    ] as const;
+    for (const [name, rejectedBody] of rejected) {
+      expect((yield* post(JSON.stringify(rejectedBody), authorized)).status, name).toBe(400);
+    }
+    const reflected = yield* post(JSON.stringify({ priceLists: [{ ...priceListRow, name: validKey }] }), authorized);
+    expect(reflected.status).toBe(400);
+    expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
+    expect(forwarded).toHaveLength(before);
   }),
 );
 
