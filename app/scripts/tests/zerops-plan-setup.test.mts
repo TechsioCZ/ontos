@@ -43,7 +43,7 @@ for (const hit of [true, false]) {
       const restore = steps.find(({ name }) => name === 'Restore the frozen planner dependencies');
       expect(restore?.with?.path).toBe('app/node_modules');
       expect(restore?.with?.key).toBe(
-        `zerops-planner-modules-v1-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml', 'app/package.json', 'app/pnpm-workspace.yaml', 'app/patches/**') }}`,
+        `zerops-planner-modules-v2-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml', 'app/package.json', 'app/pnpm-workspace.yaml', 'app/patches/**', '.github/workflows/zerops-stage.yml') }}`,
       );
       expect(restore?.with?.['restore-keys']).toBeUndefined();
       const save = steps.find(({ name }) => name === 'Save the frozen planner dependencies');
