@@ -72,10 +72,18 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
       expect(step.env).toBeUndefined();
     }
     const index = (name: string) => steps.findIndex((step) => step.name === name);
-    expect(index(RESTORE)).toBeGreaterThan(index('Install the app workspace'));
+    expect(index(RESTORE)).toBeGreaterThan(index('Install the verification dependencies'));
     expect(index(RESTORE)).toBeGreaterThan(index('Use the runner-owned verification browser cache'));
     expect(index(SAVE)).toBeGreaterThan(index('Install headless Chromium for the warm-up client'));
-    expect(index(SAVE)).toBeLessThan(index('Warm real login, declared reads and federation assets'));
+    expect(index(SAVE)).toBeLessThan(index('Warm declared reads and prove MCP over OAuth side by side'));
+    for (const command of [
+      'scripts/ops/stage-warmup.mts',
+      'scripts/zerops/verify-service.mjs app',
+      'scripts/demo/prove-mcp-oauth.mts',
+    ]) {
+      const proof = steps.findIndex((step) => step.run?.includes(command) === true);
+      expect(proof, command).toBeGreaterThan(index('Install headless Chromium for the warm-up client'));
+    }
     expect(steps.find((step) => step.name === SAVE)?.if).toBe(
       "steps.verification-browsers.outputs.cache-hit != 'true'",
     );
@@ -245,7 +253,9 @@ it.effect('preserves mandatory verification, source-pin publication and honest n
     const probe = jobs.verify.steps.find(
       (step) => step.name === 'Time /cs and OAuth metadata without waiting for storefronts',
     );
-    const oauth = jobs.verify.steps.find((step) => step.name === 'Prove MCP over OAuth end to end');
+    const oauth = jobs.verify.steps.find(
+      (step) => step.run?.includes('scripts/demo/prove-mcp-oauth.mts --variant=1 --verification') === true,
+    );
     for (const step of [probe, oauth]) {
       expect(step).toBeDefined();
       expect(step?.if).toBeUndefined();

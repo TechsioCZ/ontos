@@ -708,7 +708,7 @@ const verificationSteps = () =>
     }),
   )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs.verify.steps;
 
-it('installs only verification importers and caches both browser versions plus image-specific apt archives', () => {
+it('installs only verification importers and caches the frozen browser graph plus image-specific apt archives', () => {
   const steps = verificationSteps();
   expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
     '--trust-lockfile --filter app --filter @app/shared-contracts... --filter @app/email-delivery... --filter @app/shell-super-app',
@@ -717,18 +717,20 @@ it('installs only verification importers and caches both browser versions plus i
   expect(versions?.run).toContain('pnpm --filter @app/shell-super-app exec playwright --version');
   expect(versions?.run).toContain('pnpm exec playwright-core --version');
   const restore = steps.findIndex(({ id }) => id === 'verification-browsers');
-  expect(steps[restore]?.with?.key).toContain('steps.verification-browser-versions.outputs.versions');
+  expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml')");
   expect(steps.find(({ id }) => id === 'chromium-debs')?.run).toContain('$ImageOS-$ImageVersion-');
   const aptRestore = steps.findIndex(({ id }) => id === 'chromium-debs-cache');
-  const aptInstall = steps.findIndex(({ run }) => run?.includes('playwright install-deps chromium') === true);
+  const aptInstall = steps.findIndex(({ run }) => run?.includes('playwright install --with-deps chromium') === true);
+  const aptSeed = steps.findIndex(({ run }) => run?.includes('sudo find ~/.cache/playwright-apt-debs') === true);
   expect(aptRestore).toBeGreaterThanOrEqual(0);
-  expect(aptInstall).toBeGreaterThan(aptRestore);
+  expect(aptSeed).toBeGreaterThan(aptRestore);
+  expect(aptInstall).toBeGreaterThan(aptSeed);
   expect(steps[aptInstall]?.if).toBeUndefined();
-  expect(steps[aptInstall]?.run).toContain('/var/cache/apt/archives/');
-  for (const command of ['playwright install chromium', 'playwright-core install chromium']) {
+  expect(steps[aptSeed]?.run).toContain('/var/cache/apt/archives/');
+  for (const command of ['playwright install --with-deps chromium', 'playwright-core install chromium']) {
     const download = steps.findIndex(({ run }) => run?.includes(command) === true);
     expect(download).toBeGreaterThan(restore);
-    expect(steps[download]?.if).toBe("steps.verification-browsers.outputs.cache-hit != 'true'");
+    expect(steps[download]?.if).toBeUndefined();
   }
 });
 
