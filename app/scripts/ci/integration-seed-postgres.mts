@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DateTime, Effect, FileSystem, Option, Schema } from 'effect';
 
 import {
+  BUILD_DEPENDENT_TABLES,
   COMMERCE_URL_KEY,
   REGENERATE_SEAL_SQL,
   SEAL_TABLE,
@@ -66,6 +67,19 @@ const queryJson = <A, I>(database: string, query: string, schema: Schema.Codec<A
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
     Effect.mapError(() => seedFailure('PostgreSQL seed catalog did not match its JSON schema')),
   );
+
+const countOf = (table: string) => `(select count(*) from ${table})`;
+
+/** Rows in each build-dependent table of the application database. */
+export const buildDependentRowCounts = (database: string) =>
+  Effect.gen(function* countBuildDependentRows() {
+    const counts = yield* seedSql(database, `select ${BUILD_DEPENDENT_TABLES.map(countOf).join(', ')}`);
+    const values = counts.trim().split('|').map(Number);
+    return BUILD_DEPENDENT_TABLES.map((table, index): readonly [string, number] => [
+      table,
+      values[index] ?? Number.NaN,
+    ]);
+  });
 
 export const readRoles = () => queryJson(MAINTENANCE_DB, ROLES_QUERY, Schema.Array(SeedRoleSchema));
 export const readMemberships = () => queryJson(MAINTENANCE_DB, MEMBERS_QUERY, Schema.Array(SeedMembershipSchema));
