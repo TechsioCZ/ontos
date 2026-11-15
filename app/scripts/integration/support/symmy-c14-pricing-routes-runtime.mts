@@ -8,7 +8,6 @@ import {
   SymmyPriceReadProjectionConfigurationSchema,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
 import {
-  SymmyInternalExecutionPlanSchema,
   SymmyRouteExecutionConfigurationSchema,
   SymmyJobRetentionPolicySchema,
   SymmyJobLifecyclePolicyRefSchema,
@@ -35,7 +34,7 @@ import {
 import {
   internalPricingRouteSource,
   internalPricingNativeSourceSystem,
-  decodeInternalC14PriceGroupPlan,
+  internalPricingPriceSource,
 } from './symmy-c14-pricing-routes-plan.mts';
 
 const workerKey = 'integration.symmy.execute-symmy-job';
@@ -78,6 +77,14 @@ const rules = [
     audience: groupAudience,
     declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
     entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+    legalEntityScope: 'forbidden' as const,
+    schemaVersion: '1',
+    workloadKey: groupRead,
+  },
+  {
+    audience: groupAudience,
+    declarationKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
+    entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
     legalEntityScope: 'forbidden' as const,
     schemaVersion: '1',
     workloadKey: groupRead,
@@ -134,6 +141,22 @@ const pricingDelegationRules = [
     workloadKey: marketRead,
   },
 ].map((rule) => ({ ...rule, jobKey: workerKey, sourceWorkloadKey: priceWrite }));
+/** One authority-only enrollment: an owner operation the route may use, never an intent. */
+const enrolled = (
+  entityKind: 'PRICE' | 'PRICE_GROUP',
+  itemKey: string,
+  sourceRecordId: string,
+  operations: Readonly<Record<string, { entrypointKey: string; moduleId: string; schemaVersion: string }>>,
+) => ({
+  effects: Object.entries(operations).map(([effectKey, operation]) => ({ effectKey, operation })),
+  itemKey,
+  source: {
+    entityKind,
+    issuerId: internalPricingRouteSource.issuerId,
+    sourceNamespace: internalPricingRouteSource.namespace,
+    sourceRecordId,
+  },
+});
 const encodeRoute = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
 const encodePolicy = Schema.encodeEffect(Schema.fromJsonString(SymmyJobLifecyclePolicyRefSchema));
 const encodePolicies = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)));
@@ -319,8 +342,9 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
         ],
         { concurrency: 3 },
       );
-    const firstRecordId = 'CZ wholesale / žluťoučký 🧾';
-    const secondRecordId = `CZ wholesale ${'B'.repeat(287)}`;
+    // A public price list code is 1 to 80 characters of letters, digits, dot, underscore and hyphen.
+    const firstRecordId = 'CZ-wholesale_A.1';
+    const secondRecordId = `CZ-wholesale_${'B'.repeat(60)}`;
     const lifecyclePolicy = yield* Schema.decodeUnknownEffect(SymmyJobLifecyclePolicyRefSchema)({
       policyId: 'INTERNAL_C14_PRICING_RETENTION',
       revision: '1',
@@ -439,60 +463,26 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES',
     });
     const at = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 30 }));
-    const plan = yield* decodeInternalC14PriceGroupPlan({
-      at,
-      firstOccurrenceId: randomUUID(),
-      firstRecordId,
-      secondOccurrenceId: randomUUID(),
-      secondRecordId,
-      sourceRouteId,
-    });
-    const encoded = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan);
+    // The route enrolls operations and grant refs, never a list or a price: the admission builds the plan.
     const configuredPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
-      ...encoded,
       items: [
-        ...encoded.items.map((item) => ({
-          ...item,
-          effects: [
-            ...item.effects,
-            {
-              effectKey: 'group-revise-authority',
-              operation: {
-                entrypointKey: groupRevisionAction,
-                moduleId: groupModuleId,
-                schemaVersion: '1',
-              },
-            },
-          ],
-        })),
-        {
-          effects: [
-            {
-              effectKey: 'price-define-authority',
-              operation: {
-                entrypointKey: definePriceOperation,
-                moduleId: pricingModule,
-                schemaVersion: '2',
-              },
-            },
-            {
-              effectKey: 'price-revise-authority',
-              operation: {
-                entrypointKey: revisePriceOperation,
-                moduleId: pricingModule,
-                schemaVersion: '2',
-              },
-            },
-          ],
-          itemKey: 'price-authority',
-          source: {
-            entityKind: 'PRICE',
-            issuerId: internalPricingRouteSource.issuerId,
-            sourceNamespace: internalPricingRouteSource.namespace,
-            sourceRecordId: 'INTERNAL_C14_PRICE_ALLOWLIST',
+        enrolled('PRICE_GROUP', 'price-list-enrollment', 'INTERNAL_C14_PRICE_LIST_ENROLLMENT', {
+          'catalog-head-read': {
+            entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
+            moduleId: groupModuleId,
+            schemaVersion: '1',
           },
-        },
+          'group-create': { entrypointKey: groupCreateAction, moduleId: groupModuleId, schemaVersion: '1' },
+        }),
+        enrolled('PRICE', 'price-enrollment', 'INTERNAL_C14_PRICE_ALLOWLIST', {
+          'price-define-authority': {
+            entrypointKey: definePriceOperation,
+            moduleId: pricingModule,
+            schemaVersion: '2',
+          },
+        }),
       ],
+      priceSource: internalPricingPriceSource,
       pricingSourceSystem: internalPricingNativeSourceSystem,
       sourceRouteId,
     });
@@ -512,7 +502,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       lifecyclePolicy,
       marketPort,
       moduleKey,
-      plan,
       priceBarrier,
       pricingOwner,
       pricingPort,

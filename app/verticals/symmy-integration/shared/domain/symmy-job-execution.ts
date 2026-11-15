@@ -21,6 +21,7 @@ import {
 } from './symmy-party-commerce-intents.ts';
 
 import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
+import { SymmyPriceSourceSchema } from './symmy-price-list-batch.ts';
 import { SymmyStockScopeSchema } from './symmy-stock-batch.ts';
 
 export const SymmyOwnerIntentSchema = Schema.Union([
@@ -190,6 +191,8 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
       ).check(Schema.isMaxLength(32)),
     }),
   ).check(Schema.isMaxLength(16)),
+  /** Only the price list routes: the grant refs a price assertion names. Prices are never enrolled themselves. */
+  priceSource: Schema.optionalKey(SymmyPriceSourceSchema),
   /** Only the stock route: the positions it is enrolled for. The row values are never enrolled. */
   stockScope: Schema.optionalKey(SymmyStockScopeSchema),
 }).check(validPlanGraph);

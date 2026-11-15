@@ -9,9 +9,10 @@ import {
 import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symmy';
 import {
   SymmyInternalExecutionPlanSchema,
+  SymmyPriceListRowsSchema,
   SymmyStockRowsSchema,
 } from '@app/symmy-integration/symmy-internal-contracts';
-import type { SymmyStockRows } from '@app/symmy-integration/symmy-internal-contracts';
+import type { SymmyPriceListRows, SymmyStockRows } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { useEffectContext } from '@modern-js/bff-effect/context';
 import { HttpApiBuilder, HttpEffect } from '@modern-js/bff-effect/effect-edge';
@@ -50,6 +51,7 @@ import type {
 import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
 import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
+import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
 import { mapSymmyPriceListsProjection, SymmyPriceListsResponseSchema } from './price-lists-public-contract.ts';
 import {
   mapSymmyRegionsProjection,
@@ -102,12 +104,20 @@ interface StockApply {
   readonly stock: SymmyStockRows;
 }
 type FixtureApply = GroupApply | StockApply;
-type FixtureSubmit = InternalWritePayload & {
+/** The public price lists. The owner admission builds the plan; the dispatch reads the catalog head it fences on. */
+interface PriceListsSubmit {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
-} & (
-    | { readonly code: string; readonly route: SelectedWrites }
-    | { readonly route: Exclude<JobWrites, SelectedWrites> }
-  );
+  readonly priceLists: SymmyPriceListRows;
+  readonly route: 'priceListsBatchUpsert';
+}
+type FixtureSubmit =
+  | (InternalWritePayload & {
+      readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+    } & (
+        | { readonly code: string; readonly route: SelectedWrites }
+        | { readonly route: Exclude<JobWrites, SelectedWrites | 'priceListsBatchUpsert'> }
+      ))
+  | PriceListsSubmit;
 export type SymmyIngressRequest = FixtureRead | FixturePoll | FixtureApply | FixtureSubmit;
 
 export interface SymmyIngressAdmission {
@@ -271,6 +281,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyStockRowsSchema))(request.stock).pipe(
       Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
     );
+    return encoded.includes(raw);
+  }
+  if ('priceLists' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyPriceListRowsSchema))(
+      request.priceLists,
+    ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
     return encoded.includes(raw);
   }
   if (Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request)) {
@@ -552,7 +568,11 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('priceListsBatchUpsert', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'priceListsBatchUpsert' },
+        {
+          idempotencyKey: headers['idempotency-key'],
+          priceLists: mapSymmyPriceListsBatchRequest(payload),
+          route: 'priceListsBatchUpsert',
+        },
         request,
       ),
     )

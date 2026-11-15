@@ -4,10 +4,7 @@ import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-e
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { symmyStockScopeKey } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRow, SymmyStockRows, SymmyStockScopeEntry } from '../../shared/domain/symmy-stock-batch.ts';
-
-/** A UUID whose version and variant bits are fixed, so a digest is a stable identifier. */
-const uuidFromDigest = (digest: string): string =>
-  `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${'89ab'.charAt(Number.parseInt(digest.charAt(16), 16) % 4)}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+import { uuidFromDigest } from './derived-identity.ts';
 
 const stockOperation = {
   entrypointKey: 'commerce.inventory.import-source-assertion',

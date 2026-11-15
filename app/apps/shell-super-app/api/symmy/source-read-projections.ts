@@ -19,6 +19,7 @@ import { executeSourceProfileExportWithAuthorization } from '@app/party-registry
 import { OrganizationBusinessNameExportRequestSchema } from '@app/party-registry/apis/organization-business-name-export';
 import { executeOrganizationBusinessNameExportWithAuthorization } from '@app/party-registry/apis/organization-business-name-export/client';
 import {
+  executePriceGroupCatalogHeadWithAuthorization,
   executePriceGroupDefinitionWithAuthorization,
   executePriceGroupSourceAssociationsWithAuthorization,
 } from '@app/price-group-catalog/api/client';
@@ -65,6 +66,7 @@ export interface SymmySourceReadScope {
 type ReadQuery = typeof SymmyInternalReadQuerySchema.Type;
 type RequestIdentifier = Effect.Effect<string, typeof symmyUnavailableProblem>;
 type PriceGroupSourceAssociation = typeof PriceGroupSourceAssociationSchema.Type;
+const priceGroupCatalogAudience = 'price-group-catalog';
 const customerContextModule = 'commerce.customer-context';
 const customerContextAudience = 'commerce-customer-context';
 const partyModule = 'party.registry';
@@ -113,6 +115,23 @@ export const acquireSymmyReadAssertion = Effect.fn('SymmyReadProjection.acquire'
   }
   const baseUrl = yield* resolveSymmyOwnerReleaseBase(assertion.apiBaseUrl, audience);
   return { ...assertion, apiBaseUrl: baseUrl.toString() };
+});
+/**
+ * The tenant Price Group catalog head: the exact `expectedCatalogRevision` of the first list the next import
+ * creates. The owner fences on it, so another writer that moves it first ends that list `conflict`.
+ */
+export const readSymmyPriceGroupCatalogHead = Effect.fn('SymmyReadProjection.catalogHead')(function* readHead(
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: RequestIdentifier,
+) {
+  const assertion = yield* acquireSymmyReadAssertion(admission, priceGroupCatalogAudience);
+  const head = yield* executePriceGroupCatalogHeadWithAuthorization(
+    {},
+    `Bearer ${Redacted.value(assertion.assertion)}`,
+    yield* newRequestIdentifier,
+    { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision },
+  ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+  return head.catalogRevision;
 });
 const routeAllows = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string): boolean =>
   scope.allowedOwnerOperations.some(
@@ -644,7 +663,7 @@ const projectPriceList = Effect.fn('SymmyReadProjection.priceList')(function* pr
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<SymmyInternalPriceListsProjection['price_lists'][number], SymmyIngressProblem> {
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'price-group-catalog');
+  const assertion = yield* acquireSymmyReadAssertion(admission, priceGroupCatalogAudience);
   const definition = yield* executePriceGroupDefinitionWithAuthorization(
     { priceGroupRef: association.priceGroupRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
     `Bearer ${Redacted.value(assertion.assertion)}`,
@@ -734,7 +753,7 @@ export const projectSymmySourcePriceLists: (
   if (Option.isNone(source) && (query.priceLimit !== undefined || query.priceOffset !== undefined)) {
     return yield* Effect.fail(symmyUnsupportedProblem('projection_not_configured'));
   }
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'price-group-catalog');
+  const assertion = yield* acquireSymmyReadAssertion(admission, priceGroupCatalogAudience);
   const page = yield* executePriceGroupSourceAssociationsWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,

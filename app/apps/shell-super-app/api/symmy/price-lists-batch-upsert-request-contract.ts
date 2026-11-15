@@ -5,6 +5,7 @@ import {
   PriceGroupNameSchema,
   PriceGroupPurposeSchema,
 } from '@app/price-group-catalog-contracts/price-group';
+import { SymmyPriceListCodeSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Schema } from 'effect';
 
 import {
@@ -13,16 +14,15 @@ import {
   symmyPriceFields,
 } from './price-request-fields.ts';
 
-/** Symmy's own key for the price list. It becomes the source record id and is not the owner's business code. */
-const SymmyPriceListCodeSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,80}$/u)).pipe(
-  Schema.brand('SymmyPriceListCode'),
-);
-
-/** A price in the price list of its item. `commercialScope` and `unitBasis` are optional on this route. */
+/**
+ * A price in the price list of its item. The price identity needs an exact commercial scope and unit basis, and
+ * the route context carries neither a channel, a market nor a unit, so a price without them is refused (400)
+ * instead of being given a default.
+ */
 const SymmyNewPriceSchema = Schema.Struct({
   ...symmyPriceFields,
-  commercialScope: Schema.optionalKey(SymmyPriceCommercialScopeSchema),
-  unitBasis: Schema.optionalKey(SymmyPriceUnitBasisSchema),
+  commercialScope: SymmyPriceCommercialScopeSchema,
+  unitBasis: SymmyPriceUnitBasisSchema,
 });
 
 /**

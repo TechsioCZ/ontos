@@ -17,7 +17,15 @@ const list = {
   name: 'CZ wholesale',
   purpose: 'Wholesale customers',
 };
-const price = { amount: '25.50', currencyCode: 'CZK', effectiveFrom: '2026-01-01T00:00:00Z', productRef, variantRef };
+const price = {
+  amount: '25.50',
+  commercialScope,
+  currencyCode: 'CZK',
+  effectiveFrom: '2026-01-01T00:00:00Z',
+  productRef,
+  unitBasis,
+  variantRef,
+};
 const withList = (extra: Readonly<Record<string, Json>>) => ({ priceLists: [{ ...list, ...extra }] });
 const withPrices = (prices: Json) => withList({ prices });
 
@@ -25,7 +33,6 @@ describe('Symmy price lists batch upsert request', () => {
   it('accepts a list without prices, and a list with a price', () => {
     expect(accepts({ priceLists: [list] })).toBe(true);
     expect(accepts(withPrices([price]))).toBe(true);
-    expect(accepts(withPrices([{ ...price, commercialScope, unitBasis }]))).toBe(true);
   });
 
   it('normalizes a time without milliseconds to milliseconds', () => {
@@ -122,6 +129,13 @@ describe('Symmy price lists batch upsert request', () => {
     }
     expect(accepts(withPrices([{ ...price, amount: '0' }]))).toBe(true);
     expect(accepts(withPrices([{ ...price, amount: '123456789012345678901234567890' }]))).toBe(false);
+  });
+
+  it('requires a commercial scope and a unit basis on every price instead of defaulting them', () => {
+    const { commercialScope: _scope, ...withoutScope } = price;
+    const { unitBasis: _basis, ...withoutBasis } = price;
+    expect(accepts(withPrices([withoutScope]))).toBe(false);
+    expect(accepts(withPrices([withoutBasis]))).toBe(false);
   });
 
   it('requires both parts of a commercial scope and a positive unit basis', () => {

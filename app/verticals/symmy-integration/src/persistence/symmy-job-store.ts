@@ -43,8 +43,11 @@ import {
 } from '../services/symmy-catalog-pricing-inventory-adapters.ts';
 import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-commerce-adapters.ts';
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
+import { SymmyPriceListRowsSchema } from '../../shared/domain/symmy-price-list-batch.ts';
+import type { SymmyPriceListRows } from '../../shared/domain/symmy-price-list-batch.ts';
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
+import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyStockPlan } from './symmy-stock-plan.ts';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
@@ -62,11 +65,13 @@ export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()
 }) {}
 
 export interface SymmyJobAdmissionRequest {
+  readonly catalogHead?: number;
   readonly code?: string;
   readonly contractVersion?: 'INTERNAL_C14';
   readonly fixtureId?: string;
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
+  readonly priceLists?: SymmyPriceListRows;
   readonly routeKey: SymmyDurableRouteKey;
   readonly stock?: SymmyStockRows;
 }
@@ -266,6 +271,14 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
       Effect.map(Option.some),
     );
   }
+  if (input.priceLists !== undefined) {
+    // The catalog head is a fence read when the request arrived, not caller intent: a replay after the head
+    // moved is still the same request.
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyPriceListRowsSchema))(input.priceLists).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
   if (input.plan === undefined) {
     return Option.none<string>();
   }
@@ -417,6 +430,34 @@ const configuredEffectsAllowed = (routeKey: SymmyDurableRouteKey, plan: SymmyFix
   return true;
 };
 
+/**
+ * What a durable admission pins: the caller's internal plan, the route template, or the plan built from the public
+ * price lists. The lists are admitted for the enrolled operations only, so a route that does not enroll them yields
+ * no plan, nothing is pinned and no owner call is made.
+ */
+const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(function* admissionPlanSource(
+  route: typeof symmyJobRoutes.$inferSelect,
+  input: SymmyJobAdmissionRequest,
+  scope: OperationalScope,
+  template: SymmyFixtureExecutionPlan,
+) {
+  if (input.priceLists === undefined) {
+    return input.catalogHead === undefined ? Option.some(input.plan ?? template) : Option.none();
+  }
+  return input.catalogHead === undefined
+    ? Option.none<SymmyFixtureExecutionPlan>()
+    : yield* buildSymmyPriceListPlan({
+        catalogHead: input.catalogHead,
+        digest: hash,
+        idempotencyKey: input.idempotencyKey,
+        legalEntityId: scope.legalEntityId,
+        receivedAt: yield* DateTime.now,
+        route,
+        rows: input.priceLists,
+        template,
+      });
+});
+
 const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(function* prepareAdmissionPlan(
   context: { scope: OperationalScope; transaction: ScopedTransactionExecutor },
   route: typeof symmyJobRoutes.$inferSelect,
@@ -445,12 +486,17 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
     yield* requireLifecyclePolicy(
       route,
       input.plan !== undefined ||
+        input.priceLists !== undefined ||
         template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
     );
     if (!selectedPlanMatches(input, template, scope.tenantId)) {
       return yield* routeDenied();
     }
-    const plan = configuredPlan(input.plan ?? template, template);
+    const source = yield* admissionPlanSource(route, input, scope, template);
+    if (Option.isNone(source)) {
+      return yield* routeDenied();
+    }
+    const plan = configuredPlan(source.value, template);
     if (!configuredEffectsAllowed(input.routeKey, plan)) {
       return yield* routeDenied();
     }
@@ -476,7 +522,7 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
     if (isPolicyFixture) {
       yield* requirePinnedPolicyFixture(preparedPlan, input.routeKey, scope.legalEntityId);
     }
-  } else if (input.plan !== undefined) {
+  } else if (input.plan !== undefined || input.priceLists !== undefined) {
     return yield* routeDenied();
   }
   return preparedPlan;
