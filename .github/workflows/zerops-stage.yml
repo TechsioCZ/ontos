@@ -703,31 +703,67 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install the app workspace
+      # Root script dependencies, the imported contract closures, and Shell's own pinned OAuth browser client.
+      # No other Shell workspace dependency is executed by these scripts.
+      - name: Install the verification dependencies
         uses: ./.github/actions/install-app
         with:
-          install-args: --trust-lockfile
+          install-args: --trust-lockfile --filter app --filter @app/shared-contracts... --filter @app/email-delivery... --filter @app/shell-super-app
 
-      # The complete frozen dependency graph covers BOTH clients, including browser revision overrides.
-      # No restore prefix: another dependency graph or runner architecture is never an exact cache hit.
-      - name: Use the runner-owned verification browser cache
-        run: printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+      # Both SDK versions name their own Chromium/headless-shell/ffmpeg revisions.
+      - name: Name the pinned verification browsers
+        id: verification-browser-versions
+        working-directory: app
+        run: |
+          oauth="$(mise exec -- pnpm --filter @app/shell-super-app exec playwright --version)"
+          warmup="$(mise exec -- pnpm exec playwright-core --version)"
+          echo "versions=${oauth// /-}-${warmup// /-}" >>"$GITHUB_OUTPUT"
+          printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
 
       - name: Restore the pinned verification browsers
         id: verification-browsers
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
+          key: zerops-verify-browsers-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.verification-browser-versions.outputs.versions }}
 
-      # Always run both clients' own installers, even on a cache hit. They validate their required
-      # Chromium/headless-shell/ffmpeg revisions and install anything missing. OS dependencies are NOT cached.
-      - name: Install headless Chromium for the OAuth consent screens
+      # Reuse the gates' apt archive approach, never a cached installed /usr tree. apt checks the current index.
+      - name: Name the Chromium system-library package cache
+        id: chromium-debs
+        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"
+
+      - name: Restore the Chromium system-library packages
+        id: chromium-debs-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
+
+      - name: Install Chromium system libraries from cached packages
         working-directory: app
-        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+        run: |
+          if [ -d ~/.cache/playwright-apt-debs ]; then
+            sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
+          fi
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
+          mkdir -p ~/.cache/playwright-apt-debs
+          touch ~/.cache/playwright-apt-debs/.downloaded
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
 
-      # Warm-up imports the workspace's pinned playwright-core, which may differ from Shell's verification client.
+      - name: Save the Chromium system-library packages
+        if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
+
+      - name: Install headless Chromium for the OAuth consent screens
+        if: steps.verification-browsers.outputs.cache-hit != 'true'
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install chromium
+
       - name: Install headless Chromium for the warm-up client
+        if: steps.verification-browsers.outputs.cache-hit != 'true'
         working-directory: app
         run: mise exec -- pnpm exec playwright-core install chromium
 
@@ -736,31 +772,45 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
-
-      # The operator seed creates independent company-scoped read-only accounts, never administrator copies.
-      # Timeouts/permission gaps warn here; the existing verification below remains the broken-app gate.
-      - name: Warm real login, declared reads and federation assets
-        working-directory: app
-        env:
-          ONTOS_STAGE_WARMUP_ENABLED: 'true'
-        run: mise exec -- node scripts/ops/stage-warmup.mts
+          key: ${{ steps.verification-browsers.outputs.cache-primary-key }}
 
       - name: Time /cs and OAuth metadata without waiting for storefronts
         working-directory: app
         run: mise exec -- node scripts/zerops/verify-service.mjs app
 
-      - name: Prove MCP over OAuth end to end
+      # Independent read-only warm-up accounts and OAuth proof sessions may run together. Neither result is ignored.
+      # Warm-up keeps its full persona/route coverage and 85 s budget; only its start time changes.
+      - name: Warm declared reads and prove MCP over OAuth side by side
         working-directory: app
         env:
+          ONTOS_STAGE_WARMUP_ENABLED: 'true'
           ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
           ONTOS_OAUTH_ISSUER: ${{ env.STAGE_SHELL_URL }}/shell-super-app-api/oauth
           E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
           E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
         run: |
+          mkdir -p "$E2E_OUT_DIR"
           E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
           export E2E_PLAYWRIGHT_MODULE
-          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification
+          mise exec -- node scripts/ops/stage-warmup.mts >"$E2E_OUT_DIR/warmup.log" 2>&1 &
+          warmup_pid=$!
+          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification >"$E2E_OUT_DIR/oauth.log" 2>&1 &
+          oauth_pid=$!
+          trap 'kill "$warmup_pid" "$oauth_pid" 2>/dev/null || true' EXIT
+          warmup_status=0
+          oauth_status=0
+          wait "$warmup_pid" || warmup_status=$?
+          wait "$oauth_pid" || oauth_status=$?
+          trap - EXIT
+          echo '::group::Stage warm-up'
+          cat "$E2E_OUT_DIR/warmup.log"
+          echo "Warm-up exit: $warmup_status"
+          echo '::endgroup::'
+          echo '::group::MCP OAuth proof'
+          cat "$E2E_OUT_DIR/oauth.log"
+          echo "MCP OAuth exit: $oauth_status"
+          echo '::endgroup::'
+          test "$warmup_status" -eq 0 && test "$oauth_status" -eq 0
 
       - name: Upload the MCP OAuth proof
         if: always()
