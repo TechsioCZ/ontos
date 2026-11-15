@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pushes the current checkout, as it is on disk (prebuilt dist/ included), to one Zerops service and waits for its
-# build and deploy. Like `zcli push`, but the package uploads over HTTP/1.1 with curl. Zerops uploads can be silently
-# truncated even after a successful response.
+# build and deploy. Like `zcli push`, but the package uploads over HTTP/1.1 with curl: Zerops silently drops a zcli
+# upload that runs longer than about 30 s.
 #
 #   ZEROPS_TOKEN=… [PUSH_EXCLUDE=<path>] push-service.sh <service-id> <setup> <version-name>   (from the repository root)
 #
@@ -12,8 +12,9 @@
 #   PUSH_PROJECT_HOSTS="<host> …"   the project's public hostnames; each attempt says whether the upload host resolves to
 #                                   the same address, i.e. whether the upload enters through the project's own balancer.
 #   ONTOS_PUSH_UPLOAD_LIMIT_RATE=8M an experiment, off unless set: curl --limit-rate for the upload, to test whether a
-#                                   slower, steadier upload avoids the project-wide stall. A rate below 4 MB/s makes a
-#                                   large upload exceed its size-scaled budget and go again, up to three attempts.
+#                                   slower, steadier upload avoids the project-wide stall. A rate below package size / 25 s
+#                                   (about 10M for the 230 MB app package) makes every attempt slower than the limit
+#                                   below, so the upload goes three times and the push fails.
 #   ONTOS_PUSH_UPLOAD_WARMUP=true   an experiment, off unless set: before the first real upload of this service (once
 #                                   per push-service.sh run, so up to four times per push step), one tiny throwaway HEAD
 #                                   to the same upload host. The first upload of a service stops every hostname of the
@@ -22,8 +23,8 @@
 #                                   large transfer, is what stalls. The warm-up can never fail the push: any answer,
 #                                   curl error or timeout (cap 15 s) is logged and the push carries on unchanged.
 #
-# Keep packages small. Reject incomplete transfers and retry uploads slower than 4 MB/s on average, with a 25 s
-# floor for small packages (UPLOAD_LIMIT_SECONDS overrides that floor). A 230 MB package gets 58 s, not 25 s.
+# Keep the package small and push one service at a time: Zerops silently truncates an upload that runs longer
+# than about 30 s, so a slower upload goes again (UPLOAD_LIMIT_SECONDS, default 25).
 set -euo pipefail
 
 service_id="${1:?service id is required}"
@@ -207,19 +208,14 @@ warmup_upload() {
   log "upload warm-up (attempt $attempt, 0 bytes): host $host, started $started, ${timing:-curl_exit=$exit_code}$note"
 }
 
-# On 2026-10-30 Zerops answered 2xx after curl sent every byte, but stored a truncated package. The API exposes
-# no stored size/checksum: status and sent bytes are necessary, not sufficient. Keep a bounded-duration heuristic,
-# scaled for the healthy 5-7 MB/s first transfers now observed on 220-250 MB app packages, not a fixed 25 s cutoff.
-# 4 MB/s leaves headroom below those healthy transfers; small packages retain the original 25 s budget.
-upload_budget_seconds() {
-  local bytes="$1" floor="${UPLOAD_LIMIT_SECONDS:-25}" minimum_rate=4000000 seconds
-  seconds=$(((bytes + minimum_rate - 1) / minimum_rate))
-  ((seconds >= floor)) || seconds="$floor"
-  printf '%s' "$seconds"
-}
+# An upload that took longer than the limit is assumed truncated and goes again to a fresh app version. Zerops
+# answered 2xx to a curl that sent every byte and still kept a truncated package (2026-10-30), and the API reports no
+# stored size or checksum, so neither the status nor the byte count can replace this rule.
+# On 2026-11-15, run 43686287361 accepted a 33 s upload with HTTP 200 and the full byte count, then Zerops
+# reported "failed to identify artifact file format". The limit must stay below Zerops's ~30 s boundary and must not
+# scale with package size.
+upload_limit_seconds="${UPLOAD_LIMIT_SECONDS:-25}"
 package_bytes="$(wc -c <"$work/package.tar.gz" | tr -d ' ')"
-upload_limit_seconds="$(upload_budget_seconds "$package_bytes")"
-log "upload budget: ${upload_limit_seconds}s ($package_bytes bytes, minimum 4000000 bytes/s, floor ${UPLOAD_LIMIT_SECONDS:-25}s)"
 for attempt in 1 2 3; do
   log "app version create started (attempt $attempt)"
   created="$(jq -n --arg name "$version_name" '{name: $name}' |
@@ -236,25 +232,19 @@ for attempt in 1 2 3; do
   # the upload's own duration.
   started="$(date +%s)"
   # The signed upload URL is a secret: a refused upload names its status and Zerops's answer, never the URL.
-  curl_exit=0
-  timing="$(curl -sS --http1.1 --retry 2 --retry-max-time "$upload_limit_seconds" --max-time "$upload_limit_seconds" "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" "$upload_url" \
-    -o "$work/upload-response" -w "$timing_format" 2>"$work/upload-error")" || curl_exit=$?
+  timing="$(curl -sS --http1.1 --retry 2 "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" "$upload_url" \
+    -o "$work/upload-response" -w "$timing_format")"
   upload_code="${timing##*http_code=}"
-  if ((curl_exit == 0)) && [[ "$upload_code" != 2?? ]]; then
+  if [[ "$upload_code" != 2?? ]]; then
     log_error "upload refused (attempt $attempt): HTTP $upload_code: $(head -c 8192 "$work/upload-response")"
     exit 1
   fi
   took=$(($(date +%s) - started))
-  uploaded_bytes="${timing#* size_upload=}"
-  uploaded_bytes="${uploaded_bytes%% *}"
   log "upload timing (attempt $attempt): $timing"
   log "upload ended (attempt $attempt, $package_bytes bytes): uploaded in ${took}s (attempt $attempt)"
-  if ((curl_exit == 0 && took <= upload_limit_seconds)) && [[ "$uploaded_bytes" == "$package_bytes" ]]; then
-    break
-  fi
-  log_error "upload rejected (attempt $attempt): curl exit $curl_exit, sent $uploaded_bytes/$package_bytes bytes, ${took}s/${upload_limit_seconds}s budget"
+  ((took <= upload_limit_seconds)) && break
   if ((attempt == 3)); then
-    log_error "every upload was incomplete or exceeded ${upload_limit_seconds}s; refusing a possibly truncated package"
+    log_error "every upload took longer than ${upload_limit_seconds}s; Zerops would build a truncated package"
     exit 1
   fi
 done
