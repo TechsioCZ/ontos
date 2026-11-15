@@ -83,10 +83,32 @@ jobs:
         run: git fetch --no-tags --unshallow origin "$GITHUB_SHA"
 
       # delivery-plan-cli.mts -> delivery-plan.mts: only effect and @effect/platform-node, both root deps.
-      - name: Install the planner dependencies
-        uses: ./.github/actions/install-app
+      - name: Setup the planner toolchain
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          install-args: --trust-lockfile --filter app
+          working_directory: app
+          minimum_release_age: 24h
+
+      # Cache the installed root importer, not the pnpm store: an exact hit needs no relinking.
+      # No fallback key: different lockfiles, install policy, patches or toolchains must reinstall.
+      - name: Restore the frozen planner dependencies
+        id: planner-dependencies
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/node_modules
+          key: zerops-planner-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml', 'app/package.json', 'app/pnpm-workspace.yaml', 'app/patches/**') }}
+
+      - name: Install the planner dependencies
+        if: steps.planner-dependencies.outputs.cache-hit != 'true'
+        working-directory: app
+        run: mise exec -- pnpm --config.verify-deps-before-run=false install --frozen-lockfile --trust-lockfile --filter app
+
+      - name: Save the frozen planner dependencies
+        if: steps.planner-dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/node_modules
+          key: ${{ steps.planner-dependencies.outputs.cache-primary-key }}
 
       # A verified ledger is a cache hint, never proof by itself. Match it to the immediately preceding
       # successful workflow attempt; a failed/missing run, cache eviction or API failure forces all services.
