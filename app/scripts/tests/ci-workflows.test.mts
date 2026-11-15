@@ -1306,6 +1306,33 @@ const SEED_KEY_INPUTS = [
   "'!app/**/node_modules/**'",
 ];
 
+/**
+ * A restored seed carries the Commerce portal realm, produced and verified with its database pair
+ * (scripts/ci/integration-seed.mts), so every verification of a restored seed names the same pair.
+ */
+const SEED_REALM_VERIFY =
+  'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \\\n  mise exec -- pnpm db:verify';
+const expectRestoredSeedVerifiedWithRealm = (label: string, run: string | undefined) => {
+  const verifications = (run ?? '').split('mise exec -- pnpm db:verify').length - 1;
+  expect(verifications, label).toBeGreaterThan(0);
+  expect((run ?? '').split(SEED_REALM_VERIFY).length - 1, label).toBe(verifications);
+};
+
+/** The producer verifies its restored and its cached seed with the pair it verified the dumped seed with. */
+const expectProducerVerifiesSeedRealm = (steps: readonly (typeof GateCommandStepSchema.Type)[]) => {
+  const selfRestore = steps.find(
+    ({ name }) => name === 'Restore the new seed into fresh services as a seeded row does',
+  );
+  expectRestoredSeedVerifiedWithRealm('self-restore', selfRestore?.run);
+  const onHit = steps.find(({ run }) => run?.includes('prove-outbox-worker-host-artifact.sh') === true);
+  expectRestoredSeedVerifiedWithRealm('cached seed', onHit?.run);
+  // The producer verified the seed it dumped with exactly this pair: the job's admin and runtime URLs.
+  const producerSource = readFileSync(new URL('../ci/integration-seed.mts', import.meta.url), 'utf-8');
+  expect(producerSource).toContain('COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: admin,');
+  expect(producerSource).toContain("COMMERCE_PORTAL_AUTH_DATABASE_URL: yield* requiredEnvironment('DATABASE_URL'),");
+  expect(producerSource).toContain("yield* runSeedCommand(PNPM, ['db:verify'], { env: perPackage });");
+};
+
 const restoreOf = (steps: readonly (typeof GateCommandStepSchema.Type)[]) =>
   steps.find(({ id }) => id === 'seed-cache');
 
@@ -1328,7 +1355,7 @@ const expectSeedConsumer = (
   const seeded = steps.find(({ run }) => run?.includes('integration-seed.mts restore') === true);
   expect(seeded?.if).toBe("steps.seed-cache.outputs.cache-hit == 'true'");
   expect(seeded?.run).toContain('--purpose ordinary-tests --job-name "$CI_MATRIX_NAME"');
-  expect(seeded?.run).toContain('mise exec -- pnpm db:verify');
+  expectRestoredSeedVerifiedWithRealm(job, seeded?.run);
   for (const name of [
     INITIALIZE_IDENTITIES_STEP,
     'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
@@ -1405,6 +1432,7 @@ it('restores the integration seed from its input-keyed cache and never makes a r
   for (const check of ['--purpose ordinary-tests', 'pnpm db:verify', 'pnpm database-trust:audit']) {
     expect(producer.steps[selfRestore]?.run).toContain(check);
   }
+  expectProducerVerifiesSeedRealm(producer.steps);
   const save = producer.steps.find(({ uses }) => uses?.startsWith('actions/cache/save@') === true);
   expect(save).toBeDefined();
   expect(selfRestore).toBeLessThan(save === undefined ? -1 : producer.steps.indexOf(save));

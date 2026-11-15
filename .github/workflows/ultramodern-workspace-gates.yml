@@ -956,7 +956,9 @@ jobs:
           mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
             --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite "$ROOT_SUITE" \
             --test-files "$CI_TEST_FILES" --jobs 4
-          mise exec -- pnpm db:verify
+          # The seed carries the Commerce portal realm (produced and verified with its database pair); verify it the same way.
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \
+            mise exec -- pnpm db:verify
 
       - name: Initialize fresh local database login identities
         if: steps.seed-cache.outputs.cache-hit != 'true'
@@ -1271,7 +1273,9 @@ jobs:
           mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
             --disposable --purpose ordinary-tests --job-name 'Prove and cache the integration seed database' \
             --root-suite false --test-files '' --jobs 4
-          mise exec -- pnpm db:verify
+          # The seed carries the Commerce portal realm (produced and verified with its database pair); verify it the same way.
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \
+            mise exec -- pnpm db:verify
           mise exec -- pnpm database-trust:audit
           mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
@@ -1290,7 +1294,9 @@ jobs:
           mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed-fresh" \
             --disposable --purpose ordinary-tests --job-name 'Prove and cache the integration seed database' \
             --root-suite false --test-files '' --jobs 4
-          mise exec -- pnpm db:verify
+          # The seed carries the Commerce portal realm (produced and verified with its database pair); verify it the same way.
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \
+            mise exec -- pnpm db:verify
           mise exec -- pnpm database-trust:audit
 
       - name: Move the new seed to the cached path
@@ -1449,7 +1455,9 @@ jobs:
         run: |
           mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
             --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite false --test-files '' --jobs 4
-          mise exec -- pnpm db:verify
+          # The seed carries the Commerce portal realm (produced and verified with its database pair); verify it the same way.
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \
+            mise exec -- pnpm db:verify
 
       - name: Initialize fresh local database login identities
         if: steps.seed-cache.outputs.cache-hit != 'true'
