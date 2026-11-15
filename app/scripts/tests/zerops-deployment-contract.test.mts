@@ -200,13 +200,15 @@ it('runs the whole application in the app container through native Node, from th
   const pack = readFileSync(new URL('../zerops/pack-app-release.sh', import.meta.url), 'utf-8');
   expect(pack).toContain("list='app/scripts/zerops/app-runtime-paths.txt'");
   expect(pack).toContain('archive="$release/app.tar.zst"');
-  expect(pack).toContain('sha256sum "$archive" | cut -d \' \' -f 1 >"$archive.sha256"');
-  expect(pack).toContain('cp app/scripts/zerops/unpack-app-release.sh "$release/unpack.sh"');
+  // Packed beside and renamed in; tar's status and the digest are checked (app-release.test.mts runs the failures).
+  expect(pack).toContain(String.raw`printf '%s\n' "$digest" >"$staging/app.tar.zst.sha256"`);
+  expect(pack).toContain('mv "$staging" "$release"');
+  expect(pack).toContain('cp app/scripts/zerops/unpack-app-release.sh "$staging/unpack.sh"');
   const unpack = readFileSync(new URL('../zerops/unpack-app-release.sh', import.meta.url), 'utf-8');
   // Digest first, then a scratch unpack renamed into place, then the archive removed.
   const order = [
-    'actual="$(sha256sum "$archive" | cut -d \' \' -f 1)"',
-    'zstd -q -dc "$archive" | tar --extract --file - -C "$scratch"',
+    'if ! actual="$(sha256sum "$archive")"; then',
+    'if ! { zstd -q -dc "$archive"; echo "$?" >"$status"; } | tar --extract --file - -C "$scratch" ||',
     'mv "$scratch/app" app',
     'rm -rf app.previous "$scratch" "$archive"',
   ].map((line) => unpack.lastIndexOf(line));

@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem } from 'effect';
+import { Config, Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
@@ -15,6 +15,8 @@ const RELEASE = '.zerops-release';
 const ARCHIVE = `${RELEASE}/app.tar.zst`;
 const STAMP = 'app/.zerops-release-digest';
 const LINK = 'app/node_modules/effect';
+const BUILD_PREFIX = 'app-release-build-';
+const OLD_RELEASE = 'app/old-release';
 
 const runtimePaths = Effect.gen(function* readRuntimePaths() {
   const fs = yield* FileSystem.FileSystem;
@@ -59,7 +61,7 @@ const buildTree = (root: string) =>
 /** Packs a build tree and copies the release to a fresh runtime directory, as Zerops deploys `.zerops-release`. */
 const packedRuntime = Effect.gen(function* packedRuntime() {
   const fs = yield* FileSystem.FileSystem;
-  const build = yield* fs.makeTempDirectoryScoped({ prefix: 'app-release-build-' });
+  const build = yield* fs.makeTempDirectoryScoped({ prefix: BUILD_PREFIX });
   yield* buildTree(build);
   const packed = yield* run(build, `app/scripts/zerops/${PACK}`);
   expect(packed.status, packed.stderr).toBe(0);
@@ -135,12 +137,104 @@ it.live('refuses an archive whose digest differs, and a start with neither an ar
 it.live('fails the build when a runtime path is missing, before it writes any archive', () =>
   Effect.gen(function* missingPath() {
     const fs = yield* FileSystem.FileSystem;
-    const build = yield* fs.makeTempDirectoryScoped({ prefix: 'app-release-build-' });
+    const build = yield* fs.makeTempDirectoryScoped({ prefix: BUILD_PREFIX });
     yield* buildTree(build);
     yield* fs.remove(path.join(build, 'app/.zerops/state'), { recursive: true });
     const packed = yield* run(build, `app/scripts/zerops/${PACK}`);
     expect(packed.status).toBe(1);
     expect(packed.stderr).toContain('app runtime path app/.zerops/state is missing from the build');
     expect(yield* fs.exists(path.join(build, RELEASE))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+/** A directory with one stub command, put first on PATH; `REAL_<TOOL>` names the real one for stubs that wrap it. */
+const withStub = (root: string, tool: string, body: string) =>
+  Effect.gen(function* writeStub() {
+    const fs = yield* FileSystem.FileSystem;
+    const bin = path.join(root, `stub-${tool}`);
+    yield* fs.makeDirectory(bin, { recursive: true });
+    yield* fs.writeFileString(path.join(bin, tool), `#!/bin/sh\n${body}\n`);
+    yield* fs.chmod(path.join(bin, tool), 0o700);
+    const real = (yield* collectToolingProcess(ChildProcess.make('sh', ['-c', `command -v ${tool}`]))).stdout.trim();
+    return { [`REAL_${tool.toUpperCase()}`]: real, PATH: `${bin}:${yield* Config.String('PATH')}` };
+  });
+const runWith = (cwd: string, script: string, env: Readonly<Record<string, string>>) =>
+  collectToolingProcess(ChildProcess.make('/bin/sh', [script], { cwd, env, extendEnv: true }));
+const UNPACK_SCRIPT = `${RELEASE}/unpack.sh`;
+
+it.live(
+  'stops a start whose zstd dies mid-stream, keeps the archive and the old tree, and the next start succeeds',
+  () =>
+    Effect.gen(function* zstdDies() {
+      const fs = yield* FileSystem.FileSystem;
+      const www = yield* packedRuntime;
+      yield* fs.makeDirectory(path.join(www, 'app'), { recursive: true });
+      yield* fs.writeFileString(path.join(www, OLD_RELEASE), 'old');
+      const env = yield* withStub(www, 'zstd', '"$REAL_ZSTD" "$@" | head -c 4096\nexit 1');
+      const failed = yield* runWith(www, UNPACK_SCRIPT, env);
+      expect(failed.status).toBe(1);
+      expect(failed.stderr).toContain('could not be unpacked (zstd status 1); the archive stays for the next start');
+      expect(yield* fs.exists(path.join(www, ARCHIVE))).toBe(true);
+      expect(yield* fs.readFileString(path.join(www, OLD_RELEASE))).toBe('old');
+      expect(yield* fs.exists(path.join(www, STAMP))).toBe(false);
+      expect(yield* fs.exists(path.join(www, '.zerops-release-unpack'))).toBe(false);
+      const retried = yield* run(www, UNPACK_SCRIPT);
+      expect(retried.status, retried.stderr).toBe(0);
+      expect(yield* fs.exists(path.join(www, HOST))).toBe(true);
+      expect(yield* fs.exists(path.join(www, OLD_RELEASE))).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live('stops a start whose tar fails and replaces nothing', () =>
+  Effect.gen(function* tarFails() {
+    const fs = yield* FileSystem.FileSystem;
+    const www = yield* packedRuntime;
+    const env = yield* withStub(www, 'tar', 'cat >/dev/null\nexit 2');
+    const failed = yield* runWith(www, UNPACK_SCRIPT, env);
+    expect(failed.status).toBe(1);
+    expect(failed.stderr).toContain('could not be unpacked');
+    expect(yield* fs.exists(path.join(www, 'app'))).toBe(false);
+    expect(yield* fs.exists(path.join(www, ARCHIVE))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live('refuses to start on a failing or malformed digest and on a malformed digest record', () =>
+  Effect.gen(function* unpackDigests() {
+    const fs = yield* FileSystem.FileSystem;
+    for (const [label, body, reason] of [
+      ['failing sha256sum', 'exit 1', 'digest could not be computed; refusing to unpack'],
+      ['malformed sha256sum', 'echo "not-a-digest  $1"', "digest 'not-a-digest' is not a SHA-256; refusing to unpack"],
+    ] as const) {
+      const www = yield* packedRuntime;
+      const failed = yield* runWith(www, UNPACK_SCRIPT, yield* withStub(www, 'sha256sum', body));
+      expect(failed.status, label).toBe(1);
+      expect(failed.stderr, label).toContain(reason);
+      expect(yield* fs.exists(path.join(www, 'app')), label).toBe(false);
+      expect(yield* fs.exists(path.join(www, ARCHIVE)), label).toBe(true);
+    }
+    const www = yield* packedRuntime;
+    yield* fs.writeFileString(path.join(www, `${ARCHIVE}.sha256`), '\n');
+    const empty = yield* run(www, UNPACK_SCRIPT);
+    expect(empty.status).toBe(1);
+    expect(empty.stderr).toContain('is not a SHA-256; refusing to start');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live('fails the build and writes no release when tar or the digest fails in the pack', () =>
+  Effect.gen(function* packFailures() {
+    const fs = yield* FileSystem.FileSystem;
+    for (const [label, tool, body, reason] of [
+      ['failing tar', 'tar', 'echo "tar: broken" >&2\nexit 2', 'could not be packed (tar status 2)'],
+      ['failing sha256sum', 'sha256sum', 'exit 1', 'the app release digest could not be computed'],
+      ['empty sha256sum', 'sha256sum', 'echo "  $1"', "the app release digest '' is not a SHA-256"],
+    ] as const) {
+      const build = yield* fs.makeTempDirectoryScoped({ prefix: BUILD_PREFIX });
+      yield* buildTree(build);
+      const packed = yield* runWith(build, `app/scripts/zerops/${PACK}`, yield* withStub(build, tool, body));
+      expect(packed.status, label).toBe(1);
+      expect(packed.stderr, label).toContain(reason);
+      expect(yield* fs.exists(path.join(build, RELEASE)), label).toBe(false);
+      expect(yield* fs.exists(path.join(build, `${RELEASE}.next`)), label).toBe(false);
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
