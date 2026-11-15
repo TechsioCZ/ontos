@@ -54,12 +54,18 @@
  * and CI); actual Node/component versions, pnpm, platform and architecture.
  * Lockfile, mise pins, scripts and workflow are already common committed deploy inputs. Actual
  * versions additionally prevent a runner/toolchain mismatch despite unchanged pins. Source SHA
- * and build-marker overrides are deliberately NOT digest inputs: unchanged units keep their OLD
- * source/build identity. Stamp requires freshly built metadata naming HEAD; never restamp a keep.
+ * and build-marker overrides are NOT digest inputs, and a unit's identity is never rewritten. A unit
+ * is kept only when the revision its build names is this run's source revision, resolved as the
+ * native integration fixtures resolve it (resolveUltramodernSourceRevision: the clean HEAD,
+ * which ULTRAMODERN_SOURCE_REVISION must equal): those fixtures bundle owner and Shell code from the
+ * checkout under that revision's markers and refuse a composition built from a unit with another
+ * (run 43713716630). A rerun keeps its own builds; a new commit rebuilds. Stamp requires freshly
+ * built metadata naming HEAD; never restamp a keep.
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
+import { resolveUltramodernSourceRevision } from '@modern-js/app-tools-extensions/release-identity';
 import { Config, Console, Effect, FileSystem, Schema, Stream } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { Command, Flag } from 'effect/cli';
@@ -275,11 +281,16 @@ const loadContext = Effect.gen(function* readCacheContext() {
   const origins = yield* Effect.forEach(ORIGIN_VARIABLES, (name) => Config.String(name).pipe(Config.withDefault('')), {
     concurrency: 1,
   });
+  const revision = yield* Effect.try({
+    catch: (cause) => invalid(WORKSPACE, `cannot resolve the source revision: ${String(cause)}`),
+    try: () => resolveUltramodernSourceRevision(APP_ROOT),
+  });
   return yield* Effect.succeed({
     graph: unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) }),
     head,
     origins,
     profile: yield* readProfile,
+    revision,
     served: workspace.units.map((unit) => unit.id),
     units,
   });
@@ -396,6 +407,16 @@ export const firstOutputMismatch = (input: {
   }
   return undefined;
 };
+/** The reason a unit built at another revision is rebuilt: the one line the plan logs for it. */
+export const OTHER_REVISION = 'built at another source revision';
+/**
+ * A kept unit must name this run's source revision: the integration fixtures derive every expected build marker from
+ * it. Undefined when it does.
+ */
+export const revisionMismatch = (identity: CacheIdentity, revision: string): string | undefined =>
+  identity.sourceRevision === revision
+    ? undefined
+    : `${OTHER_REVISION} (${identity.sourceRevision}, this run ${revision})`;
 export const planOutputCache = (
   checks: readonly { readonly mismatch?: string | undefined; readonly unit: string }[],
 ) => ({
@@ -523,13 +544,14 @@ const checkUnit = (context: Context, unit: CacheUnit) =>
     const root = path.join(APP_ROOT, unit.path);
     const receipt = yield* readJson(path.join(root, RECEIPT), CacheReceiptSchema);
     const files = yield* inventory(root);
-    const mismatch = firstOutputMismatch({
-      digest: yield* expectedDigest(context, unit),
-      files,
-      identity: receipt.identity,
-      receipt,
-      unit: unit.id,
-    });
+    const mismatch =
+      firstOutputMismatch({
+        digest: yield* expectedDigest(context, unit),
+        files,
+        identity: receipt.identity,
+        receipt,
+        unit: unit.id,
+      }) ?? revisionMismatch(receipt.identity, context.revision);
     if (mismatch !== undefined) {
       return yield* invalid(unit.id, mismatch);
     }
@@ -578,6 +600,12 @@ const planCommand = Command.make('plan', { units: Flag.String('units') }, ({ uni
   Effect.gen(function* printPlan() {
     const { context, units } = yield* withUnits(value);
     const checks = yield* Effect.forEach(units, (unit) => inspectUnit(context, unit), { concurrency: 1 });
+    // stdout is the step's GITHUB_OUTPUT; the log line goes to stderr.
+    for (const check of checks) {
+      if ('mismatch' in check && check.mismatch.includes(OTHER_REVISION)) {
+        yield* Console.error(`rebuilding ${check.unit}: ${OTHER_REVISION}`);
+      }
+    }
     const plan = yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
     return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
   }),

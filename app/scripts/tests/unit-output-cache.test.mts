@@ -9,8 +9,10 @@ import {
   firstOutputMismatch,
   gatesInputDigest,
   inventory,
+  OTHER_REVISION,
   planOutputCache,
   requiredOutputs,
+  revisionMismatch,
   sameBackendBuild,
   requiredOutputMismatch,
   typeBundleMismatch,
@@ -293,4 +295,21 @@ it("matches a module's backend federation remote to its build by marker and sour
   expect(sameBackendBuild(identity, remote)).toBe(true);
   expect(sameBackendBuild(identity, { ...remote, buildMarker: OTHER_HASH })).toBe(false);
   expect(sameBackendBuild(identity, { ...remote, sourceRevision: CURRENT_REVISION })).toBe(false);
+});
+
+it("keeps a unit only when its build names this run's source revision", () => {
+  // Same revision: kept (a rerun keeps its own builds).
+  expect(revisionMismatch(identity, OLD_REVISION)).toBeUndefined();
+  expect(check() ?? revisionMismatch(identity, OLD_REVISION)).toBeUndefined();
+  // Identical inputs and bytes, built at an older commit: rebuilt, because the fixtures expect this run's markers.
+  const older = check() ?? revisionMismatch(identity, CURRENT_REVISION);
+  expect(older).toContain(OTHER_REVISION);
+  expect(planOutputCache([{ mismatch: older, unit: UNIT }])).toEqual({ build: [UNIT], keep: [] });
+});
+
+it('rebuilds a unit whose receipt records no source revision', () => {
+  const { sourceRevision: _dropped, ...withoutRevision } = identity;
+  const decoded = Schema.decodeUnknownExit(CacheReceiptSchema)({ ...receipt, identity: withoutRevision });
+  // checkUnit reads the receipt with this schema; a failed read is a mismatch, so the unit goes to build.
+  expect(Exit.isFailure(decoded)).toBe(true);
 });
