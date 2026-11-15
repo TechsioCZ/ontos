@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Effect, Match, Result, Schema } from "effect";
 import { HttpApiClient } from "effect/http-api";
 import { CheckoutApi, CheckoutRequestSchema } from "@/ontos/checkout";
@@ -14,6 +14,7 @@ import {
   checkoutGuardKey,
   readCheckoutGuard,
   removeCheckoutGuard,
+  sameCheckoutLines,
   saveCheckoutGuard,
   withCheckoutLock,
 } from "./checkout-guard";
@@ -147,6 +148,54 @@ const recoverCheckoutProgram = (guard: CheckoutGuard, locale: string) =>
     ),
   );
 
+/** Restore only the still-current persisted intent; this program never creates or dismisses an order. */
+export const recoverStoredCheckoutProgram = ({
+  guard,
+  isCurrent,
+  locale,
+  onConfirmed,
+  onUnavailable,
+}: {
+  guard: CheckoutGuard;
+  isCurrent: () => boolean;
+  locale: string;
+  onConfirmed: (result: CheckoutResult) => void;
+  onUnavailable: () => void;
+}) =>
+  Effect.suspend(() => {
+    if (!isCurrent()) {
+      return Effect.void;
+    }
+    return recoverCheckoutProgram(guard, locale).pipe(
+      Effect.flatMap((recovered) =>
+        readCheckoutGuard(guard.scope).pipe(Effect.map((stored) => ({ recovered, stored }))),
+      ),
+      Effect.match({
+        onFailure: () => {
+          if (isCurrent()) {
+            onUnavailable();
+          }
+        },
+        onSuccess: ({ recovered, stored }) => {
+          if (!isCurrent()) {
+            return;
+          }
+          if (
+            stored !== null &&
+            stored.clientRequestId === guard.clientRequestId &&
+            sameCheckoutLines(stored.lines, guard.lines) &&
+            recovered.state === "confirmed" &&
+            checkoutGuardKey(recovered.result.scope) === checkoutGuardKey(guard.scope)
+          ) {
+            onConfirmed(recovered.result);
+          } else {
+            onUnavailable();
+          }
+        },
+      }),
+    );
+  });
+
 /** Enrich an acknowledged placement once; a failed read never changes its committed outcome. */
 export const recoverConfirmedCheckoutProgram = ({
   expected,
@@ -237,13 +286,15 @@ interface GuardObservation {
   key: string;
   loaded: boolean;
 }
-const observeGuard = (scope: CartScope, accept: (value: GuardObservation) => void) =>
+const observeGuard = (
+  scope: CartScope,
+  observationKey: string,
+  accept: (value: GuardObservation) => void,
+) =>
   readCheckoutGuard(scope).pipe(
     Effect.match({
-      onFailure: () =>
-        accept({ error: true, guard: null, key: checkoutGuardKey(scope), loaded: true }),
-      onSuccess: (guard) =>
-        accept({ error: false, guard, key: checkoutGuardKey(scope), loaded: true }),
+      onFailure: () => accept({ error: true, guard: null, key: observationKey, loaded: true }),
+      onSuccess: (guard) => accept({ error: false, guard, key: observationKey, loaded: true }),
     }),
   );
 
@@ -269,10 +320,30 @@ const useCheckoutSession = () => {
   return { currentSession, ready: auth.loaded && !auth.pending, sessionGeneration };
 };
 
+/** A repeated market is a new lifecycle; StrictMode replay keeps the same context. */
+const useCheckoutContext = (key: string, sessionGeneration: number, locale: string) => {
+  const [previousScope, setPreviousScope] = useState<QuoteSelection>({ generation: 0, key });
+  const scopeSelection = advanceQuoteSelection(previousScope, key);
+  if (scopeSelection !== previousScope) {
+    setPreviousScope(scopeSelection);
+  }
+  const contextKey = JSON.stringify([key, scopeSelection.generation, sessionGeneration, locale]);
+  const currentScope = useRef<string | null>(contextKey);
+  useLayoutEffect(() => {
+    currentScope.current = contextKey;
+    return () => {
+      currentScope.current = null;
+    };
+  }, [contextKey, currentScope]);
+  return { contextKey, currentScope };
+};
+
 /** An intent survives reloads; only explicit receipt dismissal permits another order. */
 export const useCheckout = (options: ReadyOptions, locale: string) => {
   const cart = useCart();
   const { currentSession, ready: sessionReady, sessionGeneration } = useCheckoutSession();
+  const key = checkoutGuardKey(options.scope);
+  const { contextKey, currentScope } = useCheckoutContext(key, sessionGeneration, locale);
   const [editVersion, setEditVersion] = useState(0);
   const [progress, setProgress] = useState<"idle" | "quote" | "place" | "recovery">("idle");
   const busy = useRef(false);
@@ -281,18 +352,11 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     (QuoteSelection & { result: CheckoutResult }) | null
   >(null);
   const [receipt, setReceipt] = useState<CheckoutResult | null>(null);
-  const [receiptSession, setReceiptSession] = useState<number | null>(null);
+  const [receiptContext, setReceiptContext] = useState<string | null>(null);
   const receiptGuard = useRef<CheckoutGuard | null>(null);
+  const automaticAttempts = useRef(new Set<string>());
   const [receiptEntries, setReceiptEntries] = useState<readonly CartEntry[]>([]);
   const [guardState, setGuardState] = useState<GuardObservation | null>(null);
-  const key = checkoutGuardKey(options.scope);
-  const currentScope = useRef<string | null>(key);
-  useLayoutEffect(() => {
-    currentScope.current = key;
-    return () => {
-      currentScope.current = null;
-    };
-  }, [key]);
   const lines = cartLineSnapshot(cart?.entries ?? []);
   const selectionKey = JSON.stringify([
     key,
@@ -304,9 +368,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     sessionGeneration,
   ]);
   const currentReceipt =
-    receipt !== null &&
-    receiptSession === sessionGeneration &&
-    checkoutGuardKey(receipt.scope) === key
+    receipt !== null && receiptContext === contextKey && checkoutGuardKey(receipt.scope) === key
       ? receipt
       : null;
   const [previousSelection, setPreviousSelection] = useState<QuoteSelection>({
@@ -321,26 +383,17 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     quoteSnapshot?.key === selectionKey && quoteSnapshot.generation === selection.generation
       ? quoteSnapshot.result
       : null;
-  const activeGuard = guardState?.key === key ? guardState : null;
+  const activeGuard = guardState?.key === contextKey ? guardState : null;
   const restore = () => {
-    if (currentSession.current !== -1 && currentScope.current === key) {
-      clientRuntime.runSync(observeGuard(options.scope, setGuardState));
+    if (currentSession.current === sessionGeneration && currentScope.current === contextKey) {
+      clientRuntime.runSync(observeGuard(options.scope, contextKey, setGuardState));
     }
   };
-  useEffect(() => {
-    clientRuntime.runFork(observeGuard(options.scope, setGuardState));
-    const changed = (event: StorageEvent) => {
-      if (event.key === key || event.key === null) {
-        clientRuntime.runFork(observeGuard(options.scope, setGuardState));
-      }
-    };
-    window.addEventListener("storage", changed);
-    return () => window.removeEventListener("storage", changed);
-  }, [key, options.scope]);
   const complete = (result: CheckoutResult, submitted: CheckoutGuard, generation: number) => {
     if (
       currentSession.current !== generation ||
-      currentScope.current !== checkoutGuardKey(submitted.scope)
+      currentScope.current !== contextKey ||
+      key !== checkoutGuardKey(submitted.scope)
     ) {
       restore();
       return;
@@ -349,7 +402,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       setReceiptEntries(cart.entries);
     }
     setReceipt(result);
-    setReceiptSession(generation);
+    setReceiptContext(contextKey);
     receiptGuard.current = submitted;
     const cleared = cart?.clearSubmitted(submitted.lines) ?? false;
     if (cart !== null && cart.entries.length > 0 && !cleared) {
@@ -408,14 +461,14 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       }).pipe(
         Effect.matchEffect({
           onFailure: (error) => {
-            if (currentSession.current === requestSession && currentScope.current === key) {
+            if (currentSession.current === requestSession && currentScope.current === contextKey) {
               setNotice(failureNotice(error, placing));
             }
             restore();
             return Effect.void;
           },
           onSuccess: ({ guard, result }) => {
-            if (currentSession.current !== requestSession || currentScope.current !== key) {
+            if (currentSession.current !== requestSession || currentScope.current !== contextKey) {
               restore();
               return Effect.void;
             }
@@ -428,7 +481,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
                   guard,
                   isCurrent: () =>
                     currentSession.current === requestSession &&
-                    currentScope.current === key &&
+                    currentScope.current === contextKey &&
                     receiptGuard.current !== null &&
                     receiptGuard.current.clientRequestId === guard.clientRequestId &&
                     checkoutGuardKey(receiptGuard.current.scope) === key,
@@ -454,9 +507,16 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       ),
     );
   };
-  const recover = () => {
-    const guard = currentReceipt === null ? activeGuard?.guard : receiptGuard.current;
-    if (busy.current || guard === null || guard === undefined) {
+  const recover = (observedGuard?: CheckoutGuard) => {
+    const guard =
+      observedGuard ?? (currentReceipt === null ? activeGuard?.guard : receiptGuard.current);
+    if (
+      busy.current ||
+      !sessionReady ||
+      guard === null ||
+      guard === undefined ||
+      checkoutGuardKey(guard.scope) !== key
+    ) {
       return;
     }
     busy.current = true;
@@ -466,7 +526,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     if (currentReceipt !== null) {
       const isCurrent = () =>
         currentSession.current === requestSession &&
-        currentScope.current === key &&
+        currentScope.current === contextKey &&
         receiptGuard.current !== null &&
         receiptGuard.current.clientRequestId === guard.clientRequestId &&
         checkoutGuardKey(receiptGuard.current.scope) === key;
@@ -488,29 +548,51 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       return;
     }
     clientRuntime.runFork(
-      recoverCheckoutProgram(guard, locale).pipe(
-        Effect.match({
-          onFailure: () => {
-            if (currentSession.current === requestSession && currentScope.current === key) {
-              setNotice(currentReceipt === null ? "uncertain" : "unavailable");
-            }
-          },
-          onSuccess: (result) => {
-            if (currentSession.current !== requestSession || currentScope.current !== key) {
-              restore();
-              return;
-            }
-            if (result.state === "confirmed") {
-              complete(result.result, guard, requestSession);
-            } else {
-              setNotice(currentReceipt === null ? "uncertain" : "unavailable");
-            }
-          },
-        }),
-        Effect.ensuring(Effect.sync(finish)),
-      ),
+      recoverStoredCheckoutProgram({
+        guard,
+        isCurrent: () =>
+          currentSession.current === requestSession && currentScope.current === contextKey,
+        locale,
+        onConfirmed: (result) => complete(result, guard, requestSession),
+        onUnavailable: () => {
+          setNotice("uncertain");
+          restore();
+        },
+      }).pipe(Effect.ensuring(Effect.sync(finish))),
     );
   };
+  const observeStoredIntent = useEffectEvent((scope: CartScope, observedContext: string) => {
+    clientRuntime.runFork(
+      observeGuard(scope, observedContext, (observed) => {
+        if (
+          !sessionReady ||
+          currentSession.current !== sessionGeneration ||
+          currentScope.current !== observedContext
+        ) {
+          return;
+        }
+        setGuardState(observed);
+        if (busy.current || currentReceipt !== null || observed.error || observed.guard === null) {
+          return;
+        }
+        const attempt = JSON.stringify([observedContext, observed.guard.clientRequestId]);
+        if (!automaticAttempts.current.has(attempt)) {
+          automaticAttempts.current.add(attempt);
+          recover(observed.guard);
+        }
+      }),
+    );
+  });
+  useEffect(() => {
+    observeStoredIntent(options.scope, contextKey);
+    const changed = (event: StorageEvent) => {
+      if (event.key === key || event.key === null) {
+        observeStoredIntent(options.scope, contextKey);
+      }
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, [contextKey, key, options.scope]);
   const dismiss = (onDone: () => void) => {
     if (busy.current || currentReceipt === null || receiptGuard.current === null) {
       return;
