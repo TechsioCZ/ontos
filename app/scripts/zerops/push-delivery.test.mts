@@ -197,7 +197,9 @@ const expectStorefrontRunnerBuild = (workflow: StageWorkflow, source: string) =>
   expect(source).toContain('zerops-verified-delivery');
   expect(source).toContain('fetch-depth: 0');
   expect(source).toContain('STOREFRONT RUNNER PREBUILD (lane STOREFRONT)');
-  expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
+  // A full release deploys every service but keeps unchanged units; only the explicit input rebuilds them all.
+  expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ inputs.rebuild_units == true }}`);
+  expect(source).not.toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
 };
 
 it.effect('keeps verification mandatory for changed services and records sources only after successful proof', () =>

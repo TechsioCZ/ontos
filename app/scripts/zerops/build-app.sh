@@ -11,9 +11,11 @@
 # Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs, git-ignored). Run from app/.
 #
 # A unit whose inputs did not change keeps its previous build: dist/.zerops-build-digest records the digest of its
-# committed inputs (its own directory, every workspace vertical it depends on, packages/, the root build
-# configuration and the public origins). Each built dist/ is copied to $UNIT_CACHE_DIR (default .zerops/unit-cache),
-# which zerops.yaml keeps in the Zerops build cache together with the Rspack caches, and restored from there.
+# committed inputs (unitInputs in delivery-plan.mts: its runtime workspace closure, every file its build reaches,
+# the scripts its build runs, the root build configuration) and its build variables. Each built dist/ is copied to
+# $UNIT_CACHE_DIR (default .zerops/unit-cache), which zerops.yaml keeps in the Zerops build cache together with the
+# Rspack caches, and restored from there. A kept unit keeps the release identity (source revision, build marker) it
+# was built with. ZEROPS_FORCE_BUILD=true rebuilds every unit (the stage workflow's rebuild_units input).
 set -eu
 root="$PWD"
 
@@ -66,8 +68,8 @@ keep_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
   digest="$(unit_digest "$unit")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
-  # CI full/unknown/manual delivery bypasses cached artifacts. The provider still keeps the NEW prebuilt
-  # archive CI supplies, so this flag is intentionally not part of zerops.yaml's provider environment.
+  # Only an explicit rebuild request bypasses cached artifacts; a full delivery still keeps unchanged units. The
+  # provider keeps the prebuilt archive CI supplies, so this flag is intentionally not in zerops.yaml's environment.
   [ "${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1
   if [ "$(cat "$unit_cache/$unit/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
     rm -rf "$dir/dist" && cp -a "$unit_cache/$unit" "$dir/dist"

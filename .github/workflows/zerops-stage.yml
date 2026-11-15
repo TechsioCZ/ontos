@@ -32,6 +32,12 @@ on:
         description: Experiment — warm up the upload host before the first upload of each service
         type: boolean
         default: false
+      # A full release (a dispatch, a retry, or the first push after a failed deploy) deploys every service, yet keeps
+      # each unit whose committed inputs are unchanged. Only this input rebuilds every unit regardless of its cache.
+      rebuild_units:
+        description: Rebuild every app unit, ignoring the unit build cache
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -140,7 +146,7 @@ jobs:
       ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
-      ZEROPS_FORCE_BUILD: ${{ needs.plan.outputs.full }}
+      ZEROPS_FORCE_BUILD: ${{ inputs.rebuild_units == true }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
