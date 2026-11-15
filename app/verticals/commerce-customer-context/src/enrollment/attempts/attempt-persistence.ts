@@ -506,7 +506,7 @@ export interface CommerceEnrollmentAttemptPersistence {
     input: ReadEnrollmentOwnerOperationInput,
   ) => Effect.Effect<EnrollmentOwnerOperationSnapshot, CommerceEnrollmentAttemptError>;
   /**
-   * Every owner transition this Attempt has on record, in one durable read.  The Attempt
+   * Every owner transition this Attempt has on record, ordered by operation ID, in one durable read. The Attempt
    * projection already returns one row per journalled owner operation, so a derivation that needs
    * the whole journal asks for it once instead of once per declared transition.
    */
@@ -912,6 +912,11 @@ const mapOperationPersistenceError = (error: CommerceEnrollmentAttemptError): Co
 
 const operationFromAttemptRow = (row: AttemptRoutineRow) =>
   mapOperation(row).pipe(Effect.mapError(mapOperationPersistenceError));
+
+const compareOwnerOperationIds = (
+  left: EnrollmentOwnerOperationSnapshot,
+  right: EnrollmentOwnerOperationSnapshot,
+): number => left.portalEnrollmentOwnerOperationId.localeCompare(right.portalEnrollmentOwnerOperationId);
 
 /**
  * An Attempt that has claimed nothing yet still projects one row, with every owner column NULL.
@@ -1372,6 +1377,8 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
                 ? attemptNotFound(input.portalEnrollmentAttemptId)
                 : Effect.forEach(rows.filter(hasOwnerOperation), operationFromAttemptRow, { concurrency: 1 }),
             ),
+            // The scoped routine has no ORDER BY; its timestamps belong to the Attempt, not each operation.
+            Effect.map((operations) => operations.toSorted(compareOwnerOperationIds)),
           ),
         ),
       ),
