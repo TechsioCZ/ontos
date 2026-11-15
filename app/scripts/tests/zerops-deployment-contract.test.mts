@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 
+import { NodeServices } from '@effect/platform-node';
+
 import { Array as Arr, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ChildProcess } from 'effect/process';
 import { isMap, isScalar, isSeq, parse, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
 
 import {
@@ -10,6 +13,7 @@ import {
   materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
 } from '../materialize-zerops-environment.mts';
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 /** The whole stage deployment: the SpiceDB data plane, the storefront, and the one application container. */
@@ -657,3 +661,111 @@ it('keeps the worker only with its closure, all hosted identities, materializer 
   expect(digest).toContain('scripts/materialize-outbox-worker.mjs');
   expect(digest).toContain('pnpm-lock.yaml');
 });
+
+it('plans with only the root dependencies and complete HEAD ancestry, not every ref', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        plan: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              run: Schema.optional(Schema.String),
+              uses: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
+  const { steps } = workflow.jobs.plan;
+  expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
+  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
+    '--trust-lockfile --filter app',
+  );
+  const history = steps.findIndex(({ run }) => run === 'git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
+  const plan = steps.findIndex(({ run }) => run?.includes('delivery-plan-cli.mts plan') === true);
+  expect(history).toBeGreaterThanOrEqual(0);
+  expect(plan).toBeGreaterThan(history);
+});
+
+const verificationSteps = () =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        verify: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              id: Schema.optional(Schema.String),
+              if: Schema.optional(Schema.String),
+              run: Schema.optional(Schema.String),
+              uses: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs.verify.steps;
+
+it('installs only verification importers and caches both browser versions plus image-specific apt archives', () => {
+  const steps = verificationSteps();
+  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
+    '--trust-lockfile --filter app --filter @app/shared-contracts... --filter @app/email-delivery... --filter @app/shell-super-app',
+  );
+  const versions = steps.find(({ id }) => id === 'verification-browser-versions');
+  expect(versions?.run).toContain('pnpm --filter @app/shell-super-app exec playwright --version');
+  expect(versions?.run).toContain('pnpm exec playwright-core --version');
+  const restore = steps.findIndex(({ id }) => id === 'verification-browsers');
+  expect(steps[restore]?.with?.key).toContain('steps.verification-browser-versions.outputs.versions');
+  expect(steps.find(({ id }) => id === 'chromium-debs')?.run).toContain('$ImageOS-$ImageVersion-');
+  const aptRestore = steps.findIndex(({ id }) => id === 'chromium-debs-cache');
+  const aptInstall = steps.findIndex(({ run }) => run?.includes('playwright install-deps chromium') === true);
+  expect(aptRestore).toBeGreaterThanOrEqual(0);
+  expect(aptInstall).toBeGreaterThan(aptRestore);
+  expect(steps[aptInstall]?.if).toBeUndefined();
+  expect(steps[aptInstall]?.run).toContain('/var/cache/apt/archives/');
+  for (const command of ['playwright install chromium', 'playwright-core install chromium']) {
+    const download = steps.findIndex(({ run }) => run?.includes(command) === true);
+    expect(download).toBeGreaterThan(restore);
+    expect(steps[download]?.if).toBe("steps.verification-browsers.outputs.cache-hit != 'true'");
+  }
+});
+
+it.effect('the parallel verification shell waits for both clients and fails if either exits nonzero', () =>
+  Effect.gen(function* parallelVerification() {
+    const step = verificationSteps().find(({ run }) => run?.includes('warmup_pid=$!') === true);
+    const run = step?.run ?? '';
+    expect(run).toContain('stage-warmup.mts >"$E2E_OUT_DIR/warmup.log" 2>&1 &');
+    expect(run).toContain('--variant=1 --verification >"$E2E_OUT_DIR/oauth.log" 2>&1 &');
+    expect(run.indexOf('oauth_pid=$!')).toBeLessThan(run.indexOf('wait "$warmup_pid"'));
+    // Substitute only the external clients and output directory, then run the workflow's real wait/log/gate shell.
+    const shell = run
+      .replace('mkdir -p "$E2E_OUT_DIR"', 'E2E_OUT_DIR="$(mktemp -d)"')
+      .replace(/E2E_PLAYWRIGHT_MODULE=.*\n/u, 'E2E_PLAYWRIGHT_MODULE=fixture\n')
+      .replace('mise exec -- node scripts/ops/stage-warmup.mts', `bash -c 'echo warmup-output; exit "$WARMUP_EXIT"'`)
+      .replace(
+        'mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification',
+        `bash -c 'echo oauth-output; exit "$OAUTH_EXIT"'`,
+      )
+      .replace('trap - EXIT', `trap 'rm -rf "$E2E_OUT_DIR"' EXIT`);
+    for (const [warmup, oauth] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+      [1, 1],
+    ]) {
+      const result = yield* collectToolingProcess(
+        ChildProcess.make('bash', ['-e', '-c', shell], {
+          env: { OAUTH_EXIT: String(oauth), WARMUP_EXIT: String(warmup) },
+          extendEnv: true,
+        }),
+      );
+      expect(result.status).toBe(warmup === 0 && oauth === 0 ? 0 : 1);
+      expect(result.stdout).toContain('warmup-output');
+      expect(result.stdout).toContain('oauth-output');
+      expect(result.stdout).toContain(`Warm-up exit: ${warmup}`);
+      expect(result.stdout).toContain(`MCP OAuth exit: ${oauth}`);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

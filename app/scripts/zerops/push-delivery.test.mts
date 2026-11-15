@@ -195,7 +195,7 @@ const expectStorefrontRunnerBuild = (workflow: StageWorkflow, source: string) =>
   expect(pack?.run).toContain('sourceRevision: $sourceRevision');
   expect(source).toContain(`name: zerops-storefront-\${{ matrix.setup }}`);
   expect(source).toContain('zerops-verified-delivery');
-  expect(source).toContain('fetch-depth: 0');
+  expect(source).toContain('git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
   expect(source).toContain('STOREFRONT RUNNER PREBUILD (lane STOREFRONT)');
   expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
 };
