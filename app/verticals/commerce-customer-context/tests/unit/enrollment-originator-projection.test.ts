@@ -1,12 +1,14 @@
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  ReadEnrollmentAttemptInputSchema,
   RecordEnrollmentOutcomeInputSchema,
   StartEnrollmentAttemptInputSchema,
 } from '../../shared/enrollment-contracts.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import type { EnrollmentAttemptScopedRoutineInvoker } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import { stableRevision } from '../../src/stable-revision.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const attemptId = '20000000-0000-4000-8000-000000000001';
@@ -40,7 +42,7 @@ const record = Schema.decodeUnknownSync(RecordEnrollmentOutcomeInputSchema)({
   workerId: 'originator-worker',
 });
 
-const fixture = (originator: string | null) => {
+const fixture = (originator: string | null, operationIds?: readonly string[]) => {
   let revision = 1;
   const originatorReads: (readonly unknown[])[] = [];
   const invoke: EnrollmentAttemptScopedRoutineInvoker['invoke'] = (routine, values) =>
@@ -55,54 +57,64 @@ const fixture = (originator: string | null) => {
       if (recorded) {
         revision += 1;
       }
-      return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([
-        {
-          attempt_outcome: recorded ? 'RECORDED' : 'CREATED',
-          authentication_namespace_id: null,
-          completed_at: null,
-          composition_revision: compositionRevision,
-          created_at: at,
-          created_by_principal_id: principalId,
-          failure_code: null,
-          failure_reason: null,
-          intent_digest: intentDigest,
-          intent_key: start.intentKey,
-          invitation_id: null,
-          journey: start.journey,
-          last_failure_code: null,
-          last_failure_reason: null,
-          last_owner_invocation_id: null,
-          lease_expires_at: null,
-          lease_owner: null,
-          lease_token: null,
-          operation_actor_principal_id: principalId,
-          operation_id: operationId,
-          operation_lease_expires_at: null,
-          operation_lease_owner: null,
-          operation_lease_token: null,
-          operation_revision: 1,
-          operation_status: 'SUCCEEDED',
-          outcome_code: null,
-          owner_invocation_id: ownerInvocationId,
-          owner_module_key: record.ownerModuleKey,
-          portal_enrollment_attempt_id: attemptId,
-          provider_subject_id: null,
-          reconciliation_ref: null,
-          request_digest: 'b'.repeat(64),
-          required: true,
-          result_digest: null,
-          result_reference: null,
-          revision,
-          state: 'IN_PROGRESS',
-          subject_type: null,
-          target_legal_entity_id: null,
-          target_resource_id: null,
-          tenant_id: tenantId,
-          terminated_at: null,
-          transition_key: record.transitionKey,
-          updated_at: at,
-        },
-      ]);
+      const row = {
+        attempt_outcome: recorded ? 'RECORDED' : 'CREATED',
+        authentication_namespace_id: null,
+        completed_at: null,
+        composition_revision: compositionRevision,
+        created_at: at,
+        created_by_principal_id: principalId,
+        failure_code: null,
+        failure_reason: null,
+        intent_digest: intentDigest,
+        intent_key: start.intentKey,
+        invitation_id: null,
+        journey: start.journey,
+        last_failure_code: null,
+        last_failure_reason: null,
+        last_owner_invocation_id: null,
+        lease_expires_at: null,
+        lease_owner: null,
+        lease_token: null,
+        operation_actor_principal_id: principalId,
+        operation_id: operationId,
+        operation_lease_expires_at: null,
+        operation_lease_owner: null,
+        operation_lease_token: null,
+        operation_revision: 1,
+        operation_status: 'SUCCEEDED',
+        outcome_code: null,
+        owner_invocation_id: ownerInvocationId,
+        owner_module_key: record.ownerModuleKey,
+        portal_enrollment_attempt_id: attemptId,
+        provider_subject_id: null,
+        reconciliation_ref: null,
+        request_digest: 'b'.repeat(64),
+        required: true,
+        result_digest: null,
+        result_reference: null,
+        revision,
+        state: 'IN_PROGRESS',
+        subject_type: null,
+        target_legal_entity_id: null,
+        target_resource_id: null,
+        tenant_id: tenantId,
+        terminated_at: null,
+        transition_key: record.transitionKey,
+        updated_at: at,
+      };
+      const rows =
+        operationIds === undefined
+          ? [row]
+          : operationIds.map((id) => ({
+              ...row,
+              completed_at: at,
+              operation_id: id,
+              operation_status: id === operationId ? 'FAILED' : 'SUCCEEDED',
+              owner_invocation_id: id,
+              transition_key: `operation-${id}`,
+            }));
+      return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
     });
   return {
     originatorReads,
@@ -138,5 +150,28 @@ it.effect('never substitutes an owner invocation when the persisted originator i
         tenantId: start.tenantId,
       }),
     ).toEqual(recorded.attempt);
+  }),
+);
+
+it.effect('returns the same complete operation journal when equal-timestamp rows arrive in opposite orders', () =>
+  Effect.gen(function* stableOperationJournal() {
+    const secondOperationId = '50000000-0000-4000-8000-000000000002';
+    const ascending = fixture(originatorId, [operationId, secondOperationId]).persistence;
+    const descending = fixture(originatorId, [secondOperationId, operationId]).persistence;
+    const input = Schema.decodeUnknownSync(ReadEnrollmentAttemptInputSchema)({
+      portalEnrollmentAttemptId: attemptId,
+      tenantId,
+    });
+    const first = yield* ascending.readOperations(input);
+    const second = yield* descending.readOperations(input);
+    expect(first.map((operation) => operation.portalEnrollmentOwnerOperationId)).toEqual([
+      operationId,
+      secondOperationId,
+    ]);
+    expect(second).toEqual(first);
+    expect(stableRevision({ operations: second })).toBe(stableRevision({ operations: first }));
+    expect(stableRevision({ operations: EffectArray.reverse(first) })).not.toBe(stableRevision({ operations: first }));
+    expect(first.map((operation) => DateTime.formatIso(operation.createdAt))).toEqual([at, at]);
+    expect(first.map((operation) => operation.status)).toEqual(['FAILED', 'SUCCEEDED']);
   }),
 );
