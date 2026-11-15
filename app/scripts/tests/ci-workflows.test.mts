@@ -544,7 +544,7 @@ it('keeps only verified unit outputs from the unit output cache and saves them o
   expect(steps[restore]?.with).toEqual({
     key: expression('steps.unit-cache-key.outputs.key'),
     path: expression('steps.unit-cache-paths.outputs.paths'),
-    'restore-keys': `${prefix}\n${prefix.replace('gates-units-v2-', 'gates-units-v1-')}\n`,
+    'restore-keys': prefix,
   });
   expect(steps[save]?.with).toEqual({
     key: expression('steps.unit-cache-key.outputs.key'),
