@@ -8,6 +8,7 @@
     "./actions/retire-price-group": "./shared/actions/retire-price-group.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/price-group-catalog-client.ts",
+    "./apis/price-group-catalog-head": "./shared/apis/price-group-catalog-head.ts",
     "./apis/price-group-result-lookup": "./shared/apis/price-group-result-lookup.ts",
     "./apis/price-group-source-associations": "./shared/apis/price-group-source-associations.ts",
     "./domain/action-committed-retry-receipt": "./shared/domain/action-committed-retry-receipt.ts",

@@ -109,6 +109,10 @@ it.live('atomically correlates source groups, isolates issuers, pages and recove
           }),
         );
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+      const readHead = inScope((invoker, selected) =>
+        Effect.flatMap(priceGroupSourcePersistenceForScope(invoker, selected), (service) => service.head()),
+      );
+      expect(yield* readHead).toEqual({ catalogRevision: 0 });
       const [created, replayed] = yield* Effect.all(
         [
           inScope((invoker) => priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).createPriceGroup(input)),
@@ -117,6 +121,7 @@ it.live('atomically correlates source groups, isolates issuers, pages and recove
         { concurrency: 2 },
       );
       expect(replayed).toEqual(created);
+      expect(yield* readHead).toEqual({ catalogRevision: 1 });
       const groupRef = created.businessResult.identity.priceGroupRef;
       const original = yield* inScope((invoker, selected) =>
         Effect.flatMap(priceGroupSourcePersistenceForScope(invoker, selected), (service) =>

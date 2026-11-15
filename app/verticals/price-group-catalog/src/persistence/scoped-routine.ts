@@ -91,3 +91,12 @@ export const readPriceGroupOperationReceiptRoutine = defineScopedRoutine({
   routineKey: 'catalog.read-price-group-operation-receipt',
   schema,
 });
+
+export const readPriceGroupCatalogHeadRoutine = defineScopedRoutine({
+  name: 'read_price_group_catalog_head',
+  ownerModuleKey,
+  parameters: [tenant],
+  resultSchema: PriceGroupRoutineRowSchema,
+  routineKey: 'catalog.read-price-group-catalog-head',
+  schema,
+});

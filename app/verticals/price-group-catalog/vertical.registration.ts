@@ -6,6 +6,7 @@ import { priceGroupCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
+import { priceGroupCatalogHeadRead } from './src/api/price-group-catalog-head.read.ts';
 import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { priceGroupResultLookupRead } from './src/api/price-group-result-lookup.read.ts';
 import { priceGroupSourceAssociationsRead } from './src/api/price-group-source-associations.read.ts';
@@ -24,6 +25,7 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'price-group-catalog-head': () => import('./src/api/price-group-catalog-head-client.ts'),
       'price-group-definition': () => import('./src/api/price-group-definition-client.ts'),
       'price-group-result-lookup': () => import('./src/api/price-group-result-lookup-client.ts'),
       'price-group-source-associations': () => import('./src/api/price-group-source-associations-client.ts'),
@@ -54,6 +56,7 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    priceGroupCatalogHeadRead,
     priceGroupDefinitionRead,
     priceGroupResultLookupRead,
     priceGroupSourceAssociationsRead,
