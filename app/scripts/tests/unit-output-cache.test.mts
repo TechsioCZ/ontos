@@ -16,7 +16,8 @@ import {
   typeBundleMismatch,
 } from '../ci/unit-output-cache.mts';
 import type { CacheIdentity, CacheProfile, CacheReceipt, OutputFile } from '../ci/unit-output-cache.mts';
-import type { GitEntry } from '../zerops/delivery-plan.mts';
+import { unitInputGraph } from '../zerops/delivery-plan.mts';
+import type { GitEntry, WorkspacePackage } from '../zerops/delivery-plan.mts';
 
 const STAGE_ORIGIN = 'https://stage.example.test';
 
@@ -47,31 +48,39 @@ const profile: CacheProfile = {
   target: 'node',
   versions: { v8: 'example-v8' },
 };
+const DRIVER = 'app/scripts/zerops/build-app.sh';
+const BUILD_TOOL = 'app/scripts/build.mts';
+const baseEntries: readonly GitEntry[] = [
+  { identity: '100644 blob first', path: SOURCE },
+  { identity: '100644 blob manifest', path: `${DIRECTORY}/package.json` },
+  { identity: '100644 blob dependency', path: `${DEPENDENCY}/index.ts` },
+  { identity: '100644 blob lock', path: COMMON },
+  { identity: '100644 blob tooling', path: BUILD_TOOL },
+  { identity: '100644 blob driver', path: DRIVER },
+  { identity: '100644 blob shared', path: SHARED },
+  { identity: '100644 blob isolated', path: `${UNRELATED}/src/service.ts` },
+];
+const basePackages: readonly WorkspacePackage[] = [
+  { directory: DIRECTORY, name: '@app/catalog', workspaceDependencies: ['@app/catalog-contracts'] },
+  { directory: DEPENDENCY, name: '@app/catalog-contracts', workspaceDependencies: [] },
+  { directory: UNRELATED, name: '@app/another', workspaceDependencies: [] },
+];
+/** The build driver names the build tool, so the tool is an input of every unit. */
+const sources = new Map([
+  [DRIVER, 'node "$root/scripts/build.mts"'],
+  [`${DIRECTORY}/package.json`, '{"name":"@app/catalog","scripts":{"build":"modern build"}}'],
+]);
+const graphOf = (entries: readonly GitEntry[] = baseEntries, packages: readonly WorkspacePackage[] = basePackages) =>
+  unitInputGraph({ entries, packages, sources });
 const inputs = {
   directory: DIRECTORY,
-  entries: [
-    { identity: '100644 blob first', path: SOURCE },
-    { identity: '100644 blob dependency', path: `${DEPENDENCY}/index.ts` },
-    { identity: '100644 blob lock', path: COMMON },
-    { identity: '100644 blob tooling', path: 'app/scripts/build.mts' },
-    { identity: '100644 blob shared', path: SHARED },
-    { identity: '100644 blob isolated', path: `${UNRELATED}/src/service.ts` },
-  ],
+  graph: graphOf(),
   origins: [ORIGIN, 'http://localhost:3001', 'http://localhost:3002'],
-  packages: [
-    { directory: DIRECTORY, name: '@app/catalog', workspaceDependencies: ['@app/catalog-contracts'] },
-    { directory: DEPENDENCY, name: '@app/catalog-contracts', workspaceDependencies: [] },
-    { directory: UNRELATED, name: '@app/another', workspaceDependencies: [] },
-  ],
   profile,
-  units: [
-    { directory: DIRECTORY, id: UNIT },
-    { directory: UNRELATED, id: 'another' },
-  ],
 };
-const changeEntry = (filepath: string): readonly GitEntry[] =>
-  inputs.entries.map((entry) =>
-    entry.path === filepath ? { ...entry, identity: `${entry.identity}-changed` } : entry,
+const changeEntry = (filepath: string) =>
+  graphOf(
+    baseEntries.map((entry) => (entry.path === filepath ? { ...entry, identity: `${entry.identity}-changed` } : entry)),
   );
 const identity: CacheIdentity = { appId: UNIT, build: BUILD, buildMarker: BUILD, sourceRevision: OLD_REVISION };
 const files: readonly OutputFile[] = [
@@ -86,11 +95,13 @@ it.effect('is stable for identical inputs, documentation, and unrelated private 
   Effect.gen(function* stableInputs() {
     const expected = yield* gatesInputDigest(inputs);
     expect(yield* gatesInputDigest(inputs)).toBe(expected);
-    expect(yield* gatesInputDigest({ ...inputs, entries: changeEntry(`${UNRELATED}/src/service.ts`) })).toBe(expected);
+    expect(yield* gatesInputDigest({ ...inputs, graph: changeEntry(`${UNRELATED}/src/service.ts`) })).toBe(expected);
+    // Another unit's shared folder is that unit's own input, not a common one.
+    expect(yield* gatesInputDigest({ ...inputs, graph: changeEntry(SHARED) })).toBe(expected);
     expect(
       yield* gatesInputDigest({
         ...inputs,
-        entries: [...inputs.entries, { identity: '100644 blob docs', path: 'docs/guide.md' }],
+        graph: graphOf([...baseEntries, { identity: '100644 blob docs', path: 'docs/guide.md' }]),
       }),
     ).toBe(expected);
     return yield* Effect.void;
@@ -100,21 +111,21 @@ it.effect('is stable for identical inputs, documentation, and unrelated private 
 it.effect('changes for each committed input class, including Git modes and closure membership', () =>
   Effect.gen(function* committedInputs() {
     const expected = yield* gatesInputDigest(inputs);
-    const paths = [SOURCE, `${DEPENDENCY}/index.ts`, COMMON, 'app/scripts/build.mts', SHARED];
+    const paths = [SOURCE, `${DEPENDENCY}/index.ts`, COMMON, BUILD_TOOL, DRIVER];
     for (const filepath of paths) {
-      expect(yield* gatesInputDigest({ ...inputs, entries: changeEntry(filepath) })).not.toBe(expected);
+      expect(yield* gatesInputDigest({ ...inputs, graph: changeEntry(filepath) })).not.toBe(expected);
     }
-    const modeChanged = inputs.entries.map((entry) =>
+    const modeChanged = baseEntries.map((entry) =>
       entry.path === SOURCE ? { ...entry, identity: '100755 blob first' } : entry,
     );
-    expect(yield* gatesInputDigest({ ...inputs, entries: modeChanged })).not.toBe(expected);
+    expect(yield* gatesInputDigest({ ...inputs, graph: graphOf(modeChanged) })).not.toBe(expected);
     expect(
-      yield* gatesInputDigest({ ...inputs, entries: inputs.entries.filter((entry) => entry.path !== SOURCE) }),
+      yield* gatesInputDigest({ ...inputs, graph: graphOf(baseEntries.filter((entry) => entry.path !== SOURCE)) }),
     ).not.toBe(expected);
-    const packages = inputs.packages.map((entry) =>
+    const packages = basePackages.map((entry) =>
       entry.directory === DIRECTORY ? { ...entry, workspaceDependencies: [] } : entry,
     );
-    expect(yield* gatesInputDigest({ ...inputs, packages })).not.toBe(expected);
+    expect(yield* gatesInputDigest({ ...inputs, graph: graphOf(baseEntries, packages) })).not.toBe(expected);
     return yield* Effect.void;
   }),
 );

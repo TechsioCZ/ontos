@@ -6,14 +6,18 @@ import { Argument, Command } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
+  buildEnvironment,
   DeliveryPlanSchema,
   DeliveryAttemptSchema,
   DeliveryReceiptSchema,
+  isReferenceSource,
   planDelivery,
   previousVerifiedBase,
   SERVICES,
   unitInputDigest,
+  unitInputGraph,
 } from './delivery-plan.mts';
+import type { GitEntry } from './delivery-plan.mts';
 
 const Manifest = Schema.Struct({
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -62,9 +66,18 @@ const git = (args: readonly string[]) =>
 const readCommitted = <A,>(revision: string, filename: string, schema: Schema.Codec<A>) =>
   git(['show', `${revision}:${filename}`]).pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))));
 
+const workspaceNames = (dependencies: Readonly<Record<string, string>>) =>
+  Object.entries(dependencies)
+    .filter(([, range]) => range.startsWith('workspace:'))
+    .map(([name]) => name);
 const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => ({
   directory,
   name: manifest.name,
+  runtimeDependencies: workspaceNames({
+    ...manifest.dependencies,
+    ...manifest.optionalDependencies,
+    ...manifest.peerDependencies,
+  }),
   workspaceDependencies: Object.entries({
     ...manifest.dependencies,
     ...manifest.devDependencies,
@@ -103,6 +116,65 @@ export const readWorkspace = (revision: string) =>
       units.push({ directory: `app/${owner.path}`, id: module.appId });
     }
     return { entries, packages, units };
+  });
+
+/** The committed text of every reference source, read in one `git cat-file --batch`. */
+export const readSources = (entries: readonly GitEntry[]) =>
+  Effect.gen(function* readReferenceSources() {
+    const wanted = entries.filter((entry) => isReferenceSource(entry.path) && entry.identity.includes(' blob '));
+    const request = new TextEncoder().encode(wanted.map((entry) => `${entry.identity.split(' ')[2] ?? ''}\n`).join(''));
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make('git', ['cat-file', '--batch'], { stdin: { stream: Stream.make(request) } }),
+    );
+    const [chunks, , code] = yield* Effect.all(
+      [Stream.runCollect(handle.stdout), Stream.runDrain(handle.stderr), handle.exitCode],
+      { concurrency: 'unbounded' },
+    );
+    if (Number(code) !== 0) {
+      return yield* new DeliveryInputInvalid({ reason: 'Git command failed: cat-file' });
+    }
+    const output = Buffer.concat([...chunks]);
+    const decoder = new TextDecoder();
+    const sources = new Map<string, string>();
+    let offset = 0;
+    for (const entry of wanted) {
+      const end = output.indexOf(0x0a, offset);
+      const size = Number(output.subarray(offset, end).toString('latin1').split(' ')[2]);
+      if (end === -1 || !Number.isSafeInteger(size)) {
+        return yield* new DeliveryInputInvalid({ reason: `Unreadable blob for ${entry.path}` });
+      }
+      sources.set(entry.path, decoder.decode(output.subarray(end + 1, end + 1 + size)));
+      offset = end + 1 + size + 1;
+    }
+    return sources;
+  }).pipe(Effect.scoped);
+
+/** The environment build children inherit, NUL-separated so values may hold newlines. */
+const inheritedEnvironment = Effect.gen(function* readEnvironment() {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const handle = yield* spawner.spawn(ChildProcess.make('env', ['-0']));
+  const [listing] = yield* Effect.all(
+    [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(handle.stderr), handle.exitCode],
+    { concurrency: 'unbounded' },
+  );
+  return listing.split('\0').flatMap((pair): (readonly [string, string])[] => {
+    const separator = pair.indexOf('=');
+    return separator > 0 ? [[pair.slice(0, separator), pair.slice(separator + 1)]] : [];
+  });
+}).pipe(Effect.scoped);
+
+/** The unit identities of one commit, with the build variables of this process. */
+export const readUnitIdentities = (revision: string) =>
+  Effect.gen(function* readCommittedIdentities() {
+    const workspace = yield* readWorkspace(revision);
+    const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
+    const environment = buildEnvironment(yield* inheritedEnvironment);
+    const identities: (readonly [string, string])[] = [];
+    for (const unit of workspace.units) {
+      identities.push([unit.id, yield* unitInputDigest(unit.directory, { environment, graph })]);
+    }
+    return { graph, identities, units: workspace.units };
   });
 
 const optionalReceipt = (filename: string) =>
@@ -183,38 +255,35 @@ const plan = Command.make('plan', { directory: Argument.String('directory') }, (
     yield* Console.log(encoded);
   }),
 );
+const requireOrigins = Effect.forEach(
+  ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
+  (name) => Config.String(name),
+);
 const digest = Command.make('digest', { directory: Argument.String('unit-directory') }, ({ directory }) =>
   Effect.gen(function* printDigest() {
+    yield* requireOrigins;
     const head = (yield* git(['rev-parse', 'HEAD'])).trim();
     const workspace = yield* readWorkspace(head);
-    const origins = yield* Effect.forEach(
-      ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
-      (name) => Config.String(name),
-    );
+    const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
     yield* Console.log(
-      yield* unitInputDigest(`app/${directory}`, workspace.packages, workspace.units, workspace.entries, origins),
+      yield* unitInputDigest(`app/${directory}`, {
+        environment: buildEnvironment(yield* inheritedEnvironment),
+        graph,
+      }),
     );
   }),
 );
-const digests = Command.make('digests', {}, () =>
-  Effect.gen(function* printAllDigests() {
-    const head = (yield* git(['rev-parse', 'HEAD'])).trim();
-    const workspace = yield* readWorkspace(head);
-    const origins = yield* Effect.forEach(
-      ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
-      (name) => Config.String(name),
-    );
-    for (const unit of workspace.units) {
-      const value = yield* unitInputDigest(
-        unit.directory,
-        workspace.packages,
-        workspace.units,
-        workspace.entries,
-        origins,
-      );
-      yield* Console.log(`${unit.id}\t${value}`);
-    }
-  }),
+const digests = Command.make(
+  'digests',
+  { revision: Argument.String('revision').pipe(Argument.withDefault('HEAD')) },
+  ({ revision }) =>
+    Effect.gen(function* printAllDigests() {
+      yield* requireOrigins;
+      const head = (yield* git(['rev-parse', revision])).trim();
+      for (const [id, value] of (yield* readUnitIdentities(head)).identities) {
+        yield* Console.log(`${id}\t${value}`);
+      }
+    }),
 );
 const command = Command.make('delivery-plan').pipe(Command.withSubcommands([plan, digest, digests]));
 if (import.meta.main) {

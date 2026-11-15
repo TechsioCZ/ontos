@@ -45,9 +45,9 @@
  * 5. actions/cache/save@v6: same path list; key: ${{ steps.unit-cache.outputs.cache-primary-key }}
  * 6. Keep existing tar/upload/unpack/proof steps. No identity rewriting, including on keep.
  *
- * Digest inputs, exactly: deploy v2's committed Git paths/modes/blob IDs for the transitive
- * workspace closure, common/unknown tooling, shared packages/paths and three public origins;
- * plus all reference-topology units (not just release intent); Node target, package build command,
+ * Digest inputs, exactly: the stage unit identity (unitInputs in delivery-plan.mts: committed Git
+ * paths/modes/blob IDs of the runtime workspace closure, everything the build reaches, the scripts it
+ * runs and the root build configuration) with the three public origins; Node target, package build command,
  * production/default build mode, map/type-bundle policy and owner-entry policy; effective public
  * build environment (MODERN_*, ULTRAMODERN_*, PUBLIC_*, ONTOS_*ORIGIN*, NODE_ENV, NODE_OPTIONS,
  * NODE_PATH, BABEL_ENV, RSPACK_*, RSBUILD_*, BROWSERSLIST*, TZ, LANG, LC_*, SOURCE_DATE_EPOCH
@@ -70,9 +70,9 @@ import {
   OntosShellRuntimeContractSchema,
 } from '../../packages/core-runtime/src/index.ts';
 import { runQualityCli } from '../quality-cli-lifecycle.mts';
-import { readWorkspace } from '../zerops/delivery-plan-cli.mts';
-import { unitInputDigest } from '../zerops/delivery-plan.mts';
-import type { DeliveryUnit, GitEntry, WorkspacePackage } from '../zerops/delivery-plan.mts';
+import { readSources, readWorkspace } from '../zerops/delivery-plan-cli.mts';
+import { unitInputDigest, unitInputGraph } from '../zerops/delivery-plan.mts';
+import type { UnitInputGraph } from '../zerops/delivery-plan.mts';
 
 const APP_ROOT = path.resolve(import.meta.dirname, '../..');
 const RECEIPT = 'dist/.gates-output-cache.json';
@@ -200,15 +200,16 @@ const readJson = <A,>(filename: string, schema: Schema.Codec<A>) =>
 
 interface DigestInput {
   readonly directory: string;
-  readonly entries: readonly GitEntry[];
+  readonly graph: UnitInputGraph;
   readonly origins: readonly string[];
-  readonly packages: readonly WorkspacePackage[];
   readonly profile: CacheProfile;
-  readonly units: readonly DeliveryUnit[];
 }
+const ORIGIN_VARIABLES = ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'];
 export const gatesInputDigest = (input: DigestInput) =>
   Effect.gen(function* computeGatesDigest() {
-    const base = yield* unitInputDigest(input.directory, input.packages, input.units, input.entries, input.origins);
+    // The profile carries the rest of the build environment; the origins are named so an unset one still counts.
+    const environment = ORIGIN_VARIABLES.map((name, index) => [name, input.origins[index] ?? ''] as const);
+    const base = yield* unitInputDigest(input.directory, { environment, graph: input.graph });
     const profile = yield* encode(CacheProfileSchema, input.profile);
     return yield* Effect.succeed(hash(`gates-output-v1\n${base}\n${profile}`));
   });
@@ -271,13 +272,11 @@ const loadContext = Effect.gen(function* readCacheContext() {
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))),
   );
   const units = [topology.shell, ...topology.verticals];
-  const origins = yield* Effect.forEach(
-    ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
-    (name) => Config.String(name).pipe(Config.withDefault('')),
-    { concurrency: 1 },
-  );
+  const origins = yield* Effect.forEach(ORIGIN_VARIABLES, (name) => Config.String(name).pipe(Config.withDefault('')), {
+    concurrency: 1,
+  });
   return yield* Effect.succeed({
-    ...workspace,
+    graph: unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) }),
     head,
     origins,
     profile: yield* readProfile,
@@ -296,11 +295,7 @@ const selectUnits = (context: Context, names: readonly string[]) =>
     { concurrency: 1 },
   );
 const expectedDigest = (context: Context, unit: CacheUnit) =>
-  gatesInputDigest({
-    ...context,
-    directory: `app/${unit.path}`,
-    units: context.units.map((entry) => ({ directory: `app/${entry.path}`, id: entry.id })),
-  });
+  gatesInputDigest({ ...context, directory: `app/${unit.path}` });
 
 /**
  * A symlink is kept as a link when its target is relative and stays inside the output root it sits in: Modern.js
