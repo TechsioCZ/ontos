@@ -6,7 +6,6 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, Exit, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { parse } from 'yaml';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 import { HostedModuleCredentialsSchema } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
@@ -605,11 +604,6 @@ describe('module credential healing', () => {
 
 const BOOTS_PREFIX = 'module-credential-boots-';
 const BOOTS_FILE = 'boots.json';
-const AppDeployFilesSchema = Schema.Struct({
-  zerops: Schema.Array(
-    Schema.Struct({ build: Schema.Struct({ deployFiles: Schema.Array(Schema.String) }), setup: Schema.String }),
-  ),
-});
 
 const boot = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 
@@ -663,13 +657,11 @@ describe("a container's record of its host boots", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it("ships the record's directory with the app, so the running container never creates it", () => {
+  it("ships the record's directory in the app's runtime tree, so the running container never creates it", () => {
     const workspace = path.resolve(import.meta.dirname, '../..');
     expect(path.relative(workspace, path.dirname(HOST_BOOT_RECORD))).toBe('.zerops/state');
-    const zerops = Schema.decodeUnknownSync(AppDeployFilesSchema)(
-      parse(readFileSync(path.join(workspace, 'zerops.yaml'), 'utf-8')),
-    );
-    expect(zerops.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles).toContain('app/.zerops/state');
+    const runtimePaths = readFileSync(path.join(workspace, 'scripts/zerops/app-runtime-paths.txt'), 'utf-8').split('\n');
+    expect(runtimePaths).toContain('app/.zerops/state');
   });
 });
 

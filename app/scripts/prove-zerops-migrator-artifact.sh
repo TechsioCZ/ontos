@@ -18,16 +18,12 @@ if [ -n "$(ls -A "$artifact")" ]; then
 fi
 artifact="$(cd "$artifact" && pwd)"
 
-deploy_files="$(cd "$app_directory" && node --input-type=module --eval "
-import { readFileSync } from 'node:fs';
-import { parse } from 'yaml';
-const app = parse(readFileSync('zerops.yaml', 'utf-8')).zerops.find(({ setup }) => setup === 'app');
-process.stdout.write(app.build.deployFiles.join('\n'));
-")"
+# The app container's runtime tree: the paths the Zerops build packs into its release archive.
+deploy_files="$(grep -v -e '^#' -e '^$' "$app_directory/scripts/zerops/app-runtime-paths.txt")"
 
 printf '%s\n' "$deploy_files" | while IFS= read -r deploy_file; do
   if [ ! -e "$repository/$deploy_file" ]; then
-    echo "App deployFiles entry $deploy_file does not exist in the build" >&2
+    echo "App runtime path $deploy_file does not exist in the build" >&2
     exit 1
   fi
   mkdir -p "$artifact/$(dirname "$deploy_file")"

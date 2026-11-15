@@ -1611,24 +1611,16 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
   const script = fileURLToPath(scriptUrl);
   const source = readFileSync(scriptUrl, 'utf-8');
   expect(execFileSync('/bin/sh', ['-n', script], { encoding: 'utf-8' })).toBe('');
-  expect(source).toContain("setup === 'app'");
-  expect(source).toContain(String.raw`app.build.deployFiles.join('\n')`);
+  // The proof assembles the app container's runtime tree from the paths the Zerops build packs into its release.
+  expect(source).toContain('scripts/zerops/app-runtime-paths.txt');
   expect(source).toContain('exec node scripts/run-zerops-migrator.mjs');
-  const packaging = Schema.decodeUnknownSync(
-    Schema.Struct({
-      zerops: Schema.Array(
-        Schema.Struct({
-          build: Schema.Struct({ deployFiles: Schema.Array(Schema.String) }),
-          setup: Schema.String,
-        }),
-      ),
-    }),
-  )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8')));
-  const deployFiles = packaging.zerops.find(({ setup }) => setup === 'app')?.build.deployFiles ?? [];
-  expect(deployFiles.length).toBeGreaterThan(0);
-  expect(deployFiles.every((file) => file.startsWith('app/'))).toBe(true);
+  const runtimePaths = readFileSync(new URL('../zerops/app-runtime-paths.txt', import.meta.url), 'utf-8')
+    .split('\n')
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  expect(runtimePaths.length).toBeGreaterThan(0);
+  expect(runtimePaths.every((file) => file.startsWith('app/'))).toBe(true);
   // The Zerops build creates these three; every job that assembles the artifact provisions them before the proof.
-  expect(deployFiles).toEqual(
+  expect(runtimePaths).toEqual(
     expect.arrayContaining(['app/.zerops/runtime/outbox-worker-host', 'app/.zerops/bun', 'app/.zerops/state']),
   );
   const ProofJobsSchema = Schema.Struct({

@@ -143,7 +143,7 @@ zerops:
         ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
-        - sudo apk add --no-cache curl unzip zstd
+        - sudo apk add --no-cache curl tar unzip zstd
         - sudo npm install --global pnpm@12.16.1
         - sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4
       buildCommands:
@@ -159,30 +159,12 @@ zerops:
         # The app host records its boots in .zerops/state (scripts/zerops/app-host.mts, HOST_BOOT_RECORD). It ships with an
         # empty record, so the running container never has to create the directory.
         - mkdir -p 'app/.zerops/state' && printf '[]' >'app/.zerops/state/module-credential-boots.json'
-      # Keep native TS imports, migrations and owner-local drizzle-kit executables, including dev dependencies.
-      # Do NOT ship the unit cache, build logs, storefront source/builds, docs or agent workspaces.
+        # One compressed archive of the runtime tree, not the tree file by file (858.8 MiB moved in 176 s, 2026-11-15).
+        - sh app/scripts/zerops/pack-app-release.sh
+      # The runtime tree (scripts/zerops/app-runtime-paths.txt) as one archive with its digest and its unpack step;
+      # run.initCommands unpacks it to app/ before the start command.
       deployFiles:
-        - app/node_modules
-        - app/apps
-        - app/verticals
-        - app/packages
-        - app/scripts
-        - app/database
-        - app/topology
-        - app/tools
-        - app/patches
-        - app/package.json
-        - app/pnpm-lock.yaml
-        - app/pnpm-workspace.yaml
-        - app/tsconfig.json
-        - app/tsconfig.base.json
-        - app/tsconfig.node-tooling.json
-        - app/module-federation.shared.ts
-        # Merchandise operator scripts read these generated catalog files directly.
-        - app/akros-storefront/src/catalog-import
-        - app/.zerops/runtime/outbox-worker-host
-        - app/.zerops/bun
-        - app/.zerops/state
+        - .zerops-release
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
       cache:
         - app/.zerops/unit-cache
@@ -202,6 +184,12 @@ zerops:
         retryPeriod: 10s
     run:
       base: alpine/nodejs@26
+      # GNU tar and zstd for the release archive (scripts/zerops/unpack-app-release.sh).
+      prepareCommands:
+        - sudo apk add --no-cache tar zstd
+      # Every container start: unpack the release archive into app/ unless this release's tree is already complete.
+      initCommands:
+        - sh .zerops-release/unpack.sh
       ports:
         - port: 3000
           protocol: tcp

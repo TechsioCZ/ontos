@@ -2,27 +2,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Result, Schema } from 'effect';
+import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
-import { parse } from 'yaml';
 
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const migrator = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
-const deployment = Result.getOrThrow(
-  Schema.decodeUnknownResult(
-    Schema.Struct({
-      zerops: Schema.Array(
-        Schema.Struct({
-          build: Schema.optional(Schema.Struct({ deployFiles: Schema.optional(Schema.Array(Schema.String)) })),
-          setup: Schema.String,
-        }),
-      ),
-    }),
-  )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8'))),
-);
-const appDeployment = deployment.zerops.find((service) => service.setup === 'app');
+/** The app container's runtime tree, which the Zerops build packs into its release archive. */
+const appRuntimePaths = readFileSync(new URL('../zerops/app-runtime-paths.txt', import.meta.url), 'utf-8').split('\n');
 
 for (const owner of [
   'price-group-catalog',
@@ -65,7 +53,7 @@ for (const owner of [
       'app/database',
       'app/topology',
     ]) {
-      expect(appDeployment?.build?.deployFiles).toContain(runtime);
+      expect(appRuntimePaths).toContain(runtime);
     }
   });
 }

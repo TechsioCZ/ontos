@@ -58,6 +58,10 @@ const serviceEnvironments = (): ReadonlyMap<string, Readonly<Record<string, stri
 const databaseUrlKeys = (environment: Readonly<Record<string, string>>) =>
   DATABASE_URL_KEYS.filter((key) => environment[key] !== undefined);
 
+/** The app's start-time release step and the runtime tools it needs (scripts/zerops/unpack-app-release.sh). */
+const APP_RELEASE_UNPACK = 'sh .zerops-release/unpack.sh';
+const APP_RELEASE_TOOLS = 'sudo apk add --no-cache tar zstd';
+
 const serviceNode = (zeropsYaml: string, setup: string) => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(parseDocument(zeropsYaml).get('zerops', true));
   const matches = services.items.filter((item) => isMap(item) && item.get('setup') === setup);
@@ -185,28 +189,29 @@ it('runs the whole application in the app container through native Node, from th
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 
   expect(app.getIn(['run', 'start'])).toBe(`sh -c 'cd app && exec node scripts/zerops/app-host.mts'`);
-  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual([
-    'app/node_modules',
-    'app/apps',
-    'app/verticals',
-    'app/packages',
-    'app/scripts',
-    'app/database',
-    'app/topology',
-    'app/tools',
-    'app/patches',
-    'app/package.json',
-    'app/pnpm-lock.yaml',
-    'app/pnpm-workspace.yaml',
-    'app/tsconfig.json',
-    'app/tsconfig.base.json',
-    'app/tsconfig.node-tooling.json',
-    'app/module-federation.shared.ts',
-    'app/akros-storefront/src/catalog-import',
-    'app/.zerops/runtime/outbox-worker-host',
-    'app/.zerops/bun',
-    'app/.zerops/state',
-  ]);
+  // The runtime tree travels as one release archive (scripts/zerops/pack-app-release.sh) and is unpacked into app/
+  // before that unchanged start command, on every container start (scripts/zerops/unpack-app-release.sh).
+  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['.zerops-release']);
+  const buildCommands = serviceStrings(app, ['build', 'buildCommands']);
+  expect(buildCommands.at(-1)).toBe('sh app/scripts/zerops/pack-app-release.sh');
+  expect(serviceStrings(app, ['build', 'prepareCommands'])[0]).toBe('sudo apk add --no-cache curl tar unzip zstd');
+  expect(serviceStrings(app, ['run', 'prepareCommands'])).toStrictEqual([APP_RELEASE_TOOLS]);
+  expect(serviceStrings(app, ['run', 'initCommands'])).toStrictEqual([APP_RELEASE_UNPACK]);
+  const pack = readFileSync(new URL('../zerops/pack-app-release.sh', import.meta.url), 'utf-8');
+  expect(pack).toContain("list='app/scripts/zerops/app-runtime-paths.txt'");
+  expect(pack).toContain('archive="$release/app.tar.zst"');
+  expect(pack).toContain('sha256sum "$archive" | cut -d \' \' -f 1 >"$archive.sha256"');
+  expect(pack).toContain('cp app/scripts/zerops/unpack-app-release.sh "$release/unpack.sh"');
+  const unpack = readFileSync(new URL('../zerops/unpack-app-release.sh', import.meta.url), 'utf-8');
+  // Digest first, then a scratch unpack renamed into place, then the archive removed.
+  const order = [
+    'actual="$(sha256sum "$archive" | cut -d \' \' -f 1)"',
+    'zstd -q -dc "$archive" | tar --extract --file - -C "$scratch"',
+    'mv "$scratch/app" app',
+    'rm -rf app.previous "$scratch" "$archive"',
+  ].map((line) => unpack.lastIndexOf(line));
+  expect(order.every((index) => index > -1)).toBe(true);
+  expect(order.toSorted((left, right) => left - right)).toStrictEqual(order);
   for (const branch of [
     ['deploy', 'readinessCheck'],
     ['run', 'healthCheck'],
@@ -267,7 +272,8 @@ it('ships checksum-pinned Bun with the native Node Shell default and no runtime 
   );
   expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME_DEFAULT'])).toBe('node');
   expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBeUndefined();
-  expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([]);
+  // The only start-time step unpacks the release; nothing downloads a runtime.
+  expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([APP_RELEASE_UNPACK]);
   const installer = readFileSync(new URL('../install-zerops-bun.sh', import.meta.url), 'utf-8');
   expect(installer).toContain('bun-linux-x64-musl-baseline');
   expect(installer).toContain('6e9c37098b293920aed28bfb51ab240e26d23bfdd9bbfecb3ad428ac166549bc');
@@ -321,8 +327,9 @@ it('uses native Alpine Node 26 for every Node build and runtime without a custom
       `sudo npm install --global pnpm@${pnpm}`,
     );
     expect(installsPnpm).toBe(setup === 'app');
-    expect(serviceStrings(service, ['run', 'prepareCommands'])).toEqual([]);
-    expect(serviceStrings(service, ['run', 'initCommands'])).toEqual([]);
+    // The app's runtime image adds only the tools that unpack its release archive.
+    expect(serviceStrings(service, ['run', 'prepareCommands'])).toEqual(setup === 'app' ? [APP_RELEASE_TOOLS] : []);
+    expect(serviceStrings(service, ['run', 'initCommands'])).toEqual(setup === 'app' ? [APP_RELEASE_UNPACK] : []);
     expect(block).not.toMatch(/install-zerops-node|\.local\/node-|\.zerops\/node|\/node\/bin|libatomic/u);
     expect(block).toMatch(/start: sh -c '.*exec node /u);
     expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);
