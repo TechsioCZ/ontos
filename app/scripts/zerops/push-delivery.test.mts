@@ -209,7 +209,10 @@ it.effect('keeps verification mandatory for changed services and records sources
       path.resolve(import.meta.dirname, '../../../.github/workflows/zerops-stage.yml'),
     );
     const workflow = yield* Schema.decodeUnknownEffect(WorkflowSchema)(parse(source));
-    expect(workflow.jobs.build?.if).toBe(KEEP_APP_CONDITION);
+    // A failed unit_identities job never blocks the shards (scripts/zerops/reuse-shard-units.test.mts).
+    expect(workflow.jobs.build?.if).toBe(
+      `\${{ !cancelled() && needs.plan.result == 'success' && ${KEEP_APP_CONDITION} }}`,
+    );
     expect(workflow.jobs.verify?.needs).toEqual(['plan', 'deploy', 'deploy_app']);
     expect(workflow.jobs.verify?.if).toContain("needs.deploy_app.result == 'success'");
     expect(workflow.jobs.record?.if).toContain("needs.verify.result == 'success'");

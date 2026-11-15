@@ -291,11 +291,15 @@ it('fails the application build whose Zephyr upload fails', () => {
 
 it('excludes compressed asset copies from both CI archives and the final Zerops package', () => {
   const deployIgnore = readFileSync(new URL('../../../.deployignore', import.meta.url), 'utf-8');
+  // Every shard archive, built or reused, is packed by the one pack step (scripts/zerops/reuse-shard-units.sh).
   const workflow = readFileSync(stageWorkflowPath, 'utf-8');
+  const shardPack = readFileSync(new URL('../zerops/reuse-shard-units.sh', import.meta.url), 'utf-8');
+  expect(workflow).toContain('bash scripts/zerops/reuse-shard-units.sh pack "$RUNNER_TEMP/units.tar.zst" $units');
+  expect(workflow).toContain('bash scripts/zerops/reuse-shard-units.sh reuse "$RUNNER_TEMP/zerops-unit-identities"');
   for (const extension of ['br', 'gz']) {
     expect(deployIgnore).toContain(`app/apps/*/dist/**/*.${extension}`);
     expect(deployIgnore).toContain(`app/verticals/*/dist/**/*.${extension}`);
-    expect(workflow).toContain(`--exclude='*.${extension}'`);
+    expect(shardPack).toContain(`--exclude='*.${extension}'`);
   }
 });
 
