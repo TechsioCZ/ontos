@@ -348,13 +348,32 @@ jobs:
             echo 'UNIT_CACHE_PATHS'
           } >>"$GITHUB_OUTPUT"
 
+      # The entry is named by the shard's unit identities (unit-output-cache.mts digest), never by commit or run: a run
+      # whose units are all unchanged restores its exact entry and saves nothing, a changed unit names a new entry, and
+      # the prefix still restores the nearest older build for one that changed. Whether a restored unit is kept is
+      # decided by `plan` alone, so the entry is right whichever units `plan` accepts.
+      - name: Name the shard's unit output cache entry
+        id: unit-cache-key
+        working-directory: app
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          # Written only once whole: a failed digest names no entry.
+          key="$(mise exec -- node scripts/ci/unit-output-cache.mts digest --unit "$SHARD_UNITS" |
+            bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-")"
+          echo "$key" >>"$GITHUB_OUTPUT"
+
       - name: Restore the shard's unit outputs from earlier runs
         id: unit-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.unit-cache-paths.outputs.paths }}
-          key: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+          key: ${{ steps.unit-cache-key.outputs.key }}
+          # The last v1 entries still restore once: `plan` keeps a unit only by its recorded input digest.
+          restore-keys: |
+            gates-units-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+            gates-units-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
 
       - name: Keep the restored units whose inputs are unchanged
         id: cached-plan
@@ -421,12 +440,14 @@ jobs:
           SHARD_UNITS: ${{ matrix.units }}
         run: mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"
 
-      # Saved only after verify, under this run's own ref scope; a failed shard saves nothing.
+      # Saved only after verify, under this run's own ref scope; a failed shard saves nothing, and a shard that restored
+      # its exact entry writes nothing (the cache cannot overwrite a key, and nothing in it changed).
       - name: Save the shard's unit outputs for later runs
+        if: steps.unit-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.unit-cache-paths.outputs.paths }}
-          key: ${{ steps.unit-cache.outputs.cache-primary-key }}
+          key: ${{ steps.unit-cache-key.outputs.key }}
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs

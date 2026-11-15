@@ -533,17 +533,24 @@ it('keeps only verified unit outputs from the unit output cache and saves them o
   const pack = index(({ name }) => name === "Pack the shard's build outputs");
   expect(paths > -1 && paths < restore && restore < plan && plan < build && build < verify).toBe(true);
   expect(verify < save && save < pack).toBe(true);
-  const prefix = `gates-units-v1-${expression('runner.os')}-${expression('runner.arch')}-${expression(MATRIX_SHARD)}-`;
+  // Named by the shard's unit identities, never by commit or run; an exact hit saves nothing (cache-budget.test.mts).
+  const keyStep = index(({ name }) => name === "Name the shard's unit output cache entry");
+  expect(paths < keyStep && keyStep < restore).toBe(true);
+  expect(steps[keyStep]?.run).toContain('unit-output-cache.mts digest --unit "$SHARD_UNITS"');
+  expect(steps[keyStep]?.run).toContain(
+    'bash scripts/ci/cache-entry-key.sh "gates-units-v2-$RUNNER_OS-$RUNNER_ARCH-$SHARD-"',
+  );
+  const prefix = `gates-units-v2-${expression('runner.os')}-${expression('runner.arch')}-${expression(MATRIX_SHARD)}-`;
   expect(steps[restore]?.with).toEqual({
-    key: `${prefix}${expression('github.sha')}-${expression('github.run_id')}-${expression('github.run_attempt')}`,
+    key: expression('steps.unit-cache-key.outputs.key'),
     path: expression('steps.unit-cache-paths.outputs.paths'),
-    'restore-keys': prefix,
+    'restore-keys': `${prefix}\n${prefix.replace('gates-units-v2-', 'gates-units-v1-')}\n`,
   });
   expect(steps[save]?.with).toEqual({
-    key: expression('steps.unit-cache.outputs.cache-primary-key'),
+    key: expression('steps.unit-cache-key.outputs.key'),
     path: expression('steps.unit-cache-paths.outputs.paths'),
   });
-  expect(steps[save]?.if).toBeUndefined();
+  expect(steps[save]?.if).toBe("steps.unit-cache.outputs.cache-hit != 'true'");
   expect(steps[build]?.env).toEqual({ BUILD_UNITS: expression('steps.cached-plan.outputs.build') });
 });
 

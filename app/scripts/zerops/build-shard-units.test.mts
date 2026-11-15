@@ -72,8 +72,14 @@ it.effect('builds, caches and uploads each shard under its own shard number', ()
     expect(build?.env?.SHARD).toBe(MATRIX_SHARD);
     expect(build?.run).toContain('scripts/zerops/build-shard-units.mts "$SHARD" "$SHARDS"');
     expect(build?.run).not.toContain('node -e');
-    expect(step("Restore the shard's unit builds")?.with?.key).toBe(`zerops-units-${MATRIX_SHARD}-\${{ github.sha }}`);
-    expect(step("Save the shard's unit builds")?.with?.key).toBe(`zerops-units-${MATRIX_SHARD}-\${{ github.sha }}`);
+    // Named by the shard's unit identities, never by commit (cache-budget.test.mts runs the naming step).
+    expect(step("Restore the shard's unit builds")?.with?.key).toBe(
+      `\${{ steps.unit-cache-key.outputs.key || format('zerops-units-v2-{0}-unnamed', matrix.shard) }}`,
+    );
+    expect(step("Restore the shard's unit builds")?.with?.['restore-keys']).toBe(
+      `zerops-units-v2-${MATRIX_SHARD}-\nzerops-units-${MATRIX_SHARD}-\n`,
+    );
+    expect(step("Save the shard's unit builds")?.with?.key).toBe(`\${{ steps.unit-cache-key.outputs.key }}`);
     expect(step("Upload the shard's unit builds")?.with?.name).toBe(`zerops-units-${MATRIX_SHARD}`);
     // The app deploy unpacks every shard's archive, whatever the shard count.
     expect(source).toContain('pattern: zerops-units-*');
