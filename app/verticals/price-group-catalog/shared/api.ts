@@ -10,6 +10,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@
 // <generated-governed-http-api-imports>
 import { CreatePriceGroupActionApi } from './apis/create-price-group-action.ts';
 import { CreatePriceGroupDefinitionRevisionActionApi } from './apis/create-price-group-definition-revision-action.ts';
+import { PriceGroupCatalogHeadApi } from './apis/price-group-catalog-head.ts';
 import { PriceGroupDefinitionApi } from './apis/price-group-definition.ts';
 import { PriceGroupResultLookupApi } from './apis/price-group-result-lookup.ts';
 import { PriceGroupSourceAssociationsApi } from './apis/price-group-source-associations.ts';
@@ -70,6 +71,7 @@ export const priceGroupCatalogApi = HttpApi.make('PriceGroupCatalogApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(CreatePriceGroupActionApi)
   .addHttpApi(CreatePriceGroupDefinitionRevisionActionApi)
+  .addHttpApi(PriceGroupCatalogHeadApi)
   .addHttpApi(PriceGroupDefinitionApi)
   .addHttpApi(PriceGroupResultLookupApi)
   .addHttpApi(PriceGroupSourceAssociationsApi)

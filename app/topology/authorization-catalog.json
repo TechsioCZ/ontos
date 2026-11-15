@@ -17748,6 +17748,32 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "pricing.price-group-catalog.price-group-catalog-head.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "price-group-catalog-head",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "pricing.price-group-catalog.api.price-group-catalog-head",
+            "moduleKey": "pricing.price-group-catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "pricing.price-group-catalog.price-group-definition-revision.create",
             "kind": "action",
             "modes": [

@@ -55,6 +55,11 @@ const contracts = [
     operation: 'read',
     operationKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
   },
+  {
+    capabilityKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
+    operation: 'read',
+    operationKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
+  },
 ] as const;
 
 describe('Price Group Catalog exact owner policy', () => {
