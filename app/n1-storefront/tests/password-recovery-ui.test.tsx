@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AuthView } from "../src/features/auth-view";
 import { PasswordRecoveryView } from "../src/features/password-recovery-view";
 import { getDictionary } from "../src/i18n";
+import { Schema } from "effect";
+import { PasswordRecoveryRequestSchema } from "../src/ontos/password-recovery";
 
 describe("password recovery presentation boundary", () => {
   it("does not offer a password submission without the server cookie-presence proof", () => {
@@ -54,6 +56,38 @@ describe("password recovery presentation boundary", () => {
     expect(html).toContain('href="/en/prihlaseni"');
     expect(html).not.toContain("accountId");
   });
+
+  it.each(["cs", "en"])(
+    "rejects malformed recovery identifiers in the %s browser form",
+    (locale) => {
+      const html = renderToStaticMarkup(
+        createElement(PasswordRecoveryView, {
+          dictionary: getDictionary(locale),
+          locale,
+          mode: "request",
+        }),
+      );
+      const input = /<input[^>]*name="email"[^>]*>/u.exec(html)?.[0];
+      const pattern = /pattern="(?<pattern>[^"]+)"/u.exec(input ?? "")?.groups?.pattern;
+      expect(pattern).toBeDefined();
+      if (pattern === undefined) {
+        return;
+      }
+      const browserPattern = new RegExp(`^(?:${pattern})$`, "u");
+      for (const email of [
+        "not-an-email",
+        "qa@example",
+        "qa@@example.com",
+        "qa@exam ple.com",
+        "qa@example.invalid",
+        "test+demo@example.com",
+      ]) {
+        expect(browserPattern.test(email)).toBe(
+          Schema.is(PasswordRecoveryRequestSchema)({ email }),
+        );
+      }
+    },
+  );
 
   it("connects the existing Figma login link to the localized recovery route", () => {
     const html = renderToStaticMarkup(

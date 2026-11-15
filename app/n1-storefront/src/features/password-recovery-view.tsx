@@ -124,6 +124,7 @@ export const PasswordRecoveryView = ({
   tokenPresent?: boolean;
 }) => {
   const fieldId = useId();
+  const [emailInvalid, setEmailInvalid] = useState(false);
   const { form, pending, result, submit } = useRecoveryForm(mode, d);
   const text = d.passwordRecovery;
   const blocked = result !== null && terminalStates.has(result.state);
@@ -155,14 +156,22 @@ export const PasswordRecoveryView = ({
                   <FormInput
                     autoComplete="email"
                     disabled={pending}
+                    helpText={emailInvalid ? d.auth.errors.email : undefined}
                     id={`${fieldId}-email`}
                     label={d.auth.fields.email}
                     maxLength={320}
                     name="email"
+                    onChange={() => setEmailInvalid(false)}
+                    onInvalid={(event) => {
+                      event.preventDefault();
+                      setEmailInvalid(true);
+                      event.currentTarget.focus();
+                    }}
+                    pattern={String.raw`[^\s@]+@[^\s@]+\.[^\s@]+`}
                     required
                     size="md"
                     type="email"
-                    validateStatus={invalid ? "error" : "default"}
+                    validateStatus={invalid || emailInvalid ? "error" : "default"}
                   />
                 ) : (
                   <>
