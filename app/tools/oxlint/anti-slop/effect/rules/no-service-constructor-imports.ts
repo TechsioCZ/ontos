@@ -7,6 +7,7 @@ import { defineRule } from "@oxlint/plugins";
 import type { Context, ESTree } from "@oxlint/plugins";
 
 import { provesDataFactoryImport } from "./data-factory-proof.ts";
+import { provesPassiveStateFactoryExport } from "./passive-state-factory-proof.ts";
 import { registeredToolingRoot } from "./registered-tooling-root-proof.ts";
 import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
 import { isInsideNativeServiceFactoryCallback, isNativeServiceFactoryAcquisition } from "../../../effect-native/shared/native-service-factory.ts";
@@ -1679,6 +1680,11 @@ function isOwnerLocalConstructor(filename: string, source: string, owner: string
   }
 }
 
+function isPassiveStateFactoryImport(filename: string, source: string, exportedName: string): boolean {
+  const owner = resolveModule(filename, source);
+  return owner !== null && provesPassiveStateFactoryExport(owner, exportedName);
+}
+
 /** Keep dependency-bearing Effect service constructors local to their owning capability modules. */
 export const noServiceConstructorImportsRule = defineRule({
   meta: {
@@ -1709,7 +1715,8 @@ export const noServiceConstructorImportsRule = defineRule({
               isNativeServiceFactoryAcquisition(context, identifier);
           })) continue;
           if (isPureDataFactoryImport(context.filename, node.source.value, importedName, cache) ||
-            provesDataFactoryImport(context.filename, node.source.value, importedName)) continue;
+            provesDataFactoryImport(context.filename, node.source.value, importedName) ||
+            isPassiveStateFactoryImport(context.filename, node.source.value, importedName)) continue;
           pending.push({ node: specifier, source: node.source.value, name: importedName });
         }
       },

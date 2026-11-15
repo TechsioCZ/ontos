@@ -2882,3 +2882,288 @@ ruleTester.run('keeps type-only constructor imports erased', serviceRule, {
     },
   ],
 });
+
+// Additional passive-state model cases; original rule assertions above are unchanged.
+describe('passive local state proof integration', () => {
+  const scenario = recordScenario('passive local state', serviceRule);
+  const errors = [
+    {
+      message:
+        'Do not import Effect service constructor "makeController" into runtime code. Import the owning Layer, yield the contextual service, and allow its requirements to propagate to the composition root.',
+    },
+  ];
+  const declarationModuleSource = 'export const makeController=()=>({get:()=>1});';
+  const cases = [
+    [
+      'acyclic repeated helpers',
+      'export const makeController=()=>{const h0=()=>true;const h1=()=>h0()&&h0();const h2=()=>h1()&&h1();const h3=()=>h2()&&h2();const h4=()=>h3()&&h3();const h5=()=>h4()&&h4();const h6=()=>h5()&&h5();const h7=()=>h6()&&h6();const h8=()=>h7()&&h7();const h9=()=>h8()&&h8();const h10=()=>h9()&&h9();const h11=()=>h10()&&h10();const h12=()=>h11()&&h11();const h13=()=>h12()&&h12();const h14=()=>h13()&&h13();const h15=()=>h14()&&h14();const h16=()=>h15()&&h15();const h17=()=>h16()&&h16();const h18=()=>h17()&&h17();const h19=()=>h18()&&h18();const h20=()=>h19()&&h19();const h21=()=>h20()&&h20();const h22=()=>h21()&&h21();const h23=()=>h22()&&h22();const h24=()=>h23()&&h23();return{get:h24}};',
+      true,
+      factoryFilename,
+    ],
+    [
+      'literal private state',
+      'export const makeController=()=>{let active=false;return{set:(input:boolean)=>{active=input},get:()=>active}};',
+      true,
+      factoryFilename,
+    ],
+    [
+      'borrowed structural record',
+      'export const makeController=()=>{let value=null;return{set:(input:{value:string})=>{value=input},get:()=>value}};',
+      true,
+      factoryFilename,
+    ],
+    [
+      'borrowed callback transport',
+      'export const makeController=()=>({echo:(input:()=>number)=>input});',
+      true,
+      factoryFilename,
+    ],
+    [
+      'borrowed unknown transport',
+      'export const makeController=()=>({echo:(input:unknown)=>input});',
+      true,
+      factoryFilename,
+    ],
+    ['borrowed any transport', 'export const makeController=()=>({echo:(input:any)=>input});', true, factoryFilename],
+    [
+      'empty structural transport',
+      'export const makeController=()=>({echo:(input:{})=>input});',
+      true,
+      factoryFilename,
+    ],
+    [
+      'generic callable transport',
+      'export const makeController=<T extends ()=>number>()=>({echo:(input:T)=>input});',
+      true,
+      factoryFilename,
+    ],
+    [
+      'strict identity test',
+      'export const makeController=()=>({is:(a:unknown,b:unknown)=>a===b});',
+      true,
+      factoryFilename,
+    ],
+    [
+      'truthiness and nullish transport',
+      'export const makeController=()=>({get:(a:unknown,b:unknown)=>a??b,not:(a:unknown)=>!a});',
+      true,
+      factoryFilename,
+    ],
+    [
+      'all state remains opaque',
+      'export const makeController=()=>{let active=false;return{set:(x:unknown)=>{active=x},check:()=>active===false}};',
+      true,
+      factoryFilename,
+    ],
+    [
+      'helper shadowed by parameter',
+      'export const makeController=()=>{const finish=()=>null;return{get:(finish:()=>unknown)=>finish()}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'helper shadowed in block',
+      'export const makeController=()=>{const finish=()=>null;return{get:()=>{return finish();const finish=()=>fetch("/io")}}};',
+      false,
+      factoryFilename,
+    ],
+    ['fetch method', 'export const makeController=()=>({get:()=>fetch("/io")});', false, factoryFilename],
+    ['async method', 'export const makeController=()=>({get:async()=>1});', false, factoryFilename],
+    ['async factory', 'export const makeController=async()=>({get:()=>1});', false, factoryFilename],
+    ['generator method', 'export const makeController=()=>({*get(){yield 1}});', false, factoryFilename],
+    [
+      'factory dependency',
+      'export const makeController=(read:()=>unknown)=>({get:()=>read()});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'callback invocation',
+      'export const makeController=()=>({get:(input:()=>unknown)=>input()});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'stored callback invocation',
+      'export const makeController=()=>{let current=null;return{set:(input:()=>unknown)=>{current=input},get:()=>current()}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'opaque property read',
+      'export const makeController=()=>({get:(input:{value:string})=>input.value});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'opaque property write',
+      'export const makeController=()=>({set:(input:{value:string})=>{input.value="changed"}});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'global property write',
+      'export const makeController=()=>({set:()=>{globalThis.value=1}});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'coercion String',
+      'export const makeController=()=>({get:(input:{value:string})=>String(input)});',
+      false,
+      factoryFilename,
+    ],
+    ['loose equality coercion', 'export const makeController=()=>({get:(a:unknown)=>a==1});', false, factoryFilename],
+    ['relational coercion', 'export const makeController=()=>({get:(a:number)=>a<1});', false, factoryFilename],
+    ['arithmetic coercion', 'export const makeController=()=>({get:(a:number)=>a+1});', false, factoryFilename],
+    ['template coercion', `export const makeController=()=>({get:(a:unknown)=>\`\${a}\`});`, false, factoryFilename],
+    [
+      'instanceof hook',
+      'export const makeController=()=>({get:(a:unknown,b:unknown)=>a instanceof b});',
+      false,
+      factoryFilename,
+    ],
+    ['proxy in hook', 'export const makeController=()=>({get:(a:unknown)=>"value" in a});', false, factoryFilename],
+    ['ambient clock', 'export const makeController=()=>({get:()=>Date.now()});', false, factoryFilename],
+    [
+      'object construction in method',
+      'export const makeController=()=>({get:()=>({value:1})});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'opaque destructuring',
+      'export const makeController=()=>({get:({value}:{value:string})=>value});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'opaque rest parameters',
+      'export const makeController=()=>({get:(...input:unknown[])=>input});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'default parameter effect',
+      'export const makeController=()=>({get:(input=fetch("/io"))=>input});',
+      false,
+      factoryFilename,
+    ],
+    ['get accessor', 'export const makeController=()=>({get value(){return fetch("/io")}});', false, factoryFilename],
+    ['computed method', 'export const makeController=()=>({["get"]:()=>1});', false, factoryFilename],
+    ['duplicate method key', 'export const makeController=()=>({get:()=>1,get:()=>2});', false, factoryFilename],
+    ['prototype property', 'export const makeController=()=>({__proto__:()=>1});', false, factoryFilename],
+    ['returned closure', 'export const makeController=()=>({get:()=>()=>1});', false, factoryFilename],
+    ['this observation', 'export const makeController=()=>({get(){return this.value}});', false, factoryFilename],
+    [
+      'arguments observation',
+      'export const makeController=()=>({get:function(){return arguments}});',
+      false,
+      factoryFilename,
+    ],
+    ['recursive helper', 'export const makeController=()=>{const get=()=>get();return{get}};', false, factoryFilename],
+    [
+      'mutual recursion',
+      'export const makeController=()=>{const a=()=>b();const b=()=>a();return{get:a}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'unused effect helper',
+      'export const makeController=()=>{const unsafe=()=>fetch("/io");return{get:()=>1}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'effect hidden in branch',
+      'export const makeController=()=>{let active=false;return{get:()=>{if(active)return fetch("/io");return 1}}};',
+      false,
+      factoryFilename,
+    ],
+    ['mutable helper binding', 'export const makeController=()=>{let get=()=>1;return{get}};', false, factoryFilename],
+    [
+      'helper rebinding',
+      'export const makeController=()=>{const get=()=>1;return{set:(input:unknown)=>{get=input},get}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'factory initialization call',
+      'export const makeController=()=>{let value=fetch("/io");return{get:()=>value}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'opaque assignment expression',
+      'export const makeController=()=>{let v=null;return{set:(input:unknown)=>(v=input)}};',
+      false,
+      factoryFilename,
+    ],
+    [
+      'ambient callback shadow',
+      'export const makeController=()=>({get:(run)=>{{declare const run=()=>null;return run();}}});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'ambient read',
+      'export const makeController=()=>({get:()=>{declare const trap=1;return trap;}});',
+      false,
+      factoryFilename,
+    ],
+    ['erased factory export', 'export declare const makeController=()=>({get:()=>1});', false, factoryFilename],
+    [
+      'module captured mutable dependency',
+      'const dep={read:()=>1};export const install=(read:()=>number)=>{dep.read=read};export const makeController=()=>({get:()=>dep.read()});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'captured module literal',
+      'const value=1;export const makeController=()=>({get:()=>value});',
+      false,
+      factoryFilename,
+    ],
+    ['module IO', 'fetch("/io");export const makeController=()=>({get:()=>1});', false, factoryFilename],
+    [
+      'effect import',
+      'import {Effect}from"effect";export const makeController=()=>({get:()=>Effect.succeed(1)});',
+      false,
+      factoryFilename,
+    ],
+    [
+      'unused runtime import',
+      'import{readFileSync}from"node:fs";export const makeController=()=>({get:()=>1});',
+      false,
+      factoryFilename,
+    ],
+    ['runtime enum', 'enum State{Active};export const makeController=()=>({get:()=>1});', false, factoryFilename],
+    [
+      'second runtime export',
+      'export const makeController=()=>({get:()=>1});export const x=1;',
+      false,
+      factoryFilename,
+    ],
+    ['colliding barrel generic', 'type Input=string;export{makeController}from"./factory.ts";', false, factoryFilename],
+    ['declaration file d.ts', declarationModuleSource, false, 'factory.d.ts'],
+    ['declaration file d.mts', declarationModuleSource, false, 'factory.d.mts'],
+    ['declaration file d.cts', declarationModuleSource, false, 'factory.d.cts'],
+  ] as const;
+  for (const [name, source, accepted, filename] of cases) {
+    scenario.write(filename, source);
+    scenario.write(consumerFilename, `import {makeController} from './${filename}'; void makeController;`);
+    if (accepted) {
+      scenario.accept(consumerFilename, name);
+    } else {
+      scenario.reject(consumerFilename, errors, name);
+    }
+  }
+  scenario.register();
+});
+ruleTester.run('actual N1 passive factories', serviceRule, {
+  invalid: [],
+  valid: [
+    repositoryCase('n1-storefront/src/features/auth-view.tsx'),
+    repositoryCase('n1-storefront/src/features/card-variants.tsx'),
+  ],
+});
