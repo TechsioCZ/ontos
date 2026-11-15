@@ -291,11 +291,15 @@ it('fails the application build whose Zephyr upload fails', () => {
 
 it('excludes compressed asset copies from both CI archives and the final Zerops package', () => {
   const deployIgnore = readFileSync(new URL('../../../.deployignore', import.meta.url), 'utf-8');
+  // Every shard archive, built or reused, is packed by the one pack step (scripts/zerops/reuse-shard-units.sh).
   const workflow = readFileSync(stageWorkflowPath, 'utf-8');
+  const shardPack = readFileSync(new URL('../zerops/reuse-shard-units.sh', import.meta.url), 'utf-8');
+  expect(workflow).toContain('bash scripts/zerops/reuse-shard-units.sh pack "$RUNNER_TEMP/units.tar.zst" $units');
+  expect(workflow).toContain('bash scripts/zerops/reuse-shard-units.sh reuse "$RUNNER_TEMP/zerops-unit-identities"');
   for (const extension of ['br', 'gz']) {
     expect(deployIgnore).toContain(`app/apps/*/dist/**/*.${extension}`);
     expect(deployIgnore).toContain(`app/verticals/*/dist/**/*.${extension}`);
-    expect(workflow).toContain(`--exclude='*.${extension}'`);
+    expect(shardPack).toContain(`--exclude='*.${extension}'`);
   }
 });
 
@@ -679,8 +683,8 @@ it('plans with only the root dependencies and complete HEAD ancestry, not every 
   )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
   const { steps } = workflow.jobs.plan;
   expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
-  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
-    '--trust-lockfile --filter app',
+  expect(steps.find(({ run }) => run?.includes(' install --frozen-lockfile') === true)?.run).toBe(
+    'mise exec -- pnpm --config.verify-deps-before-run=false install --frozen-lockfile --trust-lockfile --filter app',
   );
   const history = steps.findIndex(({ run }) => run === 'git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
   const plan = steps.findIndex(({ run }) => run?.includes('delivery-plan-cli.mts plan') === true);
