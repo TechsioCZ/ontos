@@ -660,7 +660,9 @@ describe("a container's record of its host boots", () => {
   it("ships the record's directory in the app's runtime tree, so the running container never creates it", () => {
     const workspace = path.resolve(import.meta.dirname, '../..');
     expect(path.relative(workspace, path.dirname(HOST_BOOT_RECORD))).toBe('.zerops/state');
-    const runtimePaths = readFileSync(path.join(workspace, 'scripts/zerops/app-runtime-paths.txt'), 'utf-8').split('\n');
+    const runtimePaths = readFileSync(path.join(workspace, 'scripts/zerops/app-runtime-paths.txt'), 'utf-8').split(
+      '\n',
+    );
     expect(runtimePaths).toContain('app/.zerops/state');
   });
 });

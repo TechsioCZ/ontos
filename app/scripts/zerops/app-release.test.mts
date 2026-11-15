@@ -44,7 +44,10 @@ const buildTree = (root: string) =>
     yield* fs.symlink('.pnpm/effect@4.0.7/node_modules/effect', path.join(root, LINK));
     yield* fs.makeDirectory(path.join(root, 'app/scripts/zerops'), { recursive: true });
     yield* fs.writeFileString(path.join(root, HOST), 'export {};\n');
-    yield* fs.writeFileString(path.join(root, 'app/scripts/zerops/app-runtime-paths.txt'), yield* fs.readFileString(RUNTIME_PATHS));
+    yield* fs.writeFileString(
+      path.join(root, 'app/scripts/zerops/app-runtime-paths.txt'),
+      yield* fs.readFileString(RUNTIME_PATHS),
+    );
     for (const script of [PACK, UNPACK]) {
       yield* fs.writeFileString(
         path.join(root, 'app/scripts/zerops', script),
