@@ -110,8 +110,11 @@ const localOrigin = Effect.gen(function* localServerOrigin() {
 const PLAIN_UPLOAD = '/upload';
 
 /** The setup to push (default `app`) and extra checkout files, keyed by their repository path. */
+const PREBUILT_UNITS = 'app/.zerops-prebuilt.tar.zst';
 interface PushCheckout {
   readonly files?: Readonly<Record<string, string>>;
+  /** An app push without the packed unit builds the deploy job always adds. */
+  readonly omitUnits?: boolean;
   readonly setup?: string;
 }
 
@@ -177,7 +180,13 @@ const runPush = (
       yield* fs.makeDirectory(bin);
       yield* fs.makeDirectory(path.join(checkout, 'app'), { recursive: true });
       yield* fs.writeFileString(path.join(checkout, 'app/zerops.yaml'), 'zerops: []\n');
-      for (const [file, body] of Object.entries(pushCheckout.files ?? {})) {
+      // Every app push carries the packed unit builds, as the deploy job packs them.
+      const files: Record<string, string> = {};
+      if ((pushCheckout.setup ?? 'app') === 'app' && pushCheckout.omitUnits !== true) {
+        files[PREBUILT_UNITS] = 'app units';
+      }
+      Object.assign(files, pushCheckout.files);
+      for (const [file, body] of Object.entries(files)) {
         yield* fs.makeDirectory(path.dirname(path.join(checkout, file)), { recursive: true });
         yield* fs.writeFileString(path.join(checkout, file), body);
       }
@@ -523,6 +532,22 @@ it.live('a storefront push without the runner-built archive fails before any Zer
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('the n1 push needs app/.zerops-storefront.tar.gz (the build_storefronts artifact)');
     expect(result.calls).toEqual([]);
+  }),
+);
+
+it.live('an app push without the packed unit builds fails before any Zerops call', () =>
+  Effect.gen(function* missingUnits() {
+    for (const body of [undefined, '']) {
+      const result = yield* runPush(
+        () => processState('FINISHED'),
+        {},
+        {},
+        body === undefined ? { omitUnits: true, setup: 'app' } : { files: { [PREBUILT_UNITS]: body }, setup: 'app' },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('the app push needs app/.zerops-prebuilt.tar.zst (the packed unit builds)');
+      expect(result.calls).toEqual([]);
+    }
   }),
 );
 

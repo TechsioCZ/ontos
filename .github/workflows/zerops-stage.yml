@@ -560,14 +560,14 @@ jobs:
       # The push carries every prebuilt dist/ (git-ignored) with the checkout; its digests tell the Zerops build to
       # keep them, so Zerops only installs the workspace.
       # The units travel as one zstd archive inside the push, which keeps the package small enough to upload in one
-      # go; the Zerops build unpacks it and keeps every unit whose digest it carries.
+      # go (pack-prebuilt-units.sh: a long window over the units' shared code, checked with the Zerops build's own
+      # plain decode); the Zerops build unpacks it and keeps every unit whose digest it carries.
       - name: Pack the unit builds for the push
         if: needs.plan.outputs.app == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/dists"
           for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
-          tar --create --file - -C "$RUNNER_TEMP/dists" . | zstd -q -12 -T0 -o app/.zerops-prebuilt.tar.zst
-          ls -lh app/.zerops-prebuilt.tar.zst
+          sh app/scripts/zerops/pack-prebuilt-units.sh "$RUNNER_TEMP/dists" app/.zerops-prebuilt.tar.zst
 
       - name: Push only services whose inputs changed
         if: needs.plan.outputs.app == 'true'
