@@ -319,12 +319,12 @@ jobs:
           # shellcheck disable=SC2086
           bash scripts/zerops/reuse-shard-units.sh pack "$RUNNER_TEMP/units.tar.zst" $units
 
-      # Only builds that are new: a named entry this push did not find. A forced rebuild_units run cannot replace an
-      # entry that exists (the cache never overwrites a key); delete the entry to replace a bad build.
+      # Saved whenever the shard ends with its complete, identity-proven unit set (reused or built: a failed step
+      # never reaches here) and its exact entry was not restored, so a shard reused through a prefix writes its own
+      # entry once and then hits it. A forced rebuild_units run cannot replace an entry that exists (the cache never
+      # overwrites a key); delete the entry to replace a bad build.
       - name: Save the shard's unit builds
-        if: >-
-          steps.reuse.outputs.reused != 'true' && steps.unit-cache-key.outputs.key != '' &&
-          steps.unit-cache.outputs.cache-hit != 'true'
+        if: steps.unit-cache-key.outputs.key != '' && steps.unit-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/zerops-unit-cache

@@ -66,6 +66,11 @@ reuse() {
     mkdir -p "$dir"
     cp -a "$cache/$unit" "$dir/dist"
   done
+  # The cache keeps only this shard's units, so the entry saved under the shard's name holds exactly them.
+  for cached in "$cache"/*; do
+    [ -e "$cached" ] || continue
+    case " $units " in *" $(basename "$cached") "*) ;; *) rm -rf -- "$cached" ;; esac
+  done
   # shellcheck disable=SC2086 # units is a list of unit ids.
   pack "$archive" $units
   echo "shard $shard: reused $(echo "$units" | wc -w | tr -d ' ') units by identity, nothing built: $units"

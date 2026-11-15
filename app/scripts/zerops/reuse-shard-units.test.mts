@@ -317,9 +317,9 @@ it.effect('reuses only by identity, never blocks a build, and rebuild_units alwa
     for (const name of ['Install the app workspace', BUILD_STEP]) {
       expect(step(name)?.if, name).toBe(NOT_REUSED);
     }
-    // Saved only when built, named, and not already in the cache under that name.
+    // Saved when named and not already in the cache under that name, reused or built (cache-budget.test.mts).
     expect(step("Save the shard's unit builds")?.if).toBe(
-      `${NOT_REUSED} && steps.unit-cache-key.outputs.key != '' && steps.unit-cache.outputs.cache-hit != 'true'`,
+      "steps.unit-cache-key.outputs.key != '' && steps.unit-cache.outputs.cache-hit != 'true'",
     );
     expect(step("Upload the shard's unit builds")?.if).toBeUndefined();
     // The identities are computed in the build environment: the same declared variables, the same values.

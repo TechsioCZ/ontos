@@ -15,9 +15,10 @@ import { collectToolingProcess } from './tooling-process-fixture.mts';
  */
 const APP = path.resolve(import.meta.dirname, '../..');
 const REPOSITORY = path.resolve(APP, '..');
+const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
 const SOURCES = [
   '.github/workflows/ultramodern-workspace-gates.yml',
-  '.github/workflows/zerops-stage.yml',
+  STAGE_WORKFLOW,
   '.github/actions/install-app/action.yml',
 ] as const;
 const PER_RUN =
@@ -134,6 +135,28 @@ it.effect('saves a content-keyed cache only when the run did not restore that ex
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+/**
+ * The only conditions a content-keyed save may have: its exact entry was not restored, and its key was named. Anything
+ * else (for example "only when something was built") leaves a cache restored through a prefix without an entry under
+ * its own name, so it depends on the fallback forever (run 43725413089: six stage shards reused and saved nothing).
+ */
+const SAVE_CLAUSE = /^steps\.[\w-]+\.outputs\.(?:cache-hit != 'true'|key != '')$/u;
+
+it.effect('makes every content-keyed save depend only on its exact entry not being restored', () =>
+  Effect.gen(function* saveClauses() {
+    const saves = (yield* cacheSteps).filter(({ key, save }) => save && allowedFor(key) === undefined);
+    const offenders = saves.flatMap(({ label, step }) =>
+      (step.if ?? '')
+        .split('&&')
+        .map((clause) => clause.trim())
+        // Which runs may write (an input, the ref) is policy; what a step produced may only be the exact hit and key.
+        .filter((clause) => clause.includes('steps.') && !SAVE_CLAUSE.test(clause))
+        .map((clause) => `${label}: ${clause}`),
+    );
+    expect(offenders).toEqual([]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 const KEY_SCRIPT = 'scripts/ci/cache-entry-key.sh';
 const IDENTITY = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -209,7 +232,7 @@ const runStep = (cwd: string, script: string, env: Readonly<Record<string, strin
 it.live("runs the stage shard's naming step: a key from its units' rows, and a failure on a missing row", () =>
   Effect.gen(function* stageNaming() {
     const fs = yield* FileSystem.FileSystem;
-    const script = yield* stepRun('.github/workflows/zerops-stage.yml', 'build', "Name the shard's unit cache entry");
+    const script = yield* stepRun(STAGE_WORKFLOW, 'build', "Name the shard's unit cache entry");
     const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-unit-key-' });
     yield* fs.makeDirectory(path.join(root, 'app/scripts/ci'), { recursive: true });
     yield* fs.copyFile(path.join(APP, KEY_SCRIPT), path.join(root, 'app', KEY_SCRIPT));
@@ -294,4 +317,103 @@ it.live("runs the gates shard's naming step with the unit digests the cache tool
     expect(failed.result.status).not.toBe(0);
     expect(failed.output).toBe('');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+/** Evaluates a step `if` made of `steps.<id>.outputs.<name> ==|!= '<value>'` clauses joined by `&&`. */
+const evaluateIf = (condition: string, outputs: Readonly<Record<string, string>>) =>
+  condition.split('&&').every((clause) => {
+    const match = /^steps\.(?<ref>[\w-]+\.outputs\.[\w-]+) (?<op>==|!=) '(?<value>[^']*)'$/u.exec(clause.trim());
+    if (match?.groups === undefined) {
+      throw new Error(`unsupported condition: ${clause}`);
+    }
+    const actual = outputs[match.groups.ref ?? ''] ?? '';
+    return match.groups.op === '==' ? actual === match.groups.value : actual !== match.groups.value;
+  });
+
+const StageBuildSchema = Schema.Struct({
+  jobs: Schema.Struct({ build: Schema.Struct({ steps: Schema.Array(StepSchema) }) }),
+});
+
+it.live(
+  "saves the stage shard's entry after a reuse through a fallback, never after an exact hit, and after a build",
+  () =>
+    Effect.gen(function* stageSaveDecision() {
+      const fs = yield* FileSystem.FileSystem;
+      const { steps } = (yield* Schema.decodeUnknownEffect(StageBuildSchema)(
+        parse(yield* fs.readFileString(path.join(REPOSITORY, STAGE_WORKFLOW))),
+      )).jobs.build;
+      const named = (name: string) => {
+        const step = steps.find((candidate) => candidate.name === name);
+        if (step === undefined) {
+          throw new Error(`no step ${name}`);
+        }
+        return step;
+      };
+      const saveIf = named("Save the shard's unit builds").if ?? '';
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-save-' });
+      for (const script of [KEY_SCRIPT, 'scripts/zerops/reuse-shard-units.sh']) {
+        yield* fs.makeDirectory(path.dirname(path.join(root, 'app', script)), { recursive: true });
+        yield* fs.copyFile(path.join(APP, script), path.join(root, 'app', script));
+      }
+      const temp = path.join(root, 'temp');
+      const identities = path.join(temp, 'zerops-unit-identities');
+      yield* fs.makeDirectory(identities, { recursive: true });
+      yield* fs.writeFileString(path.join(identities, 'shards.tsv'), '2\tcrm tax\n');
+      yield* fs.writeFileString(
+        path.join(identities, 'digests.tsv'),
+        `crm\t${IDENTITY}\tf\tv\ntax\t${IDENTITY}\tf\tv\n`,
+      );
+      const cache = path.join(temp, 'zerops-unit-cache');
+      const fill = (units: readonly string[]) =>
+        Effect.gen(function* fillCache() {
+          yield* fs.remove(cache, { force: true, recursive: true });
+          yield* fs.makeDirectory(cache, { recursive: true });
+          for (const unit of units) {
+            yield* fs.makeDirectory(path.join(cache, unit), { recursive: true });
+            yield* fs.writeFileString(path.join(cache, unit, 'zerops-entry.mjs'), 'export {};\n');
+            yield* fs.writeFileString(path.join(cache, unit, '.zerops-build-digest'), `${IDENTITY}\n`);
+          }
+        });
+      const stepOutputs = (cwd: string, name: string, env: Readonly<Record<string, string>>) =>
+        Effect.gen(function* runForOutputs() {
+          const outputs = path.join(root, 'outputs');
+          yield* fs.writeFileString(outputs, '');
+          const result = yield* runStep(cwd, named(name).run ?? '', {
+            GITHUB_OUTPUT: outputs,
+            RUNNER_TEMP: temp,
+            SHARD: '2',
+            UNIT_CACHE_DIR: cache,
+            ...env,
+          });
+          expect(result.status, `${name}: ${result.stderr}`).toBe(0);
+          return Object.fromEntries(
+            (yield* fs.readFileString(outputs))
+              .split('\n')
+              .filter((line) => line.includes('='))
+              .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+          );
+        });
+      const decide = (restored: readonly string[], cacheHit: boolean) =>
+        Effect.gen(function* decideSave() {
+          yield* fill(restored);
+          const naming = yield* stepOutputs(root, "Name the shard's unit cache entry", {});
+          const reuse = yield* stepOutputs(path.join(root, 'app'), "Reuse the shard's unchanged units", {});
+          const save = evaluateIf(saveIf, {
+            'reuse.outputs.reused': reuse.reused ?? '',
+            'unit-cache-key.outputs.key': naming.key ?? '',
+            'unit-cache.outputs.cache-hit': cacheHit ? 'true' : 'false',
+          });
+          return { cached: (yield* fs.readDirectory(cache)).toSorted(), reused: reuse.reused, save };
+        });
+      // Restored through a prefix (another entry, here with a foreign unit) and every unit reused: saved, exactly them.
+      const fallback = yield* decide(['crm', 'retired', 'tax'], false);
+      expect(fallback).toStrictEqual({ cached: ['crm', 'tax'], reused: 'true', save: true });
+      // The exact entry restored and reused: nothing saved.
+      const exact = yield* decide(['crm', 'tax'], true);
+      expect(exact).toStrictEqual({ cached: ['crm', 'tax'], reused: 'true', save: false });
+      // Nothing restored: the shard builds (reused=false), and the built set is saved.
+      const cold = yield* decide([], false);
+      expect(cold.reused).toBe('false');
+      expect(cold.save).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
