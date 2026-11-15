@@ -709,12 +709,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # Root script dependencies, the imported contract closures, and Shell's own pinned OAuth browser client.
-      # No other Shell workspace dependency is executed by these scripts.
+      # Keep the proven full workspace setup: deployment verification must not depend on a partial install.
       - name: Install the verification dependencies
         uses: ./.github/actions/install-app
         with:
-          install-args: --trust-lockfile --filter app --filter @app/shared-contracts... --filter @app/email-delivery... --filter @app/shell-super-app
+          install-args: --trust-lockfile
 
       # The frozen graph covers both clients' revisions and any overrides; no prefix fallback.
       - name: Use the runner-owned verification browser cache
@@ -725,8 +724,8 @@ jobs:
         id: verification-browser-versions
         working-directory: app
         run: |
-          oauth="$(mise exec -- pnpm --filter @app/shell-super-app exec playwright --version)"
-          warmup="$(mise exec -- pnpm exec playwright-core --version)"
+          oauth="$(mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version)"
+          warmup="$(mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core --version)"
           echo "versions=${oauth// /-}-${warmup// /-}" >>"$GITHUB_OUTPUT"
 
       - name: Restore the pinned verification browsers
@@ -758,11 +757,11 @@ jobs:
       # --with-deps still checks/installs OS libraries; the restored apt packages only avoid their downloads.
       - name: Install headless Chromium for the OAuth consent screens
         working-directory: app
-        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+        run: mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright install --with-deps chromium
 
       - name: Install headless Chromium for the warm-up client
         working-directory: app
-        run: mise exec -- pnpm exec playwright-core install chromium
+        run: mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium
 
       - name: Collect the Chromium system-library packages
         run: |
@@ -868,12 +867,12 @@ jobs:
       # Chromium/headless-shell/ffmpeg revisions and install anything missing. OS dependencies are NOT cached.
       - name: Install headless Chromium for the OAuth consent screens
         working-directory: app
-        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+        run: mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright install --with-deps chromium
 
       # Warm-up imports the workspace's pinned playwright-core, which may differ from Shell's verification client.
       - name: Install headless Chromium for the warm-up client
         working-directory: app
-        run: mise exec -- pnpm exec playwright-core install chromium
+        run: mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium
 
       - name: Save the pinned verification browsers
         if: steps.verification-browsers.outputs.cache-hit != 'true'

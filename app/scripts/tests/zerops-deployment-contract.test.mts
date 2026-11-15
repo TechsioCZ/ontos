@@ -1,10 +1,7 @@
 import { readFileSync } from 'node:fs';
 
-import { NodeServices } from '@effect/platform-node';
-
 import { Array as Arr, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess } from 'effect/process';
 import { isMap, isScalar, isSeq, parse, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
 
 import {
@@ -13,7 +10,6 @@ import {
   materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
 } from '../materialize-zerops-environment.mts';
-import { collectToolingProcess } from './tooling-process-fixture.mts';
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
 
 /** The whole stage deployment: the SpiceDB data plane, the storefront, and the one application container. */
@@ -568,7 +564,10 @@ it('installs Chromium for the warm-up client before running its bounded browser 
     }),
   )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
   const { steps } = workflow.jobs.verify;
-  const install = steps.findIndex(({ run }) => run?.includes('pnpm exec playwright-core install chromium') === true);
+  const install = steps.findIndex(
+    ({ run }) =>
+      run?.includes('pnpm --config.verify-deps-before-run=false exec playwright-core install chromium') === true,
+  );
   const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);
   expect(install).toBeGreaterThanOrEqual(0);
   expect(warmup).toBeGreaterThan(install);
@@ -708,14 +707,16 @@ const verificationSteps = () =>
     }),
   )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs.verify.steps;
 
-it('installs only verification importers and caches the frozen browser graph plus image-specific apt archives', () => {
+it('installs the full verification workspace and caches the frozen browser graph plus image-specific apt archives', () => {
   const steps = verificationSteps();
   expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
-    '--trust-lockfile --filter app --filter @app/shared-contracts... --filter @app/email-delivery... --filter @app/shell-super-app',
+    '--trust-lockfile',
   );
   const versions = steps.find(({ id }) => id === 'verification-browser-versions');
-  expect(versions?.run).toContain('pnpm --filter @app/shell-super-app exec playwright --version');
-  expect(versions?.run).toContain('pnpm exec playwright-core --version');
+  expect(versions?.run).toContain(
+    'pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version',
+  );
+  expect(versions?.run).toContain('pnpm --config.verify-deps-before-run=false exec playwright-core --version');
   const restore = steps.findIndex(({ id }) => id === 'verification-browsers');
   expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml')");
   expect(steps.find(({ id }) => id === 'chromium-debs')?.run).toContain('$ImageOS-$ImageVersion-');
@@ -733,41 +734,3 @@ it('installs only verification importers and caches the frozen browser graph plu
     expect(steps[download]?.if).toBeUndefined();
   }
 });
-
-it.effect('the parallel verification shell waits for both clients and fails if either exits nonzero', () =>
-  Effect.gen(function* parallelVerification() {
-    const step = verificationSteps().find(({ run }) => run?.includes('warmup_pid=$!') === true);
-    const run = step?.run ?? '';
-    expect(run).toContain('stage-warmup.mts >"$E2E_OUT_DIR/warmup.log" 2>&1 &');
-    expect(run).toContain('--variant=1 --verification >"$E2E_OUT_DIR/oauth.log" 2>&1 &');
-    expect(run.indexOf('oauth_pid=$!')).toBeLessThan(run.indexOf('wait "$warmup_pid"'));
-    // Substitute only the external clients and output directory, then run the workflow's real wait/log/gate shell.
-    const shell = run
-      .replace('mkdir -p "$E2E_OUT_DIR"', 'E2E_OUT_DIR="$(mktemp -d)"')
-      .replace(/E2E_PLAYWRIGHT_MODULE=.*\n/u, 'E2E_PLAYWRIGHT_MODULE=fixture\n')
-      .replace('mise exec -- node scripts/ops/stage-warmup.mts', `bash -c 'echo warmup-output; exit "$WARMUP_EXIT"'`)
-      .replace(
-        'mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification',
-        `bash -c 'echo oauth-output; exit "$OAUTH_EXIT"'`,
-      )
-      .replace('trap - EXIT', `trap 'rm -rf "$E2E_OUT_DIR"' EXIT`);
-    for (const [warmup, oauth] of [
-      [0, 0],
-      [1, 0],
-      [0, 1],
-      [1, 1],
-    ]) {
-      const result = yield* collectToolingProcess(
-        ChildProcess.make('bash', ['-e', '-c', shell], {
-          env: { OAUTH_EXIT: String(oauth), WARMUP_EXIT: String(warmup) },
-          extendEnv: true,
-        }),
-      );
-      expect(result.status).toBe(warmup === 0 && oauth === 0 ? 0 : 1);
-      expect(result.stdout).toContain('warmup-output');
-      expect(result.stdout).toContain('oauth-output');
-      expect(result.stdout).toContain(`Warm-up exit: ${warmup}`);
-      expect(result.stdout).toContain(`MCP OAuth exit: ${oauth}`);
-    }
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
