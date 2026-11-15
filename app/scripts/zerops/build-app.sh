@@ -16,8 +16,12 @@
 # $UNIT_CACHE_DIR (default .zerops/unit-cache), which zerops.yaml keeps in the Zerops build cache together with the
 # Rspack caches, and restored from there. A kept unit keeps the release identity (source revision, build marker) it
 # was built with. ZEROPS_FORCE_BUILD=true rebuilds every unit (the stage workflow's rebuild_units input).
+# dist/.zerops-build-inputs records the identity's two parts (committed inputs; build variable names with short
+# value hashes), so a rebuild caused only by build variables names them.
 set -eu
 root="$PWD"
+# Only declared build variables reach a build (scripts/zerops/build-environment.sh); --unit children inherit them.
+[ "${1:-}" = --unit ] || . "$root/scripts/zerops/build-environment.sh"
 
 : "${ONTOS_PUBLIC_ORIGIN:?ONTOS_PUBLIC_ORIGIN (the public HTTPS origin of the Shell) is required}"
 : "${ONTOS_STOREFRONT_ORIGIN:?ONTOS_STOREFRONT_ORIGIN (the public HTTPS origin of the AKROS storefront) is required}"
@@ -62,6 +66,24 @@ fi
 unit_digest() {
   awk -F '\t' -v unit="$1" '$1 == unit { value=$2; count++ } END { if (count != 1 || value == "") exit 1; print value }' "$ZEROPS_UNIT_DIGESTS"
 }
+# Field 3 is the committed-inputs part of the identity, field 4 the build variables as NAME=short-hash.
+unit_field() {
+  awk -F '\t' -v unit="$1" -v field="$2" '$1 == unit { value=$field; count++ } END { if (count != 1) exit 1; print value }' "$ZEROPS_UNIT_DIGESTS"
+}
+# Names the build variables that alone make a cached unit rebuild (names only, never values); one line at most.
+explain_rebuild() {
+  recorded="$unit_cache/$1/.zerops-build-inputs"
+  [ -f "$recorded" ] && [ "$(sed -n 1p "$recorded")" = "$(unit_field "$1" 3)" ] || return 0
+  names="$(printf '%s\n%s\n' "$(sed -n 2p "$recorded")" "$(unit_field "$1" 4)" | awk '
+    NR == 1 { for (i = 1; i <= NF; i++) old[$i] = 1; next }
+    { for (i = 1; i <= NF; i++) new[$i] = 1 }
+    END {
+      for (k in old) if (!(k in new)) { split(k, p, "="); differ[p[1]] = 1 }
+      for (k in new) if (!(k in old)) { split(k, p, "="); differ[p[1]] = 1 }
+      for (n in differ) print n
+    }' | sort | tr '\n' ' ')"
+  [ -z "$names" ] || echo "rebuilding $1: committed inputs unchanged, build variables differ: $names"
+}
 
 # Restores a unit's cached build when its inputs are unchanged; succeeds only when the unit can be kept.
 keep_unit() {
@@ -85,6 +107,7 @@ build_unit() {
   [ "$status" -eq 1 ] || return 1
   if (cd "$dir" && pnpm run build && node "$root/scripts/zerops/owner-entry.mts" "$dir") >"$log_dir/$unit.log" 2>&1; then
     printf '%s\n' "$digest" >"$dir/dist/.zerops-build-digest"
+    printf '%s\n%s\n' "$(unit_field "$unit" 3)" "$(unit_field "$unit" 4)" >"$dir/dist/.zerops-build-inputs"
     rm -rf "${unit_cache:?}/$unit" && cp -a "$dir/dist" "$unit_cache/$unit"
     echo "built $unit in $(($(date +%s) - started))s"
   else
@@ -106,7 +129,10 @@ for unit in $units; do
   keep_unit "$unit" || status=$?
   case "$status" in
     0) echo "kept $unit (inputs unchanged)" ;;
-    1) pending="$pending $unit" ;;
+    1)
+      pending="$pending $unit"
+      [ "${ZEROPS_FORCE_BUILD:-false}" = true ] || explain_rebuild "$unit"
+      ;;
     *) exit 1 ;;
   esac
 done

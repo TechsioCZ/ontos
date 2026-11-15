@@ -14,6 +14,7 @@ import {
   planDelivery,
   previousVerifiedBase,
   SERVICES,
+  unitIdentity,
   unitInputDigest,
   unitInputGraph,
 } from './delivery-plan.mts';
@@ -170,9 +171,9 @@ export const readUnitIdentities = (revision: string) =>
     const workspace = yield* readWorkspace(revision);
     const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
     const environment = buildEnvironment(yield* inheritedEnvironment);
-    const identities: (readonly [string, string])[] = [];
+    const identities = [];
     for (const unit of workspace.units) {
-      identities.push([unit.id, yield* unitInputDigest(unit.directory, { environment, graph })]);
+      identities.push({ id: unit.id, ...(yield* unitIdentity(unit.directory, { environment, graph })) });
     }
     return { graph, identities, units: workspace.units };
   });
@@ -280,8 +281,9 @@ const digests = Command.make(
     Effect.gen(function* printAllDigests() {
       yield* requireOrigins;
       const head = (yield* git(['rev-parse', revision])).trim();
-      for (const [id, value] of (yield* readUnitIdentities(head)).identities) {
-        yield* Console.log(`${id}\t${value}`);
+      // unit, identity, committed-inputs part, build variables as NAME=short-hash (read by build-app.sh).
+      for (const { digest: value, files, id, variables } of (yield* readUnitIdentities(head)).identities) {
+        yield* Console.log(`${id}\t${value}\t${files}\t${variables.join(' ')}`);
       }
     }),
 );

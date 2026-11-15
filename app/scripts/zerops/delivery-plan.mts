@@ -625,17 +625,30 @@ interface UnitDigestInput {
   readonly environment: readonly (readonly [string, string])[];
   readonly graph: UnitInputGraph;
 }
-export const unitInputDigest = (directory: string, input: UnitDigestInput) =>
-  Effect.gen(function* digestUnitInputs() {
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+/**
+ * A unit's identity and its two parts, so a rebuild can say why: `files` covers the committed inputs alone, and
+ * `variables` names each build variable with a short hash of its value (never the value itself).
+ */
+export const unitIdentity = (directory: string, input: UnitDigestInput) =>
+  Effect.gen(function* identifyUnit() {
     const { closure, inputs } = yield* unitInputs(directory, input.graph);
-    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(DigestInputsSchema))({
-      closure,
-      environment: input.environment,
-      inputs,
-      version: 3,
-    });
-    return createHash('sha256').update(encoded).digest('hex');
+    const encode = Schema.encodeEffect(Schema.fromJsonString(DigestInputsSchema));
+    const [digest, files] = yield* Effect.all(
+      [
+        encode({ closure, environment: input.environment, inputs, version: 3 }),
+        encode({ closure, environment: [], inputs, version: 3 }),
+      ],
+      { concurrency: 1 },
+    );
+    return {
+      digest: sha256(digest),
+      files: sha256(files),
+      variables: input.environment.map(([name, value]) => `${name}=${sha256(value).slice(0, 12)}`),
+    };
   });
+export const unitInputDigest = (directory: string, input: UnitDigestInput) =>
+  unitIdentity(directory, input).pipe(Effect.map((identity) => identity.digest));
 
 export const previousVerifiedBase = (
   receipt: DeliveryReceipt | null,
