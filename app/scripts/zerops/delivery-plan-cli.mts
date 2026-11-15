@@ -64,18 +64,8 @@ const git = (args: readonly string[]) =>
     }
     return stdout;
   }).pipe(Effect.scoped);
-// A function expression, not a generic arrow: every package's test bundler compiles this module
-// (kept-unit-identity.mts), and SWC refuses `<A,>(…) =>` in .mts files.
-const readCommitted = function readCommitted<A>(
-  repository: string,
-  revision: string,
-  filename: string,
-  schema: Schema.Codec<A>,
-) {
-  return git(['-C', repository, 'show', `${revision}:${filename}`]).pipe(
-    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
-  );
-};
+const readCommitted = <A,>(revision: string, filename: string, schema: Schema.Codec<A>) =>
+  git(['show', `${revision}:${filename}`]).pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))));
 
 const workspaceNames = (dependencies: Readonly<Record<string, string>>) =>
   Object.entries(dependencies)
@@ -98,10 +88,9 @@ const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => 
     .filter(([, range]) => range.startsWith('workspace:'))
     .map(([name]) => name),
 });
-/** The committed workspace of one revision; `repository` is any directory inside the repository (default: here). */
-export const readWorkspace = (revision: string, repository = '.') =>
+export const readWorkspace = (revision: string) =>
   Effect.gen(function* readWorkspaceInputs() {
-    const listing = yield* git(['-C', repository, 'ls-tree', '-rz', '--full-tree', revision]);
+    const listing = yield* git(['ls-tree', '-rz', '--full-tree', revision]);
     const entries = listing
       .split('\0')
       .filter((value) => value.length > 0)
@@ -114,11 +103,11 @@ export const readWorkspace = (revision: string, repository = '.') =>
     );
     const packages = [];
     for (const entry of manifests) {
-      const manifest = yield* readCommitted(repository, revision, entry.path, Manifest);
+      const manifest = yield* readCommitted(revision, entry.path, Manifest);
       packages.push(workspacePackage(path.posix.dirname(entry.path), manifest));
     }
-    const intent = yield* readCommitted(repository, revision, 'app/topology/application-release-intent.json', Intent);
-    const topology = yield* readCommitted(repository, revision, 'app/topology/reference-topology.json', Topology);
+    const intent = yield* readCommitted(revision, 'app/topology/application-release-intent.json', Intent);
+    const topology = yield* readCommitted(revision, 'app/topology/reference-topology.json', Topology);
     const units = [{ directory: `app/${topology.shell.path}`, id: 'shell-super-app' }];
     for (const module of intent.modules) {
       const owner = topology.verticals.find((entry) => entry.id === module.appId);
@@ -131,13 +120,13 @@ export const readWorkspace = (revision: string, repository = '.') =>
   });
 
 /** The committed text of every reference source, read in one `git cat-file --batch`. */
-export const readSources = (entries: readonly GitEntry[], repository = '.') =>
+export const readSources = (entries: readonly GitEntry[]) =>
   Effect.gen(function* readReferenceSources() {
     const wanted = entries.filter((entry) => isReferenceSource(entry.path) && entry.identity.includes(' blob '));
     const request = new TextEncoder().encode(wanted.map((entry) => `${entry.identity.split(' ')[2] ?? ''}\n`).join(''));
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const handle = yield* spawner.spawn(
-      ChildProcess.make('git', ['-C', repository, 'cat-file', '--batch'], { stdin: { stream: Stream.make(request) } }),
+      ChildProcess.make('git', ['cat-file', '--batch'], { stdin: { stream: Stream.make(request) } }),
     );
     const [chunks, , code] = yield* Effect.all(
       [Stream.runCollect(handle.stdout), Stream.runDrain(handle.stderr), handle.exitCode],

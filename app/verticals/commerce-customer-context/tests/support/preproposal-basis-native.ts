@@ -108,6 +108,7 @@ import {
   Stream,
 } from 'effect';
 import { ChildProcess } from 'effect/process';
+import { readBuiltDocument } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
@@ -982,6 +983,36 @@ const isHostLogLine = (line: string) => line.startsWith('[serve-units] ') || lin
  * module credential channel (`MODULE_CREDENTIAL_CHANNEL_FD`), fed only when `moduleCredentialChannel` is set; the
  * harness's own private commands use 4 and its private output 5.
  */
+/**
+ * A document derived from the checkout's sources by a short program run at the app root, never written to disk: a
+ * unit's dist/ may be a kept build, whose outputs no fixture may rewrite.
+ */
+const deriveFromSource = Effect.fn('PreproposalNative.deriveFromSource')(function* deriveFromSource(
+  stage: string,
+  program: string,
+) {
+  const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const child = yield* ChildProcess.make(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', program],
+    {
+      cwd: applicationRoot,
+      env: { ...inherited, APP_ENV_PATH: '/dev/null' },
+      extendEnv: false,
+      stderr: 'pipe',
+      stdout: 'pipe',
+    },
+  );
+  const [code, output] = yield* Effect.all(
+    [child.exitCode, child.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(child.stderr)],
+    { concurrency: 3 },
+  );
+  return Number(code) === 0 ? output : yield* safeFailure(stage);
+});
+const DERIVE_PROGRAM_PRELUDE = `import { Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
+  import { NodeServices } from '@effect/platform-node';
+  const runtime = ManagedRuntime.make(NodeServices.layer);`;
+
 export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function* openNativeChild(input: {
   readonly args: readonly string[];
   readonly command?: string;
@@ -1608,25 +1639,27 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   const replacements = yield* Effect.all(
     modules.map((owner) =>
       Effect.gen(function* nativeContract() {
-        const generator = yield* openNativeChild({
-          args: ['scripts/generate-ontos-module-contract.mts', '--vertical', owner.appId, '--target', 'dist'],
-          environment:
-            owner.builtSourceRevision === undefined
-              ? { APP_ENV_PATH: '/dev/null' }
-              : { APP_ENV_PATH: '/dev/null', ULTRAMODERN_SOURCE_REVISION: owner.builtSourceRevision },
-          stage: `module-contract:${owner.appId}`,
-        });
-        yield* generator.exit;
-        const contract = yield* Schema.decodeUnknownEffect(contractJson)(
-          yield* io(
-            'actual-owner-contract',
-            async () =>
-              await readFile(
-                `${applicationRoot}${owner.owner}/dist/public/.well-known/ontos-module-manifest.json`,
-                'utf-8',
-              ),
-          ),
-        );
+        // A hosted owner serves its built dist/: its contract is the one that build published, the very bytes the
+        // build shard verified. An owner bundled here from source gets the contract derived from those sources.
+        const document =
+          owner.builtSourceRevision === undefined
+            ? yield* deriveFromSource(
+                `module-contract:${owner.appId}`,
+                `${DERIVE_PROGRAM_PRELUDE}
+                import { deriveOntosModuleDeploymentContract } from './scripts/generate-ontos-module-contract.mts';
+                import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
+                try {
+                  process.stdout.write(await runtime.runPromise(
+                    deriveOntosModuleDeploymentContract({ vertical: ${JSON.stringify(owner.appId)} }).pipe(
+                      Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))))));
+                } finally { await runtime.dispose(); }`,
+              )
+            : yield* readBuiltDocument({
+                document: 'dist/public/.well-known/ontos-module-manifest.json',
+                unitDirectory: owner.owner,
+                workspaceRoot: applicationRoot,
+              }).pipe(Effect.mapError(() => safeFailure('actual-owner-contract')));
+        const contract = yield* Schema.decodeUnknownEffect(contractJson)(document);
         yield* requireProtocol(
           contract.deployment.appId === owner.appId &&
             contract.deployment.buildMarker === owner.marker.buildMarker &&
@@ -1687,23 +1720,28 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   if (shell === undefined) {
     return yield* safeFailure('shell-composition-marker');
   }
-  const shellGenerator = yield* openNativeChild({
-    args: [
-      'scripts/generate-ontos-shell-runtime-contract.mts',
-      '--shell-directory',
-      `${applicationRoot}${shell.owner}`,
-      '--target',
-      'dist',
-    ],
-    environment: { APP_ENV_PATH: '/dev/null' },
-    stage: 'shell-runtime-contract',
-  });
-  yield* shellGenerator.exit;
+  // The Shell is bundled here from source, so its runtime contract is derived from those sources as the generator
+  // derives it (the Shell's release identity from the checkout), never written into its dist/.
   const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
-    yield* io(
-      'actual-shell-contract',
-      async () =>
-        await readFile(`${applicationRoot}${shell.owner}/dist/public/.well-known/ontos-shell-runtime.json`, 'utf-8'),
+    yield* deriveFromSource(
+      'shell-runtime-contract',
+      `${DERIVE_PROGRAM_PRELUDE}
+      import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+      import { createShellRuntimeContract } from './scripts/generate-ontos-shell-runtime-contract.mts';
+      import { OntosShellRuntimeContractSchema } from '@app/core-runtime';
+      try {
+        process.stdout.write(await runtime.runPromise(Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const unit = Schema.Struct({ deliveryUnit: Schema.Struct({ buildMarker: Schema.String, unitId: Schema.String }) });
+          const { shell } = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ shell: unit })))(
+            yield* fs.readFileString('./topology/reference-topology.json'));
+          const { buildMarker } = resolveUltramodernReleaseIdentity({
+            generationBuildMarker: shell.deliveryUnit.buildMarker, unitId: shell.deliveryUnit.unitId,
+            workspaceRoot: process.cwd() });
+          return yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+            createShellRuntimeContract(buildMarker));
+        })));
+      } finally { await runtime.dispose(); }`,
     ),
   );
   yield* requireProtocol(

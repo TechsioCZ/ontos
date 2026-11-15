@@ -38,3 +38,20 @@ export const CacheReceiptSchema = Schema.Struct({
   unit: NONEMPTY,
 });
 export type CacheReceipt = typeof CacheReceiptSchema.Type;
+
+/** Where a unit's receipt and keep proof live, relative to the unit's directory. */
+export const RECEIPT = 'dist/.gates-output-cache.json';
+export const KEEP_PROOF = 'dist/.gates-keep-proof.json';
+/**
+ * Written by the gates plan when it keeps a unit: the plan has just proved, for this run's HEAD, that the unit's
+ * committed inputs are the ones its receipt was stamped with. A native fixture that runs the checkout's sources under
+ * the kept unit's identity relies on this file instead of recomputing that digest (which would make the deploy
+ * planner part of every fixture, and so of the Shell's identity). Like the receipt, it is not part of the outputs.
+ */
+export const KeepProofSchema = Schema.Struct({
+  inputs: DIGEST,
+  revision: REVISION,
+  schemaVersion: Schema.Literal(1),
+  unit: NONEMPTY,
+});
+export type KeepProof = typeof KeepProofSchema.Type;

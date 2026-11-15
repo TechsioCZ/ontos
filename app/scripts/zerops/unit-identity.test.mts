@@ -239,3 +239,33 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
   60_000,
 );
+
+/**
+ * The deploy planner and the identity code itself must never become a unit's input: a fixture inside a unit's folder
+ * (the Shell's Tailwind scan reads its tests too) that reached them would make every planner edit rebuild that unit.
+ * The build drivers themselves (build-app.sh, owner-entry.mts and what they reach) are inputs by design.
+ */
+const PLANNER = new Set([
+  'app/scripts/zerops/delivery-plan.mts',
+  ...[...BUILD_DRIVER_TOOLS.keys()].map((script) => `app/${script}`),
+  'app/scripts/ci/unit-output-cache.mts',
+]);
+it.effect(
+  'keeps the deploy planner out of every committed unit, the Shell included',
+  () =>
+    Effect.gen(function* plannerNotAnInput() {
+      const { graph, units } = yield* readUnitIdentities('HEAD');
+      for (const directory of [
+        ...units.map((unit) => unit.directory),
+        'app/verticals/party-registry',
+        'app/verticals/commerce-customer-context',
+      ]) {
+        const { inputs, reachedFrom } = yield* unitInputs(directory, graph);
+        const planner = inputs
+          .filter((entry) => PLANNER.has(entry.path))
+          .map((entry) => `${entry.path} <- ${reachedFrom.get(entry.path) ?? ''}`);
+        expect({ directory, planner }).toEqual({ directory, planner: [] });
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  60_000,
+);

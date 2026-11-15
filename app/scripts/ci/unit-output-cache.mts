@@ -74,14 +74,20 @@ import {
   OntosShellRuntimeContractSchema,
 } from '../../packages/core-runtime/src/index.ts';
 import { runQualityCli } from '../quality-cli-lifecycle.mts';
-import { CacheReceiptSchema, IdentitySchema, REVISION } from './unit-output-receipt.mts';
+import {
+  CacheReceiptSchema,
+  IdentitySchema,
+  KEEP_PROOF,
+  KeepProofSchema,
+  RECEIPT,
+  REVISION,
+} from './unit-output-receipt.mts';
 import type { CacheIdentity, CacheReceipt, OutputFile } from './unit-output-receipt.mts';
 import { readSources, readWorkspace } from '../zerops/delivery-plan-cli.mts';
 import { unitIdentity, unitInputDigest, unitInputGraph } from '../zerops/delivery-plan.mts';
 import type { UnitInputGraph } from '../zerops/delivery-plan.mts';
 
 const APP_ROOT = path.resolve(import.meta.dirname, '../..');
-const RECEIPT = 'dist/.gates-output-cache.json';
 const BUILD_METADATA = 'ultramodern-build.json';
 const SHELL = 'shell-super-app';
 const DIST = 'dist';
@@ -322,7 +328,7 @@ const walkOutput = (
     if (info.type !== 'File') {
       return yield* invalid(root, `unsupported output type at ${relative}: ${info.type}`);
     }
-    if (relative === RECEIPT) {
+    if (relative === RECEIPT || relative === KEEP_PROOF) {
       return yield* Effect.succeed([]);
     }
     const bytes = yield* fs.readFile(filename);
@@ -554,10 +560,42 @@ const digestCommand = Command.make('digest', { unit: Flag.String('unit').pipe(Fl
     );
   }),
 );
+/** A unit's committed-inputs digest, as receipts and keep proofs record it (unitIdentity without build variables). */
+export const committedInputs = (graph: UnitInputGraph, unitPath: string) =>
+  unitIdentity(`app/${unitPath}`, { environment: [], graph }).pipe(Effect.map(({ files }) => files));
+/** The keep proof the plan writes for a unit it keeps (see KeepProofSchema). */
+export const keepProof = (input: { readonly head: string; readonly inputs: string; readonly unit: string }) =>
+  Schema.decodeUnknownEffect(KeepProofSchema)({
+    inputs: input.inputs,
+    revision: input.head,
+    schemaVersion: 1,
+    unit: input.unit,
+  });
+const writeKeepProof = (context: Context, unit: CacheUnit) =>
+  Effect.gen(function* writeProof() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = path.join(APP_ROOT, unit.path);
+    const proof = yield* keepProof({
+      head: context.head,
+      inputs: yield* committedInputs(context.graph, unit.path),
+      unit: unit.id,
+    });
+    const temporary = path.join(root, `${KEEP_PROOF}.tmp`);
+    yield* fs.writeFileString(temporary, yield* encode(KeepProofSchema, proof));
+    yield* fs.rename(temporary, path.join(root, KEEP_PROOF));
+  });
 const planCommand = Command.make('plan', { units: Flag.String('units') }, ({ units: value }) =>
   Effect.gen(function* printPlan() {
     const { context, units } = yield* withUnits(value);
     const checks = yield* Effect.forEach(units, (unit) => inspectUnit(context, unit), { concurrency: 1 });
+    // A kept unit carries the proof that its inputs are this HEAD's (see KeepProofSchema); a unit to build is
+    // removed and rebuilt by the workflow, and a fresh build names HEAD itself.
+    for (const [index, check] of checks.entries()) {
+      const unit = units[index];
+      if (unit !== undefined && !('mismatch' in check)) {
+        yield* writeKeepProof(context, unit);
+      }
+    }
     const plan = yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
     return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
   }),
@@ -580,7 +618,7 @@ const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ uni
         digest: yield* expectedDigest(context, unit),
         files,
         identity,
-        inputs: (yield* unitIdentity(`app/${unit.path}`, { environment: [], graph: context.graph })).files,
+        inputs: yield* committedInputs(context.graph, unit.path),
         schemaVersion: 2,
         unit: unit.id,
       };
