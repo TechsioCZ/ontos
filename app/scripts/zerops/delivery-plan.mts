@@ -330,8 +330,13 @@ const withoutComments = (text: string) => {
   }
   return output;
 };
+/** A match's `value` group, if the pattern names one. */
+const groupValue = (match: RegExpMatchArray | null): string | undefined => {
+  const { value } = match?.groups ?? {};
+  return value;
+};
 const matches = (pattern: RegExp, text: string) =>
-  [...text.matchAll(pattern)].map((match) => match.groups?.value ?? match[0]);
+  [...text.matchAll(pattern)].map((match) => groupValue(match) ?? match[0]);
 const globPattern = (glob: string) =>
   new RegExp(
     `^${glob
@@ -594,7 +599,7 @@ export const unitInputs = (directory: string, graph: UnitInputGraph) =>
         add(`app/${script}`);
       }
     }
-    const prebuilt = PREBUILT_PACKAGES.exec(driver)?.groups?.value ?? '';
+    const prebuilt = groupValue(PREBUILT_PACKAGES.exec(driver)) ?? '';
     for (const project of prebuilt.split(/\s+/u).filter((value) => value.length > 0)) {
       addPackage(`app/${project}`);
     }

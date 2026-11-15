@@ -35,6 +35,7 @@ import { Clock, Effect, Layer, Option, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Pool } from 'pg';
 import { HttpApi } from 'effect/http-api';
+import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -42,6 +43,7 @@ import { privacyManifest } from '../../vertical.manifest.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
 
 const compositionDigest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+const appRoot = new URL('../../../../', import.meta.url).pathname;
 const compositionUnavailable = (cause: unknown) =>
   new ActiveApplicationCompositionUnavailableError({
     cause,
@@ -98,7 +100,36 @@ export const resolvePrivacyFixtureShellBuildIdentity = Effect.fn('PrivacyTests.r
       return release;
     }
     if (release.sourceRevision !== 'workspace') {
-      return yield* compositionUnavailable('Published Shell runtime and source release identity differ');
+      // A Shell build kept from another commit names its own release; it may run as that release only when its
+      // gates receipt proves the checkout's Shell sources are the ones it was built from.
+      const generated = yield* Effect.tryPromise({
+        catch: compositionUnavailable,
+        try: async () =>
+          await readFile(
+            new URL('../../../../apps/shell-super-app/shared/ultramodern-build.json', import.meta.url),
+            'utf-8',
+          ),
+      });
+      const { deliveryUnit } = yield* Schema.decodeEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            deliveryUnit: Schema.Struct({
+              buildMarker: Schema.String,
+              unitId: Schema.String.pipe(Schema.brand('PrivacyFixtureShellUnitId')),
+            }),
+          }),
+        ),
+      )(generated).pipe(Effect.mapError(compositionUnavailable));
+      const built = yield* resolveOwnerReleaseIdentity({
+        generationBuildMarker: deliveryUnit.buildMarker,
+        unitDirectory: 'apps/shell-super-app',
+        unitId: deliveryUnit.unitId,
+        workspaceRoot: appRoot,
+      }).pipe(Effect.mapError(compositionUnavailable));
+      if (built.buildMarker !== expected) {
+        return yield* compositionUnavailable('Published Shell runtime and source release identity differ');
+      }
+      return built;
     }
     const directory = new URL('../../../../apps/shell-super-app/', import.meta.url).pathname;
     const compiled = yield* readCompiledNodeShellIdentity(directory).pipe(Effect.mapError(compositionUnavailable));
@@ -337,7 +368,6 @@ export const privacyDsrOwnerRuntimeLive = (snapshot: ActiveApplicationCompositio
     }),
   );
 
-const appRoot = new URL('../../../../', import.meta.url).pathname;
 const digest = compositionDigest;
 
 export const identityFailure = (stage: string) => new PrivacyPartyNativeIdentityError({ stage });

@@ -1,4 +1,3 @@
-import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
@@ -57,6 +56,7 @@ import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-po
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
 import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
+import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
 import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
 
@@ -420,6 +420,10 @@ export const decodeShellNativePriceReadEnvironment = Effect.fn('ShellNativeFixtu
 
 export { makeCompositionSnapshot as makeApiKeyGatewayNativeComposition } from './application-composition.ts';
 
+/**
+ * The Shell release this fixture's gateway process runs as: the identity of the built Shell whose runtime contract
+ * the composition names (a kept build keeps its own), or the checkout's when nothing was built.
+ */
 export const resolveShellFixtureRelease = Effect.fn('ApiKeyGatewayNativeFixture.resolveRelease')(
   function* resolveShellFixtureRelease() {
     const filesystem = yield* FileSystem.FileSystem;
@@ -433,15 +437,12 @@ export const resolveShellFixtureRelease = Effect.fn('ApiKeyGatewayNativeFixture.
         }),
       ),
     )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
-    return yield* Effect.try({
-      catch: unavailable,
-      try: () =>
-        resolveUltramodernReleaseIdentity({
-          generationBuildMarker: generated.deliveryUnit.buildMarker,
-          unitId: generated.deliveryUnit.unitId,
-          workspaceRoot: appRoot,
-        }),
-    });
+    return yield* resolveOwnerReleaseIdentity({
+      generationBuildMarker: generated.deliveryUnit.buildMarker,
+      unitDirectory: 'apps/shell-super-app',
+      unitId: generated.deliveryUnit.unitId,
+      workspaceRoot: appRoot,
+    }).pipe(Effect.mapError(unavailable));
   },
 );
 

@@ -1,5 +1,4 @@
 import { createRequire } from 'node:module';
-import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
 import { Deferred, Duration, Effect, Exit, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
@@ -19,6 +18,7 @@ import type {
   MarketRevisionNativeCustomerContextState,
   MarketRevisionNativeIssueSchema,
 } from '../support/market-revision-native-protocol.ts';
+import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import type { CreateMarketResultSchema } from '../../shared/action-contracts.ts';
 
 class MarketRevisionNativeLauncherError extends Schema.TaggedError<MarketRevisionNativeLauncherError>()(
@@ -139,15 +139,13 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
             }),
           ),
         )(yield* fs.readFileString(path.join(ownerDirectory, 'shared/ultramodern-build.json')));
-        return yield* Effect.try({
-          catch: (cause) => Object.defineProperty(unavailable(), 'cause', { value: cause }),
-          try: () =>
-            resolveUltramodernReleaseIdentity({
-              generationBuildMarker: generated.deliveryUnit.buildMarker,
-              unitId: generated.deliveryUnit.unitId,
-              workspaceRoot,
-            }),
-        });
+        // The owner runs as the built unit the composition names (a kept build keeps its own identity).
+        return yield* resolveOwnerReleaseIdentity({
+          generationBuildMarker: generated.deliveryUnit.buildMarker,
+          unitDirectory: path.relative(workspaceRoot, ownerDirectory),
+          unitId: generated.deliveryUnit.unitId,
+          workspaceRoot,
+        }).pipe(Effect.mapError((cause) => Object.defineProperty(unavailable(), 'cause', { value: cause })));
       },
     );
     const cache = `${directory}/.cache/ontos-1250`;
