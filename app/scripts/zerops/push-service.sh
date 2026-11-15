@@ -70,6 +70,12 @@ case "$setup" in
     cp app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json "$work/source/app/"
     ;;
   app)
+    # The runner-built units (scripts/zerops/pack-prebuilt-units.sh). Without them the Zerops build would rebuild all
+    # 28 units in its slow build container, so an app push without them fails here, before any Zerops call.
+    if [ ! -s app/.zerops-prebuilt.tar.zst ]; then
+      log_error "the app push needs app/.zerops-prebuilt.tar.zst (the packed unit builds)"
+      exit 1
+    fi
     # Keep manifests/configs for the frozen workspace install. A storefront archive in the checkout never ships here.
     exclude=(--exclude='*/node_modules' --exclude='*/.output' --exclude='*.map'
       --exclude='*/tests' --exclude='docs' --exclude='app/docs' --exclude='*/.codex'
