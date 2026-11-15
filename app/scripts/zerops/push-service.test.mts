@@ -40,8 +40,24 @@ if [ -n "\${FAKE_CURL_HEAD_DELAY:-}" ]; then
   done
 fi
 args=()
-for arg in "$@"; do args+=("\${arg/#"$zerops"/$FAKE_ZEROPS_ORIGIN}"); done
+for arg in "$@"; do
+  arg="\${arg/#"$zerops"/$FAKE_ZEROPS_ORIGIN}"
+  if [ -n "\${FAKE_CURL_SENT_BYTES:-\${FAKE_PACKAGE_BYTES:-}}" ]; then
+    arg="\${arg//%\\{size_upload\\}/\${FAKE_CURL_SENT_BYTES:-$FAKE_PACKAGE_BYTES}}"
+  fi
+  args+=("$arg")
+done
 exec "$REAL_CURL" "\${args[@]}"
+`,
+  date: `#!/usr/bin/env bash
+if [ -n "\${FAKE_UPLOAD_SECONDS:-}" ] && [ "$1" = +%s ]; then
+  count=0
+  [ ! -f "$RUNNER_TEMP/date-count" ] || read -r count <"$RUNNER_TEMP/date-count"
+  printf '%s\\n' "$((count % 2 * FAKE_UPLOAD_SECONDS))"
+  printf '%s\\n' "$((count + 1))" >"$RUNNER_TEMP/date-count"
+else
+  exec /bin/date "$@"
+fi
 `,
   find: `#!/usr/bin/env bash
 ls -A1 | sort
@@ -57,6 +73,13 @@ for arg in "$@"; do
   fi
   previous="$arg"
 done
+`,
+  wc: `#!/usr/bin/env bash
+if [ -n "\${FAKE_PACKAGE_BYTES:-}" ] && [ "$1" = -c ]; then
+  printf '%s\\n' "$FAKE_PACKAGE_BYTES"
+else
+  exec /usr/bin/wc "$@"
+fi
 `,
 };
 
@@ -97,6 +120,7 @@ const runPush = (
     readonly buildAndDeploy?: { readonly body: string; readonly status: number };
     readonly delayFirstUploadMs?: number;
     readonly origin?: (origin: string) => string;
+    readonly status?: number;
     readonly target?: string;
   } = {},
   pushCheckout: PushCheckout = {},
@@ -124,7 +148,7 @@ const runPush = (
           if (uploadCount === 1 && upload.delayFirstUploadMs !== undefined) {
             yield* Effect.sleep(upload.delayFirstUploadMs);
           }
-          return HttpServerResponse.empty({ status: 200 });
+          return HttpServerResponse.empty({ status: upload.status ?? 200 });
         }
         if (route === 'PUT /api/rest/public/app-version/version-1/build-and-deploy') {
           return upload.buildAndDeploy === undefined
@@ -224,6 +248,7 @@ it.live(
       const steps = lines.map((line) => line.replace(/^\S+ \[app\] /u, '').replaceAll(/\d+(?:\.\d+)?/gu, 'N'));
       expect(steps).toEqual([
         'package: NK (N bytes)',
+        'upload budget: Ns (N bytes, minimum N bytes/s, floor Ns)',
         'app version create started (attempt N)',
         'app version create ended (attempt N): version version-N',
         'upload started (attempt N, N bytes): host N.N, family IPvN, same address as project entry: unknown',
@@ -450,8 +475,10 @@ it('omits non-build inputs per service without mutating the runner index or weak
   expect(source).toContain('app/n1-storefront/src');
   expect(source).toContain('app/akros-storefront/src');
   expect(source).toContain('git -C "$work/source" update-index --skip-worktree -z --stdin');
-  expect(source).toContain(`upload_limit_seconds="\${UPLOAD_LIMIT_SECONDS:-25}"`);
-  expect(source).toContain('((took <= upload_limit_seconds)) && break');
+  expect(source).toContain('upload_limit_seconds="$(upload_budget_seconds "$package_bytes")"');
+  expect(source).toContain(`floor="\${UPLOAD_LIMIT_SECONDS:-25}" minimum_rate=4000000`);
+  expect(source).toContain('curl_exit == 0 && took <= upload_limit_seconds');
+  expect(source).toContain('[[ "$uploaded_bytes" == "$package_bytes" ]]');
 });
 
 /** The runner's storefront build, as build_storefronts uploads it and the deploy job downloads it into app/. */
@@ -547,3 +574,61 @@ it('sends every Zerops API request through the call that reports a refusal, neve
   }
   expect(source).toContain('log_error "upload refused (attempt $attempt): HTTP $upload_code');
 });
+
+it.live('replays the last four app uploads and the 47 s slow case without re-uploading healthy packages', () =>
+  Effect.gen(function* healthyUploadBudgets() {
+    // Actual first-attempt sizes and wall seconds in runs 43670763382, 43669052301, 43652806106, 43649766886.
+    // Additional rows cover 47 s / 5 MB/s, the small-package floor and rounding; only metadata is simulated.
+    for (const [bytes, seconds, budget] of [
+      [230_358_831, 35, 58],
+      [231_294_045, 35, 58],
+      [249_067_538, 34, 63],
+      [249_681_957, 37, 63],
+      [250_000_000, 47, 63],
+      [13_072_776, 2, 25],
+      [100_000_001, 26, 26],
+    ]) {
+      const result = yield* runPush(() => processState('FINISHED'), {
+        FAKE_PACKAGE_BYTES: String(bytes),
+        FAKE_UPLOAD_SECONDS: String(seconds),
+      });
+      expect(result.status).toBe(0);
+      expect(uploads(result.curlArguments)).toHaveLength(1);
+      expect(result.stdout).toContain(`upload budget: ${budget}s (${bytes} bytes`);
+      expect(result.curlArguments).toContain(`--max-time ${budget}`);
+    }
+  }),
+);
+
+it.live('retries a transfer below the minimum average rate, then refuses to deploy after three attempts', () =>
+  Effect.gen(function* stalledUpload() {
+    const result = yield* runPush(() => processState('FINISHED'), {
+      FAKE_PACKAGE_BYTES: '230358831',
+      FAKE_UPLOAD_SECONDS: '59',
+    });
+    expect(result.status).toBe(1);
+    expect(uploads(result.curlArguments)).toHaveLength(3);
+    expect(result.stderr).toContain('exceeded 58s');
+    expect(result.calls).not.toContain(ONE_EACH[2]);
+  }),
+);
+
+it.live('a 2xx transfer with fewer sent bytes than the package is retried and never deployed', () =>
+  Effect.gen(function* shortUpload() {
+    const result = yield* runPush(() => processState('FINISHED'), { FAKE_CURL_SENT_BYTES: '6' });
+    expect(result.status).toBe(1);
+    expect(uploads(result.curlArguments)).toHaveLength(3);
+    expect(result.stderr).toContain('sent 6/7 bytes');
+    expect(result.calls).not.toContain(ONE_EACH[2]);
+  }),
+);
+
+it.live('an upload refused by HTTP status never starts a build even when curl sent every byte', () =>
+  Effect.gen(function* refusedUpload() {
+    const result = yield* runPush(() => processState('FINISHED'), {}, { status: 403 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('upload refused (attempt 1): HTTP 403');
+    expect(uploads(result.curlArguments)).toHaveLength(1);
+    expect(result.calls).not.toContain(ONE_EACH[2]);
+  }),
+);
