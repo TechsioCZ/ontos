@@ -75,7 +75,7 @@
     "react-doctor/js-combine-iterations": 1,
     "sonarjs/no-built-in-override": 1,
     "sonarjs/no-duplicate-string": 17,
-    "sonarjs/no-nested-functions": 38,
+    "sonarjs/no-nested-functions": 37,
     "sonarjs/no-undefined-assignment": 5,
     "sonarjs/no-wildcard-import": 18,
     "sonarjs/too-many-break-or-continue-in-loop": 2,

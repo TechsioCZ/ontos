@@ -58,8 +58,8 @@ zerops:
           port: 3070
           path: /robots.txt
         failureTimeout: 3m
-        # A Next standalone server answers within seconds; a 10 s probe period added up to 10 s to every switch.
-        retryPeriod: 2s
+        # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
+        retryPeriod: 10s
     run:
       base: alpine/nodejs@26
       ports:
@@ -105,8 +105,8 @@ zerops:
           port: 3071
           path: /robots.txt
         failureTimeout: 3m
-        # A Next standalone server answers within seconds; a 10 s probe period added up to 10 s to every switch.
-        retryPeriod: 2s
+        # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
+        retryPeriod: 10s
     run:
       base: alpine/nodejs@26
       ports:
@@ -198,7 +198,8 @@ zerops:
           port: 3001
           path: /_host/ready
         failureTimeout: 15m
-        retryPeriod: 2s
+        # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
+        retryPeriod: 10s
     run:
       base: alpine/nodejs@26
       ports:

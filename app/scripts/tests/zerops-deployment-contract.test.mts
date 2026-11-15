@@ -88,15 +88,67 @@ it('has exactly the spicedb, storefront, n1 and app setups, in that order', () =
   expect(setups).toStrictEqual(SETUPS);
 });
 
+/** The checked-in zerops.yaml and every setup file materialized from it for stage and production. */
+const everyDeploymentYaml = Effect.gen(function* everyDeploymentYaml() {
+  const source = readZeropsDeploymentYaml();
+  const stage = yield* materializeZeropsSetupFiles(source, { environment: 'stage' });
+  const production = yield* materializeZeropsSetupFiles(source, {
+    environment: 'production',
+    spiceDbEndpoint: 'spicedb.production.example:443',
+  });
+  return [source, ...stage.map(({ file }) => file), ...production.map(({ file }) => file)];
+});
+
+/** Zerops's duration syntax (`10s`, `3m`, `1h0m0s`) in seconds; anything else is not a duration. */
+const DURATION = /^(?:(?<hours>\d+)h)?(?:(?<minutes>\d+)m)?(?:(?<seconds>\d+)s)?$/u;
+const durationSeconds = (value: string): number | undefined => {
+  const groups = value === '' ? undefined : DURATION.exec(value)?.groups;
+  return groups === undefined
+    ? undefined
+    : Number(groups.hours ?? 0) * 3600 + Number(groups.minutes ?? 0) * 60 + Number(groups.seconds ?? 0);
+};
+/** Zerops refuses a probe `retryPeriod` outside 10 s to 1 h: the whole build-and-deploy request answers 400. */
+const RETRY_PERIOD_SECONDS = { max: 3600, min: 10 } as const;
+const retryPeriodAccepted = (value: string) => {
+  const seconds = durationSeconds(value);
+  return seconds !== undefined && seconds >= RETRY_PERIOD_SECONDS.min && seconds <= RETRY_PERIOD_SECONDS.max;
+};
+
+it('accepts only probe retry periods Zerops accepts', () => {
+  expect(['10s', '1m', '1h', '1h0m0s'].every(retryPeriodAccepted)).toBe(true);
+  expect(['2s', '9s', '1h0m1s', '2h', '10', ''].some(retryPeriodAccepted)).toBe(false);
+});
+
+it.effect('keeps every readiness and health check retry period within the 10 s to 1 h Zerops accepts', () =>
+  Effect.gen(function* probeRetryPeriods() {
+    const yamls = yield* everyDeploymentYaml;
+    let checked = 0;
+    for (const yaml of yamls) {
+      const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(yaml));
+      for (const { setup } of zerops) {
+        const service = serviceNode(yaml, setup);
+        for (const probe of [
+          ['deploy', 'readinessCheck'],
+          ['run', 'readinessCheck'],
+          ['run', 'healthCheck'],
+        ]) {
+          const period = service.getIn([...probe, 'retryPeriod']);
+          if (period !== undefined) {
+            checked += 1;
+            const value = Schema.decodeUnknownSync(Schema.String)(period);
+            expect(retryPeriodAccepted(value), `${setup} ${probe.join('.')}.retryPeriod ${value}`).toBe(true);
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  }),
+);
+
 it.effect('repairs checkout ownership before any build command in every setup with a restored build cache', () =>
   Effect.gen(function* cachedBuildOwnership() {
-    const source = readZeropsDeploymentYaml();
-    const stage = yield* materializeZeropsSetupFiles(source, { environment: 'stage' });
-    const production = yield* materializeZeropsSetupFiles(source, {
-      environment: 'production',
-      spiceDbEndpoint: 'spicedb.production.example:443',
-    });
-    for (const yaml of [source, ...stage.map(({ file }) => file), ...production.map(({ file }) => file)]) {
+    const yamls = yield* everyDeploymentYaml;
+    for (const yaml of yamls) {
       const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(yaml));
       for (const { setup } of zerops) {
         const service = serviceNode(yaml, setup);
@@ -164,7 +216,7 @@ it('runs the whole application in the app container through native Node, from th
   }
   expect(app.getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe('/_host/live');
   expect(app.getIn(['deploy', 'readinessCheck', 'httpGet', 'path'])).toBe('/_host/ready');
-  expect(app.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('2s');
+  expect(app.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('10s');
 });
 
 it('starts the storefront from its standalone bundle and keeps the Shell URL in-project', () => {
@@ -197,7 +249,7 @@ it('deploys each storefront from the runner-built archive, checked against its s
     );
     // The old release keeps serving until the new one answers its readiness probe.
     expect(service.getIn(['deploy', 'temporaryShutdown'])).toBe(false);
-    expect(service.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('2s');
+    expect(service.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('10s');
   }
 });
 

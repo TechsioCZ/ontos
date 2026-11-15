@@ -100,6 +100,25 @@ mapfile -t entries < <(find "$work/source" -mindepth 1 -maxdepth 1 -printf '%P\n
 tar --format=pax -C "$work/source" -czf "$work/package.tar.gz" -- "${entries[@]}"
 log "package: $(du -h "$work/package.tar.gz" | cut -f1) ($(wc -c <"$work/package.tar.gz" | tr -d ' ') bytes)"
 
+# One Zerops API request: <method> <path under the API> [curl arguments...]. A 2xx answer's body goes to stdout. Any
+# other answer fails the push with the status and the body Zerops sent, which carries its reason (a refused zerops.yaml
+# names the field); the token travels only in the Authorization header and is never printed.
+zerops_api() {
+  local method="$1" path="$2" body code exit_code=0
+  shift 2
+  body="$(mktemp "$work/response.XXXXXX")"
+  code="$(curl -sS -o "$body" -w '%{http_code}' -X "$method" "${auth[@]}" "$@" "$api$path")" || exit_code=$?
+  if ((exit_code != 0)); then
+    log_error "Zerops $method $path got no answer (curl exit $exit_code)"
+    return 1
+  fi
+  if [[ "$code" != 2?? ]]; then
+    log_error "Zerops $method $path answered HTTP $code: $(head -c 8192 "$body")"
+    return 1
+  fi
+  cat "$body"
+}
+
 # The host of a URL, nothing else: no scheme, user info, port, path, query or fragment (the signed query is a secret).
 url_host() {
   local rest="${1#*://}"
@@ -197,7 +216,7 @@ package_bytes="$(wc -c <"$work/package.tar.gz" | tr -d ' ')"
 for attempt in 1 2 3; do
   log "app version create started (attempt $attempt)"
   created="$(jq -n --arg name "$version_name" '{name: $name}' |
-    curl -fsS -X POST "${auth[@]}" -H 'content-type: application/json' "$api/service-stack/$service_id/app-version" -d @-)"
+    zerops_api POST "/service-stack/$service_id/app-version" -H 'content-type: application/json' -d @-)"
   version_id="$(jq -er '.id' <<<"$created")"
   upload_url="$(jq -er '.uploadUrl' <<<"$created")"
   log "app version create ended (attempt $attempt): version $version_id"
@@ -209,8 +228,14 @@ for attempt in 1 2 3; do
   # The clock starts after the warm-up: only the real upload is judged by the limit below, and "uploaded in N s" means
   # the upload's own duration.
   started="$(date +%s)"
-  timing="$(curl -fsS --http1.1 --retry 2 "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" "$upload_url" -o /dev/null \
-    -w "$timing_format")"
+  # The signed upload URL is a secret: a refused upload names its status and Zerops's answer, never the URL.
+  timing="$(curl -sS --http1.1 --retry 2 "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" "$upload_url" \
+    -o "$work/upload-response" -w "$timing_format")"
+  upload_code="${timing##*http_code=}"
+  if [[ "$upload_code" != 2?? ]]; then
+    log_error "upload refused (attempt $attempt): HTTP $upload_code: $(head -c 8192 "$work/upload-response")"
+    exit 1
+  fi
   took=$(($(date +%s) - started))
   log "upload timing (attempt $attempt): $timing"
   log "upload ended (attempt $attempt, $package_bytes bytes): uploaded in ${took}s (attempt $attempt)"
@@ -223,7 +248,7 @@ done
 
 log "build and deploy request started"
 process="$(jq -n --rawfile yaml app/zerops.yaml --arg setup "$setup" '{zeropsYaml: $yaml, zeropsYamlSetup: $setup}' |
-  curl -fsS -X PUT "${auth[@]}" -H 'content-type: application/json' "$api/app-version/$version_id/build-and-deploy" -d @-)"
+  zerops_api PUT "/app-version/$version_id/build-and-deploy" -H 'content-type: application/json' -d @-)"
 process_id="$(jq -er '.id' <<<"$process")"
 log "build and deploy request ended"
 log "build and deploy process $process_id for app version $version_id"
@@ -232,7 +257,7 @@ log "build and deploy process $process_id for app version $version_id"
 deadline=$((SECONDS + ${DEPLOY_LIMIT_SECONDS:-3600}))
 previous_status=''
 while true; do
-  state="$(curl -fsS --retry 6 --retry-max-time 180 "${auth[@]}" "$api/process/$process_id")"
+  state="$(zerops_api GET "/process/$process_id" --retry 6 --retry-max-time 180)"
   status="$(jq -r '.status' <<<"$state")"
   if [ "$status" != "$previous_status" ]; then
     log "process state: $status"

@@ -94,6 +94,7 @@ const runPush = (
   answer: ProcessAnswer,
   environment: Readonly<Record<string, string>> = {},
   upload: {
+    readonly buildAndDeploy?: { readonly body: string; readonly status: number };
     readonly delayFirstUploadMs?: number;
     readonly origin?: (origin: string) => string;
     readonly target?: string;
@@ -126,7 +127,12 @@ const runPush = (
           return HttpServerResponse.empty({ status: 200 });
         }
         if (route === 'PUT /api/rest/public/app-version/version-1/build-and-deploy') {
-          return json({ id: 'process-1' });
+          return upload.buildAndDeploy === undefined
+            ? json({ id: 'process-1' })
+            : HttpServerResponse.text(upload.buildAndDeploy.body, {
+                contentType: 'application/json',
+                status: upload.buildAndDeploy.status,
+              });
         }
         if (route === 'GET /api/rest/public/process/process-1') {
           polls += 1;
@@ -505,4 +511,39 @@ it('never ships a storefront archive in the app package', () => {
   const source = readFileSync(new URL(PUSH_SERVICE_SCRIPT, import.meta.url), 'utf-8');
   expect(source).toContain("--exclude='app/.zerops-storefront.*'");
   expect(source).toContain('cp app/zerops.yaml app/.zerops-storefront.tar.gz app/.zerops-storefront.json');
+});
+
+/** Zerops's answer to a zerops.yaml it refuses (stage, 2026-11-15): the reason is the only way to know what to fix. */
+const REFUSED_YAML = JSON.stringify({
+  error: { code: 'validation', message: 'invalid retryPeriod <10s, 1h0m0s>', meta: [{ parameterName: 'retryPeriod' }] },
+});
+
+it.live("a refused build-and-deploy request fails with Zerops's status and reason, never the token", () =>
+  Effect.gen(function* refusedRequest() {
+    const result = yield* runPush(
+      () => processState('FINISHED'),
+      {},
+      { buildAndDeploy: { body: REFUSED_YAML, status: 400 } },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Zerops PUT /app-version/version-1/build-and-deploy answered HTTP 400');
+    expect(result.stderr).toContain('invalid retryPeriod <10s, 1h0m0s>');
+    expect(result.stderr).toContain('"parameterName":"retryPeriod"');
+    expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+    // Nothing is polled for a process Zerops never started.
+    expect(result.calls).not.toContain('GET /api/rest/public/process/process-1');
+  }),
+);
+
+it('sends every Zerops API request through the call that reports a refusal, never through a silent curl -f', () => {
+  const source = readFileSync(new URL(PUSH_SERVICE_SCRIPT, import.meta.url), 'utf-8');
+  expect(source).not.toMatch(/curl -f/u);
+  for (const request of [
+    'zerops_api POST "/service-stack/$service_id/app-version"',
+    'zerops_api PUT "/app-version/$version_id/build-and-deploy"',
+    'zerops_api GET "/process/$process_id"',
+  ]) {
+    expect(source).toContain(request);
+  }
+  expect(source).toContain('log_error "upload refused (attempt $attempt): HTTP $upload_code');
 });
