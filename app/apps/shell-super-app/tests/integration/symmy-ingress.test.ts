@@ -283,6 +283,25 @@ const start = ({
 };
 
 const fixtureJson = { body: '{"fixtureId":"internal-c14-fixture"}', headers: { 'content-type': 'application/json' } };
+const stockUnitRef = {
+  moduleId: 'commerce.catalog',
+  resourceId: '33333333-3333-4333-8333-333333333333',
+  resourceType: 'commerce.catalog.product-unit',
+  tenantId: regionsMarketRef.tenantId,
+};
+const stockRow = (itemKey: string, observedAt = '2026-01-01T10:00:00Z') => ({
+  businessObservedAt: observedAt,
+  itemKey,
+  locationKey: 'warehouse-1',
+  quantity: { amount: '12.5', unitRef: stockUnitRef },
+  revision: 'r1',
+  sourceReference: `erp-${itemKey}`,
+});
+/** The decoder reads any ISO instant, the owner admission always receives the canonical form. */
+const stockBatchJson = (rows: readonly ReturnType<typeof stockRow>[]) => ({
+  body: JSON.stringify({ stock: rows }),
+  headers: { 'content-type': 'application/json' },
+});
 
 const internalProductInput = {
   contractVersion: 'INTERNAL_C14',
@@ -1170,12 +1189,13 @@ it.effect('uses each approved route’s declared success status for internal fix
     );
     for (const definition of Object.values(SYMMY_ROUTES)) {
       const path = definition.path.replace('{code}', groupCode).replace('{id}', jobId);
+      const isStock = path === SYMMY_ROUTES.inventoryStockBatch.path;
       const init =
         definition.method === 'POST'
           ? {
-              ...fixtureJson,
+              ...(isStock ? stockBatchJson([stockRow('item-1'), stockRow('item-2')]) : fixtureJson),
               headers:
-                definition.mode === 'durable_job'
+                definition.mode === 'durable_job' || isStock
                   ? { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey }
                   : { ...fixtureJson.headers, 'x-api-key': validKey },
               method: definition.method,
@@ -1189,7 +1209,15 @@ it.effect('uses each approved route’s declared success status for internal fix
       const expectedBodies = {
         business_read: publicReadBody(path, references),
         durable_job: { jobId, status: 'queued' },
-        item_results: { items: expectedItems },
+        item_results: {
+          items: isStock
+            ? expectedItems.map((item, index) => ({
+                ...item,
+                itemKey: `item-${index + 1}`,
+                locationKey: 'warehouse-1',
+              }))
+            : expectedItems,
+        },
         job_read: { items: expectedItems, jobId, status: 'indeterminate' },
       };
       expect(body).toEqual(expectedBodies[definition.mode]);
@@ -1203,13 +1231,150 @@ it.effect('uses each approved route’s declared success status for internal fix
       { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
       { fixtureId, route: 'customerGroupsBatch' },
       { fixtureId, idempotencyKey, route: 'customersBatch' },
-      { fixtureId, route: 'inventoryStockBatch' },
+      {
+        idempotencyKey,
+        route: 'inventoryStockBatch',
+        stock: [stockRow('item-1', '2026-01-01T10:00:00.000Z'), stockRow('item-2', '2026-01-01T10:00:00.000Z')],
+      },
       { id: jobId, route: 'job' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'priceListPricesBatch' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
       { fixtureId, idempotencyKey, route: 'priceListsBatchUpsert' },
       { fixtureId, idempotencyKey, route: 'productsBatch' },
     ]);
+  }),
+);
+
+it.effect('serves the public stock batch route with one keyed result per row and no internal contract', () =>
+  Effect.gen(function* servesPublicStock() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const accepted = yield* decodeSymmyItemOutcome({
+      effects: [
+        { effectId: '20000000-0000-4000-8000-000000000001', owner: 'commerce.inventory', status: 'accepted_change' },
+      ],
+      itemId: '30000000-0000-4000-8000-000000000001',
+    });
+    const stale = yield* decodeSymmyItemOutcome({
+      effects: [{ effectId: '20000000-0000-4000-8000-000000000002', owner: 'commerce.inventory', status: 'stale' }],
+      itemId: '30000000-0000-4000-8000-000000000002',
+    });
+    let results: readonly [typeof accepted, ...(typeof accepted)[]] = [accepted, stale];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.succeed(results),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.fail(symmyUnavailableProblem),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const post = (init: { readonly body: string }, headers: Record<string, string>) =>
+      Effect.promise(() =>
+        server.request(SYMMY_ROUTES.inventoryStockBatch.path, {
+          ...init,
+          headers: { 'content-type': 'application/json', ...headers },
+          method: 'POST',
+        }),
+      );
+    const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
+    const rows = [stockRow('item-2'), { ...stockRow('item-1'), locationKey: 'warehouse-9' }];
+    const response = yield* post(stockBatchJson(rows), authorized);
+    expect(response.status).toBe(200);
+    const body = yield* Effect.promise(() => response.json());
+    expect(body).toEqual({
+      items: [
+        { ...accepted, itemKey: 'item-2', locationKey: 'warehouse-1', outcome: 'accepted' },
+        { ...stale, itemKey: 'item-1', locationKey: 'warehouse-9', outcome: 'not_accepted' },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain('contractVersion');
+    expect(forwarded).toEqual([
+      {
+        idempotencyKey,
+        route: 'inventoryStockBatch',
+        stock: [
+          stockRow('item-2', '2026-01-01T10:00:00.000Z'),
+          { ...stockRow('item-1', '2026-01-01T10:00:00.000Z'), locationKey: 'warehouse-9' },
+        ],
+      },
+    ]);
+    expect(forwarded[0]).not.toHaveProperty('contractVersion');
+    expect(forwarded[0]).not.toHaveProperty('plan');
+    // A replayed answer carries no extra or missing result: the pairing is by position, so a count mismatch is a defect.
+    results = [accepted];
+    expect((yield* post(stockBatchJson(rows), authorized)).status).toBe(500);
+  }),
+);
+
+it.effect('answers the public stock batch route with 428 without a key and 400 for every body rule broken', () =>
+  Effect.gen(function* rejectsStock() {
+    let calls = 0;
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.fail(symmyUnavailableProblem),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+          observe: () => {
+            calls += 1;
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const post = (body: string, headers: Record<string, string>, query = '') =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.inventoryStockBatch.path}${query}`, {
+          body,
+          headers: { 'content-type': 'application/json', ...headers },
+          method: 'POST',
+        }),
+      );
+    const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
+    const valid = stockBatchJson([stockRow('item-1')]).body;
+    const withoutKey = yield* post(valid, { 'x-api-key': validKey });
+    expect(withoutKey.status).toBe(428);
+    expect(withoutKey.headers.get('content-type')).toContain('application/problem+json');
+    expect(calls).toBe(0);
+    expect((yield* post(valid, { 'idempotency-key': idempotencyKey })).status).toBe(401);
+    const [row] = [stockRow('item-1')];
+    const { quantity: _quantity, ...withoutQuantity } = row;
+    const bodies = [
+      ['a quantity unit that is not an object', { stock: [{ ...row, quantity: { amount: '1', unitRef: 'u' } }] }],
+      ['a row without quantity', { stock: [withoutQuantity] }],
+      ['a row with a null field', { stock: [{ ...row, revision: null }] }],
+      ['a contractVersion property', { contractVersion: 'INTERNAL_C14', stock: [row] }],
+      ['a fixture identity', { fixtureId: 'internal-c14-fixture' }],
+      ['a non-canonical amount', { stock: [{ ...row, quantity: { amount: '12.50', unitRef: stockUnitRef } }] }],
+      ['a numeric amount', { stock: [{ ...row, quantity: { amount: 12, unitRef: stockUnitRef } }] }],
+      ['a reservedQuantity property', { stock: [{ ...row, reservedQuantity: '1' }] }],
+      ['an internal plan', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
+      ['an unknown property', { stock: [row], unknown: true }],
+      ['an unknown row property', { stock: [{ ...row, sku: 'a' }] }],
+      ['an empty stock list', { stock: [] }],
+      ['no stock list', {}],
+      ['seventeen rows', { stock: Array.from({ length: 17 }, () => row) }],
+    ] as const;
+    for (const [name, body] of bodies) {
+      expect((yield* post(JSON.stringify(body), authorized)).status, name).toBe(400);
+    }
+    expect((yield* post(valid, authorized, '?contractVersion=INTERNAL_C14')).status).toBe(400);
+    expect((yield* post(valid, authorized, '?limit=1')).status).toBe(400);
+    expect((yield* post(valid, { ...authorized, 'idempotency-key': 'not a key' })).status).toBe(400);
+    const reflected = yield* post(JSON.stringify({ stock: [{ ...row, itemKey: validKey }] }), authorized);
+    expect(reflected.status).toBe(400);
+    expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
+    expect(calls).toBe(0);
   }),
 );
 

@@ -12,3 +12,5 @@ export {
   decodeSymmySellerVatDeclarationSource,
   mapSymmySellerVatDeclaration,
 } from './domain/symmy-seller-vat-declaration-mapping.ts';
+export { SymmyStockRowSchema, SymmyStockRowsSchema } from './domain/symmy-stock-batch.ts';
+export type { SymmyStockRows } from './domain/symmy-stock-batch.ts';

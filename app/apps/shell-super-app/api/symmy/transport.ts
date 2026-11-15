@@ -7,7 +7,11 @@ import {
   SYMMY_ROUTES,
 } from '@app/shared-contracts/symmy';
 import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symmy';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import {
+  SymmyInternalExecutionPlanSchema,
+  SymmyStockRowsSchema,
+} from '@app/symmy-integration/symmy-internal-contracts';
+import type { SymmyStockRows } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { useEffectContext } from '@modern-js/bff-effect/context';
 import { HttpApiBuilder, HttpEffect } from '@modern-js/bff-effect/effect-edge';
@@ -44,6 +48,8 @@ import type {
   SymmyInternalWritePayloadSchema,
 } from './contract.ts';
 import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
+import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsProjection, SymmyPriceListsResponseSchema } from './price-lists-public-contract.ts';
 import {
   mapSymmyRegionsProjection,
@@ -67,7 +73,6 @@ type RouteKeyWith<Fields> = {
   [Key in SymmyRouteKey]: (typeof SYMMY_ROUTES)[Key] extends Fields ? Key : never;
 }[SymmyRouteKey];
 type Reads = RouteKeyWith<{ readonly mode: 'business_read' }>;
-type ItemWrites = RouteKeyWith<{ readonly mode: 'item_results' }>;
 type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }> | keyof typeof SYMMY_FIXTURE_ROUTES;
 type SelectedWrites = RouteKeyWith<{ readonly selector: 'code' }>;
 
@@ -86,10 +91,17 @@ interface FixturePoll {
   readonly route: 'job';
 }
 type InternalWritePayload = typeof SymmyInternalWritePayloadSchema.Type;
-type FixtureApply = InternalWritePayload & {
+type GroupApply = InternalWritePayload & {
   readonly idempotencyKey?: typeof SymmyClientIdempotencyKeySchema.Type;
-  readonly route: ItemWrites;
+  readonly route: 'customerGroupsBatch';
 };
+/** The public stock rows. Every stock request is a real import, so its replay key is required (428). */
+interface StockApply {
+  readonly idempotencyKey?: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: 'inventoryStockBatch';
+  readonly stock: SymmyStockRows;
+}
+type FixtureApply = GroupApply | StockApply;
 type FixtureSubmit = InternalWritePayload & {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
 } & (
@@ -255,6 +267,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
   ) {
     return true;
   }
+  if ('stock' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyStockRowsSchema))(request.stock).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
   if (Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request)) {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyInternalExecutionPlanSchema))(
       request.plan,
@@ -393,11 +411,30 @@ const handlePriceListsRead = handle(SymmyPriceListsResponseSchema, (ingress, inp
       ),
     ),
 );
-const handleApply = handle(SymmyFixtureItemResultsSchema, (ingress, input: FixtureInput<FixtureApply>) =>
+const handleApply = handle(SymmyFixtureItemResultsSchema, (ingress, input: FixtureInput<GroupApply>) =>
   (Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(input.request) && input.request.idempotencyKey === undefined
     ? Effect.fail(symmyIdempotencyRequiredProblem)
     : ingress.dispatch.apply(input)
   ).pipe(Effect.map((items) => ({ items: projectItems(items) }))),
+);
+/** One result per submitted row, in request order, each carrying the keys of the row it answers. */
+const handleStockApply = handle(SymmyStockBatchResponseSchema, (ingress, input: FixtureInput<StockApply>) =>
+  (input.request.idempotencyKey === undefined
+    ? Effect.fail(symmyIdempotencyRequiredProblem)
+    : ingress.dispatch.apply(input)
+  ).pipe(
+    Effect.flatMap((items) =>
+      items.length === input.request.stock.length
+        ? Effect.succeed({
+            items: EffectArray.zipWith(projectItems(items), input.request.stock, (item, row) => ({
+              ...item,
+              itemKey: row.itemKey,
+              locationKey: row.locationKey,
+            })),
+          })
+        : Effect.die('Invalid Symmy stock response'),
+    ),
+  ),
 );
 const handleSubmit = handle(SymmyFixtureAdmissionSchema, (ingress, input: FixtureInput<FixtureSubmit>) =>
   ingress.dispatch.submit(input).pipe(Effect.map((jobId) => ({ jobId, status: 'queued' as const }))),
@@ -427,10 +464,20 @@ const handlePoll = handle(SymmyFixtureJobStatusSchema, (ingress, input: FixtureI
 );
 
 const syncRequest = (
-  route: ItemWrites,
+  route: GroupApply['route'],
   payload: InternalWritePayload,
   idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
-): FixtureApply => (idempotencyKey === undefined ? { ...payload, route } : { ...payload, idempotencyKey, route });
+): GroupApply => (idempotencyKey === undefined ? { ...payload, route } : { ...payload, idempotencyKey, route });
+
+const stockRequest = (
+  payload: SymmyStockBatchRequest,
+  idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
+): StockApply => {
+  const stock = mapSymmyStockBatchRequest(payload);
+  return idempotencyKey === undefined
+    ? { route: 'inventoryStockBatch', stock }
+    : { idempotencyKey, route: 'inventoryStockBatch', stock };
+};
 
 export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
   group
@@ -478,11 +525,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       ),
     )
     .handle('inventoryStockBatch', ({ headers, payload, request }) =>
-      handleApply(
-        headers['x-api-key'],
-        syncRequest('inventoryStockBatch', payload, headers['idempotency-key']),
-        request,
-      ),
+      handleStockApply(headers['x-api-key'], stockRequest(payload, headers['idempotency-key']), request),
     )
     .handle('job', ({ headers, params, request }) =>
       handlePoll(headers['x-api-key'], { id: params.id, route: 'job' }, request),

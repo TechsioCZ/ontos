@@ -1,6 +1,5 @@
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
 import { UpdateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/update-customer-group-action';
-import { ImportSourceAssertionPayloadSchema } from '@app/inventory/source-import';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Effect, Schema } from 'effect';
 
@@ -79,47 +78,6 @@ export const makeInternalGroupUpdatePlan = (
               sourceRecordId: occurrence.recordId,
             },
             sourceOccurrenceId: occurrence.occurrenceId,
-          },
-        ],
-      }),
-    ),
-  );
-
-/** Absolute physical on-hand is the only declared Stock meaning; reservations stay unsupported. */
-export const makeInternalStockPlan = (
-  occurrence: InternalSyncOccurrence,
-  payload: typeof ImportSourceAssertionPayloadSchema.Encoded,
-  reservedQuantityHint: boolean,
-) =>
-  Schema.decodeUnknownEffect(ImportSourceAssertionPayloadSchema)(payload).pipe(
-    Effect.flatMap(Schema.encodeEffect(ImportSourceAssertionPayloadSchema)),
-    Effect.flatMap((normalized) =>
-      Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
-        items: [
-          {
-            effects: [
-              {
-                effectKey: 'inventory-absolute-on-hand',
-                intent: { _tag: 'InventoryImport', payload: normalized },
-                operation: {
-                  entrypointKey: 'commerce.inventory.import-source-assertion',
-                  moduleId: 'commerce.inventory',
-                  schemaVersion: '1',
-                },
-                originalTarget: normalized.authorizationTargetRef,
-              },
-            ],
-            itemKey: 'stock',
-            source: {
-              entityKind: 'STOCK',
-              issuerId: internalSyncSource.issuerId,
-              sourceNamespace: internalSyncSource.namespace,
-              sourceRecordId: occurrence.recordId,
-            },
-            sourceOccurrenceId: occurrence.occurrenceId,
-            unsupportedBranches: reservedQuantityHint
-              ? [{ branchKey: 'reserved-quantity', kind: 'ReservedQuantityHint' }]
-              : [],
           },
         ],
       }),
