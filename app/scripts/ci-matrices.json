@@ -488,8 +488,7 @@
     },
     {
       "suite": "browser",
-      "name": "Authenticated Browser Tests",
-      "seed": true
+      "name": "Authenticated Browser Tests"
     }
   ]
 }

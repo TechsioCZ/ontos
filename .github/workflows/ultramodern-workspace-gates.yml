@@ -1435,32 +1435,12 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
-      # The browser suite restores the cached seed like an eligible integration row and migrates its own database on a
-      # miss; it never waits for the seed producer.
-      - name: Restore the cached integration seed
-        id: seed-cache
-        if: matrix.seed == true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/integration-seed
-          key: ${{ needs.ci-plan.outputs.seed-key }}
-
-      - name: Restore the proven seed databases
-        if: steps.seed-cache.outputs.cache-hit == 'true'
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          CI_MATRIX_NAME: ${{ matrix.name }}
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: |
-          mise exec -- node scripts/ci/integration-seed.mts restore --directory "$RUNNER_TEMP/integration-seed" \
-            --disposable --purpose ordinary-tests --job-name "$CI_MATRIX_NAME" --root-suite false --test-files '' --jobs 4
-          # The seed carries the Commerce portal realm (produced and verified with its database pair); verify it the same way.
-          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \
-            mise exec -- pnpm db:verify
-
+      # The browser suite never restores the integration seed; it always prepares its own database here. The seed is the
+      # database of the service-integration rows' fresh preparation, which runs the assembled stage migrator (including
+      # the access catalog release activation) before the migrations. This job's preparation does not, so a restored
+      # seed is not the database these tests are written for: on one, the Contacts revocation test ran past its timeout
+      # (runs 43662684424 and its rerun) while it passes on the database prepared here.
       - name: Initialize fresh local database login identities
-        if: steps.seed-cache.outputs.cache-hit != 'true'
         working-directory: app
         env:
           DATABASE_LOGIN_ROLE_POLICY: initialize-local
@@ -1468,7 +1448,6 @@ jobs:
         run: mise exec -- pnpm db:bootstrap-runtime-role
 
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
-        if: steps.seed-cache.outputs.cache-hit != 'true'
         working-directory: app
         # The Commerce portal authentication realm is optional and owns its own Drizzle
         # configuration, migration journal and runtime role. Naming its database pair here is what

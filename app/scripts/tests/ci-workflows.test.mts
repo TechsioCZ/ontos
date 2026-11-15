@@ -1336,6 +1336,33 @@ const expectProducerVerifiesSeedRealm = (steps: readonly (typeof GateCommandStep
 const restoreOf = (steps: readonly (typeof GateCommandStepSchema.Type)[]) =>
   steps.find(({ id }) => id === 'seed-cache');
 
+/**
+ * The seed is the database of the service-integration rows' fresh preparation: the assembled stage migrator (with the
+ * access catalog release activation) and then the migrations. The browser job prepares without that migrator, so a
+ * seed is not its database (run 43662684424): it never restores one and always prepares its own.
+ */
+const expectBrowserPreparesItsOwnDatabase = (steps: readonly (typeof GateCommandStepSchema.Type)[]) => {
+  expect(restoreOf(steps)).toBeUndefined();
+  expect(steps.some(({ run }) => run?.includes('integration-seed.mts') === true)).toBe(false);
+  expect(steps.some(({ name }) => name === ASSEMBLED_MIGRATOR_STEP)).toBe(false);
+  const { integration } = Schema.decodeUnknownSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        integration: Schema.Array(Schema.Struct({ seed: Schema.optional(Schema.Boolean), suite: Schema.String })),
+      }),
+    ),
+  )(readFileSync(new URL(CI_MATRICES_PATH, import.meta.url), 'utf-8'));
+  expect(integration.filter(({ suite }) => suite === 'browser').every(({ seed }) => seed === undefined)).toBe(true);
+  for (const name of [
+    'Initialize fresh local database login identities',
+    'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
+  ]) {
+    const step = steps.find((candidate) => candidate.name === name);
+    expect(step, name).toBeDefined();
+    expect(step?.if, name).toBeUndefined();
+  }
+};
+
 /** A seed consumer restores exactly the planned key, with no prefix fallback, and prepares fresh on a miss. */
 const expectSeedConsumer = (
   job: string,
@@ -1395,10 +1422,9 @@ it('restores the integration seed from its input-keyed cache and never makes a r
     expect(plan.steps[keyStep]?.run).toContain(input);
   }
   expect(plan.outputs['seed-key']).toBe(expression('steps.seed-key.outputs.key'));
-  // Every consumer restores exactly that key, with no prefix fallback, and prepares a fresh database on a miss.
-  for (const job of [SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB] as const) {
-    expectSeedConsumer(job, jobs[job]);
-  }
+  // The consumer restores exactly that key, with no prefix fallback, and prepares a fresh database on a miss.
+  expectSeedConsumer(SERVICE_INTEGRATION_JOB, jobs[SERVICE_INTEGRATION_JOB]);
+  expectBrowserPreparesItsOwnDatabase(jobs[BROWSER_INTEGRATION_JOB].steps);
   const integration = jobs[SERVICE_INTEGRATION_JOB].steps;
   expect(integration.find(({ run }) => run?.includes('integration-seed.mts restore') === true)?.run).toContain(
     '--test-files "$CI_TEST_FILES"',
