@@ -24,6 +24,12 @@ export const OutputFileSchema = Schema.Struct({
   size: Schema.Number,
 });
 export type OutputFile = typeof OutputFileSchema.Type;
+/**
+ * The receipt format. The gates cache entry's digest is salted with it (gatesDigestSalt in unit-output-cache.mts), so a
+ * new format names new cache keys: an entry written in an older format can only be restored through the key prefix,
+ * where `plan` rejects it and the shard saves a new entry, instead of being an exact hit that never saves again.
+ */
+export const RECEIPT_SCHEMA_VERSION = 2;
 export const CacheReceiptSchema = Schema.Struct({
   digest: DIGEST,
   files: Schema.Array(OutputFileSchema),
@@ -34,7 +40,7 @@ export const CacheReceiptSchema = Schema.Struct({
    * those sources are the ones the unit was built from (scripts/ci/kept-unit-identity.mts).
    */
   inputs: DIGEST,
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(RECEIPT_SCHEMA_VERSION),
   unit: NONEMPTY,
 });
 export type CacheReceipt = typeof CacheReceiptSchema.Type;

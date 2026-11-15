@@ -3,8 +3,8 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
-import { Effect, Exit, FileSystem, Schema } from 'effect';
-import { ChildProcess } from 'effect/process';
+import { Effect, Exit, FileSystem, Layer, PlatformError, Schema } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
 import { KeptUnitIdentityError, readBuiltDocument, resolveOwnerReleaseIdentity } from '../ci/kept-unit-identity.mts';
@@ -25,6 +25,7 @@ const ENVIRONMENT = {};
 const markerAt = (revision: string) =>
   createUltramodernReleaseBuildMarker({ generationBuildMarker: GENERATION, sourceRevision: revision, unitId: UNIT_ID });
 const NOT_THIS_BUILD = 'does not describe this build';
+const RECEIPT_UNREADABLE = 'gates receipt cannot be read';
 const OTHER_SOURCES = 'other sources';
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -209,12 +210,12 @@ const refusals: readonly {
   },
   {
     change: 'an unreadable receipt',
-    expected: 'gates receipt cannot be read',
+    expected: RECEIPT_UNREADABLE,
     setup: (context) => context.write(`app/${SHELL}/${RECEIPT}`, 'not json'),
   },
   {
     change: 'a version 1 receipt',
-    expected: 'gates receipt cannot be read',
+    expected: RECEIPT_UNREADABLE,
     setup: (context) =>
       context.write(
         `app/${SHELL}/${RECEIPT}`,
@@ -322,6 +323,49 @@ live('the keep proof schema accepts only what the gates plan writes', () =>
       );
       expect(Exit.isFailure(Schema.decodeUnknownExit(CacheReceiptSchema)({ schemaVersion: 1 }))).toBe(true);
       return yield* Effect.void;
+    }),
+  ),
+);
+
+/** A spawner that cannot start anything: Git is not installed. */
+const noGit = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() =>
+    Effect.fail(PlatformError.systemError({ _tag: 'NotFound', method: 'spawn', module: 'ChildProcess' })),
+  ),
+);
+
+live('refuses a built unit when Git cannot be run', () =>
+  run(
+    Effect.gen(function* gitUnavailable() {
+      const context = yield* fixture;
+      yield* context.build(OLD_REVISION);
+      const reason = yield* context.refusal().pipe(Effect.provide(noGit));
+      expect(reason).toContain('Git cannot be run');
+    }),
+  ),
+);
+
+live('refuses a built document that cannot be read, has no readable receipt, or is not in its inventory', () =>
+  run(
+    Effect.gen(function* builtDocumentRefusals() {
+      const context = yield* fixture;
+      const read = (document = CONTRACT) =>
+        readBuiltDocument({ document, unitDirectory: SHELL, workspaceRoot: context.workspaceRoot }).pipe(
+          Effect.match({ onFailure: (error) => error.reason, onSuccess: () => 'accepted' }),
+        );
+      yield* context.build(OLD_REVISION);
+      expect(yield* read('dist/public/missing.json')).toContain('cannot be read');
+      // A document on disk that the receipt never inventoried, as opposed to one with other bytes.
+      yield* context.write(`app/${SHELL}/dist/public/extra.json`, '{}');
+      expect(yield* read('dist/public/extra.json')).toContain('is not the document its build verified');
+      yield* context.write(`app/${SHELL}/${RECEIPT}`, 'not json');
+      expect(yield* read()).toContain(RECEIPT_UNREADABLE);
+      yield* context.write(
+        `app/${SHELL}/${RECEIPT}`,
+        JSON.stringify({ digest: 'd'.repeat(64), files: [], identity: {}, schemaVersion: 1, unit: APP_ID }),
+      );
+      expect(yield* read()).toContain(RECEIPT_UNREADABLE);
     }),
   ),
 );

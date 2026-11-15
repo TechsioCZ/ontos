@@ -80,6 +80,7 @@ import {
   KEEP_PROOF,
   KeepProofSchema,
   RECEIPT,
+  RECEIPT_SCHEMA_VERSION,
   REVISION,
 } from './unit-output-receipt.mts';
 import type { CacheIdentity, CacheReceipt, OutputFile } from './unit-output-receipt.mts';
@@ -191,19 +192,21 @@ interface DigestInput {
   readonly profile: CacheProfile;
 }
 const ORIGIN_VARIABLES = ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'];
+/** Derived from the receipt format, never a second hand-kept version (see RECEIPT_SCHEMA_VERSION). */
+export const gatesDigestSalt = `gates-output-receipt-v${CacheReceiptSchema.fields.schemaVersion.literal}`;
 export const gatesInputDigest = (input: DigestInput) =>
   Effect.gen(function* computeGatesDigest() {
     // The profile carries the rest of the build environment; the origins are named so an unset one still counts.
     const environment = ORIGIN_VARIABLES.map((name, index) => [name, input.origins[index] ?? ''] as const);
     const base = yield* unitInputDigest(input.directory, { environment, graph: input.graph });
     const profile = yield* encode(CacheProfileSchema, input.profile);
-    return yield* Effect.succeed(hash(`gates-output-v1\n${base}\n${profile}`));
+    return yield* Effect.succeed(hash(`${gatesDigestSalt}\n${base}\n${profile}`));
   });
 
-const run = (executable: string, args: readonly string[]) =>
+const run = (executable: string, args: readonly string[], cwd: string) =>
   Effect.gen(function* captureCommand() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const handle = yield* spawner.spawn(ChildProcess.make(executable, args, { cwd: APP_ROOT }));
+    const handle = yield* spawner.spawn(ChildProcess.make(executable, args, { cwd }));
     const [text, stderr, code] = yield* Effect.all(
       [
         handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
@@ -217,21 +220,22 @@ const run = (executable: string, args: readonly string[]) =>
     }
     return yield* Effect.succeed(text.trim());
   }).pipe(Effect.scoped);
-const git = (args: readonly string[]) => run('git', args);
+const git = (args: readonly string[], root: string) => run('git', args, root);
 const identityOverride = /^(?:ULTRAMODERN_SOURCE_REVISION|ULTRAMODERN_BUILD_MARKER)$/u;
 const buildVariable =
   /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
 /** `name=value` pairs of the environment every build child inherits, NUL-separated so values may hold newlines. */
-const inheritedEnvironment = run('env', ['-0']).pipe(
-  Effect.map((listing) =>
-    listing.split('\0').flatMap((pair): [string, string][] => {
-      const separator = pair.indexOf('=');
-      return separator > 0 ? [[pair.slice(0, separator), pair.slice(separator + 1)]] : [];
-    }),
-  ),
-);
-const readProfile = Effect.gen(function* readBuildProfile() {
-  const environment = (yield* inheritedEnvironment)
+const inheritedEnvironment = (root: string) =>
+  run('env', ['-0'], root).pipe(
+    Effect.map((listing) =>
+      listing.split('\0').flatMap((pair): [string, string][] => {
+        const separator = pair.indexOf('=');
+        return separator > 0 ? [[pair.slice(0, separator), pair.slice(separator + 1)]] : [];
+      }),
+    ),
+  );
+const readProfile = Effect.fn('UnitOutputCache.profile')(function* readBuildProfile(root: string) {
+  const environment = (yield* inheritedEnvironment(root))
     .filter(([name]) => buildVariable.test(name) && !identityOverride.test(name))
     .toSorted(([left], [right]) => left.localeCompare(right));
   return yield* Schema.decodeUnknownEffect(CacheProfileSchema)({
@@ -241,20 +245,21 @@ const readProfile = Effect.gen(function* readBuildProfile() {
     mode: yield* Config.String('NODE_ENV').pipe(Config.withDefault('production')),
     node: process.version,
     platform: process.platform,
-    pnpm: yield* run('pnpm', ['--version']),
+    pnpm: yield* run('pnpm', ['--version'], root),
     policy: 'full dist + packaged .output; preserve maps/types; owner-entry for released units; v1',
     target: 'node',
     versions: process.versions,
   });
 });
-const loadContext = Effect.gen(function* readCacheContext() {
-  const dirty = yield* git(['status', '--porcelain', '--untracked-files=normal']);
+/** Everything the plan, stamp and verify read about one committed workspace; `root` is its app directory. */
+export const loadCacheContext = Effect.fn('UnitOutputCache.context')(function* readCacheContext(root: string) {
+  const dirty = yield* git(['status', '--porcelain', '--untracked-files=normal'], root);
   if (dirty.length > 0) {
     return yield* invalid(WORKSPACE, 'committed inputs required; checkout has uncommitted changes');
   }
-  const head = yield* git(['rev-parse', 'HEAD']);
-  const workspace = yield* readWorkspace(head);
-  const topology = yield* git(['show', `${head}:app/topology/reference-topology.json`]).pipe(
+  const head = yield* git(['rev-parse', 'HEAD'], root);
+  const workspace = yield* readWorkspace(head, root);
+  const topology = yield* git(['show', `${head}:app/topology/reference-topology.json`], root).pipe(
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))),
   );
   const units = [topology.shell, ...topology.verticals];
@@ -262,15 +267,16 @@ const loadContext = Effect.gen(function* readCacheContext() {
     concurrency: 1,
   });
   return yield* Effect.succeed({
-    graph: unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) }),
+    graph: unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries, root) }),
     head,
     origins,
-    profile: yield* readProfile,
+    profile: yield* readProfile(root),
+    root,
     served: workspace.units.map((unit) => unit.id),
     units,
   });
 });
-type Context = Effect.Success<typeof loadContext>;
+type Context = Effect.Success<ReturnType<typeof loadCacheContext>>;
 const selectUnits = (context: Context, names: readonly string[]) =>
   Effect.forEach(
     names,
@@ -280,7 +286,8 @@ const selectUnits = (context: Context, names: readonly string[]) =>
     },
     { concurrency: 1 },
   );
-const expectedDigest = (context: Context, unit: CacheUnit) =>
+/** The gates digest a unit's receipt must carry for this context's HEAD. */
+export const expectedDigest = (context: Context, unit: CacheUnit) =>
   gatesInputDigest({ ...context, directory: `app/${unit.path}` });
 
 /**
@@ -435,17 +442,17 @@ export const requiredOutputs = (unit: string): readonly string[] => [
   `${DIST}/api/index.js`,
   ...(isBackendRemote(unit) ? [`${DIST}/${BACKEND_MANIFEST}`, `${DIST}/backendRemoteEntry.cjs`] : []),
 ];
-const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served: readonly string[]) =>
+const validateStructure = (context: Context, unit: CacheUnit, files: readonly OutputFile[]) =>
   Effect.gen(function* validateRequiredOutputs() {
     const fs = yield* FileSystem.FileSystem;
-    const root = path.join(APP_ROOT, unit.path);
+    const root = path.join(context.root, unit.path);
     // Unpack consumes .output; hosted-owner fixtures consume dist/zerops-entry.mjs and both
     // build identities; derive-built-application-composition consumes the public contracts + MF manifest.
     const remote = isBackendRemote(unit.id);
     for (const filename of requiredOutputs(unit.id)) {
       yield* requireFile(files, filename, unit.id);
     }
-    if (served.includes(unit.id)) {
+    if (context.served.includes(unit.id)) {
       yield* requireFile(files, `${DIST}/zerops-entry.mjs`, unit.id);
     }
     yield* readJson(path.join(root, OUTPUT, PACKAGE_JSON), PackageManifest);
@@ -506,7 +513,7 @@ const validateStructure = (unit: CacheUnit, files: readonly OutputFile[], served
   });
 const checkUnit = (context: Context, unit: CacheUnit) =>
   Effect.gen(function* validateRestoredUnit() {
-    const root = path.join(APP_ROOT, unit.path);
+    const root = path.join(context.root, unit.path);
     const receipt = yield* readJson(path.join(root, RECEIPT), CacheReceiptSchema);
     const files = yield* inventory(root);
     const mismatch = firstOutputMismatch({
@@ -519,7 +526,7 @@ const checkUnit = (context: Context, unit: CacheUnit) =>
     if (mismatch !== undefined) {
       return yield* invalid(unit.id, mismatch);
     }
-    const identity = yield* validateStructure(unit, files, context.served);
+    const identity = yield* validateStructure(context, unit, files);
     if (!sameIdentity(identity, receipt.identity)) {
       return yield* invalid(unit.id, 'original build identity mismatch');
     }
@@ -532,7 +539,7 @@ const listNames = (value: string) =>
     .filter((name) => name.length > 0);
 const withUnits = (value: string) =>
   Effect.gen(function* loadSelectedUnits() {
-    const context = yield* loadContext;
+    const context = yield* loadCacheContext(APP_ROOT);
     const names = listNames(value);
     if (names.length === 0 || new Set(names).size !== names.length) {
       return yield* invalid('selection', 'nonempty, unique units required');
@@ -574,7 +581,7 @@ export const keepProof = (input: { readonly head: string; readonly inputs: strin
 const writeKeepProof = (context: Context, unit: CacheUnit) =>
   Effect.gen(function* writeProof() {
     const fs = yield* FileSystem.FileSystem;
-    const root = path.join(APP_ROOT, unit.path);
+    const root = path.join(context.root, unit.path);
     const proof = yield* keepProof({
       head: context.head,
       inputs: yield* committedInputs(context.graph, unit.path),
@@ -584,19 +591,31 @@ const writeKeepProof = (context: Context, unit: CacheUnit) =>
     yield* fs.writeFileString(temporary, yield* encode(KeepProofSchema, proof));
     yield* fs.rename(temporary, path.join(root, KEEP_PROOF));
   });
+/**
+ * Decides which units a shard keeps. A kept unit gets the keep proof that its inputs are this HEAD's (see
+ * KeepProofSchema); a unit to build loses any earlier proof at once, so no proof outlives the outputs it vouched for
+ * even before the workflow removes them, and a fresh build names HEAD itself.
+ */
+export const planUnits = Effect.fn('UnitOutputCache.plan')(function* planUnits(
+  context: Context,
+  units: readonly CacheUnit[],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const checks = yield* Effect.forEach(units, (unit) => inspectUnit(context, unit), { concurrency: 1 });
+  for (const [index, check] of checks.entries()) {
+    const unit = units[index];
+    if (unit !== undefined) {
+      yield* 'mismatch' in check
+        ? fs.remove(path.join(context.root, unit.path, KEEP_PROOF), { force: true })
+        : writeKeepProof(context, unit);
+    }
+  }
+  return yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
+});
 const planCommand = Command.make('plan', { units: Flag.String('units') }, ({ units: value }) =>
   Effect.gen(function* printPlan() {
     const { context, units } = yield* withUnits(value);
-    const checks = yield* Effect.forEach(units, (unit) => inspectUnit(context, unit), { concurrency: 1 });
-    // A kept unit carries the proof that its inputs are this HEAD's (see KeepProofSchema); a unit to build is
-    // removed and rebuilt by the workflow, and a fresh build names HEAD itself.
-    for (const [index, check] of checks.entries()) {
-      const unit = units[index];
-      if (unit !== undefined && !('mismatch' in check)) {
-        yield* writeKeepProof(context, unit);
-      }
-    }
-    const plan = yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
+    const plan = yield* planUnits(context, units);
     return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
   }),
 );
@@ -605,12 +624,12 @@ const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ uni
     const { context, units } = yield* withUnits(value);
     const fs = yield* FileSystem.FileSystem;
     for (const unit of units) {
-      const root = path.join(APP_ROOT, unit.path);
+      const root = path.join(context.root, unit.path);
       if (yield* fs.exists(path.join(root, RECEIPT))) {
         return yield* invalid(unit.id, 'refusing to restamp; clean outputs before rebuilding');
       }
       const files = yield* inventory(root);
-      const identity = yield* validateStructure(unit, files, context.served);
+      const identity = yield* validateStructure(context, unit, files);
       if (identity.sourceRevision !== context.head) {
         return yield* invalid(unit.id, 'fresh build must name HEAD; refusing to relabel old bytes');
       }
@@ -619,7 +638,7 @@ const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ uni
         files,
         identity,
         inputs: yield* committedInputs(context.graph, unit.path),
-        schemaVersion: 2,
+        schemaVersion: RECEIPT_SCHEMA_VERSION,
         unit: unit.id,
       };
       const temporary = path.join(root, `${RECEIPT}.tmp`);

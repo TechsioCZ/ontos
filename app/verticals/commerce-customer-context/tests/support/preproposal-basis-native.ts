@@ -108,7 +108,7 @@ import {
   Stream,
 } from 'effect';
 import { ChildProcess } from 'effect/process';
-import { readBuiltDocument } from '../../../../scripts/ci/kept-unit-identity.mts';
+import { readBuiltDocument, resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
@@ -1329,10 +1329,11 @@ const startNativeOwner = Effect.fn('PreproposalNative.startOwner')(function* sta
   return yield* owner.bind(ready.port);
 });
 
-const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(function* resolveNativeOwnerIdentity(
+/** An owner's generation marker and unit id, from its committed `shared/ultramodern-build.json`. */
+const readOwnerGeneration = Effect.fn('PreproposalNative.ownerGeneration')(function* readOwnerGeneration(
   owner: string,
 ) {
-  const generated = yield* Schema.decodeUnknownEffect(
+  return yield* Schema.decodeUnknownEffect(
     Schema.fromJsonString(
       Schema.Struct({
         deliveryUnit: Schema.Struct({
@@ -1347,6 +1348,28 @@ const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(
       async () => await readFile(`${applicationRoot}${owner}/shared/ultramodern-build.json`, 'utf-8'),
     ),
   );
+});
+
+/**
+ * The identity of an owner's built unit, proven to come from this checkout's sources (scripts/ci/kept-unit-identity.mts):
+ * a stale local build refuses here instead of being run or bundled as if it were current.
+ */
+const resolveProvenOwnerIdentity = Effect.fn('PreproposalNative.provenOwnerIdentity')(function* provenOwnerIdentity(
+  owner: string,
+) {
+  const generated = yield* readOwnerGeneration(owner);
+  return yield* resolveOwnerReleaseIdentity({
+    generationBuildMarker: generated.deliveryUnit.buildMarker,
+    unitDirectory: owner,
+    unitId: generated.deliveryUnit.unitId,
+    workspaceRoot: applicationRoot,
+  }).pipe(Effect.mapError(() => safeFailure(`owner-release-identity:${owner}`)));
+});
+
+const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(function* resolveNativeOwnerIdentity(
+  owner: string,
+) {
+  const generated = yield* readOwnerGeneration(owner);
   return yield* Effect.try({
     catch: () => safeFailure('owner-release-identity'),
     try: () =>
@@ -1384,6 +1407,15 @@ const resolveHostedOwnerIdentity = Effect.fn('PreproposalNative.hostedOwnerIdent
     built.deliveryUnit.appId === appId &&
       built.surfaces.api.appId === appId &&
       built.surfaces.api.buildMarker === built.deliveryUnit.buildMarker,
+    `hosted-owner-build-identity:${appId}`,
+  );
+  // Its own fixtures (Market's setup child, Catalog's producer) bundle this checkout's sources under this identity:
+  // that is honest only for a build of these sources. A dirty checkout runs as the workspace, as before.
+  const proven = yield* resolveProvenOwnerIdentity(owner);
+  yield* requireProtocol(
+    proven.sourceRevision === 'workspace' ||
+      (proven.buildMarker === built.deliveryUnit.buildMarker &&
+        proven.sourceRevision === built.deliveryUnit.sourceRevision),
     `hosted-owner-build-identity:${appId}`,
   );
   return { buildMarker: built.deliveryUnit.buildMarker, sourceRevision: built.deliveryUnit.sourceRevision };
@@ -1722,6 +1754,9 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   }
   // The Shell is bundled here from source, so its runtime contract is derived from those sources as the generator
   // derives it (the Shell's release identity from the checkout), never written into its dist/.
+  // The generator refused a Shell dist/ built from other sources; the in-memory derivation must too, because the
+  // Shell's built federation manifest is still read below. Only the refusal matters here.
+  yield* resolveProvenOwnerIdentity(shell.owner);
   const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
     yield* deriveFromSource(
       'shell-runtime-contract',
