@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  BUILD_DEPENDENT_TABLES,
+  buildDependentStateRefusal,
   schemaDifference,
   seedFailure,
   seedRestoreRefusal,
@@ -178,4 +182,28 @@ it('fingerprints a policy by the set of roles it applies to, not the order their
   );
   expect(schemaFingerprint(insertPolicy('b, a'))).toBe(schemaFingerprint(insertPolicy('a, b')));
   expect(schemaFingerprint(deletePolicy('b, a'))).toBe(schemaFingerprint(deletePolicy('a, b')));
+});
+
+it("refuses a seed that carries another run's Application Composition, and a count it could not read", () => {
+  const none = BUILD_DEPENDENT_TABLES.map((table): readonly [string, number] => [table, 0]);
+  expect(buildDependentStateRefusal(none)).toBeUndefined();
+  expect(buildDependentStateRefusal([['core.application_composition_authority', 1], ...none.slice(1)])).toContain(
+    'core.application_composition_authority: 1 rows',
+  );
+  expect(buildDependentStateRefusal([['core.application_composition_authority', Number.NaN]])).toBeDefined();
+});
+
+it('dumps before the Outbox Worker host proof publishes a composition, and checks for none on restore too', () => {
+  const source = readFileSync(new URL('../ci/integration-seed.mts', import.meta.url), 'utf-8');
+  const produce = source.slice(source.indexOf('const produce = '), source.indexOf('const restore = '));
+  const check = produce.indexOf('yield* assertNoBuildDependentState;');
+  const dump = produce.indexOf('dumpDatabase(name, index, directory, containerDirectory)');
+  const worker = produce.indexOf("'scripts/prove-outbox-worker-host-artifact.sh'");
+  expect(check).toBeGreaterThan(-1);
+  expect(check).toBeLessThan(dump);
+  expect(dump).toBeLessThan(worker);
+  const proof = source.slice(source.indexOf('const runFullProof = '), source.indexOf('const produce = '));
+  expect(proof).not.toContain('prove-outbox-worker-host-artifact.sh');
+  const restore = source.slice(source.indexOf('const restore = '));
+  expect(restore.indexOf('yield* assertNoBuildDependentState;')).toBeGreaterThan(restore.indexOf('restoreDatabase('));
 });

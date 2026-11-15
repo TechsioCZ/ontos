@@ -41,6 +41,8 @@ const WORKSPACE_GATES_JOB = 'workspace-gates';
 const DOWNLOAD_ARTIFACT_ACTION = 'actions/download-artifact@';
 const INITIALIZE_IDENTITIES_STEP = 'Initialize fresh local database login identities';
 const ASSEMBLED_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
+const WORKER_PROVISION_STEP = 'Provision the worker host runtime and Bun that the app artifact ships';
+const WORKER_PROOF_STEP = 'Build and run the Outbox Worker host artifact against the job database';
 const CI_MATRICES_PATH = '../ci-matrices.json';
 const MATRIX_SHARD = 'matrix.shard';
 const SEED_KEY_OUTPUT = 'needs.ci-plan.outputs.seed-key';
@@ -1433,9 +1435,13 @@ it('restores the integration seed from its input-keyed cache and never makes a r
     'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
     ASSEMBLED_MIGRATOR_STEP,
     AUDIT_STEP,
-    'Build and run the Outbox Worker host artifact against the fresh database',
   ]) {
     expect(integration.find((step) => step.name === name)?.if, name).toBe(FRESH_PREPARATION_CONDITION);
+  }
+  // A restored seed carries no Application Composition: every row, seeded or not, publishes its own from this run's
+  // unit builds through the Outbox Worker host proof (run 43678606041 failed 10 rows on another run's composition).
+  for (const name of [WORKER_PROVISION_STEP, WORKER_PROOF_STEP]) {
+    expect(integration.find((step) => step.name === name)?.if, name).toBe(BACKEND_INTEGRATION_CONDITION);
   }
   // INVARIANT: every full run runs the complete fresh proof in the producer; a narrow round skips its migration part
   // only on a hit, which a change to any migration input turns into a miss; a miss saves the new seed.
@@ -1455,7 +1461,12 @@ it('restores the integration seed from its input-keyed cache and never makes a r
   const producing = producer.steps.findIndex(({ run }) => run?.includes('integration-seed.mts produce') === true);
   expect(selfRestore).toBeGreaterThan(producing);
   expect(producer.steps[selfRestore]?.if).toBe(produce?.if);
-  for (const check of ['--purpose ordinary-tests', 'pnpm db:verify', 'pnpm database-trust:audit']) {
+  for (const check of [
+    '--purpose ordinary-tests',
+    'pnpm db:verify',
+    'pnpm database-trust:audit',
+    'sh scripts/prove-outbox-worker-host-artifact.sh',
+  ]) {
     expect(producer.steps[selfRestore]?.run).toContain(check);
   }
   expectProducerVerifiesSeedRealm(producer.steps);
@@ -1493,7 +1504,7 @@ it('prepares every integration row before it waits, with a deadline, for the bui
   for (const name of [
     'Download the same-run Node artifacts for native owner fixtures',
     'Run the assembled stage migrator artifact against the fresh database',
-    'Build and run the Outbox Worker host artifact against the fresh database',
+    WORKER_PROOF_STEP,
   ]) {
     expect(at(name), name).toBeGreaterThan(wait);
   }
@@ -1635,9 +1646,7 @@ it('ships a runnable fresh-database proof for the actual app artifact without ov
     [INTEGRATION_SEED_PROOF_JOB, 'Prove the fresh-database preparation and dump the seed'],
   ] as const) {
     const { steps } = jobs[job];
-    const provision = steps.findIndex(
-      ({ name }) => name === 'Provision the worker host runtime and Bun that the app artifact ships',
-    );
+    const provision = steps.findIndex(({ name }) => name === WORKER_PROVISION_STEP);
     expect(provision, job).toBeGreaterThan(-1);
     expect(provision, job).toBeLessThan(steps.findIndex(({ name }) => name === proofStep));
     // The runner is glibc: the musl build Zerops runs cannot load its C++ runtime here.

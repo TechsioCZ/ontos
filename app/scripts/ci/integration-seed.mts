@@ -55,6 +55,7 @@ import {
   MANIFEST_FILE,
   SEAL_TABLE,
   assertSeedConsumer,
+  buildDependentStateRefusal,
   manifestJson,
   seedFailure,
   seedRestoreRefusal,
@@ -63,6 +64,7 @@ import {
   assertClusterEvidence,
   assertDatabaseNames,
   assertEmptyDatabases,
+  buildDependentRowCounts,
   dumpDatabase,
   readDatabases,
   readMemberships,
@@ -127,12 +129,14 @@ const runFullProof = (proofDirectory: string) =>
     };
     yield* runSeedCommand(PNPM, ['db:migrate'], { env: perPackage });
     yield* runSeedCommand(PNPM, ['db:verify'], { env: perPackage });
-    yield* runSeedCommand(PNPM, ['database-trust:audit']);
-    return yield* runSeedCommand('sh', [
-      'scripts/prove-outbox-worker-host-artifact.sh',
-      path.join(proofDirectory, 'outbox-worker-host-artifact'),
-    ]);
+    return yield* runSeedCommand(PNPM, ['database-trust:audit']);
   });
+
+/** Refuses a database that holds state of this run's unit builds, as a seed or as a restored one. */
+const assertNoBuildDependentState = Effect.gen(function* refuseBuildDependentState() {
+  const refusal = buildDependentStateRefusal(yield* buildDependentRowCounts(yield* requiredEnvironment('POSTGRES_DB')));
+  return refusal === undefined ? yield* Effect.void : yield* seedFailure(refusal);
+});
 
 const produce = (directory: string, disposable: boolean) =>
   Effect.scoped(
@@ -140,7 +144,11 @@ const produce = (directory: string, disposable: boolean) =>
       yield* assertDisposable(disposable);
       yield* emptyOutputDirectory(directory);
       const temporaryRoot = yield* requiredEnvironment('RUNNER_TEMP');
-      yield* runFullProof(path.join(temporaryRoot, 'integration-seed-proof'));
+      const proofDirectory = path.join(temporaryRoot, 'integration-seed-proof');
+      yield* runFullProof(proofDirectory);
+      // The dump is the database every job's own migration produces before it publishes an Application Composition from
+      // its own unit builds. The Outbox Worker host proof publishes one, so it runs after the dump, never into it.
+      yield* assertNoBuildDependentState;
       const names = yield* readDatabases();
       yield* assertDatabaseNames(names);
       const settings = yield* readSettings();
@@ -150,6 +158,10 @@ const produce = (directory: string, disposable: boolean) =>
           concurrency: 1,
         }),
       );
+      yield* runSeedCommand('sh', [
+        'scripts/prove-outbox-worker-host-artifact.sh',
+        path.join(proofDirectory, 'outbox-worker-host-artifact'),
+      ]);
       const manifest: SeedManifest = {
         databases,
         memberships: yield* readMemberships(),
@@ -228,6 +240,8 @@ const restore = (input: {
       );
       yield* restoreSettings(manifest.settings);
       yield* assertClusterEvidence(manifest);
+      // A seed dumped with a published Application Composition would describe another run's unit builds.
+      yield* assertNoBuildDependentState;
       return yield* restoreSpiceDb(manifest.spiceSchema);
     }),
   );

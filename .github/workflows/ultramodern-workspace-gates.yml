@@ -1028,8 +1028,10 @@ jobs:
       # that prepares its own database provisions the same two before it, once the build outputs are here: the
       # materialized worker host and the pinned Bun (its glibc build here; Zerops runs the musl build). The
       # migrator, migrations and grant audit therefore run after the build wait on such rows.
+      # A seeded row needs the worker host too: it publishes this run's Application Composition below (the seed carries
+      # none), exactly as a row that migrates itself.
       - name: Provision the worker host runtime and Bun that the app artifact ships
-        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+        if: matrix.suite == 'integration'
         working-directory: app
         env:
           APP_ENV_PATH: /dev/null
@@ -1081,10 +1083,11 @@ jobs:
         run: mise exec -- pnpm database-trust:audit
 
       # Stage-shaped on the Cloudflare target: the host is materialized by its zerops.yaml build command,
-      # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
-      # database until /ready, then drains on SIGTERM.
-      - name: Build and run the Outbox Worker host artifact against the fresh database
-        if: matrix.suite == 'integration' && steps.seed-cache.outputs.cache-hit != 'true'
+      # ships only its deployFiles, polls every hosted owner's outbox against the job's database until /ready, then
+      # drains on SIGTERM. It publishes the Application Composition of this run's unit builds, which native owner
+      # fixtures read, so it runs on every row: a restored seed carries no composition (scripts/ci/integration-seed.mts).
+      - name: Build and run the Outbox Worker host artifact against the job database
+        if: matrix.suite == 'integration'
         working-directory: app
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
@@ -1298,6 +1301,8 @@ jobs:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" COMMERCE_PORTAL_AUTH_DATABASE_URL="$DATABASE_URL" \
             mise exec -- pnpm db:verify
           mise exec -- pnpm database-trust:audit
+          # Then this run's Application Composition on the restored seed, as every seeded row publishes it.
+          mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-restored-artifact"
 
       - name: Move the new seed to the cached path
         if: steps.seed-cache.outputs.cache-hit != 'true'

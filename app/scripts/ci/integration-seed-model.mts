@@ -18,6 +18,28 @@ export const quoteLiteral = (value: string) => `'${value.replaceAll("'", "''")}'
 export const SEAL_TABLE = 'trust.scope_sealing_keys';
 export const COMMERCE_URL_KEY = 'INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL';
 export const MANIFEST_FILE = 'manifest.json';
+/**
+ * Tables whose rows name the unit builds of the run that wrote them: the Application Composition the Outbox Worker host
+ * proof publishes, with every unit's build marker. A seed is reused by later commits whose units are built again, so
+ * such rows would describe builds the consuming job does not have. A seed never carries them; each job publishes its
+ * own, from its own builds, after the restore, exactly as a job that migrates does.
+ */
+export const BUILD_DEPENDENT_TABLES = [
+  'core.application_composition_authority',
+  'core.application_composition_durable_work',
+  'core.application_composition_drain_abandonments',
+] as const;
+
+const heldRows = ([table, rows]: readonly [string, number]) => `${table}: ${String(rows)} rows`;
+
+/** Why a database with rows in a build-dependent table may not become, or be used as, a seed. */
+export const buildDependentStateRefusal = (counts: readonly (readonly [string, number])[]): string | undefined => {
+  // A count that did not come back is treated as rows: the check never passes by not looking.
+  const held = counts.filter(([, rows]) => !Number.isSafeInteger(rows) || rows > 0);
+  return held.length === 0
+    ? undefined
+    : `Seed database holds state of this run's unit builds (${held.map(heldRows).join(', ')}); a seed carries none`;
+};
 export const FRESH_JOB = 'Database, Migration, RLS, Authorization, and Outbox Integration';
 
 /** These tests must retain their own empty/historical database and migration/recovery path. */
