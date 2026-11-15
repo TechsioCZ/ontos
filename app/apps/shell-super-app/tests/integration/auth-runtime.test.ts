@@ -2,7 +2,6 @@ import { CoreDatabase } from '@app/core-runtime/db/client';
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { shellTestAuthentication } from '../support/shell-authentication.ts';
-import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -89,6 +88,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistry,
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
+import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
@@ -2570,13 +2570,13 @@ const readFixtureReleaseIdentity = Effect.fn('TenantPartyGatewayTest.releaseIden
     )(
       yield* Effect.tryPromise(() => readFile(path.join(appRoot, directory, 'shared/ultramodern-build.json'), 'utf-8')),
     );
-    return yield* Effect.try(() =>
-      resolveUltramodernReleaseIdentity({
-        generationBuildMarker: generated.deliveryUnit.buildMarker,
-        unitId: generated.deliveryUnit.unitId,
-        workspaceRoot: appRoot,
-      }),
-    );
+    // The identity of the built unit whose public documents this test reads (a kept build keeps its own).
+    return yield* resolveOwnerReleaseIdentity({
+      generationBuildMarker: generated.deliveryUnit.buildMarker,
+      unitDirectory: directory,
+      unitId: generated.deliveryUnit.unitId,
+      workspaceRoot: appRoot,
+    });
   },
 );
 

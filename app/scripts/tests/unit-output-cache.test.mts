@@ -5,19 +5,20 @@ import { Effect, Exit, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  CacheReceiptSchema,
+  committedInputs,
   firstOutputMismatch,
   gatesInputDigest,
   inventory,
-  OTHER_REVISION,
+  keepProof,
   planOutputCache,
   requiredOutputs,
-  revisionMismatch,
   sameBackendBuild,
   requiredOutputMismatch,
   typeBundleMismatch,
 } from '../ci/unit-output-cache.mts';
-import type { CacheIdentity, CacheProfile, CacheReceipt, OutputFile } from '../ci/unit-output-cache.mts';
+import type { CacheProfile } from '../ci/unit-output-cache.mts';
+import { CacheReceiptSchema, KEEP_PROOF, RECEIPT } from '../ci/unit-output-receipt.mts';
+import type { CacheIdentity, CacheReceipt, OutputFile } from '../ci/unit-output-receipt.mts';
 import { unitInputGraph } from '../zerops/delivery-plan.mts';
 import type { GitEntry, WorkspacePackage } from '../zerops/delivery-plan.mts';
 
@@ -38,6 +39,7 @@ const BUILD = 'e'.repeat(64);
 const FILE = 'dist/api/index.js';
 const OUTPUT_ENTRY = '.output/index.js';
 const ORIGIN = 'http://localhost:8080';
+const CATALOG_PATH = 'verticals/catalog';
 const profile: CacheProfile = {
   architecture: 'x64',
   command: 'pnpm run build',
@@ -89,7 +91,7 @@ const files: readonly OutputFile[] = [
   { mode: 0o644, path: FILE, sha256: HASH, size: 42 },
   { mode: 0o644, path: 'dist/source.js.map', sha256: OTHER_HASH, size: 120 },
 ];
-const receipt: CacheReceipt = { digest: HASH, files, identity, schemaVersion: 1, unit: UNIT };
+const receipt: CacheReceipt = { digest: HASH, files, identity, inputs: OTHER_HASH, schemaVersion: 2, unit: UNIT };
 const check = (overrides: Partial<Parameters<typeof firstOutputMismatch>[0]> = {}) =>
   firstOutputMismatch({ digest: HASH, files, identity, receipt, unit: UNIT, ...overrides });
 
@@ -111,7 +113,7 @@ it.effect('is stable for identical inputs, documentation, and unrelated private 
 );
 
 it.effect('changes for each committed input class, including Git modes and closure membership', () =>
-  Effect.gen(function* committedInputs() {
+  Effect.gen(function* committedInputClasses() {
     const expected = yield* gatesInputDigest(inputs);
     const paths = [SOURCE, `${DEPENDENCY}/index.ts`, COMMON, BUILD_TOOL, DRIVER];
     for (const filepath of paths) {
@@ -297,19 +299,26 @@ it("matches a module's backend federation remote to its build by marker and sour
   expect(sameBackendBuild(identity, { ...remote, sourceRevision: CURRENT_REVISION })).toBe(false);
 });
 
-it("keeps a unit only when its build names this run's source revision", () => {
-  // Same revision: kept (a rerun keeps its own builds).
-  expect(revisionMismatch(identity, OLD_REVISION)).toBeUndefined();
-  expect(check() ?? revisionMismatch(identity, OLD_REVISION)).toBeUndefined();
-  // Identical inputs and bytes, built at an older commit: rebuilt, because the fixtures expect this run's markers.
-  const older = check() ?? revisionMismatch(identity, CURRENT_REVISION);
-  expect(older).toContain(OTHER_REVISION);
-  expect(planOutputCache([{ mismatch: older, unit: UNIT }])).toEqual({ build: [UNIT], keep: [] });
-});
-
-it('rebuilds a unit whose receipt records no source revision', () => {
-  const { sourceRevision: _dropped, ...withoutRevision } = identity;
-  const decoded = Schema.decodeUnknownExit(CacheReceiptSchema)({ ...receipt, identity: withoutRevision });
-  // checkUnit reads the receipt with this schema; a failed read is a mismatch, so the unit goes to build.
-  expect(Exit.isFailure(decoded)).toBe(true);
-});
+it.effect('records committed inputs in receipts and keep proofs, and leaves both out of the output inventory', () =>
+  Effect.gen(function* proofAndInputs() {
+    // stamp and plan both record committedInputs: the unit's committed inputs without build variables.
+    const recorded = yield* committedInputs(inputs.graph, CATALOG_PATH);
+    expect(recorded).toMatch(/^[a-f0-9]{64}$/u);
+    expect(yield* committedInputs(changeEntry(SOURCE), CATALOG_PATH)).not.toBe(recorded);
+    expect(yield* committedInputs(changeEntry(`${UNRELATED}/src/service.ts`), CATALOG_PATH)).toBe(recorded);
+    expect(yield* keepProof({ head: CURRENT_REVISION, inputs: recorded, unit: UNIT })).toEqual({
+      inputs: recorded,
+      revision: CURRENT_REVISION,
+      schemaVersion: 1,
+      unit: UNIT,
+    });
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped();
+    for (const file of [FILE, RECEIPT, KEEP_PROOF, OUTPUT_ENTRY]) {
+      yield* fs.makeDirectory(path.dirname(path.join(root, file)), { recursive: true });
+      yield* fs.writeFileString(path.join(root, file), file);
+    }
+    expect((yield* inventory(root)).map((file) => file.path).toSorted()).toEqual([OUTPUT_ENTRY, FILE]);
+    return yield* Effect.void;
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

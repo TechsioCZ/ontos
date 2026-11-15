@@ -54,18 +54,16 @@
  * and CI); actual Node/component versions, pnpm, platform and architecture.
  * Lockfile, mise pins, scripts and workflow are already common committed deploy inputs. Actual
  * versions additionally prevent a runner/toolchain mismatch despite unchanged pins. Source SHA
- * and build-marker overrides are NOT digest inputs, and a unit's identity is never rewritten. A unit
- * is kept only when the revision its build names is this run's source revision, resolved as the
- * native integration fixtures resolve it (resolveUltramodernSourceRevision: the clean HEAD,
- * which ULTRAMODERN_SOURCE_REVISION must equal): those fixtures bundle owner and Shell code from the
- * checkout under that revision's markers and refuse a composition built from a unit with another
- * (run 43713716630). A rerun keeps its own builds; a new commit rebuilds. Stamp requires freshly
- * built metadata naming HEAD; never restamp a keep.
+ * and build-marker overrides are NOT digest inputs: unchanged units keep their OLD source/build
+ * identity, and the receipt records the unit's committed-inputs digest. Native integration fixtures
+ * that bundle checkout sources against a composition built from these outputs take a kept unit's
+ * identity from scripts/ci/kept-unit-identity.mts, which proves with that digest that the sources
+ * are the ones the unit was built from. Stamp requires freshly built metadata naming HEAD; never
+ * restamp a keep.
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { resolveUltramodernSourceRevision } from '@modern-js/app-tools-extensions/release-identity';
 import { Config, Console, Effect, FileSystem, Schema, Stream } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { Command, Flag } from 'effect/cli';
@@ -76,12 +74,20 @@ import {
   OntosShellRuntimeContractSchema,
 } from '../../packages/core-runtime/src/index.ts';
 import { runQualityCli } from '../quality-cli-lifecycle.mts';
+import {
+  CacheReceiptSchema,
+  IdentitySchema,
+  KEEP_PROOF,
+  KeepProofSchema,
+  RECEIPT,
+  REVISION,
+} from './unit-output-receipt.mts';
+import type { CacheIdentity, CacheReceipt, OutputFile } from './unit-output-receipt.mts';
 import { readSources, readWorkspace } from '../zerops/delivery-plan-cli.mts';
-import { unitInputDigest, unitInputGraph } from '../zerops/delivery-plan.mts';
+import { unitIdentity, unitInputDigest, unitInputGraph } from '../zerops/delivery-plan.mts';
 import type { UnitInputGraph } from '../zerops/delivery-plan.mts';
 
 const APP_ROOT = path.resolve(import.meta.dirname, '../..');
-const RECEIPT = 'dist/.gates-output-cache.json';
 const BUILD_METADATA = 'ultramodern-build.json';
 const SHELL = 'shell-super-app';
 const DIST = 'dist';
@@ -90,9 +96,7 @@ const WORKSPACE = 'workspace';
 const BACKEND_MANIFEST = 'backend-mf-manifest.json';
 const PACKAGE_JSON = 'package.json';
 const OUTPUT_ROOTS = [DIST, OUTPUT];
-const DIGEST = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const NONEMPTY = Schema.String.check(Schema.isMinLength(1));
-const REVISION = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u));
 const UnitSchema = Schema.Struct({
   id: NONEMPTY,
   path: Schema.String.check(Schema.isPattern(/^(?:apps|verticals)\/[a-z0-9-]+$/u)),
@@ -100,13 +104,6 @@ const UnitSchema = Schema.Struct({
 });
 const TopologySchema = Schema.Struct({ shell: UnitSchema, verticals: Schema.Array(UnitSchema) });
 export type CacheUnit = typeof UnitSchema.Type;
-const IdentitySchema = Schema.Struct({
-  appId: NONEMPTY.pipe(Schema.brand('UnitOutputAppId'), Schema.decodeTo(Schema.String)),
-  build: NONEMPTY,
-  buildMarker: NONEMPTY,
-  sourceRevision: REVISION,
-});
-export type CacheIdentity = typeof IdentitySchema.Type;
 const MetadataSchema = Schema.Struct({
   deliveryUnit: IdentitySchema,
   kind: Schema.Literal('ultramodern-build-artifact'),
@@ -126,23 +123,6 @@ export const CacheProfileSchema = Schema.Struct({
   versions: Schema.Record(Schema.String, Schema.String),
 });
 export type CacheProfile = typeof CacheProfileSchema.Type;
-export const OutputFileSchema = Schema.Struct({
-  /** A relative symlink's target, kept as a link: its sha256 and size describe the target text. */
-  link: Schema.optionalKey(NONEMPTY),
-  mode: Schema.Number,
-  path: NONEMPTY,
-  sha256: DIGEST,
-  size: Schema.Number,
-});
-export type OutputFile = typeof OutputFileSchema.Type;
-export const CacheReceiptSchema = Schema.Struct({
-  digest: DIGEST,
-  files: Schema.Array(OutputFileSchema),
-  identity: IdentitySchema,
-  schemaVersion: Schema.Literal(1),
-  unit: NONEMPTY,
-});
-export type CacheReceipt = typeof CacheReceiptSchema.Type;
 /** A Modern.js route document: this check owns only that it is a parsed JSON object, not its route model. */
 const RouteDocument = Schema.Record(Schema.String, Schema.Unknown);
 const PlainSourceMapSchema = Schema.Struct({
@@ -281,16 +261,11 @@ const loadContext = Effect.gen(function* readCacheContext() {
   const origins = yield* Effect.forEach(ORIGIN_VARIABLES, (name) => Config.String(name).pipe(Config.withDefault('')), {
     concurrency: 1,
   });
-  const revision = yield* Effect.try({
-    catch: (cause) => invalid(WORKSPACE, `cannot resolve the source revision: ${String(cause)}`),
-    try: () => resolveUltramodernSourceRevision(APP_ROOT),
-  });
   return yield* Effect.succeed({
     graph: unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) }),
     head,
     origins,
     profile: yield* readProfile,
-    revision,
     served: workspace.units.map((unit) => unit.id),
     units,
   });
@@ -353,7 +328,7 @@ const walkOutput = (
     if (info.type !== 'File') {
       return yield* invalid(root, `unsupported output type at ${relative}: ${info.type}`);
     }
-    if (relative === RECEIPT) {
+    if (relative === RECEIPT || relative === KEEP_PROOF) {
       return yield* Effect.succeed([]);
     }
     const bytes = yield* fs.readFile(filename);
@@ -407,16 +382,6 @@ export const firstOutputMismatch = (input: {
   }
   return undefined;
 };
-/** The reason a unit built at another revision is rebuilt: the one line the plan logs for it. */
-export const OTHER_REVISION = 'built at another source revision';
-/**
- * A kept unit must name this run's source revision: the integration fixtures derive every expected build marker from
- * it. Undefined when it does.
- */
-export const revisionMismatch = (identity: CacheIdentity, revision: string): string | undefined =>
-  identity.sourceRevision === revision
-    ? undefined
-    : `${OTHER_REVISION} (${identity.sourceRevision}, this run ${revision})`;
 export const planOutputCache = (
   checks: readonly { readonly mismatch?: string | undefined; readonly unit: string }[],
 ) => ({
@@ -544,14 +509,13 @@ const checkUnit = (context: Context, unit: CacheUnit) =>
     const root = path.join(APP_ROOT, unit.path);
     const receipt = yield* readJson(path.join(root, RECEIPT), CacheReceiptSchema);
     const files = yield* inventory(root);
-    const mismatch =
-      firstOutputMismatch({
-        digest: yield* expectedDigest(context, unit),
-        files,
-        identity: receipt.identity,
-        receipt,
-        unit: unit.id,
-      }) ?? revisionMismatch(receipt.identity, context.revision);
+    const mismatch = firstOutputMismatch({
+      digest: yield* expectedDigest(context, unit),
+      files,
+      identity: receipt.identity,
+      receipt,
+      unit: unit.id,
+    });
     if (mismatch !== undefined) {
       return yield* invalid(unit.id, mismatch);
     }
@@ -596,14 +560,40 @@ const digestCommand = Command.make('digest', { unit: Flag.String('unit').pipe(Fl
     );
   }),
 );
+/** A unit's committed-inputs digest, as receipts and keep proofs record it (unitIdentity without build variables). */
+export const committedInputs = (graph: UnitInputGraph, unitPath: string) =>
+  unitIdentity(`app/${unitPath}`, { environment: [], graph }).pipe(Effect.map(({ files }) => files));
+/** The keep proof the plan writes for a unit it keeps (see KeepProofSchema). */
+export const keepProof = (input: { readonly head: string; readonly inputs: string; readonly unit: string }) =>
+  Schema.decodeUnknownEffect(KeepProofSchema)({
+    inputs: input.inputs,
+    revision: input.head,
+    schemaVersion: 1,
+    unit: input.unit,
+  });
+const writeKeepProof = (context: Context, unit: CacheUnit) =>
+  Effect.gen(function* writeProof() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = path.join(APP_ROOT, unit.path);
+    const proof = yield* keepProof({
+      head: context.head,
+      inputs: yield* committedInputs(context.graph, unit.path),
+      unit: unit.id,
+    });
+    const temporary = path.join(root, `${KEEP_PROOF}.tmp`);
+    yield* fs.writeFileString(temporary, yield* encode(KeepProofSchema, proof));
+    yield* fs.rename(temporary, path.join(root, KEEP_PROOF));
+  });
 const planCommand = Command.make('plan', { units: Flag.String('units') }, ({ units: value }) =>
   Effect.gen(function* printPlan() {
     const { context, units } = yield* withUnits(value);
     const checks = yield* Effect.forEach(units, (unit) => inspectUnit(context, unit), { concurrency: 1 });
-    // stdout is the step's GITHUB_OUTPUT; the log line goes to stderr.
-    for (const check of checks) {
-      if ('mismatch' in check && check.mismatch.includes(OTHER_REVISION)) {
-        yield* Console.error(`rebuilding ${check.unit}: ${OTHER_REVISION}`);
+    // A kept unit carries the proof that its inputs are this HEAD's (see KeepProofSchema); a unit to build is
+    // removed and rebuilt by the workflow, and a fresh build names HEAD itself.
+    for (const [index, check] of checks.entries()) {
+      const unit = units[index];
+      if (unit !== undefined && !('mismatch' in check)) {
+        yield* writeKeepProof(context, unit);
       }
     }
     const plan = yield* Schema.decodeUnknownEffect(PlanSchema)(planOutputCache(checks));
@@ -628,7 +618,8 @@ const stampCommand = Command.make('stamp', { unit: Flag.String('unit') }, ({ uni
         digest: yield* expectedDigest(context, unit),
         files,
         identity,
-        schemaVersion: 1,
+        inputs: yield* committedInputs(context.graph, unit.path),
+        schemaVersion: 2,
         unit: unit.id,
       };
       const temporary = path.join(root, `${RECEIPT}.tmp`);

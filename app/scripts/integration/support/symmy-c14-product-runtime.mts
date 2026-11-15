@@ -72,12 +72,23 @@ export const nativePort = Effect.scoped(
 const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContract')(function* publishedContract(
   vertical: string,
 ) {
-  // Only the canonical CLI's published DTO crosses into Rstest. Opaque owner registration values
-  // stay in the native runtime that created them.
+  // Only the canonical derivation's published DTO crosses into Rstest. Opaque owner registration values stay in the
+  // native runtime that created them. The contract is derived, never written: a unit's dist/ may be a kept build
+  // whose outputs no fixture may rewrite.
+  const program = `import { Effect, ManagedRuntime, Schema } from 'effect';
+    import { NodeServices } from '@effect/platform-node';
+    import { deriveOntosModuleDeploymentContract } from './scripts/generate-ontos-module-contract.mts';
+    import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
+    const runtime = ManagedRuntime.make(NodeServices.layer);
+    try {
+      const text = await runtime.runPromise(deriveOntosModuleDeploymentContract({ vertical: process.argv.at(-1) ?? '' }).pipe(
+        Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema)))));
+      process.stdout.write(text);
+    } finally { await runtime.dispose(); }`;
   const generator = yield* ChildProcess.make(
     'mise',
-    ['exec', '--', 'node', 'scripts/generate-ontos-module-contract.mts', '--vertical', vertical, '--target', 'dist'],
-    { cwd: c14AppRoot, stderr: 'pipe', stdout: 'pipe' },
+    ['exec', '--', 'node', '--experimental-strip-types', '--input-type=module', '--eval', program, vertical],
+    { cwd: c14AppRoot, env: { APP_ENV_PATH: '/dev/null' }, extendEnv: true, stderr: 'pipe', stdout: 'pipe' },
   );
   const [exit, errors, output] = yield* Effect.all(
     [
@@ -88,14 +99,9 @@ const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContr
     { concurrency: 3 },
   );
   if (Number(exit) !== 0) {
-    return yield* unavailable(
-      `Actual ${vertical} metadata generation failed: ${redactedDiagnostic(errors.join('') + output.join(''))}`,
-    );
+    return yield* unavailable(`Actual ${vertical} metadata derivation failed: ${redactedDiagnostic(errors.join(''))}`);
   }
-  const fs = yield* FileSystem.FileSystem;
-  const document = yield* fs.readFileString(
-    `${c14AppRoot}/verticals/${vertical}/dist/public/.well-known/ontos-module-manifest.json`,
-  );
+  const document = output.join('');
   return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(document);
 });
 
@@ -174,8 +180,9 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = `${c14AppRoot}/verticals/${contract.deployment.appId}`;
-  // Keep the native artifacts in their owning package scope for generated package self-imports.
-  const cache = `${directory}/dist/.cache/INTERNAL_C14_PRODUCT`;
+  // Keep the native artifacts in their owning package scope for generated package self-imports, outside dist/:
+  // a kept unit's outputs are never written.
+  const cache = `${directory}/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
   const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'owner-' });
   const ownerArtifact = path.join(temporary, 'owner.mjs');
