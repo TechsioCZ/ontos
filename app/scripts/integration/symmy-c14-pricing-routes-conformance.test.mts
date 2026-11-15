@@ -504,7 +504,9 @@ it.live(
         );
         expect(revisedProjection.priceLists.find(({ code }) => code === fixture.firstRecordId)).toEqual({
           ...originalGroup,
+          description: 'INTERNAL_C14 actual native cosmetic definition revision',
           name: 'Internal revised group A',
+          startsAt: DateTime.formatIso(revisionAt),
         });
         const beforeHeld = yield* readNativeCurrentGroup(fixture, originalGroupRef);
         const heldImportedAt = DateTime.formatIso(yield* DateTime.now);
