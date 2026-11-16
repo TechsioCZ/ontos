@@ -48,6 +48,7 @@ const privateRoutines = [
 const privateInvokerSearchPaths = {
   apply_partial_membership_set_locked: securityDefinerSearchPath,
   customer_group_membership_snapshot_digest: 'search_path=pg_catalog, pg_temp',
+  customer_profile_source_search_match: 'search_path=pg_catalog, pg_temp',
   lock_customer_group_membership_scope: 'search_path=pg_catalog, pg_temp',
   project_membership_source_result: 'search_path=pg_catalog, pg_temp',
   project_organization_membership_result: 'search_path=pg_catalog, pg_temp',
