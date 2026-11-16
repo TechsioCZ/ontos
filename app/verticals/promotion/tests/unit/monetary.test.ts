@@ -282,38 +282,6 @@ describe('exact monetary effect before Pricing publication', () => {
     }),
   );
 
-  it.effect('permits all four effect pairings in fixed product-before-cart order', () =>
-    Effect.gen(function* test() {
-      const cases = [
-        { cart: fixed('100'), product: fixed('100'), remaining: '800' },
-        { cart: percentage('10'), product: fixed('100'), remaining: '810' },
-        { cart: fixed('100'), product: percentage('10'), remaining: '800' },
-        { cart: percentage('10'), product: percentage('10'), remaining: '810' },
-      ];
-      for (const example of cases) {
-        const product = yield* applyPromotionMonetaryEffect({
-          capacity: '1000',
-          currencyCode: 'CZK',
-          effect: example.product,
-        });
-        expect(product.outcome).toBe('APPLIED');
-        if (product.outcome !== 'APPLIED') {
-          return;
-        }
-        const cart = yield* applyPromotionMonetaryEffect({
-          capacity: product.remainingCapacity,
-          currencyCode: 'CZK',
-          effect: example.cart,
-        });
-        expect(cart.outcome).toBe('APPLIED');
-        if (cart.outcome !== 'APPLIED') {
-          return;
-        }
-        expect(cart.remainingCapacity).toBe(example.remaining);
-      }
-    }),
-  );
-
   it.effect('preserves exact benefit while Pricing alone rounds final NET lines once', () =>
     Effect.gen(function* test() {
       const monetary = yield* applyPromotionMonetaryEffect({

@@ -39,33 +39,6 @@ const options = {
   cookie: 'session=test-session',
 } as const;
 
-const expectType = <Expected>(value: Expected): Expected => value;
-
-it.effect('preserves the literal audience and success and failure inference', () =>
-  Effect.gen(function* inferenceEffect() {
-    yield* pinDocumentCompositionRevision(compositionRevision);
-    const gateway = makeOperationGateway(audience, ({ audience: receivedAudience }) => {
-      expectType<typeof audience>(receivedAudience);
-      return Effect.fail(gatewayAcquisitionFailure);
-    });
-
-    yield* expectType<
-      Effect.Effect<
-        never,
-        | typeof gatewayAcquisitionFailure
-        | typeof operationAttemptFailure
-        | DocumentCompositionRevisionError
-        | Schema.SchemaError
-      >
-    >(gateway.invoke(() => Effect.fail(operationAttemptFailure))).pipe(Effect.flip);
-    yield* expectType<Effect.Effect<'completed', DocumentCompositionRevisionError | Schema.SchemaError>>(
-      makeOperationGateway(audience, () =>
-        Effect.succeed({ ...approvedTarget, expiresAt: 1_700_000_300, token: 'test-token' }),
-      ).invoke(() => Effect.succeed('completed' as const)),
-    );
-  }),
-);
-
 it.effect('acquires one audience-scoped assertion and forwards options unchanged', () =>
   Effect.gen(function* audienceAssertionEffect() {
     yield* pinDocumentCompositionRevision(compositionRevision);

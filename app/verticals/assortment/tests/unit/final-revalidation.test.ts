@@ -163,37 +163,27 @@ it.effect('publishes only after every material fact and set proof remains unchan
   }),
 );
 
-it.effect('discards changed Boundary, Candidate, Category, and Membership proofs', () =>
-  Effect.all(
-    (
-      [
-        ['boundary', 'commerce.assortment.boundary-fact'],
-        ['candidate', 'commerce.assortment.candidate-fact'],
-        ['category', 'catalog.category-classification-fact'],
-        ['membership', 'commerce.customer-context.membership-fact'],
-      ] as const
-    ).map((proofCase) => {
-      const [, resourceType] = proofCase;
-      return Effect.gen(function* rerunsTheCompleteAttempt() {
-        const fact = factRequest('fact-1', resourceType);
-        const oldProof = evidenceProof('old-proof');
-        const newProof = evidenceProof('new-proof');
-        let builds = 0;
-        const result = yield* evaluate({
-          buildAttempt: () => {
-            builds += 1;
-            const proof = builds === 1 ? oldProof : newProof;
-            return Effect.succeed(makeAttempt({ fact, factProof: proof }));
-          },
-          maxAttempts: 2,
-          ownerEvidence: ownerEvidence({ factProof: () => newProof }),
-        });
+// The fact resourceType is an opaque equality term inside refEquals, with no dispatch and no
+// per-owner validation, so one fact kind proves the discard-and-rerun behaviour for all of them.
+it.effect('discards a changed proof and reruns the complete attempt', () =>
+  Effect.gen(function* rerunsTheCompleteAttempt() {
+    const fact = factRequest('fact-1', 'commerce.assortment.boundary-fact');
+    const oldProof = evidenceProof('old-proof');
+    const newProof = evidenceProof('new-proof');
+    let builds = 0;
+    const result = yield* evaluate({
+      buildAttempt: () => {
+        builds += 1;
+        const proof = builds === 1 ? oldProof : newProof;
+        return Effect.succeed(makeAttempt({ fact, factProof: proof }));
+      },
+      maxAttempts: 2,
+      ownerEvidence: ownerEvidence({ factProof: () => newProof }),
+    });
 
-        expect(result).toMatchObject({ attempts: 2, decision: { outcome: 'ELIGIBLE' }, kind: 'PUBLISHED' });
-        expect(builds).toBe(2);
-      });
-    }),
-  ),
+    expect(result).toMatchObject({ attempts: 2, decision: { outcome: 'ELIGIBLE' }, kind: 'PUBLISHED' });
+    expect(builds).toBe(2);
+  }),
 );
 
 it.effect('does not retry when maxAttempts is one and publishes no stale decision evidence', () =>

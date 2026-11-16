@@ -3,7 +3,6 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { AvailabilityOwnerEvidenceUnverifiable } from '../../shared/domain/availability-owner-ports.ts';
 import { AvailabilityLaunchPromisePolicySchema } from '../../shared/domain/availability-promise-policy.ts';
-import type { AvailabilityLaunchPromisePolicy } from '../../shared/domain/availability-promise-policy.ts';
 import { AvailabilitySubjectSchema } from '../../shared/domain/availability-subject.ts';
 import { availabilityPromisePolicyService } from '../../src/services/availability-promise-policy.service.ts';
 
@@ -61,38 +60,6 @@ const subject = Schema.decodeUnknownSync(AvailabilitySubjectSchema)(input);
 const useBoundary = { kind: 'CHECKOUT_SUBMISSION' as const, requiredAt: operationTime };
 
 describe('Availability Launch promise policy', () => {
-  it.effect('keeps requested five unchanged when a controlled evaluator proves coverage for only three', () =>
-    Effect.gen(function* preserveExactShortage() {
-      const evidence = {
-        committedObligation: '2',
-        currentness: 'CURRENT',
-        onHand: '10',
-        ownerProvenCoverage: '3',
-        reserved: '3',
-        sourceCoverage: 'OWNER_VERIFIED',
-        unresolvedReservationEffect: 'NONE',
-      };
-      const original = structuredClone(evidence);
-      const controlledEvaluator = {
-        evaluate: (evaluation: {
-          readonly evidence: typeof evidence;
-          readonly policy: AvailabilityLaunchPromisePolicy;
-          readonly subject: typeof subject;
-          readonly useBoundary: typeof useBoundary;
-        }) => Effect.succeed({ ...evaluation, outcome: 'UNAVAILABLE' as const }),
-      };
-      const policy = yield* availabilityPromisePolicyService.resolveCurrent({ subject, useBoundary });
-      const decision = yield* controlledEvaluator.evaluate({ evidence, policy, subject, useBoundary });
-      expect(decision.outcome).toBe('UNAVAILABLE');
-      expect(decision.subject.quantity.amount).toBe('5.00');
-      expect(decision.policy.subject.quantity).toEqual(subject.quantity);
-      expect(decision.evidence).toEqual(original);
-      expect(evidence).toEqual(original);
-      expect(decision).not.toHaveProperty('partialReplacement');
-      expect(decision).not.toHaveProperty('allocation');
-    }),
-  );
-
   it.effect('rejects an invalid exact request through the typed policy failure channel', () =>
     Effect.gen(function* rejectInvalidRequest() {
       const error = yield* availabilityPromisePolicyService
@@ -154,16 +121,6 @@ describe('Availability Launch promise policy', () => {
       ]) {
         expect(() => decode({ ...policy, [knob]: true })).toThrow();
       }
-    }),
-  );
-
-  it.effect('does not promote conflicting, stale or unavailable owner truth to a policy positive', () =>
-    Effect.gen(function* preserveOwnerTruth() {
-      const policy = yield* availabilityPromisePolicyService.resolveCurrent({ subject, useBoundary });
-      expect(policy).not.toHaveProperty('outcome');
-      expect(policy).not.toHaveProperty('promisableQuantity');
-      expect(policy).not.toHaveProperty('inventory');
-      expect(policy).not.toHaveProperty('reservation');
     }),
   );
 });

@@ -1,4 +1,4 @@
-import { Crypto, DateTime, Effect, Exit, Option, Redacted, Result } from 'effect';
+import { Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { executeActivateMarketWithAuthorization } from '../../src/api/activate-market-action-client.ts';
@@ -11,14 +11,23 @@ import { executeRetireMarketWithAuthorization } from '../../src/api/retire-marke
 import { executeReviseMarketDefinitionWithAuthorization } from '../../src/api/revise-market-definition-action-client.ts';
 import { executeReviseStorefrontAssociationWithAuthorization } from '../../src/api/revise-storefront-association-action-client.ts';
 import { executeSuspendMarketWithAuthorization } from '../../src/api/suspend-market-action-client.ts';
-import { makeMarketRevisionNativeFixture, marketRevisionNativeServices } from '../fixtures/market-revision-native.ts';
+import {
+  MarketRevisionNativeBundleLive,
+  makeMarketRevisionNativeOwner,
+  marketRevisionNativeServices,
+} from '../fixtures/market-revision-native.ts';
 
-it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
+const nativeOwnerServices = MarketRevisionNativeBundleLive.pipe(Layer.provideMerge(marketRevisionNativeServices));
+
+// Each test starts its own owner child, but the child bundle is identical for all three: the
+// retirement-management executor is chosen by the spawned process's environment. The suite builds it
+// once, which no longer fits the 10 s default hook timeout.
+it.layer(nativeOwnerServices, { excludeTestServices: true, timeout: '120 seconds' })((suite) => {
   suite.effect(
     'runs all eight public Market Actions with original-actor owner receiving and exact retirement recovery',
     () =>
       Effect.gen(function* nativeMarketAdministration() {
-        const owner = yield* makeMarketRevisionNativeFixture();
+        const owner = yield* makeMarketRevisionNativeOwner();
         expect(owner.relaySourcePrincipalId).not.toBe(owner.principal.principalId);
         const admit = Effect.fn('NativeMarketActions.admit')(function* admit(
           requestCorrelation: string,
@@ -382,13 +391,11 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
           expect(accesses.some((value) => value.outcome === 'allowed')).toBe(true);
         }
       }).pipe(Effect.scoped),
-  ),
-);
+  );
 
-it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
   suite.effect('keeps an installed suspended Customer Context owner mandatory without future dummy providers', () =>
     Effect.gen(function* suspendedInstalledReferenceOwner() {
-      const owner = yield* makeMarketRevisionNativeFixture();
+      const owner = yield* makeMarketRevisionNativeOwner();
       expect(owner.snapshot.composition.modules).toHaveLength(3);
       expect(owner.snapshot.composition.modules.map((module) => module.moduleId)).toEqual(
         expect.arrayContaining([
@@ -489,13 +496,11 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
       expect(restoredEvidence.outboxCount).toBeGreaterThan(before.outboxCount);
       expect(owner.compositionRevision).toBe(owner.snapshot.composition.revision);
     }).pipe(Effect.scoped),
-  ),
-);
+  );
 
-it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
   suite.effect('denies private retirement management for the real actor while retaining public Retire rights', () =>
     Effect.gen(function* deniedRetirementManagement() {
-      const owner = yield* makeMarketRevisionNativeFixture({ retirementManagementExecutor: 'denied' });
+      const owner = yield* makeMarketRevisionNativeOwner({ retirementManagementExecutor: 'denied' });
       expect(owner.relaySourcePrincipalId).not.toBe(owner.principal.principalId);
       const admit = Effect.fn('NativeManageDenial.admit')(function* admit(suffix: string) {
         const requestCorrelation = `native-manage-denied-${suffix}`;
@@ -585,5 +590,5 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
       );
       expect(historyAfter).toEqual(historyBefore);
     }).pipe(Effect.scoped),
-  ),
-);
+  );
+});

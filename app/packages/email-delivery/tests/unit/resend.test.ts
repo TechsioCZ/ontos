@@ -6,6 +6,7 @@ import {
   EmailDeliveryService,
   EmailDeliveryUnavailable,
 } from '../../src/server.ts';
+import type { ResendEmailDeliveryConfigValue } from '../../src/resend.ts';
 import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '../../src/resend.ts';
 import { Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -15,8 +16,14 @@ const configuration = {
   apiKey: Redacted.make('re_test_secret'),
   endpoint: 'https://fixture.resend.test/emails',
   from: 'OntOS <no-reply@example.test>',
-  timeout: '20 millis',
+  timeout: '10 seconds',
 } as const;
+
+// src/resend.ts wraps the whole submit-and-decode pipeline in one timeout, and these suites run on
+// the live clock. Every suite whose outcome is not a timeout keeps the production budget, so a
+// scheduler or GC pause on a loaded worker cannot turn an expected receipt into an indeterminate
+// acceptance. Only the two suites that assert the timeout outcome itself keep a short budget.
+const indeterminateConfiguration = { ...configuration, timeout: '20 millis' } as const;
 
 const message = {
   html: Redacted.make('<p>Hello from OntOS.</p>'),
@@ -26,9 +33,12 @@ const message = {
   to: 'person@example.test',
 } as const;
 
-const resendTestLayer = (fetch: typeof globalThis.fetch) =>
+const resendTestLayer = (
+  fetch: typeof globalThis.fetch,
+  resendConfiguration: ResendEmailDeliveryConfigValue = configuration,
+) =>
   ResendEmailDeliveryLive.pipe(
-    Layer.provide(Layer.succeed(ResendEmailDeliveryConfig, configuration)),
+    Layer.provide(Layer.succeed(ResendEmailDeliveryConfig, resendConfiguration)),
     Layer.provide(FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))),
   );
 
@@ -143,23 +153,26 @@ const timeoutFixture: FetchFixture = (() => {
   return { fetch, requests };
 })();
 
-it.layer(resendTestLayer(timeoutFixture.fetch), { excludeTestServices: true })('Resend ambiguous outcomes', (test) => {
-  test.effect('reports a timeout as indeterminate acceptance and never retries automatically', () =>
-    Effect.gen(function* timedOutSubmission() {
-      const service = yield* EmailDeliveryService;
-      const error = yield* Effect.flip(service.send(message));
-      expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
-      if (!Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)) {
-        return;
-      }
-      const encoded = yield* encodeForAssertions(error);
-      expect(error.reason).toBe('timeout');
-      expect(timeoutRequestCount).toBe(1);
-      expect(encoded).not.toContain(message.to);
-      expect(encoded).not.toContain('OntOS');
-    }),
-  );
-});
+it.layer(resendTestLayer(timeoutFixture.fetch, indeterminateConfiguration), { excludeTestServices: true })(
+  'Resend ambiguous outcomes',
+  (test) => {
+    test.effect('reports a timeout as indeterminate acceptance and never retries automatically', () =>
+      Effect.gen(function* timedOutSubmission() {
+        const service = yield* EmailDeliveryService;
+        const error = yield* Effect.flip(service.send(message));
+        expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
+        if (!Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)) {
+          return;
+        }
+        const encoded = yield* encodeForAssertions(error);
+        expect(error.reason).toBe('timeout');
+        expect(timeoutRequestCount).toBe(1);
+        expect(encoded).not.toContain(message.to);
+        expect(encoded).not.toContain('OntOS');
+      }),
+    );
+  },
+);
 
 let streamingRequestCount = 0;
 let streamingResponseAborted = false;
@@ -183,7 +196,7 @@ const streamingFixture: FetchFixture = (() => {
   return { fetch, requests };
 })();
 
-it.layer(resendTestLayer(streamingFixture.fetch), { excludeTestServices: true })(
+it.layer(resendTestLayer(streamingFixture.fetch, indeterminateConfiguration), { excludeTestServices: true })(
   'Resend streaming responses',
   (test) => {
     test.effect('bounds a response body that never completes and cancels the request', () =>

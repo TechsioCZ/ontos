@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocketServer } from '@effect/platform-node';
-import { Deferred, Duration, Effect, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
+import { Context, Deferred, Duration, Effect, FileSystem, Layer, Path, Queue, Ref, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient } from 'effect/http';
@@ -214,12 +214,33 @@ export const bundleMarketRevisionNativeChild = Effect.fn('MarketRevisionNativeLa
   },
 );
 
+interface MarketRevisionNativeArtifact {
+  readonly artifact: string;
+  readonly directory: string;
+}
+
+/**
+ * The bundled child is a pure function of the owner source tree and its build marker: the executor
+ * under test is chosen by the spawned child's environment, not by the bundle. A suite that starts
+ * several owners therefore builds this once and spawns per test.
+ */
+export class MarketRevisionNativeBundle extends Context.Service<
+  MarketRevisionNativeBundle,
+  MarketRevisionNativeArtifact
+>()('@app/commerce-market-catalog/tests/fixtures/MarketRevisionNativeBundle') {}
+
+export const MarketRevisionNativeBundleLive = Layer.effect(
+  MarketRevisionNativeBundle,
+  bundleMarketRevisionNativeChild(),
+);
+
 /** Published launcher only: producer, database, runtime and HTTP verifier remain in the Market owner process. */
-export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLauncher.make')(
-  function* makeMarketRevisionNativeFixture(
-    options: { readonly retirementManagementExecutor?: 'allowed' | 'denied' } = {},
+const spawnMarketRevisionNativeOwner = Effect.fn('MarketRevisionNativeLauncher.spawn')(
+  function* spawnMarketRevisionNativeOwner(
+    bundle: MarketRevisionNativeArtifact,
+    options: { readonly retirementManagementExecutor?: 'allowed' | 'denied' },
   ) {
-    const { artifact, directory } = yield* bundleMarketRevisionNativeChild();
+    const { artifact, directory } = bundle;
     const channel = yield* openMarketRevisionNativeChannel();
     const child = yield* ChildProcess.make(process.execPath, [artifact], {
       cwd: directory,
@@ -344,5 +365,23 @@ export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLa
         },
       ),
     });
+  },
+);
+
+/** Bundles the owner child and starts it. Use for a suite that starts exactly one owner. */
+export const makeMarketRevisionNativeFixture = Effect.fn('MarketRevisionNativeLauncher.make')(
+  function* makeMarketRevisionNativeFixture(
+    options: { readonly retirementManagementExecutor?: 'allowed' | 'denied' } = {},
+  ) {
+    return yield* spawnMarketRevisionNativeOwner(yield* bundleMarketRevisionNativeChild(), options);
+  },
+);
+
+/** Starts an owner child from the bundle its suite layer already built. */
+export const makeMarketRevisionNativeOwner = Effect.fn('MarketRevisionNativeLauncher.makeFromBundle')(
+  function* makeMarketRevisionNativeOwner(
+    options: { readonly retirementManagementExecutor?: 'allowed' | 'denied' } = {},
+  ) {
+    return yield* spawnMarketRevisionNativeOwner(yield* MarketRevisionNativeBundle, options);
   },
 );

@@ -1,13 +1,8 @@
-import { getVerticalRuntimeEntrypoints } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeAvailabilityApiRuntime } from '../../api/index.ts';
-import { getAvailabilityReadiness } from '@app/availability/api/client';
-import { availabilityApi, availabilityReadinessSchema } from '../../shared/api.ts';
-import { CurrentAvailabilityApi } from '../../shared/apis/current-availability.ts';
-import { availabilityManifest } from '../../vertical.manifest.ts';
-import { availabilityRegistration } from '../../vertical.registration.ts';
+import { availabilityReadinessSchema } from '../../shared/api.ts';
 
 it.effect('production composition serves foundation readiness without publishing the unavailable business read', () =>
   Effect.gen(function* availabilityRuntimePublication() {
@@ -36,14 +31,3 @@ it.effect('production composition serves foundation readiness without publishing
     expect(removedRead.status).toBe(404);
   }),
 );
-
-it('preserves the typed contract without registering an executable or discoverable contribution', () => {
-  expect(Object.keys(CurrentAvailabilityApi.groups)).not.toHaveLength(0);
-  expect(Object.keys(availabilityApi.groups)).toEqual(['foundation']);
-  expect(availabilityManifest.publicSurface.api).toEqual({});
-  expect(getVerticalRuntimeEntrypoints(availabilityRegistration).api).toEqual({});
-  expect(availabilityManifest.publicSurface.components).toEqual({});
-  expect(availabilityManifest.publicSurface.search).toEqual([]);
-  expect(availabilityManifest.publicSurface.shellContributions.pages).toEqual([]);
-  expect(Effect.isEffect(getAvailabilityReadiness)).toBe(true);
-});

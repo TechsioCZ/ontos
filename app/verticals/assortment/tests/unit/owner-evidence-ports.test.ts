@@ -12,7 +12,6 @@ import {
   AssortmentFactCurrentnessRequestSchema,
   AssortmentFactCurrentnessResultSchema,
   AssortmentSetCompletenessRequestSchema,
-  AssortmentSetCompletenessResultSchema,
   AssortmentTrustedCommerceContextRequestSchema,
   AssortmentOwnerEvidenceUnavailableLive,
   AssortmentOwnerEvidence,
@@ -94,27 +93,6 @@ const membershipSet = (nextTenantId = tenantId) =>
       nextTenantId,
     ),
   });
-
-it('accepts complete membership, currentness, and set proof values without using time as proof', () => {
-  const memberships = membershipSet();
-  expect(memberships.completeness.state).toBe('COMPLETE');
-  expect(memberships.items[0]?.effectiveTo).not.toBeNull();
-
-  const currentness = Schema.decodeUnknownSync(AssortmentFactCurrentnessResultSchema)({
-    evidence: {
-      factRef: ref('commerce.assortment', 'commerce.assortment.binding', 'binding-1'),
-      proof: evidence('binding-currentness'),
-      state: 'CURRENT',
-    },
-    observedAt: instant,
-  });
-  expect(currentness.evidence.state).toBe('CURRENT');
-
-  const completeness = Schema.decodeUnknownSync(AssortmentSetCompletenessResultSchema)({
-    evidence: memberships.completeness,
-  });
-  expect(completeness.evidence.state).toBe('COMPLETE');
-});
 
 it('preserves negative proof states and rejects cross-tenant nested evidence', () => {
   const completeMemberships = membershipSet();

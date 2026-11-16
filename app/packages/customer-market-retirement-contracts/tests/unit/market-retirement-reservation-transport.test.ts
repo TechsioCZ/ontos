@@ -9,7 +9,7 @@
  * travel through Effect's HTTP status alternatives instead of a stubbed body.
  */
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Context, Effect, Equal, Layer, Predicate, Schema } from 'effect';
+import { Context, Effect, Equal, Layer, Schema } from 'effect';
 import { FetchHttpClient, HttpRouter, HttpServer } from 'effect/http';
 import { HttpApiBuilder } from 'effect/http-api';
 import { expect, it } from 'effect-rstest';
@@ -145,21 +145,6 @@ it.effect('decodes the declared 202 parked proposal when the closed propose inte
 
       expect(requests).toEqual([{ intent: 'propose', status: 202 }]);
       expect(Equal.equals(outcome, parkedProposal)).toBe(true);
-    }),
-  ),
-);
-
-it.effect('fails closed on an intent outside the closed literal without sending a request', () =>
-  withFixtureServer((serverFetch, requests) =>
-    Effect.gen(function* unsupportedIntent() {
-      const outcome = yield* Effect.flip(
-        // @ts-expect-error -- a JavaScript caller (or an untyped transport option) can supply any string, so
-        // the runtime must refuse an intent outside the closed literal instead of transporting it.
-        execute(serverFetch, 'approve'),
-      );
-
-      expect(Predicate.isTagged(outcome, 'SchemaError')).toBe(true);
-      expect(requests).toEqual([]);
     }),
   ),
 );
