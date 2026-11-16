@@ -545,13 +545,13 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       }),
       yield* ConfigProvider.ConfigProvider,
     );
-    const database = Layer.succeed(
+    const databaseConfig = Layer.succeed(
       DatabaseConfig,
       yield* parseDatabaseConfig({ DATABASE_URL: isolated.connections.runtime.connectionString }),
     );
     const redemptionLayer = GatewayAssertionRedemptionLive.pipe(
       Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-      Layer.provide(database),
+      Layer.provide(databaseConfig),
     );
     const compositionSource = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer));
     const receiving = yield* Layer.build(

@@ -168,7 +168,7 @@ const identityReads = (client: Client) =>
 class CoreEvidenceTenantScopeFixture extends Context.Service<
   CoreEvidenceTenantScopeFixture,
   Effect.Success<typeof openFixture>
->()('PartyCoreEvidenceTenantScope.fixture') {}
+>()('@app/party-registry/tests/integration/core-evidence-tenant-scope.test/CoreEvidenceTenantScopeFixture') {}
 const evidenceLayer = Layer.effect(CoreEvidenceTenantScopeFixture, openFixture).pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );

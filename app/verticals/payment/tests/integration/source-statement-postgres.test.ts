@@ -1137,7 +1137,7 @@ describe('#1151 source ingress concurrency on native PostgreSQL', () => {
         const first = yield* inActionTransaction(database, scope, COMPOSITION_REVISION, (services, base) =>
           Effect.gen(function* acceptWhileHolding() {
             yield* TestClock.setTime(receivedAtMs);
-            const source = {
+            const source: PaymentSourceServices['source'] = {
               ...services.source,
               lockAuthorities: (...args: Parameters<typeof services.source.lockAuthorities>) =>
                 services.source.lockAuthorities(...args).pipe(Effect.tap(pauseQualification)),

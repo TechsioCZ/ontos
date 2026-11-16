@@ -11,7 +11,7 @@ import type { MarketRevisionNativeArtifact } from './market-revision-native.ts';
 export class MarketRevisionNativeBundle extends Context.Service<
   MarketRevisionNativeBundle,
   MarketRevisionNativeArtifact
->()('@app/commerce-market-catalog/tests/fixtures/MarketRevisionNativeBundle') {}
+>()('@app/commerce-market-catalog/tests/fixtures/market-revision-native-bundle/MarketRevisionNativeBundle') {}
 
 export const MarketRevisionNativeBundleLive = Layer.effect(
   MarketRevisionNativeBundle,

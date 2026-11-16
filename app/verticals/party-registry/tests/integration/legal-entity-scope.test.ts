@@ -164,7 +164,7 @@ const openFixture = Effect.gen(function* openLegalEntityFixture() {
  * SELECT. One fixture, and therefore one id set, per file is therefore sound.
  */
 class LegalEntityScopeFixture extends Context.Service<LegalEntityScopeFixture, Effect.Success<typeof openFixture>>()(
-  'PartyLegalEntityScope.fixture',
+  '@app/party-registry/tests/integration/legal-entity-scope.test/LegalEntityScopeFixture',
 ) {}
 const scopeLayer = Layer.effect(LegalEntityScopeFixture, openFixture).pipe(Layer.provideMerge(NodeCrypto.layer));
 
