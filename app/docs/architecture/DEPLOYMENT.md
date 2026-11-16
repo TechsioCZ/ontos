@@ -588,6 +588,8 @@ When `main` merges into `demo/sales-crm`, main's design wins except for these re
 
    What removes each: staging that proof in the operation's prepare step (or a read's finish step) and revalidating it against transaction-local owner state, once Core exposes the sealed invocation facts to preparation. Privacy's read-only proofs can move first: their requests need no sealed facts (branch `fix/merge4-a2-restaging-20261114` holds a first attempt).
 
+10. Lint suppression counts. Main still fails the Quality Audit workflow on an increase; the demo reports changes, totals, and GitHub Actions warnings without enforcing a count limit. Removed when main adopts report-only monitoring.
+
 Zerops-only deployment: the demo keeps main's GATES and none of main's deploy jobs or Cloudflare/edge workflows; it deploys through `zerops-stage.yml`. The deploy chain behind `MAIN_DEPLOY_ENABLED` in `ultramodern-workspace-gates.yml` and the workflows `active-application-composition-refresh.yml`, `initial-composition-cutover.yml` and `stage-edge-cost-guard.yml` are absent on purpose.
 
 The owner generator no longer scaffolds a Cloudflare build script.

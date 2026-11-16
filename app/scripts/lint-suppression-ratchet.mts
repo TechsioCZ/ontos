@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Array as EffectArray, Console, Data, Effect, FileSystem, Order, Path, Schema } from 'effect';
+import { Array as EffectArray, Config, Console, Data, Effect, FileSystem, Order, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { parseSync } from 'oxc-parser';
 
@@ -18,7 +18,7 @@ const Scope = Schema.fromJsonString(
   Schema.Struct({ exclude: Schema.Array(Schema.String), patterns: Schema.Array(Schema.String) }),
 );
 
-class LintSuppressionRatchetError extends Data.TaggedError('LintSuppressionRatchetError')<{
+class LintSuppressionReportError extends Data.TaggedError('LintSuppressionReportError')<{
   message: string;
 }> {}
 
@@ -58,8 +58,17 @@ export interface SuppressionDelta {
   readonly rule: string;
 }
 
-const describe = (entries: readonly SuppressionDelta[]) =>
-  entries.map(({ baseline: before, current: after, rule }) => `${rule} ${before} -> ${after}`).join(', ');
+const signedDelta = ({ baseline, current }: SuppressionDelta) => {
+  const delta = current - baseline;
+  return delta > 0 ? `+${delta}` : String(delta);
+};
+const describe = (entry: SuppressionDelta) =>
+  `${entry.rule}: ${entry.baseline} -> ${entry.current} (${signedDelta(entry)})`;
+const sum = (counts: Readonly<Record<string, number>>) =>
+  Object.values(counts).reduce((total, count) => total + count, 0);
+const escapeAnnotation = (value: string) =>
+  value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+const escapeTableCell = (value: string) => value.replaceAll('|', '&#124;').replaceAll('\r', ' ').replaceAll('\n', ' ');
 
 /** Every rule whose suppression count differs from the committed baseline. */
 export const compareLintSuppressions = (
@@ -71,29 +80,52 @@ export const compareLintSuppressions = (
     return delta.baseline === delta.current ? [] : [delta];
   });
 
-export const checkLintSuppressions = Effect.fn('lintSuppressionRatchet.check')(function* checkLintSuppressionsEffect(
+export const checkLintSuppressions = Effect.fn('lintSuppressionReport.check')(function* checkLintSuppressionsEffect(
   baselineSource: string,
   current: Readonly<Record<string, number>>,
 ) {
   const baseline = yield* Schema.decodeEffect(Baseline)(baselineSource).pipe(
-    Effect.mapError((cause) => new LintSuppressionRatchetError({ message: `Malformed ${BASELINE}: ${String(cause)}` })),
+    Effect.mapError((cause) => new LintSuppressionReportError({ message: `Malformed ${BASELINE}: ${String(cause)}` })),
   );
   const deltas = compareLintSuppressions(baseline.rules, current);
   const increased = deltas.filter(({ baseline: before, current: after }) => after > before);
-  const decreased = deltas.filter(({ baseline: before, current: after }) => after < before);
-  if (increased.length > 0) {
-    yield* new LintSuppressionRatchetError({
-      message: `Lint suppressions increased: ${describe(increased)}. Fix the diagnostic, or encode a repeated false positive as a rule exemption instead of disabling it.`,
-    });
+  const total = { baseline: sum(baseline.rules), current: sum(current), rule: 'Total' };
+  const entries = [...deltas, total];
+  if (deltas.length === 0) {
+    yield* Console.log('Lint suppressions match the committed baseline');
   }
-  if (decreased.length > 0) {
-    yield* new LintSuppressionRatchetError({
-      message: `Lint suppressions decreased: ${describe(decreased)}. Lower ${BASELINE} with \`pnpm lint:suppressions --update\`.`,
-    });
+  yield* Console.log(entries.map(describe).join('\n'));
+  const githubActions = yield* Config.String('GITHUB_ACTIONS').pipe(Config.withDefault('false'));
+  if (githubActions === 'true') {
+    if (increased.length > 0) {
+      yield* Console.log(
+        `::warning title=Lint suppressions increased::${escapeAnnotation(increased.map(describe).join(', '))}`,
+      );
+    }
+    const summary = yield* Config.String('GITHUB_STEP_SUMMARY');
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(
+      summary,
+      [
+        '',
+        '## Lint suppressions',
+        '',
+        'Report only. Counts are compared with the committed baseline.',
+        '',
+        '| Rule | Baseline | Now | Delta |',
+        '| --- | ---: | ---: | ---: |',
+        ...entries.map(
+          (entry) =>
+            `| ${escapeTableCell(entry.rule)} | ${entry.baseline} | ${entry.current} | ${signedDelta(entry)} |`,
+        ),
+        '',
+      ].join('\n'),
+      { flag: 'a' },
+    );
   }
 });
 
-const collectSources = Effect.fn('lintSuppressionRatchet.collectSources')(function* collectSourcesEffect(root: string) {
+const collectSources = Effect.fn('lintSuppressionReport.collectSources')(function* collectSourcesEffect(root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scope = yield* Schema.decodeEffect(Scope)(yield* fs.readFileString(path.join(root, SCOPE)));
@@ -113,10 +145,10 @@ const collectSources = Effect.fn('lintSuppressionRatchet.collectSources')(functi
 });
 
 const cli = Command.make(
-  'lint-suppression-ratchet',
+  'lint-suppression-report',
   { update: Flag.Boolean('update').pipe(Flag.withDefault(false)) },
   ({ update }) =>
-    Effect.gen(function* lintSuppressionRatchetCommand() {
+    Effect.gen(function* lintSuppressionReportCommand() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* path.fromFileUrl(new URL('..', import.meta.url));
@@ -128,7 +160,6 @@ const cli = Command.make(
         return;
       }
       yield* checkLintSuppressions(yield* fs.readFileString(baselinePath), current);
-      yield* Console.log('Lint suppressions match the committed baseline');
     }),
 );
 
