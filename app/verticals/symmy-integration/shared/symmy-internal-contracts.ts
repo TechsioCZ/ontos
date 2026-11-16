@@ -16,3 +16,5 @@ export { SymmyStockRowSchema, SymmyStockRowsSchema } from './domain/symmy-stock-
 export type { SymmyStockRows } from './domain/symmy-stock-batch.ts';
 export { SymmyPriceListCodeSchema, SymmyPriceListRowsSchema } from './domain/symmy-price-list-batch.ts';
 export type { SymmyPriceListRows } from './domain/symmy-price-list-batch.ts';
+export { SymmyPriceBatchSchema } from './domain/symmy-price-batch.ts';
+export type { SymmyPriceBatch, SymmyPriceReviseFacts } from './domain/symmy-price-batch.ts';

@@ -35,6 +35,7 @@ import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.
 import { priceResourceDescriptor } from './shared/resources/price.ts';
 import { PriceResultLookupApi } from './shared/apis/price-result-lookup.ts';
 import { PriceScheduleApi } from './shared/apis/price-schedule.ts';
+import { priceScheduleRead } from './src/api/price-schedule.read.ts';
 import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lookup.ts';
 import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
@@ -147,6 +148,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
         operationKey: 'priceGroupSourcePrices.execute',
         registration: priceGroupSourcePricesRead,
       },
+      { apiKey: 'price-schedule', operationKey: 'priceSchedule.execute', registration: priceScheduleRead },
       {
         apiKey: 'price-source-result-lookup',
         operationKey: 'priceSourceResultLookup.execute',

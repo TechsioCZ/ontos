@@ -16,6 +16,8 @@ import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { RevisePricePayloadSchema } from '@app/pricing/actions/revise-price';
 import { Schema } from 'effect';
 
+import { SymmyPriceGroupRefSchema } from './symmy-price-batch.ts';
+
 const dependencyKey = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/u));
 const productEffectReference = Schema.Struct({
   effectKey: dependencyKey.pipe(Schema.brand('SymmyExecutionEffectKey')),
@@ -98,7 +100,11 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('PriceGroupCreate', { payload: CreatePriceGroupPayloadSchema }),
   Schema.TaggedStruct('PriceGroupRevise', { payload: CreatePriceGroupDefinitionRevisionPayloadSchema }),
   Schema.TaggedStruct('PriceDefine', { payload: DefinePricePayloadSchema }),
-  Schema.TaggedStruct('PriceRevise', { payload: RevisePricePayloadSchema }),
+  Schema.TaggedStruct('PriceRevise', {
+    payload: RevisePricePayloadSchema,
+    /** The price list the caller named. The adapter refuses a price of any other list and an unenrolled list. */
+    priceGroupRef: Schema.optionalKey(SymmyPriceGroupRefSchema),
+  }),
   SymmyInventoryImportIntentSchema,
   Schema.TaggedStruct('CatalogCreateVariantFromProductEffect', {
     parent: productEffectReference,

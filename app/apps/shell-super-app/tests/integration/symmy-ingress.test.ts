@@ -24,7 +24,7 @@ import {
   SymmyRouteContextResponseSchema,
 } from '@app/symmy-integration/api/symmy-route-context';
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { SymmyIngressDefectLive } from '../../api/index.ts';
 import {
@@ -338,10 +338,45 @@ const canonicalPriceList = {
   prices: [{ ...priceRow, effectiveFrom: '2026-01-01T00:00:00.000Z' }],
 };
 
+type SymmyIngressServer = ReturnType<typeof start>;
+interface PublicPriceGroupRef {
+  readonly moduleId: string;
+  readonly resourceId: string;
+  readonly resourceType: string;
+  readonly tenantId: string;
+}
+const definedAt = '2026-01-01T00:00:00.000Z';
+const definePriceRow = { ...priceRow, operation: 'DEFINE' };
+const revisePriceRow = {
+  amount: '30',
+  currencyCode: 'CZK',
+  expectedRevision: { revision: 1, revisionId: '44444444-4444-4444-8444-444444444444' },
+  operation: 'REVISE',
+  priceRef: {
+    moduleId: 'commerce.pricing',
+    resourceId: '33333333-3333-4333-8333-333333333340',
+    resourceType: 'commerce.pricing.price',
+    tenantId: regionsMarketRef.tenantId,
+  },
+};
+const priceGroupRefOfBatch = {
+  moduleId: 'pricing.price-group-catalog',
+  resourceId: '50000000-0000-4000-8000-000000000001',
+  resourceType: 'pricing.price-group-catalog.price-group',
+  tenantId: '60000000-0000-4000-8000-000000000001',
+};
+const priceBatchJson = (prices: readonly unknown[]) => ({
+  body: JSON.stringify({ priceGroupRef: priceGroupRefOfBatch, prices }),
+  headers: { 'content-type': 'application/json' },
+});
+
 /** The body each durable or synchronous POST route accepts: the public body, or an operator fixture identity. */
 const routeBody = (path: string) => {
   if (path === SYMMY_ROUTES.inventoryStockBatch.path) {
     return stockBatchJson([stockRow('item-1'), stockRow('item-2')]);
+  }
+  if (path === SYMMY_ROUTES.priceListPricesBatch.path) {
+    return priceBatchJson([definePriceRow, revisePriceRow]);
   }
   return path === SYMMY_ROUTES.priceListsBatchUpsert.path ? priceListsBatchJson([priceListRow]) : fixtureJson;
 };
@@ -518,6 +553,12 @@ const nativePriceGroupRef = {
   resourceType: 'pricing.price-group-catalog.price-group',
   tenantId: internalRoute.tenantId,
 } as const;
+const nativeCustomerGroupRef = {
+  moduleId: 'commerce.customer-context',
+  resourceId: '50000000-0000-4000-8000-000000000011',
+  resourceType: 'commerce.customer-context.customer-group',
+  tenantId: internalRoute.tenantId,
+} as const;
 const nativeGroupDefinition = (observedAt: string) => {
   const at = '1970-01-01T00:00:00.000Z';
   const period = { effectiveFrom: at, effectiveTo: null };
@@ -572,28 +613,28 @@ it.effect('uses a privately acquired route assertion without falling back to hum
   Effect.gen(function* sealedRouteIssuerCapability() {
     const rawCode = 'CZ wholesale';
     const source = {
-      entityKind: 'PRICE_LIST',
+      entityKind: 'CUSTOMER_GROUP',
       issuerId: internalRoute.issuerId,
       route: { integrationRouteId: internalRoute.sourceRouteId, tenantId: internalRoute.tenantId },
-      sourceNamespace: 'source-price-group-namespace',
+      sourceNamespace: 'source-customer-group-namespace',
       sourceRecordId: rawCode,
     };
     const route = yield* Schema.decodeUnknownEffect(SymmyRouteContextResponseSchema)({
       ...internalRoute,
       resolvedCode: rawCode,
-      selector: { kind: 'PRICE_GROUP', source, target: nativePriceGroupRef },
+      selector: { kind: 'CUSTOMER_GROUP', source, target: nativeCustomerGroupRef },
       sourceNamespace: 'distinct-price-row-namespace',
     });
     const code = encodeSymmySourceSelector(
       {
         issuerId: source.issuerId,
         routeId: source.route.integrationRouteId,
-        selectorKind: 'PRICE_GROUP',
+        selectorKind: 'CUSTOMER_GROUP',
         sourceNamespace: source.sourceNamespace,
         tenantId: source.route.tenantId,
       },
       rawCode,
-      nativePriceGroupRef.resourceId,
+      nativeCustomerGroupRef.resourceId,
     );
     const scopes: Parameters<NonNullable<SymmyIngressAdmission['acquireRouteAssertion']>>[0][] = [];
     const nativeCalls: string[] = [];
@@ -629,44 +670,47 @@ it.effect('uses a privately acquired route assertion without falling back to hum
       (fixture) => Effect.promise(fixture.dispose),
     );
     const response = yield* Effect.promise(() =>
-      server.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
+      server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
         ...fixtureJson,
         headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
     );
     expect(response.status).toBe(202);
-    expect(scopes).toEqual([{ code, replayIdempotencyKey: idempotencyKey, routeKey: 'priceListPricesBatch' }]);
+    expect(scopes).toEqual([{ code, replayIdempotencyKey: idempotencyKey, routeKey: 'customerGroupCustomersBatch' }]);
     expect(genericSelections).toBe(0);
     expect(nativeCalls).toEqual([`${releasePath}/symmy-integration/actions/admit-symmy-job`]);
   }),
 );
 
+const priceBatchRoute = (logicalRouteId: string, namespace: string) => ({
+  ...internalRoute,
+  allowedOwnerOperations: [
+    {
+      entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+      moduleId: 'pricing.price-group-catalog',
+      schemaVersion: '1',
+    },
+  ],
+  routeId: '72000000-0000-4000-8000-000000000001',
+  sourceEntityKind: 'PRICE',
+  sourceNamespace: namespace,
+  sourceRouteId: logicalRouteId,
+});
+
 it.effect(
-  'round-trips opaque GET Price List IDs through a distinct selected POST route without changing the native source key',
+  'copies the priceGroupRef of GET Price Lists into POST Price Batch and refuses every other list with one answer',
   () =>
-    Effect.gen(function* actualSelectedCodeRoundTrip() {
+    Effect.gen(function* priceGroupRefRoundTrip() {
       let sequence = 0;
-      for (const sourceRecordId of [
-        'CZ wholesale',
-        'CZ/wholesale',
-        'Žluťoučký / 価格',
-        'x'.repeat(300),
-        '界'.repeat(300),
-      ]) {
+      for (const sourceRecordId of ['CZ wholesale', 'CZ/wholesale', 'Žluťoučký / 価格', 'x'.repeat(300)]) {
         sequence += 1;
-        const roundtripKey = `roundtrip-${sequence}`;
-        const registeredCode = `operator-code-${sequence}`;
         const logicalRouteId = '71000000-0000-4000-8000-000000000001';
         const priceGroupNamespace = 'internal-price-groups';
         const listRoute = {
-          ...internalRoute,
+          ...priceBatchRoute(logicalRouteId, priceGroupNamespace),
           allowedOwnerOperations: [
-            {
-              entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
-              moduleId: 'pricing.price-group-catalog',
-              schemaVersion: '1',
-            },
+            ...priceBatchRoute(logicalRouteId, priceGroupNamespace).allowedOwnerOperations,
             {
               entrypointKey: 'pricing.price-group-catalog.api.price-group-definition',
               moduleId: 'pricing.price-group-catalog',
@@ -674,28 +718,9 @@ it.effect(
             },
           ],
           sourceEntityKind: 'PRICE_LIST',
-          sourceNamespace: priceGroupNamespace,
-          sourceRouteId: logicalRouteId,
         };
-        const priceRoute = {
-          ...internalRoute,
-          resolvedCode: registeredCode,
-          routeId: '72000000-0000-4000-8000-000000000001',
-          selector: {
-            kind: 'PRICE_GROUP',
-            source: {
-              entityKind: 'PRICE_LIST',
-              issuerId: internalRoute.issuerId,
-              route: { integrationRouteId: logicalRouteId, tenantId: internalRoute.tenantId },
-              sourceNamespace: priceGroupNamespace,
-              sourceRecordId,
-            },
-            target: nativePriceGroupRef,
-          },
-          sourceNamespace: 'separate-price-row-namespace',
-          sourceRouteId: logicalRouteId,
-        };
-        const admittedCodes: string[] = [];
+        const admitted: (typeof AdmitSymmyJobPayloadSchema.Type)[] = [];
+        const associationPages: { readonly issuer: string; readonly offset: number }[] = [];
         const ownerFetchFor =
           (issuerId: string): typeof fetch =>
           async (input, init) => {
@@ -703,46 +728,45 @@ it.effect(
             const path = new URL(request.url).pathname;
             if (path.endsWith('/reads/symmy-route-context')) {
               const payload = Schema.decodeUnknownSync(SymmyRouteContextRequestSchema)(await request.json());
+              expect(payload.code).toBeUndefined();
               return Response.json(
                 payload.routeKey === 'priceLists'
                   ? { ...listRoute, issuerId }
-                  : {
-                      ...priceRoute,
-                      issuerId,
-                      selector: { ...priceRoute.selector, source: { ...priceRoute.selector.source, issuerId } },
-                    },
+                  : { ...priceBatchRoute(logicalRouteId, priceGroupNamespace), issuerId },
               );
             }
             if (path.endsWith('/reads/price-group-source-associations')) {
               const payload = Schema.decodeUnknownSync(PriceGroupSourceAssociationsRequestSchema)(await request.json());
               expect(payload.routeId).toBe(logicalRouteId);
-              if (payload.recordKey !== undefined) {
-                expect(payload.recordKey).toBe(sourceRecordId);
-              }
+              expect(payload.namespace).toBe(priceGroupNamespace);
+              associationPages.push({ issuer: payload.issuer, offset: payload.offset });
+              // Only the issuer that created the list holds an association for it.
+              const created = payload.issuer === internalRoute.issuerId;
               return Response.json({
-                associations: [
-                  {
-                    priceGroupRef: nativePriceGroupRef,
-                    sourceCorrelation: {
-                      issuer: issuerId,
-                      mappingVersion: internalRoute.sourceMappingVersion,
-                      namespace: priceGroupNamespace,
-                      recordKey: sourceRecordId,
-                      routeId: logicalRouteId,
-                    },
-                  },
-                ],
-                count: 1,
-                limit: 1,
-                offset: 0,
+                associations: created
+                  ? [
+                      {
+                        priceGroupRef: nativePriceGroupRef,
+                        sourceCorrelation: {
+                          issuer: issuerId,
+                          mappingVersion: internalRoute.sourceMappingVersion,
+                          namespace: priceGroupNamespace,
+                          recordKey: sourceRecordId,
+                          routeId: logicalRouteId,
+                        },
+                      },
+                    ]
+                  : [],
+                count: created ? 1 : 0,
+                limit: payload.limit,
+                offset: payload.offset,
               });
             }
             if (path.endsWith('/reads/price-group-definition')) {
               const payload = Schema.decodeUnknownSync(PriceGroupDefinitionRequestSchema)(await request.json());
               return Response.json(nativeGroupDefinition(payload.trustedOperationAt));
             }
-            const payload = Schema.decodeUnknownSync(AdmitSymmyJobPayloadSchema)(await request.json());
-            admittedCodes.push(payload.code ?? '');
+            admitted.push(Schema.decodeUnknownSync(AdmitSymmyJobPayloadSchema)(await request.json()));
             return Response.json({ jobId, phase: 'admitted' });
           };
         const startIssuer = (issuerId: string) =>
@@ -762,18 +786,6 @@ it.effect(
             (fixture) => Effect.promise(fixture.dispose),
           );
         const server = yield* startIssuer(internalRoute.issuerId);
-        const qualifiedCodeFor = (issuerId: string) =>
-          encodeSymmySourceSelector(
-            {
-              issuerId,
-              routeId: logicalRouteId,
-              selectorKind: 'PRICE_GROUP',
-              sourceNamespace: priceGroupNamespace,
-              tenantId: internalRoute.tenantId,
-            },
-            sourceRecordId,
-            nativePriceGroupRef.resourceId,
-          );
         const get = yield* Effect.promise(() =>
           server.request(`${SYMMY_ROUTES.priceLists.path}?limit=1`, {
             headers: { 'x-api-key': validKey },
@@ -781,65 +793,122 @@ it.effect(
           }),
         );
         expect(get.status).toBe(200);
-        const body = yield* Effect.promise(() => get.json());
         const publicBody = yield* Schema.decodeUnknownEffect(SymmyPriceListsResponseSchema, {
           onExcessProperty: 'error',
-        })(body);
+        })(yield* Effect.promise(() => get.json()));
         const [item] = publicBody.priceLists;
         expect(item?.code).toBe(sourceRecordId);
-        expect(item?.priceGroupRef).toEqual(nativePriceGroupRef);
-        for (const rejected of [
-          `sourceRecordId=${encodeURIComponent(sourceRecordId)}`,
-          `code=${encodeURIComponent(sourceRecordId)}`,
-          'afterRecordId=x',
-          'contractVersion=INTERNAL_C14',
-        ]) {
-          const refused = yield* Effect.promise(() =>
-            server.request(`${SYMMY_ROUTES.priceLists.path}?${rejected}&limit=1`, {
-              headers: { 'x-api-key': validKey },
-              method: 'GET',
+        assert.isOk(item);
+        const post = (
+          target: SymmyIngressServer,
+          priceGroupRef: PublicPriceGroupRef,
+          key: string,
+          prices = [definePriceRow],
+        ) =>
+          Effect.promise(() =>
+            target.request(SYMMY_ROUTES.priceListPricesBatch.path, {
+              body: JSON.stringify({ priceGroupRef, prices }),
+              headers: { 'content-type': 'application/json', 'idempotency-key': key, 'x-api-key': validKey },
+              method: 'POST',
             }),
           );
-          expect(refused.status, rejected).toBe(400);
+        const accepted = yield* post(server, item.priceGroupRef, `roundtrip-${sequence}`);
+        expect(accepted.status).toBe(202);
+        expect(yield* Effect.promise(() => accepted.json())).toEqual({ jobId, status: 'queued' });
+        expect(admitted).toHaveLength(1);
+        const [payload] = admitted;
+        expect(payload).toMatchObject({
+          idempotencyKey: `roundtrip-${sequence}`,
+          priceBatch: { priceGroupRef: nativePriceGroupRef, prices: [{ ...definePriceRow, effectiveFrom: definedAt }] },
+          reviseFacts: [],
+          routeKey: 'priceListPricesBatch',
+        });
+        for (const absent of ['code', 'contractVersion', 'fixtureId', 'plan', 'selector']) {
+          expect(payload).not.toHaveProperty(absent);
         }
 
-        const code = qualifiedCodeFor(internalRoute.issuerId);
-        const post = yield* Effect.promise(() =>
-          server.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
-            ...fixtureJson,
-            headers: { ...fixtureJson.headers, 'idempotency-key': roundtripKey, 'x-api-key': validKey },
-            method: 'POST',
-          }),
+        // A list the key may not write to and a list that does not exist answer alike, before any admission.
+        const otherList = { ...nativePriceGroupRef, resourceId: '50000000-0000-4000-8000-0000000000ff' };
+        const unknownList = yield* post(server, otherList, `roundtrip-other-${sequence}`);
+        expect(unknownList.status).toBe(403);
+        const otherIssuer = yield* startIssuer('other-authorized-issuer');
+        const crossIssuer = yield* post(otherIssuer, item.priceGroupRef, `roundtrip-cross-${sequence}`);
+        expect(crossIssuer.status).toBe(403);
+        expect(yield* Effect.promise(() => crossIssuer.json())).toEqual(
+          yield* Effect.promise(() => unknownList.json()),
         );
-        expect(post.status).toBe(202);
-        expect(admittedCodes).toEqual([registeredCode]);
-
-        const otherServer = yield* startIssuer('other-authorized-issuer');
-        const otherGet = yield* Effect.promise(() =>
-          otherServer.request(`${SYMMY_ROUTES.priceLists.path}?limit=1`, {
-            headers: { 'x-api-key': validKey },
-            method: 'GET',
-          }),
-        );
-        expect(otherGet.status).toBe(200);
-        const otherBody = yield* Effect.promise(() => otherGet.json());
-        const otherPublicBody = yield* Schema.decodeUnknownEffect(SymmyPriceListsResponseSchema, {
-          onExcessProperty: 'error',
-        })(otherBody);
-        const [otherItem] = otherPublicBody.priceLists;
-        expect(otherItem?.code).toBe(sourceRecordId);
-        expect(qualifiedCodeFor('other-authorized-issuer')).not.toBe(code);
-        const crossIssuerPost = yield* Effect.promise(() =>
-          otherServer.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
-            ...fixtureJson,
-            headers: { ...fixtureJson.headers, 'idempotency-key': roundtripKey, 'x-api-key': validKey },
-            method: 'POST',
-          }),
-        );
-        expect(crossIssuerPost.status).toBe(403);
-        expect(admittedCodes).toEqual([registeredCode]);
+        expect(admitted).toHaveLength(1);
+        expect(associationPages.every(({ offset }) => offset === 0)).toBe(true);
       }
     }),
+);
+
+it.effect('refuses a REVISE item with 422 when the route has no price read source configured', () =>
+  Effect.gen(function* reviseNeedsPriceSource() {
+    const logicalRouteId = '71000000-0000-4000-8000-000000000001';
+    const ownerFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/reads/symmy-route-context')) {
+        return Response.json({
+          ...priceBatchRoute(logicalRouteId, 'internal-price-groups'),
+          allowedOwnerOperations: [
+            ...priceBatchRoute(logicalRouteId, 'internal-price-groups').allowedOwnerOperations,
+            { entrypointKey: 'commerce.pricing.api.price-schedule', moduleId: 'commerce.pricing', schemaVersion: '1' },
+            {
+              entrypointKey: 'commerce.pricing.api.price-group-source-prices',
+              moduleId: 'commerce.pricing',
+              schemaVersion: '1',
+            },
+          ],
+        });
+      }
+      if (path.endsWith('/reads/price-group-source-associations')) {
+        return Response.json({
+          associations: [
+            {
+              priceGroupRef: nativePriceGroupRef,
+              sourceCorrelation: {
+                issuer: internalRoute.issuerId,
+                mappingVersion: internalRoute.sourceMappingVersion,
+                namespace: 'internal-price-groups',
+                recordKey: 'CZ wholesale',
+                routeId: logicalRouteId,
+              },
+            },
+          ],
+          count: 1,
+          limit: 100,
+          offset: 0,
+        });
+      }
+      return Response.json({ jobId, phase: 'admitted' });
+    };
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          acquireOwnerAssertion: ({ audience }) =>
+            Effect.succeed({
+              apiBaseUrl: moduleReleaseApiBaseUrl(audience, 'fixture-build'),
+              assertion: Redacted.make('fresh-owned-route-assertion'),
+              compositionRevision: revision,
+            }),
+          dispatch: makeSymmyGovernedDispatch(Effect.succeed('revise-correlation')),
+          ownerFetch,
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.priceListPricesBatch.path, {
+        body: JSON.stringify({ priceGroupRef: nativePriceGroupRef, prices: [revisePriceRow] }),
+        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+        method: 'POST',
+      }),
+    );
+    expect(response.status).toBe(422);
+    expect(yield* Effect.promise(() => response.json())).toMatchObject({ reason: 'projection_not_configured' });
+  }),
 );
 
 it.effect('rejects foreign qualified codes and forged target hints before admitting a selected owner effect', () =>
@@ -849,8 +918,8 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
     const selectorScope = {
       issuerId: internalRoute.issuerId,
       routeId: logicalRouteId,
-      selectorKind: 'PRICE_GROUP' as const,
-      sourceNamespace: 'internal-price-groups',
+      selectorKind: 'CUSTOMER_GROUP' as const,
+      sourceNamespace: 'internal-customer-groups',
       tenantId: internalRoute.tenantId,
     };
     let routeReads = 0;
@@ -864,15 +933,15 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
             ...internalRoute,
             resolvedCode: rawCode,
             selector: {
-              kind: 'PRICE_GROUP',
+              kind: 'CUSTOMER_GROUP',
               source: {
-                entityKind: 'PRICE_LIST',
+                entityKind: 'CUSTOMER_GROUP',
                 issuerId: selectorScope.issuerId,
                 route: { integrationRouteId: logicalRouteId, tenantId: internalRoute.tenantId },
                 sourceNamespace: selectorScope.sourceNamespace,
                 sourceRecordId: rawCode,
               },
-              target: nativePriceGroupRef,
+              target: nativeCustomerGroupRef,
             },
           }),
         );
@@ -897,7 +966,7 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
     );
     const submit = (code: string) =>
       Effect.promise(() =>
-        server.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
+        server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
           ...fixtureJson,
           headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
           method: 'POST',
@@ -906,20 +975,20 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
     const foreign = encodeSymmySourceSelector(
       { ...selectorScope, issuerId: 'another-issuer' },
       rawCode,
-      nativePriceGroupRef.resourceId,
+      nativeCustomerGroupRef.resourceId,
     );
     expect((yield* submit(foreign)).status).toBe(403);
     const wrongKind = encodeSymmySourceSelector(
-      { ...selectorScope, selectorKind: 'CUSTOMER_GROUP' },
+      { ...selectorScope, selectorKind: 'PRICE_GROUP' },
       rawCode,
-      nativePriceGroupRef.resourceId,
+      nativeCustomerGroupRef.resourceId,
     );
     expect((yield* submit(wrongKind)).status).toBe(403);
     expect(routeReads).toBe(2);
     expect(writes).toBe(0);
     const before = server.authAttempts.length;
     expect(
-      (yield* submit(encodeSymmySourceSelector(selectorScope, validKey, nativePriceGroupRef.resourceId))).status,
+      (yield* submit(encodeSymmySourceSelector(selectorScope, validKey, nativeCustomerGroupRef.resourceId))).status,
     ).toBe(403);
     expect(server.authAttempts).toHaveLength(before + 1);
     expect(
@@ -1281,7 +1350,14 @@ it.effect('uses each approved route’s declared success status for internal fix
         stock: [stockRow('item-1', '2026-01-01T10:00:00.000Z'), stockRow('item-2', '2026-01-01T10:00:00.000Z')],
       },
       { id: jobId, route: 'job' },
-      { code: groupCode, fixtureId, idempotencyKey, route: 'priceListPricesBatch' },
+      {
+        idempotencyKey,
+        priceBatch: {
+          priceGroupRef: priceGroupRefOfBatch,
+          prices: [{ ...definePriceRow, effectiveFrom: definedAt }, revisePriceRow],
+        },
+        route: 'priceListPricesBatch',
+      },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
       { idempotencyKey, priceLists: [canonicalPriceList], route: 'priceListsBatchUpsert' },
       { fixtureId, idempotencyKey, route: 'productsBatch' },
@@ -1508,6 +1584,121 @@ it.effect('serves the public price lists batch route with 202 queued and no inte
       expect((yield* post(JSON.stringify(rejectedBody), authorized)).status, name).toBe(400);
     }
     const reflected = yield* post(JSON.stringify({ priceLists: [{ ...priceListRow, name: validKey }] }), authorized);
+    expect(reflected.status).toBe(400);
+    expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
+    expect(forwarded).toHaveLength(before);
+  }),
+);
+
+it.effect('serves the public price batch route at its own path with 202 queued and no internal contract', () =>
+  Effect.gen(function* servesPublicPriceBatch() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const admittedJobId = Schema.decodeUnknownSync(SymmyFixtureJobIdSchema)(jobId);
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.fail(symmyUnavailableProblem),
+            submit: () => Effect.succeed(admittedJobId),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const post = (
+      body: string,
+      headers: Record<string, string>,
+      query = '',
+      path: string = SYMMY_ROUTES.priceListPricesBatch.path,
+    ) =>
+      Effect.promise(() =>
+        server.request(`${path}${query}`, {
+          body,
+          headers: { 'content-type': 'application/json', ...headers },
+          method: 'POST',
+        }),
+      );
+    const authorized = { 'idempotency-key': idempotencyKey, 'x-api-key': validKey };
+    const batch = (prices: readonly Schema.Json[], extra: Readonly<Record<string, Schema.Json>> = {}) =>
+      JSON.stringify({ priceGroupRef: priceGroupRefOfBatch, prices, ...extra });
+    const accepted = yield* post(batch([definePriceRow, revisePriceRow]), authorized);
+    expect(accepted.status).toBe(202);
+    const body = yield* Effect.promise(() => accepted.json());
+    expect(body).toEqual({ jobId, status: 'queued' });
+    for (const hidden of ['contractVersion', 'selector']) {
+      expect(JSON.stringify(body)).not.toContain(hidden);
+      expect(JSON.stringify(forwarded)).not.toContain(hidden);
+    }
+    expect(forwarded).toEqual([
+      {
+        idempotencyKey,
+        priceBatch: {
+          priceGroupRef: priceGroupRefOfBatch,
+          prices: [{ ...definePriceRow, effectiveFrom: definedAt }, revisePriceRow],
+        },
+        route: 'priceListPricesBatch',
+      },
+    ]);
+    // The old path with a code segment finds no route.
+    const oldPath = `${SYMMY_REST_PREFIX}/price-lists/some-code/prices/batch`;
+    expect((yield* post(batch([definePriceRow]), authorized, '', oldPath)).status).toBe(404);
+
+    const before = forwarded.length;
+    const valid = batch([definePriceRow]);
+    expect((yield* post(valid, { 'x-api-key': validKey })).status).toBe(400);
+    expect((yield* post(valid, { 'idempotency-key': idempotencyKey })).status).toBe(401);
+    expect((yield* post(valid, { ...authorized, 'idempotency-key': 'not a key' })).status).toBe(400);
+    expect((yield* post(valid, authorized, '?limit=1')).status).toBe(400);
+    const { commercialScope: _scope, ...withoutScope } = definePriceRow;
+    const { unitBasis: _basis, ...withoutBasis } = definePriceRow;
+    const { operation: _operation, ...withoutOperation } = definePriceRow;
+    const { priceRef: _priceRef, ...reviseWithoutRef } = revisePriceRow;
+    const { expectedRevision: _revision, ...reviseWithoutRevision } = revisePriceRow;
+    const { priceGroupRef: _group, ...withoutGroup } = JSON.parse(valid);
+    const rejected = [
+      ['an internal plan', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
+      ['a fixture identity', { fixtureId: 'internal-c14-fixture' }],
+      ['a contractVersion property', JSON.parse(batch([definePriceRow], { contractVersion: 'INTERNAL_C14' }))],
+      ['no priceGroupRef', withoutGroup],
+      [
+        'a price ref as the priceGroupRef',
+        JSON.parse(batch([definePriceRow], { priceGroupRef: revisePriceRow.priceRef })),
+      ],
+      ['a priceListCode', JSON.parse(batch([definePriceRow], { priceListCode: 'cz' }))],
+      ['a code', JSON.parse(batch([definePriceRow], { code: 'cz' }))],
+      ['a reason', JSON.parse(batch([{ ...definePriceRow, reason: 'free text' }]))],
+      ['a sourceAssertion', JSON.parse(batch([{ ...definePriceRow, sourceAssertion: {} }]))],
+      ['no prices', { priceGroupRef: priceGroupRefOfBatch }],
+      ['an empty prices array', JSON.parse(batch([]))],
+      ['seventeen prices', JSON.parse(batch(Array.from({ length: 17 }, () => definePriceRow)))],
+      ['no operation', JSON.parse(batch([withoutOperation]))],
+      ['another operation', JSON.parse(batch([{ ...definePriceRow, operation: 'RETIRE' }]))],
+      ['a DEFINE without a scope', JSON.parse(batch([withoutScope]))],
+      ['a DEFINE without a unit basis', JSON.parse(batch([withoutBasis]))],
+      ['a DEFINE with a priceRef', JSON.parse(batch([{ ...definePriceRow, priceRef: revisePriceRow.priceRef }]))],
+      ['a REVISE without a priceRef', JSON.parse(batch([reviseWithoutRef]))],
+      ['a REVISE without an expectedRevision', JSON.parse(batch([reviseWithoutRevision]))],
+      [
+        'a REVISE with a commercialScope',
+        JSON.parse(batch([{ ...revisePriceRow, commercialScope: definePriceRow.commercialScope }])),
+      ],
+      ['a negative amount', JSON.parse(batch([{ ...definePriceRow, amount: '-1' }]))],
+      ['a numeric amount', JSON.parse(batch([{ ...definePriceRow, amount: 25 }]))],
+      ['a lower-case currency', JSON.parse(batch([{ ...definePriceRow, currencyCode: 'czk' }]))],
+      ['a variant ref as the productRef', JSON.parse(batch([{ ...definePriceRow, productRef: priceVariantRef }]))],
+      ['two items for the same price', JSON.parse(batch([definePriceRow, definePriceRow]))],
+      ['two REVISE items for the same price', JSON.parse(batch([revisePriceRow, revisePriceRow]))],
+      ['an unknown property', JSON.parse(batch([definePriceRow], { unknown: true }))],
+    ] as const;
+    for (const [name, rejectedBody] of rejected) {
+      expect((yield* post(JSON.stringify(rejectedBody), authorized)).status, name).toBe(400);
+    }
+    const reflected = yield* post(batch([{ ...definePriceRow, amount: validKey }]), authorized);
     expect(reflected.status).toBe(400);
     expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
     expect(forwarded).toHaveLength(before);

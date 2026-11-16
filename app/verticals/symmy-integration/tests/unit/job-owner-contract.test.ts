@@ -21,9 +21,16 @@ describe('Symmy internal job owner contracts', () => {
     expect(Result.isFailure(parseAdmission({ ...admission, idempotencyKey: '   ' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, code: 'unneeded' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'inventoryStockBatch' }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'customerGroupCustomersBatch' }))).toBe(true);
+    expect(
+      Result.isSuccess(
+        parseAdmission({ ...admission, code: 'customer-group', routeKey: 'customerGroupCustomersBatch' }),
+      ),
+    ).toBe(true);
+    // The prices route is no longer coded and takes only the public price batch.
     expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'priceListPricesBatch' }))).toBe(true);
     expect(
-      Result.isSuccess(parseAdmission({ ...admission, code: 'price-list', routeKey: 'priceListPricesBatch' })),
+      Result.isFailure(parseAdmission({ ...admission, code: 'price-list', routeKey: 'priceListPricesBatch' })),
     ).toBe(true);
   });
 

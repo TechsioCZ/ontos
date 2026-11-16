@@ -101,7 +101,7 @@ it.effect('retains one exact scoped job across concurrent admission, lost respon
     yield* admin.insert(symmyJobRoutes).values([
       { ...routes, routeId, tenantId },
       { ...routes, tenantId: otherTenantId },
-      { ...routes, routeCode: 'internal-eu', routeKey: 'priceListPricesBatch', tenantId },
+      { ...routes, routeCode: 'internal-eu', routeKey: 'customerGroupCustomersBatch', tenantId },
     ]);
 
     const scoped = <A, E>(scope: OperationalScope, run: (store: Store) => Effect.Effect<A, E>) =>
@@ -211,7 +211,7 @@ it.effect('retains one exact scoped job across concurrent admission, lost respon
     expect(next.jobId).not.toBe(accepted.jobId);
     const foreign = yield* scoped(otherTenant, (store) => store.admit(request));
     expect(foreign.jobId).not.toBe(accepted.jobId);
-    const selected = { ...request, code: 'internal-eu', routeKey: 'priceListPricesBatch' as const };
+    const selected = { ...request, code: 'internal-eu', routeKey: 'customerGroupCustomersBatch' as const };
     const selectedJob = yield* scoped(owner, (store) => store.admit(selected));
     expect(selectedJob.jobId).not.toBe(accepted.jobId);
     const wrongCode = yield* scoped(owner, (store) => store.admit({ ...selected, code: 'internal-foreign' })).pipe(

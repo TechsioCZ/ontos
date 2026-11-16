@@ -111,10 +111,13 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
     check(
       'symmy_job_routes_selector_ck',
       sql`(
-        ${table.routeKey} in ('customerGroupCustomersBatch', 'priceListPricesBatch')
+        ${table.routeKey} = 'customerGroupCustomersBatch'
         and ${table.routeCode} is not null and char_length(${table.routeCode}) between 1 and 300
       ) or (
         ${table.routeKey} in ('customersBatch', 'priceListsBatchUpsert', 'productsBatch', 'customerGroupsBatch', 'inventoryStockBatch', 'adminCustomers', 'adminProducts', 'adminRegions', 'priceLists', 'assortmentRulesFixtureBatch', 'sellerVatDeclarationsFixtureBatch') and ${table.routeCode} is null
+      ) or (
+        ${table.routeKey} = 'priceListPricesBatch'
+        and (${table.routeCode} is null or (not ${table.active} and char_length(${table.routeCode}) between 1 and 300))
       )`,
     ),
     check(
