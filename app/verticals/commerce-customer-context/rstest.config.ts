@@ -5,6 +5,7 @@ import { defineConfig } from '@rstest/core';
 const swc = { jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } } } as const;
 
 export default defineConfig({
+  maxConcurrency: 2,
   projects: [
     {
       include: ['tests/integration/**/*.test.ts'],

@@ -92,6 +92,7 @@ const oldClockDefinition = (current: string): string => {
 const ClockMigrationStateSchema = Schema.Literals(['CURRENT', 'OLD_CLOCK']);
 type ClockMigrationState = typeof ClockMigrationStateSchema.Type;
 
+// Every scenario owns a database and access scope; cases share only immutable source migrations.
 // Finite TEST owner windows leave scheduling headroom; every expiry check still crosses the stored boundary.
 const initialObservationSeconds = 5;
 const extendedObservationSeconds = 15;
@@ -762,7 +763,7 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   };
 });
 
-it.live(
+it.live.concurrent(
   'preserves source journals and verifies idempotent Core and approval migrations on an isolated clone',
   () =>
     Effect.scoped(
@@ -775,7 +776,7 @@ it.live(
 );
 
 // Native expiry scenarios keep scheduling headroom while still crossing the stored boundary.
-it.live(
+it.live.concurrent(
   'commits distinct immutable same-Attempt proofs after expiry and refuses expired intent replay',
   () =>
     Effect.scoped(
@@ -823,7 +824,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'rejects proof-changing writer frames after actual Current resolution without new effects or history',
   () =>
     Effect.scoped(
@@ -943,7 +944,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'retains native proof identity and idempotency UNIQUE guards and rolls back actual collisions',
   () =>
     Effect.scoped(
@@ -1010,7 +1011,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'keeps unavailable, changed, foreign and unresolved final bindings proof-free',
   () =>
     Effect.scoped(
@@ -1046,7 +1047,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'serializes distinct and same fresh intents without changing request revision or historical proof bytes',
   () =>
     Effect.scoped(
@@ -1151,7 +1152,7 @@ const pausedRegisteredBackend = (test: FreshProofScenario) =>
     return row.pid;
   });
 
-it.live(
+it.live.concurrent(
   'serializes actual registered revalidations at the Core Tenant gate before the second authority entry',
   () =>
     Effect.scoped(
@@ -1183,7 +1184,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'keeps actual different-intent Submit behind the same Tenant gate and preserves its existing typed conflict',
   () =>
     Effect.scoped(
@@ -1210,7 +1211,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'refuses original I1 after the actual registered request wait crosses exclusive P1 expiry',
   () =>
     Effect.scoped(
@@ -1239,7 +1240,7 @@ it.live(
 );
 
 for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
-  it.live(
+  it.live.concurrent(
     state === 'OLD_CLOCK'
       ? 'OLD clock accepts an exact genuine P1 component replay after forced expiry with fresh incoming evidence'
       : 'CURRENT clock refuses an exact genuine P1 component replay after forced expiry with fresh incoming evidence',
@@ -1297,7 +1298,7 @@ for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
   );
 }
 
-it.live(
+it.live.concurrent(
   'rejects fresh proof after actual buyer revocation and retains committed P1 history',
   () =>
     Effect.scoped(
@@ -1327,7 +1328,7 @@ it.live(
 );
 
 for (const change of ['POLICY', 'PROFILE'] as const) {
-  it.live(
+  it.live.concurrent(
     `rejects fresh proof after actual ${change} change without rewriting P1 or request history`,
     () =>
       Effect.scoped(
@@ -1365,7 +1366,7 @@ for (const change of ['POLICY', 'PROFILE'] as const) {
   );
 }
 
-it.live(
+it.live.concurrent(
   'rejects fresh intent at actual request expiry without replacing P1 or extending the request',
   () =>
     Effect.scoped(
@@ -1417,7 +1418,7 @@ it.live(
 );
 
 for (const scope of ['TENANT', 'STOREFRONT'] as const) {
-  it.live(
+  it.live.concurrent(
     `rejects wrong ${scope} scope before Current authority and preserves existing P1`,
     () =>
       Effect.scoped(
@@ -1460,7 +1461,7 @@ for (const scope of ['TENANT', 'STOREFRONT'] as const) {
   );
 }
 
-it.live(
+it.live.concurrent(
   'rolls back a genuinely inserted fresh owner proof when its enclosing transaction fails',
   () =>
     Effect.scoped(
@@ -1520,7 +1521,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'reads exact fresh P2 and retained expired P1 through governed buyer evidence without renewing history',
   () =>
     Effect.scoped(
@@ -1636,7 +1637,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'recovers exact original buyer intents after losing proof refs, including expired P1, without new effects',
   () =>
     Effect.scoped(
@@ -1782,7 +1783,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component consumption selects exact P2 once, retains P1 and rejects competing proof and Order claims',
   () =>
     Effect.scoped(
@@ -1847,7 +1848,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'rejects fresh proof after the registered hierarchy scheduled end without changing retained P1 or effects',
   () =>
     Effect.scoped(
@@ -1885,7 +1886,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component consumption rejects mismatched evidence without effects and still accepts exact P2',
   () =>
     Effect.scoped(
@@ -1996,7 +1997,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component reconciliation uses the exclusive stored P2 commitment interval after real expiry',
   () =>
     Effect.scoped(
@@ -2048,7 +2049,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component competing proofs and Order claims consume once under concurrent registered Actions',
   () =>
     Effect.scoped(
@@ -2117,7 +2118,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'rejects fresh I2 after Current source or material-value drift and preserves immutable P1',
   () =>
     Effect.scoped(
@@ -2195,7 +2196,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'refuses terminal decision rewrites of an approved proof-bearing request without superseding P1',
   () =>
     Effect.scoped(

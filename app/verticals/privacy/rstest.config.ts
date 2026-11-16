@@ -48,6 +48,7 @@ const swc = {
 } as const;
 
 export default defineConfig({
+  maxConcurrency: 2,
   projects: [
     {
       include: ['tests/integration/**/*.test.ts'],
