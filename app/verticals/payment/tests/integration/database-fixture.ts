@@ -6,7 +6,6 @@ import type { PgClient } from '@effect/sql-pg';
 import { randomUUID } from 'node:crypto';
 
 import { Duration, Effect, Option, Predicate, Result, Schedule, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { expect } from 'effect-rstest';
 
 import type { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -254,7 +253,6 @@ export const awaitQueuedLockWaiters = (admin: PgClient.PgClient, waiters: Queued
           `PostgreSQL never queued ${waiters.expected} backend(s) behind backend ${waiters.holderPid} within 30 seconds`,
         ),
     }),
-    TestClock.withLive,
   );
 
 export { coreRelations as paymentTestRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
