@@ -1,5 +1,5 @@
 import { NodeHttpServer } from '@effect/platform-node';
-import { ConfigProvider, Duration, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
@@ -261,7 +261,7 @@ it.live('uses the configured read token without retaining it in source failures'
   }).pipe(Effect.scoped),
 );
 
-it.live('bounds the complete HTTP body read, including a stalled stream', () =>
+it.effect('bounds the complete HTTP body read, including a stalled stream', () =>
   Effect.gen(function* sourceTimeout() {
     let cancelled = false;
     const url = yield* serveSnapshot(() => ({
@@ -271,11 +271,14 @@ it.live('bounds the complete HTTP body read, including a stalled stream', () =>
         },
       }),
     }));
-    const [duration, failure] = yield* Effect.timed(
-      Effect.flip(encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url)))),
-    );
+    // The stubbed fetch never emits, so the read's own timeout is the only elapsing clock.
+    const fiber = yield* Effect.flip(
+      encodedActiveApplicationCompositionSnapshot.pipe(Effect.provide(sourceConfiguration(url))),
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust('5 seconds');
+    const failure = yield* Fiber.join(fiber);
     expect(failure.reason).toContain('timed out');
-    expect(Duration.toMillis(duration)).toBeLessThan(10_000);
+    // Cancelling the body runs on promises, not the clock, and completes with the interrupted read.
     expect(cancelled).toBe(true);
   }).pipe(Effect.scoped),
 );

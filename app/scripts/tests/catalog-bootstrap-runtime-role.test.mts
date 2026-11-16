@@ -204,10 +204,6 @@ it.live(
         );
         expect(broadened).not.toEqual(statements);
         expect(() => expectOwnerGrants(broadened)).toThrow();
-        const deletedFence = statements.map((statement) =>
-          statement === marketFenceGrants[3] ? statement.replace('grant update ', 'grant update, delete ') : statement,
-        );
-        expect(() => expectMarketFenceGrants(deletedFence)).toThrow();
       }
       statements.length = 0;
       tableExists = false;

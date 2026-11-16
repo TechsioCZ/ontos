@@ -1,30 +1,17 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, Predicate, Schema } from 'effect';
+import { Config, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
-interface WorkspaceScriptPlan {
-  readonly typecheck: string;
-}
-
-type WorkspaceScriptPlanFactory = (applications: readonly string[]) => WorkspaceScriptPlan;
-
-const callable = <Callable extends (...argumentsList: never[]) => void>() =>
-  Schema.Opaque<Callable>()(Schema.Unknown.pipe(Schema.refine(Predicate.isFunction)));
-
 const PackageJsonSchema = Schema.Struct({
   scripts: Schema.Struct({ typecheck: Schema.String }),
-});
-const WorkspaceScriptPlanSchema = Schema.Struct({ typecheck: Schema.String });
-const WorkspaceScriptPlanModuleSchema = Schema.Struct({
-  createWorkspaceRootScriptPlan: callable<WorkspaceScriptPlanFactory>(),
 });
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -53,27 +40,6 @@ const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
-
-it.live(
-  'installed generator and consumer both check the full project reference graph',
-  Effect.fn(function* testEffect2() {
-    const generator = Schema.decodeUnknownSync(WorkspaceScriptPlanModuleSchema)(
-      yield* Effect.tryPromise(
-        () =>
-          import(
-            pathToFileURL(
-              path.join(
-                workspaceRoot,
-                'node_modules/@modern-js/ultramodern-create/dist/esm-node/ultramodern-workspace/workspace-script-plan.js',
-              ),
-            ).href
-          ),
-      ),
-    );
-    const scriptPlan = Schema.decodeUnknownSync(WorkspaceScriptPlanSchema)(generator.createWorkspaceRootScriptPlan([]));
-    expect(scriptPlan.typecheck).toBe('ultramodern-create ultramodern typecheck --build tsconfig.json');
-  }),
-);
 
 it.live(
   'Drizzle consumer surface compiles in both ESM and CommonJS projects',

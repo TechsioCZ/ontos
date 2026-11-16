@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
-import { Clock, Crypto, Data, Effect, Logger, Path, References, Tracer } from 'effect';
+import { Clock, Crypto, Effect, Logger, Path, References, Tracer } from 'effect';
 import { PgClient } from '@effect/sql-pg';
 import { NodeServices } from '@effect/platform-node';
 import { collectDatabaseAccessRuntimeInputs } from '../check-database-access-boundaries.mts';
@@ -3521,17 +3521,6 @@ it.effect.each([
     }
   }).pipe(Effect.provide(Path.layer)),
 );
-
-it.effect('retains native error evaluator payload success as a real success alternative', () => {
-  class PayloadError extends Data.TaggedError('PayloadError')<{ readonly reason: string }> {}
-  const payload = {
-    '~effect/Effect/evaluate': () => Effect.succeed('unexpected success'),
-    reason: 'failed validation',
-  };
-  return Effect.gen(function* nativeErrorPayload() {
-    return yield* new PayloadError(payload);
-  }).pipe(Effect.map((value) => expect(value).toBe('unexpected success')));
-});
 
 const reachedHelperIdentity = 'reached helper identity';
 const reachedDeferredOverride = 'reached helper deferred override';

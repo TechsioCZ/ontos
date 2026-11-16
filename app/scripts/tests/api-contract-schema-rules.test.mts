@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
 import { Effect } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { afterAll, expect, it } from 'effect-rstest';
 
 import { unconstrainedHttpApiContractSchemas } from '../api-contract-schema-rules.mts';
 
@@ -32,46 +33,63 @@ import { Schema } from 'effect';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts';
 ${source}`;
 
-/**
- * A fresh temp workspace with `@app/shared-contracts` linked (Problem Details factories are only
- * recognized when declared under `/packages/shared-contracts/`) and every `packages/<name>` fixture
- * referenced by `files` linked into `node_modules/@app/<name>`, following the old resolver's
- * `@app/<name>/<subpath>` -> `packages/<name>/src/<subpath>.ts` convention unless a test supplies an
- * explicit `package.json`.
- */
-const createWorkspace = Effect.fn(function* buildWorkspace(files: ReadonlyMap<string, string>) {
-  const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'api-contract-schema-rules-')));
-  yield* write(root, 'pnpm-workspace.yaml', 'packages:\n  - packages/*\n  - verticals/*\n');
-
-  const defaults = new Map<string, string>([
-    [
-      'packages/shared-contracts/package.json',
-      JSON.stringify({
-        exports: { '.': './src/index.ts', './problem-details': './src/problem-details.ts' },
-        name: '@app/shared-contracts',
-      }),
-    ],
-    [
-      'packages/shared-contracts/src/problem-details.ts',
-      `export const makeProblemDetailsSchema = (name, status, extensions) => ({ name, status, extensions });
+const DEFAULT_FILES = new Map<string, string>([
+  [
+    'packages/shared-contracts/package.json',
+    JSON.stringify({
+      exports: { '.': './src/index.ts', './problem-details': './src/problem-details.ts' },
+      name: '@app/shared-contracts',
+    }),
+  ],
+  [
+    'packages/shared-contracts/src/problem-details.ts',
+    `export const makeProblemDetailsSchema = (name, status, extensions) => ({ name, status, extensions });
 export const makeRetryableProblemDetailsSchema = (name, status, extensions) => ({ name, status, extensions });
 `,
-    ],
-    [
-      'packages/shared-contracts/src/index.ts',
-      `export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details';`,
-    ],
-  ]);
-  for (const [file, content] of defaults) {
-    if (!files.has(file)) {
-      yield* write(root, file, content);
-    }
-  }
+  ],
+  [
+    'packages/shared-contracts/src/index.ts',
+    `export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details';`,
+  ],
+  ['pnpm-workspace.yaml', 'packages:\n  - packages/*\n  - verticals/*\n'],
+]);
+
+/**
+ * The resolver inputs every assertion shares -- `pnpm-workspace.yaml`, `packages/shared-contracts`
+ * (Problem Details factories are only recognized when declared under `/packages/shared-contracts/`)
+ * and its `node_modules/@app` link -- live at the workspace root and resolve from any subdirectory,
+ * so they are built once instead of once per assertion.
+ */
+const workspaceRoot = mkdtempSync(path.join(tmpdir(), 'api-contract-schema-rules-'));
+for (const [file, content] of DEFAULT_FILES) {
+  const target = path.join(workspaceRoot, file);
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, content);
+}
+mkdirSync(path.join(workspaceRoot, 'node_modules/@app'), { recursive: true });
+symlinkSync(
+  path.join(workspaceRoot, 'packages/shared-contracts'),
+  path.join(workspaceRoot, 'node_modules/@app/shared-contracts'),
+  'dir',
+);
+
+afterAll(() => {
+  rmSync(workspaceRoot, { force: true, recursive: true });
+});
+
+/**
+ * A fresh assertion directory of the shared workspace holding only the fixture `files`, with every
+ * `packages/<name>` among them linked into its own `node_modules/@app/<name>`, following the old
+ * resolver's `@app/<name>/<subpath>` -> `packages/<name>/src/<subpath>.ts` convention unless a test
+ * supplies an explicit `package.json`.
+ */
+const createWorkspace = Effect.fn(function* buildWorkspace(files: ReadonlyMap<string, string>) {
+  const root = yield* Effect.promise(() => mkdtemp(path.join(workspaceRoot, 'assertion-')));
   for (const [file, content] of files) {
     yield* write(root, file, content);
   }
 
-  const packageDirs = new Set<string>(['shared-contracts']);
+  const packageDirs = new Set<string>();
   for (const file of files.keys()) {
     const match = /^packages\/(?<name>[^/]+)\//u.exec(file);
     if (match?.groups?.name !== undefined) {
@@ -80,7 +98,7 @@ export const makeRetryableProblemDetailsSchema = (name, status, extensions) => (
   }
   for (const name of packageDirs) {
     const packageJsonPath = `packages/${name}/package.json`;
-    if (!files.has(packageJsonPath) && !defaults.has(packageJsonPath)) {
+    if (!files.has(packageJsonPath) && !DEFAULT_FILES.has(packageJsonPath)) {
       yield* write(root, packageJsonPath, JSON.stringify({ exports: { './*': './src/*.ts' }, name: `@app/${name}` }));
     }
     yield* Effect.promise(() => mkdir(path.join(root, 'node_modules/@app'), { recursive: true }));
@@ -91,19 +109,14 @@ export const makeRetryableProblemDetailsSchema = (name, status, extensions) => (
   return root;
 });
 
-/** Runs the rule against `file` inside a fresh temp workspace built from `files`, cleaned up on exit. */
+/** Runs the rule against `file` inside a fresh assertion directory built from `files`. */
 const violation = (files: ReadonlyMap<string, string>, file: string = contractApiFixturePath) =>
-  Effect.acquireUseRelease(
-    createWorkspace(files),
-    (root) =>
-      Effect.sync(() => {
-        const graph = createModuleGraph();
-        const module = graph.module(path.join(root, file));
-        const messages = unconstrainedHttpApiContractSchemas({ file, graph, module });
-        return messages.length > 0 ? messages.join(' ') : undefined;
-      }),
-    (root) => Effect.promise(() => rm(root, { force: true, recursive: true })),
-  );
+  Effect.map(createWorkspace(files), (root) => {
+    const graph = createModuleGraph();
+    const module = graph.module(path.join(root, file));
+    const messages = unconstrainedHttpApiContractSchemas({ file, graph, module });
+    return messages.length > 0 ? messages.join(' ') : undefined;
+  });
 
 /** `violation` for the common single-file case. */
 const violationOf = (content: string, file: string = contractApiFixturePath) =>
