@@ -81,6 +81,7 @@ import {
 } from 'effect';
 import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
+import { TestClock } from 'effect/testing';
 import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { Socket } from 'effect/socket';
 import { createHash } from 'node:crypto';
@@ -2014,7 +2015,7 @@ const coreDebtSettled = (f: Effect.Success<typeof fixture>) =>
     return receipt.value;
   });
 
-it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 seconds' })(
+it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, timeout: '30 seconds' })(
   'Privacy message-bound completion admission',
   (suite) => {
     suite.effect(
@@ -2349,7 +2350,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
               query: string,
             ) {
               while (!(yield* observeNativeLock(pool, query))) {
-                yield* Effect.sleep('20 millis');
+                yield* TestClock.withLive(Effect.sleep('20 millis'));
               }
             });
             const lockInterleavingReached = (query: string) =>
@@ -2626,7 +2627,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           const remaining = before.validUntilEpochMilliseconds - before.observedAtEpochMilliseconds;
           expect(remaining).toBeGreaterThan(0);
           expect(remaining).toBeLessThanOrEqual(shortAuthorityLifetimeSeconds * 1000);
-          yield* Effect.sleep(remaining + 100);
+          yield* TestClock.withLive(Effect.sleep(remaining + 100));
           const expired = yield* f.isolated.composition.observeRetainedOriginal();
           expect(expired.unexpired).toBe(false);
           for (const credential of [privacyCredential, partyCredential]) {
