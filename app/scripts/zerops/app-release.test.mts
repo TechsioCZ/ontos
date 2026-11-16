@@ -30,6 +30,11 @@ const STAMP = 'app/.zerops-release-digest';
 const LINK = 'app/node_modules/effect';
 const BUILD_PREFIX = 'app-release-build-';
 const OLD_RELEASE = 'app/old-release';
+const BUILD_CACHES = [
+  'app/node_modules/.cache/tsgo/build',
+  'app/apps/shell-super-app/node_modules/.cache/rspack/build',
+  'app/verticals/projects/node_modules/.cache/rspack/build',
+];
 
 const runtimePaths = Effect.gen(function* readRuntimePaths() {
   const fs = yield* FileSystem.FileSystem;
@@ -79,6 +84,10 @@ const buildTree = (root: string) =>
         yield* fs.readFileString(path.join(import.meta.dirname, script)),
       );
     }
+    for (const cache of BUILD_CACHES) {
+      yield* fs.makeDirectory(path.dirname(path.join(root, cache)), { recursive: true });
+      yield* fs.writeFileString(path.join(root, cache), 'build-only cache');
+    }
   });
 
 /** Packs a build tree and copies the release to a fresh runtime directory, as Zerops deploys `.zerops-release`. */
@@ -119,6 +128,9 @@ it.live('packs every runtime path and unpacks it whole into app/, then keeps it 
     expect(yield* fs.readLink(path.join(www, LINK))).toBe('.pnpm/effect@4.0.7/node_modules/effect');
     expect(yield* fs.readFileString(path.join(www, STAMP))).toBe(`${digest}\n${hostDigest}\n`);
     expect(yield* fs.exists(path.join(www, WORKER))).toBe(true);
+    for (const cache of BUILD_CACHES) {
+      expect(yield* fs.exists(path.join(www, cache)), cache).toBe(false);
+    }
     // The archive is not held twice on disk; the scratch directory is gone.
     expect(yield* fs.exists(path.join(www, ARCHIVE))).toBe(false);
     expect(yield* fs.exists(path.join(www, HOST_ARCHIVE))).toBe(false);

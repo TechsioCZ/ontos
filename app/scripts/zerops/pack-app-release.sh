@@ -84,6 +84,8 @@ pack() {
 set --
 if tar --version 2>/dev/null | grep -q 'GNU tar'; then set -- --anchored; fi
 set -- "$@" "--exclude=$host"
+# Compiler caches belong to build.cache, not the runtime release. The runtime never builds a unit.
+set -- "$@" '--exclude=app/node_modules/.cache' '--exclude=app/*/node_modules/.cache'
 # Names hold no spaces; `set -f` keeps their `*` from matching files here.
 set -f
 # shellcheck disable=SC2013 # one package name per line, no spaces.

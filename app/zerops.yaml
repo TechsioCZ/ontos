@@ -145,6 +145,8 @@ zerops:
         # the install still writes real files into app/node_modules, which scripts/verify-zerops-workspace-install.mts
         # keeps requiring, so the runtime tree never ships links into a cache the runtime container does not receive.
         PNPM_CONFIG_STORE_DIR: /build/source/app/.zerops/pnpm-store
+        # Peer-context copies of identical packages share inodes, so tar ships the bytes once.
+        PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
