@@ -6,11 +6,12 @@ import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
-import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
+import type { SymmyPinnedEffect } from '../../shared/domain/symmy-job-execution.ts';
+import { SymmyFixtureExecutionPlanSchema, SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { symmyImportJobs, symmyIntegrationRelations, symmyJobEffects, symmyJobRoutes } from '../../src/db/schema.ts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
@@ -36,6 +37,13 @@ const makeScope = (tenantId: string, principalId: string, legalEntityId?: string
     audience: 'symmy-integration',
     correlationId: 'durable-execution-ledger-fixture',
   };
+};
+
+/** The pinned effect with another command and, when given, the target it was resolved onto. */
+const pinnedWith = (effect: SymmyPinnedEffect, intent: Schema.Json, originalTarget: Schema.Json | null) => {
+  const encoded = Schema.encodeSync(SymmyPinnedEffectSchema)(effect);
+  const ref = originalTarget === null ? encoded.ref : { ...encoded.ref, originalTarget };
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...encoded, intent, ref });
 };
 
 type ExecutionStore = ReturnType<typeof symmyJobExecutionStore>;
@@ -539,6 +547,165 @@ it.effect('polls items[n] as request item n when a customer plans a contact item
       ['accepted_change', 'denied'],
       ['accepted_change'],
     ]);
+    return yield* Effect.void;
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.effect('records the company ICO resolved onto the profile of its own item, and refuses any other resolution', () =>
+  Effect.gen(function* verifyIcoResolution() {
+    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const admin = yield* openDatabase(connections.admin.connectionString);
+    const tenantId = crypto.randomUUID();
+    const scope = makeScope(tenantId, crypto.randomUUID());
+    yield* Effect.addFinalizer(() =>
+      admin
+        .delete(symmyJobEffects)
+        .where(eq(symmyJobEffects.tenantId, tenantId))
+        .pipe(
+          Effect.andThen(admin.delete(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId))),
+          Effect.andThen(admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId))),
+          Effect.orDie,
+        ),
+    );
+    const commerce = 'commerce.customer-context';
+    const profileRef = {
+      moduleId: commerce,
+      resourceId: crypto.randomUUID(),
+      resourceType: `${commerce}.counterparty-purchasing-profile`,
+      tenantId,
+    };
+    const sourceReference = {
+      occurrenceId: crypto.randomUUID(),
+      recordId: 'customer-0',
+      source: { issuer: 'internal-issuer', namespace: 'internal-fixtures', recordType: 'customer', routeRef: 'route' },
+    };
+    const dependent = {
+      _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+      fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
+      payload: {
+        countryCode: 'CZ',
+        effectiveAt: '2026-11-16T10:00:00.000Z',
+        expectedRevision: 0,
+        identifier: { identifierType: 'ICO', value: '27074358' },
+        operation: 'SET',
+        originalInput: '27074358',
+      },
+      sourceReference,
+    };
+    const fixturePlan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+      items: [
+        {
+          effects: [
+            {
+              effectKey: 'counterparty-profile',
+              operation: {
+                entrypointKey: `${commerce}.create-counterparty-purchasing-profile`,
+                moduleId: commerce,
+                schemaVersion: '1',
+              },
+            },
+            {
+              dependsOn: ['counterparty-profile'],
+              effectKey: 'ico-set',
+              operation: {
+                entrypointKey: `${commerce}.change-organization-customer-profile-ico`,
+                moduleId: commerce,
+                schemaVersion: '1',
+              },
+            },
+          ],
+          itemKey: 'customer-0',
+          source: {
+            entityKind: 'customer',
+            issuerId: 'internal-issuer',
+            sourceNamespace: 'internal-fixtures',
+            sourceRecordId: 'customer-0',
+          },
+        },
+      ],
+    });
+    yield* admin.insert(symmyJobRoutes).values({
+      active: true,
+      fixtureIds: ['internal-ico'],
+      fixturePlan,
+      mappingVersion: 'mapping-original',
+      principalId: scope.principalId,
+      routeId: crypto.randomUUID(),
+      routeKey: 'productsBatch',
+      routeRevision: 'route-original',
+      tenantId,
+    });
+    const scoped = <A, E>(run: (admission: AdmissionStore, execution: ExecutionStore) => Effect.Effect<A, E>) =>
+      withScopedStores(connections.runtime.connectionString, scope, run);
+    const admitted = yield* scoped((admission) =>
+      admission.admit({ fixtureId: 'internal-ico', idempotencyKey: 'internal-ico-key', routeKey: 'productsBatch' }),
+    );
+    const job = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(admitted.jobId)));
+    const [profile, ico] = job.plan.items[0]?.effects ?? [];
+    if (profile === undefined || ico === undefined) {
+      return yield* Effect.die('the customer item must plan the profile and its ICO');
+    }
+    const profileToken = crypto.randomUUID();
+    const profileClaim = yield* scoped((_admission, execution) =>
+      execution.claim(job.jobId, profile.ref.effectId, profileToken),
+    );
+    expect(
+      yield* scoped((_admission, execution) =>
+        execution.settle(
+          job.jobId,
+          profile.ref.effectId,
+          profileToken,
+          profileClaim.version,
+          Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+            effectId: profile.ref.effectId,
+            owner: commerce,
+            status: 'accepted_change',
+          }),
+        ),
+      ),
+    ).toBe(true);
+    const token = crypto.randomUUID();
+    const claim = yield* scoped((_admission, execution) => execution.claim(job.jobId, ico.ref.effectId, token));
+    // Fixture admission pins no intent, so the dependent command is grafted onto the claimed effect, as a real admission
+    // of the customer plan stores it (a claim needs the stored effect to equal the pinned one, so it follows the claim).
+    yield* admin
+      .update(symmyJobEffects)
+      .set({ effect: pinnedWith(ico, dependent, null) })
+      .where(eq(symmyJobEffects.effectId, ico.ref.effectId));
+    const resolution = {
+      intent: {
+        _tag: 'OrganizationCustomerProfileIco',
+        payload: { ...dependent.payload, effectId: ico.ref.effectId, profileRef },
+        sourceReference,
+      },
+      originalTarget: profileRef,
+    };
+    const resolved = pinnedWith(ico, resolution.intent, resolution.originalTarget);
+    const record = (effect: SymmyPinnedEffect) =>
+      scoped((_admission, execution) =>
+        execution.recordResolvedEffect(job.jobId, ico.ref.effectId, token, claim.version, effect),
+      ).pipe(Effect.result);
+    // The unresolved command again is no resolution of the ICO. A target of another Tenant or module cannot even be
+    // pinned: the effect schema refuses it before the routine is asked.
+    expect(Result.isFailure(yield* record(pinnedWith(ico, dependent, profileRef)))).toBe(true);
+    expect(() => pinnedWith(ico, resolution.intent, { ...profileRef, tenantId: crypto.randomUUID() })).toThrow();
+    expect(() => pinnedWith(ico, resolution.intent, { ...profileRef, moduleId: 'party.registry' })).toThrow();
+    const [none] = yield* admin
+      .select({ resolved: symmyJobEffects.resolvedEffect })
+      .from(symmyJobEffects)
+      .where(eq(symmyJobEffects.effectId, ico.ref.effectId));
+    expect(none?.resolved).toBeNull();
+    expect(Result.getOrNull(yield* record(resolved))).toBe(true);
+    const [stored] = yield* admin
+      .select({ resolved: symmyJobEffects.resolvedEffect })
+      .from(symmyJobEffects)
+      .where(eq(symmyJobEffects.effectId, ico.ref.effectId));
+    expect(stored?.resolved).toMatchObject({
+      intent: { _tag: 'OrganizationCustomerProfileIco' },
+      ref: { originalTarget: { resourceId: profileRef.resourceId } },
+    });
+    // The same resolution is recorded once: asking again for it answers the same, another one is not applied.
+    expect(Result.getOrNull(yield* record(resolved))).toBe(true);
     return yield* Effect.void;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
 );

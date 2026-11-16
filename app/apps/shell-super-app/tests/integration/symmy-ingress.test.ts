@@ -550,7 +550,10 @@ const publicCustomersBody = {
       contacts: [{ preferred: true, type: 'EMAIL', value: 'office@example.test' }],
       customerId: 'customer-2',
       kind: 'ORGANIZATION',
-      officialIdentifiers: [{ type: 'CZ_DIC', value: 'CZ00000019' }],
+      officialIdentifiers: [
+        { type: 'ICO', value: '00000019' },
+        { type: 'CZ_DIC', value: 'CZ00000019' },
+      ],
     },
   ],
 } satisfies Schema.Json;
@@ -576,7 +579,10 @@ const publicCustomerRows = [
     contacts: [{ preferred: true, type: 'EMAIL', value: 'office@example.test' }],
     customerId: 'customer-2',
     kind: 'ORGANIZATION',
-    officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ00000019' }],
+    officialIdentifiers: [
+      { identifierType: 'ICO', value: '00000019' },
+      { identifierType: 'CZ_DIC', value: 'CZ00000019' },
+    ],
   },
 ];
 const customersJson = (body: Schema.Json = publicCustomersBody) => ({

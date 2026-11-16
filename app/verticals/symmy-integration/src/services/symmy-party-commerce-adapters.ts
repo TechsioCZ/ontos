@@ -129,6 +129,7 @@ import {
   resolveSymmyRetailSavedAddressFromProfile,
   resolveSymmyCounterpartySavedAddress,
   resolveSymmyCounterpartySavedAddressFromProfile,
+  resolveSymmyOrganizationProfileIco,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -507,6 +508,7 @@ export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent
         input.effect.ref.originalTarget?.moduleId === payload.profileRef.moduleId &&
         input.effect.ref.originalTarget.resourceType === payload.profileRef.resourceType &&
         sourceMatches(input, sourceReference.source, sourceReference.recordId, sourceReference.occurrenceId),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => false,
       PartyCorrect: ({ payload }) =>
         Match.value(payload).pipe(
           Match.when({ factKind: 'RELATIONSHIP' }, () => false),
@@ -619,6 +621,7 @@ const nativeIdentityForIntent = (intent: SymmyPartyCommerceIntent) =>
       OnboardCounterpartyCustomerFromParty: () => Effect.fail(symmyJobWorkerUnavailable()),
       OrganizationCustomerProfileIco: (selected) =>
         changeOrganizationCustomerProfileIcoRequestIdentity(selected.payload),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
       PartyCorrect: (selected) => correctPartyFactRequestIdentity(selected.payload),
       PartyCreate: (selected) => createPartyRequestIdentity(selected.payload),
       PartyMatch: (selected) => matchPartyRequestIdentity(selected.payload),
@@ -933,6 +936,7 @@ const operationForIntent = (intent: SymmyPartyCommerceIntent) =>
       OnboardCounterpartyCustomer: () => operations[12],
       OnboardCounterpartyCustomerFromParty: () => operations[12],
       OrganizationCustomerProfileIco: () => operations[19],
+      OrganizationCustomerProfileIcoFromProfileEffect: () => operations[19],
       PartyCorrect: () => operations[3],
       PartyCreate: () => operations[0],
       PartyMatch: () => operations[1],
@@ -1374,6 +1378,17 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
           );
         },
       ),
+      OrganizationCustomerProfileIcoFromProfileEffect: Effect.fn('SymmyPartyCommerceAdapters.resolveProfileIco')(
+        function* resolveProfileIco(pending) {
+          const profile = yield* Match.value(yield* dependencyReceipt(input, pending.fromProfileEffect)).pipe(
+            Match.tag('CounterpartyProfileCreated', (value) => Effect.succeed(value)),
+            Match.orElse(() => Effect.fail(symmyJobWorkerUnavailable())),
+          );
+          return Option.some<SymmyPartyCommerceIntent>(
+            resolveSymmyOrganizationProfileIco(pending, profile, input.effect.ref.effectId),
+          );
+        },
+      ),
     }),
     Match.orElse(() => Effect.succeed(Option.none<SymmyPartyCommerceIntent>())),
   );
@@ -1389,9 +1404,15 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
   ) {
     return yield* symmyJobWorkerUnavailable();
   }
+  // The company ICO is a write to one profile, so its resolved effect names that profile as its original target.
+  const resolvedTarget = Match.value(resolved.value).pipe(
+    Match.tag('OrganizationCustomerProfileIco', (value) => ({ originalTarget: value.payload.profileRef })),
+    Match.orElse(() => ({})),
+  );
   const effect = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
     ...input.effect,
     intent: yield* organizationResolvedIntent(input, resolved.value),
+    ref: { ...input.effect.ref, ...resolvedTarget },
   }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   if (
     !symmyPartyCommerceIntentMatchesEffect(
@@ -1888,6 +1909,7 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
             return yield* outcome(input, Option.isSome(acknowledged) ? 'accepted_change' : 'denied');
           },
         ),
+        OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
         PartyCorrect: Effect.fn('SymmyPartyCommerceAdapters.PartyCorrect')(function* invokePartyCorrect(
           intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCorrect' }>,
         ) {
@@ -2536,6 +2558,7 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
       OnboardCounterpartyCustomer: (selected) => recoverParty(crypto, input, 'ONBOARD_COUNTERPARTY_CUSTOMER', selected),
       OnboardCounterpartyCustomerFromParty: () => Effect.succeed(unavailableRecovery),
       OrganizationCustomerProfileIco: (selected) => recoverOrganizationIco(crypto, input, selected),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       PartyCorrect: (selected) => recoverParty(crypto, input, 'CORRECTION', selected),
       PartyCreate: (selected) => recoverParty(crypto, input, 'CREATE', selected),
       PartyMatch: (selected) => recoverParty(crypto, input, 'MATCH', selected),

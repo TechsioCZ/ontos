@@ -59,6 +59,7 @@ const processingTarget = (intent: SymmyPartyCommerceIntent): Target | null =>
       OnboardCounterpartyCustomer: ({ payload }) => partyTarget(payload.partyRef.resourceId),
       OnboardCounterpartyCustomerFromParty: () => null,
       OrganizationCustomerProfileIco: ({ payload }) => profileTarget(payload.profileRef),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => null,
       PartyCorrect: ({ payload }) =>
         Match.value(payload).pipe(
           Match.when({ factKind: 'RELATIONSHIP' }, () => null),
@@ -118,6 +119,7 @@ const deferredSource = (intent: SymmyPartyCommerceIntent): Source | null | 'DIRE
       CreateCounterpartyProfileFromCounterparty: ({ payload }) => flattenProfileSource(payload.source),
       EnsureRetailProfileFromParty: ({ payload }) => flattenProfileSource(payload.source),
       OnboardCounterpartyCustomerFromParty: ({ payload }) => flattenSourceReference(payload.sourceReference),
+      OrganizationCustomerProfileIcoFromProfileEffect: ({ sourceReference }) => flattenSourceReference(sourceReference),
     }),
     Match.orElse(() => 'DIRECT' as const),
   );

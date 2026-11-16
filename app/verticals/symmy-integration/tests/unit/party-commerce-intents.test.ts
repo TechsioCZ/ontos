@@ -9,6 +9,7 @@ import type {
 import {
   materializeSymmyPartyCommerceIntent,
   resolveSymmyCounterpartySavedAddressFromProfile,
+  resolveSymmyOrganizationProfileIco,
   resolveSymmyRetailProfileParty,
   resolveSymmyRetailSavedAddress,
   resolveSymmyRetailSavedAddressFromProfile,
@@ -679,5 +680,92 @@ describe('explicit organization ICO contract', () => {
       payload: { ...payload, effectId: id },
       sourceReference: input.sourceReference,
     });
+  });
+});
+
+describe('company ICO resolved from a profile effect', () => {
+  const { profileRef: icoProfileRef } = { profileRef: counterpartyProfileRef };
+  const icoPayload = {
+    countryCode: 'CZ',
+    effectiveAt: '2026-11-07T00:00:00.000Z',
+    expectedRevision: 0,
+    identifier: { identifierType: 'ICO', value: '27074358' },
+    operation: 'SET',
+    originalInput: '27074358',
+  };
+  const pending = decodeIntent({
+    _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+    fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
+    payload: icoPayload,
+    sourceReference: { occurrenceId: 'occurrence-1', recordId: 'customer-1', source },
+  });
+  const resolve = (receipt: SymmyPartyCommerceOwnerReceipt, id: string) =>
+    Match.value(pending).pipe(
+      Match.tag('OrganizationCustomerProfileIcoFromProfileEffect', (value) =>
+        Match.value(receipt).pipe(
+          Match.tag('CounterpartyProfileCreated', (created) =>
+            Option.some(resolveSymmyOrganizationProfileIco(value, created, id)),
+          ),
+          Match.orElse(() => Option.none()),
+        ),
+      ),
+      Match.orElse(() => Option.none()),
+    );
+  const created = counterpartyReceipts().profile;
+
+  it('decodes only the first SET of one numeric ICO, without a profile or an effect id of its own', () => {
+    const decode = Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema, { onExcessProperty: 'error' });
+    const base = {
+      _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+      fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-0' },
+      payload: icoPayload,
+      sourceReference: { occurrenceId: 'occurrence-1', recordId: 'customer-1', source },
+    };
+    const { sourceReference: _omitted, ...withoutSource } = base;
+    expect(Result.isSuccess(decode(base))).toBe(true);
+    for (const invalid of [
+      { ...base, payload: { ...icoPayload, profileRef: icoProfileRef } },
+      { ...base, payload: { ...icoPayload, effectId } },
+      { ...base, payload: { ...icoPayload, operation: 'END' } },
+      { ...base, payload: { ...icoPayload, originalInput: '27074359' } },
+      { ...base, payload: { ...icoPayload, identifier: { identifierType: 'CZ_DIC', value: 'CZ27074358' } } },
+      withoutSource,
+    ]) {
+      expect(Result.isFailure(decode(invalid))).toBe(true);
+    }
+  });
+
+  it('pins nothing of its own: the effect id is assigned when the profile is known', () => {
+    expect(materializeSymmyPartyCommerceIntent(pending, effect.ref)).toEqual(pending);
+  });
+
+  it('resolves to the plain organization ICO change on the actual profile, under the id of this effect', () => {
+    const resolved = resolve(created, effectId);
+    expect(tagOfResolved(resolved)).toBe('OrganizationCustomerProfileIco');
+    expect(payloadOfResolved(resolved)).toEqual({ ...icoPayload, effectId, profileRef: counterpartyProfileRef });
+    expect(JSON.stringify(resolved)).not.toContain('fromProfileEffect');
+    expect(
+      Result.isSuccess(
+        Schema.decodeUnknownResult(SymmyPartyCommerceIntentSchema, { onExcessProperty: 'error' })(
+          Option.getOrThrow(resolved),
+        ),
+      ),
+    ).toBe(true);
+    // A Retail profile has no company ICO.
+    expect(Option.isNone(resolve(retailReceipt(), effectId))).toBe(true);
+  });
+
+  it('matches an effect only once resolved, and only for the profile it names as its original target', () => {
+    expect(match(pending)).toBe(false);
+    const resolved = Option.getOrThrow(resolve(created, effectId));
+    const operation = {
+      entrypointKey: 'commerce.customer-context.change-organization-customer-profile-ico',
+      moduleId: 'commerce.customer-context',
+      schemaVersion: '1',
+    };
+    const targeted = decodeEffect({ ...effect, ref: { ...effect.ref, operation, originalTarget: icoProfileRef } });
+    expect(symmyPartyCommerceIntentMatchesEffect({ effect: targeted }, resolved)).toBe(true);
+    const untargeted = decodeEffect({ ...effect, ref: { ...effect.ref, operation } });
+    expect(symmyPartyCommerceIntentMatchesEffect({ effect: untargeted }, resolved)).toBe(false);
   });
 });
