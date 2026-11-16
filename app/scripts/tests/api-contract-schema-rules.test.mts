@@ -66,7 +66,9 @@ for (const [file, content] of DEFAULT_FILES) {
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, content);
 }
-mkdirSync(path.join(workspaceRoot, 'node_modules/@app'), { recursive: true });
+/** The `@app` scope link every fixture workspace needs for `@app/*` specifiers to resolve. */
+const APP_SCOPE_LINK = 'node_modules/@app';
+mkdirSync(path.join(workspaceRoot, APP_SCOPE_LINK), { recursive: true });
 symlinkSync(
   path.join(workspaceRoot, 'packages/shared-contracts'),
   path.join(workspaceRoot, 'node_modules/@app/shared-contracts'),
@@ -101,9 +103,9 @@ const createWorkspace = Effect.fn(function* buildWorkspace(files: ReadonlyMap<st
     if (!files.has(packageJsonPath) && !DEFAULT_FILES.has(packageJsonPath)) {
       yield* write(root, packageJsonPath, JSON.stringify({ exports: { './*': './src/*.ts' }, name: `@app/${name}` }));
     }
-    yield* Effect.promise(() => mkdir(path.join(root, 'node_modules/@app'), { recursive: true }));
+    yield* Effect.promise(() => mkdir(path.join(root, APP_SCOPE_LINK), { recursive: true }));
     yield* Effect.promise(() =>
-      symlink(path.join(root, 'packages', name), path.join(root, 'node_modules/@app', name), 'dir'),
+      symlink(path.join(root, 'packages', name), path.join(root, APP_SCOPE_LINK, name), 'dir'),
     );
   }
   return root;

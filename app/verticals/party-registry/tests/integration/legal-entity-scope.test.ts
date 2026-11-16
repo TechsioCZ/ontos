@@ -163,7 +163,9 @@ const openFixture = Effect.gen(function* openLegalEntityFixture() {
  * probes — is durable, and the one statement outside a rolled-back transaction is a read-only
  * SELECT. One fixture, and therefore one id set, per file is therefore sound.
  */
-const LegalEntityScopeFixture = Context.Service<Effect.Success<typeof openFixture>>('PartyLegalEntityScope.fixture');
+class LegalEntityScopeFixture extends Context.Service<LegalEntityScopeFixture, Effect.Success<typeof openFixture>>()(
+  'PartyLegalEntityScope.fixture',
+) {}
 const scopeLayer = Layer.effect(LegalEntityScopeFixture, openFixture).pipe(Layer.provideMerge(NodeCrypto.layer));
 
 it.layer(scopeLayer, { excludeTestServices: true, timeout: 120_000 })('sealed legal-entity scope', (suite) => {

@@ -59,14 +59,13 @@ const scope = {
  * Every context here reads only the content-digest revision of one identical Application Composition
  * bundle, so the full decode/encode/digest/validate pass runs once for the whole file.
  */
-const compositionRevisionCache: { value?: string } = {};
+let cachedCatalogCompositionRevision: string | undefined;
 const catalogCompositionRevision = Effect.gen(function* catalogCompositionRevision() {
-  const cached = compositionRevisionCache.value;
-  if (cached !== undefined) {
-    return cached;
+  if (cachedCatalogCompositionRevision !== undefined) {
+    return cachedCatalogCompositionRevision;
   }
   const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
-  compositionRevisionCache.value = snapshot.composition.revision;
+  cachedCatalogCompositionRevision = snapshot.composition.revision;
   return snapshot.composition.revision;
 });
 

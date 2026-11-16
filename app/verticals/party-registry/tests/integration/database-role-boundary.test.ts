@@ -200,9 +200,10 @@ const rowCount = (rows: readonly Row[]) => rows.length;
  * the statements outside a rolled-back transaction are read-only selects plus the two non-owner
  * GRANT attempts that are then asserted to have conferred nothing. So the suite seeds once.
  */
-const DatabaseRoleBoundaryFixture = Context.Service<Effect.Success<typeof openFixture>>(
-  'PartyDatabaseRoleBoundary.fixture',
-);
+class DatabaseRoleBoundaryFixture extends Context.Service<
+  DatabaseRoleBoundaryFixture,
+  Effect.Success<typeof openFixture>
+>()('PartyDatabaseRoleBoundary.fixture') {}
 const roleBoundaryLayer = Layer.effect(DatabaseRoleBoundaryFixture, openFixture).pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );

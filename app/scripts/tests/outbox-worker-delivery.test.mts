@@ -124,10 +124,12 @@ const readWorkerOutput = (child: { readonly stdout: Readable }) =>
   Effect.callback<string>((resume) => {
     // stdout arrives in chunks the operating system chooses, so one 'data' event is not one line.
     // Accumulating to the first newline makes the returned value independent of that split, which
-    // is what the JSON and pattern assertions on it depend on.
+    // is what the JSON and pattern assertions on it depend on. `setEncoding` decodes at this I/O
+    // boundary, so each chunk is text and a multi-byte character split across chunks stays intact.
+    child.stdout.setEncoding('utf8');
     let buffered = '';
-    const onData = (chunk: unknown): void => {
-      buffered += String(chunk);
+    const onData = (chunk: string): void => {
+      buffered += chunk;
       const newline = buffered.indexOf('\n');
       if (newline !== -1) {
         child.stdout.removeListener('data', onData);

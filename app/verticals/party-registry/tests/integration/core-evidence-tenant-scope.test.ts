@@ -165,9 +165,10 @@ const identityReads = (client: Client) =>
  * nothing behind; the third test's only durable rows live in a table the others never read and the
  * shared finalizer purges by issuer. So the suite seeds once and keeps the per-test probes.
  */
-const CoreEvidenceTenantScopeFixture = Context.Service<Effect.Success<typeof openFixture>>(
-  'PartyCoreEvidenceTenantScope.fixture',
-);
+class CoreEvidenceTenantScopeFixture extends Context.Service<
+  CoreEvidenceTenantScopeFixture,
+  Effect.Success<typeof openFixture>
+>()('PartyCoreEvidenceTenantScope.fixture') {}
 const evidenceLayer = Layer.effect(CoreEvidenceTenantScopeFixture, openFixture).pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );

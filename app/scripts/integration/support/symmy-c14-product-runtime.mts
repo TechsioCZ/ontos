@@ -74,9 +74,9 @@ export const nativePortList = (count: number) =>
 /** `nativePortList` for the fixtures that address their ports by owner appId. */
 export const nativePorts = (keys: readonly string[]) =>
   Effect.scoped(
-    Effect.forEach(keys, (key) => Effect.map(allocateNativePort, (port) => [key, port] as const)).pipe(
-      Effect.map((allocated) => new Map(allocated)),
-    ),
+    Effect.forEach(keys, (key) => allocateNativePort.pipe(Effect.map((port) => [key, port] as const)), {
+      concurrency: 1,
+    }).pipe(Effect.map((allocated) => new Map(allocated))),
   );
 
 const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContract')(function* publishedContract(
