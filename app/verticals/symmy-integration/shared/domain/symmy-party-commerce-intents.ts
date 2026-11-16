@@ -73,6 +73,11 @@ const savedAddressFromReceiptsPayload = Schema.Struct({
   reason: AddSavedAddressPayloadSchema.fields.reason,
   source: AddSavedAddressPayloadSchema.fields.source,
 });
+/** A Commerce-only address names its postal address itself, so no Party contact point stands behind it. */
+const savedAddressFromProfilePayload = Schema.Struct({
+  ...savedAddressFromReceiptsPayload.fields,
+  postalAddress: AddSavedAddressPayloadSchema.fields.origin.members[1].fields.postalAddress.schema.members[0],
+});
 
 /** Internal normalized inputs retain the complete native owner contract, including evidence and meaning. */
 export const SymmyPartyCommerceIntentSchema = Schema.Union([
@@ -89,6 +94,15 @@ export const SymmyPartyCommerceIntentSchema = Schema.Union([
     fromCounterpartyEffect: partyDependency,
     fromProfileEffect: partyDependency,
     payload: Schema.toEncoded(savedAddressFromReceiptsPayload),
+  }),
+  Schema.TaggedStruct('AddSavedRetailAddressFromProfileEffect', {
+    fromProfileEffect: partyDependency,
+    payload: Schema.toEncoded(savedAddressFromProfilePayload),
+  }),
+  Schema.TaggedStruct('AddSavedCounterpartyAddressFromProfileEffect', {
+    fromCounterpartyEffect: partyDependency,
+    fromProfileEffect: partyDependency,
+    payload: Schema.toEncoded(savedAddressFromProfilePayload),
   }),
   Schema.TaggedStruct('OnboardCounterpartyCustomer', {
     payload: Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
@@ -192,7 +206,15 @@ export const materializeSymmyPartyCommerceIntent = (
         value.payload.source === undefined
           ? value
           : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
+      AddSavedCounterpartyAddressFromProfileEffect: (value) =>
+        value.payload.source === undefined
+          ? value
+          : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
       AddSavedRetailAddressFromOwnerReceipts: (value) =>
+        value.payload.source === undefined
+          ? value
+          : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
+      AddSavedRetailAddressFromProfileEffect: (value) =>
         value.payload.source === undefined
           ? value
           : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
@@ -333,4 +355,50 @@ export const resolveSymmyCounterpartySavedAddress = (
           },
         },
       })
+    : Option.none();
+
+type CommerceOnlyAddressIntent = Extract<
+  SymmyPartyCommerceIntent,
+  { readonly _tag: 'AddSavedCounterpartyAddressFromProfileEffect' | 'AddSavedRetailAddressFromProfileEffect' }
+>;
+type ResolvedSavedAddress = Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AddSavedAddress' }>;
+
+/** The Commerce-only origin names the postal address itself; no Party contact point stands behind it. */
+const commerceOnlyAddress = (
+  intent: CommerceOnlyAddressIntent,
+  profile: ResolvedSavedAddress['payload']['profile'],
+): ResolvedSavedAddress => ({
+  _tag: 'AddSavedAddress',
+  payload: {
+    ...Struct.omit(intent.payload, ['postalAddress']),
+    origin: { kind: 'COMMERCE_ONLY', postalAddress: intent.payload.postalAddress },
+    profile,
+  },
+});
+
+/** A Retail saved address belongs to the actual profile the parent effect returned, in that profile's Tenant. */
+export const resolveSymmyRetailSavedAddressFromProfile = (
+  intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AddSavedRetailAddressFromProfileEffect' }>,
+  profile: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'RetailProfileEnsured' }>,
+): Option.Option<ResolvedSavedAddress> =>
+  profile.partyRef.tenantId === profile.profileRef.tenantId
+    ? Option.some(commerceOnlyAddress(intent, { kind: 'RETAIL', profileRef: profile.profileRef }))
+    : Option.none();
+
+/** A Counterparty saved address needs the profile and the counterparty of one Tenant and of one onboarding. */
+export const resolveSymmyCounterpartySavedAddressFromProfile = (
+  intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AddSavedCounterpartyAddressFromProfileEffect' }>,
+  profile: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'CounterpartyProfileCreated' }>,
+  counterparty: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'CounterpartyCustomerOnboarded' }>,
+): Option.Option<ResolvedSavedAddress> =>
+  profile.counterpartyRef.resourceId === counterparty.counterpartyRef.resourceId &&
+  profile.counterpartyRef.tenantId === counterparty.counterpartyRef.tenantId &&
+  profile.profileRef.tenantId === counterparty.counterpartyRef.tenantId
+    ? Option.some(
+        commerceOnlyAddress(intent, {
+          counterpartyRef: counterparty.counterpartyRef,
+          kind: 'COUNTERPARTY',
+          profileRef: profile.profileRef,
+        }),
+      )
     : Option.none();

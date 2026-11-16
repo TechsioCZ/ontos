@@ -1213,6 +1213,137 @@ describe('finite Saved Address owner dispatch', () => {
   );
 });
 
+const commerceOnlyPostalAddress = {
+  addressLine1: 'Fixture Street 1',
+  city: 'Prague',
+  countryCode: 'CZ',
+  postalCode: '11000',
+};
+const profileAddressEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...effect,
+  dependsOn: [{ effectKey: 'ensure-profile', itemKey: 'customer-1' }],
+  effectKey: 'address-add',
+  intent: {
+    _tag: 'AddSavedRetailAddressFromProfileEffect',
+    fromProfileEffect: { effectKey: 'ensure-profile', itemKey: 'customer-1' },
+    payload: {
+      postalAddress: commerceOnlyPostalAddress,
+      purposes: ['DELIVERY'],
+      reason: 'Explicit qualified delivery address',
+      source: addressSource,
+    },
+  },
+  ref: { ...effect.ref, operation: savedAddressEffect.ref.operation },
+});
+const profileParent = (
+  status: 'accepted_change' | 'accepted_no_change' | 'conflict',
+): SymmyEffectAdapterInput['dependencies'][number] => ({
+  effect: retailDependencyEffect,
+  itemKey: 'customer-1',
+  outcome: Option.some({ effectId: effect.ref.effectId, owner: 'commerce.customer-context', status }),
+  ownerReceipt: Option.some(
+    Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
+      _tag: 'RetailProfileEnsured',
+      partyRef: canonicalPartyRef,
+      profileRef: profile,
+    }),
+  ),
+  state: 'settled',
+  version: 1,
+});
+describe('Commerce-only Saved Address resolved from its profile effect', () => {
+  it.effect('persists the AddSavedAddress it resolved from the profile receipt before the native write', () =>
+    Effect.gen(function* resolvedAddress() {
+      reset();
+      calls.address.mockReturnValue(
+        Effect.succeed(
+          Schema.decodeUnknownSync(AddSavedAddressResultSchema)({
+            address: {
+              lifecycle: 'ACTIVE',
+              origin: { kind: 'COMMERCE_ONLY', postalAddress: commerceOnlyPostalAddress },
+              profile: { kind: 'RETAIL', profileRef: profile },
+              purposes: ['DELIVERY'],
+              revision: 1,
+              savedAddressRef,
+            },
+            outcome: 'ADDED',
+          }),
+        ),
+      );
+      const adapter = yield* savedAddressAdapter;
+      const recorded: unknown[] = [];
+      // An existing profile ends accepted without change: the address still goes to it, never to a second profile.
+      const result = yield* adapter.execute({
+        ...input(),
+        dependencies: [profileParent('accepted_no_change')],
+        effect: profileAddressEffect,
+        legalEntityId: sellingLegalEntityId,
+        recordResolvedEffect: (value) =>
+          Effect.sync(() => {
+            recorded.push(value);
+          }),
+      });
+      expect(result.status).toBe('accepted_change');
+      expect(recorded).toMatchObject([
+        {
+          intent: {
+            _tag: 'AddSavedAddress',
+            payload: {
+              origin: { kind: 'COMMERCE_ONLY', postalAddress: commerceOnlyPostalAddress },
+              profile: { kind: 'RETAIL', profileRef: { resourceId: profile.resourceId } },
+              source: { effectId, identity: { occurrenceId: 'occurrence-1', recordId: 'customer-1' } },
+            },
+          },
+        },
+      ]);
+      expect(calls.address.mock.calls[0]?.[0]).toMatchObject({
+        origin: { kind: 'COMMERCE_ONLY' },
+        profile: { kind: 'RETAIL', profileRef: { resourceId: profile.resourceId } },
+      });
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+
+  it.effect('writes nothing when the profile effect was not accepted', () =>
+    Effect.gen(function* unacceptedProfile() {
+      reset();
+      const adapter = yield* savedAddressAdapter;
+      const result = yield* adapter
+        .execute({
+          ...input(),
+          dependencies: [profileParent('conflict')],
+          effect: profileAddressEffect,
+          legalEntityId: sellingLegalEntityId,
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(calls.address).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+
+  it.effect('finds nothing committed for an unresolved address and never recovers by itself', () =>
+    Effect.gen(function* noRecovery() {
+      reset();
+      const adapter = yield* savedAddressAdapter;
+      const result = yield* adapter.recover({
+        ...input(),
+        dependencies: [profileParent('accepted_change')],
+        effect: profileAddressEffect,
+        legalEntityId: sellingLegalEntityId,
+      });
+      expect(result).toEqual({ status: 'not_committed' });
+      const revoked = yield* adapter.recover({
+        ...input(),
+        canExecuteNewEffects: false,
+        dependencies: [profileParent('accepted_change')],
+        effect: profileAddressEffect,
+        legalEntityId: sellingLegalEntityId,
+      });
+      expect(revoked).toEqual({ status: 'unavailable' });
+      expect(calls.address).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+});
+
 it.effect('keeps a successful Contact write indeterminate when its following receipt Read is forbidden', () =>
   Effect.gen(function* acknowledgedContactReadDenied() {
     reset();

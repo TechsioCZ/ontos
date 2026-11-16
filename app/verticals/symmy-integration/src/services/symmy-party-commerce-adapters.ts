@@ -126,7 +126,9 @@ import {
   resolveSymmyContactPointParty,
   resolveSymmyCounterpartyProfileCounterparty,
   resolveSymmyRetailSavedAddress,
+  resolveSymmyRetailSavedAddressFromProfile,
   resolveSymmyCounterpartySavedAddress,
+  resolveSymmyCounterpartySavedAddressFromProfile,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -447,7 +449,9 @@ export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent
         addressSourceMatches(input, payload.source) &&
         payload.profile.profileRef.tenantId === input.effect.ref.occurrence.record.route.tenantId,
       AddSavedCounterpartyAddressFromOwnerReceipts: () => false,
+      AddSavedCounterpartyAddressFromProfileEffect: () => false,
       AddSavedRetailAddressFromOwnerReceipts: () => false,
+      AddSavedRetailAddressFromProfileEffect: () => false,
       AssignCounterpartyPriceGroup: ({ authorizationSubject, payload }) =>
         targetMatches(input, payload.profile) &&
         profileSourceMatches(input, payload.source) &&
@@ -597,7 +601,9 @@ const nativeIdentityForIntent = (intent: SymmyPartyCommerceIntent) =>
       AddPartyContactPointFromParty: () => Effect.fail(symmyJobWorkerUnavailable()),
       AddSavedAddress: (selected) => addSavedAddressRequestIdentity(selected.payload),
       AddSavedCounterpartyAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+      AddSavedCounterpartyAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
       AddSavedRetailAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+      AddSavedRetailAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
       AssignCounterpartyPriceGroup: (selected) => assignCounterpartyPriceGroupRequestIdentity(selected.payload),
       AssignCustomerPriceGroup: (selected) => assignCustomerPriceGroupRequestIdentity(selected.payload),
       CreateCounterpartyProfile: (selected) => createCounterpartyPurchasingProfileRequestIdentity(selected.payload),
@@ -910,7 +916,9 @@ const operationForIntent = (intent: SymmyPartyCommerceIntent) =>
       AddPartyContactPointFromParty: () => operations[13],
       AddSavedAddress: () => operations[16],
       AddSavedCounterpartyAddressFromOwnerReceipts: () => operations[16],
+      AddSavedCounterpartyAddressFromProfileEffect: () => operations[16],
       AddSavedRetailAddressFromOwnerReceipts: () => operations[16],
+      AddSavedRetailAddressFromProfileEffect: () => operations[16],
       AssignCounterpartyPriceGroup: () => operations[11],
       AssignCustomerPriceGroup: () => operations[10],
       CreateCounterpartyProfile: () => operations[9],
@@ -1291,6 +1299,23 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
           return Option.some<SymmyPartyCommerceIntent>(resolvedAddress.value);
         },
       ),
+      AddSavedCounterpartyAddressFromProfileEffect: Effect.fn(
+        'SymmyPartyCommerceAdapters.resolveCounterpartyProfileAddress',
+      )(function* resolveCounterpartyProfileAddress(pending) {
+        const profile = yield* Match.value(yield* dependencyReceipt(input, pending.fromProfileEffect)).pipe(
+          Match.tag('CounterpartyProfileCreated', (value) => Effect.succeed(value)),
+          Match.orElse(() => Effect.fail(symmyJobWorkerUnavailable())),
+        );
+        const resolvedAddress = resolveSymmyCounterpartySavedAddressFromProfile(
+          pending,
+          profile,
+          yield* counterpartyDependencyReceipt(input, pending.fromCounterpartyEffect),
+        );
+        if (Option.isNone(resolvedAddress)) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        return Option.some<SymmyPartyCommerceIntent>(resolvedAddress.value);
+      }),
       AddSavedRetailAddressFromOwnerReceipts: Effect.fn('SymmyPartyCommerceAdapters.resolveRetailAddress')(
         function* resolveRetailAddress(pending) {
           const found = yield* dependencyReceipt(input, pending.fromProfileEffect);
@@ -1303,6 +1328,19 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
             profile,
             yield* contactDependencyReceipt(input, pending.fromContactPointEffect),
           );
+          if (Option.isNone(resolvedAddress)) {
+            return yield* symmyJobWorkerUnavailable();
+          }
+          return Option.some<SymmyPartyCommerceIntent>(resolvedAddress.value);
+        },
+      ),
+      AddSavedRetailAddressFromProfileEffect: Effect.fn('SymmyPartyCommerceAdapters.resolveRetailProfileAddress')(
+        function* resolveRetailProfileAddress(pending) {
+          const profile = yield* Match.value(yield* dependencyReceipt(input, pending.fromProfileEffect)).pipe(
+            Match.tag('RetailProfileEnsured', (value) => Effect.succeed(value)),
+            Match.orElse(() => Effect.fail(symmyJobWorkerUnavailable())),
+          );
+          const resolvedAddress = resolveSymmyRetailSavedAddressFromProfile(pending, profile);
           if (Option.isNone(resolvedAddress)) {
             return yield* symmyJobWorkerUnavailable();
           }
@@ -1646,7 +1684,9 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
           return yield* outcome(input, 'outcome' in result ? changedStatus(result.outcome === 'ADDED') : 'denied');
         }),
         AddSavedCounterpartyAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+        AddSavedCounterpartyAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
         AddSavedRetailAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+        AddSavedRetailAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
         AssignCounterpartyPriceGroup: Effect.fn('SymmyPartyCommerceAdapters.AssignCounterpartyPriceGroup')(
           function* invokeCounterpartyPriceGroup(
             intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AssignCounterpartyPriceGroup' }>,
@@ -2479,7 +2519,9 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
       AddPartyContactPointFromParty: () => Effect.succeed(unavailableRecovery),
       AddSavedAddress: (selected) => recoverSavedAddress(crypto, input, selected),
       AddSavedCounterpartyAddressFromOwnerReceipts: () => Effect.succeed(unavailableRecovery),
+      AddSavedCounterpartyAddressFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       AddSavedRetailAddressFromOwnerReceipts: () => Effect.succeed(unavailableRecovery),
+      AddSavedRetailAddressFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       AssignCounterpartyPriceGroup: (selected) => recoverAssignment(crypto, input, selected),
       AssignCustomerPriceGroup: (selected) => recoverAssignment(crypto, input, selected),
       CreateCounterpartyProfile: (selected) => recoverProfile(crypto, input, selected),

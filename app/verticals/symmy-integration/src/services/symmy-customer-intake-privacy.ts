@@ -41,7 +41,9 @@ const processingTarget = (intent: SymmyPartyCommerceIntent): Target | null =>
       AddPartyContactPointFromParty: () => null,
       AddSavedAddress: ({ payload }) => profileTarget(payload.profile.profileRef),
       AddSavedCounterpartyAddressFromOwnerReceipts: () => null,
+      AddSavedCounterpartyAddressFromProfileEffect: () => null,
       AddSavedRetailAddressFromOwnerReceipts: () => null,
+      AddSavedRetailAddressFromProfileEffect: () => null,
       AssignCounterpartyPriceGroup: ({ payload }) =>
         target('COUNTERPARTY_PURCHASING_PROFILE', payload.profile.resourceId),
       AssignCustomerPriceGroup: ({ payload }) => target('RETAIL_CUSTOMER_PROFILE', payload.profile.resourceId),
@@ -110,7 +112,9 @@ const deferredSource = (intent: SymmyPartyCommerceIntent): Source | null | 'DIRE
     Match.tags({
       AddPartyContactPointFromParty: ({ payload }) => flattenSourceReference(payload.sourceReference),
       AddSavedCounterpartyAddressFromOwnerReceipts: ({ payload }) => payload.source?.identity ?? null,
+      AddSavedCounterpartyAddressFromProfileEffect: ({ payload }) => payload.source?.identity ?? null,
       AddSavedRetailAddressFromOwnerReceipts: ({ payload }) => payload.source?.identity ?? null,
+      AddSavedRetailAddressFromProfileEffect: ({ payload }) => payload.source?.identity ?? null,
       CreateCounterpartyProfileFromCounterparty: ({ payload }) => flattenProfileSource(payload.source),
       EnsureRetailProfileFromParty: ({ payload }) => flattenProfileSource(payload.source),
       OnboardCounterpartyCustomerFromParty: ({ payload }) => flattenSourceReference(payload.sourceReference),
