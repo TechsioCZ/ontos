@@ -1,5 +1,19 @@
 name: Quality Audit
 
+# This stays a separate workflow. Do not fold it into Ultramodern Workspace Gates.
+# Wall clock, last 100 runs (80 successes): min 2.8, p50 5.0, p90 6.8, max 7.2 min, zero over 10.
+# It is already inside the 10-minute target and blocks nothing.
+# It duplicates no gates work: `lint:suppressions` and `quality:audit` each appear zero times in
+# ultramodern-workspace-gates.yml and in scripts/ci-matrices.json, and both scripts exist only here.
+# Folding it in would spend its ~6 machine-minutes competing for the same 20 concurrent hosted
+# runners that set the blocking gate's wall-clock floor, and would promote audit findings into
+# "Workspace gates", the single required status check -- a merge-policy change, not a speed-up.
+#
+# No `branches:` filter on pull_request either. Measured base refs over the last 100 pull requests:
+# main 60, demo/sales-crm 25, stacked bases 15 (tax-907/* 11, codex/* 4). An allowlist of main and
+# demo/sales-crm would drop this workflow from those 15 stacked pull requests, where new code lands
+# first, and save zero wall clock on any pipeline because this one runs beside the gates.
+#
 # Repository-root documentation is outside the audited app/ workspace.
 on:
   pull_request:
@@ -60,9 +74,14 @@ jobs:
           install-args: --ignore-scripts
           mise-env: "false"
 
-      - name: Verify audit runner and gate behavior
-        run: mise exec -- pnpm quality:audit:test
-
+      # The former "Verify audit runner and gate behavior" step (`pnpm quality:audit:test`, 32-51 s)
+      # is gone. All eight test files it named are `scripts/tests/*.test.mts`, which the blocking
+      # gate already runs in full through `pnpm test:scripts` (rstest project `scripts`, include
+      # `scripts/**/*.test.mts`) on every pull_request and merge_group, so it lost no coverage.
+      # A silently broken runner still cannot report clean: the gate step below reads
+      # summary.json and fails closed. Verified by running it against an absent, an empty and a
+      # truncated summary (exit 1 each: NotFound, then "Malformed audit summary") versus a
+      # complete six-analyzer summary (exit 0).
       - name: Hold lint suppressions at the committed baseline
         run: mise exec -- pnpm lint:suppressions
 

@@ -833,8 +833,9 @@ list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `fals
   no rate-limit rule: on the Free plan a rate-limit expression cannot match a hostname, so it would
   throttle every other project in the zone. `cost-guards` also records the zone as the `stage-edge` variable
   `CLOUDFLARE_STAGE_ZONE_ID`.
-- The hourly `.github/workflows/stage-edge-cost-guard.yml` runs
-  `node scripts/ops/cloudflare-stage-cost-guard.mts check` once that variable exists. It sums the
+- `node scripts/ops/cloudflare-stage-cost-guard.mts check` reports the bill once that variable
+  exists. Its hourly workflow is removed: it was disabled on 2026-10-30 and the Cloudflare edge
+  target it guarded is retired, so the command is run by hand while that is true. It sums the
   whole account's Workers requests and CPU time since the billing cycle started, and logs each OntOS
   Worker's share and the other Workers' total (`STAGE_BILLING_CYCLE_DAY`,
   1-28, default 1). Past `STAGE_WORKERS_REQUEST_LIMIT` (default 8M) or `STAGE_WORKERS_CPU_MS_LIMIT`
