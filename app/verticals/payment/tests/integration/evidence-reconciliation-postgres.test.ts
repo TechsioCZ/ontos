@@ -379,6 +379,21 @@ it.live('#1151 A source corrects a statement rather than reversing money; histor
         }),
       );
       expect(correctionEffectTag(decision)).toBe('REOPEN_TO_CONFLICT');
+      // The same correction carrying a smaller amount reduces the established collection instead of
+      // reopening it. It is interpreted here, while the collection is still EFFECT_CONFIRMED: after the
+      // settle below the corrected fact no longer matches that outcome and every correction is RECORD_ONLY.
+      const partial = yield* interpret(
+        evidence,
+        payment.paymentId,
+        qualified({
+          amount: czk(30_000),
+          correctsObservationId: receipt,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          sourceAuthorityId: authority,
+        }),
+      );
+      expect(correctionEffectTag(partial)).toBe('REDUCE_ESTABLISHED_COLLECTION');
       const correction = yield* evidence.recordObservation({
         correctionEffect: 'REOPEN_TO_CONFLICT',
         correctsObservationId: receipt,
@@ -427,38 +442,6 @@ it.live('#1151 A source corrects a statement rather than reversing money; histor
       ]);
       expect(history.authorizations).toHaveLength(1);
       expect(history.operations.map((operation) => operation.provenance.compositionRevision)).toEqual([COMPOSITION_R1]);
-    }),
-  ),
-);
-
-it.live('#1151 correction vs reversal: a full correction reopens the collection, a partial one reduces it', () =>
-  native(
-    Effect.gen(function* correctionDecision() {
-      const evidence = yield* scenario();
-      const { authority, collect, payment, receipt } = yield* confirmedCollection(evidence);
-      const full = yield* interpret(
-        evidence,
-        payment.paymentId,
-        qualified({
-          correctsObservationId: receipt,
-          factKind: 'SOURCE_CORRECTION',
-          operationId: collect.operationId,
-          sourceAuthorityId: authority,
-        }),
-      );
-      expect(correctionEffectTag(full)).toBe('REOPEN_TO_CONFLICT');
-      const partial = yield* interpret(
-        evidence,
-        payment.paymentId,
-        qualified({
-          amount: czk(30_000),
-          correctsObservationId: receipt,
-          factKind: 'SOURCE_CORRECTION',
-          operationId: collect.operationId,
-          sourceAuthorityId: authority,
-        }),
-      );
-      expect(correctionEffectTag(partial)).toBe('REDUCE_ESTABLISHED_COLLECTION');
     }),
   ),
 );
