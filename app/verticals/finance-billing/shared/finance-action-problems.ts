@@ -1,6 +1,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import type { FinanceConflict } from './actions/errors/finance-conflict.ts';
+import type { FinanceForbidden } from './actions/errors/finance-forbidden.ts';
 import type { FinanceNotFound } from './actions/errors/finance-not-found.ts';
 import type { FinancePersistenceUnavailable } from './actions/errors/finance-persistence-unavailable.ts';
 import type { FinanceReferenceUnavailable } from './actions/errors/finance-reference-unavailable.ts';
@@ -17,6 +18,20 @@ export const mapFinanceConflictProblem = (failure: FinanceConflict): typeof Fina
     status: FinanceConflictProblemSchema.fields.status.literal,
     title: 'Action conflict',
     type: 'https://ontos.dev/problems/action-conflict',
+  });
+
+export const FinanceForbiddenProblemSchema = makeProblemDetailsSchema('FinanceForbiddenProblem', 403, {
+  code: Schema.Literal('finance_forbidden'),
+});
+
+/** A right the caller lacks for a read the command needs; `detail` is the reason code the screen explains. */
+export const mapFinanceForbiddenProblem = (failure: FinanceForbidden): typeof FinanceForbiddenProblemSchema.Type =>
+  FinanceForbiddenProblemSchema.make({
+    code: 'finance_forbidden',
+    detail: failure.reason,
+    status: FinanceForbiddenProblemSchema.fields.status.literal,
+    title: 'Action forbidden',
+    type: 'https://ontos.dev/problems/action-forbidden',
   });
 
 export const FinanceNotFoundProblemSchema = makeProblemDetailsSchema('FinanceNotFoundProblem', 404, {

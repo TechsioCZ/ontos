@@ -158,7 +158,11 @@ const reasonText = {
   document_type_not_supported: 'Podporované jsou soubory PDF, PNG, JPEG a WebP.',
   export_already_confirmed: 'Předání už je potvrzené.',
   export_cannot_fail: 'Chybu lze zapsat jen u připraveného nebo předaného balíčku.',
+  export_issuer_identity_forbidden:
+    'Vaše role nemá právo číst identifikaci firmy (název a údaje právnické osoby), kterou předávací soubor pro účetnictví potřebuje. Požádejte správce o doplnění práva.',
   export_not_prepared: 'Balíček už byl předán nebo uzavřen.',
+  export_partner_identity_forbidden:
+    'Vaše role nemá právo číst identifikaci obchodních partnerů (IČO, DIČ, sídlo), kterou předávací soubor pro účetnictví potřebuje. Požádejte správce o doplnění práva.',
   export_requires_confirmed_invoices: 'Exportovat lze jen potvrzené (vystavené / zaevidované) doklady.',
   export_requires_handover: 'Potvrzení účetní lze zapsat až po předání balíčku.',
   incoming_invoice_already_recorded: 'Faktura s tímto číslem od stejného dodavatele už je zaevidovaná.',

@@ -1,18 +1,21 @@
-import { ReadRuntime, agentActivityActorsRead, legalEntityDetailRead } from '@app/core-runtime';
+import { ReadPermissionDenied, ReadRuntime, agentActivityActorsRead, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import {
   executeCounterpartyIdentitiesWithAuthorization,
   executeCounterpartyReadWithAuthorization,
 } from '@app/party-registry/api/client';
-import { COUNTERPARTY_IDENTITIES_MAX_REFS } from '@app/party-registry/apis/counterparty-identities';
+import {
+  COUNTERPARTY_IDENTITIES_MAX_REFS,
+  CounterpartyIdentitiesForbiddenProblemSchema,
+} from '@app/party-registry/apis/counterparty-identities';
 import type { CounterpartyIdentity } from '@app/party-registry/apis/counterparty-identities';
 import { executeRecordsWithAuthorization as readAgreements } from '@app/legal-agreements/clients/records';
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
 import { executeRecordsWithAuthorization as readProperty } from '@app/property-portfolio/clients/records';
 import { executeRecordsWithAuthorization as readWork } from '@app/work-tasks/clients/records';
-import { Array as Arr, Context, DateTime, Effect, Layer } from 'effect';
-import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actions/apply-command.ts';
+import { Array as Arr, Context, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
+import { FinanceForbidden, FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
 import { FinanceTaxRates } from '../integrations/tax-rates.ts';
@@ -21,18 +24,16 @@ import type { ExportPartnerReference, FinanceAnchors, FinanceValidators } from '
 
 type MutableExportPartnerReference = { -readonly [Key in keyof ExportPartnerReference]: ExportPartnerReference[Key] };
 
-type ReferenceFailure = Effect.Error<
-  | ReturnType<typeof makeReferenceGatewayCredentialSource>
-  | ReturnType<Effect.Success<ReturnType<typeof makeReferenceGatewayCredentialSource>>['issue']>
-  | ReturnType<typeof executeCounterpartyIdentitiesWithAuthorization>
-  | ReturnType<typeof executeCounterpartyReadWithAuthorization>
-  | ReturnType<typeof readAgreements>
-  | ReturnType<typeof readOccupancies>
-  | ReturnType<typeof readProperty>
-  | ReturnType<typeof readWork>
->;
+/** The fields of a failure on this path the WARN may name: every tagged error and HTTP problem here has some of them. */
+export const ReferenceCauseSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.Unknown),
+  code: Schema.optionalKey(Schema.Unknown),
+  reason: Schema.optionalKey(Schema.Unknown),
+  status: Schema.optionalKey(Schema.Unknown),
+});
+export type ReferenceCause = typeof ReferenceCauseSchema.Type;
 /** Core Read failures (legal entity of the export issuer) are tagged errors as well. */
-const unavailable = (cause?: ReferenceFailure | { readonly _tag: string }) =>
+const unavailable = (cause?: ReferenceCause) =>
   Object.defineProperty(
     new FinanceReferenceUnavailable({
       code: 'finance_reference_unavailable',
@@ -42,6 +43,74 @@ const unavailable = (cause?: ReferenceFailure | { readonly _tag: string }) =>
     { value: cause },
   );
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
+/**
+ * Refusals the caller's rights decide, not an unreachable owner: the export needs the company's legal identity (Core's
+ * legal-entity read and its name field) and the partners' identity (Party Registry's counterparty identities read).
+ */
+export const EXPORT_ISSUER_IDENTITY_FORBIDDEN = 'export_issuer_identity_forbidden';
+export const EXPORT_PARTNER_IDENTITY_FORBIDDEN = 'export_partner_identity_forbidden';
+const forbidden = (reason: string) => new FinanceForbidden({ code: 'finance_forbidden', reason });
+/** The issuer read refused by the caller's rights is a permission problem; any other failure stays unavailable. */
+export const issuerReadFailure = (cause: ReferenceCause) =>
+  Schema.is(ReadPermissionDenied)(cause) ? forbidden(EXPORT_ISSUER_IDENTITY_FORBIDDEN) : unavailable(cause);
+/** No name: Core withheld it by the caller's field right (absent), or holds an empty one (blank, unavailable). */
+export const issuerNameFailure = (legalName?: string) =>
+  legalName === undefined ? forbidden(EXPORT_ISSUER_IDENTITY_FORBIDDEN) : unavailable();
+/** Party Registry refusing the caller is a permission problem; an unreachable registry stays unavailable. */
+export const partnerReadFailure = (cause: ReferenceCause) =>
+  Schema.is(CounterpartyIdentitiesForbiddenProblemSchema)(cause)
+    ? forbidden(EXPORT_PARTNER_IDENTITY_FORBIDDEN)
+    : unavailable(cause);
+
+/** The step of the accounting export's references (or of preparing any reference read) that failed. */
+export const ReferenceStepSchema = Schema.Literals([
+  'author_read',
+  'credential_source',
+  'issuer_name',
+  'issuer_read',
+  'partner_credential',
+  'partner_read',
+]);
+export type ReferenceStep = typeof ReferenceStepSchema.Type;
+
+/** A word-like text without slashes, `@` or long digit runs: an error tag, a code or a fixed reason, never a value. */
+const SAFE_TEXT = /^[A-Za-z][A-Za-z0-9 _.,:'-]{0,119}$/u;
+const safeText = (field: ReferenceCause['code']): string | null =>
+  Predicate.isString(field) && SAFE_TEXT.test(field) && !/\d{5}/u.test(field) ? field : null;
+const wrappedTag = (reason: ReferenceCause['reason']): string | null =>
+  Predicate.hasProperty(reason, '_tag') ? safeText(reason._tag) : null;
+
+/**
+ * What the WARN names about a failed reference step: the step, the error's tag, code and fixed reason, the tag of the
+ * failure it wraps and an HTTP status. Never a token, a URL, an id from the request or a value of the ledger.
+ */
+export const referenceFailureFields = (
+  step: ReferenceStep,
+  cause: ReferenceCause | undefined,
+  detail: Readonly<Record<string, boolean | number | string>> = {},
+) => ({
+  ...detail,
+  causeTag: wrappedTag(cause?.reason),
+  code: safeText(cause?.code),
+  errorTag: safeText(cause?._tag),
+  reason: safeText(cause?.reason),
+  status: Predicate.isNumber(cause?.status) ? cause.status : null,
+  step,
+});
+
+/** One WARN per failed step, scoped to the company and the request, before the failure becomes `unavailable`. */
+const logReferenceFailure =
+  (scope: OperationalScope, step: ReferenceStep, detail?: Readonly<Record<string, boolean | number | string>>) =>
+  (cause?: ReferenceCause) =>
+    Effect.logWarning('A Finance reference read failed; the command answers reference unavailable').pipe(
+      Effect.annotateLogs({
+        ...referenceFailureFields(step, cause, detail),
+        company: scope.legalEntityId ?? null,
+        correlation: scope.correlationId,
+        module: 'finance.billing',
+        tenant: scope.tenantId,
+      }),
+    );
 
 const exportPartnerOf = (identity: CounterpartyIdentity): ExportPartnerReference => {
   const partner: MutableExportPartnerReference = {};
@@ -81,7 +150,10 @@ const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function*
     return yield* rejected('legal_entity_required');
   }
   const { legalEntityId } = scope;
-  const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(unavailable));
+  const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(
+    Effect.tapError(logReferenceFailure(scope, 'credential_source')),
+    Effect.mapError(unavailable),
+  );
   const readRuntime = yield* ReadRuntime;
   const taxRates = yield* FinanceTaxRates;
   /**
@@ -105,26 +177,32 @@ const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function*
         registration: legalEntityDetailRead,
         transport: { correlationId: scope.correlationId },
       })
-      .pipe(Effect.mapError(unavailable));
+      .pipe(Effect.tapError(logReferenceFailure(scope, 'issuer_read')), Effect.mapError(issuerReadFailure));
     const issuerName = issuer.legalName;
     if (issuerName === undefined || issuerName.trim().length === 0) {
-      return yield* unavailable();
+      // Absent: Core withheld the name (its personal-data field right) or holds none; blank: it holds an empty one.
+      yield* logReferenceFailure(scope, 'issuer_name', { legalName: issuerName === undefined ? 'absent' : 'blank' })();
+      return yield* issuerNameFailure(issuerName);
     }
     // No partner credential is issued before the trusted issuer read succeeds; each batch carries its own.
     const { actors, partners } = yield* Effect.all(
       {
         partners: resolveExportPartners(counterpartyRefs, (batch) =>
           source.issue('party-registry').pipe(
+            Effect.tapError(logReferenceFailure(scope, 'partner_credential', { batchSize: batch.length })),
+            Effect.mapError(unavailable),
             Effect.flatMap((target) =>
               executeCounterpartyIdentitiesWithAuthorization(
                 { counterpartyRefs: batch },
                 target.authorization,
                 scope.correlationId,
                 { baseUrl: target.apiBaseUrl, compositionRevision: target.compositionRevision },
+              ).pipe(
+                Effect.tapError(logReferenceFailure(scope, 'partner_read', { batchSize: batch.length })),
+                Effect.mapError(partnerReadFailure),
               ),
             ),
             Effect.map((response) => response.items),
-            Effect.mapError(unavailable),
           ),
         ),
         // The file names its author by the display name Core holds for the authenticated principal, never by its id.
@@ -135,7 +213,7 @@ const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function*
             registration: agentActivityActorsRead,
             transport: { correlationId: scope.correlationId },
           })
-          .pipe(Effect.mapError(unavailable)),
+          .pipe(Effect.tapError(logReferenceFailure(scope, 'author_read')), Effect.mapError(unavailable)),
       },
       // One after the other, as before: the partner reads first, then the author.
       { concurrency: 1 },

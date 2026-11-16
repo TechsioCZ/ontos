@@ -2,6 +2,7 @@ import { FinanceReferenceUnavailable } from './errors/finance-reference-unavaila
 import { FinancePersistenceUnavailable } from './errors/finance-persistence-unavailable.ts';
 import { FinanceNotFound } from './errors/finance-not-found.ts';
 import { FinanceConflict } from './errors/finance-conflict.ts';
+import { FinanceForbidden } from './errors/finance-forbidden.ts';
 import { FinanceRejected } from './errors/finance-rejected.ts';
 import { Schema } from 'effect';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
@@ -271,6 +272,7 @@ export const ApplyCommandResultSchema = Schema.Struct({
 export const FinanceErrorSchema = Schema.Union([
   FinanceRejected,
   FinanceConflict,
+  FinanceForbidden,
   FinanceNotFound,
   FinancePersistenceUnavailable,
   FinanceReferenceUnavailable,
@@ -280,6 +282,8 @@ export type FinanceError = typeof FinanceErrorSchema.Type;
 export { FinanceRejected } from './errors/finance-rejected.ts';
 
 export { FinanceConflict } from './errors/finance-conflict.ts';
+
+export { FinanceForbidden } from './errors/finance-forbidden.ts';
 
 export { FinanceNotFound } from './errors/finance-not-found.ts';
 

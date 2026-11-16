@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   FinanceConflict,
+  FinanceForbidden,
   FinanceNotFound,
   FinancePersistenceUnavailable,
   FinanceReferenceUnavailable,
@@ -9,11 +10,13 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import {
   FinanceConflictProblemSchema,
+  FinanceForbiddenProblemSchema,
   FinanceNotFoundProblemSchema,
   FinancePersistenceUnavailableProblemSchema,
   FinanceReferenceUnavailableProblemSchema,
   FinanceRejectedProblemSchema,
   mapFinanceConflictProblem,
+  mapFinanceForbiddenProblem,
   mapFinanceNotFoundProblem,
   mapFinancePersistenceUnavailableProblem,
   mapFinanceReferenceUnavailableProblem,
@@ -36,8 +39,9 @@ it('preserves all reviewed safe domain details and statuses without projecting c
       new FinanceReferenceUnavailable({ code: 'finance_reference_unavailable', reason }),
     ),
     mapFinanceRejectedProblem(new FinanceRejected({ code: 'finance_rejected', reason })),
+    mapFinanceForbiddenProblem(new FinanceForbidden({ code: 'finance_forbidden', reason })),
   ];
-  expect(problems.map((problem) => problem.status)).toEqual([409, 404, 503, 503, 422]);
+  expect(problems.map((problem) => problem.status)).toEqual([409, 404, 503, 503, 422, 403]);
   for (const problem of problems) {
     expect(problem.detail).toBe(reason);
     expect(JSON.stringify(problem)).not.toMatch(/private-driver-secret|stack|cause/u);
@@ -47,4 +51,5 @@ it('preserves all reviewed safe domain details and statuses without projecting c
   expect(Schema.is(FinancePersistenceUnavailableProblemSchema)(problems[2])).toBe(true);
   expect(Schema.is(FinanceReferenceUnavailableProblemSchema)(problems[3])).toBe(true);
   expect(Schema.is(FinanceRejectedProblemSchema)(problems[4])).toBe(true);
+  expect(Schema.is(FinanceForbiddenProblemSchema)(problems[5])).toBe(true);
 });

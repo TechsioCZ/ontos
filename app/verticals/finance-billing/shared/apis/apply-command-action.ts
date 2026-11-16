@@ -2,6 +2,7 @@
 // @ontos-action-http-owner finance.billing
 // @ontos-action-http-slug apply-command
 // @ontos-action-http-domain-problem FinanceConflict=shared/finance-action-problems.ts#FinanceConflictProblemSchema#mapFinanceConflictProblem
+// @ontos-action-http-domain-problem FinanceForbidden=shared/finance-action-problems.ts#FinanceForbiddenProblemSchema#mapFinanceForbiddenProblem
 // @ontos-action-http-domain-problem FinanceNotFound=shared/finance-action-problems.ts#FinanceNotFoundProblemSchema#mapFinanceNotFoundProblem
 // @ontos-action-http-domain-problem FinancePersistenceUnavailable=shared/finance-action-problems.ts#FinancePersistenceUnavailableProblemSchema#mapFinancePersistenceUnavailableProblem
 // @ontos-action-http-domain-problem FinanceReferenceUnavailable=shared/finance-action-problems.ts#FinanceReferenceUnavailableProblemSchema#mapFinanceReferenceUnavailableProblem
@@ -13,6 +14,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
   FinanceConflictProblemSchema,
+  FinanceForbiddenProblemSchema,
   FinanceNotFoundProblemSchema,
   FinancePersistenceUnavailableProblemSchema,
   FinanceReferenceUnavailableProblemSchema,
@@ -101,6 +103,7 @@ export const ApplyCommandActionInternalProblemSchema = makeProblemDetailsSchema(
 
 export type ApplyCommandActionProblem =
   | typeof FinanceConflictProblemSchema.Type
+  | typeof FinanceForbiddenProblemSchema.Type
   | typeof FinanceNotFoundProblemSchema.Type
   | typeof FinancePersistenceUnavailableProblemSchema.Type
   | typeof FinanceReferenceUnavailableProblemSchema.Type
@@ -124,6 +127,7 @@ export class ApplyCommandActionSchemaErrorMiddleware extends HttpApiMiddleware.S
 
 const actionErrors = [
   FinanceConflictProblemSchema,
+  FinanceForbiddenProblemSchema,
   FinanceNotFoundProblemSchema,
   FinancePersistenceUnavailableProblemSchema,
   FinanceReferenceUnavailableProblemSchema,
