@@ -25,7 +25,7 @@ import {
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
 } from './symmy-c14-customer-native-authority.mts';
 import { customerOccurrenceId, customersBody } from './symmy-c14-customer-public.mts';
-import { internalCustomerSource, makeSymmyC14CustomerPlan } from './symmy-c14-customer-plan.mts';
+import { internalCustomerSource, symmyC14CustomerPlanData } from './symmy-c14-customer-plan.mts';
 import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
@@ -428,7 +428,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const occurrenceId = customerOccurrenceId(customerJobKey, 'customer-0');
     const recordId = 'INTERNAL_C14_NAMED_PERSON';
     const observedAt = yield* DateTime.now;
-    const customerPlan = yield* makeSymmyC14CustomerPlan({
+    const customerPlan = symmyC14CustomerPlanData({
       legalEntityId,
       observedAt,
       occurrenceId,
@@ -440,7 +440,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const planFor = Effect.fn('SymmyC14CustomerFixture.plan')(function* planFor(priceGroupEffectiveFrom: DateTime.Utc) {
       return yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
         items: [
-          ...(yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(customerPlan)).items,
+          ...customerPlan.items,
           ...(configuration.includePriceGroup
             ? [
                 {
