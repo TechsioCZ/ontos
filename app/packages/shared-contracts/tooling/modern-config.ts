@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AppUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
+import { RsdoctorRspackPlugin } from '@rsdoctor/rspack-plugin';
 import {
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
@@ -273,5 +275,27 @@ export const createWorkspaceModernConfig = ({
       ULTRAMODERN_SHELL_ORIGIN: readBuildEnvironmentValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
     },
   },
-  tools: browserTargetTools,
+  tools: {
+    ...browserTargetTools,
+    ...(readBuildEnvironmentValue('ONTOS_BUILD_PROFILE_DIR') === undefined
+      ? undefined
+      : {
+          rspack: (config) => {
+            config.plugins ??= [];
+            config.plugins.push(
+              new RsdoctorRspackPlugin({
+                disableClientServer: true,
+                output: {
+                  reportDir: path.join(
+                    readBuildEnvironmentValue('ONTOS_BUILD_PROFILE_DIR') ?? '',
+                    'rsdoctor',
+                    appId,
+                    config.name ?? 'default',
+                  ),
+                },
+              }),
+            );
+          },
+        }),
+  } satisfies AppUserConfig['tools'],
 });
