@@ -75,9 +75,11 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   const plan = planCiChecks({ changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
-  // Template order decides the order here. The preproposal row is retained through its proof-packages,
-  // and the federation proof row is retained unconditionally because its suite is neither integration nor browser.
+  // Template order decides the order here. The preproposal row is retained through its proof-packages, and
+  // the bootstrap and federation proof rows are retained unconditionally because their suite is neither
+  // integration nor browser: they prove the deployment bootstrap and the build outputs, not a package.
   expect(plan.integration.map(({ name }) => name)).toEqual([
+    'Deployment Bootstrap Proof',
     'Native Preproposal Approval and Storefront Registry Integration',
     'Pricing and Inventory Integration',
     'Catalog Integration',

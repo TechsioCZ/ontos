@@ -43,6 +43,10 @@
   ],
   "integration": [
     {
+      "suite": "bootstrap",
+      "name": "Deployment Bootstrap Proof"
+    },
+    {
       "suite": "integration",
       "name": "Commerce Customer Context Integration (1/6)",
       "package-filters": "--filter ./verticals/commerce-customer-context",
