@@ -23,13 +23,14 @@ import type { OrganizationBusinessNameExportResponse } from '@app/party-registry
 import { PriceGroupDefinitionResponseSchema } from '@app/price-group-catalog/api/client';
 import { PriceGroupSourceAssociationsResponseSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
-import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Match, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { assert, describe, expect, it } from 'effect-rstest';
 
 import { SymmyCustomerIcoProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
 import { SymmyInternalReadQuerySchema, SymmyUnavailableProblemSchema } from '../../api/symmy/contract.ts';
+import type { SymmyCustomerFieldName } from '../../api/symmy/contract.ts';
 import {
   acquireSymmyReadAssertion,
   projectSymmySourceCustomers,
@@ -58,7 +59,7 @@ const allowedOwnerOperations = [
     schemaVersion: '1',
   },
   {
-    entrypointKey: 'commerce.customer-context.api.customer-profile-source',
+    entrypointKey: 'commerce.customer-context.api.customer-profile-source-page',
     moduleId: 'commerce.customer-context',
     schemaVersion: '1',
   },
@@ -428,6 +429,17 @@ const FixtureModeSchema = Schema.Literals([
 ]);
 type FixtureMode = typeof FixtureModeSchema.Type;
 
+/** The owner page answer for a source page; any other answer is returned as it is, for a malformed owner reply. */
+const customerPageReply = (decoded: CustomerProfileSourceResponse, shortCount: boolean) =>
+  Response.json(
+    Match.value(decoded).pipe(
+      Match.tag('PAGE', ({ items }) => ({
+        count: shortCount ? 0 : items.length,
+        items: items.map((item) => Schema.encodeSync(CustomerProfileSourceItemSchema)(item)),
+      })),
+      Match.orElse((other) => Schema.encodeSync(CustomerProfileSourceResponseSchema)(other)),
+    ),
+  );
 const fixtureIcoReply = (path: string, response?: Response | FixtureOwnerReplies): Response | undefined => {
   const replies = Schema.is(Schema.instanceOf(Response))(response) ? { ico: response } : response;
   if (path.endsWith('/reads/organization-business-name-export')) {
@@ -530,7 +542,7 @@ const fixture = (
       });
       return Promise.resolve(Response.json(Schema.encodeSync(CatalogSourceProductPageResponseSchema)(decoded)));
     }
-    if (pathname.endsWith('/reads/customer-profile-source')) {
+    if (pathname.endsWith('/reads/customer-profile-source-page')) {
       let item =
         mode === 'foreign_customer'
           ? { ...customer, source: { ...customer.source, issuer: 'foreign-issuer' } }
@@ -560,7 +572,7 @@ const fixture = (
           items: [item],
           nextCursor: null,
         });
-      return Promise.resolve(Response.json(Schema.encodeSync(CustomerProfileSourceResponseSchema)(decoded)));
+      return Promise.resolve(customerPageReply(decoded, mode === 'short_count'));
     }
     if (pathname.endsWith('/reads/source-profile-export')) {
       return Promise.resolve(
@@ -652,6 +664,26 @@ const projectQualifiedReadback = (selectedScope: SymmySourceReadScope) => {
   }).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
 };
 
+const projectCustomerParts = (
+  fields: readonly SymmyCustomerFieldName[] | undefined,
+  selectedScope: SymmySourceReadScope,
+  page: CustomerProfileSourceResponse,
+  replies?: FixtureOwnerReplies,
+) => {
+  const current = fixture('current', sourceCorrelation.recordKey, page, replies, selectedScope);
+  return projectSymmySourceCustomers(
+    selectedScope,
+    fields === undefined ? {} : { fields },
+    current.admission,
+    current.newRequestIdentifier,
+  ).pipe(
+    Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
+    Effect.map((result) => ({
+      customer: result.customers[0],
+      owners: current.requests.map((request) => new URL(request.url).pathname.split('/').at(-1)),
+    })),
+  );
+};
 describe('Symmy source-qualified public owner read projections', () => {
   it.effect('exports lossless selected-path aliases for actual opaque Price Group source keys', () =>
     Effect.gen(function* opaqueGroupIdentifiers() {
@@ -872,22 +904,20 @@ describe('Symmy source-qualified public owner read projections', () => {
     }),
   );
   it.effect(
-    'refuses owner receipt responses for both Current and paged customer exports without projecting proof or actor data',
+    'refuses owner receipt responses for the paged customer export without projecting proof or actor data',
     () =>
       Effect.gen(function* receiptIsNotCurrent() {
         for (const response of customerReceiptResponses) {
-          for (const selectedQuery of [query, { ...query, code: customer.source.recordId }]) {
-            const current = fixture('current', sourceCorrelation.recordKey, response);
-            const failure = yield* projectSymmySourceCustomers(
-              scope,
-              selectedQuery,
-              current.admission,
-              current.newRequestIdentifier,
-            ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
-            expect(Schema.is(SymmyUnavailableProblemSchema)(failure)).toBe(true);
-            expect(current.requests).toHaveLength(1);
-            expect(current.acquisitions).toEqual([{ audience: 'commerce-customer-context', legalEntityId }]);
-          }
+          const current = fixture('current', sourceCorrelation.recordKey, response);
+          const failure = yield* projectSymmySourceCustomers(
+            scope,
+            query,
+            current.admission,
+            current.newRequestIdentifier,
+          ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+          expect(Schema.is(SymmyUnavailableProblemSchema)(failure)).toBe(true);
+          expect(current.requests).toHaveLength(1);
+          expect(current.acquisitions).toEqual([{ audience: 'commerce-customer-context', legalEntityId }]);
         }
       }),
   );
@@ -912,7 +942,7 @@ describe('Symmy source-qualified public owner read projections', () => {
           expect(result.customers[0]?.ico).toMatchObject({ normalizedValue: '27074358' });
           expect(result.unsupported_fields).toEqual(['addresses', 'groups', 'name', 'contacts']);
           expect(current.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
-            'customer-profile-source',
+            'customer-profile-source-page',
             'organization-customer-profile-ico',
           ]);
           const request = yield* Effect.fromNullishOr(current.requests[1]).pipe(Effect.orDie);
@@ -953,7 +983,7 @@ describe('Symmy source-qualified public owner read projections', () => {
       ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
       expect(Schema.is(SymmyCustomerIcoProjectionSchema.members[1])(result.customers[0]?.ico)).toBe(true);
       expect(current.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
-        'customer-profile-source',
+        'customer-profile-source-page',
         'customer-profile-ico',
       ]);
     }),
@@ -1134,7 +1164,7 @@ describe('Symmy source-qualified public owner read projections', () => {
         sourceReference: companyPartySourceReference,
       });
       expect(current.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
-        'customer-profile-source',
+        'customer-profile-source-page',
         'organization-business-name-export',
         'organization-customer-profile-ico',
       ]);
@@ -1447,6 +1477,141 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(unsupported.status).toBe(422);
       expect(current.acquisitions).toHaveLength(0);
       expect(current.requests).toHaveLength(0);
+    }),
+  );
+  it.effect('pages the customer source with offset and count and carries the owner total', () =>
+    Effect.gen(function* customersPage() {
+      const current = fixture();
+      const result = yield* projectSymmySourceCustomers(
+        scope,
+        { limit: 2, offset: 0 },
+        current.admission,
+        current.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(result).toMatchObject({ contractVersion: 'INTERNAL_C14', count: 1, limit: 2, offset: 0 });
+      expect(result).not.toHaveProperty('nextRecordId');
+      const request = yield* Effect.fromNullishOr(current.requests[0]).pipe(Effect.orDie);
+      expect(new URL(request.url).pathname.split('/').at(-1)).toBe('customer-profile-source-page');
+      expect(yield* Effect.promise(() => request.clone().json())).toEqual({
+        issuer: scope.issuerId,
+        limit: 2,
+        mappingRevision: scope.mappingVersion,
+        namespace: scope.sourceNamespace,
+        offset: 0,
+        recordType: 'CUSTOMER',
+        route: { id: routeId, revision: scope.routeRevision },
+      });
+      const defaults = fixture();
+      const unpaged = yield* projectSymmySourceCustomers(
+        scope,
+        {},
+        defaults.admission,
+        defaults.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, defaults.fakeFetch));
+      expect(unpaged).toMatchObject({ limit: 50, offset: 0 });
+      const defaultRequest = yield* Effect.fromNullishOr(defaults.requests[0]).pipe(Effect.orDie);
+      expect(yield* Effect.promise(() => defaultRequest.clone().json())).toMatchObject({ limit: 50, offset: 0 });
+    }),
+  );
+  it.effect('rejects a customer owner total below the offset plus the page and an oversized page', () =>
+    Effect.gen(function* customersInconsistentPage() {
+      const short = fixture('short_count');
+      const shortError = yield* projectSymmySourceCustomers(
+        scope,
+        { limit: 1, offset: 0 },
+        short.admission,
+        short.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, short.fakeFetch));
+      expect(Schema.is(SymmyUnavailableProblemSchema)(shortError)).toBe(true);
+      const two = Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+        _tag: 'PAGE',
+        items: [customer, { ...customer, source: { ...customer.source, recordId: 'customer-two' } }],
+        nextCursor: null,
+      });
+      const oversized = fixture('current', sourceCorrelation.recordKey, two);
+      const oversizedError = yield* projectSymmySourceCustomers(
+        scope,
+        { limit: 1, offset: 0 },
+        oversized.admission,
+        oversized.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, oversized.fakeFetch));
+      expect(Schema.is(SymmyUnavailableProblemSchema)(oversizedError)).toBe(true);
+    }),
+  );
+  it.effect('answers filter_not_supported for q before any owner is called', () =>
+    Effect.gen(function* customersSearchHeldBack() {
+      const current = fixture();
+      const failure = yield* projectSymmySourceCustomers(
+        scope,
+        { q: 'ada' },
+        current.admission,
+        current.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(failure).toMatchObject({ reason: 'filter_not_supported', status: 422 });
+      expect(current.acquisitions).toHaveLength(0);
+      expect(current.requests).toHaveLength(0);
+    }),
+  );
+  it.effect('refuses the customers read for a route that may not read the page entrypoint', () =>
+    Effect.gen(function* customersPageNotAllowed() {
+      const current = fixture();
+      const failure = yield* projectSymmySourceCustomers(
+        {
+          ...scope,
+          allowedOwnerOperations: scope.allowedOwnerOperations.filter(
+            ({ entrypointKey }) => entrypointKey !== 'commerce.customer-context.api.customer-profile-source-page',
+          ),
+        },
+        {},
+        current.admission,
+        current.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(Schema.is(GatewayForbiddenProblemSchema)(failure)).toBe(true);
+      expect(current.requests).toHaveLength(0);
+    }),
+  );
+  it.effect('reads only the owners of the selected customer parts', () =>
+    Effect.gen(function* customerFieldSelection() {
+      const personal = Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+        _tag: 'PAGE',
+        items: [customer],
+        nextCursor: null,
+      });
+      const all = yield* projectCustomerParts(undefined, scope, personal);
+      expect(all.owners).toEqual(['customer-profile-source-page', 'source-profile-export', 'customer-profile-ico']);
+      expect(all.customer).toHaveProperty('party');
+      expect(all.customer).toHaveProperty('ico');
+      for (const fields of [['id', 'sourceRecordId', 'partyRef', 'profile'], ['businessName']] as const) {
+        const bare = yield* projectCustomerParts(fields, scope, personal);
+        expect(bare.owners).toEqual(['customer-profile-source-page']);
+        expect(bare.customer).not.toHaveProperty('party');
+        expect(bare.customer).not.toHaveProperty('ico');
+        expect(bare.customer).toMatchObject({ partyRef, source_record_id: customer.source.recordId });
+      }
+      const partyOnly = yield* projectCustomerParts(['party'], scope, personal);
+      expect(partyOnly.owners).toEqual(['customer-profile-source-page', 'source-profile-export']);
+      expect(partyOnly.customer).toHaveProperty('party');
+      expect(partyOnly.customer).not.toHaveProperty('ico');
+      const icoOnly = yield* projectCustomerParts(['ico'], scope, personal);
+      expect(icoOnly.owners).toEqual(['customer-profile-source-page', 'customer-profile-ico']);
+      expect(icoOnly.customer).toHaveProperty('ico');
+      expect(icoOnly.customer).not.toHaveProperty('party');
+      const organization = { ico: organizationIcoReply(), name: organizationNameReply() };
+      const companyAll = yield* projectCustomerParts(undefined, companyNameScope, companyPage(), organization);
+      expect(companyAll.owners).toEqual([
+        'customer-profile-source-page',
+        'organization-business-name-export',
+        'organization-customer-profile-ico',
+      ]);
+      const nameOnly = yield* projectCustomerParts(['businessName'], companyNameScope, companyPage(), organization);
+      expect(nameOnly.owners).toEqual(['customer-profile-source-page', 'organization-business-name-export']);
+      expect(nameOnly.customer).toHaveProperty('business_name');
+      expect(nameOnly.customer).not.toHaveProperty('ico');
+      const companyIcoOnly = yield* projectCustomerParts(['ico'], companyNameScope, companyPage(), organization);
+      expect(companyIcoOnly.owners).toEqual(['customer-profile-source-page', 'organization-customer-profile-ico']);
+      expect(companyIcoOnly.customer).not.toHaveProperty('business_name');
+      const companyParty = yield* projectCustomerParts(['party'], companyNameScope, companyPage(), organization);
+      expect(companyParty.owners).toEqual(['customer-profile-source-page']);
     }),
   );
   it.effect('pages Catalog products with offset, count and q and carries the owner total', () =>

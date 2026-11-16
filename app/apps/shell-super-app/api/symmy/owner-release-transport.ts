@@ -32,7 +32,12 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['commerce-market-catalog', new Set(['reads/current-market-catalog'])],
   [
     'commerce-customer-context',
-    new Set(['reads/customer-profile-source', 'reads/customer-profile-ico', 'reads/organization-customer-profile-ico']),
+    new Set([
+      'reads/customer-profile-source',
+      'reads/customer-profile-source-page',
+      'reads/customer-profile-ico',
+      'reads/organization-customer-profile-ico',
+    ]),
   ],
   ['party-registry', new Set(['reads/source-profile-export', 'reads/organization-business-name-export'])],
 ]);

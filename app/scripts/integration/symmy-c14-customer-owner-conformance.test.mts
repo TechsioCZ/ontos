@@ -86,18 +86,20 @@ const profileReceiptSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   profileRef: RetailCustomerProfileRefSchema,
 });
+const sourceRecordIdSchema = Schema.String.pipe(Schema.brand('SourceRecordId'));
 const customerReadbackSchema = Schema.Struct({
-  contractVersion: Schema.Literal('INTERNAL_C14'),
+  count: Schema.Int,
   customers: Schema.Array(
     Schema.Struct({
       id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
       party: Schema.optionalKey(SourceProfileExportResponseSchema.members[1]),
       partyRef: PartyRefSchema,
       profile: CustomerProfileSourceItemSchema.fields.profile,
-      source_record_id: Schema.String,
+      sourceRecordId: sourceRecordIdSchema,
     }),
   ),
-  projection: Schema.Literal('customers'),
+  limit: Schema.Int,
+  offset: Schema.Int,
 });
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const symmyAppId = 'symmy-integration';
@@ -184,7 +186,7 @@ interface ReadbackInput {
 const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* readCustomers(input: ReadbackInput) {
   const { admin, client, headers, ownerDiagnostics, partyRef, profileResourceId, readRoute, readRouteId } = input;
   const { recordId, shell, tenantId } = input;
-  const readbackUrl = `${shell.baseUrl}/api/symmy/v1/admin/customers?contractVersion=INTERNAL_C14`;
+  const readbackUrl = `${shell.baseUrl}/api/symmy/v1/admin/customers`;
   const customerReadbackResponse = yield* client
     .get(readbackUrl, { headers })
     .pipe(
@@ -204,16 +206,41 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
   const readback = yield* customerReadbackResponse.json.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)),
   );
+  expect(readback).toMatchObject({ count: 1, limit: 50, offset: 0 });
   expect(readback.customers).toHaveLength(1);
   const exportedCustomer = readback.customers.at(0);
   assert.isOk(exportedCustomer);
-  expect(exportedCustomer.source_record_id).toBe(recordId);
+  expect(exportedCustomer.sourceRecordId).toBe(recordId);
   expect(exportedCustomer.id).not.toBe(recordId);
   expect(exportedCustomer.partyRef).toEqual(partyRef);
   expect(exportedCustomer.profile.profileRef.resourceId).toBe(profileResourceId);
   assert.isOk(exportedCustomer.party);
   expect(exportedCustomer.party.firstName).toBe('Internal');
   expect(exportedCustomer.party.lastName).toBe('Customer');
+  const readPage = (query: string) =>
+    client.get(`${readbackUrl}${query}`, { headers }).pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)),
+    );
+  // The owner pages by offset and counts its customers: past the last one the page is empty, the count is not.
+  expect(yield* readPage('?limit=1&offset=0')).toMatchObject({ count: 1, limit: 1, offset: 0 });
+  expect(yield* readPage('?offset=1')).toMatchObject({ count: 1, customers: [], offset: 1 });
+  // An unselected part is not read: no Party export, so no `party`.
+  const withoutParty = yield* readPage('?fields=partyRef');
+  expect(withoutParty.customers.map(({ sourceRecordId }) => sourceRecordId)).toEqual([recordId]);
+  expect(withoutParty.customers[0]).not.toHaveProperty('party');
+  // `q` stays held back until an owner can search the customer key together with the Party names and contacts.
+  const searched = yield* client.get(`${readbackUrl}?q=Internal`, { headers });
+  expect(searched.status).toBe(422);
+  expect(yield* searched.json).toMatchObject({ reason: 'filter_not_supported' });
+  for (const rejectedQuery of [
+    `?afterRecordId=${recordId}`,
+    `?code=${recordId}`,
+    '?contractVersion=INTERNAL_C14',
+    '?fields=bogus',
+  ]) {
+    expect((yield* client.get(`${readbackUrl}${rejectedQuery}`, { headers })).status, rejectedQuery).toBe(400);
+  }
   yield* Effect.logInfo('INTERNAL_C14 customer GET exported current protected owners under explicit reader authority');
   const wrongReadRoutes = yield* Effect.forEach(
     [
@@ -251,7 +278,7 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
   );
   yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb
     where tenant_id=${tenantId} and route_id=${readRouteId}`;
-  return { party: exportedCustomer.party, sourceRecordId: exportedCustomer.source_record_id };
+  return { party: exportedCustomer.party, sourceRecordId: exportedCustomer.sourceRecordId };
 });
 
 it.live(
@@ -485,7 +512,7 @@ it.live(
                 {
                   effectKey: 'customer-source-read',
                   operation: {
-                    entrypointKey: 'commerce.customer-context.api.customer-profile-source',
+                    entrypointKey: 'commerce.customer-context.api.customer-profile-source-page',
                     moduleId: commerceModuleId,
                     schemaVersion: '1',
                   },

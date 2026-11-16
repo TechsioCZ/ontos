@@ -1168,7 +1168,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
                 {
                   effectKey: 'organization-profile-read',
                   operation: {
-                    entrypointKey: 'commerce.customer-context.api.customer-profile-source',
+                    entrypointKey: 'commerce.customer-context.api.customer-profile-source-page',
                     moduleId: COMMERCE_MODULE_ID,
                     schemaVersion: '1',
                   },
@@ -1204,10 +1204,9 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision) values(${randomUUID()},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb,${source.mappingRevision},'adminCustomers',${source.route.revision})`;
         companyReadConfigured = true;
       }
-      return yield* client.get(
-        `${shell.baseUrl}/api/symmy/v1/admin/customers?contractVersion=INTERNAL_C14&code=${encodeURIComponent(source.recordId)}`,
-        { headers: { 'x-api-key': Redacted.value(key.secret) } },
-      );
+      return yield* client.get(`${shell.baseUrl}/api/symmy/v1/admin/customers`, {
+        headers: { 'x-api-key': Redacted.value(key.secret) },
+      });
     });
     const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
       function* originalReceipt(input: {
