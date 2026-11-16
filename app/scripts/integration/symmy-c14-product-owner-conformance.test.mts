@@ -143,6 +143,13 @@ const rules = [
     schemaVersion: '1',
     workloadKey: catalogRead,
   },
+  {
+    audience: catalogApp,
+    declarationKey: 'commerce.catalog.catalog-source-product-page.read',
+    entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
+    schemaVersion: '1',
+    workloadKey: catalogRead,
+  },
 ].map((rule) => ({ ...rule, jobKey: workerKey, legalEntityScope: 'forbidden' as const, workerKey }));
 const recoveryRules = [
   {
@@ -279,24 +286,25 @@ const ledgerSchema = Schema.Struct({
   resolved_target: Schema.OptionFromNullOr(Schema.Unknown),
   state: Schema.String,
 });
+const sourceRecordIdSchema = Schema.String.pipe(Schema.brand('SourceRecordId'));
 const readProjectionSchema = Schema.Struct({
-  contractVersion: Schema.Literal('INTERNAL_C14'),
+  count: Schema.Int,
+  limit: Schema.Int,
+  offset: Schema.Int,
   products: Schema.Array(
     Schema.Struct({
       id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
       product: ProductSchema,
-      source_record_id: Schema.String,
+      sourceRecordId: sourceRecordIdSchema,
       variantSources: Schema.Array(
         Schema.Struct({
           id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
-          source_record_id: Schema.String,
+          sourceRecordId: sourceRecordIdSchema,
           variantId: VariantRefSchema.fields.resourceId,
         }),
       ),
     }),
   ),
-  projection: Schema.Literal('products'),
-  unsupported_fields: Schema.Array(Schema.String),
 });
 
 const nativeObservationAttempts = 600;
@@ -592,7 +600,7 @@ it.live(
                 {
                   effectKey: 'catalog-source-read',
                   operation: {
-                    entrypointKey: 'commerce.catalog.api.catalog-source-products',
+                    entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
                     moduleId: catalogModule,
                     schemaVersion: '1',
                   },
@@ -970,15 +978,12 @@ it.live(
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and (action_key like 'tax.%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
         expect(forbiddenCalls?.count).toBe(0);
-        const exported = yield* client.get(
-          `${shell.baseUrl}/api/symmy/v1/admin/products?contractVersion=INTERNAL_C14`,
-          { headers },
-        );
+        const exported = yield* client.get(`${shell.baseUrl}/api/symmy/v1/admin/products`, { headers });
         expect(exported.status).toBe(200);
         const readback = yield* exported.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(readProjectionSchema)));
         expect(readback.products).toHaveLength(1);
         const product = readback.products.find(
-          (item) => item.source_record_id === productRecordId(internalProductSource.productIdentifier),
+          (item) => item.sourceRecordId === productRecordId(internalProductSource.productIdentifier),
         );
         assert.isOk(product);
         expect(product.id).not.toBe(productRecordId(internalProductSource.productIdentifier));
@@ -986,7 +991,7 @@ it.live(
         expect(product.product.variants).toHaveLength(2);
         expect(
           EffectArray.sort(
-            product.variantSources.map(({ source_record_id }) => source_record_id),
+            product.variantSources.map(({ sourceRecordId }) => sourceRecordId),
             Order.String,
           ),
         ).toEqual(
@@ -1000,8 +1005,8 @@ it.live(
         );
         yield* Effect.gen(function* proveExistingVariantFacts() {
           const variantSource = product.variantSources.find(
-            ({ source_record_id }) =>
-              source_record_id === variantRecordId(internalProductSource.additionalVariantIdentifier),
+            ({ sourceRecordId }) =>
+              sourceRecordId === variantRecordId(internalProductSource.additionalVariantIdentifier),
           );
           assert.isOk(variantSource);
           const sourceVariant = product.product.variants.find(({ variantId }) => variantId === variantSource.variantId);
@@ -1089,10 +1094,7 @@ it.live(
         const readyCreated = yield* Schema.decodeUnknownEffect(productReceiptSchema)(
           Option.getOrThrow(readyCreationEffect.owner_receipt),
         );
-        const readySourceResponse = yield* client.get(
-          `${shell.baseUrl}/api/symmy/v1/admin/products?contractVersion=INTERNAL_C14`,
-          { headers },
-        );
+        const readySourceResponse = yield* client.get(`${shell.baseUrl}/api/symmy/v1/admin/products`, { headers });
         expect(readySourceResponse.status).toBe(200);
         const readySourceReadback = yield* readySourceResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(readProjectionSchema)),
@@ -1101,12 +1103,71 @@ it.live(
           Schema.Tuple([readProjectionSchema.fields.products.value]),
         )(
           readySourceReadback.products.filter(
-            (item) => item.source_record_id === productRecordId('INTERNAL_C14_READY_SOURCE_PRODUCT'),
+            (item) => item.sourceRecordId === productRecordId('INTERNAL_C14_READY_SOURCE_PRODUCT'),
           ),
         );
         expect(readySourceProduct.product.lifecycle).toBe('DRAFT');
         expect(readySourceProduct.product.variants).toHaveLength(1);
         expect(readySourceProduct.product.variants.map((variant) => variant.lifecycle)).toEqual(['WORK_IN_PROGRESS']);
+        // Paging, q and fields over the two source Products now present, in ascending source record order.
+        const sourceKeys = EffectArray.sort(
+          [
+            productRecordId(internalProductSource.productIdentifier),
+            productRecordId('INTERNAL_C14_READY_SOURCE_PRODUCT'),
+          ],
+          Order.String,
+        );
+        const readPage = (query: string) =>
+          client.get(`${shell.baseUrl}/api/symmy/v1/admin/products${query}`, { headers }).pipe(
+            Effect.flatMap((response) => response.json),
+            Effect.flatMap(Schema.decodeUnknownEffect(readProjectionSchema)),
+          );
+        expect(readySourceReadback).toMatchObject({ count: 2, limit: 50, offset: 0 });
+        expect(readySourceReadback.products.map((item) => item.sourceRecordId)).toEqual(sourceKeys);
+        const secondPage = yield* readPage('?limit=1&offset=1');
+        expect(secondPage).toMatchObject({ count: 2, limit: 1, offset: 1 });
+        expect(secondPage.products.map((item) => item.sourceRecordId)).toEqual([sourceKeys[1]]);
+        const pastTheEnd = yield* readPage('?offset=2');
+        expect(pastTheEnd).toMatchObject({ count: 2, offset: 2, products: [] });
+        const byName = yield* readPage('?q=NATIVE%20product');
+        expect(byName.count).toBe(1);
+        expect(byName.products.map((item) => item.sourceRecordId)).toEqual([
+          productRecordId(internalProductSource.productIdentifier),
+        ]);
+        const byOtherName = yield* readPage('?q=%20Prepared%20');
+        expect(byOtherName.count).toBe(1);
+        expect(byOtherName.products.map((item) => item.sourceRecordId)).toEqual([
+          productRecordId('INTERNAL_C14_READY_SOURCE_PRODUCT'),
+        ]);
+        const pagedMatches = yield* readPage('?q=product&limit=1&offset=1');
+        expect(pagedMatches).toMatchObject({ count: 2, offset: 1 });
+        expect(pagedMatches.products.map((item) => item.sourceRecordId)).toEqual([sourceKeys[1]]);
+        // `%` is an ordinary character: no source Product has one, so it is no wildcard.
+        expect(yield* readPage('?q=%25')).toMatchObject({ count: 0, products: [] });
+        const idAndSourceOnly = yield* client
+          .get(`${shell.baseUrl}/api/symmy/v1/admin/products?fields=sourceRecordId`, { headers })
+          .pipe(
+            Effect.flatMap((response) => response.json),
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Struct({
+                  count: Schema.Int,
+                  limit: Schema.Int,
+                  offset: Schema.Int,
+                  products: Schema.Array(Schema.Struct({ id: Schema.String, sourceRecordId: sourceRecordIdSchema })),
+                }),
+                { onExcessProperty: 'error' },
+              ),
+            ),
+          );
+        expect(idAndSourceOnly.products.map((item) => item.sourceRecordId)).toEqual(sourceKeys);
+        const rejected = yield* client.get(
+          `${shell.baseUrl}/api/symmy/v1/admin/products?afterRecordId=${sourceKeys[0]}`,
+          {
+            headers,
+          },
+        );
+        expect(rejected.status).toBe(400);
         const readiness = yield* bootstrapInternalC14SupportedProductPriceFacts({
           catalogReadiness: {
             expectedProductRevision: 1,
