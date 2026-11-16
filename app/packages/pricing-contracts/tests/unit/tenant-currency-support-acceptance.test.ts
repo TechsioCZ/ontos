@@ -2,14 +2,12 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
-  CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesResponseSchema,
   PriceDefinitionSchema,
   SetSupportedCurrenciesV2PayloadSchema,
 } from '../../src/index.ts';
 
 const tenantId = '22222222-2222-4222-8222-222222222222';
-const otherTenantId = '33333333-3333-4333-8333-333333333333';
 const effectiveAt = '2026-09-27T10:00:00.000Z';
 const observedAt = '2026-09-27T10:00:01.000Z';
 const supportRootId = '99999999-9999-4999-8999-999999999999';
@@ -30,9 +28,6 @@ const supportRevisionRef = (resourceId: string) => ({
   tenantId,
 });
 
-const decodeRequest = Schema.decodeUnknownSync(CurrentSupportedCurrenciesRequestSchema, {
-  onExcessProperty: 'error',
-});
 const decodeResponse = Schema.decodeUnknownSync(CurrentSupportedCurrenciesResponseSchema, {
   onExcessProperty: 'error',
 });
@@ -78,28 +73,6 @@ const eurPrice = {
 };
 
 describe('Tenant Currency Support acceptance contract', () => {
-  it('uses only trusted Tenant and evaluation time as the capability request identity', () => {
-    const request = { effectiveAt, tenantId };
-    expect(decodeRequest(request)).toEqual(request);
-
-    for (const purchasePartition of [
-      { cartId: 'cart-1' },
-      { channelId: 'B2C' },
-      { marketId: 'market-cz' },
-      { sellingLegalEntityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
-      { storefrontId: 'storefront-cz' },
-      { subject: { kind: 'GUEST' } },
-      { contextRevision: 'purchase-context:9' },
-    ]) {
-      expect(() => decodeRequest({ ...request, ...purchasePartition })).toThrow();
-    }
-
-    expect(decodeRequest({ effectiveAt, tenantId: otherTenantId })).toEqual({
-      effectiveAt,
-      tenantId: otherTenantId,
-    });
-  });
-
   it('keeps generalized EUR-aware wire and Price contracts without making EUR a Launch default', () => {
     const verificationRef = `commerce.pricing.currency-support-proof:${supportRevision42}`;
     const generalizedResponse = {

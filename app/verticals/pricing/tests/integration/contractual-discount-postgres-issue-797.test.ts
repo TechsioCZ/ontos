@@ -827,11 +827,33 @@ it.live('binds a verified-empty Counterparty set to the start of its scheduled D
       yield* cleanup(admin);
       yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
 
-      // The read instant trails the wall clock so the owner observes it as already effective; the
-      // scheduled Discount starts shortly after that observation and before the fence re-check.
-      const now = yield* DateTime.now;
-      const readAt = DateTime.subtract(now, { seconds: 1 });
-      const boundary = DateTime.formatIso(DateTime.add(now, { milliseconds: 1500 }));
+      // Every boundary comparison here is made by the routines against their own clock: the read
+      // publishes observedAt from clock_timestamp(), raises P0001 when the next applicability
+      // boundary is already at or behind it, and the generation fence refuses a `through` past
+      // clock_timestamp(). A Node-side margin therefore fails on Postgres/Node clock skew in both
+      // directions, so observe the owner's own instant first and derive every instant from it.
+      const basePredicate = {
+        audiences: [identityKey.audience],
+        basis: identityKey.basis,
+        commercialScope: identityKey.commercialScope,
+        currencyCode: identityKey.currencyCode,
+        tenantId,
+      } as const;
+      const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+      const probeEffectiveAt = DateTime.subtract(DateTime.makeUnsafe(probeStartedAt), { minutes: 1 });
+      const unscheduled = yield* withPersistence(runtime, (persistence) =>
+        persistence.readCurrentSet({ ...basePredicate, effectiveAt: DateTime.formatIso(probeEffectiveAt) }),
+      );
+      expect(unscheduled.completenessEvidence.nextApplicabilityBoundary).toBeUndefined();
+      // One measured owner round trip sizes the window the create and the first read must fit in,
+      // so the wait below is the real remaining distance to the boundary and nothing more.
+      const ownerRoundTripMillis = DateTime.toEpochMillis(yield* DateTime.now) - probeStartedAt;
+      const observedBeforeCreate = DateTime.makeUnsafe(unscheduled.authority.observedAt);
+      // The read instant trails the owner's observation so it is already effective; the scheduled
+      // Discount starts shortly after that observation and before the fence re-check.
+      const readAt = DateTime.subtract(observedBeforeCreate, { seconds: 1 });
+      const boundaryMargin = Math.max(8 * ownerRoundTripMillis, 500);
+      const boundary = DateTime.formatIso(DateTime.add(observedBeforeCreate, { milliseconds: boundaryMargin }));
       const scheduledCreateCommand = createCommand('e7970000-0000-4000-8000-000000000090', '10');
       if (scheduledCreateCommand.intent !== 'CREATE') {
         throw new Error('Expected the scheduled fixture to use the create command');
@@ -849,14 +871,7 @@ it.live('binds a verified-empty Counterparty set to the start of its scheduled D
       }
       expect(created.schedule.current).toBeUndefined();
 
-      const predicate = {
-        audiences: [identityKey.audience],
-        basis: identityKey.basis,
-        commercialScope: identityKey.commercialScope,
-        currencyCode: identityKey.currencyCode,
-        effectiveAt: DateTime.formatIso(readAt),
-        tenantId,
-      } as const;
+      const predicate = { ...basePredicate, effectiveAt: DateTime.formatIso(readAt) } as const;
       const emptySet = yield* withPersistence(runtime, (persistence) => persistence.readCurrentSet(predicate));
       expect(emptySet.currentDiscounts).toEqual([]);
       expect(emptySet.factProofs).toEqual([]);
@@ -876,8 +891,11 @@ it.live('binds a verified-empty Counterparty set to the start of its scheduled D
         verifiedThrough: emptySet.authority.observedAt,
       });
 
+      // The distance is measured between two owner instants, so no Node/Postgres offset can leave
+      // the fence above clock_timestamp() when verifySetGeneration re-checks it below.
       const remainingMillis =
-        DateTime.toEpochMillis(DateTime.makeUnsafe(boundary)) - DateTime.toEpochMillis(yield* DateTime.now);
+        DateTime.toEpochMillis(DateTime.makeUnsafe(boundary)) -
+        DateTime.toEpochMillis(DateTime.makeUnsafe(emptySet.authority.observedAt));
       yield* Effect.sleep(Math.max(0, remainingMillis) + 250);
 
       const atBoundary = yield* withPersistence(runtime, (persistence) =>

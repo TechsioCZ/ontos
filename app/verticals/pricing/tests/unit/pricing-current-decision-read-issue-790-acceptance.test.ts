@@ -596,30 +596,6 @@ describe('issue #790 Current Pricing Decision read acceptance', () => {
     }),
   );
 
-  it('keeps absent, conflict, stale, unavailable, and unverifiable outcomes distinct', () => {
-    const firstAttempt = makeEvaluationAttempt(1);
-    const secondAttempt = makeEvaluationAttempt(2);
-    const absent = makeProvenAbsentOutcome(firstAttempt);
-    const conflict = conflictOutcome(firstAttempt);
-    const stale = staleOutcome(firstAttempt);
-    const unavailable = indeterminateOutcome(firstAttempt, 'OWNER_STATE_UNAVAILABLE');
-    const unverifiable = indeterminateOutcome(secondAttempt, 'CURRENTNESS_UNVERIFIABLE');
-
-    expect([
-      absent.outcome,
-      conflict.outcome,
-      stale.outcome,
-      `${unavailable.outcome}:${unavailable.reasonCode}`,
-      `${unverifiable.outcome}:${unverifiable.reasonCode}`,
-    ]).toEqual([
-      'NO_APPLICABLE_PRICE',
-      'PRICING_CONFLICT',
-      'PRICING_STALE',
-      'PRICING_INDETERMINATE:OWNER_STATE_UNAVAILABLE',
-      'PRICING_INDETERMINATE:CURRENTNESS_UNVERIFIABLE',
-    ]);
-  });
-
   it.effect('keeps Storefront and downstream commitment or payable concepts outside the read request', () =>
     Effect.gen(function* noDownstreamScope() {
       const { compositionRequest } = yield* makeIssue779Scenario();

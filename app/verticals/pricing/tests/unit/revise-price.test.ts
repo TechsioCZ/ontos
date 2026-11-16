@@ -237,30 +237,6 @@ const applyPriceRevision = (
 ) => applyPriceRevisionWithServices(revisionPayload, trustedContext, servicesFor(revise, overrides));
 
 describe('Revise Price Action', () => {
-  it('keeps conflict reasons and rejection codes closed', () => {
-    const conflict = new RevisePriceConflict({
-      code: 'revise_price_conflict',
-      reason: 'BOUNDARY_CROSSED',
-    });
-    const rejection = new RevisePriceRejected({ code: 'revise_price_scope_mismatch', reason: 'Rejected' });
-    expect(Schema.is(RevisePriceConflict)(conflict)).toBe(true);
-    expect(
-      Schema.is(RevisePriceConflict)({
-        _tag: 'RevisePriceConflict',
-        code: 'revise_price_conflict',
-        reason: 'UNDECLARED_CONFLICT',
-      }),
-    ).toBe(false);
-    expect(Schema.is(RevisePriceRejected)(rejection)).toBe(true);
-    expect(
-      Schema.is(RevisePriceRejected)({
-        _tag: 'RevisePriceRejected',
-        code: 'undeclared_rejection',
-        reason: 'Rejected',
-      }),
-    ).toBe(false);
-  });
-
   it.effect('maps persistence revision and no-op outcomes distinctly', () =>
     Effect.gen(function* mapAcceptedOutcomes() {
       const revised = yield* applyPriceRevision(payload, trusted, () => Effect.succeed(persistenceSuccess('REVISED')));

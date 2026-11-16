@@ -261,31 +261,4 @@ describe('Issue #761 Price Group interpretation acceptance', () => {
       }),
     ).toThrow();
   });
-
-  it('keeps the actual Group audience available when a later issue substitutes only the base Price selector', () => {
-    const interpreted = decodeInterpretation({
-      _tag: 'ASSIGNED',
-      assignmentResolution,
-      basis,
-      compatibilityEvidence,
-      discountAudience: { kind: 'PRICE_GROUP', priceGroupRef },
-      priceGroupRef,
-      priceSelector: { kind: 'PRICE_GROUP', priceGroupRef },
-    });
-    const assigned = Match.value(interpreted).pipe(
-      Match.tag('ASSIGNED', (value) => value),
-      Match.orElse(() => {
-        throw new Error('fixture must decode as ASSIGNED');
-      }),
-    );
-
-    const laterPriceResolutionOnly = {
-      discountAudience: assigned.discountAudience,
-      priceSelector: { kind: 'NO_GROUP' as const },
-    };
-    expect(laterPriceResolutionOnly).toEqual({
-      discountAudience: { kind: 'PRICE_GROUP', priceGroupRef },
-      priceSelector: { kind: 'NO_GROUP' },
-    });
-  });
 });

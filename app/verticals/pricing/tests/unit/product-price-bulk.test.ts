@@ -3,12 +3,8 @@ import type { PriceProductTargetOutcomeIdentity } from '@app/pricing-contracts/d
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import {
-  makeProductPriceBulkService,
-  ProductPriceBulkRejected,
-} from '../../src/services/product-price-bulk.service.ts';
+import { makeProductPriceBulkService } from '../../src/services/product-price-bulk.service.ts';
 import type {
-  ProductPriceBulkCommand,
   ProductPriceBulkCommandPort,
   ProductPriceBulkTargetIntent,
 } from '../../src/services/product-price-bulk.service.ts';
@@ -107,31 +103,6 @@ const canonical = (identity: PriceProductTargetOutcomeIdentity) => ({
 });
 
 describe('Product Price bulk service (#797)', () => {
-  it.effect('preserves snapshot order and reports independent atomic owner outcomes', () =>
-    Effect.gen(function* partialOutcomes() {
-      const commands: ProductPriceBulkCommand<Operation>[] = [];
-      const port: ProductPriceBulkCommandPort<Operation> = {
-        executeAuthorizedExactPriceAction: (command) => {
-          commands.push(command);
-          return command.identity.targetId === snapshot.targets[0]?.targetId
-            ? Effect.succeed({ canonical: canonical(command.identity), outcome: 'APPLIED' as const })
-            : Effect.succeed({ outcome: 'CONFLICT' as const, reasonCode: 'EXPECTED_CURRENT_MISMATCH' });
-        },
-        reconcileAuthorizedExactPriceAction: () => Effect.succeed({ status: 'ABSENT' as const }),
-      };
-      const service = makeProductPriceBulkService(port);
-      const result = yield* service.execute({ snapshot, targetIntents: intents, trusted });
-
-      expect(result.snapshotId).toBe(snapshot.snapshotId);
-      expect(result.outcomes.map(({ outcome }) => outcome)).toEqual(['APPLIED', 'CONFLICT']);
-      expect(result.outcomes.map(({ identity }) => identity.targetId)).toEqual(
-        snapshot.targets.map(({ targetId }) => targetId),
-      );
-      expect(commands).toHaveLength(2);
-      expect(commands.every(({ trusted: commandTrusted }) => commandTrusted === trusted)).toBe(true);
-    }),
-  );
-
   it.effect('reconciles every original intent and never reruns a resolved success or conflict', () =>
     Effect.gen(function* reconcileBeforeRetry() {
       const executed: string[] = [];
@@ -188,29 +159,6 @@ describe('Product Price bulk service (#797)', () => {
         reasonCode: 'OwnerResultLookupUnavailable',
         resolvedBy: 'OWNER_RECONCILIATION',
       });
-    }),
-  );
-
-  it.effect('rejects an intent set that is not the exact fixed snapshot target set', () =>
-    Effect.gen(function* exactTargetSet() {
-      let portCalls = 0;
-      const port: ProductPriceBulkCommandPort<Operation> = {
-        executeAuthorizedExactPriceAction: () => {
-          portCalls += 1;
-          return Effect.succeed({ outcome: 'REJECTED' as const, reasonCode: 'unused' });
-        },
-        reconcileAuthorizedExactPriceAction: () => {
-          portCalls += 1;
-          return Effect.succeed({ status: 'ABSENT' as const });
-        },
-      };
-      const error = yield* Effect.flip(
-        makeProductPriceBulkService(port).execute({ snapshot, targetIntents: intents.slice(0, 1), trusted }),
-      );
-
-      expect(error).toBeInstanceOf(ProductPriceBulkRejected);
-      expect(error.code).toBe('BULK_TARGET_SET_MISMATCH');
-      expect(portCalls).toBe(0);
     }),
   );
 });

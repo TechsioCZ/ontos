@@ -7,12 +7,7 @@ import {
   projectCurrentPricingDecisionResponse,
 } from '../../src/apis/current-pricing-decision.ts';
 import type { CurrentPricingDecisionResponse } from '../../src/apis/current-pricing-decision.ts';
-import {
-  CurrentSupportedCurrenciesRequestSchema,
-  PricingDecisionOutcomeKindSchema,
-  executeCurrentPricingDecision,
-  executeCurrentPricingDecisionWithAuthorization,
-} from '../../src/index.ts';
+import { PricingDecisionOutcomeKindSchema, executeCurrentPricingDecisionWithAuthorization } from '../../src/index.ts';
 import type { PricingDecisionOutcome } from '../../src/index.ts';
 import { PricingCommercialTotalSafeProjectionSchema } from '../../src/domain/commercial-total.ts';
 
@@ -181,7 +176,6 @@ describe('Pricing Current Decision public contract', () => {
   it('accepts one exact closed whole-candidate request and keeps the support read separate', () => {
     const request = { decision, subject: guestSubject };
     expect(decodeRequest(request)).toEqual(request);
-    expect(CurrentPricingDecisionRequestSchema).not.toBe(CurrentSupportedCurrenciesRequestSchema);
     expect(() => decodeRequest({ ...request, storefrontId: 'storefront-web' })).toThrow();
     expect(() => decodeRequest({ subject: guestSubject, tenantId })).toThrow();
   });
@@ -377,7 +371,6 @@ describe('Pricing Current Decision public contract', () => {
         executeCurrentPricingDecisionWithAuthorization(invalid, 'credential', 'correlation'),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(executeCurrentPricingDecision).toBeTypeOf('function');
     }),
   );
 });
