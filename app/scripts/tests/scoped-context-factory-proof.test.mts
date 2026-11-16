@@ -1,9 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
-import { Clock, Crypto, Effect, Logger, Path, References, Tracer } from 'effect';
+import { Crypto, Effect, Logger, Path, References, Tracer } from 'effect';
 import { PgClient } from '@effect/sql-pg';
-import { NodeServices } from '@effect/platform-node';
-import { collectDatabaseAccessRuntimeInputs } from '../check-database-access-boundaries.mts';
 import { SqlClient } from 'effect/sql';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient, HttpClient } from 'effect/http';
@@ -1019,64 +1017,15 @@ it.effect('follows a native Effect.all flatMap parameter rather than a structura
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toHaveLength(1)));
 });
 
-it.live('returns unknown for all three actual CCC factory queries without caller Context', () =>
-  Effect.gen(function* unframedOwnerFactories() {
-    const path = yield* Path.Path;
-    const app = nodePath.resolve(import.meta.dirname, '../..');
-    const ownerPath = nodePath.join(app, 'verticals/commerce-customer-context');
-    const inputs = yield* collectDatabaseAccessRuntimeInputs(app);
-    const snapshot = inputs.sources;
-    const resolver = makeScopedContextFactoryResolver(
-      snapshot,
-      app,
-      path,
-      inputs.packageExports,
-      inputs.conditionalPackageExports,
-      inputs.contractSources,
-      inputs.nativeSqlRuntimeProofEnvironment,
-    );
-    // Native client callbacks can inspect public HTTP metadata, including middleware tags.
-    // The original file/callee requests do not establish the caller's effective Context.
-    const results: ('resolved' | 'unknown')[] = [];
-    for (const [relative, receiver, method] of [
-      ['src/profile-service-factory.ts', 'reactivationEvaluatorFactory', 'make'],
-      ['src/persistence/purchase-limit-persistence.ts', 'currentness', 'forOperation'],
-      ['src/persistence/purchase-approval-currentness-persistence.ts', 'currentness', 'forTransaction'],
-    ]) {
-      const file = nodePath.join(ownerPath, relative ?? '');
-      let actual: Expression | undefined;
-      new Visitor({
-        CallExpression(node) {
-          if (
-            node.callee.type === 'MemberExpression' &&
-            node.callee.object.type === 'Identifier' &&
-            node.callee.object.name === receiver &&
-            node.callee.property.type === 'Identifier' &&
-            node.callee.property.name === method
-          ) {
-            actual ??= node.callee;
-          }
-        },
-      }).visit(parseSync(file, snapshot.get(file) ?? '').program);
-      expect(actual).toBeDefined();
-      if (actual === undefined) {
-        return;
-      }
-      const started = yield* Clock.currentTimeMillis;
-      const candidates = resolver.resolve({ callee: actual, file });
-      const result = candidates === undefined ? 'unknown' : 'resolved';
-      results.push(result);
-      yield* Effect.logInfo('Actual scoped Context factory proof', {
-        candidateCount: candidates?.length ?? 0,
-        durationMs: (yield* Clock.currentTimeMillis) - started,
-        file: relative,
-        method,
-        result,
-      });
-    }
-    expect(results).toEqual(['unknown', 'unknown', 'unknown']);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
+// Removed: 'returns unknown for all three actual CCC factory queries without caller Context'. It ran the
+// resolver over the whole repository snapshot for three real Customer Context call sites and asserted only
+// that all three come back unknown. `scripts/check-database-access-boundaries.mts` runs this same resolver
+// over the same sources on every gates run (the blocking "Database Access Boundaries" check), so the
+// real-repository outcome is already proved by the production entry point, and the declining outcome itself
+// is pinned deterministically by the synthetic cases in this file. Its measured cost was 21 min 16 s of the
+// 23.4 min "Repository Tooling Tests (1/2)" job in run 43877762519 — 159 s, 482 s and 555 s for the three
+// call sites, a 3.5x spread between queries of the same shape, which is also the 4x shard-to-shard variance
+// this file caused across runs 43616061381, 43806766074 and 43844802542.
 it.effect('does not infer a parameter solely from known calls when the function also escapes', () => {
   const snapshot = sources();
   snapshot.set(
