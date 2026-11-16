@@ -48,10 +48,10 @@ const swc = {
 } as const;
 
 export default defineConfig({
-  maxConcurrency: 2,
   projects: [
     {
       include: ['tests/integration/**/*.test.ts'],
+      maxConcurrency: 2,
       name: 'integration',
       root: new URL('.', import.meta.url).pathname,
       setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
