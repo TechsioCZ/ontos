@@ -678,11 +678,15 @@ jobs:
           [[ ${#failed[@]} -eq 0 ]]
 
   static-contracts:
-    name: Static Contracts
+    name: Static Contracts (${{ matrix.group }})
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [database, contracts]
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -717,20 +721,20 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
 
-      # Share one install across independent checks and retain a log for each check.
-      # Keep the memory-heavy API analyzer and Commerce build outside this group.
+      # Separate the two memory-heavy analyzers instead of serializing them on one runner.
+      # The remaining independent checks share the contracts runner and retain individual logs.
       - parallel:
           - name: Validate the root lefthook config
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             run: app/node_modules/.bin/lefthook validate
 
           - name: Skills
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm skills:check
 
           - name: Database Access Boundaries
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'database' }}
             working-directory: app
             env:
               # The whole-workspace prover peaks at about 5.7 GiB footprint (5.2 GiB resident) and ran out of
@@ -739,34 +743,34 @@ jobs:
             run: mise exec -- pnpm database-access:check
 
           - name: Lean Core Dependencies
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm lean-core:check
 
           - name: Workspace Contract
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm contract:check
 
           - name: Module Contract Generation
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm check:module-contracts
 
           - name: Action Unit Tests
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm action:test:unit
 
       # Module contract generation creates and deletes bundles inside verticals.
       # Wait for it before the i18n scanner walks those source directories.
       - name: I18n Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm i18n:boundaries
 
       - name: API Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         env:
           # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
@@ -776,9 +780,10 @@ jobs:
       # The reviewed authorization catalogue and what is generated from it (which modules get a module credential)
       # must match the declarations in source; a stale artefact would key the wrong modules.
       - name: Authorization catalogue artefact
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm authorization:catalog:artifact:check
+
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
