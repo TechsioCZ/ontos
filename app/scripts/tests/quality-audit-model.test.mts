@@ -341,7 +341,8 @@ it.live(
          setupFiles: ['./${rootSetup}'],
          projects: [
            { name: 'integration', setupFiles: ['./${projectSetup}'] },
-           { name: 'dynamic', setupFiles: [chooseSetup()] }
+           { name: 'dynamic', setupFiles: [chooseSetup()] },
+           { name: 'relocated', root: 'elsewhere', setupFiles: ['./${deadFile}'] }
          ]
        });`,
     );
