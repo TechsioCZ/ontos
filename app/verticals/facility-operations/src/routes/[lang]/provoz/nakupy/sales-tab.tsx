@@ -43,9 +43,9 @@ import { salesTotals } from '../../../../../shared/domain/purchasing.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
 import { readFinance, readFinanceVatChoices } from '../../../../ui/finance-reads.ts';
-import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';
 import { salesLineVat } from './invoice-vat.ts';
 import { useIncomingInvoiceLinks } from './finance-links.tsx';
+import { invoiceOfSalesOrder } from './sales-order-invoice.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { quoteDraftOf } from './sales-quote-draft.ts';
 import type { QuoteDraft } from './sales-quote-draft.ts';
@@ -913,10 +913,14 @@ export const SalesQuotePanel = ({
   );
 };
 
-/** Creates the issued invoice draft in Finance from a snapshot of the order, then links it back to the order. */
+/**
+ * The issued invoice draft of the order in Finance: the one Finance already holds for this order, or a new one from a
+ * snapshot of the order. Finance keeps one invoice per order, so a retry after a lost answer or a failed link, from
+ * any tab, device or agent, gets the same invoice and never drafts a second one.
+ */
 const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSalesInvoice')(
   function* prepareSalesInvoice(input: IssueSalesInvoiceInput) {
-    const { dueDate, issueDate, order, pending } = input;
+    const { dueDate, issueDate, order } = input;
     if (!canInvoiceSalesOrder(order)) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
     }
@@ -924,21 +928,9 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
     if (!snapshot.canWrite) {
       return yield* new SalesInvoicePreparationDenied({ orderId: order.id });
     }
-    const retained = pending.get(order.id);
-    if (retained !== undefined) {
-      const current = snapshot.state.invoices.find(
-        (invoice) =>
-          invoice.ref.resourceId === retained.ref.resourceId &&
-          invoice.documentNumber === retained.documentNumber &&
-          invoice.counterpartyRef.resourceId === order.customer.counterpartyId &&
-          invoice.totalMinor === retained.totalMinor &&
-          invoice.direction === 'OUTGOING' &&
-          invoice.businessState !== 'VOIDED',
-      );
-      if (current === undefined) {
-        return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
-      }
-      return yield* Effect.succeed(current);
+    const existing = invoiceOfSalesOrder(snapshot.state.invoices, order);
+    if (existing !== undefined) {
+      return yield* Effect.succeed(existing);
     }
     const choices = yield* readFinanceVatChoices(issueDate);
     const lines = yield* Effect.forEach(
@@ -974,12 +966,12 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
           },
           currency: 'CZK',
           direction: 'OUTGOING',
-          documentNumber: `${order.number}-F${order.invoices.length + 1}`,
           dueDate,
           issueDate,
           lines,
           note: `Vystaveno z prodejní objednávky ${order.number}${quoteSuffix}.`,
           ...optionalField('partyId', order.customer.partyId),
+          sourceOrder: { id: order.id, number: order.number },
           totalMinor: Math.max(1, salesTotals(order.lines).totalMinor),
         },
         expectedRevision: snapshot.revision,
@@ -987,12 +979,15 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
       'facility-operations.sales-invoice.create',
       { idempotencyKey, referenceCredentials },
     );
-    // No proposal intent is sent, so Finance answers with the stored invoice; anything else is not a created draft.
-    if (Predicate.isTagged(result, 'ActionProposalAccepted') || result.invoice === undefined) {
+    // No proposal intent is sent, so Finance answers with the stored invoice; anything else is not this order's draft.
+    const invoice =
+      Predicate.isTagged(result, 'ActionProposalAccepted') || result.invoice === undefined
+        ? undefined
+        : invoiceOfSalesOrder([result.invoice], order);
+    if (invoice === undefined) {
       return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
     }
-    pending.set(order.id, result.invoice);
-    return yield* Effect.succeed(result.invoice);
+    return yield* Effect.succeed(invoice);
   },
 );
 
@@ -1015,22 +1010,12 @@ const invoiceNotCreated = (failure?: InvoiceIssueOutcome['failure']): InvoiceIss
   return { failure, ok: false };
 };
 
-/**
- * Invoices Finance created for an order whose link back to the order has not gone through yet. The page keeps them,
- * so the next Uložit links the same invoice even after the order panel was closed or reloaded.
- */
-export interface RetainedSalesInvoices {
-  readonly get: (orderId: string) => FinanceInvoiceView | undefined;
-  readonly set: (orderId: string, invoice: FinanceInvoiceView) => void;
-}
-
 const SalesInvoiceDatesSchema = Schema.Struct({ dueDate: IsoDateSchema, issueDate: IsoDateSchema });
 type SalesInvoiceDates = typeof SalesInvoiceDatesSchema.Type;
 
 interface IssueSalesInvoiceInput extends SalesInvoiceDates {
   readonly busy: { current: boolean };
   readonly order: SalesOrder;
-  readonly pending: RetainedSalesInvoices;
   readonly run: RunCommand;
 }
 const linkPreparedInvoice = Effect.fn('FacilityOperations.Purchasing.linkPreparedInvoice')(
@@ -1077,10 +1062,13 @@ export const issueSalesInvoice = Effect.fn('FacilityOperations.Purchasing.issueS
   },
 );
 
-const useIssueInvoice = (run: RunCommand, pending: RetainedSalesInvoices) => {
+/** After a failed link Finance is read again, so the panel shows the invoice that waits for its link. */
+const useIssueInvoice = (run: RunCommand, onLinkFailed: () => void) => {
   const busy = useRef(false);
   return (order: SalesOrder, issueDate: string, dueDate: string) =>
-    issueSalesInvoice({ busy, dueDate, issueDate, order, pending, run });
+    issueSalesInvoice({ busy, dueDate, issueDate, order, run }).pipe(
+      Effect.tap((outcome) => (!outcome.ok && outcome.reason === 'link' ? Effect.sync(onLinkFailed) : Effect.void)),
+    );
 };
 
 const OrderActionSchema = Schema.Literals(['deliver', 'close', 'invoice']);
@@ -1231,9 +1219,15 @@ const salesOrderCapabilities = (
   };
 };
 
-/** The number of an invoice Finance already created for `order` whose link back to it failed, if there is one. */
-const retainedInvoiceNumber = (order: SalesOrder, pending: RetainedSalesInvoices): string | undefined => {
-  const retained = order.invoices.length === 0 ? pending.get(order.id) : undefined;
+/** The number of the invoice Finance already holds for `order` that is not linked to it yet, if there is one. */
+const retainedInvoiceNumber = (
+  order: SalesOrder,
+  finance: ReturnType<typeof useIncomingInvoiceLinks>,
+): string | undefined => {
+  const retained =
+    order.invoices.length === 0 && finance.status === 'ready'
+      ? invoiceOfSalesOrder(finance.salesInvoices, order)
+      : undefined;
   return retained === undefined ? undefined : (retained.number ?? retained.documentNumber);
 };
 
@@ -1276,7 +1270,6 @@ export const SalesOrderPanel = ({
   onClose,
   onOpenQuote,
   orderId,
-  pendingInvoices,
   run,
   state,
 }: {
@@ -1284,16 +1277,16 @@ export const SalesOrderPanel = ({
   readonly onClose: () => void;
   readonly onOpenQuote: (id: string) => void;
   readonly orderId: string;
-  readonly pendingInvoices: RetainedSalesInvoices;
   readonly run: RunCommand;
   readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { language, t } = useModernI18n();
   const toast = useToast();
-  const issueInvoice = useIssueInvoice(run, pendingInvoices);
+  const [financeRefresh, setFinanceRefresh] = useState(0);
+  const issueInvoice = useIssueInvoice(run, () => setFinanceRefresh((value) => value + 1));
   // Finance decides who may create invoice drafts; read-only Finance roles get no invoice action at all.
-  const finance = useIncomingInvoiceLinks();
+  const finance = useIncomingInvoiceLinks(financeRefresh);
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<OrderAction>();
   const [error, setError] = useState<string>();
@@ -1307,7 +1300,7 @@ export const SalesOrderPanel = ({
   const done = (command: Parameters<RunCommand>[0], success: string) =>
     submitSalesOrderCommand({ k, run, setAction, setBusy, setError, t, toast }, command, success);
   const capabilities = salesOrderCapabilities(order, finance, canWrite, remainder.length);
-  const retainedNumber = retainedInvoiceNumber(order, pendingInvoices);
+  const retainedNumber = retainedInvoiceNumber(order, finance);
   return (
     <SidePanel
       description={order.customer.name}

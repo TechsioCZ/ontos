@@ -55,6 +55,7 @@ const invoice: FinanceInvoiceView = {
   paidMinor: 0,
   paymentState: 'UNPAID',
   ref: { resourceId: 'invoice-1' },
+  sourceOrder: { id: 'order-1', number: 'PRO-2026-001' },
   totalMinor: 12_100,
 };
 const snapshot = (invoices: readonly FinanceInvoiceView[]) => ({
@@ -92,46 +93,79 @@ beforeEach(() => {
   );
 });
 
-it.effect('after a failed link a remounted panel retries only the retained invoice and never creates another', () =>
+const attempt = (runner: ReturnType<typeof recordingRunner>, current = order) =>
+  // Every attempt starts with nothing kept in the browser: a new panel, tab, device or person.
+  issueSalesInvoice({ busy: { current: false }, dueDate: issueDate, issueDate, order: current, run: runner.run });
+
+it.effect('Finance drafts the invoice under the identity of the order, never under a guessed number', () =>
+  Effect.gen(function* draftUnderOrderIdentity() {
+    const runner = recordingRunner();
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ number: invoice.number, ok: true });
+    const [[payload]] = create.mock.calls;
+    expect(payload).toMatchObject({ command: { sourceOrder: { id: order.id, number: order.number } } });
+    expect(payload).not.toHaveProperty('command.documentNumber');
+    expect(runner.sent).toEqual([
+      {
+        _tag: 'SalesOrderLinkInvoice',
+        invoiceId: invoice.ref.resourceId,
+        number: invoice.number,
+        orderId: order.id,
+        totalMinor: invoice.totalMinor,
+      },
+    ]);
+  }),
+);
+
+it.effect('after a failed link a fresh attempt links the invoice Finance holds for the order and creates none', () =>
   Effect.gen(function* retryOnlyLink() {
     const runner = recordingRunner(['unavailable']);
-    const pending = new Map<string, FinanceInvoiceView>();
-    const busy = { current: false };
-    const input = { busy, dueDate: issueDate, issueDate, order, pending, run: runner.run };
-    const failed = yield* issueSalesInvoice(input);
+    const failed = yield* attempt(runner);
     expect(failed).toMatchObject({ number: invoice.number, ok: false, reason: 'link' });
-    expect(pending.get(order.id)?.ref.resourceId).toBe(invoice.ref.resourceId);
-    expect(busy.current).toBe(false);
     read.mockReturnValue(Effect.succeed(snapshot([invoice])));
-    const linked = yield* issueSalesInvoice({ ...input, busy: { current: false }, dueDate: '2026-12-01' });
+    const linked = yield* attempt(runner);
     expect(linked).toMatchObject({ number: invoice.number, ok: true });
     expect(create.mock.calls).toHaveLength(1);
     expect(vat.mock.calls).toHaveLength(1);
     expect(runner.sent).toHaveLength(2);
     expect(runner.sent[1]).toEqual(runner.sent[0]);
     expect(Predicate.isTagged(runner.sent[1], 'SalesOrderLinkInvoice')).toBe(true);
-    // A caller still holding the old order snapshot also links the same invoice, never creates one again.
-    yield* issueSalesInvoice(input);
-    expect(create.mock.calls).toHaveLength(1);
   }),
 );
 
-it.effect('a retained invoice missing from the current authorized Finance scope cannot be linked or recreated', () =>
-  Effect.gen(function* retainWithinScope() {
+it.effect('when Finance stored the invoice but its answer was lost, the retry links that invoice', () =>
+  Effect.gen(function* lostAnswer() {
     const runner = recordingRunner();
-    const pending = new Map<string, FinanceInvoiceView>([[order.id, invoice]]);
-    const outcome = yield* issueSalesInvoice({
-      busy: { current: false },
-      dueDate: issueDate,
-      issueDate,
-      order,
-      pending,
-      run: runner.run,
-    });
-    expect(outcome.ok).toBe(false);
-    expect(create.mock.calls).toHaveLength(0);
+    create.mockReturnValueOnce(Effect.fail(new Error('connection reset')));
+    const lost = yield* attempt(runner);
+    expect(lost.ok).toBe(false);
     expect(runner.sent).toEqual([]);
-    expect(pending.get(order.id)).toEqual(invoice);
+    read.mockReturnValue(Effect.succeed(snapshot([invoice])));
+    const linked = yield* attempt(runner);
+    expect(linked).toMatchObject({ number: invoice.number, ok: true });
+    expect(create.mock.calls).toHaveLength(1);
+    expect(runner.sent).toHaveLength(1);
+  }),
+);
+
+it.effect('an invoice of another order or customer, or a voided one, is never linked to this order', () =>
+  Effect.gen(function* foreignInvoices() {
+    const runner = recordingRunner();
+    read.mockReturnValue(
+      Effect.succeed(
+        snapshot([
+          { ...invoice, businessState: 'VOIDED', ref: { resourceId: 'voided' } },
+          { ...invoice, ref: { resourceId: 'other-order' }, sourceOrder: { id: 'order-2', number: 'PRO-2026-002' } },
+          { ...invoice, counterpartyRef: { resourceId: 'customer-2' }, ref: { resourceId: 'other-customer' } },
+        ]),
+      ),
+    );
+    // Finance answering with an invoice that is not this order's is refused, not linked.
+    create.mockReturnValue(Effect.succeed({ invoice: { ...invoice, sourceOrder: { id: 'order-2', number: 'X' } } }));
+    const outcome = yield* attempt(runner);
+    expect(outcome.ok).toBe(false);
+    expect(create.mock.calls).toHaveLength(1);
+    expect(runner.sent).toEqual([]);
   }),
 );
 
@@ -142,14 +176,7 @@ it.effect('already linked orders refuse Finance creation before any read or writ
       ...Schema.encodeSync(SalesOrderSchema)(order),
       invoices: [{ invoiceId: invoice.ref.resourceId, linkedAt: timestamp, linkedBy: actor, number: invoice.number }],
     });
-    const outcome = yield* issueSalesInvoice({
-      busy: { current: false },
-      dueDate: issueDate,
-      issueDate,
-      order: linkedOrder,
-      pending: new Map<string, FinanceInvoiceView>(),
-      run: runner.run,
-    });
+    const outcome = yield* attempt(runner, linkedOrder);
     expect(outcome.ok).toBe(false);
     expect(create.mock.calls).toHaveLength(0);
     expect(read.mock.calls).toHaveLength(0);

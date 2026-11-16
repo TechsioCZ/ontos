@@ -34,6 +34,7 @@ import type { VatChoices } from '../../shared/apis/vat-choices.ts';
 import { lineVatChoice, lineVatIssue, lineVatOf, rateOf, withCurrentTaxRate } from '../../shared/domain/line-vat.ts';
 import type { InvoiceDirection, LineVatChoice } from '../../shared/domain/line-vat.ts';
 import { computeInvoiceTotals, isLineDiscountValid, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
+import { invoiceOfSourceOrder } from '../../shared/domain/source-order-invoice.ts';
 import {
   addCalendarDaysTo,
   buildAccountingExport,
@@ -337,6 +338,14 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const { input, scope, state, validators } = context;
 
+  // An order of Provoz has one invoice in each direction: asking again for it returns the invoice it already has.
+  const existing =
+    command.sourceOrder === undefined
+      ? undefined
+      : invoiceOfSourceOrder(state.invoices, command.direction, command.sourceOrder);
+  if (existing !== undefined) {
+    return unchanged(state, existing);
+  }
   if (state.invoices.some((record) => record.ref.resourceId === input.resourceId)) {
     return yield* conflict(INVOICE_ALREADY_EXISTS);
   }
@@ -781,14 +790,7 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
     if (command.lines === undefined) {
       return yield* rejected('source_order_lines_required');
     }
-    if (
-      state.invoices.some(
-        (record) =>
-          record.direction === 'INCOMING' &&
-          record.businessState !== 'VOIDED' &&
-          record.sourceOrder?.id === command.sourceOrder?.id,
-      )
-    ) {
+    if (invoiceOfSourceOrder(state.invoices, 'INCOMING', command.sourceOrder) !== undefined) {
       return yield* conflict('source_order_invoice_already_prepared');
     }
   }
