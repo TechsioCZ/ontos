@@ -1,10 +1,8 @@
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AppUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
-import { RsdoctorRspackPlugin } from '@rsdoctor/rspack-plugin';
 import {
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
@@ -262,9 +260,14 @@ export const createWorkspaceModernConfig = ({
   output: {
     overrideBrowserslist: BROWSER_TARGETS,
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
-    // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
-    // `pnpm typecheck` owns type diagnostics.
-    disableTsChecker: readBuildEnvironmentValue('NODE_ENV') === 'development',
+    // holds a cold dev server past readiness budgets. The required workspace CI job owns type
+    // diagnostics once; deployment and local builds still check unless explicitly separated.
+    disableTsChecker:
+      readBuildEnvironmentValue('NODE_ENV') === 'development' ||
+      readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1',
+    ...(readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1'
+      ? { sourceMap: { js: false as const } }
+      : undefined),
   },
   server: {
     publicDir: ['./.dev-public'],
@@ -277,25 +280,5 @@ export const createWorkspaceModernConfig = ({
   },
   tools: {
     ...browserTargetTools,
-    ...(readBuildEnvironmentValue('ONTOS_BUILD_PROFILE_DIR') === undefined
-      ? undefined
-      : {
-          rspack: (config) => {
-            config.plugins ??= [];
-            config.plugins.push(
-              new RsdoctorRspackPlugin({
-                disableClientServer: true,
-                output: {
-                  reportDir: path.join(
-                    readBuildEnvironmentValue('ONTOS_BUILD_PROFILE_DIR') ?? '',
-                    'rsdoctor',
-                    appId,
-                    config.name ?? 'default',
-                  ),
-                },
-              }),
-            );
-          },
-        }),
   } satisfies AppUserConfig['tools'],
 });

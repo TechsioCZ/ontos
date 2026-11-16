@@ -1972,7 +1972,11 @@ it('builds every Node release from this commit rather than restoring another rel
   const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   expect(strategy.matrix.shard).toEqual([1, 2]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
-  expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache/') === true)).toEqual([]);
+  const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
+  expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
+  expect(compilerCache?.with?.key).toContain('app/pnpm-lock.yaml');
+  expect(compilerCache?.with?.key).toContain('app/**/tsconfig*.json');
+  expect(compilerCache?.with?.key).toContain('app/patches/**');
   const build = steps.findIndex(({ name }) => name === "Build the shard's Node artifacts");
   const pack = steps.findIndex(({ name }) => name === "Pack the shard's build outputs");
   const upload = steps.findIndex(({ name }) => name === UPLOAD_STEP);
@@ -1983,6 +1987,7 @@ it('builds every Node release from this commit rather than restoring another rel
   expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
   expect(steps[build]?.env).toMatchObject({
     NODE_OPTIONS: '--max-old-space-size=2048',
+    ONTOS_CI_TYPECHECK_SEPARATE: '1',
   });
   expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
 });
@@ -1990,7 +1995,7 @@ it('builds every Node release from this commit rather than restoring another rel
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
   const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const install = steps.find(({ name }) => name === INSTALL_APP_STEP);
-  expect(install?.with).toBeUndefined();
+  expect(install?.with).toEqual({ 'restore-typescript-build': 'true' });
 });
 
 it('warms only reusable dependencies and typecheck state on main, never commit-bound releases', () => {
