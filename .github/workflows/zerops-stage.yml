@@ -157,8 +157,9 @@ jobs:
   # (`build-app.sh --digests-only`: the declared build environment, the same table), and each shard's unit list. A build
   # shard whose cached units all carry these identities reuses them without installing or building
   # (scripts/zerops/reuse-shard-units.sh). Should this job fail, every shard builds as it always did.
-  # When every unit's identity equals that of the newest earlier unit builds of this branch, this job proves those
-  # builds by identity and names their run: the build matrix is skipped and the app deploy takes that run's archives.
+  # Front path: when every unit's identity equals that of the newest earlier run of this branch that uploaded unit
+  # builds, this job downloads that run's zerops-units-* artifacts (no shard cache is restored), proves every unit in
+  # them by identity and names the run: the build matrix is skipped and the app deploy downloads those artifacts.
   unit_identities:
     name: Compute this commit's unit identities
     if: github.ref == 'refs/heads/demo/sales-crm'
@@ -211,8 +212,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      # FRONT PATH. Unit builds (zerops-units-*) exist only in runs whose build matrix ran. The newest one of this branch
-      # is reused when its identity table equals this commit's and every unit in its archives carries this commit's
+      # FRONT PATH (artifacts, not caches). Unit builds (zerops-units-*) exist only in runs whose build matrix ran. That
+      # run's artifacts are reused when its identity table equals this commit's and every unit in them carries this commit's
       # identity. Anything else (no such run, expired artifacts, a changed unit, any error) leaves the matrix to build
       # as before; rebuild_units never reuses. The Zerops build proves every kept unit again.
       - name: Find the newest earlier unit builds of this branch
@@ -902,7 +903,8 @@ jobs:
 
   # Starts with the app deploy, not after it: checkout, install and browsers are ready while Zerops builds, and the
   # proofs start once `deploy_app` succeeded (Wait for the app deployment). A failed, skipped or cancelled app deploy
-  # fails this job, so `record` (which needs deploy_app and verify) never records it.
+  # fails this job, so `record` (which needs deploy_app and verify) never records it. A plan without the app still
+  # runs Verify: it skips only the wait and proves the kept app release.
   verify:
     name: Verify stage
     needs: [plan, deploy, unit_identities, build]
@@ -999,7 +1001,9 @@ jobs:
           key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
 
       # Only a succeeded app deploy lets the proofs start; it fails at once on any other end of that job. A plan without
-      # the app proves the kept release without waiting.
+      # the app skips this step and proves the kept release. A failed read of the jobs is asked again inside the
+      # deadline. The app deploy is created with this job (same `needs`), so a deploy job still missing after five
+      # minutes was not started in this attempt and fails the wait.
       - name: Wait for the app deployment
         if: needs.plan.outputs.app == 'true'
         timeout-minutes: 80
@@ -1008,6 +1012,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
           WAIT_FOR_BUILD_SHARDS_TIMEOUT: '4800'
+          WAIT_FOR_BUILD_SHARDS_MISSING_TIMEOUT: '300'
         run: bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1
 
       - name: Time /cs and OAuth metadata without waiting for storefronts

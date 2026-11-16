@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1568,6 +1568,102 @@ it('waits for the build shards with a deadline and fails at once when one does n
     expect(waitForBuildShards('started', [{ ...running, conclusion, status: 'completed' }, done])).toBe(false);
   }
   expect(waitForBuildShards('sometime', [done])).toBe(false);
+});
+
+/**
+ * Runs the deploy wait with a `gh` whose first FAILURES reads fail with READ_ERROR, then answer with these jobs.
+ * Returns the exit status, standard error and how many reads it made.
+ */
+const waitThroughFailedReads = (
+  failures: number,
+  readError: string,
+  jobs: readonly { conclusion: string | null; name: string; status: string }[],
+  extraEnvironment: Readonly<Record<string, string>> = {},
+) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-reads-'));
+  const reads = path.join(directory, 'reads');
+  try {
+    const gh = path.join(directory, 'gh');
+    writeFileSync(
+      gh,
+      [
+        '#!/bin/bash',
+        'n=$(($(cat "$READS" 2>/dev/null || echo 0) + 1)); echo "$n" >"$READS"',
+        'if [ "$n" -le "$FAILURES" ]; then echo "$READ_ERROR" >&2; exit 1; fi',
+        'printf %s "$FAKE_JOBS" | jq -r "$5"',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(gh, 0o755);
+    const result = spawnSync(
+      '/bin/bash',
+      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'finished', 'Deploy and check app', '1'],
+      {
+        encoding: 'utf-8',
+        env: {
+          FAILURES: String(failures),
+          FAKE_JOBS: JSON.stringify({ jobs }),
+          GITHUB_REPOSITORY: 'owner/repository',
+          GITHUB_RUN_ID: '1',
+          PATH: `${directory}:${STEP_PATH}`,
+          READ_ERROR: readError,
+          READS: reads,
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
+          WAIT_FOR_BUILD_SHARDS_TIMEOUT: '30',
+          ...extraEnvironment,
+        },
+        timeout: 20_000,
+      },
+    );
+    return {
+      reads: Number(readFileSync(reads, 'utf-8')),
+      status: result.status,
+      stderr: `${result.stdout}${result.stderr}`,
+    };
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+it('asks again after a transient failed read of the jobs and fails at once on a permanent one', () => {
+  const deployed = [{ conclusion: 'success', name: 'Deploy and check app', status: 'completed' }];
+  for (const transient of [
+    'gh: Bad Gateway (HTTP 502)',
+    'gh: API rate limit exceeded for installation (HTTP 403)',
+    'gh: You have exceeded a secondary rate limit (HTTP 403)',
+    'gh: Too Many Requests (HTTP 429)',
+    'error connecting to api.github.com',
+  ]) {
+    const result = waitThroughFailedReads(2, transient, deployed);
+    expect(result.status, transient).toBe(0);
+    expect(result.reads, transient).toBe(3);
+  }
+  for (const permanent of [
+    'gh: Bad credentials (HTTP 401)',
+    'gh: Resource not accessible by integration (HTTP 403)',
+    'gh: Not Found (HTTP 404)',
+  ]) {
+    const result = waitThroughFailedReads(5, permanent, deployed);
+    expect(result.status, permanent).toBe(1);
+    expect(result.reads, permanent).toBe(1);
+    expect(result.stderr).toContain('Jobs of this run unreadable');
+  }
+  // A read that keeps failing never counts as an answer: the deadline ends the wait.
+  const exhausted = waitThroughFailedReads(1000, 'gh: Bad Gateway (HTTP 502)', deployed, {
+    WAIT_FOR_BUILD_SHARDS_TIMEOUT: '2',
+  });
+  expect(exhausted.status).toBe(1);
+  expect(exhausted.stderr).toContain('unreadable at the deadline');
+});
+
+it('fails a wait for a job this attempt never created only when the caller bounds it', () => {
+  const unrelated = [{ conclusion: 'success', name: 'Plan selective delivery', status: 'completed' }];
+  const bounded = waitThroughFailedReads(0, '', unrelated, { WAIT_FOR_BUILD_SHARDS_MISSING_TIMEOUT: '1' });
+  expect(bounded.status).toBe(1);
+  expect(bounded.stderr).toContain('it was not started in this attempt');
+  const unbounded = waitThroughFailedReads(0, '', unrelated, { WAIT_FOR_BUILD_SHARDS_TIMEOUT: '1' });
+  expect(unbounded.status).toBe(1);
+  expect(unbounded.stderr).toContain('Build shards too slow');
 });
 
 it('exports the built Composition path to native tests only after its derivation succeeds', () => {

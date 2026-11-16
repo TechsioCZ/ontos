@@ -6,8 +6,9 @@
  * the slowest shard. The modules of topology/application-release-intent.json are dealt over the other shards by their
  * measured build seconds (MODULE_BUILD_SECONDS), longest first, each to the shard with the least work so far, so the
  * shards end together when every unit rebuilds. A module that has no measurement yet is dealt after every measured
- * one, at UNMEASURED_MODULE_SECONDS: adding a module never moves another, so every shard's restored unit cache still
- * holds its modules. Changing a measurement can move modules; each moved module then builds once in its new shard.
+ * one, at UNMEASURED_MODULE_SECONDS, so adding an unmeasured module moves no measured module (only unmeasured modules
+ * dealt after it can move). Adding, changing or removing a measurement, or removing a measured module, can move
+ * modules; each moved module then builds once in its new shard.
  *
  *   node scripts/zerops/build-shard-units.mts <shard> <shards>
  */
