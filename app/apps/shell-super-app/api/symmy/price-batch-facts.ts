@@ -111,6 +111,10 @@ const readCurrentSchedule = Effect.fn('SymmyPriceBatch.currentSchedule')(functio
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ) {
+  // A price of another tenant is never asked of the owner: it has no facts and its item ends not accepted.
+  if (priceRef.tenantId !== source.tenantId) {
+    return Option.none<CurrentSchedule>();
+  }
   const assertion = yield* acquireSymmyReadAssertion(admission, 'pricing', source.legalEntityId);
   const result = yield* executePriceScheduleWithAuthorization(
     { priceRef },

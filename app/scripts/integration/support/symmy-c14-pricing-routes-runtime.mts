@@ -485,11 +485,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     const configuredPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
       items: [
         enrolled('PRICE_GROUP', 'price-list-enrollment', 'INTERNAL_C14_PRICE_LIST_ENROLLMENT', {
-          'catalog-head-read': {
-            entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
-            moduleId: groupModuleId,
-            schemaVersion: '1',
-          },
           'group-create': { entrypointKey: groupCreateAction, moduleId: groupModuleId, schemaVersion: '1' },
         }),
         enrolled('PRICE', 'price-enrollment', 'INTERNAL_C14_PRICE_ALLOWLIST', {

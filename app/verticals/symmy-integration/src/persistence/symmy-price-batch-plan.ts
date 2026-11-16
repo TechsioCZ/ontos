@@ -8,9 +8,16 @@ import type {
   SymmyPriceBatchRevise,
   SymmyPriceReviseFacts,
 } from '../../shared/domain/symmy-price-batch.ts';
-import type { SymmyPriceListPrice } from '../../shared/domain/symmy-price-list-batch.ts';
+import type { SymmyPriceListPrice, SymmyRequestTenant } from '../../shared/domain/symmy-price-list-batch.ts';
 import { uuidFromDigest } from './derived-identity.ts';
-import { instant, priceContextOf, priceOperation } from './symmy-price-list-plan.ts';
+import {
+  inRequestTenant,
+  instant,
+  namesOnlyTenant,
+  priceContextOf,
+  priceOperation,
+  refusedItem,
+} from './symmy-price-list-plan.ts';
 import type { Digest, PriceContext } from './symmy-price-list-plan.ts';
 
 const reviseOperation = {
@@ -231,6 +238,8 @@ export interface SymmyPriceBatchPlanInput<Failure> {
   /** What the owner held about each REVISE price when the request arrived. A price it did not answer for is absent. */
   readonly reviseFacts: readonly SymmyPriceReviseFacts[];
   readonly template: SymmyFixtureExecutionPlan;
+  /** The tenant of the route scope. A price that names another tenant ends not accepted for its item. */
+  readonly tenantId: SymmyRequestTenant;
 }
 
 /**
@@ -242,29 +251,35 @@ export interface SymmyPriceBatchPlanInput<Failure> {
 export const buildSymmyPriceBatchPlan = Effect.fn('SymmyPriceBatchPlan.build')(function* buildSymmyPriceBatchPlan<
   Failure,
 >(input: SymmyPriceBatchPlanInput<Failure>): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure> {
-  const { batch, digest, idempotencyKey, legalEntityId, receivedAt, reviseFacts, template } = input;
+  const { batch, digest, idempotencyKey, legalEntityId, receivedAt, reviseFacts, template, tenantId } = input;
   const { priceGroupRef, prices } = batch;
+  if (priceGroupRef.tenantId !== tenantId) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
   const defineContext = priceContextOf(template, legalEntityId, priceOperation);
   const reviseContext = priceContextOf(template, legalEntityId, reviseOperation);
   const items = yield* Effect.forEach(
     prices,
-    (price, index) => {
+    (price, index): Effect.Effect<Option.Option<unknown>, Failure> => {
       const context = price.operation === 'DEFINE' ? defineContext : reviseContext;
       if (Option.isNone(context)) {
-        return Effect.succeed(Option.none());
+        return Effect.succeed(Option.none<unknown>());
       }
       const facts = { context: context.value, digest, idempotencyKey, importedAt: receivedAt, index, priceGroupRef };
-      const item: Effect.Effect<unknown, Failure> =
-        price.operation === 'DEFINE'
-          ? buildDefine({ ...facts, price })
-          : buildRevise({
-              ...facts,
-              current: Option.fromNullishOr(
-                reviseFacts.find(({ priceRef }) => priceRef.resourceId === price.priceRef.resourceId),
-              ),
-              price,
-            });
-      return item.pipe(Effect.map(Option.some));
+      if (price.operation === 'DEFINE') {
+        const own = namesOnlyTenant(price, tenantId);
+        return buildDefine({ ...facts, price: own ? price : inRequestTenant(price, tenantId) }).pipe(
+          Effect.map((item) => Option.some(own ? item : refusedItem(item))),
+        );
+      }
+      const own = price.priceRef.tenantId === tenantId;
+      return buildRevise({
+        ...facts,
+        current: own
+          ? Option.fromNullishOr(reviseFacts.find(({ priceRef }) => priceRef.resourceId === price.priceRef.resourceId))
+          : Option.none(),
+        price: own ? price : { ...price, priceRef: { ...price.priceRef, tenantId } },
+      }).pipe(Effect.map((item) => Option.some(own ? item : refusedItem(item))));
     },
     { concurrency: 1 },
   );

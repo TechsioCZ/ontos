@@ -52,6 +52,14 @@ const variantFromProductEffectPayload = Schema.Struct({
   variantRef: CreateVariantPayloadSchema.fields.variantRef,
 });
 
+/**
+ * A Price Group create whose catalog fence is not known when the request is admitted. The fence is the tenant
+ * ledger head at the moment the create runs, so the adapter reads it right before the owner call and records the
+ * resolved `PriceGroupCreate`. Every other field is explicit.
+ */
+const { expectedCatalogRevision: _resolvedAtExecution, ...priceGroupAtHeadFields } =
+  CreatePriceGroupPayloadSchema.fields;
+
 const definePriceFromGroupEffectPayload = Schema.Struct({
   ...DefinePricePayloadSchema.fields,
   identityKey: Schema.Struct({
@@ -169,5 +177,6 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
       Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
     ),
   }),
+  Schema.TaggedStruct('PriceGroupCreateAtCatalogHead', { payload: Schema.Struct(priceGroupAtHeadFields) }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

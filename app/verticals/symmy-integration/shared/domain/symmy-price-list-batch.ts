@@ -1,5 +1,4 @@
 import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';
-import { PriceGroupCatalogHeadResponseSchema } from '@app/price-group-catalog/apis/price-group-catalog-head';
 import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { Schema } from 'effect';
 
@@ -30,6 +29,10 @@ export const SymmyPriceListPriceSchema = Schema.Struct({
 });
 export type SymmyPriceListPrice = typeof SymmyPriceListPriceSchema.Type;
 
+/** The tenant every ref of a request belongs to: the tenant of the route scope, never one the body names. */
+export const SymmyRequestTenantSchema = SymmyPriceListPriceSchema.fields.productRef.fields.tenantId;
+export type SymmyRequestTenant = typeof SymmyRequestTenantSchema.Type;
+
 /** One public price list with its prices. There is no end date, type, status, customer group or metadata. */
 export const SymmyPriceListRowSchema = Schema.Struct({
   businessCode: group.businessCode,
@@ -54,9 +57,6 @@ export const SymmyPriceListRowsSchema = Schema.NonEmptyArray(SymmyPriceListRowSc
   ),
 );
 export type SymmyPriceListRows = typeof SymmyPriceListRowsSchema.Type;
-
-/** The tenant catalog head read when the request arrives: the exact fence of the first created price list. */
-export const SymmyCatalogHeadSchema = PriceGroupCatalogHeadResponseSchema.fields.catalogRevision;
 
 /** Compatibility the Symmy price lists declare. Nothing in Pricing names a production contract yet. */
 export const SYMMY_PRICE_GROUP_COMPATIBILITY_CONTRACTS = [

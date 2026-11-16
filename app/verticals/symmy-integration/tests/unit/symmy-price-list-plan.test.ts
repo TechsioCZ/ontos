@@ -6,11 +6,12 @@ import { describe, expect, it } from 'effect-rstest';
 import { AdmitSymmyJobPayloadSchema } from '../../shared/domain/symmy-job-admission.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
-import { SymmyPriceListRowsSchema } from '../../shared/domain/symmy-price-list-batch.ts';
+import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
 import { buildSymmyPriceListPlan } from '../../src/persistence/symmy-price-list-plan.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
+const otherTenantId = '77777777-7777-4777-8777-777777777777';
 const routeId = '55555555-5555-4555-8555-555555555555';
 const ref = (moduleId: string, resourceType: string, suffix: string) => ({
   moduleId,
@@ -65,7 +66,7 @@ const list = (code: string, prices: readonly ReturnType<typeof price>[] = []) =>
 });
 const groupCreateOf = (effect: SymmyFixtureExecutionPlan['items'][number]['effects'][number] | undefined) =>
   Match.value(effect?.intent).pipe(
-    Match.when({ _tag: 'PriceGroupCreate' }, ({ payload }) => payload),
+    Match.when({ _tag: 'PriceGroupCreateAtCatalogHead' }, ({ payload }) => payload),
     Match.orElse(() => null),
   );
 const priceDefineOf = (effect: SymmyFixtureExecutionPlan['items'][number]['effects'][number] | undefined) =>
@@ -79,15 +80,14 @@ const digest = (value: string) => Effect.succeed(createHash('sha256').update(val
 const build = (
   rows: ReturnType<typeof rowsOf>,
   overrides: {
-    readonly catalogHead?: number;
     readonly idempotencyKey?: string;
     readonly receivedAt?: DateTime.Utc;
     readonly template?: SymmyFixtureExecutionPlan;
+    readonly tenantId?: string;
     readonly withoutLegalEntity?: boolean;
   } = {},
 ) =>
   buildSymmyPriceListPlan({
-    catalogHead: overrides.catalogHead ?? 4,
     digest,
     idempotencyKey: overrides.idempotencyKey ?? 'price-key-1',
     legalEntityId: overrides.withoutLegalEntity === true ? undefined : legalEntityId,
@@ -95,10 +95,11 @@ const build = (
     route: { mappingVersion: 'route-mapping', routeId },
     rows,
     template: overrides.template ?? template,
+    tenantId: Schema.decodeUnknownSync(SymmyRequestTenantSchema)(overrides.tenantId ?? tenantId),
   });
 
 describe('Symmy price list plan from the public rows', () => {
-  it.effect('maps a list without prices to one Price Group create fenced on the catalog head', () =>
+  it.effect('maps a list without prices to one Price Group create that carries no fence', () =>
     Effect.gen(function* maps() {
       const plan = Option.getOrThrow(yield* build(rowsOf(list('cz-wholesale'))));
       expect(plan.items).toHaveLength(1);
@@ -121,7 +122,6 @@ describe('Symmy price list plan from the public rows', () => {
         displayName: 'List cz-wholesale',
         effectiveFrom: '2026-01-01T00:00:00.000Z',
         effectiveTo: null,
-        expectedCatalogRevision: 4,
         reason: 'Symmy price list import',
         sourceCorrelation: {
           issuer: 'route-issuer',
@@ -181,10 +181,10 @@ describe('Symmy price list plan from the public rows', () => {
     }),
   );
 
-  it.effect('chains the lists by dependsOn and fences list i on the head plus i', () =>
-    Effect.gen(function* chains() {
+  it.effect('keeps the lists independent: no list waits for another and none carries a fence', () =>
+    Effect.gen(function* independent() {
       const plan = Option.getOrThrow(
-        yield* build(rowsOf(list('a-list', [price('7')]), list('b-list'), list('c-list')), { catalogHead: 0 }),
+        yield* build(rowsOf(list('a-list', [price('7')]), list('b-list'), list('c-list'))),
       );
       expect(plan.items.map(({ itemKey }) => itemKey)).toEqual([
         'price-list-0',
@@ -193,13 +193,47 @@ describe('Symmy price list plan from the public rows', () => {
         'price-list-2',
       ]);
       const groups = plan.items.filter(({ source }) => source.entityKind === 'PRICE_GROUP');
-      const fences = groups.map(({ effects: [effect] }) => groupCreateOf(effect)?.expectedCatalogRevision);
-      expect(fences).toEqual([0, 1, 2]);
-      expect(groups.map(({ effects: [effect] }) => effect?.dependsOn)).toEqual([
-        undefined,
-        [{ effectKey: 'group-create', itemKey: 'price-list-0' }],
-        [{ effectKey: 'group-create', itemKey: 'price-list-1' }],
+      expect(groups.map(({ effects: [effect] }) => effect?.dependsOn)).toEqual([undefined, undefined, undefined]);
+      expect(groups.map(({ effects: [effect] }) => groupCreateOf(effect) !== null)).toEqual([true, true, true]);
+      expect(
+        groups.map(({ effects: [effect] }) => Object.hasOwn(groupCreateOf(effect) ?? {}, 'expectedCatalogRevision')),
+      ).toEqual([false, false, false]);
+    }),
+  );
+
+  it.effect('refuses only the price that names another tenant and plans the rest of the request', () =>
+    Effect.gen(function* refuses() {
+      const foreign = { ...price('8'), productRef: { ...productRef, tenantId: otherTenantId } };
+      const plan = Option.getOrThrow(
+        yield* build(rowsOf(list('a-list', [price('7'), foreign, price('9')]), list('b-list'))),
+      );
+      expect(plan.items.map(({ itemKey }) => itemKey)).toEqual([
+        'price-list-0',
+        'price-list-0-price-0',
+        'price-list-0-price-1',
+        'price-list-0-price-2',
+        'price-list-1',
       ]);
+      const targets = plan.items.map(({ effects: [effect] }) => effect?.originalTarget?.tenantId ?? null);
+      expect(targets).toEqual([null, tenantId, null, tenantId, null]);
+      const refused = plan.items[2]?.effects[0];
+      expect(priceDefineOf(refused)?.payload.priceRef.tenantId).toBe(tenantId);
+      expect(priceDefineOf(refused)?.payload.identityKey.catalogSelection.productRef.tenantId).toBe(tenantId);
+      expect(Object.hasOwn(refused ?? {}, 'originalTarget')).toBe(false);
+    }),
+  );
+
+  it.effect('refuses a price whose variant or unit is of another tenant, not only its product', () =>
+    Effect.gen(function* refuses() {
+      const variantForeign = { ...price('7'), variantRef: { ...variantRef, tenantId: otherTenantId } };
+      const unitForeign = {
+        ...price('8'),
+        unitBasis: { quantity: '1', unitRef: { ...unitRef, tenantId: otherTenantId } },
+      };
+      const plan = Option.getOrThrow(yield* build(rowsOf(list('a-list', [variantForeign, unitForeign]))));
+      expect(plan.items.slice(1).map(({ effects: [effect] }) => Object.hasOwn(effect ?? {}, 'originalTarget'))).toEqual(
+        [false, false],
+      );
     }),
   );
 
@@ -287,23 +321,21 @@ describe('Symmy price list admission payload', () => {
   const parse = Schema.decodeUnknownResult(AdmitSymmyJobPayloadSchema, { onExcessProperty: 'error' });
   const rows = Schema.encodeSync(SymmyPriceListRowsSchema)(rowsOf(list('cz-wholesale')));
   const admission = {
-    catalogHead: 0,
     idempotencyKey: 'price-key',
     priceLists: rows,
     routeKey: 'priceListsBatchUpsert',
   };
 
-  it('admits the rows with the catalog head only on the price list route', () => {
+  it('admits the rows only on the price list route', () => {
     expect(Result.isSuccess(parse(admission))).toBe(true);
     expect(Result.isFailure(parse({ ...admission, routeKey: 'productsBatch' }))).toBe(true);
     expect(Result.isFailure(parse({ ...admission, code: 'selected', routeKey: 'priceListPricesBatch' }))).toBe(true);
   });
 
-  it('refuses rows without the head, a head without rows, an empty or oversized list, and a plan or fixture beside them', () => {
-    const { catalogHead: _head, ...withoutHead } = admission;
+  it('refuses a missing, empty or oversized list, a catalog head, and a plan or fixture beside the rows', () => {
     const { priceLists: _rows, ...withoutRows } = admission;
-    expect(Result.isFailure(parse(withoutHead))).toBe(true);
     expect(Result.isFailure(parse(withoutRows))).toBe(true);
+    expect(Result.isFailure(parse({ ...admission, catalogHead: 0 }))).toBe(true);
     expect(Result.isFailure(parse({ ...admission, priceLists: [] }))).toBe(true);
     expect(Result.isFailure(parse({ ...admission, priceLists: Array.from({ length: 17 }, () => rows[0]) }))).toBe(true);
     expect(Result.isFailure(parse({ ...admission, fixtureId: 'fixture-safe' }))).toBe(true);

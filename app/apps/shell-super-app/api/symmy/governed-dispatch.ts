@@ -27,7 +27,6 @@ import {
   projectSymmySourcePriceLists,
   projectSymmySourceProducts,
   projectSymmySourceCustomers,
-  readSymmyPriceGroupCatalogHead,
 } from './source-read-projections.ts';
 import {
   projectSymmyRegionsWithCrypto,
@@ -169,9 +168,8 @@ const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[
 };
 
 /**
- * What a durable job carries besides its key and route. The price lists carry the catalog head read now, as the
- * route enrolls that read: the owner admission fences the first created list on it and ignores it on a replay.
- * The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
+ * What a durable job carries besides its key and route. The price lists carry nothing more: the adapter reads the
+ * catalog head right before each create. The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
  * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
  * list each price group code names, read the same way. The customers carry nothing more: the route enrollment and
  * the route scope the owner admission reads give it the source and the selling legal entity.
@@ -215,18 +213,7 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
     };
   }
   if ('priceLists' in request) {
-    if (selected === undefined) {
-      return yield* unavailable();
-    }
-    yield* requireReadOperation(
-      selected.route,
-      priceGroupModule,
-      'pricing.price-group-catalog.api.price-group-catalog-head',
-    );
-    return {
-      catalogHead: yield* readSymmyPriceGroupCatalogHead(admission, newRequestIdentifier),
-      priceLists: request.priceLists,
-    };
+    return { priceLists: request.priceLists };
   }
   return 'fixtureId' in request
     ? { fixtureId: request.fixtureId }
