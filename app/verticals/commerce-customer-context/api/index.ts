@@ -228,6 +228,7 @@ import { customerProfileIcoReadApiLive } from './customer-profile-ico-read-serve
 import { customerProfileOrganizationIcoFactsReadApiLive } from './customer-profile-organization-ico-facts-read-server.ts';
 import { customerProfileReadReadApiLive } from './customer-profile-read-read-server.ts';
 import { customerProfileSourcePageReadApiLive } from './customer-profile-source-page-read-server.ts';
+import { customerProfileSourcePartiesReadApiLive } from './customer-profile-source-parties-read-server.ts';
 import { customerProfileSourceReadApiLive } from './customer-profile-source-read-server.ts';
 import { customerProfileTradingGateReadApiLive } from './customer-profile-trading-gate-read-server.ts';
 import { customerRecordVisibilityReadApiLive } from './customer-record-visibility-read-server.ts';
@@ -1182,6 +1183,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     customerProfileOrganizationIcoFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileSourcePageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerProfileSourcePartiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileSourceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileTradingGateReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerRecordVisibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

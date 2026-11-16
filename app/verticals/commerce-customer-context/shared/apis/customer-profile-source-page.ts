@@ -2,9 +2,23 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CustomerProfileSourceAuthoritySchema } from '../domain/customer-profile-source.ts';
 import { CustomerProfileSourceItemSchema } from './customer-profile-source.ts';
 
+/**
+ * A search over the customers of the route, applied before `offset`, `limit` and `count`. Every term must match: a
+ * customer matches a term when its source record id contains the term (literally, ignoring case) or its Party is in
+ * that term's `partyIds`, the Parties the Party owner found for the term. At most 10 terms of at most 500 Parties.
+ */
+export const CustomerProfileSourceSearchSchema = Schema.Struct({
+  terms: Schema.Array(
+    Schema.Struct({
+      partyIds: Schema.Array(PartyRefSchema.fields.resourceId).check(Schema.isMaxLength(500)),
+      term: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(10)),
+});
 /**
  * One page of the current source customer Profiles of a qualified source route, in ascending source record id
  * order. `offset` skips that many Profiles of the same order.
@@ -13,6 +27,7 @@ export const CustomerProfileSourcePageRequestSchema = Schema.Struct({
   ...CustomerProfileSourceAuthoritySchema.fields,
   limit: Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  search: Schema.optionalKey(CustomerProfileSourceSearchSchema),
 });
 export type CustomerProfileSourcePageRequest = typeof CustomerProfileSourcePageRequestSchema.Type;
 /** `count` is the number of source customer Profiles of the route before paging. */

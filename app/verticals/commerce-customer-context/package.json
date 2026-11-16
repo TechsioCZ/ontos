@@ -58,6 +58,8 @@
     "./api/customer-profile-source/client": "./src/api/customer-profile-source-client.ts",
     "./api/customer-profile-source-page": "./shared/apis/customer-profile-source-page.ts",
     "./api/customer-profile-source-page/client": "./src/api/customer-profile-source-page-client.ts",
+    "./api/customer-profile-source-parties": "./shared/apis/customer-profile-source-parties.ts",
+    "./api/customer-profile-source-parties/client": "./src/api/customer-profile-source-parties-client.ts",
     "./api/effective-customer-group-membership-set-v1": "./shared/apis/effective-customer-group-membership-set-v1.ts",
     "./api/effective-customer-group-membership-set-v1/client": "./src/api/effective-customer-group-membership-set-v1-client.ts",
     "./api/ensure-retail-customer-profile-action": "./shared/apis/ensure-retail-customer-profile-action.ts",

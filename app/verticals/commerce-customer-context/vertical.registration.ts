@@ -62,6 +62,7 @@ import { customerProfileIcoRead } from './src/api/customer-profile-ico.read.ts';
 import { customerProfileOrganizationIcoFactsRead } from './src/api/customer-profile-organization-ico-facts.read.ts';
 import { customerProfileReadRead } from './src/api/customer-profile-read.read.ts';
 import { customerProfileSourcePageRead } from './src/api/customer-profile-source-page.read.ts';
+import { customerProfileSourcePartiesRead } from './src/api/customer-profile-source-parties.read.ts';
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { customerProfileTradingGateRead } from './src/api/customer-profile-trading-gate.read.ts';
 import { customerRecordVisibilityRead } from './src/api/customer-record-visibility.read.ts';
@@ -256,6 +257,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'customer-profile-read': () => import('./src/api/customer-profile-read-client.ts'),
       'customer-profile-source': () => import('./src/api/customer-profile-source-client.ts'),
       'customer-profile-source-page': () => import('./src/api/customer-profile-source-page-client.ts'),
+      'customer-profile-source-parties': () => import('./src/api/customer-profile-source-parties-client.ts'),
       'customer-profile-trading-gate': () => import('./src/api/customer-profile-trading-gate-client.ts'),
       'customer-record-visibility': () => import('./src/api/customer-record-visibility-client.ts'),
       'delivery-destination-resolution': () => import('./src/api/delivery-destination-resolution-client.ts'),
@@ -370,6 +372,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     customerProfileIcoRead,
     customerProfileOrganizationIcoFactsRead,
     customerProfileSourcePageRead,
+    customerProfileSourcePartiesRead,
     customerProfileSourceRead,
     deliveryDestinationResolutionRead,
     effectiveCustomerGroupMembershipSetV1Read,

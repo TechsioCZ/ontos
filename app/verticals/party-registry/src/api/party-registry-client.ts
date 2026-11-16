@@ -172,3 +172,4 @@ export * from './counterparty-organization-ico-facts-client.ts';
 
 export * from './organization-record-facts-client.ts';
 export * from './organization-business-name-export-client.ts';
+export * from './source-party-search-client.ts';

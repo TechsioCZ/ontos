@@ -15,12 +15,14 @@ import { CreateCounterpartyPurchasingProfilePayloadSchema } from '../../shared/a
 import { CustomerProfileSourceResponseSchema } from '../../shared/apis/customer-profile-source.ts';
 import type { CustomerProfileSourceRequest } from '../../shared/apis/customer-profile-source.ts';
 import type { CustomerProfileSourcePageRequest } from '../../shared/apis/customer-profile-source-page.ts';
+import type { CustomerProfileSourcePartiesRequest } from '../../shared/apis/customer-profile-source-parties.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { CustomerProfilePartySourceReference } from '../../shared/domain/customer-profile-source.ts';
 import { ensureRetailCustomerProfileAction } from '../../src/actions/ensure-retail-customer-profile.action.ts';
 import { createCounterpartyPurchasingProfileAction } from '../../src/actions/create-counterparty-purchasing-profile.action.ts';
 import { customerProfileSourcePageRead } from '../../src/api/customer-profile-source-page.read.ts';
+import { customerProfileSourcePartiesRead } from '../../src/api/customer-profile-source-parties.read.ts';
 import { customerProfileSourceRead } from '../../src/api/customer-profile-source.read.ts';
 import {
   CommerceSourceProcessingEligibility,
@@ -315,6 +317,10 @@ it.live(
           Context.get(context, ReadRuntime)
             .runRead({ input, principal, registration: customerProfileSourcePageRead, transport: transport() })
             .pipe(Effect.provideContext(context));
+        const readParties = (input: CustomerProfileSourcePartiesRequest) =>
+          Context.get(context, ReadRuntime)
+            .runRead({ input, principal, registration: customerProfileSourcePartiesRead, transport: transport() })
+            .pipe(Effect.provideContext(context));
         const ensure = (input = payload) =>
           runAction({
             payload: input,
@@ -510,6 +516,49 @@ it.live(
           count: 3,
           items: [{ source: { recordId: 'customer-002' } }],
         });
+        // The candidate list carries identifiers only, in the same order, and its total is the whole route.
+        const candidates = yield* readParties({ ...authority, limit: 2 });
+        expect(candidates.count).toBe(3);
+        expect(candidates.items.map(({ recordId }) => recordId)).toEqual(sourceKeys.slice(0, 2));
+        expect(candidates.items[0]).toEqual({
+          partyRef: payload.subject.partyRef,
+          partySourceReference,
+          recordId: 'customer-001',
+        });
+        // A search filters before count, offset and limit: by key (ignoring case, literally) or by matched Party.
+        const searched = (terms: readonly { readonly partyIds: readonly string[]; readonly term: string }[]) =>
+          readPage({ ...authority, limit: 100, offset: 0, search: { terms } });
+        const searchedKeys = (result: { readonly items: Parameters<typeof recordIds>[0] }) => recordIds(result.items);
+        const byKey = yield* searched([{ partyIds: [], term: 'CUSTOMER-002' }]);
+        expect([byKey.count, searchedKeys(byKey)]).toEqual([1, ['customer-002']]);
+        const byAll = yield* searched([{ partyIds: [], term: 'customer-00' }]);
+        expect([byAll.count, searchedKeys(byAll)]).toEqual([3, sourceKeys]);
+        for (const literal of ['_', '%', '\\', 'customer-0_2', 'customer-%']) {
+          expect((yield* searched([{ partyIds: [], term: literal }])).count, literal).toBe(0);
+        }
+        // Retail customers 001 and 002 share one Party; matching the Party matches both, whatever the key says.
+        const byParty = yield* searched([{ partyIds: [payload.subject.partyRef.resourceId], term: 'ada' }]);
+        expect(searchedKeys(byParty)).toEqual(['customer-001', 'customer-002', 'customer-003']);
+        const mixed = yield* searched([
+          { partyIds: [], term: 'customer-003' },
+          { partyIds: [payload.subject.partyRef.resourceId], term: 'ada' },
+        ]);
+        expect([mixed.count, searchedKeys(mixed)]).toEqual([1, ['customer-003']]);
+        const pagedSearch = yield* readPage({
+          ...authority,
+          limit: 1,
+          offset: 1,
+          search: { terms: [{ partyIds: [], term: 'customer' }] },
+        });
+        expect([pagedSearch.count, searchedKeys(pagedSearch)]).toEqual([3, ['customer-002']]);
+        expect(
+          yield* readPage({
+            ...authority,
+            limit: 5,
+            offset: 3,
+            search: { terms: [{ partyIds: [], term: 'customer' }] },
+          }),
+        ).toEqual({ count: 3, items: [] });
         expect(yield* readPage({ ...authority, limit: 50, offset: 3 })).toEqual({ count: 3, items: [] });
         expect(yield* readPage({ ...authority, limit: 50, offset: 100 })).toEqual({ count: 3, items: [] });
         expect(

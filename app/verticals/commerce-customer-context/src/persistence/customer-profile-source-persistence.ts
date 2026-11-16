@@ -31,6 +31,11 @@ import type {
   CustomerProfileSourceItem,
 } from '../../shared/apis/customer-profile-source.ts';
 import { CustomerProfileSourcePageResponseSchema } from '../../shared/apis/customer-profile-source-page.ts';
+import { CustomerProfileSourcePartiesResponseSchema } from '../../shared/apis/customer-profile-source-parties.ts';
+import type {
+  CustomerProfileSourcePartiesRequest,
+  CustomerProfileSourcePartiesResponse,
+} from '../../shared/apis/customer-profile-source-parties.ts';
 import type {
   CustomerProfileSourcePageRequest,
   CustomerProfileSourcePageResponse,
@@ -102,6 +107,20 @@ const sourcePageRoutine = defineScopedRoutine({
   routineKey: 'customer-profile-source.page-read',
   schema: DATABASE_SCHEMA,
 });
+const routeNotAuthorized = 'The current route does not authorize this source Profile read';
+const sourcePartiesRoutine = defineScopedRoutine({
+  name: 'read_customer_profile_source_parties',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({ outcome: Schema.String, result: Schema.Unknown }),
+  routineKey: 'customer-profile-source.parties-read',
+  schema: DATABASE_SCHEMA,
+});
 const organizationReceiptResultSchema = Schema.Struct({
   current: Schema.Struct({
     counterpartyRef: OrganizationProfileSourceCreateSchema.fields.subject.fields.counterpartyRef,
@@ -145,6 +164,12 @@ export interface CustomerProfileSourcePageReadServices {
   readonly readPage: (
     input: CustomerProfileSourcePageRequest,
   ) => Effect.Effect<CustomerProfileSourcePageResponse, ReadHandlerUnavailable | ReadPermissionDenied>;
+}
+
+export interface CustomerProfileSourcePartiesReadServices {
+  readonly readParties: (
+    input: CustomerProfileSourcePartiesRequest,
+  ) => Effect.Effect<CustomerProfileSourcePartiesResponse, ReadHandlerUnavailable | ReadPermissionDenied>;
 }
 
 const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(function* sourceProfileReadServices(
@@ -501,7 +526,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       if (row?.outcome === 'SOURCE_AUTHORITY_DENIED') {
         return yield* new ReadPermissionDenied({
           code: 'read_permission_denied',
-          reason: 'The current route does not authorize this source Profile read',
+          reason: routeNotAuthorized,
         });
       }
       if (row?.outcome !== 'AVAILABLE') {
@@ -515,6 +540,25 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
           ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
           : yield* Effect.forEach(page.items, projectCurrentItem, { concurrency: 1 });
       return { ...page, items };
+    }),
+    readParties: Effect.fn('CustomerProfileSourceRead.readParties')(function* readParties(
+      input: CustomerProfileSourcePartiesRequest,
+    ) {
+      const [row] = yield* transaction
+        .invoke(sourcePartiesRoutine, [scope.principalId, input])
+        .pipe(Effect.mapError(unavailable));
+      if (row?.outcome === 'SOURCE_AUTHORITY_DENIED') {
+        return yield* new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: routeNotAuthorized,
+        });
+      }
+      if (row?.outcome !== 'AVAILABLE') {
+        return yield* unavailable();
+      }
+      return yield* Schema.decodeUnknownEffect(CustomerProfileSourcePartiesResponseSchema, {
+        onExcessProperty: 'error',
+      })(row.result).pipe(Effect.mapError(unavailable));
     }),
     readSource: Effect.fn('CustomerProfileSourceRead.read')(function* readSource(input: CustomerProfileSourceRequest) {
       if (input.mode === 'ORG_RECEIPT') {
@@ -532,7 +576,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       if (row.outcome === 'SOURCE_AUTHORITY_DENIED') {
         return yield* new ReadPermissionDenied({
           code: 'read_permission_denied',
-          reason: 'The current route does not authorize this source Profile read',
+          reason: routeNotAuthorized,
         });
       }
       if (row.outcome === 'NOT_FOUND') {
@@ -603,4 +647,11 @@ export const customerProfileSourcePageReadServices: ReadServiceFactory<
 > = (transaction, scope) =>
   makeSourceReadServices(sourcePageReadRequirements, transaction, scope).pipe(
     Effect.map(({ readPage }) => ({ readPage })),
+  );
+export const customerProfileSourcePartiesReadServices: ReadServiceFactory<
+  CustomerProfileSourcePartiesReadServices,
+  SourceReadServiceRequirements
+> = (transaction, scope) =>
+  makeSourceReadServices(sourcePageReadRequirements, transaction, scope).pipe(
+    Effect.map(({ readParties }) => ({ readParties })),
   );

@@ -8067,6 +8067,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-source-parties.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-source-parties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-source-parties",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.customer-profile-source.read",
             "kind": "read",
             "modes": [
@@ -16807,6 +16833,32 @@
               "kind": "protected"
             },
             "entrypointKey": "party.registry.api.source-counterparty-admission",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "party.registry.source-party-search.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-party-search",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.source-party-search",
             "moduleKey": "party.registry",
             "role": "api",
             "scope": "tenant"
