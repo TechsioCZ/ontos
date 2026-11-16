@@ -43,7 +43,9 @@ start_worker() {
 
   local ready=false
   for ((attempt = 0; attempt < 60; attempt++)); do
-    if docker exec "$database" pg_isready --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null 2>&1 \
+    # initdb's temporary server accepts Unix sockets before shutting down. Only
+    # the final postmaster accepts TCP; restoring into the temporary one races its restart.
+    if docker exec "$database" pg_isready --host 127.0.0.1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null 2>&1 \
       && docker exec "$spice" /usr/local/bin/grpc_health_probe -addr=localhost:50051 \
         -tls -tls-ca-cert=/tls/cert.pem >/dev/null 2>&1; then
       ready=true
