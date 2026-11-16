@@ -3038,6 +3038,7 @@ it('runs excluded whole-owner scenarios exactly once on the bootstrap runner', (
   for (const file of [
     'scripts/integration/organization-source-customer-owner-conformance.test.mts',
     'tests/integration/market-revision-whole-current-pricing-postgres.test.ts',
+    'tests/integration/privacy-composition-drain.test.ts',
   ]) {
     expect(scheduler).toContain(`--exclude ${file}`);
     const proofs = job.steps.filter(({ run }) => run?.includes(file) === true);

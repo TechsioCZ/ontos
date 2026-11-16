@@ -113,6 +113,13 @@ it('launches package and root suites with the assigned lane and propagates failu
       '2',
       'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 --shard 2/4',
     ]);
+    execFileSync('/bin/bash', [script, '--task', './verticals/privacy#2/4'], {
+      env: launchEnvironment,
+    });
+    expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
+      '2',
+      'exec -- pnpm --filter ./verticals/privacy run test:integration --pool.maxWorkers 1 --shard 2/4 --exclude tests/integration/privacy-composition-drain.test.ts',
+    ]);
     expect(() =>
       execFileSync('/bin/bash', [script, '--task', pricingSelector], {
         env: { ...launchEnvironment, LAUNCH_STATUS: '9' },
