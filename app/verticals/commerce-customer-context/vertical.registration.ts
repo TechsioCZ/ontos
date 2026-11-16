@@ -5,7 +5,6 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { commerceCustomerContextManifest } from './vertical.manifest.ts';
 /* jscpd:ignore-start -- generated imports intentionally mirror the manifest's generated action imports. */
 // <generated-module-registration-imports>
-import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
 import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
@@ -52,6 +51,7 @@ import { createCustomerGroupAction } from './src/actions/create-customer-group.a
 import { createPurchaseProposalRevisionAction } from './src/actions/create-purchase-proposal-revision.action.ts';
 import { customerArchiveRead } from './src/api/customer-archive.read.ts';
 import { customerGroupDefinitionSourceRead } from './src/api/customer-group-definition-source.read.ts';
+import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { customerGroupMembershipSourceReceiptRead } from './src/api/customer-group-membership-source-receipt.read.ts';
 import { customerPaymentTermEntitlementReadRead } from './src/api/customer-payment-term-entitlement-read.read.ts';
 import { customerPriceGroupAssignmentReadRead } from './src/api/customer-price-group-assignment-read.read.ts';
@@ -61,6 +61,7 @@ import { customerProfileIcoMigrationRead } from './src/api/customer-profile-ico-
 import { customerProfileIcoRead } from './src/api/customer-profile-ico.read.ts';
 import { customerProfileOrganizationIcoFactsRead } from './src/api/customer-profile-organization-ico-facts.read.ts';
 import { customerProfileReadRead } from './src/api/customer-profile-read.read.ts';
+import { customerProfileSourcePageRead } from './src/api/customer-profile-source-page.read.ts';
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { customerProfileTradingGateRead } from './src/api/customer-profile-trading-gate.read.ts';
 import { customerRecordVisibilityRead } from './src/api/customer-record-visibility.read.ts';
@@ -254,6 +255,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
         import('./src/api/customer-profile-organization-ico-facts-client.ts'),
       'customer-profile-read': () => import('./src/api/customer-profile-read-client.ts'),
       'customer-profile-source': () => import('./src/api/customer-profile-source-client.ts'),
+      'customer-profile-source-page': () => import('./src/api/customer-profile-source-page-client.ts'),
       'customer-profile-trading-gate': () => import('./src/api/customer-profile-trading-gate-client.ts'),
       'customer-record-visibility': () => import('./src/api/customer-record-visibility-client.ts'),
       'delivery-destination-resolution': () => import('./src/api/delivery-destination-resolution-client.ts'),
@@ -359,14 +361,15 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     savedAddressListRead,
     verifyRetailPurchasingSubjectCurrentV1Read,
     // <generated-module-registration-reads>
-    customerGroupDetailRead,
     customerGroupDefinitionSourceRead,
+    customerGroupDetailRead,
     customerGroupMembershipSourceReceiptRead,
     customerPriceGroupAssignmentReceiptRead,
     customerPriceGroupResolutionRead,
     customerProfileIcoMigrationRead,
     customerProfileIcoRead,
     customerProfileOrganizationIcoFactsRead,
+    customerProfileSourcePageRead,
     customerProfileSourceRead,
     deliveryDestinationResolutionRead,
     effectiveCustomerGroupMembershipSetV1Read,
