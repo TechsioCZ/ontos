@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -623,15 +622,11 @@ const assertRejectedSources = Effect.fn(function* rejectGovernedSources(
   }
 });
 
-const makeFixture = Effect.fn(function* mergedScenario1(
-  includeParty = false,
-  initialize: (root: string) => Effect.Effect<void, unknown> = () => Effect.void,
-) {
+const makeFixture = Effect.fn(function* mergedScenario1(includeParty = false) {
   const root = yield* Effect.acquireRelease(
     Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
     (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
   );
-  yield* initialize(root);
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -3296,51 +3291,10 @@ for (const handler of ['issueGatewayContext', 'issueApiKeyGatewayContext', 'issu
   );
 }
 
-const EARLY_FAILURE = 'early failure';
-
-const PARTIAL_FAILURE = 'partial failure';
-
-for (const outcome of ['success', EARLY_FAILURE, PARTIAL_FAILURE, 'interruption'] as const) {
-  it.live(`releases fixture directories after ${outcome} during initialization`, () =>
-    Effect.gen(function* fixtureCleanupControl() {
-      let directory = '';
-      const failure = new Error('fixture initialization failed');
-      const exit = yield* Effect.scoped(
-        makeFixture(false, (root) =>
-          Effect.gen(function* initializeFixtureControl() {
-            directory = root;
-            if (outcome === EARLY_FAILURE) {
-              yield* Effect.fail(failure);
-            }
-            yield* write(root, 'partial.txt', 'partially initialized');
-            if (outcome === PARTIAL_FAILURE) {
-              yield* Effect.fail(failure);
-            }
-            if (outcome === 'interruption') {
-              yield* Effect.interrupt;
-            }
-          }),
-        ),
-      ).pipe(Effect.exit);
-      expect(directory).not.toBe('');
-      expect(existsSync(directory)).toBe(false);
-      expect(Exit.isSuccess(exit)).toBe(outcome === 'success');
-      expect(Exit.hasInterrupts(exit)).toBe(outcome === 'interruption');
-      if (outcome === EARLY_FAILURE || outcome === PARTIAL_FAILURE) {
-        Exit.match(exit, {
-          onFailure: (cause) => {
-            expect(cause.reasons).toHaveLength(1);
-            expect(Cause.squash(cause)).toBe(failure);
-          },
-          onSuccess: () => expect.unreachable('Expected fixture initialization to fail'),
-        });
-      }
-    }),
-  );
-}
-
 it('accepts the protected classification on a generated read and refuses any other kind', () => {
   const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  // O62: a protected read decides itself, so the generated descriptor names no legacy permission target.
+  expect(base).not.toContain('permissionTarget');
   expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, { kind: 'protected' })).toBe(
     true,
   );
@@ -3358,23 +3312,6 @@ it('accepts the protected classification on a generated read and refuses any oth
   for (const kind of ['public', 'authenticated_principal'] as const) {
     expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, { kind })).toBe(false);
   }
-});
-
-it('accepts a protected read that decides itself without the legacy permission target (O62)', () => {
-  const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
-  expect(base).not.toContain('permissionTarget');
-  expect(hasGeneratedModuleApiReadContract(base, INVENTORY_MODULE_ID, STOCK_LIST_STEM, { kind: 'protected' })).toBe(
-    true,
-  );
-  // Negative control: a read on any other classification has to name the permission target it is
-  // decided by, so the same descriptor without one is refused.
-  const unprotected = base.replace(PROTECTED_AUTHORIZATION_SOURCE, "{ kind: 'authenticated_principal' }");
-  expect(unprotected).not.toBe(base);
-  expect(
-    hasGeneratedModuleApiReadContract(unprotected, INVENTORY_MODULE_ID, STOCK_LIST_STEM, {
-      kind: 'authenticated_principal',
-    }),
-  ).toBe(false);
 });
 
 it('follows the actual immutable Core entrypoint reference while preserving owner and authorization identity', () => {

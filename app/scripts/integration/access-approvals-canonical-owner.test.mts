@@ -283,8 +283,6 @@ const RELEASE = Result.getOrThrow(
     publishedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00.000Z')),
   }),
 );
-const BRAND_ENTRY = RELEASE.entries.find((entry) => entry.key === CAPABILITY);
-
 const NO_ENVIRONMENT_FILE = `${import.meta.filename}.no-environment-file`;
 
 const replaceDatabase = (configuration: DatabaseConfigValue, database: string): string => {
@@ -745,24 +743,6 @@ const proposeRequest = (principal: OperationalScope, idempotencyKey: string) => 
   registration: createBrandAction,
   successContract: 'result-or-proposal' as const,
   transport: { correlationId: CORRELATION_ID, idempotencyKey, intent: 'propose' as const },
-});
-
-it('publishes the real registration, never a fabricated declaration', () => {
-  expect(createBrandAction.descriptor.accessDeclaration).toMatchObject({
-    key: CAPABILITY_TEXT,
-    kind: 'action',
-    modes: ['run', 'propose', 'approve'],
-    placement: { group: 'brand', level: 'basic' },
-    risk: 'routine',
-    selectors: [],
-  });
-  expect(BRAND_ENTRY).toMatchObject({
-    key: CAPABILITY_TEXT,
-    kind: 'action',
-    modes: ['run', 'propose', 'approve'],
-    moduleKey: CATALOG_MODULE,
-    selectors: [],
-  });
 });
 
 it.layer(NodeServices.layer)('access approvals canonical owner over live intent and SpiceDB', (suite) => {

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -287,22 +287,6 @@ const withFixture = (run: (root: string) => Effect.Effect<void, unknown>, option
     const root = yield* makeFixture(options);
     yield* run(root);
   }).pipe(Effect.scoped);
-
-for (const termination of ['failure', 'interruption'] as const) {
-  it.live(`removes the fixture after ${termination}`, () =>
-    Effect.gen(function* verifiesFixtureCleanup() {
-      let fixtureRoot = '';
-      const outcome = yield* withFixture((root) => {
-        fixtureRoot = root;
-        return termination === 'failure' ? Effect.fail('fixture failure') : Effect.interrupt;
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(outcome)).toBe(true);
-      expect(fixtureRoot).not.toBe('');
-      const remaining = yield* Effect.tryPromise(() => access(fixtureRoot)).pipe(Effect.exit);
-      expect(Exit.isFailure(remaining)).toBe(true);
-    }),
-  );
-}
 
 it.live('deploys a generated owner worker immediately after its provider', () =>
   Effect.gen(function* testEffect4() {

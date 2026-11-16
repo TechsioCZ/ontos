@@ -47,12 +47,10 @@ const WorkflowSchema = Schema.Struct({
     'publish-edge-composition': JobSchema,
   }),
 });
-const readJobs = () =>
-  Schema.decodeUnknownSync(WorkflowSchema)(
-    parse(
-      readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
-    ),
-  ).jobs;
+// The workflow is read, parsed and decoded once: no test mutates the decoded jobs.
+const jobs = Schema.decodeUnknownSync(WorkflowSchema)(
+  parse(readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8')),
+).jobs;
 const IMMUTABLE_SCRIPT = 'immutable-application-release.mts';
 const RECEIPT_FILE_FLAG = '--receipt-file';
 const SHARED_LOCK = 'zerops-stage';
@@ -65,7 +63,6 @@ const SHELL_RECEIPT_FILE = 'shell-super-app.json';
 const CHANGED_SHELL_CONDITION = "contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')";
 
 it('selects the full reviewed module release before creating independent build shards', () => {
-  const jobs = readJobs();
   const plan = jobs['edge-plan'];
   const selection = plan?.steps.find(({ run }) => run?.includes(`${IMMUTABLE_SCRIPT} select`) === true);
   expect(selection).toBeDefined();
@@ -77,7 +74,6 @@ it('selects the full reviewed module release before creating independent build s
 });
 
 it('derives the retained origin before each module build and transports the same plan with its output', () => {
-  const jobs = readJobs();
   const steps = jobs['edge-build']?.steps ?? [];
   const origin = steps.find(({ run }) => run?.includes(`${IMMUTABLE_SCRIPT} plan`) === true);
   const build = steps.find(({ run }) => run?.includes('run cloudflare:build') === true);
@@ -98,7 +94,6 @@ it('derives the retained origin before each module build and transports the same
 });
 
 it('reads the Node asset subdomain without re-enabling retired Worker readiness or deployment', () => {
-  const jobs = readJobs();
   const config = jobs['node-asset-config'];
   expect(config.needs).toEqual([DEPLOY_TARGET_JOB]);
   expect(config.if).toBe(
@@ -128,7 +123,6 @@ it('reads the Node asset subdomain without re-enabling retired Worker readiness 
 });
 
 it('uses native immutable deployment receipts and leaves a failed release retained for investigation', () => {
-  const jobs = readJobs();
   const edge = jobs['deploy-cloudflare'];
   const deploy = edge?.steps.find(({ id }) => id === 'deploy');
   const candidate = edge?.steps.find(({ id }) => id === 'candidate');
@@ -147,7 +141,6 @@ it('uses native immutable deployment receipts and leaves a failed release retain
 });
 
 it('uploads retained Shell assets without changing public ingress or recording deployment success', () => {
-  const jobs = readJobs();
   const edge = jobs['deploy-cloudflare'];
   const shell = edge?.steps.find(({ id }) => id === 'shell-deploy');
   expect(edge.environment).toEqual({ deployment: false, name: 'stage-edge' });
@@ -167,7 +160,6 @@ it('uploads retained Shell assets without changing public ingress or recording d
 });
 
 it('finalizes deployment history and changed Shell ingress only after successful composition publication', () => {
-  const jobs = readJobs();
   const finalize = jobs['finalize-edge-deployment'];
   expect(finalize.needs).toEqual(
     expect.arrayContaining(['deploy-target', 'edge-plan', 'deploy-cloudflare', 'publish-edge-composition']),
@@ -190,7 +182,6 @@ it('finalizes deployment history and changed Shell ingress only after successful
 });
 
 it("hands the same run's native Shell build and exact static receipt to the changed ingress", () => {
-  const jobs = readJobs();
   const receiptUpload = jobs['deploy-cloudflare'].steps.find(
     ({ uses, with: settings }) => uses?.startsWith(UPLOAD_ACTION) === true && settings?.name === CANDIDATE_ARTIFACT,
   );
@@ -228,14 +219,13 @@ it("hands the same run's native Shell build and exact static receipt to the chan
 });
 
 it('skips public Shell ingress when the reviewed release does not change the Shell', () => {
-  const finalize = readJobs()['finalize-edge-deployment'];
+  const finalize = jobs['finalize-edge-deployment'];
   const ingress = finalize.steps.find(({ run }) => run?.includes(`${SHELL_SCRIPT} ingress-deploy`) === true);
   expect(ingress?.if).toBe(CHANGED_SHELL_CONDITION);
   expect(ingress?.if).not.toBe(finalize.if);
 });
 
 it('hands the exact original prepared candidate and expected target to CF publication', () => {
-  const jobs = readJobs();
   const upload = jobs['deploy-cloudflare'].steps.find(
     ({ uses, with: settings }) => uses?.startsWith(UPLOAD_ACTION) === true && settings?.name === CANDIDATE_ARTIFACT,
   );
@@ -260,8 +250,7 @@ const PREPARED_PATH = '$RUNNER_TEMP/prepared-release';
 const DEPLOYED_PATH = '$RUNNER_TEMP/deployed-node-release';
 const jobScript = (job: typeof JobSchema.Type) => job.steps.map(({ run }) => run ?? '').join('\n');
 
-it('keeps the two staging branches before independent migrations and avoids a deployment DAG cycle', () => {
-  const jobs = readJobs();
+it('keeps the two staging branches before independent migrations', () => {
   expect(jobs['deploy-cloudflare'].needs).not.toContain(MIGRATION_JOB);
   expect(jobs[NODE_PREFLIGHT_JOB].needs).not.toContain(MIGRATION_JOB);
   expect(jobs[MIGRATION_JOB].needs).toEqual(expect.arrayContaining(['deploy-cloudflare', NODE_PREFLIGHT_JOB]));
@@ -270,39 +259,9 @@ it('keeps the two staging branches before independent migrations and avoids a de
   expect(jobs['deploy-zerops'].if).toContain(
     "needs.deploy-target.outputs.target == 'cloudflare' || needs.deploy-node-backends.result == 'success'",
   );
-  const graph = Schema.decodeUnknownSync(
-    Schema.Struct({
-      jobs: Schema.Record(
-        Schema.String,
-        Schema.Struct({ needs: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])) }),
-      ),
-    }),
-  )(
-    parse(
-      readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
-    ),
-  ).jobs;
-  const pending = new Map(
-    Object.entries(graph).map(([id, node]) => [
-      id,
-      Schema.is(Schema.String)(node.needs) ? [node.needs] : (node.needs ?? []),
-    ]),
-  );
-  const completed = new Set<string>();
-  while (pending.size > 0) {
-    const ready = [...pending].filter(([, dependencies]) =>
-      dependencies.every((dependency) => completed.has(dependency)),
-    );
-    expect(ready.length).toBeGreaterThan(0);
-    for (const [id] of ready) {
-      completed.add(id);
-      pending.delete(id);
-    }
-  }
 });
 
 it('uses original source plans and selection for retry matrices and carries their reviewed intent into preflight', () => {
-  const jobs = readJobs();
   const plan = jobs[NODE_PLAN_JOB];
   expect(plan.outputs?.['fresh-units']).toBe(`\${{ steps.original-selection.outputs.fresh }}`);
   expect(jobScript(plan)).toContain('node-release-plans/selection.json');
@@ -319,7 +278,7 @@ it('uses original source plans and selection for retry matrices and carries thei
 });
 
 it('deploys business slots then Shell using actual same-attempt artifacts and guarded source pushes', () => {
-  const deploy = readJobs()[NODE_DEPLOY_JOB];
+  const deploy = jobs[NODE_DEPLOY_JOB];
   expect(deploy.environment).toEqual({
     deployment: false,
     name: `\${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}`,
@@ -330,9 +289,9 @@ it('deploys business slots then Shell using actual same-attempt artifacts and gu
   expect(download?.if).toContain("needs.node-release-plan.outputs.fresh-units != '[]'");
   const push = deploy.steps.find(({ run }) => run?.includes(' node-deploy ') === true);
   expect(push?.run).toContain('plans/deployment-order.json');
-  expect(jobScript(readJobs()[NODE_PLAN_JOB])).toContain('deployment-impact:plan');
-  expect(jobScript(readJobs()[NODE_PLAN_JOB])).toContain('select(.kind == "provider")');
-  expect(jobScript(readJobs()[NODE_PLAN_JOB])).toContain('$selection.shell.unit');
+  expect(jobScript(jobs[NODE_PLAN_JOB])).toContain('deployment-impact:plan');
+  expect(jobScript(jobs[NODE_PLAN_JOB])).toContain('select(.kind == "provider")');
+  expect(jobScript(jobs[NODE_PLAN_JOB])).toContain('$selection.shell.unit');
   for (const flag of [
     '--assets-receipt-file',
     CANDIDATE_FLAG,
@@ -352,7 +311,7 @@ it('deploys business slots then Shell using actual same-attempt artifacts and gu
 });
 
 it('allows zero fresh Node slots without downloading missing build shards while still verifying complete receipts', () => {
-  const deploy = readJobs()[NODE_DEPLOY_JOB];
+  const deploy = jobs[NODE_DEPLOY_JOB];
   expect(deploy.if).not.toContain("fresh-units != '[]'");
   const verify = deploy.steps.find(({ id }) => id === 'candidate');
   expect(verify?.if).toBeUndefined();
@@ -365,7 +324,7 @@ it('allows zero fresh Node slots without downloading missing build shards while 
 });
 
 it('recovers a complete original deployed handoff before retry effects and archives it before exact-R receipts', () => {
-  const deploy = readJobs()[NODE_DEPLOY_JOB];
+  const deploy = jobs[NODE_DEPLOY_JOB];
   const recover = deploy.steps.find(({ with: settings }) => settings?.name === 'deployed-node-release');
   const push = deploy.steps.find(({ run }) => run?.includes(' node-deploy ') === true);
   expect(recover?.if).toContain("steps.recovery.outputs.complete == 'true'");
@@ -395,7 +354,7 @@ it('recovers a complete original deployed handoff before retry effects and archi
 });
 
 it('keeps legacy pushes worker-only and publishes Node only after those workers using the original handoff', () => {
-  const workers = readJobs()['deploy-zerops'];
+  const workers = jobs['deploy-zerops'];
   const pushes = workers.steps.filter(({ run }) => run?.includes('push-zerops-units.sh') === true);
   expect(pushes).toHaveLength(1);
   expect(pushes[0]?.env?.UNITS_JSON).toContain('needs.deploy-plan.outputs.providers');

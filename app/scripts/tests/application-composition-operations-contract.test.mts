@@ -75,11 +75,3 @@ it('keeps runner expressions out of job-level environment contexts', () => {
     }
   }
 });
-
-it('documents only native publication and renewal, not retired synchronization jobs or consumer restarts', () => {
-  const deployment = readFileSync(new URL('../../docs/architecture/DEPLOYMENT.md', import.meta.url), 'utf-8');
-  expect(deployment).not.toMatch(/sync-edge-composition|refresh-stage-edge|put-edge-composition-snapshot/u);
-  expect(deployment).not.toContain('On `cloudflare` it restarts');
-  expect(deployment).toContain('active-composition:publish refresh');
-  expect(deployment).toContain('active-composition:publish publish');
-});

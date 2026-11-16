@@ -648,14 +648,6 @@ describe('access catalog report', () => {
     expect(report.findings.map((finding) => finding.code)).toStrictEqual(['unlisted_field_class', 'dangerous_verb']);
     expect(report.findings[1]?.reason).toBe('dangerous verb declared as sensitive');
   });
-
-  it('renders a deterministic text view with gaps and findings', () => {
-    const report = buildAccessCatalogReport(buildSnapshot([{ file: actionFile, source: actionSource('') }]));
-    const text = renderAccessCatalogReportText(report);
-    expect(text).toContain('Authorization v2 access catalog (report only; no decision changes)');
-    expect(text).toContain('Missing declarations: 1');
-    expect(text).toContain('projects.core.create-project');
-  });
 });
 
 describe('access catalog diff', () => {

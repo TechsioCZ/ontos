@@ -3545,27 +3545,6 @@ describe('consumer migration preserves native tooling and governed safety', () =
           partyId,
         ),
       ).toBe(false);
-      // Exercise the complete Core/Party server, client, permission and transport negative matrix.
-      const governed = spawnSync(
-        process.execPath,
-        [
-          path.join(workspaceRoot, 'node_modules/@rstest/core/bin/rstest.js'),
-          'run',
-          '--project',
-          'scripts',
-          'scripts/tests/module-entrypoint-boundaries.test.mts',
-          '--testNamePattern',
-          'governed',
-        ],
-        {
-          cwd: workspaceRoot,
-          encoding: 'utf-8',
-          env: { PATH: path.dirname(process.execPath) },
-        },
-      );
-      expect(governed.status, governed.stdout + governed.stderr).toBe(0);
-      expect(governed.stdout).toMatch(/governed servers bind/u);
-      expect(governed.stdout).toMatch(/rejects generated governed clients/u);
     }),
   );
 });

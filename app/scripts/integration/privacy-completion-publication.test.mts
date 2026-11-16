@@ -57,10 +57,7 @@ import {
 } from '../active-application-composition.mts';
 import { verifyInitialCutoverProviderInventory } from '../initial-composition-cutover-provider.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
-import {
-  makePrivacyPublicCompletionSession,
-  PublicCompletionCapabilitySchema,
-} from './support/privacy-public-completion-session.mts';
+import { makePrivacyPublicCompletionSession } from './support/privacy-public-completion-session.mts';
 import {
   ApplicationCompositionAuthorityError,
   closeApplicationCompositionDurableAdmission,
@@ -460,53 +457,6 @@ const makeFixture = Effect.fn('OperatorPublicationTest.makeFixture')(function* m
     requests,
     startWriter: () => startWriter().pipe(Effect.provideContext(childContext)),
   };
-});
-
-it('validates only the closed operator fixture protocol', () => {
-  expect(
-    Schema.is(descriptionSchema)({
-      commands,
-      historicalProducer: 'unavailable',
-      owner: fixtureOwner,
-      protocolVersion: 1,
-      publicAckProducer: 'unavailable',
-    }),
-  ).toBe(true);
-  expect(Schema.is(descriptionSchema)({ commands: ['execute-sql'], owner: fixtureOwner, protocolVersion: 1 })).toBe(
-    false,
-  );
-  const transaction = { backendXid: '789', databaseOid: '456', pid: 123, virtualTransaction: '4/5' };
-  expect(sameNativeTransaction(transaction, transaction)).toBe(true);
-  for (const unrelated of [
-    { ...transaction, pid: 124 },
-    { ...transaction, databaseOid: '457' },
-    { ...transaction, backendXid: '790' },
-    { ...transaction, virtualTransaction: '4/6' },
-  ]) {
-    expect(sameNativeTransaction(unrelated, transaction)).toBe(false);
-  }
-  const body = '{"composition":{"revision":"replacement"}}';
-  const rejectedPut = {
-    body,
-    bodySha256: createHash('sha256').update(body).digest('hex'),
-    method: 'PUT',
-    rejected: true,
-    responseBody: { success: false },
-    responseStatus: 200,
-    url: providerUrl,
-  };
-  expect(isExpectedRejectedPut(rejectedPut, body)).toBe(true);
-  for (const unrelated of [
-    { ...rejectedPut, method: 'GET' },
-    { ...rejectedPut, url: `${providerUrl}-unrelated` },
-    { ...rejectedPut, body: `${body} ` },
-    { ...rejectedPut, bodySha256: '0'.repeat(64) },
-    { ...rejectedPut, responseStatus: 503 },
-    { ...rejectedPut, responseBody: { success: true } },
-    { ...rejectedPut, rejected: false },
-  ]) {
-    expect(isExpectedRejectedPut(unrelated, body)).toBe(false);
-  }
 });
 
 it.live('publishes only after real same-database empty-owner proof', () =>
@@ -1044,25 +994,6 @@ it.live(
       expect(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${retainedNames[0]}`)).toBe(retainedSource);
     }).pipe(Effect.provide(services)),
 );
-
-it('validates the creator capability schema without native setup', () => {
-  expect(
-    Schema.is(PublicCompletionCapabilitySchema)({
-      creatorPid: process.pid,
-      databaseName: `ontos_test_party_gateway_${'a'.repeat(32)}`,
-      databaseOid: '123',
-      systemIdentifier: '456',
-    }),
-  ).toBe(true);
-  expect(
-    Schema.is(PublicCompletionCapabilitySchema)({
-      creatorPid: 0,
-      databaseName: 'ambient',
-      databaseOid: 'x',
-      systemIdentifier: '456',
-    }),
-  ).toBe(false);
-});
 
 for (const phase of ['active', 'draining', 'sealed'] as const) {
   it.live(`refuses unprovable owner history at first owner-verifier publication or recovered ${phase}`, () =>

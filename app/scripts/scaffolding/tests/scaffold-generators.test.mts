@@ -6209,9 +6209,200 @@ const runCombinedScenario = (fixture: Fixture): Effect.Effect<Readonly<Record<st
     return yield* snapshotTree(fixture.root);
   });
 
+/**
+ * The generated tree against the real workspace contracts: the fixture links exactly the modules the
+ * shipped verticals resolve, so the proof is a real typecheck of every generated file. The caller owns
+ * the tree, which lets the one expensive combined build serve both this proof and the determinism pair.
+ */
+const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unknown> =>
+  Effect.gen(function* mergedScenario91() {
+    yield* run(fixture, scaffoldCommand.outboxWorker, [
+      scaffoldFlag.vertical,
+      'billing',
+      '--worker',
+      fixtureName.ordersCreatedLogger,
+      scaffoldFlag.producer,
+      inventorySlug,
+      '--topic',
+      fixtureName.ordersCreated,
+    ]);
+    yield* Effect.promise(() =>
+      mkdir(path.join(fixture.root, 'node_modules', '@authzed'), {
+        recursive: true,
+      }),
+    );
+    yield* Effect.promise(() =>
+      mkdir(path.join(fixture.root, 'node_modules', '@effect'), {
+        recursive: true,
+      }),
+    );
+    yield* Effect.promise(() =>
+      mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), {
+        recursive: true,
+      }),
+    );
+    yield* Effect.promise(() =>
+      mkdir(path.join(fixture.root, 'node_modules', '@noble'), {
+        recursive: true,
+      }),
+    );
+    yield* Effect.promise(() =>
+      mkdir(path.join(fixture.root, 'node_modules', '@types'), {
+        recursive: true,
+      }),
+    );
+    // Every generated-runtime dependency is linked from the real workspace so the fixture
+    // typechecks and runs against the same modules the shipped verticals resolve.
+    yield* Effect.all(
+      (
+        [
+          ['packages/core-runtime/node_modules/effect', effectNodeModulePath, 'dir'],
+          ['packages/core-runtime/node_modules/@effect/sql-pg', 'node_modules/@effect/sql-pg', 'dir'],
+          ['packages/core-runtime/node_modules/@effect/platform-node', 'node_modules/@effect/platform-node', 'dir'],
+          ['packages/core-runtime/node_modules/@noble/hashes', 'node_modules/@noble/hashes', 'dir'],
+          ['apps/shell-super-app/node_modules/jose', 'node_modules/jose', 'dir'],
+          ['packages/core-runtime/node_modules/drizzle-orm', 'node_modules/drizzle-orm', 'dir'],
+          ['packages/core-runtime/node_modules/dotenv', 'node_modules/dotenv', 'dir'],
+          ['packages/core-runtime/node_modules/pg', 'node_modules/pg', 'dir'],
+          ['packages/core-runtime/node_modules/@authzed/authzed-node', 'node_modules/@authzed/authzed-node', 'dir'],
+          ['apps/shell-super-app/node_modules/@modern-js/plugin-i18n', 'node_modules/@modern-js/plugin-i18n', 'dir'],
+          ['apps/shell-super-app/node_modules/@modern-js/plugin-bff', pluginBffNodeModulePath, 'dir'],
+          ['apps/shell-super-app/node_modules/@modern-js/bff-effect', bffEffectNodeModulePath, 'dir'],
+          ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
+          ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
+          ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
+          ['packages/core-runtime/src/access', 'packages/core-runtime/src/access', 'dir'],
+          ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
+          ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
+          ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
+          ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
+          ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
+          ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
+          ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
+          ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
+          ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
+          ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
+          [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
+        ] as const
+      ).map(([source, target, kind]) =>
+        Effect.promise(() => symlink(path.join(appRoot, source), path.join(fixture.root, target), kind)),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    // Every Core module file the generated composition root resolves, read from Core instead of a
+    // frozen list: the fixture owns only the generated action catalog and generated core actions.
+    const coreModulesRoot = path.join(appRoot, 'packages/core-runtime/src/modules');
+    const coreModuleFiles = (yield* Effect.promise(() => readdir(coreModulesRoot, { withFileTypes: true })))
+      .filter((entry) => entry.isFile() && entry.name !== 'module-entrypoint.ts')
+      .map((entry) => entry.name);
+    const coreActionFiles = (yield* Effect.promise(() =>
+      readdir(path.join(coreModulesRoot, 'actions'), { withFileTypes: true }),
+    ))
+      .filter((entry) => entry.isFile() && entry.name !== 'catalog.ts')
+      .map((entry) => path.join('actions', entry.name));
+    yield* Effect.all(
+      [...coreModuleFiles, ...coreActionFiles].map(
+        Effect.fn(function* mergedScenario90(moduleFile) {
+          return yield* Effect.promise(() =>
+            symlink(
+              path.join(coreModulesRoot, moduleFile),
+              path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
+              'file',
+            ),
+          );
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    // Map every @app/core-runtime export exactly as the package declares it, so the fixture cannot drift.
+    const coreRuntimeDirectory = path.join(appRoot, path.dirname(path.dirname(coreRuntimeIndexFile)));
+    const corePackage = yield* decodeCorePackageExports(
+      yield* Effect.promise(() => readFile(path.join(coreRuntimeDirectory, 'package.json'), 'utf-8')),
+    );
+    const coreRuntimeExportPaths: (readonly [string, readonly string[]])[] = Object.entries(corePackage.exports).map(
+      ([subpath, target]) => [
+        path.posix.join(corePackage.name, subpath),
+        [path.join(coreRuntimeDirectory, declaredNodeTarget(target))],
+      ],
+    );
+    // Core's own `#` package imports use their declared Node or default target, as in the workspace.
+    const coreRuntimeImportPaths: (readonly [string, readonly string[]])[] = Object.entries(corePackage.imports).map(
+      ([specifier, target]) => [specifier, [path.join(coreRuntimeDirectory, declaredNodeTarget(target))]],
+    );
+    const coreRuntimePaths = Object.fromEntries([...coreRuntimeExportPaths, ...coreRuntimeImportPaths]);
+    const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
+    yield* Effect.promise(() =>
+      writeFile(
+        fixtureTsconfig,
+        json({
+          compilerOptions: {
+            allowImportingTsExtensions: true,
+            jsx: 'preserve',
+            module: 'preserve',
+            moduleResolution: 'Bundler',
+            noEmit: true,
+            paths: {
+              ...coreRuntimePaths,
+              '@app/gateway-principal-verifier/server': [
+                path.join(appRoot, 'packages/gateway-principal-verifier/src/server.ts'),
+              ],
+              '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
+              '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
+              '@app/shared-contracts/client-runtime': [
+                path.join(appRoot, 'packages/shared-contracts/src/client-runtime.ts'),
+              ],
+              '@app/shared-contracts/problem-details': [
+                path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
+              ],
+              '@app/shared-contracts/server/effect-bff-runtime': [
+                path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
+              ],
+            },
+            resolveJsonModule: true,
+            skipLibCheck: true,
+            strict: true,
+            target: 'ESNext',
+            types: ['node', 'react'],
+          },
+          include: [
+            modernAppEnvironmentTypes,
+            'packages/core-runtime/src/modules/actions/**/*.ts',
+            'packages/core-runtime/src/policies/**/*.ts',
+            inventoryManifestFile,
+            'verticals/inventory-stock/src/actions/**/*.ts',
+            'verticals/inventory-stock/src/integrations/**/*.ts',
+            'verticals/inventory-stock/shared/outbox/**/*.ts',
+            'verticals/billing/src/workers/**/*.ts',
+            'verticals/billing/src/worker-host/**/*.ts',
+            billingApiIndexFile,
+            'verticals/inventory-stock/src/policies/**/*.ts',
+            'verticals/inventory-stock/src/routes/**/*.ts',
+            'verticals/inventory-stock/src/routes/**/*.tsx',
+            'verticals/inventory-stock/src/federation/**/*.tsx',
+            'verticals/inventory-stock/src/i18n/**/*.ts',
+            'verticals/inventory-stock/api/**/*.ts',
+            'verticals/inventory-stock/src/api/**/*.ts',
+            'verticals/inventory-stock/shared/apis/**/*.ts',
+            'verticals/inventory-stock/src/search/**/*.ts',
+            'verticals/inventory-stock/src/reports/**/*.ts',
+          ],
+        }),
+        'utf-8',
+      ),
+    );
+
+    const result = spawnSync(tscPath, ['-p', fixtureTsconfig], {
+      cwd: fixture.root,
+      encoding: 'utf-8',
+    });
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  });
+
 it.live(
-  'all generators compose deterministically without crossing owner boundaries',
+  'all generators compose deterministically without crossing owner boundaries and the result typechecks',
   Effect.fn(function* scenario131() {
+    // The combined scaffold scenario is the most expensive build in this suite, so the determinism
+    // pair is the only pair built: the typecheck consumes the second tree after determinism is proven.
     const first = yield* createFixture();
     const second = yield* createFixture();
     yield* Effect.gen(function* useResource3() {
@@ -6231,6 +6422,8 @@ it.live(
       expect(yield* readFixtureFile(first.root, topologyFile)).toBe(topologyBefore);
       const combinedSource = Object.values(firstTree).join('\n');
       expect(combinedSource).not.toMatch(/from ['"]\.\.\/\.\.\/billing|fetch\(/u);
+      // `second` is byte-identical to `first` above, so typechecking it typechecks the generated tree.
+      yield* typecheckGeneratedWorkspace(second);
     }).pipe(
       Effect.ensuring(
         Effect.gen(function* releaseResources3() {
@@ -6240,270 +6433,8 @@ it.live(
       ),
     );
   }),
-);
-
-it.live(
-  'every generated TypeScript file is already formatter-stable',
-  Effect.fn(function* mergedScenario85() {
-    yield* withFixture(
-      Effect.fn(function* mergedScenario84(fixture) {
-        yield* runCombinedScenario(fixture);
-        yield* run(fixture, scaffoldCommand.outboxWorker, [
-          scaffoldFlag.vertical,
-          'billing',
-          '--worker',
-          fixtureName.ordersCreatedLogger,
-          scaffoldFlag.producer,
-          inventorySlug,
-          '--topic',
-          fixtureName.ordersCreated,
-        ]);
-        const generatedFiles = [
-          'packages/core-runtime/src/modules/actions/change-tenant-state.action.ts',
-          'packages/core-runtime/src/policies/tenant-active.policy.ts',
-          inventoryActionFile,
-          'verticals/inventory-stock/src/integrations/warehouse-api/warehouse-api-stock-level.service.ts',
-          'verticals/inventory-stock/src/actions/create-order-orders-created.outbox-message.ts',
-          inventoryOutboxContractFile,
-          billingWorkersIndexFile,
-          billingApiIndexFile,
-          'verticals/billing/src/workers/orders-created-logger.worker.ts',
-          'verticals/billing/src/worker-host/layer.ts',
-          'verticals/billing/src/worker-host/entry.ts',
-          'verticals/billing/src/worker-host/main.ts',
-          'verticals/inventory-stock/src/policies/stock-available.policy.ts',
-          'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
-          'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/route.meta.ts',
-          inventoryActionPrincipalFile,
-          inventoryActionHttpRunnerFile,
-          inventoryActionGatewayFile,
-          inventoryModuleApiContractFile,
-          inventoryModuleApiReadFile,
-          inventoryModuleApiClientFile,
-          inventoryModuleApiServerFile,
-          inventorySearchContractFile,
-          inventorySearchProviderFile,
-          inventorySearchClientFile,
-          inventorySearchServerFile,
-          inventoryReportContractFile,
-          inventoryReportProviderFile,
-          inventoryReportClientFile,
-          inventoryReportServerFile,
-        ];
-
-        yield* Effect.all(
-          generatedFiles.map(
-            Effect.fn(function* mergedScenario83(relativePath) {
-              const source = yield* readFixtureFile(fixture.root, relativePath);
-              const formatted = spawnSync(oxfmtPath, [`--stdin-filepath=${relativePath}`], {
-                cwd: appRoot,
-                encoding: 'utf-8',
-                input: source,
-              });
-              expect(formatted.status, formatted.stderr).toBe(0);
-              expect(formatted.stdout, `${relativePath} must be formatter-stable`).toBe(source);
-            }),
-          ),
-          { concurrency: 'unbounded' },
-        );
-      }),
-    );
-  }),
-);
-
-it.live(
-  'all generated files typecheck against the real workspace contracts',
-  Effect.fn(function* mergedScenario92() {
-    yield* withFixture(
-      Effect.fn(function* mergedScenario91(fixture) {
-        yield* runCombinedScenario(fixture);
-        yield* run(fixture, scaffoldCommand.outboxWorker, [
-          scaffoldFlag.vertical,
-          'billing',
-          '--worker',
-          fixtureName.ordersCreatedLogger,
-          scaffoldFlag.producer,
-          inventorySlug,
-          '--topic',
-          fixtureName.ordersCreated,
-        ]);
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules', '@authzed'), {
-            recursive: true,
-          }),
-        );
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules', '@effect'), {
-            recursive: true,
-          }),
-        );
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), {
-            recursive: true,
-          }),
-        );
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules', '@noble'), {
-            recursive: true,
-          }),
-        );
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules', '@types'), {
-            recursive: true,
-          }),
-        );
-        // Every generated-runtime dependency is linked from the real workspace so the fixture
-        // typechecks and runs against the same modules the shipped verticals resolve.
-        yield* Effect.all(
-          (
-            [
-              ['packages/core-runtime/node_modules/effect', effectNodeModulePath, 'dir'],
-              ['packages/core-runtime/node_modules/@effect/sql-pg', 'node_modules/@effect/sql-pg', 'dir'],
-              ['packages/core-runtime/node_modules/@effect/platform-node', 'node_modules/@effect/platform-node', 'dir'],
-              ['packages/core-runtime/node_modules/@noble/hashes', 'node_modules/@noble/hashes', 'dir'],
-              ['apps/shell-super-app/node_modules/jose', 'node_modules/jose', 'dir'],
-              ['packages/core-runtime/node_modules/drizzle-orm', 'node_modules/drizzle-orm', 'dir'],
-              ['packages/core-runtime/node_modules/dotenv', 'node_modules/dotenv', 'dir'],
-              ['packages/core-runtime/node_modules/pg', 'node_modules/pg', 'dir'],
-              ['packages/core-runtime/node_modules/@authzed/authzed-node', 'node_modules/@authzed/authzed-node', 'dir'],
-              [
-                'apps/shell-super-app/node_modules/@modern-js/plugin-i18n',
-                'node_modules/@modern-js/plugin-i18n',
-                'dir',
-              ],
-              ['apps/shell-super-app/node_modules/@modern-js/plugin-bff', pluginBffNodeModulePath, 'dir'],
-              ['apps/shell-super-app/node_modules/@modern-js/bff-effect', bffEffectNodeModulePath, 'dir'],
-              ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
-              ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
-              ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
-              ['packages/core-runtime/src/access', 'packages/core-runtime/src/access', 'dir'],
-              ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
-              ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
-              ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
-              ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
-              ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
-              ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
-              ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
-              ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
-              ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
-              ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
-              [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
-            ] as const
-          ).map(([source, target, kind]) =>
-            Effect.promise(() => symlink(path.join(appRoot, source), path.join(fixture.root, target), kind)),
-          ),
-          { concurrency: 'unbounded' },
-        );
-        // Every Core module file the generated composition root resolves, read from Core instead of a
-        // frozen list: the fixture owns only the generated action catalog and generated core actions.
-        const coreModulesRoot = path.join(appRoot, 'packages/core-runtime/src/modules');
-        const coreModuleFiles = (yield* Effect.promise(() => readdir(coreModulesRoot, { withFileTypes: true })))
-          .filter((entry) => entry.isFile() && entry.name !== 'module-entrypoint.ts')
-          .map((entry) => entry.name);
-        const coreActionFiles = (yield* Effect.promise(() =>
-          readdir(path.join(coreModulesRoot, 'actions'), { withFileTypes: true }),
-        ))
-          .filter((entry) => entry.isFile() && entry.name !== 'catalog.ts')
-          .map((entry) => path.join('actions', entry.name));
-        yield* Effect.all(
-          [...coreModuleFiles, ...coreActionFiles].map(
-            Effect.fn(function* mergedScenario90(moduleFile) {
-              return yield* Effect.promise(() =>
-                symlink(
-                  path.join(coreModulesRoot, moduleFile),
-                  path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
-                  'file',
-                ),
-              );
-            }),
-          ),
-          { concurrency: 'unbounded' },
-        );
-        // Map every @app/core-runtime export exactly as the package declares it, so the fixture cannot drift.
-        const coreRuntimeDirectory = path.join(appRoot, path.dirname(path.dirname(coreRuntimeIndexFile)));
-        const corePackage = yield* decodeCorePackageExports(
-          yield* Effect.promise(() => readFile(path.join(coreRuntimeDirectory, 'package.json'), 'utf-8')),
-        );
-        const coreRuntimeExportPaths: (readonly [string, readonly string[]])[] = Object.entries(
-          corePackage.exports,
-        ).map(([subpath, target]) => [
-          path.posix.join(corePackage.name, subpath),
-          [path.join(coreRuntimeDirectory, declaredNodeTarget(target))],
-        ]);
-        // Core's own `#` package imports use their declared Node or default target, as in the workspace.
-        const coreRuntimeImportPaths: (readonly [string, readonly string[]])[] = Object.entries(
-          corePackage.imports,
-        ).map(([specifier, target]) => [specifier, [path.join(coreRuntimeDirectory, declaredNodeTarget(target))]]);
-        const coreRuntimePaths = Object.fromEntries([...coreRuntimeExportPaths, ...coreRuntimeImportPaths]);
-        const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
-        yield* Effect.promise(() =>
-          writeFile(
-            fixtureTsconfig,
-            json({
-              compilerOptions: {
-                allowImportingTsExtensions: true,
-                jsx: 'preserve',
-                module: 'preserve',
-                moduleResolution: 'Bundler',
-                noEmit: true,
-                paths: {
-                  ...coreRuntimePaths,
-                  '@app/gateway-principal-verifier/server': [
-                    path.join(appRoot, 'packages/gateway-principal-verifier/src/server.ts'),
-                  ],
-                  '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
-                  '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
-                  '@app/shared-contracts/client-runtime': [
-                    path.join(appRoot, 'packages/shared-contracts/src/client-runtime.ts'),
-                  ],
-                  '@app/shared-contracts/problem-details': [
-                    path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
-                  ],
-                  '@app/shared-contracts/server/effect-bff-runtime': [
-                    path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
-                  ],
-                },
-                resolveJsonModule: true,
-                skipLibCheck: true,
-                strict: true,
-                target: 'ESNext',
-                types: ['node', 'react'],
-              },
-              include: [
-                modernAppEnvironmentTypes,
-                'packages/core-runtime/src/modules/actions/**/*.ts',
-                'packages/core-runtime/src/policies/**/*.ts',
-                inventoryManifestFile,
-                'verticals/inventory-stock/src/actions/**/*.ts',
-                'verticals/inventory-stock/src/integrations/**/*.ts',
-                'verticals/inventory-stock/shared/outbox/**/*.ts',
-                'verticals/billing/src/workers/**/*.ts',
-                'verticals/billing/src/worker-host/**/*.ts',
-                billingApiIndexFile,
-                'verticals/inventory-stock/src/policies/**/*.ts',
-                'verticals/inventory-stock/src/routes/**/*.ts',
-                'verticals/inventory-stock/src/routes/**/*.tsx',
-                'verticals/inventory-stock/src/federation/**/*.tsx',
-                'verticals/inventory-stock/src/i18n/**/*.ts',
-                'verticals/inventory-stock/api/**/*.ts',
-                'verticals/inventory-stock/src/api/**/*.ts',
-                'verticals/inventory-stock/shared/apis/**/*.ts',
-                'verticals/inventory-stock/src/search/**/*.ts',
-                'verticals/inventory-stock/src/reports/**/*.ts',
-              ],
-            }),
-            'utf-8',
-          ),
-        );
-
-        const result = spawnSync(tscPath, ['-p', fixtureTsconfig], {
-          cwd: fixture.root,
-          encoding: 'utf-8',
-        });
-        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      }),
-    );
-  }),
+  // Two scaffold builds plus a real typecheck: the sum of what the two separate tests each had.
+  { timeout: 240_000 },
 );
 
 it('generated fluent slots preserve nested chains beside independent top-level entries', () => {
@@ -7143,35 +7074,6 @@ it.live(
   }),
 );
 
-it.live(
-  'scaffold executable returns nonzero for a typed missing-owner failure',
-  Effect.fn(function* executableMissingOwnerFailure() {
-    yield* withFixture(
-      Effect.fn(function* executableMissingOwnerFixture(fixture) {
-        const before = yield* snapshotTree(fixture.root);
-        const result = spawnSync(
-          process.execPath,
-          [
-            STRIP_TYPES_FLAG,
-            path.join(appRoot, SCAFFOLD_CLI_PATH),
-            MODULE_CONTRACT_COMMAND,
-            scaffoldFlag.vertical,
-            MISSING_OWNER,
-            scaffoldFlag.module,
-            MISSING_MODULE,
-          ],
-          { cwd: fixture.root, encoding: 'utf-8', timeout: 20_000 },
-        );
-        expect(result.error).toBeUndefined();
-        expect(result.signal).toBeNull();
-        expect(result.status, result.stderr + result.stdout).not.toBe(0);
-        expect(result.stderr + result.stdout).toMatch(/missing-owner/u);
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
-      }),
-    );
-  }),
-);
-
 const configureApiOnlyInventory = Effect.fn(function* configureApiOnlyInventory(fixture: Fixture) {
   const value = yield* Schema.decodeUnknownEffect(Schema.Json)(
     JSON.parse(yield* readFixtureFile(fixture.root, inventoryPackageFile)),
@@ -7438,29 +7340,44 @@ it.live(
             encoding: 'utf-8',
             timeout: 20_000,
           });
-        const failures = [
-          [MODULE_CONTRACT_COMMAND, '--unknown-flag', 'x'],
-          ['unknown-command'],
+        // Each refused argv is paired with the proof the refusal names its own cause where this
+        // generator owns the message, rather than the CLI framework's own argument reporting.
+        const failures: readonly (readonly [readonly string[], RegExp | null])[] = [
+          [[MODULE_CONTRACT_COMMAND, '--unknown-flag', 'x'], null],
+          [['unknown-command'], null],
           [
-            'action',
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--action',
-            selectionActionName,
-            scaffoldFlag.accessRisk,
-            accessRiskFailure,
+            [
+              'action',
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--action',
+              selectionActionName,
+              scaffoldFlag.accessRisk,
+              accessRiskFailure,
+            ],
+            null,
           ],
-          [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE],
+          [
+            [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE],
+            /missing-owner/u,
+          ],
           // Existing owner files make this a controlled generator overwrite failure.
-          [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, inventorySlug, scaffoldFlag.module, 'inventory.stock'],
+          [
+            [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, inventorySlug, scaffoldFlag.module, 'inventory.stock'],
+            null,
+          ],
         ];
-        for (const args of failures) {
+        for (const [args, named] of failures) {
           const before = yield* snapshotTree(fixture.root);
           const result = child(args);
+          const output = result.stderr + result.stdout;
           expect(result.error).toBeUndefined();
           expect(result.signal).toBeNull();
-          expect(result.status, result.stderr + result.stdout).not.toBe(0);
-          expect(result.stderr + result.stdout).not.toBe('');
+          expect(result.status, `${args.join(' ')}: ${output}`).not.toBe(0);
+          expect(output, args.join(' ')).not.toBe('');
+          if (named !== null) {
+            expect(output, args.join(' ')).toMatch(named);
+          }
           expect(yield* snapshotTree(fixture.root)).toEqual(before);
         }
         const beforeHelp = yield* snapshotTree(fixture.root);

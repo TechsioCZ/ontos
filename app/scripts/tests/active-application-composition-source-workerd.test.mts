@@ -180,7 +180,7 @@ it.live('cancels a native KV stream that arrives after timeout and handles cance
     const delayedProbeWorker = `
 import { env } from 'cloudflare:workers';
 import { Effect } from 'effect';
-import { ActiveApplicationCompositionSourceLive } from ${JSON.stringify(sourceModule)};
+import { makeActiveApplicationCompositionSourceLayer } from ${JSON.stringify(sourceModule)};
 import { ActiveApplicationCompositionSource } from ${JSON.stringify(sourceService)};
 
 export default {
@@ -188,20 +188,28 @@ export default {
     const binding = env.${BINDING};
     const originalGet = binding.get.bind(binding);
     let cancellationStarted = false;
-    let cancellationRejected = false;
+    // Until the cancelling read runs, no cancellation has rejected.
+    let cancellation = Promise.resolve();
+    let releaseStream = () => {};
+    // The KV value only arrives once the bounded read has already failed, so the late stream is
+    // ordered by the read's own completion rather than by outlasting a duration.
+    const arrival = new Promise((resolve) => {
+      releaseStream = resolve;
+    });
     let pendingRead = Promise.resolve(null);
     binding.get = (key, type) => {
       pendingRead = originalGet(key, type).then(async (stream) => {
         if (stream !== null) {
           const originalCancel = stream.cancel.bind(stream);
-          stream.cancel = async () => {
+          stream.cancel = () => {
             cancellationStarted = true;
-            await originalCancel();
-            cancellationRejected = true;
-            throw new Error('fixture cancellation rejection');
+            cancellation = originalCancel().then(() => {
+              throw new Error('fixture cancellation rejection');
+            });
+            return cancellation;
           };
         }
-        await new Promise((resolve) => setTimeout(resolve, 5100));
+        await arrival;
         return stream;
       });
       return pendingRead;
@@ -209,12 +217,13 @@ export default {
     const result = await Effect.runPromise(
       ActiveApplicationCompositionSource.pipe(
         Effect.flatMap(({ load }) => load),
-        Effect.provide(ActiveApplicationCompositionSourceLive),
+        Effect.provide(makeActiveApplicationCompositionSourceLayer('50 millis')),
         Effect.match({ onFailure: (error) => ({ failure: error.reason }), onSuccess: (snapshot) => ({ snapshot }) }),
       ),
     );
+    releaseStream();
     await pendingRead;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const cancellationRejected = await cancellation.then(() => false, () => true);
     return Response.json({ ...result, cancellationStarted, cancellationRejected });
   },
 };

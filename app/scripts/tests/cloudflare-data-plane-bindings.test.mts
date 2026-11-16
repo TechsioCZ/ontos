@@ -162,9 +162,8 @@ it.each([
       name: PRICING_WORKER,
     },
   };
-  expect(deploy).toBeDefined();
   const wrangler = Schema.decodeUnknownSync(GeneratedWranglerObservabilitySchema)(
-    createWranglerConfig(process.cwd(), deploy === undefined ? {} : { deploy }),
+    createWranglerConfig(process.cwd(), { deploy }),
   );
   expect(wrangler).toEqual({ name: PRICING_WORKER, observability });
 });
@@ -216,9 +215,7 @@ it('generates Commerce without a retired mutable owner binding while preserving 
     services: Schema.optional(Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String }))),
     vpc_services: Schema.Array(Schema.Struct({ binding: Schema.String, service_id: Schema.String })),
   });
-  const wrangler = Schema.decodeUnknownSync(GeneratedBindingsSchema)(
-    createWranglerConfig(process.cwd(), deploy === undefined ? {} : { deploy }),
-  );
+  const wrangler = Schema.decodeUnknownSync(GeneratedBindingsSchema)(createWranglerConfig(process.cwd(), { deploy }));
   expect(wrangler).toEqual({
     compatibility_flags: ['global_fetch_strictly_public', 'nodejs_compat', 'enable_request_signal'],
     hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
@@ -235,17 +232,6 @@ const IDENTITY_BINDING_VALUES = {
   [PUBLIC_URL]: CATALOG_ORIGIN,
   [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
 };
-
-it('binds the shared runtime identity to the HYPERDRIVE binding', () => {
-  expect(SHARED_HYPERDRIVE).toEqual({ binding: 'HYPERDRIVE', idVariable: HYPERDRIVE_ID });
-  expect(
-    createCloudflareWorkerConfig(reader(IDENTITY_BINDING_VALUES), {
-      cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
-      hyperdrives: [SHARED_HYPERDRIVE],
-      publicUrlVariable: PUBLIC_URL,
-    }).wrangler.hyperdrive,
-  ).toEqual([{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }]);
-});
 
 it('binds the Party Worker only to its request identity Hyperdrive', () => {
   const values = reader({

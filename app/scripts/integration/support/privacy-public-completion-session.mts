@@ -86,7 +86,7 @@ class PrivacyCompletionTestFailure extends Schema.TaggedError<PrivacyCompletionT
 ) {}
 const failure = (reason: string) => new PrivacyCompletionTestFailure({ reason });
 export const PUBLIC_COMPLETION_COMMAND = 'dispatch-business-rejected-and-ack';
-export const PublicCompletionCapabilitySchema = Schema.Struct({
+const PublicCompletionCapabilitySchema = Schema.Struct({
   creatorPid: Schema.Int.check(Schema.isGreaterThan(0)),
   databaseName: Schema.String.check(Schema.isPattern(/^ontos_test_party_gateway_[a-f\d]{32}$/u)),
   databaseOid: Schema.String.check(Schema.isPattern(/^\d+$/u)),

@@ -412,6 +412,7 @@ it('declares Price Group Cloudflare proof variables and resolves every provider 
   const workflow = readFileSync(workflowPath, 'utf-8');
 
   expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid');
+  expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid');
   expect(workflow).toContain(`STAGE_VARIABLES_JSON: \${{ toJSON(vars) }}`);
   expect(workflow).toContain('app/scripts/push-zerops-units.sh');
   const pushUnits = readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8');
@@ -451,15 +452,6 @@ it("stops the other Outbox Worker mode's workers after this mode's workers deplo
   expect(deploy).toBeGreaterThanOrEqual(0);
   expect(stopOtherMode).toBeGreaterThan(deploy);
   expect(publish).toBeGreaterThan(stopOtherMode);
-});
-
-it('declares the Inventory public URL for Cloudflare proof', () => {
-  const workflow = readFileSync(
-    new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url),
-    'utf-8',
-  );
-
-  expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid');
 });
 
 it('declares no dedicated Price Group worker once the module has no Outbox Worker left (O62)', () => {

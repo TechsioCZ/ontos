@@ -17,7 +17,7 @@ import { Reactivity } from 'effect/reactivity';
 import {
   SymmyC14ProductFixtureUnavailable,
   encodeProductComposition,
-  nativePort,
+  nativePortList,
   productComposition,
 } from './symmy-c14-product-runtime.mts';
 import type { C14PolicyFixtureOwner } from './symmy-c14-product-runtime.mts';
@@ -117,23 +117,16 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   readonly owner: C14PolicyFixtureOwner;
   readonly workloadKey: string;
 }) {
-  const ownerPort = yield* nativePort;
-  const currentnessReceivers =
-    owner === 'assortment'
-      ? yield* Effect.forEach(
-          assortmentCurrentnessReceivers,
-          Effect.fn('SymmyC14Policy.currentnessPort')(function* currentnessPort(
-            receiver: (typeof assortmentCurrentnessReceivers)[number],
-          ) {
-            return { ...receiver, port: yield* nativePort };
-          }),
-          { concurrency: 1 },
-        )
-      : [];
-  let symmyPort = yield* nativePort;
-  while (symmyPort === ownerPort) {
-    symmyPort = yield* nativePort;
-  }
+  const receiverAudiences = owner === 'assortment' ? assortmentCurrentnessReceivers : [];
+  const allocatedPorts = yield* nativePortList(2 + receiverAudiences.length);
+  const [ownerPort, symmyPort] = allocatedPorts;
+  assert.isDefined(ownerPort);
+  assert.isDefined(symmyPort);
+  const currentnessReceivers = receiverAudiences.map((receiver, index) => {
+    const port = allocatedPorts[index + 2];
+    assert.isDefined(port);
+    return { ...receiver, port };
+  });
   const { contracts, snapshot } = yield* productComposition(
     {
       ...Object.fromEntries(currentnessReceivers.map(({ audience, port }) => [audience, `http://127.0.0.1:${port}/`])),

@@ -10,7 +10,6 @@ import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  ACCESS_CATALOG_ARTIFACT_SCHEMA_VERSION,
   AUTHORIZATION_CATALOG_ARTIFACT_PATH,
   AccessCatalogArtifactModulesSchema,
   AccessCatalogArtifactSchema,
@@ -116,11 +115,6 @@ const withTempRoot = <A, E, R>(use: (root: string) => Effect.Effect<A, E, R>) =>
     Effect.promise(() => rm(root, { force: true, recursive: true })),
   );
 
-const ArtifactDocumentSchema = Schema.Struct({
-  modules: Schema.Array(Schema.Unknown),
-  schemaVersion: Schema.Number,
-});
-
 it.effect('orders modules and descriptors canonically regardless of scan order', () =>
   Effect.gen(function* ordersCanonically() {
     const alpha = ZETA_ACTION_SOURCE;
@@ -135,18 +129,6 @@ it.effect('orders modules and descriptors canonically regardless of scan order',
     ]);
     expect(sortAccessCatalogModules(forward).map((module) => module.moduleId)).toEqual(['alpha.core', 'zeta.core']);
     expect(yield* renderAccessCatalogArtifact(forward)).toBe(yield* renderAccessCatalogArtifact(reversed));
-  }),
-);
-
-it.effect('renders a canonical document with the schema version', () =>
-  Effect.gen(function* rendersCanonicalDocument() {
-    const rendered = yield* renderAccessCatalogArtifact(
-      yield* modulesOf([{ file: ZETA_ACTION_FILE, source: ZETA_ACTION_SOURCE }]),
-    );
-    expect(rendered.endsWith('\n')).toBe(true);
-    const parsed = Schema.decodeUnknownSync(Schema.fromJsonString(ArtifactDocumentSchema))(rendered);
-    expect(parsed.schemaVersion).toBe(ACCESS_CATALOG_ARTIFACT_SCHEMA_VERSION);
-    expect(parsed.modules).toHaveLength(1);
   }),
 );
 

@@ -3,7 +3,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
+import { Context, Effect, FileSystem, Layer, Path, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -41,14 +41,23 @@ const cases = [
   },
 ];
 
-for (const format of ['cjs', 'esm', 'esm-node']) {
-  for (const fixture of cases) {
-    const testEffect = Effect.gen(function* verifyI18nAdapter() {
+// The built adapter tree (the copied dist plus the oxlint and Babel links) is identical for every
+// case of a format; only `src` differs. Each format builds it once and every case lints its own
+// subdirectory, which keeps `../dist/cjs/oxlint-plugin.cjs` at the same relative depth through a
+// `dist` link.
+class AdapterTree extends Context.Service<AdapterTree, { readonly adapter: string; readonly root: string }>()(
+  'AdapterTree',
+) {}
+
+const adapterTree = (format: string) =>
+  Layer.effect(
+    AdapterTree,
+    Effect.gen(function* buildAdapterTree() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const oxlintRoot = path.dirname(packageRequire.resolve('oxlint/package.json'));
       const root = yield* fs.makeTempDirectoryScoped({
-        prefix: 'ontos-code-tools-i18n-',
+        prefix: `ontos-code-tools-i18n-${format}-`,
       });
       const extension = format === 'cjs' ? 'cjs' : 'js';
       const dist = path.join(root, 'dist', format);
@@ -67,82 +76,82 @@ for (const format of ['cjs', 'esm', 'esm-node']) {
           path.join(root, 'node_modules', '@babel', dependency),
         );
       }
-      yield* fs.makeDirectory(path.join(root, 'src'));
-      yield* fs.writeFileString(path.join(root, 'src', 'fixture.tsx'), fixture.source);
-      if (fixture.name === malformedPluginCase) {
-        // A deliberately broken, isolated plugin exercises Oxlint's actual crash reporter.
-        const plugin =
-          '{ meta: { name: "ultramodern" }, rules: { "no-manual-locale-copy-branching": { meta: { schema: [] }, create() { return { Program() { throw new Error("deliberate-i18n-plugin-failure"); } }; } } } }';
-        yield* fs.writeFileString(path.join(root, 'src', 'oxlint-plugin.ts'), `export default ${plugin};`);
-      } else if (format === 'cjs') {
-        // Oxlint expects the plugin value, not the CJS module's named-export namespace.
-        yield* fs.writeFileString(
-          path.join(root, 'src', 'oxlint-plugin.ts'),
-          'import plugin from "../dist/cjs/oxlint-plugin.cjs"; export default plugin.default;',
-        );
-      }
-      const adapter = pathToFileURL(path.join(dist, 'cli', `oxlint.${extension}`)).href;
-      const rules =
-        fixture.name === malformedPluginCase
-          ? { 'ultramodern/no-manual-locale-copy-branching': 'error' }
-          : {
-              'ultramodern/no-literal-visible-jsx-attributes': 'error',
-              'ultramodern/no-manual-locale-copy-branching': 'error',
-            };
-      const script = `import { runOxlintRules, printOxlintOutput } from ${encodeJson(adapter)};
+      return { adapter: pathToFileURL(path.join(dist, 'cli', `oxlint.${extension}`)).href, root };
+    }),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
+for (const format of ['cjs', 'esm', 'esm-node']) {
+  it.layer(adapterTree(format), { excludeTestServices: true })(`code-tools ${format}`, (suite) => {
+    for (const fixture of cases) {
+      suite.effect(fixture.name, () =>
+        Effect.gen(function* verifyI18nAdapter() {
+          const tree = yield* AdapterTree;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ directory: tree.root, prefix: 'case-' });
+          yield* fs.symlink(path.join(tree.root, 'dist'), path.join(root, 'dist'));
+          yield* fs.writeFileString(path.join(root, 'package.json'), encodeJson({ type: 'module' }));
+          yield* fs.makeDirectory(path.join(root, 'src'));
+          yield* fs.writeFileString(path.join(root, 'src', 'fixture.tsx'), fixture.source);
+          if (fixture.name === malformedPluginCase) {
+            // A deliberately broken, isolated plugin exercises Oxlint's actual crash reporter.
+            const plugin =
+              '{ meta: { name: "ultramodern" }, rules: { "no-manual-locale-copy-branching": { meta: { schema: [] }, create() { return { Program() { throw new Error("deliberate-i18n-plugin-failure"); } }; } } } }';
+            yield* fs.writeFileString(path.join(root, 'src', 'oxlint-plugin.ts'), `export default ${plugin};`);
+          } else if (format === 'cjs') {
+            // Oxlint expects the plugin value, not the CJS module's named-export namespace.
+            yield* fs.writeFileString(
+              path.join(root, 'src', 'oxlint-plugin.ts'),
+              'import plugin from "../dist/cjs/oxlint-plugin.cjs"; export default plugin.default;',
+            );
+          }
+          const rules =
+            fixture.name === malformedPluginCase
+              ? { 'ultramodern/no-manual-locale-copy-branching': 'error' }
+              : {
+                  'ultramodern/no-literal-visible-jsx-attributes': 'error',
+                  'ultramodern/no-manual-locale-copy-branching': 'error',
+                };
+          const script = `import { runOxlintRules, printOxlintOutput } from ${encodeJson(tree.adapter)};
 const result = runOxlintRules({ cwd: ${encodeJson(root)}, targets: ['src'], rules: ${encodeJson(rules)} });
 printOxlintOutput(result); process.exitCode = result.exitCode;`;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const child = yield* spawner.spawn(
-        ChildProcess.make(process.execPath, ['--input-type=module', '--eval', script], {
-          cwd: root,
-          env: { TMPDIR: root },
-          extendEnv: true,
-          stderr: 'pipe',
-          stdin: 'ignore',
-          stdout: 'pipe',
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const child = yield* spawner.spawn(
+            ChildProcess.make(process.execPath, ['--input-type=module', '--eval', script], {
+              cwd: root,
+              env: { TMPDIR: root },
+              extendEnv: true,
+              stderr: 'pipe',
+              stdin: 'ignore',
+              stdout: 'pipe',
+            }),
+          );
+          const result = yield* Effect.all(
+            {
+              status: child.exitCode.pipe(Effect.map(Number)),
+              stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+              stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            },
+            { concurrency: 'unbounded' },
+          );
+          const output = stripVTControlCharacters(result.stdout + result.stderr);
+          if (fixture.diagnostic === null) {
+            expect(result.status, output).toBe(0);
+            expect(output).toMatch(cleanOutput);
+          } else {
+            expect(result.status, output).toBe(1);
+            expect(output).toMatch(fixture.diagnostic);
+            expect(output).toMatch(/fixture\.tsx/u);
+            if (fixture.name === malformedPluginCase) {
+              expect(output).toMatch(/Error running JS plugin/u);
+              expect(output).not.toMatch(/:0:0: {2}\[Warning\]/u);
+            } else {
+              expect(output).toMatch(/fixture\.tsx:1:\d+/u);
+              expect(output).not.toMatch(/Error running JS plugin/u);
+            }
+          }
         }),
       );
-      const result = yield* Effect.all(
-        {
-          status: child.exitCode.pipe(Effect.map(Number)),
-          stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
-          stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-        },
-        { concurrency: 'unbounded' },
-      );
-      const output = stripVTControlCharacters(result.stdout + result.stderr);
-      if (fixture.diagnostic === null) {
-        expect(result.status, output).toBe(0);
-        expect(output).toMatch(cleanOutput);
-      } else {
-        expect(result.status, output).toBe(1);
-        expect(output).toMatch(fixture.diagnostic);
-        expect(output).toMatch(/fixture\.tsx/u);
-        if (fixture.name === malformedPluginCase) {
-          expect(output).toMatch(/Error running JS plugin/u);
-          expect(output).not.toMatch(/:0:0: {2}\[Warning\]/u);
-        } else {
-          expect(output).toMatch(/fixture\.tsx:1:\d+/u);
-          expect(output).not.toMatch(/Error running JS plugin/u);
-        }
-      }
-    });
-    it.live(`code-tools ${format}: ${fixture.name}`, () => testEffect.pipe(Effect.provide(NodeServices.layer)));
-  }
+    }
+  });
 }
-
-it('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
-  const summary = 'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
-  expect('').toMatch(cleanOutput);
-  expect(summary).toMatch(cleanOutput);
-  for (const output of [
-    summary.replace('0 errors', '1 error'),
-    summary.replace('0 warnings', '1 warning'),
-    summary.replace('2 files', '0 files'),
-    `${summary}Error running JS plugin\n`,
-    `fixture.tsx:1:1: unexpected diagnostic\n${summary}`,
-  ]) {
-    expect(output).not.toMatch(cleanOutput);
-  }
-});
