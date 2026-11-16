@@ -130,8 +130,8 @@ it.layer(NodeServices.layer)((suite) => {
         });
         const preExtraction = yield* corePolicies('20261024223832_gateway-identity-attestation');
         // Keep the historical policies exact while including the current intent and prepared-authority policies, and
-        // the runtime's read-only policy on the drain abandonment ledger.
-        const current = yield* corePolicies('20261114011916_application-composition-drain-abandonment');
+        // the runtime's read-only policies on the drain abandonment ledger and the module credential holder leases.
+        const current = yield* corePolicies('20261116003723_module-credential-holder-leases');
         const actual = [
           ...Object.values(coreDatabaseSchema).flatMap((table) =>
             getTableConfig(table).policies.map((policy) => renderPolicy({ policy, table })),
@@ -141,7 +141,7 @@ it.layer(NodeServices.layer)((suite) => {
 
         expect(preExtraction).toHaveLength(59);
         expect(actual).toEqual(expect.arrayContaining(preExtraction));
-        expect(current).toHaveLength(180);
+        expect(current).toHaveLength(181);
         expect(actual).toEqual(current);
       }),
   );

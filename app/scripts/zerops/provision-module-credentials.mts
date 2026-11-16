@@ -11,8 +11,9 @@
  *   node scripts/zerops/provision-module-credentials.mts issue-installed --operation <id> --host <host> --boot <id>
  *     The same, for every calling module of the release the Shell serves now (the local demo serves them all).
  *   node scripts/zerops/provision-module-credentials.mts retire --operation <id> --host <host> --boot <id> --revision <rev> [<provider-key-id> ...]
- *     When <revision> holds the authority, revokes every module credential bound before it took the authority, except
- *     the named ones the host holds (none, when its boot pass issued nothing).
+ *     When <revision> holds the authority, revokes every platform key of <revision> whose issuing boot holds no lease
+ *     any more, and every other key bound before <revision> took the authority, except the named ones the host holds
+ *     (none, when its boot pass issued nothing).
  *   node scripts/zerops/provision-module-credentials.mts retire-own --operation <id> --host <host> --boot <id> --revision <rev> --earlier-boots <id,...> [<replaced-provider-key-id> ...]
  *     Revokes the host's own module credentials it no longer holds: the named keys this boot replaced (attested for
  *     <host> and this boot), and every key attested for <host> and one of the ended earlier boots its container

@@ -7,6 +7,7 @@ import {
   accessWorkloadCompanyBindings,
   applicationCompositionAuthority,
   auditEvents,
+  moduleCredentialHolderLeases,
   principalAuthBindings,
   principals,
   tenants,
@@ -388,6 +389,83 @@ export const loadCompositionAuthorityActivation = Effect.fn('ModuleCredentials.l
     return Option.fromNullishOr(authority);
   },
 );
+
+/**
+ * How long one boot of an app host is known to run after it last renewed its lease. The host renews every minute, so
+ * a running host never comes near it; a boot that stopped renewing (killed, hung, cut off from the database) is no
+ * longer a holder once it passes, and its keys of the authority's revision are retired at the next retirement pass.
+ */
+export const MODULE_CREDENTIAL_HOLDER_LEASE = Duration.minutes(5);
+
+/**
+ * How long an ended lease is kept: twice the 24-hour key lifetime, after which no key of that boot can still verify,
+ * so the row decides nothing any more.
+ */
+const ENDED_HOLDER_LEASE_RETENTION = Duration.hours(48);
+
+/** The holder that renews a lease: the boot its keys attest and the host that boot runs in. */
+export interface ModuleCredentialHolder {
+  readonly bootId: string;
+  readonly hostId: string;
+}
+
+/**
+ * Takes or renews one boot's holder lease until `MODULE_CREDENTIAL_HOLDER_LEASE` from now, on the database clock, and
+ * drops leases that ended long ago. Only the app host's administrative identity may write (runtimes only read). A
+ * boot id is a fresh random UUID per boot, and a lease is only ever renewed for the host that took it: a row naming
+ * another host is never touched, and the call fails.
+ */
+export const holdModuleCredentialLease = Effect.fn('ModuleCredentials.holdLease')(function* holdLease(
+  executor: Pick<CoreDatabaseExecutor, 'execute'>,
+  holder: ModuleCredentialHolder,
+) {
+  const held = yield* executor
+    .execute<{ readonly bootId: string }>(
+      sql`insert into ${moduleCredentialHolderLeases} (boot_id, host_id, lease_until)
+        values (${holder.bootId}, ${holder.hostId}, clock_timestamp() + make_interval(secs => ${Duration.toSeconds(MODULE_CREDENTIAL_HOLDER_LEASE)}))
+        on conflict (boot_id) do update set lease_until = excluded.lease_until, updated_at = clock_timestamp()
+        where ${moduleCredentialHolderLeases.hostId} = excluded.host_id
+        returning boot_id as "bootId"`,
+      'objects',
+    )
+    .pipe(
+      Effect.timeout(DATABASE_OPERATION_TIMEOUT),
+      Effect.mapError(unavailable('The module credential holder lease could not be written')),
+    );
+  if (held.length !== 1) {
+    return yield* new ModuleCredentialUnavailableError({
+      reason: 'The module credential holder lease belongs to another host',
+    });
+  }
+  yield* executor
+    .execute(
+      sql`delete from ${moduleCredentialHolderLeases}
+        where ${moduleCredentialHolderLeases.leaseUntil} < clock_timestamp() - make_interval(secs => ${Duration.toSeconds(ENDED_HOLDER_LEASE_RETENTION)})`,
+    )
+    .pipe(
+      Effect.timeout(DATABASE_OPERATION_TIMEOUT),
+      Effect.mapError(unavailable('Ended module credential holder leases could not be dropped')),
+    );
+  return yield* Effect.void;
+});
+
+/** The boots whose holder lease has not ended, on the database clock. */
+export const loadLiveModuleCredentialHolders = Effect.fn('ModuleCredentials.loadLiveHolders')(function* loadLive(
+  executor: Pick<CoreDatabaseExecutor, 'execute'>,
+) {
+  const rows = yield* executor
+    .execute<{ readonly bootId: string }>(
+      sql`select boot_id::text as "bootId" from ${moduleCredentialHolderLeases}
+        where ${moduleCredentialHolderLeases.leaseUntil} > clock_timestamp()`,
+      'objects',
+    )
+    .pipe(
+      Effect.timeout(DATABASE_OPERATION_TIMEOUT),
+      Effect.mapError(unavailable('The module credential holder leases could not be read')),
+    );
+  const live: ReadonlySet<string> = new Set(rows.map(({ bootId }) => bootId));
+  return live;
+});
 
 /** One module credential named in an audit row: the module and the key's provider id, never the key. */
 export interface AuditedModuleCredential {

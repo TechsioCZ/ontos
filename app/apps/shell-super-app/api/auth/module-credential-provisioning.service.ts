@@ -5,6 +5,7 @@ import {
   ensurePlatformTenant,
   loadCompositionAuthorityActivation,
   loadInternalWorkloadBindings,
+  loadLiveModuleCredentialHolders,
   loadPlatformCredentialBindings,
   ModuleCredentialUnavailableError,
   modulePrincipalDisplayName,
@@ -30,6 +31,7 @@ import {
   ModuleCredentialAttestationJson,
   ModuleCredentialAttestationSchema,
   platformAttestationOf,
+  supersededByHolder,
   WorkloadCredentialAttestationJson,
   WorkloadCredentialAttestationSchema,
   workloadCredentialEntryId,
@@ -396,12 +398,13 @@ const holdsAuthorityNow = Effect.fn('ModuleCredentialProvisioning.holdsAuthority
 });
 
 /**
- * Retires the module credentials the issuing host's release superseded, and only when that release holds the
- * authority now. The cutoff is the moment its revision took the authority (the authority row's
- * `revision_activated_at`): a credential bound before it is superseded, its binding revoked and its key disabled; a
- * credential bound after it (another container of this release, an observe-only host, a newer host booting) is never
- * touched, and neither are this pass's own. A host whose revision does not hold the authority retires nothing. The
- * pass is audited either way. Returns the counts, so the caller can report and retry.
+ * Retires the platform credentials the issuing host's release superseded, and only when that release holds the
+ * authority now (`supersededByHolder` decides each): a key of the holder's own revision whose issuing boot holds no
+ * lease any more, and a key of any other revision, or unattested, bound before that revision took the authority
+ * (`revision_activated_at`). Each is disabled, then its binding revoked. The keys this pass is told the host holds,
+ * keys of a running peer of the same release (its boot holds a lease) and keys bound after the cutoff by a host of
+ * another revision are never touched. A host whose revision does not hold the authority retires nothing. The pass is
+ * audited either way. Returns the counts, so the caller can report and retry.
  */
 export const retireSupersededModuleCredentials = Effect.fn('ModuleCredentialProvisioning.retire')(function* retire(
   input: ModuleCredentialIssuer & {
@@ -427,9 +430,13 @@ export const retireSupersededModuleCredentials = Effect.fn('ModuleCredentialProv
   }
   const cutoff = authority.value.revisionActivatedAt;
   const platform = yield* loadPlatformCredentials;
-  // Module keys and internal workload keys alike: every platform key bound before this revision took the authority.
-  const superseded = platform.filter(
-    ({ binding }) => !input.current.has(binding.providerKeyId) && binding.boundAt.getTime() < cutoff.getTime(),
+  // Read after the keys: a host takes its lease before it binds any key, so every key read above whose boot still
+  // runs has a lease this read sees. Read first, a peer booting in between would have its fresh keys retired.
+  const liveBoots = yield* loadLiveModuleCredentialHolders(database.executor);
+  const holder = { current: input.current, cutoff, liveBoots, revision: input.compositionRevision };
+  // Module keys and internal workload keys alike.
+  const superseded = platform.filter(({ attestation, binding }) =>
+    supersededByHolder({ attestation, boundAt: binding.boundAt, providerKeyId: binding.providerKeyId }, holder),
   );
   const retireOne = Effect.fn('ModuleCredentialProvisioning.retireOne')(function* retireOne({
     binding: credential,
