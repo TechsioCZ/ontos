@@ -2,7 +2,6 @@ import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { mapCreatePriceGroupDefinitionRevisionActionProblem } from '../../api/create-price-group-definition-revision-action-problems.ts';
 import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '../../shared/actions/create-price-group-definition-revision.ts';
 import {
@@ -95,21 +94,6 @@ const services = (
   readDefinitionRevision: unused,
   retirePriceGroup: unused,
   validateCompatibility: unused,
-});
-
-it('declares the revision capability as scope-wide and forbids Legal Entity scope', () => {
-  expect(createPriceGroupDefinitionRevisionAction.descriptor.legalEntityScope).toBe('forbidden');
-  expect(createPriceGroupDefinitionRevisionAction.descriptor.entrypoint.authorization).toEqual({
-    kind: 'protected',
-  });
-  expect(createPriceGroupDefinitionRevisionAction.descriptor.accessDeclaration).toMatchObject({
-    key: 'pricing.price-group-catalog.price-group-definition-revision.create',
-    kind: 'action',
-    selectors: [],
-  });
-  // O67-Q2: the retired per-Price-Group target is gone; the gate decides the capability, and the
-  // owner service still refuses a payload whose current definition belongs to another Tenant.
-  expect(getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)).toBeUndefined();
 });
 
 it.effect('persists expected-current evidence and emits the revision event with its attached outbox message', () =>

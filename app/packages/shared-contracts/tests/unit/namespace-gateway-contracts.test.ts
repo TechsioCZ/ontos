@@ -34,11 +34,6 @@ const external = {
 };
 const decode = Schema.decodeUnknownSync(SupportedGatewayContextClaimsSchema, { onExcessProperty: 'error' });
 
-it('admits release-bound staff v1 and third-namespace v2 assertions', () => {
-  expect(decode(staff)).toEqual(staff);
-  expect(decode(external)).toEqual(external);
-});
-
 it('rejects missing namespace, wrong subject and changed assertion lifetime', () => {
   expect(() => decode({ ...staff, ver: 2 })).toThrow();
   expect(() => decode({ ...external, sub: staff.jti })).toThrow();

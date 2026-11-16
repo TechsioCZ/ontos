@@ -29,21 +29,13 @@ describe('Storefront Registry database contract', () => {
     }
   });
 
-  it('keeps gateway assertion replay identities global, unique and runtime-limited to select, insert and delete', () => {
+  // The realized unique identity and the exact runtime grants are asserted against a migrated
+  // database in tests/integration/gateway-assertion-redemption-postgres.test.ts, which also catches
+  // a later migration that re-grants UPDATE. Only the declared global shape is left here.
+  it('keeps gateway assertion replay identities global pre-authentication state', () => {
     const config = getTableConfig(gatewayAssertionRedemptions);
     expect(config.enableRLS).toBe(false);
     expect(config.columns.some(({ name }) => name === 'tenant_id')).toBe(false);
-    const migration = readFileSync(
-      new URL('../../drizzle/20261021175811_gateway_assertion_redemption/migration.sql', import.meta.url),
-      'utf-8',
-    );
-    expect(migration).toContain('UNIQUE("issuer","audience","jti")');
-    expect(migration).toContain(
-      'REVOKE ALL ON TABLE "storefront_registry"."gateway_assertion_redemptions" FROM PUBLIC, ontos_runtime',
-    );
-    expect(migration).toContain(
-      'GRANT SELECT, INSERT, DELETE ON TABLE "storefront_registry"."gateway_assertion_redemptions" TO ontos_runtime',
-    );
   });
 
   it('enforces tenant application identity, immutable revision numbering, lifecycle, channels, and intervals', () => {

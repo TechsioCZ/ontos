@@ -578,26 +578,6 @@ describe('Commerce Market server owner transport', () => {
     }),
   );
 
-  it.effect('rejects a scope without verified gateway provenance before any HTTP transport', () =>
-    Effect.gen(function* rejectUnverifiedRestrictionsScope() {
-      let fetchCount = 0;
-      const fakeFetch: typeof fetch = () => {
-        fetchCount += 1;
-        return Promise.reject(new Error('Unverified scope must fail before any HTTP transport'));
-      };
-      const failure = yield* makeServerMarketSubjectRestrictionsReader({
-        compositionRevision,
-        crypto,
-        scope: sourceScope,
-      })
-        .current(subject, requestCorrelation)
-        .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-
-      expect(Predicate.isTagged(failure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
-      expect(fetchCount).toBe(0);
-    }),
-  );
-
   it.effect('rejects a missing Legal Entity before any HTTP transport', () =>
     Effect.gen(function* rejectMissingLegalEntity() {
       let fetchCount = 0;

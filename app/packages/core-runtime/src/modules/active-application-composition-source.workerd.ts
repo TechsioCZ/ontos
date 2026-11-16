@@ -13,7 +13,7 @@ const KV_READ_TIMEOUT = Duration.seconds(5);
  * Workers KV binding. Every read goes to KV, so a new publication reaches the Worker within KV's
  * propagation time and no isolate keeps an expired observation; a missing binding or key fails closed.
  */
-const load = Effect.gen(function* readEdgeSnapshot() {
+const readSnapshot = Effect.gen(function* readEdgeSnapshot() {
   const binding = env.ONTOS_ACTIVE_APPLICATION_COMPOSITION;
   if (binding === undefined) {
     return yield* new ActiveApplicationCompositionSourceReadError({
@@ -77,17 +77,27 @@ const load = Effect.gen(function* readEdgeSnapshot() {
       return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     },
   });
-}).pipe(
-  Effect.timeoutOrElse({
-    duration: KV_READ_TIMEOUT,
-    orElse: () =>
-      Effect.fail(
-        new ActiveApplicationCompositionSourceReadError({ reason: 'The Workers KV snapshot read timed out' }),
-      ),
-  }),
-);
+});
 
-export const ActiveApplicationCompositionSourceLive = Layer.succeed(
-  ActiveApplicationCompositionSource,
-  Object.freeze({ load }),
-);
+/**
+ * `readTimeout` bounds one complete KV read, binding and body included. The placed Worker takes
+ * `KV_READ_TIMEOUT`; a caller that must observe the timed-out failure binds it tighter instead of
+ * waiting out the deployed bound.
+ */
+export const makeActiveApplicationCompositionSourceLayer = (readTimeout: Duration.Input) =>
+  Layer.succeed(
+    ActiveApplicationCompositionSource,
+    Object.freeze({
+      load: readSnapshot.pipe(
+        Effect.timeoutOrElse({
+          duration: readTimeout,
+          orElse: () =>
+            Effect.fail(
+              new ActiveApplicationCompositionSourceReadError({ reason: 'The Workers KV snapshot read timed out' }),
+            ),
+        }),
+      ),
+    }),
+  );
+
+export const ActiveApplicationCompositionSourceLive = makeActiveApplicationCompositionSourceLayer(KV_READ_TIMEOUT);

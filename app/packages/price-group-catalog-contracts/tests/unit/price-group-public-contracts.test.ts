@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
-import {
-  PriceGroupActionInvocationIdSchema as PublicPriceGroupActionInvocationIdSchema,
-  PriceGroupCompatibilityDecisionSchema as PublicPriceGroupCompatibilityDecisionSchema,
-  PriceGroupOwnerFailureSchema as PublicPriceGroupOwnerFailureSchema,
-  PriceGroupRefSchema as PublicPriceGroupRefSchema,
-} from '../../src/index.ts';
+import { PriceGroupActionInvocationIdSchema as PublicPriceGroupActionInvocationIdSchema } from '../../src/index.ts';
 import { PriceGroupDefinitionResponseSchema } from '../../src/apis/price-group-definition.ts';
 import {
   CatalogFenceRevisionSchema,
@@ -58,12 +53,6 @@ const requiredContract = { contractId: 'commerce.customer-price-group-assignment
 const meaningFingerprint = 'a'.repeat(64);
 
 describe('canonical Price Group Catalog package surface', () => {
-  it('publishes canonical resource and domain schemas from one browser-safe package', () => {
-    expect(PublicPriceGroupRefSchema).toBe(PriceGroupRefSchema);
-    expect(PublicPriceGroupCompatibilityDecisionSchema).toBe(PriceGroupCompatibilityDecisionSchema);
-    expect(PublicPriceGroupOwnerFailureSchema).toBe(PriceGroupOwnerFailureSchema);
-  });
-
   it('uses one canonical UUID catalog identity per Tenant and builds the exact Core target', () => {
     const decodedTenantId = Schema.decodeSync(PriceGroupTenantIdSchema)(tenantId);
     const rootRef = makePriceGroupCatalogRootRef(decodedTenantId);
@@ -91,6 +80,7 @@ describe('canonical Price Group Catalog package surface', () => {
     expect(decode(priceGroupRef)).toEqual(priceGroupRef);
     expect(() => decode({ ...priceGroupRef, resourceId: 'DEALER' })).toThrow();
     expect(() => decode({ ...priceGroupRef, businessCode: 'DEALER' })).toThrow();
+    expect(() => decode({ ...priceGroupRef, tenantId: 'not-a-tenant-id' })).toThrow();
   });
 });
 

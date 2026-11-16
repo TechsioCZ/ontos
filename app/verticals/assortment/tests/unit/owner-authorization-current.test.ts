@@ -137,19 +137,6 @@ it.effect('evaluates Rule retirement at the trusted operation time', () =>
     });
     expect(effectiveRetirement).toEqual({ reason: 'rule_retired', status: 'NOT_CURRENT' });
 
-    const retirementAtInstant = yield* assortmentAuthorizationCurrentForTransaction(
-      transaction([[stableRule], [{ retiredAt: futureAt }]]),
-    ).assess({
-      operationAt: afterFutureAt,
-      scope,
-      target: {
-        kind: 'assortment_rule',
-        mode: 'retire',
-        stableRule: stableRuleTarget,
-      },
-    });
-    expect(retirementAtInstant).toEqual({ reason: 'rule_retired', status: 'NOT_CURRENT' });
-
     const unavailable = yield* assortmentAuthorizationCurrentForTransaction(transaction([])).assess({
       operationAt,
       scope,

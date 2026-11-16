@@ -1,10 +1,7 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  OwnerVerifiableSetCompletenessEvidenceSchema,
-  OwnerVerifiableSetCompletenessScopeSchema,
-} from '../../src/index.ts';
+import { OwnerVerifiableSetCompletenessEvidenceSchema } from '../../src/index.ts';
 import type { OwnerVerifiableSetCompletenessEvidenceEncoded } from '../../src/index.ts';
 
 // Evidence is a closed cross-owner envelope; receiving boundaries decode it with closed parse options.
@@ -26,8 +23,6 @@ it('round-trips exact-predicate completeness evidence through the public contrac
   const decoded = decodeEvidence(exactPredicateEvidence);
 
   expect(encodeEvidence(decoded)).toEqual(exactPredicateEvidence);
-  expect(OwnerVerifiableSetCompletenessEvidenceSchema).toBeDefined();
-  expect(OwnerVerifiableSetCompletenessScopeSchema).toBeDefined();
 });
 
 it('round-trips safely-broader evidence with an optional next applicability boundary', () => {
