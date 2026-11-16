@@ -3,6 +3,7 @@ import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-ide
 import { SymmyInternalExecutionPlanSchema } from './symmy-job-execution.ts';
 import { SymmyPriceBatchSchema, SymmyPriceReviseFactsListSchema } from './symmy-price-batch.ts';
 import { SymmyCatalogHeadSchema, SymmyPriceListRowsSchema } from './symmy-price-list-batch.ts';
+import { SymmyProductPriceGroupFactsSchema, SymmyProductRowsSchema } from './symmy-product-batch.ts';
 
 import { SymmyPolicyFixtureRouteKeySchema } from './symmy-policy-fixture-intents.ts';
 
@@ -23,10 +24,14 @@ interface AdmissionFields {
   readonly fixtureId?: unknown;
   readonly plan?: unknown;
   readonly priceBatch?: unknown;
+  readonly priceGroupFacts?: unknown;
   readonly priceLists?: unknown;
+  readonly products?: unknown;
   readonly reviseFacts?: unknown;
   readonly routeKey: string;
 }
+const carriesNoProductSource = ({ priceGroupFacts, products }: AdmissionFields) =>
+  products === undefined && priceGroupFacts === undefined;
 const carriesNoFixtureSource = ({ code, contractVersion, fixtureId, plan }: AdmissionFields) =>
   code === undefined && fixtureId === undefined && contractVersion === undefined && plan === undefined;
 const priceListsAdmissionValid = (fields: AdmissionFields) =>
@@ -34,14 +39,25 @@ const priceListsAdmissionValid = (fields: AdmissionFields) =>
   fields.catalogHead !== undefined &&
   fields.priceBatch === undefined &&
   fields.reviseFacts === undefined &&
+  carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
 const priceBatchAdmissionValid = (fields: AdmissionFields) =>
   fields.priceBatch !== undefined &&
   fields.reviseFacts !== undefined &&
   fields.priceLists === undefined &&
   fields.catalogHead === undefined &&
+  carriesNoProductSource(fields) &&
+  carriesNoFixtureSource(fields);
+const productsAdmissionValid = (fields: AdmissionFields) =>
+  fields.products !== undefined &&
+  fields.priceGroupFacts !== undefined &&
+  fields.priceLists === undefined &&
+  fields.priceBatch === undefined &&
+  fields.catalogHead === undefined &&
+  fields.reviseFacts === undefined &&
   carriesNoFixtureSource(fields);
 const fixtureAdmissionValid = (fields: AdmissionFields) =>
+  carriesNoProductSource(fields) &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
   fields.catalogHead === undefined &&
@@ -63,8 +79,12 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   plan: Schema.optionalKey(SymmyInternalExecutionPlanSchema),
   /** The public price batch: one price list and its DEFINE and REVISE items. */
   priceBatch: Schema.optionalKey(SymmyPriceBatchSchema),
+  /** The price list each price group code of the products names, read for the route. Never caller intent. */
+  priceGroupFacts: Schema.optionalKey(SymmyProductPriceGroupFactsSchema),
   /** The public price list rows. The route enrollment, not the caller, supplies every other price fact. */
   priceLists: Schema.optionalKey(SymmyPriceListRowsSchema),
+  /** The public products. The route enrollment and the admission supply every owner fact the body lacks. */
+  products: Schema.optionalKey(SymmyProductRowsSchema),
   /** What the owner already holds about each REVISE price, read now. It is a fence, never caller intent. */
   reviseFacts: Schema.optionalKey(SymmyPriceReviseFactsListSchema),
   routeKey: SymmyDurableJobRouteKeySchema,
@@ -72,6 +92,12 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   Schema.makeFilter((fields) => {
     if (fields.routeKey === 'priceListsBatchUpsert') {
       return priceListsAdmissionValid(fields) || 'Price lists need the catalog head and no other source';
+    }
+    if (fields.routeKey === 'productsBatch') {
+      return (
+        productsAdmissionValid(fields) ||
+        'Products need their price group facts and no other source, and the products route takes nothing else'
+      );
     }
     if (fields.routeKey === 'priceListPricesBatch') {
       return priceBatchAdmissionValid(fields) || 'A price batch needs its REVISE facts and no other source';

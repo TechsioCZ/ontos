@@ -329,8 +329,8 @@ it.live(
         yield* admin`insert into symmy_integration.job_routes
       (tenant_id, principal_id, active, fixture_ids, mapping_version, route_key, route_revision)
       values
-            (${fixture.tenantId}, ${submitter.principalId}, true, array['native-products','native-alternate'], '1', 'productsBatch', '1'),
-            (${fixture.tenantId}, ${service.principalId}, true, array['native-products'], '1', 'productsBatch', '1')`;
+            (${fixture.tenantId}, ${submitter.principalId}, true, array['native-products','native-alternate'], '1', 'customersBatch', '1'),
+            (${fixture.tenantId}, ${service.principalId}, true, array['native-products'], '1', 'customersBatch', '1')`;
 
         const artifact = yield* prepareArtifact();
         const testIssuer = makeTestIssuer(admin, snapshot.composition.revision);
@@ -347,7 +347,7 @@ it.live(
         const payload = {
           fixtureId: 'native-products',
           idempotencyKey: 'native-client-key',
-          routeKey: 'productsBatch',
+          routeKey: 'customersBatch',
         } as const;
         const submit = (
           baseUrl: string,
@@ -415,7 +415,7 @@ it.live(
             });
             yield* admin`update symmy_integration.job_routes set fixture_plan = ${JSON.stringify(runnable)}::jsonb
               where tenant_id = ${submitter.tenantId} and principal_id = ${submitter.principalId}
-                and route_key = 'productsBatch'`;
+                and route_key = 'customersBatch'`;
             const credential = yield* testIssuer.fresh(submitter);
             const receipt = yield* submit(baseUrl, credential);
             expect(receipt).toStrictEqual({ jobId: receipt.jobId, phase: 'admitted' });
@@ -446,7 +446,7 @@ it.live(
             expect(changed).toMatchObject({ code: 'symmy_job_intent_conflict', status: 409 });
             yield* admin`update symmy_integration.job_routes set active = false
               where tenant_id = ${submitter.tenantId} and principal_id = ${submitter.principalId}
-                and route_key = 'productsBatch'`;
+                and route_key = 'customersBatch'`;
             const revoked = yield* Effect.flip(
               submit(baseUrl, yield* testIssuer.fresh(submitter), {
                 ...payload,
@@ -458,7 +458,7 @@ it.live(
             expect(yield* poll(baseUrl, yield* testIssuer.fresh(submitter), accepted.jobId)).toMatchObject(accepted);
             yield* admin`update symmy_integration.job_routes set active = true
               where tenant_id = ${submitter.tenantId} and principal_id = ${submitter.principalId}
-                and route_key = 'productsBatch'`;
+                and route_key = 'customersBatch'`;
             yield* admin`update core.access_workload_bindings set status = 'revoked', revoked_at = clock_timestamp()
               where tenant_id = ${submitter.tenantId} and principal_id = ${submitter.principalId}
                 and workload_key = ${admitWorkload}`;

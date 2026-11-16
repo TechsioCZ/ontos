@@ -14,8 +14,9 @@ const parseReceipt = Schema.decodeUnknownResult(AdmitSymmyJobResultSchema, { onE
 
 describe('Symmy internal job owner contracts', () => {
   it('keeps tenant, principal, source authority and pins outside submitted fixture data', () => {
-    const admission = { fixtureId: 'fixture-safe', idempotencyKey: 'submitted-key', routeKey: 'productsBatch' };
+    const admission = { fixtureId: 'fixture-safe', idempotencyKey: 'submitted-key', routeKey: 'customersBatch' };
     expect(Result.isSuccess(parseAdmission(admission))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'productsBatch' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, routeRevision: '2' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, tenantId: 'unverified' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, idempotencyKey: '   ' }))).toBe(true);

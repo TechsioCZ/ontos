@@ -247,7 +247,7 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     });
   const template = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(yield* planFor('INTERNAL_TEMPLATE'));
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
-    values(${routeId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json({ ...template, sourceRouteId })}::jsonb,'v1','productsBatch','v1',${yield* json(policy)}::jsonb)`;
+    values(${routeId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json({ ...template, sourceRouteId })}::jsonb,'v1','customersBatch','v1',${yield* json(policy)}::jsonb)`;
   const environment = {
     APP_ENV_PATH: '/dev/null',
     DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
@@ -310,7 +310,7 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
       contractVersion: 'INTERNAL_C14',
       plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan),
     };
-    const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/products/batch`, {
+    const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
       body: yield* HttpBody.json(payload),
       headers: { 'idempotency-key': key, 'x-api-key': Redacted.value(sourceKey.secret) },
     });

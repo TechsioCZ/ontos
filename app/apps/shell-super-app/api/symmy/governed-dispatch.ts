@@ -20,6 +20,7 @@ import {
 } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
 import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
+import { readSymmyProductPriceGroupFacts } from './product-batch-facts.ts';
 import {
   acquireSymmyReadAssertion,
   mapSymmyOwnerReadProblem,
@@ -171,7 +172,8 @@ const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[
  * What a durable job carries besides its key and route. The price lists carry the catalog head read now, as the
  * route enrolls that read: the owner admission fences the first created list on it and ignores it on a replay.
  * The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
- * about each REVISE price, which the owner admission uses on the first admission only.
+ * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
+ * list each price group code names, read the same way.
  */
 const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
   request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
@@ -179,6 +181,18 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
   admission: SymmyIngressAdmission,
   newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
 ) {
+  if ('products' in request) {
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    return {
+      priceGroupFacts: yield* readSymmyProductPriceGroupFacts(
+        { admission, products: request.products, routeScope: selected.route },
+        newRequestIdentifier,
+      ),
+      products: request.products,
+    };
+  }
   if ('priceBatch' in request) {
     if (selected === undefined) {
       return yield* unavailable();
@@ -419,6 +433,7 @@ export const makeSymmyGovernedDispatch = (
       Object.hasOwn(SYMMY_FIXTURE_ROUTES, request.route) ||
       'priceLists' in request ||
       'priceBatch' in request ||
+      'products' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;

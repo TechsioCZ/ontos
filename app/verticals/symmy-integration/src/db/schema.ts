@@ -137,11 +137,11 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
         ${table.routeKey} <> 'inventoryStockBatch' and (${table.fixturePlan} is null or not (${table.fixturePlan} ? 'stockScope'))
       )`,
     ),
-    // Only the price list routes enroll the grant refs of a price assertion, and then with both of its parts.
+    // Only the routes that write prices enroll the grant refs of a price assertion, and then with both of its parts.
     check(
       'symmy_job_routes_price_source_ck',
       sql`${table.fixturePlan} is null or not (${table.fixturePlan} ? 'priceSource') or (
-        ${table.routeKey} in ('priceListsBatchUpsert', 'priceListPricesBatch')
+        ${table.routeKey} in ('priceListsBatchUpsert', 'priceListPricesBatch', 'productsBatch')
         and jsonb_typeof(${table.fixturePlan} -> 'priceSource' -> 'mapping') = 'object'
         and jsonb_typeof(${table.fixturePlan} -> 'priceSource' -> 'sourceAuthority') = 'object'
       )`,

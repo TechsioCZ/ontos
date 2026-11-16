@@ -67,6 +67,19 @@ export const SYMMY_PRICE_REASON = 'Symmy price import';
 
 /** What the route enrolls to define prices: the grant refs a price assertion must name. */
 export const SymmyPriceSourceSchema = Schema.Struct({
+  /**
+   * The one commercial scope and unit basis the route gives a price whose body names none. Only the products route
+   * reads it: a price without its own and without this default is reported unsupported, never given a guess.
+   */
+  defaults: Schema.optionalKey(
+    Schema.Struct({
+      commercialScope: Schema.Struct({
+        channelId: identity.commercialScope.fields.channelId,
+        marketId: identity.commercialScope.fields.marketId,
+      }),
+      unitBasis: identity.unitBasis,
+    }),
+  ),
   mapping: price.sourceAssertion.fields.mapping,
   sourceAuthority: price.sourceAssertion.fields.sourceAuthority,
 });

@@ -241,7 +241,7 @@ export interface SymmyPriceBatchPlanInput<Failure> {
  */
 export const buildSymmyPriceBatchPlan = Effect.fn('SymmyPriceBatchPlan.build')(function* buildSymmyPriceBatchPlan<
   Failure,
->(input: SymmyPriceBatchPlanInput<Failure>) {
+>(input: SymmyPriceBatchPlanInput<Failure>): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure> {
   const { batch, digest, idempotencyKey, legalEntityId, receivedAt, reviseFacts, template } = input;
   const { priceGroupRef, prices } = batch;
   const defineContext = priceContextOf(template, legalEntityId, priceOperation);

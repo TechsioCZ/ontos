@@ -376,7 +376,7 @@ it.live(
         const beforeReplay = yield* emittedDispatches(fixture.admin, fixture.tenantId);
         yield* dispatch(governance.handoff, 'INTERNAL_PRIVACY_DISPATCH_COORDINATOR_REPLAY');
         expect(yield* emittedDispatches(fixture.admin, fixture.tenantId)).toBe(beforeReplay);
-        const replay = yield* fixture.client.post(`${fixture.shell.baseUrl}/api/symmy/v1/products/batch`, {
+        const replay = yield* fixture.client.post(`${fixture.shell.baseUrl}/api/symmy/v1/customers/batch`, {
           body: yield* HttpBody.json(positive.payload),
           headers: {
             'idempotency-key': 'INTERNAL_PRIVACY_DISPATCH_POSITIVE',
