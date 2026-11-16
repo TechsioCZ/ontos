@@ -6,7 +6,8 @@ import {
 } from '@app/core-runtime';
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Data, Effect, Layer, Predicate, Redacted } from 'effect';
+import { Context, Effect, Layer, Predicate, Redacted } from 'effect';
+import { ProbeRollback } from '../support/probe-rollback.ts';
 import type { SqlError } from 'effect/sql/SqlError';
 import { NodeCrypto } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
@@ -55,7 +56,6 @@ const isDenied = (client: Client, statement: string, parameters: readonly unknow
   );
 
 /** Carries a probe result out of a transaction that must roll back, since a denied probe aborts it. */
-class ProbeRollback<Value> extends Data.TaggedError('ProbeRollback')<{ readonly value: Value }> {}
 
 /** Runs `body` in one transaction and always rolls it back, returning the body's result. */
 const inTransaction = <Value>(client: Client, body: Effect.Effect<Value, SqlError>) =>

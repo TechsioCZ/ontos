@@ -14,8 +14,8 @@ import { executeSuspendMarketWithAuthorization } from '../../src/api/suspend-mar
 import {
   MarketRevisionNativeBundleLive,
   makeMarketRevisionNativeOwner,
-  marketRevisionNativeServices,
-} from '../fixtures/market-revision-native.ts';
+} from '../fixtures/market-revision-native-bundle.ts';
+import { marketRevisionNativeServices } from '../fixtures/market-revision-native.ts';
 
 const nativeOwnerServices = MarketRevisionNativeBundleLive.pipe(Layer.provideMerge(marketRevisionNativeServices));
 

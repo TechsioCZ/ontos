@@ -13,16 +13,12 @@ import { Context, DateTime, Effect, Layer, Redacted, Result, Schema, Stream } fr
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
+import { NativeSetupFailed } from '../support/native-setup-failure.ts';
 
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
-
-class RedemptionNativeSetupFailed extends Schema.TaggedError<RedemptionNativeSetupFailed>()(
-  'RedemptionNativeSetupFailed',
-  { reason: Schema.String },
-) {}
 
 const fixture = Effect.fn('commerce-market-catalog.RedemptionNative.fixture')(function* fixture() {
   const sourceConnections = yield* loadDatabaseConnectionPair();
@@ -51,7 +47,7 @@ const fixture = Effect.fn('commerce-market-catalog.RedemptionNative.fixture')(fu
       concurrency: 3,
     });
     if (code !== 0) {
-      return yield* new RedemptionNativeSetupFailed({ reason: 'The isolated owner migration failed' });
+      return yield* new NativeSetupFailed({ reason: 'The isolated owner migration failed' });
     }
     return yield* Effect.void;
   });

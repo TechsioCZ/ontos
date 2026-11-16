@@ -63,6 +63,7 @@ import { makeCurrentStorefrontNativeReceiver } from '@app/storefront-registry/te
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
+import { NativeSetupFailed } from '../support/native-setup-failure.ts';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -196,10 +197,6 @@ const makeMarketSourceContract = Effect.fn('MarketRevisionNative.sourceContract'
   });
 });
 
-class MarketScenarioSetupFailed extends Schema.TaggedError<MarketScenarioSetupFailed>()('MarketScenarioSetupFailed', {
-  reason: Schema.String,
-}) {}
-
 /**
  * The isolated database, its Core and owner forward migrations, the runtime privilege grants and the
  * single published composition are the fixed cost of a scenario, and none of them is Tenant-scoped:
@@ -265,7 +262,7 @@ const makeScenarioDatabase = Effect.fn('MarketRevisionNative.makeScenarioDatabas
       { concurrency: 3 },
     );
     if (Number(status) !== 0) {
-      return yield* new MarketScenarioSetupFailed({ reason: 'The isolated owner migration failed' });
+      return yield* new NativeSetupFailed({ reason: 'The isolated owner migration failed' });
     }
     return yield* Effect.void;
   });
@@ -314,7 +311,7 @@ const makeScenarioDatabase = Effect.fn('MarketRevisionNative.makeScenarioDatabas
     replayPrivileges.canSelect !== true ||
     replayPrivileges.canUpdate !== false
   ) {
-    return yield* new MarketScenarioSetupFailed({
+    return yield* new NativeSetupFailed({
       reason: 'Pre-authentication replay storage does not retain its exact production privileges',
     });
   }

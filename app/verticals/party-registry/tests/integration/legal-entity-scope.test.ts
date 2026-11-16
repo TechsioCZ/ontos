@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, Data, Effect, Layer, Redacted } from 'effect';
+import { Context, Crypto, Effect, Layer, Redacted } from 'effect';
+import { ProbeRollback } from '../support/probe-rollback.ts';
 import { expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -14,7 +15,6 @@ import {
 type Client = PgClient.PgClient;
 const query = (client: Client, statement: string, parameters: readonly unknown[] = []) =>
   client.unsafe<Row>(statement, parameters);
-class ProbeRollback<Value> extends Data.TaggedError('LegalEntityProbeRollback')<{ readonly value: Value }> {}
 
 /** Each probe, including successful writes, rolls back and keeps the registered grant unchanged. */
 const inScope = <Value>(client: Client, assertion: Redacted.Redacted<string>, body: Effect.Effect<Value, SqlError>) =>
@@ -26,7 +26,7 @@ const inScope = <Value>(client: Client, assertion: Redacted.Redacted<string>, bo
         return yield* new ProbeRollback({ value });
       }),
     )
-    .pipe(Effect.catchTag('LegalEntityProbeRollback', ({ value }) => Effect.succeed(value)));
+    .pipe(Effect.catchTag('ProbeRollback', ({ value }) => Effect.succeed(value)));
 
 const denied = (client: Client, statement: string, parameters: readonly unknown[]) =>
   query(client, statement, parameters).pipe(
