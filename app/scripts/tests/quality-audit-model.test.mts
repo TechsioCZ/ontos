@@ -19,6 +19,7 @@ const requirePrelude = [
   'const require = createRequire(import.meta.url);',
 ];
 const resolverFile = 'src/resolver.ts';
+const deadFile = 'src/dead.ts';
 const directFile = 'src/direct.ts';
 const configurationFiles = '*.config.ts';
 const toolsPattern = 'tools/**/*.{ts,mts}';
@@ -295,7 +296,7 @@ const fixture = () =>
     write(root, directFile, "import '@rspack/core';");
     write(root, 'src/helper.ts', 'export const used = 1; export const unusedNeighbor = 2;');
     write(root, 'src/worker.mts', 'console.log("worker"); export const unusedWorkerExport = 3;');
-    write(root, 'src/dead.ts', 'export const genuinelyDead = 1;');
+    write(root, deadFile, 'export const genuinelyDead = 1;');
     write(root, 'src/public.ts', 'export const externallyConsumed = 1;');
     write(
       root,
@@ -325,6 +326,57 @@ const fixture = () =>
     );
     return root;
   });
+
+it.live(
+  'Rstest setup files stay live without hiding their unused exports or dynamic neighbors',
+  Effect.fn(function* rstestSetupFileConsumers() {
+    const root = yield* fixture();
+    const rootSetup = 'src/root-setup.ts';
+    const projectSetup = 'src/integration-setup.ts';
+    write(
+      root,
+      rstestConfigFile,
+      `import { defineConfig } from '@rstest/core';
+       export default defineConfig({
+         setupFiles: ['./${rootSetup}'],
+         projects: [
+           { name: 'integration', setupFiles: ['./${projectSetup}'] },
+           { name: 'dynamic', setupFiles: [chooseSetup()] }
+         ]
+       });`,
+    );
+    for (const file of [rootSetup, projectSetup]) {
+      write(root, file, 'export const unusedSetupExport = 1;');
+    }
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(
+      root,
+      {
+        workspaces: {
+          '.': {
+            entry: [rstestConfigFile],
+            node: false,
+            project: [rstestConfigFile, 'src/*.ts'],
+            rstest: { config: [] },
+          },
+        },
+      },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const files = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    const exports = report.issues.flatMap((issue) => issue.exports.map((finding) => `${issue.file}#${finding.name}`));
+    for (const file of [rootSetup, projectSetup]) {
+      expect(files).not.toContain(file);
+      expect(exports).toContain(`${file}#unusedSetupExport`);
+    }
+    expect(files).toContain(deadFile);
+    expect(
+      model.evidence.filter(({ reason }) => reason === 'Rstest setupFiles consumer').map(({ target }) => target),
+    ).toEqual([rootSetup, projectSetup]);
+  }),
+);
 
 it.live(
   'native Modern route generation proves paired client loaders and splat defaults without hiding neighbors',
@@ -1985,7 +2037,7 @@ it.live(
     }
     expect(files).not.toContain(typeTest);
     expect(exports).toContain(`${typeTest}#unusedTypeTestNeighbor`);
-    expect(files).toContain('src/dead.ts');
+    expect(files).toContain(deadFile);
     const probeFile = `${lintDirectory}/tests/shared-helpers-probe.ts`;
     expect(model.evidence.filter((fact) => fact.source === helperTest)).toEqual([
       expect.objectContaining({
