@@ -57,12 +57,6 @@ const AnchorFields = {
   unitRef: Schema.optionalKey(UnitRefSchema),
 };
 
-/**
- * Refusal reason (a FinanceConflict) of a CreateInvoiceDraft for a billing part of an order that Finance already holds
- * for another counterparty: the invoice has to be corrected in Finance, asking again changes nothing.
- */
-export const SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY = 'source_order_invoice_other_counterparty';
-
 export const FinanceCommandSchema = Schema.Union([
   /**
    * Our own (outgoing) invoice takes the next number of the company's series, allocated by Finance from the complete

@@ -11,7 +11,6 @@ import {
   FinanceReferenceUnavailable,
   FinanceRejected,
   MAX_DOCUMENT_BYTES,
-  SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY,
 } from '../../shared/actions/apply-command.ts';
 import {
   DEMO_BUSINESS_DATE,
@@ -21,6 +20,7 @@ import {
   FinancePrincipalIdSchema,
   FinanceRecurringTemplateIdSchema,
   InvoiceLineSchema,
+  SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY,
 } from '../../shared/apis/records.ts';
 import type {
   FinanceDocument,

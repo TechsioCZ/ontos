@@ -1,4 +1,4 @@
-import { SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY } from '@app/finance-billing/contracts/apply-command';
+import { SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY } from '@app/finance-billing/contracts/records';
 import { Predicate } from 'effect';
 import type { SalesOrder } from '../../../../../shared/domain/purchasing.ts';
 import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';

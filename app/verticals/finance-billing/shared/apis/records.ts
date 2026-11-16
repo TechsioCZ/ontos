@@ -148,6 +148,12 @@ export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-
 export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 /** Purchase-order identity in the same tenant/legal-entity finance aggregate. */
 export const SourceOrderSchema = Schema.Struct({ id: FinanceTextSchema, number: FinanceTextSchema });
+/**
+ * Refusal reason (a FinanceConflict, the problem's `detail`) of a CreateInvoiceDraft for a billing part of an order that
+ * Finance already holds for another counterparty: the invoice has to be corrected in Finance, asking again changes
+ * nothing.
+ */
+export const SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY = 'source_order_invoice_other_counterparty';
 /** Earlier advance/partial invoice whose amount a final or partial invoice takes into account (S07.R2). */
 export const PriorSettlementEntrySchema = Schema.Struct({
   amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),

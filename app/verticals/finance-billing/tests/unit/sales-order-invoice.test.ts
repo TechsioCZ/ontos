@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import {
-  FinanceConflict,
-  FinanceRejected,
-  SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY,
-} from '../../shared/actions/apply-command.ts';
+import { FinanceConflict, FinanceRejected } from '../../shared/actions/apply-command.ts';
+import { SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY } from '../../shared/apis/records.ts';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
