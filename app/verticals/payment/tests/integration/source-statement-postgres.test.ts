@@ -1127,7 +1127,9 @@ describe('#1151 source ingress concurrency on native PostgreSQL', () => {
         const verifiedAtMs = receivedAtMs + 1000;
         const pauseQualification = Effect.gen(function* pauseQualification() {
           // The backend holding the authority lock, read on this transaction's own connection.
-          const [backend] = yield* runtimeClient.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid');
+          const [backend] = yield* runtimeClient
+            .unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid')
+            .pipe(Effect.orDie);
           yield* Deferred.succeed(locked, backend?.pid ?? 0);
           yield* Deferred.await(release);
           yield* TestClock.setTime(verifiedAtMs);
