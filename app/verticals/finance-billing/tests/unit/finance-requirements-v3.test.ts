@@ -407,7 +407,15 @@ describe('S07.R2 final invoice takes earlier advances into account by hand', () 
 
   it.effect('links, caps by the paid amount and settles that part on approval without moving money', () =>
     Effect.gen(function* settlement() {
-      const state = { ...empty, invoices: [advance, final] };
+      // The advance's own payment is one dated payment record, as every paid amount is.
+      const advancePayment = {
+        amountMinor: 30_000,
+        id: 'adv-1-payment',
+        invoiceResourceId: yield* Schema.decodeEffect(FinanceInvoiceResourceIdSchema)('adv-1'),
+        paidOn: '2026-10-05',
+        recordedAt: now,
+      };
+      const state = { ...empty, invoices: [advance, final], manualPayments: [advancePayment] };
       const tooMuch = yield* Effect.exit(
         run(state, {
           _tag: 'SetPriorSettlement',

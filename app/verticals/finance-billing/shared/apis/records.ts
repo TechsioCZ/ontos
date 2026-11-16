@@ -248,7 +248,11 @@ export const FinanceDocumentSchema = Schema.Struct({
   uploadedAt: Schema.DateTimeUtcFromString,
 });
 export type FinanceDocument = typeof FinanceDocumentSchema.Type;
-/** A payment confirmed by a user. */
+/**
+ * One payment of an invoice, immutable once recorded: confirmed by a user, or (`source` IMPORT) a paid amount the
+ * invoice was imported or seeded with, dated when it was taken over. Every paid amount beyond the earlier advances an
+ * invoice takes into account is one of these records, so a payment keeps its date whatever later edits the invoice.
+ */
 export const ManualPaymentSchema = Schema.Struct({
   ...ActorFields,
   amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
@@ -257,6 +261,7 @@ export const ManualPaymentSchema = Schema.Struct({
   note: Schema.optionalKey(FinanceTextSchema),
   paidOn: CalendarDateSchema,
   recordedAt: Schema.DateTimeUtcFromString,
+  source: Schema.optionalKey(Schema.Literal('IMPORT')),
 });
 export type ManualPayment = typeof ManualPaymentSchema.Type;
 export const RecurringTemplateSchema = Schema.Struct({

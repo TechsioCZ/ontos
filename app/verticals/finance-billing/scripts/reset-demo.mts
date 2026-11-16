@@ -21,6 +21,7 @@ import { Command, Flag } from 'effect/cli';
 import { FinanceStateSchema, InvoiceLinesSchema } from '../shared/apis/records.ts';
 import type { FinanceState } from '../shared/apis/records.ts';
 import { computeInvoiceTotals, INVOICE_NUMBER_PREFIX } from '../shared/domain/invoice-totals.ts';
+import { withImportedPaymentRecords } from '../shared/domain/finance-planning.ts';
 import { classificationOfStoredRate } from '../shared/domain/line-vat.ts';
 import { derivePaymentState } from '../src/services/persistence.service.ts';
 import { financeStates, financeRelations } from '../src/database/schema.ts';
@@ -47,7 +48,13 @@ const AdminDatabaseLive = Layer.effect(
 ).pipe(Layer.provide(Reactivity.layer));
 
 const writeState = Effect.fn('Finance.writeDemoState')(function* writeDemoState(input: typeof FixtureSchema.Type) {
-  const state = yield* Schema.encodeEffect(FinanceStateSchema)(input.state);
+  // A seeded paid amount becomes a dated payment record here, before any later edit of the invoice can move its date.
+  const recorded = yield* withImportedPaymentRecords(input.state);
+  const paymentIds = new Set((recorded.manualPayments ?? []).map((payment) => payment.id));
+  if (paymentIds.size !== (recorded.manualPayments ?? []).length) {
+    return yield* new ResetInputError({ reason: 'Payment record identities are not unique' });
+  }
+  const state = yield* Schema.encodeEffect(FinanceStateSchema)(recorded);
   const db = yield* makeWithDefaults({ relations: financeRelations });
   const now = yield* DateTime.now;
   yield* db
@@ -63,7 +70,7 @@ const writeState = Effect.fn('Finance.writeDemoState')(function* writeDemoState(
       set: { revision: 0, state, updatedAt: DateTime.toDateUtc(now) },
       target: [financeStates.tenantId, financeStates.legalEntityId],
     });
-  yield* Console.log('Nájempark finance demo state reset to revision 0');
+  return yield* Console.log('Nájempark finance demo state reset to revision 0');
 });
 
 const reset = Effect.fn('Finance.resetDemo')(function* resetDemo(fixturePath: string) {

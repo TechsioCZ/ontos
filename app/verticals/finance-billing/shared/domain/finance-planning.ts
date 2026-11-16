@@ -14,6 +14,7 @@ import {
   InvoiceSchema,
   IssuerIcoSchema,
   IssuerVatIdSchema,
+  ManualPaymentSchema,
 } from '../apis/records.ts';
 import { buildPohodaDataPack } from './pohoda-xml.ts';
 import type { PohodaExportRefused } from './pohoda-xml.ts';
@@ -61,64 +62,103 @@ export interface PaymentEvent {
   readonly direction: Invoice['direction'];
   readonly id: string;
   readonly invoiceResourceId: string;
-  /** PRIOR = an earlier advance/partial amount taken into account by hand: it settles, but moves no money. */
-  readonly source: 'MANUAL' | 'PRIOR' | 'SNAPSHOT';
+  /**
+   * MANUAL = confirmed by a user; IMPORT = the paid amount an invoice was imported or seeded with; PRIOR = an earlier
+   * advance/partial amount taken into account by hand: it settles, but moves no money.
+   */
+  readonly source: 'IMPORT' | 'MANUAL' | 'PRIOR';
 }
 
-const isoDateOf = (value: Invoice['updatedAt']): string => DateTime.formatIsoDateUtc(value);
+const recordsByInvoice = (payments: readonly ManualPayment[]): ReadonlyMap<string, readonly ManualPayment[]> => {
+  const byInvoice = new Map<string, ManualPayment[]>();
+  for (const payment of payments) {
+    byInvoice.set(payment.invoiceResourceId, [...(byInvoice.get(payment.invoiceResourceId) ?? []), payment]);
+  }
+  return byInvoice;
+};
 
 /**
- * Every confirmed payment of every invoice exactly once. Simulated observations are cumulative, so each one
- * contributes its increment; manual payments contribute their amount. Whatever part of `paidMinor` no event
- * explains (older seeded snapshots) becomes one SNAPSHOT event, so the sum always equals `paidMinor`.
+ * Every payment of every confirmed invoice exactly once: the earlier advances it takes into account, dated when it
+ * was approved, and its payment records, each on its own payment date. A record never moves, whatever later edits
+ * the invoice, so a cash-flow month counts a payment once and in the month it was paid.
  */
 export const paymentEvents = (
   state: Pick<FinanceState, 'invoices'> & {
     readonly manualPayments?: readonly ManualPayment[];
   },
 ): readonly PaymentEvent[] => {
+  const records = recordsByInvoice(state.manualPayments ?? []);
   const events: PaymentEvent[] = [];
   for (const invoice of state.invoices) {
-    if (invoice.businessState !== 'CONFIRMED' || invoice.paidMinor === 0) {
+    if (invoice.businessState !== 'CONFIRMED') {
       continue;
     }
     const id = invoice.ref.resourceId;
-    let explained = 0;
-    for (const [index, entry] of (invoice.priorSettlement?.entries ?? []).entries()) {
-      events.push({
-        amountMinor: entry.amountMinor,
-        date: isoDateOf(invoice.approvedAt ?? invoice.priorSettlement?.confirmedAt ?? invoice.updatedAt),
-        direction: invoice.direction,
-        id: `${id}:prior:${index}`,
-        invoiceResourceId: id,
-        source: 'PRIOR',
-      });
-      explained += entry.amountMinor;
+    const { priorSettlement } = invoice;
+    if (priorSettlement !== undefined) {
+      const date = DateTime.formatIsoDateUtc(invoice.approvedAt ?? priorSettlement.confirmedAt);
+      for (const [index, entry] of priorSettlement.entries.entries()) {
+        events.push({
+          amountMinor: entry.amountMinor,
+          date,
+          direction: invoice.direction,
+          id: `${id}:prior:${index}`,
+          invoiceResourceId: id,
+          source: 'PRIOR',
+        });
+      }
     }
-    for (const payment of (state.manualPayments ?? []).filter((entry) => entry.invoiceResourceId === id)) {
+    for (const payment of records.get(id) ?? []) {
       events.push({
         amountMinor: payment.amountMinor,
         date: payment.paidOn,
         direction: invoice.direction,
         id: payment.id,
         invoiceResourceId: id,
-        source: 'MANUAL',
-      });
-      explained += payment.amountMinor;
-    }
-    if (explained < invoice.paidMinor) {
-      events.push({
-        amountMinor: invoice.paidMinor - explained,
-        date: isoDateOf(invoice.updatedAt),
-        direction: invoice.direction,
-        id: `${id}:snapshot`,
-        invoiceResourceId: id,
-        source: 'SNAPSHOT',
+        source: payment.source ?? 'MANUAL',
       });
     }
   }
   return events;
 };
+
+/**
+ * An imported or seeded ledger with the part of each invoice's `paidMinor` that neither its payment records nor the
+ * earlier advances it takes into account explain turned into one IMPORT payment record, dated on the invoice's
+ * `updatedAt` as the ledger hands it over. Taken over once, at the import boundary, before any edit can move that
+ * date. The Finance migration `imported-payment-records` applies exactly this rule to the ledgers already stored.
+ */
+export const withImportedPaymentRecords = Effect.fn('Finance.withImportedPaymentRecords')(
+  function* withImportedPaymentRecords(state: FinanceState) {
+    const records = recordsByInvoice(state.manualPayments ?? []);
+    const unrecorded = state.invoices.flatMap((invoice) => {
+      const { resourceId } = invoice.ref;
+      const settledByPrior = (invoice.priorSettlement?.entries ?? []).reduce(
+        (sum, entry) => sum + entry.amountMinor,
+        0,
+      );
+      const recorded = (records.get(resourceId) ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
+      const amountMinor = invoice.paidMinor - settledByPrior - recorded;
+      return amountMinor > 0
+        ? [
+            {
+              amountMinor,
+              id: `${resourceId}:import`,
+              invoiceResourceId: resourceId,
+              paidOn: DateTime.formatIsoDateUtc(invoice.updatedAt),
+              recordedAt: DateTime.formatIso(invoice.updatedAt),
+              source: 'IMPORT',
+            },
+          ]
+        : [];
+    });
+    if (unrecorded.length === 0) {
+      return state;
+    }
+    const imported = yield* Schema.decodeUnknownEffect(Schema.Array(ManualPaymentSchema))(unrecorded);
+    return { ...state, manualPayments: [...(state.manualPayments ?? []), ...imported] };
+  },
+);
 
 /** Plan item amount weighted by its optional probability (absent = certain), rounded to whole haléře. */
 export const planItemWeightedMinor = (item: Pick<PlanItem, 'amountMinor' | 'probabilityPercent'>): number =>
