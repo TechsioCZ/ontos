@@ -484,7 +484,7 @@ jobs:
   # run whose exact diff is unavailable. ci-plan publishes the list; $RUNNER_TEMP is job-local and this
   # job checks out at depth 1, so it can neither read that path nor recompute the diff.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook
+    name: Format, Lint, and Repository Tooling
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-24.04
@@ -562,6 +562,15 @@ jobs:
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$files"
           git diff --exit-code HEAD
+
+      # Balance the eight executors: source checks already carry typecheck and API rules,
+      # while this runner would otherwise be idle after the hook completes.
+      - name: Test repository tooling against the unchanged checkout
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: mise exec -- pnpm test:scripts
 
   # Three service runners: bootstrap plus federation proof, integration, and browsers.
   # Integration starts four independent PostgreSQL clusters and SpiceDB datastores

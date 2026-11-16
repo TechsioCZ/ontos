@@ -3,7 +3,7 @@
     {
       "name": "Source, Tooling, and Generation Gates",
       "typescript-build": true,
-      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm test:deployment-impact\npnpm test:generation\npnpm test:scripts\n"
+      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm test:deployment-impact\npnpm test:generation\n"
     }
   ],
   "unit": [

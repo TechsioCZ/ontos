@@ -117,6 +117,7 @@ it('reports the required Workspace gates check on every pull request and merge g
 
 /** A GitHub Actions `${{ … }}` expression, written without JavaScript template placeholders. */
 const expression = (body: string) => `\${{ ${body} }}`;
+const CURRENT_SOURCE_REVISION = expression('github.sha');
 const REVIEWED_RELEASE_INTENT_EXPRESSION = expression(
   "vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json'",
 );
@@ -421,7 +422,7 @@ it('builds each edge unit with its retained asset origin and archives the exact 
   const build = builds.steps.find((step) => step.name === BUILD_STEP);
   expect(build?.env).toMatchObject({
     ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-    ULTRAMODERN_SOURCE_REVISION: expression('github.sha'),
+    ULTRAMODERN_SOURCE_REVISION: CURRENT_SOURCE_REVISION,
     UNIT_ID: expression('matrix.unit.id'),
     UNIT_PACKAGE: expression('matrix.unit.packageName'),
   });
@@ -1969,7 +1970,7 @@ it('builds Node artifacts on one runner without waiting for or proving the topol
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
   const { env: environment, steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(expression('github.sha'));
+  expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache/') === true)).toEqual([]);
   const build = steps.findIndex(({ name }) => name === "Build the shard's Node artifacts");
   const pack = steps.findIndex(({ name }) => name === "Pack the shard's build outputs");
@@ -2164,13 +2165,12 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   ]) {
     expect(commands).toContain(check);
   }
-  // One four-worker process covers the entire tooling project without another runner or install.
-  const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
-  const tooling = sourceShards
-    .flatMap((entry) => entry.commands.trim().split('\n'))
-    .filter((command) => command.startsWith('pnpm test:scripts'));
-  expect(tooling.length).toBeGreaterThan(0);
-  expect(tooling).toEqual(['pnpm test:scripts']);
+  // Tooling shares the otherwise short formatter runner; it still runs exactly once.
+  const format = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
+  const tooling = format.steps.filter(({ run }) => run === 'mise exec -- pnpm test:scripts');
+  expect(tooling).toHaveLength(1);
+  expect(tooling[0]?.env?.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
+  expect(commands).not.toContain('pnpm test:scripts');
   // The module entrypoint boundary check runs inside the deployment impact gate.
   const { scripts } = readRootScripts();
   expect(scripts['test:deployment-impact']).toContain(scripts['module-entrypoints:check']);
