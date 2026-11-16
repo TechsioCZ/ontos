@@ -1512,6 +1512,19 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     });
   }).pipe(Effect.catch(() => Effect.logInfo('Privacy seal failure Outbox metadata unavailable')));
   const seal = isolated.composition.seal().pipe(Effect.tapError(() => observeSealFailure));
+  const observeMatchedWork = () =>
+    Effect.tryPromise({
+      catch: () => failure('The committed Privacy dispatch matching observation failed'),
+      try: () =>
+        bootstrapAdmin.query<{ ready: boolean }>(
+          `select not exists(
+        select 1 from core.outbox_messages
+        where tenant_id=$1 and producer_module_key='privacy.core'
+          and topic='privacy.measure.dispatched' and matched_at is null
+      ) as ready`,
+          [handoff.tenantId],
+        ),
+    }).pipe(Effect.map((result) => result.rows[0]?.ready ?? false));
   const token = (
     audience: 'party-registry' | 'privacy',
     revision = snapshot.composition.revision,
@@ -1730,6 +1743,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     handoff,
     isolated,
     legalEntityId: shell.legalEntityId,
+    observeMatchedWork,
     operatorConfiguration,
     outcomes,
     ownerCount,
@@ -1758,6 +1772,26 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     worker,
   };
 });
+
+// Shell's matcher may own the row a one-shot worker skips. Wait for its commit, not another worker cycle.
+// These tests control real PostgreSQL and child processes under the live suite clock.
+const matchedWorkReady = (f: Effect.Success<typeof fixture>) =>
+  Effect.gen(function* awaitCommittedMatching() {
+    while (!(yield* f.observeMatchedWork())) {
+      yield* Effect.sleep('20 millis');
+    }
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: '10 seconds',
+      orElse: () =>
+        Effect.fail(failure('Committed Privacy dispatch matching was not observed before the worker cycle')),
+    }),
+  );
+const synchronizedCycle = (f: Effect.Success<typeof fixture>, advanceMs = 0) =>
+  Effect.gen(function* committedWorkerCycle() {
+    yield* matchedWorkReady(f);
+    return yield* f.cycle(advanceMs);
+  });
 
 it.effect('accepts only the closed additional Legal Entity fixture option', () =>
   Effect.sync(() => {
@@ -2639,7 +2673,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             rows.filter((row) => row.messageId === originalMessage.id && row.consumerModuleKey === 'party.registry');
           const deliveriesBefore = yield* f.deliveries();
           // Actual registered handler + repository.complete: succeeded is counted only after durable ACK.
-          const completedCycle = yield* f.cycle();
+          const completedCycle = yield* synchronizedCycle(f);
           expect(completedCycle).toMatchObject({
             claimed: 1,
             dead: 0,
@@ -2648,8 +2682,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             succeeded: 1,
           });
           const deliveriesAfter = yield* f.deliveries();
-          // Shell's real installed-catalog matcher also runs: this worker may find its delivery already matched.
-          // Keep both matchers and require the same single claim/ACK and exact message-derived debt settlement.
+          // Synchronization leaves matching to Shell and requires the same single claim/ACK and exact debt settlement.
           // One match inserts every subscribed delivery of the message: Party's consumer and Privacy's own
           // dispatch watchdog. The totals count both, so this count reads Party's delivery of the one dispatch.
           expect(privacyDeliveries(deliveriesAfter)).toHaveLength(1);
@@ -2659,12 +2692,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
             deliveriesAfter.length - deliveriesBefore.length,
           );
-          // Either Shell's matcher got there first and this worker matched nothing, or this worker matched the one
-          // message itself and created both of its subscribed deliveries (Party's consumer, Privacy's watchdog).
-          expect([
-            [0, 0],
-            [1, 2],
-          ]).toContainEqual([completedCycle.matched.messagesMatched, completedCycle.matched.deliveriesCreated]);
+          expect(completedCycle.matched).toEqual({ deliveriesCreated: 0, messagesMatched: 0 });
           const original = yield* coreDebtSettled(f);
           expect(original.handoffFingerprint).toBe(digest(canonical));
           expect(original.outcome).toMatchObject({
@@ -2677,7 +2705,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             taskId: f.handoff.taskId,
           });
           expect(yield* f.ownerCount()).toBe('1');
-          expect(yield* f.cycle()).toMatchObject({ claimed: 0, succeeded: 0 });
+          expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 0, succeeded: 0 });
           expect(yield* coreDebtSettled(f)).toEqual(original);
           expect(yield* f.ownerCount()).toBe('1');
           expect(
@@ -2734,7 +2762,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             expect(yield* interrupted.child.isRunning).toBe(false);
             yield* pending(f);
             // Public Outbox test clock origin crosses the unchanged real 30s claim lease.
-            expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+            expect(yield* synchronizedCycle(f, 31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
             const completed = yield* coreDebtSettled(f);
             expect(Option.getOrUndefined(original)).toEqual(completed);
             expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
@@ -2932,7 +2960,12 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* f.isolated.composition.closeAdmission();
           const originalMessages = (yield* f.evidence()).outbox;
           for (const advance of [0, 2000]) {
-            expect(yield* f.cycle(advance)).toMatchObject({ claimed: 1, failed: 1, retried: 1, succeeded: 0 });
+            expect(yield* synchronizedCycle(f, advance)).toMatchObject({
+              claimed: 1,
+              failed: 1,
+              retried: 1,
+              succeeded: 0,
+            });
             yield* pending(f);
             expect(yield* f.receipt()).toEqual(priorReceipt);
             expect(yield* f.outcomes()).toEqual([]);
@@ -2952,6 +2985,107 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
     );
 
     suite.effect(
+      'waits for an in-flight matcher before the one-shot cycle claims the committed dispatch once',
+      () =>
+        Effect.scoped(
+          Effect.gen(function* inFlightMatching() {
+            const f = yield* fixture;
+            const pool = yield* Effect.acquireRelease(
+              Effect.sync(
+                () =>
+                  new Pool({
+                    connectionString: f.isolated.connections.admin.connectionString,
+                    connectionTimeoutMillis: 5000,
+                    max: 2,
+                  }),
+              ),
+              (value) => Effect.promise(() => value.end()),
+            );
+            // Lock before dispatch, so Shell cannot match before the test installs its gate.
+            const gate = yield* Effect.acquireRelease(
+              Effect.tryPromise(async () => {
+                const client = await pool.connect();
+                try {
+                  await client.query('begin');
+                  await client.query('lock table core.outbox_deliveries in share mode');
+                  return client;
+                } catch (error) {
+                  client.release(true);
+                  throw error;
+                }
+              }),
+              (client) =>
+                Effect.promise(async () => {
+                  try {
+                    await client.query('rollback');
+                  } finally {
+                    client.release();
+                  }
+                }),
+            );
+            yield* f.dispatch(f.suffix);
+            const originalMessages = (yield* f.evidence()).outbox;
+            yield* Effect.gen(function* waitForMatcherInsert() {
+              while (
+                !(yield* observeNativeLock(
+                  pool,
+                  `select exists(
+                select 1 from pg_locks delivery join pg_locks authority using(pid)
+                where delivery.database=(select oid from pg_database where datname=current_database())
+                  and delivery.relation='core.outbox_deliveries'::regclass
+                  and delivery.mode='RowExclusiveLock' and not delivery.granted
+                  and authority.locktype='advisory' and authority.mode='ShareLock' and authority.granted
+              ) as waiting`,
+                ))
+              ) {
+                yield* Effect.sleep('20 millis');
+              }
+            }).pipe(Effect.timeout('10 seconds'));
+            // Shell holds the message row lock while its real delivery INSERT is blocked.
+            // SKIP LOCKED sees no message; the due probe sees no uncommitted delivery.
+            type Cycle = ReturnType<typeof f.cycle>;
+            const completed = yield* Deferred.make<Effect.Success<Cycle>, Effect.Error<Cycle>>();
+            yield* Effect.gen(function* observeSynchronizedCycle() {
+              const exit = yield* Effect.exit(synchronizedCycle(f));
+              yield* Deferred.done(completed, exit);
+            }).pipe(Effect.forkScoped);
+            const unsynchronized = yield* f.worker();
+            const skipped = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(cycleSchema))(unsynchronized.line);
+            expect(yield* unsynchronized.child.exitCode).toBe(0);
+            expect(skipped.matched).toEqual({ deliveriesCreated: 0, messagesMatched: 0 });
+            expect(skipped.cycle).toMatchObject({ claimed: 0, failed: 0, retried: 0, succeeded: 0 });
+            expect(Option.isNone(yield* f.receipt())).toBe(true);
+            expect(yield* f.outcomes()).toEqual([]);
+
+            expect(yield* Deferred.isDone(completed)).toBe(false);
+            yield* Effect.tryPromise(() => gate.query('commit'));
+            yield* f.isolated.composition.closeAdmission();
+            expect(yield* Deferred.await(completed).pipe(Effect.timeout('30 seconds'))).toMatchObject({
+              claimed: 1,
+              failed: 0,
+              succeeded: 1,
+            });
+            yield* coreDebtSettled(f);
+            expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 0, succeeded: 0 });
+            expect(yield* f.storedHandoffs()).toEqual([f.handoff]);
+            expect((yield* f.evidence()).outbox).toEqual(originalMessages);
+            const { invocations } = yield* f.evidence();
+            expect(
+              invocations.filter(
+                (row) => row.actionKey === 'party.registry.execute-privacy-measure' && row.status === 'succeeded',
+              ),
+            ).toHaveLength(1);
+            expect(
+              invocations.filter(
+                (row) => row.actionKey === 'privacy.core.record-owner-execution-outcome' && row.status === 'succeeded',
+              ),
+            ).toHaveLength(1);
+          }),
+        ),
+      120_000,
+    );
+
+    suite.effect(
       'recovers a real committed report whose HTTP response was discarded without repeating owner effects or losing debt',
       () =>
         Effect.gen(function* lostCommittedReportResponse() {
@@ -2962,7 +3096,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(yield* f.control('privacy', 'report-response/discard-next')).toBe(204);
           expect(yield* f.control('privacy', 'report-response/discard-next')).toBe(409);
           // Unlike after-report, this worker never receives the successful response.
-          expect(yield* f.cycle()).toMatchObject({ claimed: 1, failed: 1, retried: 1, succeeded: 0 });
+          expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 1, failed: 1, retried: 1, succeeded: 0 });
           const response = yield* Effect.tryPromise(() => fetch(`${f.privacyUrl}/__1258/report-response/evidence`));
           expect(response.status).toBe(200);
           const suppression = yield* Schema.decodeUnknownEffect(
@@ -3012,9 +3146,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* pending(f);
           expect(yield* f.outcomes()).toEqual([original.value.outcome]);
           // A fresh worker loads the real receipt and replays the exact committed report.
-          expect(yield* f.cycle(2000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+          expect(yield* synchronizedCycle(f, 2000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
           expect(yield* coreDebtSettled(f)).toEqual(original.value);
-          expect(yield* f.cycle(3000)).toMatchObject({ claimed: 0, succeeded: 0 });
+          expect(yield* synchronizedCycle(f, 3000)).toMatchObject({ claimed: 0, succeeded: 0 });
           expect((yield* f.evidence()).outbox).toEqual(originalMessages);
           expect(yield* f.storedHandoffs()).toEqual([f.handoff]);
           expect(yield* f.outcomes()).toEqual([original.value.outcome]);
@@ -3058,13 +3192,13 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             yield* f.dispatch(f.suffix);
             yield* f.isolated.composition.closeAdmission();
             expect(yield* f.control('privacy', `${capability}/unavailable`)).toBe(204);
-            expect(yield* f.cycle()).toMatchObject({ claimed: 1, failed: 1, retried: 1, succeeded: 0 });
+            expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 1, failed: 1, retried: 1, succeeded: 0 });
             yield* pending(f);
             expect(yield* f.outcomes()).toHaveLength(0);
             const original = yield* f.receipt();
             expect(Option.isSome(original)).toBe(true);
             expect(yield* f.control('privacy', `${capability}/available`)).toBe(204);
-            expect(yield* f.cycle(2000)).toMatchObject({ claimed: 1, succeeded: 1 });
+            expect(yield* synchronizedCycle(f, 2000)).toMatchObject({ claimed: 1, succeeded: 1 });
             expect(yield* coreDebtSettled(f)).toEqual(Option.getOrUndefined(original));
           }),
         120_000,
@@ -3079,7 +3213,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* f.dispatch(f.suffix);
           yield* f.isolated.composition.closeAdmission();
           expect(yield* f.control('party', 'revoke-party-read')).toBe(204);
-          expect(yield* f.cycle()).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
+          expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
           yield* pending(f);
           const deniedRead = yield* Effect.result(f.receipt());
           expect(Result.isFailure(deniedRead)).toBe(true);
@@ -3095,10 +3229,10 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(Option.isNone(yield* f.receipt())).toBe(true);
           expect(yield* f.control('shell', 'deactivate-party')).toBe(204);
           // Consumer background eligibility prevents even claiming; no fabricated handler failure.
-          expect(yield* f.cycle(2000)).toMatchObject({ claimed: 0, succeeded: 0 });
+          expect(yield* synchronizedCycle(f, 2000)).toMatchObject({ claimed: 0, succeeded: 0 });
           yield* pending(f);
           expect(yield* f.control('shell', 'activate-party')).toBe(204);
-          expect(yield* f.cycle(3000)).toMatchObject({ claimed: 1, succeeded: 1 });
+          expect(yield* synchronizedCycle(f, 3000)).toMatchObject({ claimed: 1, succeeded: 1 });
           yield* coreDebtSettled(f);
         }),
       120_000,
@@ -3193,7 +3327,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* Effect.result(interrupted.child.exitCode);
           expect(yield* interrupted.child.isRunning).toBe(false);
           // Recover the real claim through the existing test-clock lease control, then report and ACK in A.
-          expect(yield* f.cycle(31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+          expect(yield* synchronizedCycle(f, 31_000)).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
           expect(yield* coreDebtSettled(f)).toEqual(original.value);
           expect(yield* f.control('privacy', 'dispatch-watchdog/complete')).toBe(204);
           yield* f.isolated.composition.drain();
@@ -3218,7 +3352,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           // Entity, so Party refuses the foreign target as a scope mismatch: it never completes or reports.
           expect(yield* f.dispatch(f.suffix, foreignHandoff)).toEqual(foreignHandoff);
           yield* f.isolated.composition.closeAdmission();
-          expect(yield* f.cycle()).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
+          expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
           yield* pending(f);
           expect(yield* f.outcomes()).toEqual([]);
           expect(Option.isNone(yield* f.receipt())).toBe(true);
@@ -3245,6 +3379,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* f.dispatch(f.suffix);
           yield* f.isolated.composition.closeAdmission();
           expect(yield* f.control('party', 'revoke-party-read')).toBe(204);
+          yield* matchedWorkReady(f);
           const retry = yield* f.retrySession;
           const advances = [0, 2000, 5000, 10_000, 19_000, 36_000, 69_000, 130_000];
           for (const [index, advance] of advances.entries()) {
@@ -3331,7 +3466,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(yield* wrongRevision.child.exitCode).not.toBe(0);
           yield* pending(f);
           expect(Option.isNone(yield* f.receipt())).toBe(true);
-          expect(yield* f.cycle()).toMatchObject({ claimed: 1, succeeded: 1 });
+          expect(yield* synchronizedCycle(f)).toMatchObject({ claimed: 1, succeeded: 1 });
           yield* coreDebtSettled(f);
         }),
       120_000,
