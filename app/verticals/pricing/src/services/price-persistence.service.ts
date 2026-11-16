@@ -330,6 +330,7 @@ export type RevisePricePersistenceCommand =
       readonly acknowledgement?: PriceScheduleAcknowledgement;
       readonly actingPrincipalId: string;
       readonly actionInvocationId: string;
+      readonly effectiveFrom?: string;
       readonly expectedCurrent: ExpectedPriceCurrent;
       readonly intent: 'VALUE_ONLY_CURRENT';
       readonly monetaryAmount: PriceDefinition['revision']['monetaryAmount'];

@@ -16,7 +16,6 @@ import { Reactivity } from 'effect/reactivity';
 import { bootstrapInternalC14PricingRouteInputs } from './support/symmy-c14-pricing-routes-inputs.mts';
 import {
   decodeInternalC14CapturedPriceGrant,
-  decodeInternalC14GrantForIdentity,
   decodeInternalC14PriceGrantFor,
 } from './support/symmy-c14-pricing-routes-plan.mts';
 import { assertInternalC14PriceRecovery } from './support/symmy-c14-pricing-routes-recovery.mts';
@@ -887,34 +886,29 @@ it.live(
         expect(outcomesOf(stale)).toEqual(['unresolved', 'conflict']);
         expect((yield* priceCounts).map(tableCounts)).toEqual(beforeRevise.map(tableCounts));
         expect(currentRevisionOf(yield* listedPrice())).toEqual(listed.revision);
-        // The current revision reaches the owner's source check. Pricing finds a grant by the raw identity key, and
-        // reads a unit quantity back with nine decimals, so a revision needs a grant for the identity as read here.
-        // Even then Pricing takes the effective time of a value-only revision from its own clock and refuses a source
-        // assertion pinned before the call (MAPPING_REJECTED): the item ends invalid and nothing changes. This pins
-        // the known owner limitation, see the plan decision log.
-        expect(
-          yield* bootstrapInternalC14PricingSourceAuthority({
-            grant: yield* decodeInternalC14GrantForIdentity({
-              effectiveFrom: selectedAt,
-              exactIdentityKey: listed.identityKey,
-              verifiedAt: DateTime.formatIso(yield* DateTime.now),
-            }),
-            legalEntityId: fixture.legalEntityId,
-            operatorPrincipalId: fixture.integration.issuerPrincipalId,
-            operatorProviderUserId: fixture.shell.providerUserId,
-            ownedDatabase: fixture.isolated,
-            purpose: pricingFixturePurpose,
-            runtimeConnectionString: Redacted.make(fixture.isolated.connections.runtime.connectionString),
-            tenantId: fixture.tenantId,
-          }),
-        ).toEqual({ outcome: 'STORED' });
+        // The revision the caller read is the current one: the amount changes and the revision number rises. The
+        // grant of the DEFINE covers it although Pricing reads the unit quantity back with nine decimals, and the
+        // revision starts at the time the source asserts (the admission time), not at the owner clock.
+        const beforeCurrentRevise = yield* priceCounts;
         const current = yield* settle(
           yield* submitPrices('INTERNAL_C14_REVISE_CURRENT', originalGroupRef, [reviseOf('30')]),
         );
-        expect(current.status).toBe('completed_none');
-        expect(outcomesOf(current)).toEqual(['invalid']);
-        expect((yield* priceCounts).map(tableCounts)).toEqual(beforeRevise.map(tableCounts));
-        expect(currentRevisionOf(yield* listedPrice())).toEqual(listed.revision);
+        expect(current.status).toBe('completed_all');
+        expect(outcomesOf(current)).toEqual(['accepted_change']);
+        const after = yield* priceCounts;
+        expect(after.map(tableCounts)).toEqual(
+          beforeCurrentRevise.map(({ prices, revisions }) => ({ prices, revisions: revisions + 1 })),
+        );
+        expect(currentRevisionOf(yield* listedPrice())).toMatchObject({
+          monetaryAmount: { amount: '30.000000000' },
+          revision: listed.revision.revision + 1,
+        });
+        // The revision the caller read is now stale: a second revision of it ends conflict and writes nothing.
+        const staleNow = yield* settle(
+          yield* submitPrices('INTERNAL_C14_REVISE_AFTER_REVISION', originalGroupRef, [reviseOf('31')]),
+        );
+        expect(outcomesOf(staleNow)).toEqual(['conflict']);
+        expect((yield* priceCounts).map(tableCounts)).toEqual(after.map(tableCounts));
         const [actualPrices] = yield* fixture.admin<{
           count: number;
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
