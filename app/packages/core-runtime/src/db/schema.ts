@@ -172,35 +172,6 @@ export const applicationCompositionDrainAbandonments = enableCoreGovernedRls(
   ),
 );
 
-/**
- * One row per boot of an app host process that holds platform-issued module keys: the host and boot its keys attest,
- * and until when that boot is known to run, on the database clock. The app host writes it with the administrative
- * identity before its boot issues any key and renews it every minute while it runs; a boot that stops renewing lets
- * it lapse. Runtimes only read it.
- * A key attested for the authority holder's own revision stays admitted exactly while its issuing boot holds a lease
- * here; once that lease ends, the holder's next superseded-key retirement retires the key.
- */
-export const moduleCredentialHolderLeases = enableCoreGovernedRls(
-  coreSchema.table(
-    'module_credential_holder_leases',
-    {
-      bootId: uuid('boot_id').primaryKey(),
-      hostId: text('host_id').notNull(),
-      leaseUntil: timestamp('lease_until', { withTimezone: true }).notNull(),
-      createdAt: createdAt(),
-      updatedAt: updatedAt(),
-    },
-    (table) => [
-      check('core_module_credential_holder_leases_host_ck', sql`length(${table.hostId}) between 1 and 500`),
-      pgPolicy('core_module_credential_holder_leases_select', {
-        for: 'select',
-        to: SHARED_RUNTIME_ROLE,
-        using: sql`true`,
-      }),
-    ],
-  ),
-);
-
 /** Durable owner workflows participate until their trusted journal transition reaches a terminal state. */
 export const applicationCompositionDurableWork = enableCoreGovernedRls(
   coreSchema.table(
@@ -1666,7 +1637,6 @@ export const CORE_TABLE_INVENTORY = [
   'application_composition_authority',
   'application_composition_drain_abandonments',
   'application_composition_durable_work',
-  'module_credential_holder_leases',
   'tenants',
   'legal_entities',
   'principals',
@@ -1719,7 +1689,6 @@ export const coreDatabaseSchema = {
   mediaAssetRenditions,
   mediaAssets,
   mediaLinks,
-  moduleCredentialHolderLeases,
   oauthConnectionGrants,
   outboxAttempts,
   outboxDeliveries,
@@ -1748,7 +1717,6 @@ export const CORE_TABLES = [
   applicationCompositionAuthority,
   applicationCompositionDrainAbandonments,
   applicationCompositionDurableWork,
-  moduleCredentialHolderLeases,
   tenants,
   legalEntities,
   principals,

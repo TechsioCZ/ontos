@@ -1,5 +1,5 @@
 import { ModuleAppIdSchema } from '@app/core-runtime/auth/hosted-module-credentials';
-import { DateTime, Option, Schema } from 'effect';
+import { Option, Schema } from 'effect';
 
 /**
  * What a module credential was issued for, recorded with the key (its provider metadata) when the issuing host bound
@@ -59,48 +59,6 @@ export type PlatformCredentialAttestation = ModuleCredentialAttestation | Worklo
 /** The attestation of a platform-issued key of either kind, if its metadata holds one. */
 export const platformAttestationOf = (metadata: null | string): Option.Option<PlatformCredentialAttestation> =>
   metadata === null ? Option.none() : Schema.decodeOption(PlatformCredentialAttestationJson)(metadata);
-
-/** The release that holds the authority, as one superseded-key retirement pass sees it. */
-export interface AuthorityHolderView {
-  /** The keys the retiring host holds (and those it replaced within the hand-over grace): never retired. */
-  readonly current: ReadonlySet<string>;
-  /** The moment the holder's revision took the authority (`revision_activated_at`). */
-  readonly cutoff: Date;
-  /** The boots whose holder lease had not ended, read after the keys were. */
-  readonly liveBoots: ReadonlySet<string>;
-  readonly revision: string;
-}
-
-/**
- * Whether the release that holds the authority retires a platform key (module or internal workload key) as
- * superseded. The retiring host's own keys never are. A key attested for the holder's own revision is a key of the
- * serving release, issued by one of its containers (a deploy that rebuilt no unit publishes the same revision): it is
- * retired exactly when the boot that issued it no longer holds a lease, whenever it was bound, so a peer that still
- * runs keeps its keys and a dead one loses them at the next pass. Every other key (another revision, or no
- * attestation) is retired when it was bound before the holder's revision took the authority, as an older release's
- * key; one bound later belongs to a host that booted since (a newer release, an observe-only host) and is left alone.
- */
-export const supersededByHolder = (
-  credential: {
-    readonly attestation: Option.Option<PlatformCredentialAttestation>;
-    readonly boundAt: Date;
-    readonly providerKeyId: string;
-  },
-  holder: AuthorityHolderView,
-): boolean => {
-  if (holder.current.has(credential.providerKeyId)) {
-    return false;
-  }
-  const boundBeforeCutoff = DateTime.isLessThan(
-    DateTime.makeUnsafe(credential.boundAt),
-    DateTime.makeUnsafe(holder.cutoff),
-  );
-  return Option.match(credential.attestation, {
-    onNone: () => boundBeforeCutoff,
-    onSome: ({ bootId, compositionRevision }) =>
-      compositionRevision === holder.revision ? !holder.liveBoots.has(bootId) : boundBeforeCutoff,
-  });
-};
 
 /** The handover entry of a workload credential: the module, the workload, and the tenant and company it acts for. */
 export { internalWorkloadEntryId as workloadCredentialEntryId } from '@app/core-runtime/auth/hosted-module-credentials';

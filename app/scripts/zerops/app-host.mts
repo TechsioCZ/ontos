@@ -65,11 +65,7 @@ import {
   internalWorkloadEntryId,
   workloadEntryAppId,
 } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
-import {
-  holdModuleCredentialLease,
-  loadInternalWorkloadBindings,
-  loadLiveModuleCredentialHolders,
-} from '../../packages/core-runtime/src/auth/module-credentials.ts';
+import { loadInternalWorkloadBindings } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
@@ -835,9 +831,8 @@ const runRetirement = (
  * container, even one with the same host name. With `superseded`, the host's release took the authority, and it then
  * also retires the credentials that release superseded, keeping the keys it holds when that pass runs (`current`,
  * read then, so a key a fill issued during the grace period is kept too): the provisioning
- * program decides from the authority row and the holder leases, only while this release holds it: keys of this
- * revision whose boot holds no lease, and other keys bound before its revision took it. A failure is reported; the
- * next renewal, boot or ended lease retries.
+ * program decides from the authority row, only while this release holds it and only credentials bound before its
+ * revision took it. A failure is reported; the next renewal or boot retries.
  */
 export interface RetirementAfterHandover {
   readonly compositionRevision: string;
@@ -864,8 +859,8 @@ export const retireAfterHandoverWith =
       if (!input.superseded) {
         return;
       }
-      // Even when the boot pass issued nothing: the superseded release's keys are retired all the same. A key a later
-      // fill issues is this boot's, under its lease, so the pass never reaches it.
+      // Even when the boot pass issued nothing: the superseded release's keys are retired all the same, and any key a
+      // later fill issues is bound after this release took the authority, so the cutoff never reaches it.
       yield* run('retire', { ...input, providerKeyIds: yield* input.current });
     }).pipe(Effect.delay(MODULE_CREDENTIAL_HANDOVER_GRACE));
 
@@ -1097,84 +1092,6 @@ export const healModuleCredentials = <Requirements,>(input: ModuleCredentialHeal
       backoff = healthy ? HEALING_INTERVAL : Duration.min(Duration.times(backoff, 2), HEALING_BACKOFF_CAP);
     }
     return yield* Console.log('[app-host] superseded; module credential healing stops');
-  });
-
-/** What the holder lease loop remembers between steps. */
-export interface ModuleCredentialLeaseWatch {
-  /** Whether the last renewal of this boot's own lease failed. */
-  readonly failing: boolean;
-  /** A lease ended and the superseded-key retirement has not run since (this host did not hold the authority). */
-  readonly pending: boolean;
-  /** The live boots the last readable step saw; none before the first. */
-  readonly seen: Option.Option<ReadonlySet<string>>;
-}
-
-/** The inputs of this boot's holder lease. */
-export interface ModuleCredentialLeaseInput<Requirements> {
-  readonly bootId: string;
-  /** Takes or renews this boot's lease. */
-  readonly hold: Effect.Effect<void, unknown, Requirements>;
-  /** Whether this host's release holds the authority now, so its retirement pass retires anything. */
-  readonly holding: Effect.Effect<boolean, never, Requirements>;
-  readonly liveBoots: Effect.Effect<ReadonlySet<string>, unknown, Requirements>;
-  /** One superseded-key retirement pass, at once; it reports its own failure. */
-  readonly retire: Effect.Effect<void, never, Requirements>;
-}
-
-/** How often a boot renews its holder lease, well inside `MODULE_CREDENTIAL_HOLDER_LEASE`. */
-export const MODULE_CREDENTIAL_LEASE_INTERVAL = Duration.minutes(1);
-
-export const initialModuleCredentialLeaseWatch: ModuleCredentialLeaseWatch = {
-  failing: false,
-  pending: false,
-  seen: Option.none(),
-};
-
-/**
- * One step of this boot's holder lease: renews it, then reads which boots still hold one. When a boot this host saw
- * holding a lease no longer does (it stopped, was killed or lost the database), and this host's release holds the
- * authority, it runs the superseded-key retirement at once, which retires that boot's keys of the serving revision;
- * a host that does not hold the authority leaves that to the one that does, or runs it once it does. A dead peer's
- * keys therefore end within `MODULE_CREDENTIAL_HOLDER_LEASE` and one interval after its last renewal, while a running
- * peer's never do. An unreadable lease table is not evidence of anything; a failed renewal of its own is reported.
- */
-export const holdModuleCredentialLeaseOnce = Effect.fn('AppHost.holdModuleCredentialLeaseOnce')(function* leaseOnce<
-  Requirements,
->(input: ModuleCredentialLeaseInput<Requirements>, watch: Ref.Ref<ModuleCredentialLeaseWatch>) {
-  const held = yield* Effect.exit(input.hold);
-  const before = yield* Ref.get(watch);
-  const failing = Exit.isFailure(held);
-  if (failing && !before.failing) {
-    yield* Console.error(
-      "[app-host] MODULE CREDENTIAL HOLDER LEASE COULD NOT BE RENEWED; once it ends, this host's keys of the serving release are retired",
-    );
-  }
-  if (!failing && before.failing) {
-    yield* Console.log('[app-host] module credential holder lease renewed again');
-  }
-  const live = yield* Effect.option(input.liveBoots);
-  const ended =
-    Option.isSome(live) &&
-    Option.isSome(before.seen) &&
-    [...before.seen.value].some((bootId) => bootId !== input.bootId && !live.value.has(bootId));
-  const due = before.pending || ended;
-  const retire = due && (yield* input.holding);
-  yield* Ref.set(watch, { failing, pending: due && !retire, seen: Option.isSome(live) ? live : before.seen });
-  if (retire) {
-    yield* Console.log("[app-host] a module credential holder's lease ended; retiring its keys");
-    yield* input.retire;
-  }
-});
-
-/** Keeps this boot's holder lease for as long as the host runs: one step now, then one each interval. */
-export const keepModuleCredentialLease = <Requirements,>(input: ModuleCredentialLeaseInput<Requirements>) =>
-  Effect.gen(function* keepLease() {
-    const watch = yield* Ref.make(initialModuleCredentialLeaseWatch);
-    yield* holdModuleCredentialLeaseOnce(input, watch);
-    return holdModuleCredentialLeaseOnce(input, watch).pipe(
-      Effect.repeat(Schedule.spaced(MODULE_CREDENTIAL_LEASE_INTERVAL)),
-      Effect.asVoid,
-    );
   });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2224,35 +2141,6 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const activeRevision = readAuthority.pipe(
     Effect.map((rows) => Option.map(EffectArray.head(rows), ({ revision }) => revision)),
   );
-  // This boot's module credential holder lease, which keeps its keys of the serving release admitted: taken before the
-  // boot issues any key and renewed every minute while the host runs. While this host's release holds the authority,
-  // a peer's lease that ends has its keys retired at once.
-  const holdingAuthority = Effect.gen(function* holdsAuthority() {
-    const own = yield* Ref.get(ownRevision);
-    if (Option.isNone(own)) {
-      return false;
-    }
-    return Option.exists(yield* activeRevision, (revision) => revision === own.value);
-  }).pipe(Effect.orElseSucceed(() => false));
-  const retireSupersededNow = Effect.gen(function* retireSupersededNow() {
-    const own = yield* Ref.get(ownRevision);
-    if (Option.isNone(own)) {
-      return;
-    }
-    yield* runRetirement('retire', {
-      compositionRevision: own.value,
-      earlierBoots: [],
-      providerKeyIds: yield* replacedKeys.keptWith(Ref.get(heldCredentials).pipe(Effect.map(providerKeyIdsOf))),
-      shellEnvironment: shellEnvironment.environment,
-    });
-  });
-  const takeHolderLease = keepModuleCredentialLease({
-    bootId: BOOT_ID,
-    hold: holdModuleCredentialLease(database.executor, { bootId: BOOT_ID, hostId: HOST_ID }),
-    holding: holdingAuthority,
-    liveBoots: loadLiveModuleCredentialHolders(database.executor),
-    retire: retireSupersededNow,
-  }).pipe(Effect.flatMap(Effect.forkChild));
   const publishSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
     Effect.gen(function* publishObservedComposition() {
       const allowed = yield* publicationAllowed({
@@ -2338,8 +2226,6 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* waitForUnits(units);
     const snapshot = yield* observeOwners(units, publicOrigin);
     const release = hostReleaseOf(snapshot);
-    // Without migrations the lease table may not exist yet: the failure is reported and the keys stay unprotected.
-    yield* takeHolderLease;
     yield* provisionForRelease(release);
     // An observe-only host holds no authority: it retires only its own earlier boots' keys.
     yield* retireReplaced(release, { replaced: [], superseded: false }).pipe(Effect.forkChild);
@@ -2395,9 +2281,6 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // After migrations, the role bootstrap and schema verification (all inside the migrator) and before this host
     // serves anything: the observed release's keys are issued and handed to the owners.
     const release = hostReleaseOf(releaseSnapshot);
-    // The lease comes first (the migrator created its table): a peer's retirement never sees a key of this boot
-    // without it.
-    yield* takeHolderLease;
     // Keys can only be issued for registrations that exist: the platform registers every module's declared internal
     // workloads first (per tenant and company), so the boot's provisioning keys them in the same pass.
     yield* registerInternalWorkloads(release).pipe(
@@ -2431,7 +2314,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* drainWhenSuperseded(revision).pipe(Effect.forkChild);
     // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
-    // itself (only while this release holds it) and keeps every key of a peer of this release that holds a lease.
+    // itself: only while this release holds it, and only credentials bound before its revision took it.
     yield* retireReplaced(release, { replaced: [], superseded: true }).pipe(Effect.forkChild);
     // Platform module installation (`release-tenant-modules.mts`): against the composition just published, every
     // stage Tenant gets the approved modules it still lacks, written as `system` and projected into SpiceDB by the

@@ -340,11 +340,6 @@ export const grantSharedRuntimeRole = (
       );
       yield* query(client, 'grant select on table core.application_composition_drain_abandonments to ontos_runtime');
     }
-    // Module credential holder leases are written only by the app host's administrative identity.
-    if (yield* exists(client, tableExistsQuery, 'core.module_credential_holder_leases')) {
-      yield* query(client, 'revoke all on table core.module_credential_holder_leases from public, ontos_runtime');
-      yield* query(client, 'grant select on table core.module_credential_holder_leases to ontos_runtime');
-    }
     // The operator-only dead-delivery resolution ledger stays readable but never writable by runtimes.
     if (yield* exists(client, tableExistsQuery, 'core.outbox_delivery_resolutions')) {
       yield* query(client, 'revoke all on table core.outbox_delivery_resolutions from public, ontos_runtime');

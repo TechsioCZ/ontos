@@ -399,12 +399,6 @@ it('restores read-only Application Composition authority privileges after blanke
   const resolutionGrant = bootstrap.indexOf('grant select on table core.outbox_delivery_resolutions to ontos_runtime');
   expect(resolutionRevoke).toBeGreaterThan(broadGrant);
   expect(resolutionGrant).toBeGreaterThan(resolutionRevoke);
-  const leaseRevoke = bootstrap.indexOf(
-    'revoke all on table core.module_credential_holder_leases from public, ontos_runtime',
-  );
-  const leaseGrant = bootstrap.indexOf('grant select on table core.module_credential_holder_leases to ontos_runtime');
-  expect(leaseRevoke).toBeGreaterThan(broadGrant);
-  expect(leaseGrant).toBeGreaterThan(leaseRevoke);
   expect(bootstrap).toContain(
     'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
   );
