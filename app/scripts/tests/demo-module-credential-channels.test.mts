@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Duration, Effect, Stream } from 'effect';
+import { Effect, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
@@ -45,26 +45,32 @@ wait "$reader"
 rm -rf "$PID_DIR"
 `;
 
-it.live('hands a demo module its credential line without ever blocking, and removes the channels on exit', () =>
-  Effect.scoped(
-    Effect.gen(function* demoChannels() {
-      const handle = yield* ChildProcess.make('bash', ['-c', HARNESS, 'harness', channels], {
-        extendEnv: true,
-        stderr: 'inherit',
-        stdin: 'ignore',
-        stdout: 'pipe',
-      });
-      const [output, code] = yield* Effect.all(
-        [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
-        { concurrency: 2 },
-      ).pipe(Effect.timeout(Duration.seconds(20)));
-      expect(code).toBe(0);
-      expect(output).toContain('dead=refused');
-      expect(output).toContain('idle=returned');
-      expect(output).toContain('live={"credentials":{},"schemaVersion":1}');
-      const directory = /^dir=(?<directory>.+)$/mu.exec(output)?.groups?.directory;
-      expect(directory).toBeDefined();
-      expect(directory === undefined ? true : existsSync(directory)).toBe(false);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+it.live(
+  'hands a demo module its credential line without ever blocking, and removes the channels on exit',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* demoChannels() {
+        const handle = yield* ChildProcess.make('bash', ['-c', HARNESS, 'harness', channels], {
+          extendEnv: true,
+          stderr: 'inherit',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        });
+        const [output, code] = yield* Effect.all(
+          [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+          { concurrency: 2 },
+        );
+        expect(code).toBe(0);
+        expect(output).toContain('dead=refused');
+        expect(output).toContain('idle=returned');
+        expect(output).toContain('live={"credentials":{},"schemaVersion":1}');
+        const directory = /^dir=(?<directory>.+)$/mu.exec(output)?.groups?.directory;
+        expect(directory).toBeDefined();
+        expect(directory === undefined ? true : existsSync(directory)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  // The ordering proof is the harness's own output and exit code, so no wall-clock budget belongs inside the Effect:
+  // loaded CI never prints this case among its slow ones (peers print from 366 ms) and its single failure was a 20 s
+  // stall (run 43403265958, job 131811813717). 120_000 is this project's budget and 6x that stall, so a hang fails.
+  120_000,
 );
