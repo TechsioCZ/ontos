@@ -1614,10 +1614,18 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
-const BOOTSTRAP_PROOF_JOB = 'bootstrap-proof';
+/** The integration matrix row that proves the stage-shaped deployment bootstrap from a scratch cluster. */
+const BOOTSTRAP_SUITE = 'bootstrap';
+const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
 const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
-/** Every row that reads built Node artifacts: the suites and the whole-topology proof, never the browser. */
-const BACKEND_ARTIFACT_CONDITION = "matrix.suite != 'browser'";
+/**
+ * Every row that reads built Node artifacts: the suites and the whole-topology proof. The browser row
+ * drives a deployed release instead, and the bootstrap row assembles the migrator and Outbox Worker host
+ * from their own zerops.yaml build commands — making it wait for a build shard is what put the whole
+ * bootstrap proof in front of the integration wave before it became a row.
+ */
+const BACKEND_ARTIFACT_CONDITION = `matrix.suite != 'browser' && matrix.suite != '${BOOTSTRAP_SUITE}'`;
+const BACKEND_ARTIFACT_DOWNLOAD_STEP = 'Download the same-run Node artifacts for native owner fixtures';
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 /** The integration matrix row that proves the built topology of every delivery unit. */
 const NODE_PROOF_SUITE = 'proof';
@@ -1633,11 +1641,11 @@ const ROOT_GATE_JOBS = [
   SERVICE_INTEGRATION_JOB,
   NODE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** What each gate job waits for. The bootstrap proof is upstream of the suites and is deliberately no gate id. */
+/** What each gate job waits for. The bootstrap proof is a row of the suites, so it adds no `needs` edge. */
 const GATE_JOB_NEEDS = {
   [FORMAT_AND_LINT_JOB]: [CI_PLAN_JOB],
   [NODE_ARTIFACT_BUILD_JOB]: [CI_PLAN_JOB],
-  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, BOOTSTRAP_PROOF_JOB],
+  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB],
   'static-contracts': [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB],
@@ -1699,18 +1707,12 @@ it('selects work before gates and starts source checks without waiting for artif
       ),
     );
   }
-  // The bootstrap proof runs exactly when the suites it feeds run, and nothing else waits for it, so it
-  // cannot delay the required check on a push to main.
-  expect(jobs[BOOTSTRAP_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB]);
-  expect(jobs[BOOTSTRAP_PROOF_JOB]?.if).toBe(
-    expression(
-      `!cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SERVICE_INTEGRATION_JOB}'] == 'success'`,
-    ),
-  );
-  const bootstrapConsumers = Object.entries(jobs)
-    .filter(([, { needs }]) => (needs ?? []).includes(BOOTSTRAP_PROOF_JOB))
-    .map(([job]) => job);
-  expect(bootstrapConsumers).toEqual([SERVICE_INTEGRATION_JOB]);
+  // The bootstrap proof is a row of the suites, never a job: `needs` is job-level, so proving it upstream
+  // put its whole duration in front of every row. No job may carry it as a dependency again.
+  expect(Object.keys(jobs)).not.toContain('bootstrap-proof');
+  for (const [job, { needs }] of Object.entries(jobs)) {
+    expect(needs ?? [], job).not.toContain('bootstrap-proof');
+  }
 });
 
 it('classifies documentation before installation and schedules full regression without enabling deployment', () => {
@@ -2397,7 +2399,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
               'root-suite': Schema.optional(Schema.Boolean),
               'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-              suite: Schema.Literals(['integration', 'browser', NODE_PROOF_SUITE]),
+              suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser', NODE_PROOF_SUITE]),
             }),
           ),
         }),
@@ -2557,10 +2559,8 @@ it('proves the built topology of every delivery unit in one row of the integrati
   }
   // It reads every shard's artifacts, and runs on the PostgreSQL this job starts and migrates on
   // every row: its complete handler layers acquire real pools.
-  expect(steps[named('Download the same-run Node artifacts for native owner fixtures')]?.if).toBe(
-    BACKEND_ARTIFACT_CONDITION,
-  );
-  expect(named('Download the same-run Node artifacts for native owner fixtures')).toBeLessThan(indexes[0] ?? -1);
+  expect(steps[named(BACKEND_ARTIFACT_DOWNLOAD_STEP)]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(named(BACKEND_ARTIFACT_DOWNLOAD_STEP)).toBeLessThan(indexes[0] ?? -1);
   const migrations = named('Apply and verify Core, Auth, and Contacts migrations, plus Party Registry');
   expect(steps[migrations]?.if).toBeUndefined();
   expect(migrations).toBeLessThan(indexes[0] ?? -1);
@@ -2835,7 +2835,6 @@ const IdentityGateJobSchema = Schema.Struct({
 });
 const IdentityGateJobsSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [BOOTSTRAP_PROOF_JOB]: IdentityGateJobSchema,
     'cloudflare-artifact-build': IdentityGateJobSchema,
     [SERVICE_INTEGRATION_JOB]: IdentityGateJobSchema,
   }),
@@ -2845,23 +2844,14 @@ it('gives every CI database tool a separate login per runtime identity and audit
   const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
   const integration = jobs[SERVICE_INTEGRATION_JOB];
-  const bootstrap = jobs[BOOTSTRAP_PROOF_JOB];
   const proofValues = jobs['cloudflare-artifact-build'].steps.find(
     ({ name }) => name === 'Set the development-only service values of the Worker proofs',
   );
-  for (const environment of [integration.env, bootstrap.env, proofValues?.env]) {
+  for (const environment of [integration.env, proofValues?.env]) {
     for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
       expect(environment?.[key]).toBe(`postgresql://${role}:${role}@localhost:5433/ontos_ci`);
     }
   }
-  // The bootstrap proof runs against the cluster the rows run, so it must see the identical service
-  // environment; a divergence would prove one cluster and test another. Two values the rows scope to a
-  // step are needed at job level here, because several steps of the proof read them.
-  expect({ ...bootstrap.env }).toEqual({
-    ...integration.env,
-    APP_ENV_PATH: '/dev/null',
-    SPICEDB_DATABASE_PASSWORD: 'spicedb',
-  });
   // Both dotenv writers pass exactly the identity URLs through, and nothing that merely shares a prefix.
   const filters = Array.from(source.matchAll(IDENTITY_STEP_ENV_FILTER), (match) => match.groups?.pattern ?? '');
   expect(filters).toHaveLength(2);
@@ -2872,23 +2862,22 @@ it('gives every CI database tool a separate login per runtime identity and audit
       expect(pattern.test(`${key}_EXTRA=value`)).toBe(false);
     }
   }
-  // The grant audit runs once per run, in the bootstrap proof, directly after the migrations that
-  // provision the identities it audits. It reads no matrix input, so no row repeats it.
-  const { steps } = bootstrap;
+  // The grant audit runs once per run, on the bootstrap row only, directly after the migrations that
+  // provision the identities it audits. It reads no matrix input, so no other row repeats it.
+  const { steps } = integration;
   const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
   const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
   expect(migrations).toBeGreaterThanOrEqual(0);
   expect(audit).toBe(migrations + 1);
-  expect(steps[audit]?.if).toBeUndefined();
+  expect(steps[audit]?.if).toBe(BOOTSTRAP_CONDITION);
   expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
-  for (const step of integration.steps) {
-    expect(`${step.name}: ${step.run ?? ''}`).not.toContain('database-trust:audit');
-  }
+  expect(steps.filter(({ run }) => (run ?? '').includes('database-trust:audit'))).toHaveLength(1);
 });
 
-it('proves the deployment bootstrap once from a scratch cluster', () => {
+it('proves the deployment bootstrap once, on a row beside the suites', () => {
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
-  const names = jobs[BOOTSTRAP_PROOF_JOB].steps.map(({ name }) => name);
+  const { steps } = jobs[SERVICE_INTEGRATION_JOB];
+  const names = steps.map(({ name }) => name);
   // Bootstrap ordering is proved end to end: the pre-seeded runtime role goes first, then the real
   // migrator artifact against the scratch cluster, then the migrations, the grant audit and the host.
   const order = [
@@ -2900,20 +2889,29 @@ it('proves the deployment bootstrap once from a scratch cluster', () => {
     'Build and run the Outbox Worker host artifact against the fresh database',
   ];
   expect(names.filter((name) => order.includes(name))).toEqual(order);
-  for (const step of jobs[BOOTSTRAP_PROOF_JOB].steps) {
-    // No matrix exists here: a guard copied from a row would silently skip part of the bootstrap.
-    expect(`${step.name}: ${step.if ?? ''}`).not.toContain('matrix.');
+  // Each of the four proofs runs on the bootstrap row alone. Without that guard every row would pay them
+  // again, which is the 72.8 machine-minutes per run this arrangement exists to remove; and the
+  // runtime-role drop in particular would leave an ordinary row with no login for its own suites.
+  const bootstrapOnly = [
+    'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
+    'Run the assembled stage migrator artifact against the fresh database',
+    AUDIT_STEP,
+    'Build and run the Outbox Worker host artifact against the fresh database',
+  ];
+  for (const name of bootstrapOnly) {
+    const step = steps.find((candidate) => candidate.name === name);
+    expect(step?.if, name).toBe(BOOTSTRAP_CONDITION);
   }
-  // No row repeats the four proofs that read no matrix input: the migrator artifact, the runtime-role
-  // drop that orders it, the grant audit and the Outbox Worker host. Each row still migrates its own
-  // cluster, which is the only database preparation a row's own suites decide.
-  const integration = jobs[SERVICE_INTEGRATION_JOB].steps;
-  for (const step of integration) {
-    for (const moved of ['prove-zerops-migrator-artifact.sh', 'prove-outbox-worker-host-artifact.sh', 'DROP ROLE']) {
-      expect(`${step.name}: ${step.run ?? ''}`, moved).not.toContain(moved);
-    }
+  // The migrations are the one database preparation every row decides for itself, bootstrap row included:
+  // it is what proves the migrator left a cluster the ordinary migrations still converge on.
+  const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
+  expect(migrations?.if).toBeUndefined();
+  expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
+  // The bootstrap row assembles both artifacts from their own zerops.yaml build commands, so it must not
+  // wait for a build shard's outputs: that dependency is exactly what made this proof serial before.
+  for (const name of [BACKEND_ARTIFACT_DOWNLOAD_STEP, 'Unpack the Node artifacts for native owner fixtures']) {
+    expect(steps.find((candidate) => candidate.name === name)?.if, name).toBe(BACKEND_ARTIFACT_CONDITION);
   }
-  expect(integration.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
 });
 
 it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>

@@ -20,8 +20,9 @@ const IntegrationEntrySchema = Schema.Struct({
   'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
-  // `proof` rows depend on no package: they prove the build outputs and therefore run on every event.
-  suite: Schema.Literals(['integration', 'browser', 'proof']),
+  // `bootstrap` and `proof` rows depend on no package: they prove the deployment bootstrap and the build
+  // outputs, so they run on every event and are never narrowed away by affected selection.
+  suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'proof']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' &&
@@ -197,8 +198,9 @@ export const planCiChecks = (input: {
         !packages.some(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`)),
     );
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
-    // A row that is neither a package suite nor the browser suite proves the build outputs themselves,
-    // reads no matrix input and has nothing to narrow, so affected selection always keeps it.
+    // A row that is neither a package suite nor the browser suite proves the deployment bootstrap or the
+    // build outputs themselves: it reads no matrix input and has nothing to narrow, so affected selection
+    // always keeps it.
     if (entry.suite !== 'integration' && entry.suite !== 'browser') {
       return [entry];
     }
