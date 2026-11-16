@@ -307,7 +307,13 @@ it('classifies documentation before installation and schedules full regression w
   expect(install).toBeGreaterThan(classify);
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
   expect(steps[install]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
-  expect(selection?.env?.APPLY_AFFECTED).toBe(expression("steps.candidate.outputs.base != '' && 'true' || 'false'"));
+  // A candidate dispatch that is not forced full and a push to the demo trunk narrow the gates to the changed owners;
+  // pull requests, merge groups and pushes to main still run the complete suite.
+  expect(selection?.env?.APPLY_AFFECTED).toBe(
+    expression(
+      "(steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm')) && 'true' || 'false'",
+    ),
+  );
   // Only a candidate dispatch that is not forced full resolves a comparison point, before the classification.
   const candidate = steps.findIndex(({ id }) => id === 'candidate');
   expect(candidate).toBeGreaterThan(-1);
