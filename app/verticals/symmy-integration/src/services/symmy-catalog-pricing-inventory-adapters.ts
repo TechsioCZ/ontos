@@ -294,6 +294,7 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
         payload.variantRef.tenantId === tenantId &&
         qualifiedSource(input, payload.sourceCorrelation),
       CatalogCreateVariantFromProductEffect: () => false,
+      CatalogProductDependentEffect: () => false,
       CatalogSetVariantLocalizedFacts: ({ payload }) =>
         entityKind === 'VARIANT' && expectedTarget(payload.variantRef) && payload.productRef.tenantId === tenantId,
       CatalogUpdateProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
@@ -550,6 +551,148 @@ const hasDeclaredParentDependency = (
       : dependency.itemKey === reference.itemKey && dependency.effectKey === reference.effectKey,
   );
 
+interface ProductEffectReference {
+  readonly effectKey: string;
+  readonly itemKey: string;
+}
+
+/**
+ * The receipt of the Product create effect a dependent effect names: the parent must be this job's settled Product
+ * create, declared in the dependent's own dependencies, and its receipt must belong to the route's tenant.
+ */
+const requireCreatedProductParent = Effect.fn('SymmyOwnerAdapters.requireCreatedProductParent')(function* createdParent(
+  input: SymmyEffectAdapterInput,
+  reference: ProductEffectReference,
+) {
+  const parents = input.dependencies.filter(
+    (dependency) => dependency.itemKey === reference.itemKey && dependency.effect.effectKey === reference.effectKey,
+  );
+  const [parent] = parents;
+  if (
+    parents.length !== 1 ||
+    parent === undefined ||
+    parent.state !== 'settled' ||
+    Option.isNone(parent.outcome) ||
+    parent.effect.ref.operation.moduleId !== catalogModuleId ||
+    parent.effect.ref.operation.entrypointKey !== 'commerce.catalog.create-product'
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  if (
+    !Schema.is(settledParentOutcomeSchema)(parent.outcome.value.status) ||
+    !hasDeclaredParentDependency(input.effect, parent.effect.itemId, reference)
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[0])(
+    Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
+  ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+  if (receipt.productRef.tenantId !== input.effect.ref.occurrence.record.route.tenantId) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  return receipt;
+});
+
+type ProductDependentIntent = Extract<
+  SymmyCatalogPricingInventoryIntent,
+  { readonly _tag: 'CatalogProductDependentEffect' }
+>;
+type ProductCreatedReceipt = Extract<SymmyCatalogPricingInventoryReceipt, { readonly _tag: 'ProductCreated' }>;
+
+/**
+ * The Variant a text or a price of the Product is about: the further Variant its `variantParent` create effect
+ * settled on (the owner's own answer, so a replayed source record keeps its Variant) or, without one, the initial
+ * Variant of the Product the create receipt names.
+ */
+const requireCreatedVariant = Effect.fn('SymmyOwnerAdapters.requireCreatedVariant')(function* createdVariant(
+  input: SymmyEffectAdapterInput,
+  intent: ProductDependentIntent,
+  product: ProductCreatedReceipt,
+) {
+  const reference = intent.variantParent;
+  if (reference === undefined) {
+    return product.initialVariantRef;
+  }
+  const parents = input.dependencies.filter(
+    (dependency) => dependency.itemKey === reference.itemKey && dependency.effect.effectKey === reference.effectKey,
+  );
+  const [parent] = parents;
+  if (
+    parents.length !== 1 ||
+    parent === undefined ||
+    parent.state !== 'settled' ||
+    Option.isNone(parent.outcome) ||
+    !Schema.is(settledParentOutcomeSchema)(parent.outcome.value.status) ||
+    parent.effect.ref.operation.moduleId !== catalogModuleId ||
+    parent.effect.ref.operation.entrypointKey !== 'commerce.catalog.create-variant' ||
+    !hasDeclaredParentDependency(input.effect, parent.effect.itemId, reference)
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[1])(
+    Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
+  ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+  if (!sameRef(receipt.productRef, product.productRef) || receipt.variantRef.tenantId !== product.productRef.tenantId) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  return receipt.variantRef;
+});
+
+/**
+ * The plain intent a command on the Product of this job becomes once the receipts of its create effects exist.
+ * The Product update takes the Product as its owner target, a text takes its Variant and a price keeps the planned
+ * Price ref and names the Variant.
+ */
+const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentIntent')(function* dependentIntent(
+  input: SymmyEffectAdapterInput,
+  intent: ProductDependentIntent,
+  product: ProductCreatedReceipt,
+) {
+  const { originalTarget: target } = input.effect.ref;
+  const { productRef } = product;
+  return yield* Match.value(intent.request).pipe(
+    Match.tag('UpdateProduct', ({ payload }) =>
+      target === undefined
+        ? Effect.succeed({
+            intent: { _tag: 'CatalogUpdateProduct', payload: { ...payload, productRef } },
+            target: productRef,
+          })
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.tag('SetVariantLocalizedFacts', ({ payload }) =>
+      target === undefined
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.map((variantRef) => ({
+              intent: { _tag: 'CatalogSetVariantLocalizedFacts', payload: { ...payload, productRef, variantRef } },
+              target: variantRef,
+            })),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.tag('DefinePrice', ({ payload }) =>
+      target !== undefined &&
+      sameRef(target, payload.priceRef) &&
+      input.canExecuteNewEffects &&
+      priceSourceMatches(input, payload.sourceAssertion) &&
+      input.legalEntityId === payload.identityKey.commercialScope.sellingLegalEntityId
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.map((variantRef) => ({
+              intent: {
+                _tag: 'PriceDefine',
+                payload: {
+                  ...payload,
+                  identityKey: { ...payload.identityKey, catalogSelection: { productRef, variantRef } },
+                },
+              },
+              target,
+            })),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.exhaustive,
+  );
+});
+
 const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDependency')(function* resolveDependency(
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
@@ -589,34 +732,7 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
         ) {
           return yield* symmyJobWorkerInvalid();
         }
-        const parents = input.dependencies.filter(
-          (dependency) =>
-            dependency.itemKey === intent.parent.itemKey && dependency.effect.effectKey === intent.parent.effectKey,
-        );
-        const [parent] = parents;
-        if (
-          parents.length !== 1 ||
-          parent === undefined ||
-          parent.state !== 'settled' ||
-          Option.isNone(parent.outcome) ||
-          parent.effect.ref.operation.moduleId !== catalogModuleId ||
-          parent.effect.ref.operation.entrypointKey !== 'commerce.catalog.create-product'
-        ) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        if (!Schema.is(settledParentOutcomeSchema)(parent.outcome.value.status)) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        const declared = hasDeclaredParentDependency(input.effect, parent.effect.itemId, intent.parent);
-        if (!declared) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[0])(
-          Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
-        ).pipe(Effect.mapError(symmyJobWorkerInvalid));
-        if (receipt.productRef.tenantId !== input.effect.ref.occurrence.record.route.tenantId) {
-          return yield* symmyJobWorkerInvalid();
-        }
+        const receipt = yield* requireCreatedProductParent(input, intent.parent);
         const bound = yield* readCatalogSourceProduct(input, intent.productSource, contract, crypto);
         if (
           !sameRef(bound.product.productRef, receipt.productRef) ||
@@ -634,6 +750,25 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
           ...input.effect,
           intent: { _tag: 'CatalogCreateVariant', payload, productSource: intent.productSource },
           ref: { ...input.effect.ref, originalTarget: receipt.productRef },
+        }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        yield* input.recordResolvedEffect(resolved);
+        return { ...input, effect: resolved };
+      }),
+    ),
+    Match.tag(
+      'CatalogProductDependentEffect',
+      Effect.fn('SymmyOwnerAdapters.resolveProductDependent')(function* resolveProductDependent(
+        intent: ProductDependentIntent,
+      ) {
+        if (input.originalExecutorPrincipalId !== undefined || input.originalInvocationId !== undefined) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const receipt = yield* requireCreatedProductParent(input, intent.parent);
+        const dependent = yield* productDependentIntent(input, intent, receipt);
+        const resolved = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+          ...input.effect,
+          intent: dependent.intent,
+          ref: { ...input.effect.ref, originalTarget: dependent.target },
         }).pipe(Effect.mapError(symmyJobWorkerInvalid));
         yield* input.recordResolvedEffect(resolved);
         return { ...input, effect: resolved };
@@ -749,6 +884,7 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
         CatalogCreateProduct: () => Option.none(),
         CatalogCreateVariant: ({ productSource }) => Option.some(productSource),
         CatalogCreateVariantFromProductEffect: () => Option.none(),
+        CatalogProductDependentEffect: () => Option.none(),
         CatalogSetVariantLocalizedFacts: () => Option.some(occurrenceSource),
         CatalogUpdateProduct: () => Option.some(occurrenceSource),
         InventoryImport: () => Option.none(),
@@ -891,6 +1027,7 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return createdSourceOutcome(input, invocationId, result.businessOriginalCreateInvocationId);
       }),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.recoverVariantLocalizedFacts')(
         function* recoverVariantLocalizedFacts() {
           const result = yield* executeSetVariantLocalizedFactsRecoveryWithAuthorization(
@@ -1021,6 +1158,7 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
       CatalogCreateProduct: () => catalog,
       CatalogCreateVariant: () => catalog,
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: () => catalog,
       CatalogUpdateProduct: () => catalog,
       InventoryImport: ({ payload }) => {
@@ -1179,6 +1317,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
         },
       ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.setVariantLocalizedFacts')(
         function* setVariantLocalizedFacts({ payload }) {
           const result = yield* executeSetVariantLocalizedFactsWithAuthorization(
@@ -1329,6 +1468,7 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
         ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: ({ payload }) =>
         setVariantLocalizedFactsRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),

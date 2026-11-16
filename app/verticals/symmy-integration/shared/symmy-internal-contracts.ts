@@ -18,3 +18,14 @@ export { SymmyPriceListCodeSchema, SymmyPriceListRowsSchema } from './domain/sym
 export type { SymmyPriceListRows } from './domain/symmy-price-list-batch.ts';
 export { SymmyPriceBatchSchema } from './domain/symmy-price-batch.ts';
 export type { SymmyPriceBatch, SymmyPriceReviseFacts } from './domain/symmy-price-batch.ts';
+export {
+  SymmyProductPlanSizeSchema,
+  SymmyProductPriceGroupFactsSchema,
+  SymmyProductRowsSchema,
+} from './domain/symmy-product-batch.ts';
+export type {
+  SymmyProductHintKind,
+  SymmyProductPriceGroupFacts,
+  SymmyProductRow,
+  SymmyProductRows,
+} from './domain/symmy-product-batch.ts';

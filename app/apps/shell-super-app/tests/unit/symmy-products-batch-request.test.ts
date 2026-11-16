@@ -20,6 +20,9 @@ const product = { name: 'Product', variants: [variant] };
 const withProduct = (extra: Readonly<Record<string, Json>>) => ({ products: [{ ...product, ...extra }] });
 const withVariant = (extra: Readonly<Record<string, Json>>) => withProduct({ variants: [{ ...variant, ...extra }] });
 const price = { amount: '10.5', currencyCode: 'CZK' };
+const texts = (count: number) => Array.from({ length: count }, (_, index) => ({ locale: `l${index}`, name: 'N' }));
+const channel = (resourceId: string) =>
+  withVariant({ prices: [{ ...price, commercialScope: { channelRef: { ...productRef, resourceId } } }] });
 
 describe('Symmy products batch request: products', () => {
   it('accepts the minimal product and a full product', () => {
@@ -56,6 +59,21 @@ describe('Symmy products batch request: products', () => {
     expect(accepts(withProduct({ name: 'n'.repeat(240) }))).toBe(true);
     expect(accepts(withProduct({ description: 'd'.repeat(4001) }))).toBe(false);
     expect(accepts(withProduct({ description: 'd'.repeat(4000) }))).toBe(true);
+  });
+
+  it('refuses what the owner cannot store, so no admitted request fails to plan', () => {
+    expect(accepts(withProduct({ name: '   ' }))).toBe(false);
+    expect(accepts(withProduct({ localized: [{ locale: ' cs', name: 'x' }] }))).toBe(false);
+    expect(accepts(withProduct({ localized: [{ locale: 'cs', name: '   ' }] }))).toBe(false);
+    expect(accepts(withVariant({ localized: [{ description: '', locale: 'cs' }] }))).toBe(false);
+  });
+
+  it('limits a product to thirty-two owner effects and a request to sixteen plan items', () => {
+    expect(accepts(withVariant({ localized: texts(31) }))).toBe(true);
+    expect(accepts(withVariant({ localized: texts(32) }))).toBe(false);
+    const priced = { name: 'P', variants: [{ prices: [price] }] };
+    expect(accepts({ products: Array.from({ length: 8 }, () => priced) })).toBe(true);
+    expect(accepts({ products: Array.from({ length: 9 }, () => priced) })).toBe(false);
   });
 
   it('checks the identifier, lifecycle and localized texts', () => {
@@ -226,7 +244,7 @@ describe('Symmy products batch request: variants', () => {
             {
               ...price,
               commercialScope: {
-                channelRef: productRef,
+                channelRef: { ...productRef, resourceId: 'B2B' },
                 commerceMarketRef: {
                   moduleId: 'commerce.market-catalog',
                   resourceId: '99999999-9999-4999-8999-999999999999',
@@ -248,6 +266,13 @@ describe('Symmy products batch request: variants', () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it('accepts only the owner channels as a channel reference', () => {
+    expect(accepts(channel('B2C'))).toBe(true);
+    expect(accepts(channel('B2B'))).toBe(true);
+    expect(accepts(channel('retail'))).toBe(false);
+    expect(accepts(channel(productRef.resourceId))).toBe(false);
   });
 
   it('rejects a bad price', () => {

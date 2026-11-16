@@ -11,11 +11,13 @@ import {
   SymmyInternalExecutionPlanSchema,
   SymmyPriceBatchSchema,
   SymmyPriceListRowsSchema,
+  SymmyProductRowsSchema,
   SymmyStockRowsSchema,
 } from '@app/symmy-integration/symmy-internal-contracts';
 import type {
   SymmyPriceBatch,
   SymmyPriceListRows,
+  SymmyProductRows,
   SymmyStockRows,
 } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -58,6 +60,7 @@ import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stoc
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
 import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
+import { mapSymmyProductsBatchRequest } from './products-batch-public-contract.ts';
 import { mapSymmyPriceListsProjection, SymmyPriceListsResponseSchema } from './price-lists-public-contract.ts';
 import {
   mapSymmyRegionsProjection,
@@ -122,15 +125,27 @@ interface PriceBatchSubmit {
   readonly priceBatch: SymmyPriceBatch;
   readonly route: 'priceListPricesBatch';
 }
+/** The public products. The owner admission builds the plan; the dispatch reads the price lists the codes name. */
+interface ProductsSubmit {
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly products: SymmyProductRows;
+  readonly route: 'productsBatch';
+}
 type FixtureSubmit =
   | (InternalWritePayload & {
       readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
     } & (
         | { readonly code: string; readonly route: SelectedWrites }
-        | { readonly route: Exclude<JobWrites, SelectedWrites | 'priceListsBatchUpsert' | 'priceListPricesBatch'> }
+        | {
+            readonly route: Exclude<
+              JobWrites,
+              SelectedWrites | 'priceListsBatchUpsert' | 'priceListPricesBatch' | 'productsBatch'
+            >;
+          }
       ))
   | PriceBatchSubmit
-  | PriceListsSubmit;
+  | PriceListsSubmit
+  | ProductsSubmit;
 export type SymmyIngressRequest = FixtureRead | FixturePoll | FixtureApply | FixtureSubmit;
 
 export interface SymmyIngressAdmission {
@@ -292,6 +307,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
   }
   if ('stock' in request) {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyStockRowsSchema))(request.stock).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
+  if ('products' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyProductRowsSchema))(request.products).pipe(
       Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
     );
     return encoded.includes(raw);
@@ -611,7 +632,11 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('productsBatch', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'productsBatch' },
+        {
+          idempotencyKey: headers['idempotency-key'],
+          products: mapSymmyProductsBatchRequest(payload),
+          route: 'productsBatch',
+        },
         request,
       ),
     ),

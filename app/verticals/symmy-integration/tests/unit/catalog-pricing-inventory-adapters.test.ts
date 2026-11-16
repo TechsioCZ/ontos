@@ -5,7 +5,7 @@ import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Exit, Option, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
@@ -1845,4 +1845,204 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
+});
+
+type ResolutionJson = typeof Schema.Json.Type;
+type ResolutionFields = Readonly<Record<string, ResolutionJson>>;
+const productParent = { effectKey: 'catalog-create', itemKey: 'product-item' };
+const variantParent = { effectKey: 'additional-variant', itemKey: 'variant-item' };
+const furtherVariantRef = { ...variantRef, resourceId: '10000000-0000-4000-8000-000000000031' };
+const variantParentState = {
+  ...Schema.decodeUnknownSync(SymmyExecutionEffectStateSchema)({
+    effect: dependentVariantEffect,
+    outcome: { effectId, owner: 'commerce.catalog', status: 'accepted_change' },
+    ownerReceipt: { _tag: 'VariantCreated', productRef, variantRef: furtherVariantRef },
+    state: 'settled',
+    version: 1,
+  }),
+  itemKey: 'variant-item',
+};
+const dependentEffect = (
+  request: ResolutionFields,
+  operation: { readonly entrypointKey: string; readonly moduleId: string; readonly schemaVersion: string },
+  named: readonly (typeof productParent)[] = [],
+) => {
+  const [variant] = named;
+  const intent = { _tag: 'CatalogProductDependentEffect', parent: productParent, request };
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...effect,
+    dependsOn: [productParent, ...named],
+    intent: variant === undefined ? intent : { ...intent, variantParent: variant },
+    ref: { ...effect.ref, operation },
+  });
+};
+const updateOperation = {
+  entrypointKey: 'commerce.catalog.update-product',
+  moduleId: 'commerce.catalog',
+  schemaVersion: '1',
+};
+const factsOperation = {
+  entrypointKey: 'commerce.catalog.set-variant-localized-facts',
+  moduleId: 'commerce.catalog',
+  schemaVersion: '1',
+};
+const updateEffectOf = () =>
+  dependentEffect(
+    {
+      _tag: 'UpdateProduct',
+      payload: { expectedRevision: 1, reason: 'Symmy product import', targetLifecycle: 'ACTIVE' },
+    },
+    updateOperation,
+  );
+const factsEffectOf = (named: readonly (typeof productParent)[] = []) =>
+  dependentEffect(
+    {
+      _tag: 'SetVariantLocalizedFacts',
+      payload: {
+        evidenceRefs: ['symmy-product:key:0'],
+        expectedRevision: 0,
+        facts: { name: 'Chair' },
+        locale: 'en',
+        reason: 'Symmy product import',
+      },
+    },
+    factsOperation,
+    named,
+  );
+const priceEffectOf = () => {
+  const planned = priceDefinitionEffect(priceGroupA);
+  const priceIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[7])(planned.intent);
+  const { payload } = Schema.encodeSync(SymmyCatalogPricingInventoryIntentSchema.members[7])(priceIntent);
+  const { catalogSelection: _planned, ...identityKey } = payload.identityKey;
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...planned,
+    dependsOn: [productParent],
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent: productParent,
+      request: { _tag: 'DefinePrice', payload: { ...payload, identityKey } },
+    },
+  });
+};
+const resolutionOf = (
+  selected: SymmyPinnedEffect,
+  dependencies: readonly (typeof parentState)[],
+  legalEntity?: string,
+) => {
+  const h = harness(false, selected);
+  return h.provide(
+    Effect.gen(function* resolution() {
+      const adapter = yield* h.adapter;
+      const exit = yield* Effect.exit(adapter.execute({ ...h.input, dependencies, legalEntityId: legalEntity }));
+      return { exit, h };
+    }),
+  );
+};
+const resolvedIntentOf = (resolved: SymmyPinnedEffect | undefined) => ({
+  payload: Match.value(resolved?.intent).pipe(
+    Match.tags({
+      CatalogSetVariantLocalizedFacts: ({ payload }) => payload,
+      CatalogUpdateProduct: ({ payload }) => payload,
+      PriceDefine: ({ payload }) => payload,
+    }),
+    Match.option,
+    Option.getOrUndefined,
+  ),
+  tag: resolved?.intent?._tag,
+});
+
+describe('Symmy commands on the Product the same job creates', () => {
+  it.effect('resolves a lifecycle update to the Product of the settled create receipt before any native write', () =>
+    Effect.gen(function* resolvesUpdate() {
+      const { h } = yield* resolutionOf(updateEffectOf(), [parentState]);
+      const [resolved] = h.resolvedEffects;
+      const { payload, tag } = resolvedIntentOf(resolved);
+      expect(tag).toBe('CatalogUpdateProduct');
+      expect(payload).toMatchObject({ expectedRevision: 1, productRef, targetLifecycle: 'ACTIVE' });
+      expect(resolved?.ref.originalTarget).toEqual(productRef);
+      expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+    }),
+  );
+
+  it.effect('resolves a localized text to the initial Variant of the receipt, or to the further Variant it names', () =>
+    Effect.gen(function* resolvesFacts() {
+      const initial = yield* resolutionOf(factsEffectOf(), [parentState]);
+      const [initialResolved] = initial.h.resolvedEffects;
+      expect(resolvedIntentOf(initialResolved).tag).toBe('CatalogSetVariantLocalizedFacts');
+      expect(resolvedIntentOf(initialResolved).payload).toMatchObject({
+        facts: { name: 'Chair' },
+        locale: 'en',
+        productRef,
+        variantRef,
+      });
+      expect(initialResolved?.ref.originalTarget).toEqual(variantRef);
+      const further = yield* resolutionOf(factsEffectOf([variantParent]), [parentState, variantParentState]);
+      const [furtherResolved] = further.h.resolvedEffects;
+      expect(resolvedIntentOf(furtherResolved).payload).toMatchObject({ productRef, variantRef: furtherVariantRef });
+      expect(furtherResolved?.ref.originalTarget).toEqual(furtherVariantRef);
+    }),
+  );
+
+  it.effect('resolves a price to the Price define of the receipt Variant and keeps its planned Price ref', () =>
+    Effect.gen(function* resolvesPrice() {
+      const { h } = yield* resolutionOf(priceEffectOf(), [parentState], legalEntityId);
+      const [resolved] = h.resolvedEffects;
+      expect(resolvedIntentOf(resolved).tag).toBe('PriceDefine');
+      expect(resolvedIntentOf(resolved).payload).toMatchObject({
+        identityKey: { catalogSelection: { productRef, variantRef } },
+        priceRef,
+      });
+      expect(resolved?.ref.originalTarget).toEqual(priceRef);
+      const other = yield* resolutionOf(priceEffectOf(), [parentState], '10000000-0000-4000-8000-0000000000bb');
+      expect(Exit.isFailure(other.exit)).toBe(true);
+      expect(other.h.resolvedEffects).toHaveLength(0);
+    }),
+  );
+
+  it.effect('does not resolve without the settled create receipt the effect names and declares', () =>
+    Effect.gen(function* refuses() {
+      const selected = updateEffectOf();
+      const foreign = '10000000-0000-4000-8000-0000000000aa';
+      const wrongTenant = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: { ...variantRef, tenantId: foreign },
+            productRef: { ...productRef, tenantId: foreign },
+          }),
+        ),
+      };
+      const { dependsOn: _declared, ...withoutDependency } = selected;
+      for (const [selectedEffect, dependencies] of [
+        [selected, []],
+        [selected, [{ ...parentState, itemKey: 'decoy-item' }]],
+        [selected, [wrongTenant]],
+        [selected, [{ ...parentState, state: 'planned' as const }]],
+        [Schema.decodeUnknownSync(SymmyPinnedEffectSchema)(withoutDependency), [parentState]],
+      ] as const) {
+        const { exit, h } = yield* resolutionOf(selectedEffect, dependencies);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.resolvedEffects).toHaveLength(0);
+        expect(h.requests).toHaveLength(0);
+      }
+    }),
+  );
+
+  it.effect('refuses a text whose Variant create is missing and a text that already names an owner target', () =>
+    Effect.gen(function* refusesFacts() {
+      const missing = yield* resolutionOf(factsEffectOf([variantParent]), [parentState]);
+      expect(Exit.isFailure(missing.exit)).toBe(true);
+      expect(missing.h.resolvedEffects).toHaveLength(0);
+      const targeted = factsEffectOf();
+      const withTarget = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+        ...targeted,
+        ref: { ...targeted.ref, originalTarget: variantRef },
+      });
+      const refused = yield* resolutionOf(withTarget, [parentState]);
+      expect(Exit.isFailure(refused.exit)).toBe(true);
+      expect(refused.h.resolvedEffects).toHaveLength(0);
+    }),
+  );
 });

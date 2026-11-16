@@ -60,6 +60,48 @@ const definePriceFromGroupEffectPayload = Schema.Struct({
   }),
 });
 
+const updatedProduct = UpdateProductPayloadSchema.fields;
+const localizedFacts = SetVariantLocalizedFactsPayloadSchema.fields;
+const pricedIdentity = DefinePricePayloadSchema.fields.identityKey.fields;
+/**
+ * A command on a Product, or on one of its Variants, that the same job creates. The Product and the Variant
+ * references are the facts that do not exist when the plan is built (and are not the planned ones when the create
+ * is a semantic replay of an existing source record), so each request names every other owner fact and the receipts
+ * of the create effects supply the references. The adapter resolves them once, before any native write, into the
+ * plain intent.
+ */
+const productDependentRequest = Schema.Union([
+  Schema.TaggedStruct('UpdateProduct', {
+    payload: Schema.Struct({
+      expectedRevision: updatedProduct.expectedRevision,
+      reason: updatedProduct.reason,
+      targetLifecycle: updatedProduct.targetLifecycle,
+    }),
+  }),
+  Schema.TaggedStruct('SetVariantLocalizedFacts', {
+    payload: Schema.Struct({
+      evidenceRefs: localizedFacts.evidenceRefs,
+      expectedRevision: localizedFacts.expectedRevision,
+      facts: localizedFacts.facts,
+      locale: localizedFacts.locale,
+      reason: localizedFacts.reason,
+    }).check(
+      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
+    ),
+  }),
+  Schema.TaggedStruct('DefinePrice', {
+    payload: Schema.Struct({
+      ...DefinePricePayloadSchema.fields,
+      identityKey: Schema.Struct({
+        commercialScope: pricedIdentity.commercialScope,
+        currencyCode: pricedIdentity.currencyCode,
+        priceGroupSelector: pricedIdentity.priceGroupSelector,
+        unitBasis: pricedIdentity.unitBasis,
+      }),
+    }),
+  }),
+]);
+
 export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
   Schema.TaggedStruct('ProductCreated', {
     actionInvocationId: ProductActionInvocationIdSchema,
@@ -110,6 +152,13 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
     parent: productEffectReference,
     payload: variantFromProductEffectPayload,
     productSource: CatalogSourceCorrelationSchema,
+  }),
+  Schema.TaggedStruct('CatalogProductDependentEffect', {
+    /** The Product create effect, which supplies the Product and, without `variantParent`, its initial Variant. */
+    parent: productEffectReference,
+    request: productDependentRequest,
+    /** The create effect of a further Variant, which supplies the Variant a text or a price is about. */
+    variantParent: Schema.optionalKey(productEffectReference),
   }),
   Schema.TaggedStruct('PriceDefineFromGroupEffect', {
     fromPriceGroupEffect: productEffectReference,

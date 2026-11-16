@@ -60,6 +60,9 @@ const unsupportedBranchSchema = Schema.Struct({
     'AttributeHint',
     'MediaHint',
     'VariantUpdateHint',
+    'DescriptiveHint',
+    'ClassificationHint',
+    'PriceHint',
   ]),
 });
 const unsupportedBranches = Schema.optionalKey(
@@ -342,7 +345,10 @@ const unsupportedBranchOutcomes = {
   AssortmentHint: { owner: 'commerce.assortment', reason: 'owner_not_activated' },
   AttributeHint: { ...unsupportedCatalogMeaning, branchKind: 'AttributeHint' },
   CategoryHint: { ...unsupportedCatalogMeaning, branchKind: 'CategoryHint' },
+  ClassificationHint: { ...unsupportedCatalogMeaning, branchKind: 'ClassificationHint' },
+  DescriptiveHint: { ...unsupportedCatalogMeaning, branchKind: 'DescriptiveHint' },
   MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },
+  PriceHint: { branchKind: 'PriceHint', owner: 'commerce.pricing', reason: 'missing_context' },
   ReservedQuantityHint: { owner: 'commerce.inventory', reason: 'unsupported_meaning' },
   TaxHint: { owner: 'commerce.tax', reason: 'owner_not_activated' },
   VariantUpdateHint: { ...unsupportedCatalogMeaning, branchKind: 'VariantUpdateHint', reason: 'missing_context' },

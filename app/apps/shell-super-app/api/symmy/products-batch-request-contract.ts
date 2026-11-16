@@ -1,3 +1,5 @@
+import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
+import { ProductDescriptionSchema, ProductNameSchema } from '@app/catalog/domain/product';
 import { AttributeDefinitionRefSchema } from '@app/catalog/resources/attribute-definition';
 import { BrandRefSchema } from '@app/catalog/resources/brand';
 import { ControlledAttributeValueRefSchema } from '@app/catalog/resources/controlled-attribute-value';
@@ -10,10 +12,12 @@ import { MarketRefSchema } from '@app/commerce-market-catalog/resources/market';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { PricingCurrencyCodeSchema } from '@app/pricing-contracts/domain/currency-support';
+import { PricingChannelIdSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
 import {
   PriceNonNegativeDecimalSchema,
   PricePositiveDecimalSchema,
 } from '@app/pricing-contracts/domain/price-definition';
+import { SymmyProductPlanSizeSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Schema } from 'effect';
 
 const text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
@@ -30,15 +34,20 @@ const SymmyOwnerRefSchema = Schema.Struct({
   tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyOwnerRefTenantId')),
 });
 
+/** The channel is the owner's own closed vocabulary, so any other value is refused here and not at the owner. */
+const SymmyChannelRefSchema = Schema.Struct({ ...SymmyOwnerRefSchema.fields, resourceId: PricingChannelIdSchema });
+
+const localizedFacts = SetVariantLocalizedFactsPayloadSchema.fields;
 const EffectivePeriodSchema = Schema.Struct({
   effectiveFrom: Schema.optionalKey(instant),
   effectiveTo: Schema.optionalKey(instant),
 });
 const GtinSchema = Schema.Struct({ code: text(64), effectiveAt: instant });
+/** The texts and the locale are the owner's own, so what Catalog cannot store is refused here with 400. */
 const LocalizedSchema = Schema.Struct({
-  description: Schema.optionalKey(text(4000)),
-  locale: text(100),
-  name: Schema.optionalKey(text(240)),
+  description: localizedFacts.facts.fields.description,
+  locale: localizedFacts.locale,
+  name: localizedFacts.facts.fields.name,
 });
 
 const AttributeValueSchema = Schema.Union([
@@ -81,7 +90,7 @@ const PriceSchema = Schema.Struct({
   amount: PriceNonNegativeDecimalSchema,
   commercialScope: Schema.optionalKey(
     Schema.Struct({
-      channelRef: Schema.optionalKey(SymmyOwnerRefSchema),
+      channelRef: Schema.optionalKey(SymmyChannelRefSchema),
       commerceMarketRef: Schema.optionalKey(MarketRefSchema),
       sellingLegalEntityRef: Schema.optionalKey(LegalEntityRefSchema),
     }),
@@ -108,14 +117,14 @@ const SymmyProductSchema = Schema.Struct({
   attributes: Schema.optionalKey(Schema.Array(AttributeSchema)),
   brand: Schema.optionalKey(BrandSchema),
   categories: Schema.optionalKey(Schema.Array(ProductCategoryRefSchema)),
-  description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4000))),
+  description: Schema.optionalKey(ProductDescriptionSchema),
   gtin: Schema.optionalKey(GtinSchema),
   identifier: Schema.optionalKey(Schema.Struct({ type: Schema.Literals(['sku', 'ean', 'erpId']), value: text(300) })),
   lifecycle: Schema.optionalKey(Schema.Literals(['DRAFT', 'ACTIVE', 'RETIRED'])),
   localized: Schema.optionalKey(Schema.Array(LocalizedSchema)),
   manufacturer: Schema.optionalKey(ManufacturerSchema),
   media: Schema.optionalKey(Schema.Array(MediaSchema)),
-  name: text(240),
+  name: ProductNameSchema,
   productType: Schema.optionalKey(ProductTypeRefSchema),
   relationships: Schema.optionalKey(Schema.Array(RelationshipSchema)),
   sizes: Schema.optionalKey(Schema.Array(SymmyOwnerRefSchema)),
@@ -126,9 +135,15 @@ const SymmyProductSchema = Schema.Struct({
 
 /**
  * The public body of `POST /products/batch`: one to sixteen products, each with at least one variant.
- * There is no product-level price and no version field.
+ * There is no product-level price and no version field. A plan holds sixteen items of at most thirty-two
+ * effects, so a request whose products need more than that is refused (400).
  */
 export const SymmyProductsBatchRequestSchema = Schema.Struct({
-  products: Schema.NonEmptyArray(SymmyProductSchema).check(Schema.isMaxLength(16)),
+  products: Schema.NonEmptyArray(SymmyProductSchema).check(
+    Schema.isMaxLength(16),
+    Schema.makeFilter(
+      (products) => Schema.is(SymmyProductPlanSizeSchema)(products) || 'A request needs more than one plan holds',
+    ),
+  ),
 });
 export type SymmyProductsBatchRequest = typeof SymmyProductsBatchRequestSchema.Type;

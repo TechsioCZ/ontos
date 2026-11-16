@@ -370,6 +370,40 @@ const priceBatchJson = (prices: readonly unknown[]) => ({
   headers: { 'content-type': 'application/json' },
 });
 
+/** The public products body, and the rows the owner admission receives for it. */
+const publicProduct = {
+  identifier: { type: 'sku', value: 'SKU-1' },
+  name: 'Public source product',
+  variants: [
+    {
+      identifier: { type: 'sku', value: 'SKU-1-A' },
+      localized: [{ locale: 'en', name: 'Variant name' }],
+      prices: [{ amount: '10.5', currencyCode: 'CZK' }],
+    },
+  ],
+};
+const publicProductsBody = { products: [publicProduct] };
+const publicProductRows = [
+  {
+    identifier: { type: 'sku', value: 'SKU-1' },
+    name: 'Public source product',
+    unsupported: [],
+    variants: [
+      {
+        identifier: { type: 'sku', value: 'SKU-1-A' },
+        localized: [{ locale: 'en', name: 'Variant name' }],
+        prices: [{ amount: '10.5', currencyCode: 'CZK' }],
+      },
+    ],
+  },
+];
+
+const texts = (count: number) => Array.from({ length: count }, (_, index) => ({ locale: `l${index}`, name: 'N' }));
+const productsJson = (body: Schema.Json = publicProductsBody) => ({
+  body: JSON.stringify(body),
+  headers: { 'content-type': 'application/json' },
+});
+
 /** The body each durable or synchronous POST route accepts: the public body, or an operator fixture identity. */
 const routeBody = (path: string) => {
   if (path === SYMMY_ROUTES.inventoryStockBatch.path) {
@@ -377,6 +411,9 @@ const routeBody = (path: string) => {
   }
   if (path === SYMMY_ROUTES.priceListPricesBatch.path) {
     return priceBatchJson([definePriceRow, revisePriceRow]);
+  }
+  if (path === SYMMY_ROUTES.productsBatch.path) {
+    return productsJson();
   }
   return path === SYMMY_ROUTES.priceListsBatchUpsert.path ? priceListsBatchJson([priceListRow]) : fixtureJson;
 };
@@ -410,7 +447,7 @@ const internalProductInput = {
   },
 } as const;
 
-it.effect('accepts a versioned typed business input and preserves its source identity and owner intent', () =>
+it.effect('accepts the public products body and forwards the rows with their identity and no contract version', () =>
   Effect.gen(function* versionedBusinessRequest() {
     const forwarded: SymmyIngressRequest[] = [];
     const admittedJobId = yield* Schema.decodeUnknownEffect(SymmyFixtureJobIdSchema)(jobId);
@@ -432,76 +469,79 @@ it.effect('accepts a versioned typed business input and preserves its source ide
     );
     const response = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.productsBatch.path, {
-        body: JSON.stringify(internalProductInput),
+        ...productsJson(),
         headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
     );
     expect(response.status).toBe(202);
     expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
-    expect(forwarded).toEqual([{ ...internalProductInput, idempotencyKey, route: 'productsBatch' }]);
+    expect(forwarded).toEqual([{ idempotencyKey, products: publicProductRows, route: 'productsBatch' }]);
   }),
 );
 
-it.effect('rejects untyped owner intents, authority overrides and credentials nested in business values', () =>
-  Effect.gen(function* versionedInputBoundaries() {
+it.effect('rejects the internal plan, authority overrides and credentials nested in the public products', () =>
+  Effect.gen(function* publicProductBoundaries() {
     const server = yield* Effect.acquireRelease(
       Effect.sync(() => start()),
       (fixture) => Effect.promise(fixture.dispose),
     );
-    const submit = (payload: Schema.Json) =>
+    const submit = (payload: Schema.Json, query = '') =>
       Effect.promise(() =>
-        server.request(SYMMY_ROUTES.productsBatch.path, {
+        server.request(`${SYMMY_ROUTES.productsBatch.path}${query}`, {
           body: JSON.stringify(payload),
           headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
           method: 'POST',
         }),
       );
-    for (const unsupportedTag of ['TaxDefineRate', 'AssortmentImport']) {
-      const [original] = internalProductInput.plan.items;
-      const unsupported = {
-        ...internalProductInput,
-        plan: {
-          items: [
-            {
-              ...original,
-              effects: [
-                {
-                  ...original.effects[0],
-                  intent: { _tag: unsupportedTag, payload: {} },
-                },
-              ],
-            },
-          ],
-        },
-      };
-      expect((yield* submit(unsupported)).status).toBe(400);
-    }
-    expect((yield* submit({ ...internalProductInput, tenantId: '90000000-0000-4000-8000-000000000001' })).status).toBe(
+    const product = publicProduct;
+    expect((yield* submit(internalProductInput)).status).toBe(400);
+    expect((yield* submit({ fixtureId: 'internal-c14-fixture' })).status).toBe(400);
+    expect((yield* submit({ ...publicProductsBody, contractVersion: 'INTERNAL_C14' })).status).toBe(400);
+    expect((yield* submit({ ...publicProductsBody, tenantId: '90000000-0000-4000-8000-000000000001' })).status).toBe(
       400,
     );
-    const [original] = internalProductInput.plan.items;
-    const reflected = {
-      ...internalProductInput,
-      plan: {
-        items: [
-          {
-            ...original,
-            effects: [
-              {
-                ...original.effects[0],
-                intent: { _tag: 'CatalogCreateProduct', payload: { name: `Private ${validKey}` } },
-              },
-            ],
-          },
-        ],
-      },
-    };
-    const response = yield* submit(reflected);
-    expect(response.status).toBe(400);
-    expect(yield* Effect.promise(() => response.text())).not.toContain(validKey);
+    expect((yield* submit({ products: [{ ...product, prices: [{ amount: '1', currencyCode: 'CZK' }] }] })).status).toBe(
+      400,
+    );
+    expect((yield* submit({ products: [{ ...product, unknownField: true }] })).status).toBe(400);
+    expect((yield* submit({ products: [{ identifier: product.identifier, variants: product.variants }] })).status).toBe(
+      400,
+    );
+    expect((yield* submit({ products: [{ ...product, variants: [] }] })).status).toBe(400);
+    expect((yield* submit({ products: [] })).status).toBe(400);
+    expect(
+      (yield* submit({ products: Array.from({ length: 17 }, () => ({ name: 'P', variants: [{}] })) })).status,
+    ).toBe(400);
+    expect((yield* submit(publicProductsBody, '?contractVersion=INTERNAL_C14')).status).toBe(400);
+    const reflected = yield* submit({ products: [{ ...product, name: `Private ${validKey}` }] });
+    expect(reflected.status).toBe(400);
+    expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
     expect(server.authAttempts).toEqual([]);
   }),
+);
+
+it.effect(
+  'refuses a product that needs more than thirty-two effects or a request that needs more than sixteen items',
+  () =>
+    Effect.gen(function* planLimits() {
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() => start()),
+        (fixture) => Effect.promise(fixture.dispose),
+      );
+      const submit = (payload: Schema.Json) =>
+        Effect.promise(() =>
+          server.request(SYMMY_ROUTES.productsBatch.path, {
+            body: JSON.stringify(payload),
+            headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+            method: 'POST',
+          }),
+        );
+      expect((yield* submit({ products: [{ name: 'P', variants: [{ localized: texts(33) }] }] })).status).toBe(400);
+      const priced = { name: 'P', variants: [{ prices: [{ amount: '1', currencyCode: 'CZK' }] }] };
+      expect((yield* submit({ products: Array.from({ length: 9 }, () => priced) })).status).toBe(400);
+      expect(server.authAttempts).toEqual([]);
+    }),
 );
 
 it.effect('requires a replay key for versioned synchronous writes before any owner dispatch', () =>
@@ -1037,7 +1077,7 @@ it.effect('derives async scope from the governed route and obtains a fresh scope
     );
     const response = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.productsBatch.path, {
-        body: JSON.stringify(internalProductInput),
+        ...productsJson(),
         headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
@@ -1051,7 +1091,7 @@ it.effect('derives async scope from the governed route and obtains a fresh scope
     expect(tokens).toEqual(['Bearer synthetic-assertion-1', 'Bearer fresh-scoped-job-assertion']);
     expect(bodies).toEqual([
       { replayIdempotencyKey: idempotencyKey, routeKey: 'productsBatch' },
-      { ...internalProductInput, idempotencyKey, routeKey: 'productsBatch' },
+      { idempotencyKey, priceGroupFacts: [], products: publicProductRows, routeKey: 'productsBatch' },
     ]);
   }),
 );
@@ -1360,7 +1400,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'priceLists' },
       { idempotencyKey, priceLists: [canonicalPriceList], route: 'priceListsBatchUpsert' },
-      { fixtureId, idempotencyKey, route: 'productsBatch' },
+      { idempotencyKey, products: publicProductRows, route: 'productsBatch' },
     ]);
   }),
 );
@@ -2122,7 +2162,7 @@ it.effect('fails closed by default and rejects caller-provided authority in fixt
     expect(response.headers.get('content-type')).toContain('application/problem+json');
     const noReceipt = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.productsBatch.path, {
-        ...fixtureJson,
+        ...productsJson(),
         headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
@@ -2162,7 +2202,7 @@ it.effect('requires an exact idempotency key and rejects reflected credentials b
       Effect.sync(() => start()),
       (fixture) => Effect.promise(fixture.dispose),
     );
-    const submit = (headers: HeadersInit, body = fixtureJson.body) =>
+    const submit = (headers: HeadersInit, body = productsJson().body) =>
       Effect.promise(() => server.request(SYMMY_ROUTES.productsBatch.path, { body, headers, method: 'POST' }));
     const common = { ...fixtureJson.headers, 'x-api-key': validKey };
     expect((yield* submit(common)).status).toBe(400);
@@ -2170,7 +2210,7 @@ it.effect('requires an exact idempotency key and rejects reflected credentials b
     expect((yield* submit({ ...common, 'idempotency-key': `job-${validKey}` })).status).toBe(400);
     const reflected = yield* submit(
       { ...common, 'idempotency-key': idempotencyKey },
-      JSON.stringify({ fixtureId: validKey }),
+      productsJson({ products: [{ name: validKey, variants: [{}] }] }).body,
     );
     expect(reflected.status).toBe(400);
     expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
@@ -2420,7 +2460,7 @@ it.effect('projects owner admission and polling failures without owner details',
               headers: { 'x-api-key': validKey },
               method: 'GET',
             })
-          : server.request(SYMMY_ROUTES.productsBatch.path, {
+          : server.request(SYMMY_ROUTES.customersBatch.path, {
               ...fixtureJson,
               headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
               method: 'POST',

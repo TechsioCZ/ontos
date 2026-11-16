@@ -26,6 +26,7 @@ import {
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
+import { SymmyProductsBatchRequestSchema } from '../api/symmy/products-batch-request-contract.ts';
 import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
 import { SymmyStockBatchResponseSchema } from '../api/symmy/stock-batch-public-contract.ts';
 import { SymmyStockBatchRequestSchema } from '../api/symmy/stock-batch-request-contract.ts';
@@ -83,11 +84,10 @@ const priceListsBatchUpsertEndpoint = HttpApiEndpoint.post(
   SYMMY_ROUTES.priceListsBatchUpsert.path,
   { ...symmySubmitOptions, payload: SymmyPriceListsBatchRequestSchema },
 );
-const productsBatchEndpoint = HttpApiEndpoint.post(
-  'productsBatch',
-  SYMMY_ROUTES.productsBatch.path,
-  symmySubmitOptions,
-);
+const productsBatchEndpoint = HttpApiEndpoint.post('productsBatch', SYMMY_ROUTES.productsBatch.path, {
+  ...symmySubmitOptions,
+  payload: SymmyProductsBatchRequestSchema,
+});
 
 const assortmentRulesFixtureBatchEndpoint = HttpApiEndpoint.post(
   'assortmentRulesFixtureBatch',

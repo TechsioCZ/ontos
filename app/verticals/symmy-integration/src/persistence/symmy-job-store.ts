@@ -47,10 +47,13 @@ import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts'
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema } from '../../shared/domain/symmy-price-list-batch.ts';
 import type { SymmyPriceListRows } from '../../shared/domain/symmy-price-list-batch.ts';
+import { SymmyProductRowsSchema } from '../../shared/domain/symmy-product-batch.ts';
+import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared/domain/symmy-product-batch.ts';
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
+import { buildSymmyProductPlan } from './symmy-product-plan.ts';
 import { buildSymmyStockPlan } from './symmy-stock-plan.ts';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
@@ -75,7 +78,9 @@ export interface SymmyJobAdmissionRequest {
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
   readonly priceBatch?: SymmyPriceBatch;
+  readonly priceGroupFacts?: SymmyProductPriceGroupFacts;
   readonly priceLists?: SymmyPriceListRows;
+  readonly products?: SymmyProductRows;
   readonly reviseFacts?: readonly SymmyPriceReviseFacts[];
   readonly routeKey: SymmyDurableRouteKey;
   readonly stock?: SymmyStockRows;
@@ -276,6 +281,13 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
       Effect.map(Option.some),
     );
   }
+  if (input.products !== undefined) {
+    // The price lists the price group codes name are facts read when the request arrived, not caller intent.
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyProductRowsSchema))(input.products).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
   if (input.priceBatch !== undefined) {
     // What the owner held about each REVISE price is a fence read when the request arrived, not caller intent.
     return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyPriceBatchSchema))(input.priceBatch).pipe(
@@ -444,11 +456,14 @@ const configuredEffectsAllowed = (routeKey: SymmyDurableRouteKey, plan: SymmyFix
 
 /** A request that brings its own plan or public rows to turn into one. A route without a template refuses it. */
 const carriesCallerPlan = (input: SymmyJobAdmissionRequest): boolean =>
-  input.plan !== undefined || input.priceLists !== undefined || input.priceBatch !== undefined;
+  input.plan !== undefined ||
+  input.priceLists !== undefined ||
+  input.priceBatch !== undefined ||
+  input.products !== undefined;
 
 /**
  * What a durable admission pins: the caller's internal plan, the route template, or the plan built from the public
- * price lists or price batch. They are admitted for the enrolled operations only, so a route that does not
+ * price lists, price batch or products. They are admitted for the enrolled operations only, so a route that does not
  * enroll them yields no plan, nothing is pinned and no owner call is made.
  */
 const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(function* admissionPlanSource(
@@ -457,6 +472,21 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
   scope: OperationalScope,
   template: SymmyFixtureExecutionPlan,
 ) {
+  if (input.products !== undefined) {
+    return input.priceGroupFacts === undefined
+      ? Option.none<SymmyFixtureExecutionPlan>()
+      : yield* buildSymmyProductPlan({
+          digest: hash,
+          idempotencyKey: input.idempotencyKey,
+          legalEntityId: scope.legalEntityId,
+          priceGroups: input.priceGroupFacts,
+          receivedAt: yield* DateTime.now,
+          route,
+          rows: input.products,
+          template,
+          tenantId: scope.tenantId,
+        });
+  }
   if (input.priceBatch !== undefined) {
     return input.reviseFacts === undefined
       ? Option.none<SymmyFixtureExecutionPlan>()

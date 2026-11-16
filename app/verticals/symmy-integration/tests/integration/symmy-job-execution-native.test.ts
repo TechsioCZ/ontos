@@ -269,7 +269,7 @@ it.live(
         });
         yield* admin`insert into symmy_integration.job_routes
     (tenant_id, principal_id, active, fixture_ids, fixture_plan, mapping_version, route_key, route_revision)
-    values (${fixture.tenantId}, ${fixture.integrationId}, true, array['native-execution'], ${JSON.stringify(plan)}::jsonb, 'original-map-v1', 'productsBatch', 'original-route-v1')`;
+    values (${fixture.tenantId}, ${fixture.integrationId}, true, array['native-execution'], ${JSON.stringify(plan)}::jsonb, 'original-map-v1', 'customersBatch', 'original-route-v1')`;
 
         const runtimeLayer = nativeGovernedRuntimes(isolated.connections.runtime, snapshot, owner.registration);
         const admit = (idempotencyKey: string, fixtureId = 'native-execution') =>
@@ -279,7 +279,7 @@ it.live(
               payload: yield* Schema.decodeUnknownEffect(AdmitSymmyJobPayloadSchema)({
                 fixtureId,
                 idempotencyKey,
-                routeKey: 'productsBatch',
+                routeKey: 'customersBatch',
               }),
               principal: yield* freshPrincipal(),
               registration: admitSymmyJobAction,
