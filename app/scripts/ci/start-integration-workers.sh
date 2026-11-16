@@ -28,7 +28,7 @@ docker exec ontos-db pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"
 start_worker() {
   local worker="$1" database="ontos-ci-db-$1" spice="ontos-ci-spicedb-$1"
   docker run --detach --name "$database" --label ontos-ci-worker \
-    --env POSTGRES_USER --env POSTGRES_PASSWORD --env POSTGRES_DB \
+    --env POSTGRES_USER --env POSTGRES_PASSWORD --env POSTGRES_DB=postgres \
     --publish "127.0.0.1:$((5540 + worker)):5432" "$postgres_image" >/dev/null
   docker run --detach --name "$spice" --label ontos-ci-worker \
     --env "SPICEDB_GRPC_PRESHARED_KEY=$SPICEDB_PRESHARED_KEY" \
@@ -45,7 +45,7 @@ start_worker() {
   for ((attempt = 0; attempt < 60; attempt++)); do
     # initdb's temporary server accepts Unix sockets before shutting down. Only
     # the final postmaster accepts TCP; restoring into the temporary one races its restart.
-    if docker exec "$database" pg_isready --host 127.0.0.1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null 2>&1 \
+    if docker exec "$database" pg_isready --host 127.0.0.1 --username "$POSTGRES_USER" --dbname postgres >/dev/null 2>&1 \
       && docker exec "$spice" /usr/local/bin/grpc_health_probe -addr=localhost:50051 \
         -tls -tls-ca-cert=/tls/cert.pem >/dev/null 2>&1; then
       ready=true
@@ -59,10 +59,12 @@ start_worker() {
   fi
   # The initdb-created administrator already exists; its ALTER ROLE from the dump
   # remains. All other login roles, role memberships, ownership and grants are restored.
-  docker exec --interactive "$database" psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+  docker exec --interactive "$database" psql --username "$POSTGRES_USER" --dbname postgres \
     --set ON_ERROR_STOP=1 <"$scratch/roles.sql" >/dev/null
-  docker exec --interactive "$database" pg_restore --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-    --exit-on-error --single-transaction <"$scratch/database.dump"
+  # Restoring into an existing database copies its contents, not its database-level ACL. Let the
+  # archive create the database too, including the source's REVOKE TEMPORARY FROM PUBLIC.
+  docker exec --interactive "$database" pg_restore --username "$POSTGRES_USER" --dbname postgres \
+    --create --exit-on-error <"$scratch/database.dump"
 }
 
 pids=()
@@ -78,6 +80,14 @@ done
 
 # Assert that every worker owns a different cluster, not just a different port.
 identifiers=()
+acl_query="select coalesce(grantor_role.rolname, 'PUBLIC'), coalesce(grantee_role.rolname, 'PUBLIC'),
+  acl.privilege_type, acl.is_grantable
+  from pg_database d
+  cross join lateral aclexplode(coalesce(d.datacl, acldefault('d', d.datdba))) acl
+  left join pg_roles grantor_role on grantor_role.oid = acl.grantor
+  left join pg_roles grantee_role on grantee_role.oid = acl.grantee
+  where d.datname = '$POSTGRES_DB' order by 1, 2, 3, 4"
+source_acl="$(docker exec ontos-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$acl_query")"
 for worker in 1 2 3 4; do
   identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
   [[ -n "$identifier" ]]
@@ -85,5 +95,10 @@ for worker in 1 2 3 4; do
     [[ "$identifier" != "$existing" ]]
   done
   identifiers+=("$identifier")
+  worker_acl="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$acl_query")"
+  if [[ "$worker_acl" != "$source_acl" ]]; then
+    echo "::error::Integration worker $worker did not preserve the source database privileges."
+    exit 1
+  fi
 done
 echo 'Four independent PostgreSQL clusters and SpiceDB datastores are ready.'
