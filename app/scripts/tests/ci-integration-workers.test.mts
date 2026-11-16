@@ -105,6 +105,13 @@ it('launches package and root suites with the assigned lane and propagates failu
       '3',
       'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4',
     ]);
+    execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
+      env: launchEnvironment,
+    });
+    expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
+      '3',
+      'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 --shard 2/4',
+    ]);
     expect(() =>
       execFileSync('/bin/bash', [script, '--task', pricingSelector], {
         env: { ...launchEnvironment, LAUNCH_STATUS: '9' },
@@ -117,6 +124,45 @@ it('launches package and root suites with the assigned lane and propagates failu
         stdio: 'pipe',
       }),
     ).toThrow();
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+it('partitions the two long direct-Rstest suites without duplicating compound package scripts', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'ontos-integration-tasks-'));
+  const output = path.join(directory, 'tasks');
+  const xargs = path.join(directory, 'xargs');
+  const script = fileURLToPath(new URL('../ci/run-integration-suites.sh', import.meta.url));
+  writeFileSync(xargs, '#!/bin/sh\ncat > "$TASK_OUTPUT"\n');
+  chmodSync(xargs, 0o755);
+  try {
+    execFileSync('/bin/bash', [script], {
+      env: {
+        PACKAGE_FILTERS:
+          '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
+        PATH: `${directory}:/usr/bin:/bin`,
+        ROOT_SUITE: 'true',
+        TASK_OUTPUT: output,
+      },
+    });
+    const tasks = readFileSync(output, 'utf-8').split('\0').filter(Boolean);
+    expect(tasks.filter((task) => task.startsWith('root:'))).toEqual(['root:1/4', 'root:2/4', 'root:3/4', 'root:4/4']);
+    const directScript = Schema.decodeUnknownSync(
+      Schema.fromJsonString(
+        Schema.Struct({
+          scripts: Schema.Struct({ 'test:integration': Schema.Literal('rstest --project integration') }),
+        }),
+      ),
+    );
+    for (const owner of ['commerce-customer-context', 'privacy']) {
+      directScript(readFileSync(new URL(`../../verticals/${owner}/package.json`, import.meta.url), 'utf-8'));
+      expect(tasks.filter((task) => task.startsWith(`./verticals/${owner}#`))).toEqual(
+        ['1/4', '2/4', '3/4', '4/4'].map((shard) => `./verticals/${owner}#${shard}`),
+      );
+    }
+    expect(tasks.filter((task) => task.includes('party-registry'))).toEqual(['./verticals/party-registry']);
+    expect(new Set(tasks).size).toBe(tasks.length);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

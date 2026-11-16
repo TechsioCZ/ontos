@@ -10,6 +10,9 @@ if [[ "${1:-}" == --task ]]; then
   if [[ "$task" == root:* ]]; then
     exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}"
   fi
+  if [[ "$task" == *#* ]]; then
+    exec mise exec -- pnpm --filter "${task%#*}" run test:integration --pool.maxWorkers 1 --shard "${task##*#}"
+  fi
   exec mise exec -- pnpm --filter "$task" run test:integration --pool.maxWorkers 1
 fi
 
@@ -24,7 +27,16 @@ for ((index = 0; index < ${#filters[@]}; index += 2)); do
   [[ "${filters[index]}" == --filter ]] || exit 2
   package="${filters[index + 1]:?}"
   [[ "$package" =~ ^\./(apps|packages|verticals)/[a-z0-9-]+$ ]] || exit 2
-  tasks+=("$package")
+  case "$package" in
+    ./verticals/commerce-customer-context | ./verticals/privacy)
+      # File-sized tasks let another lane take over when one long package remains.
+      # These owners run Rstest directly; compound scripts such as Party's stay whole.
+      for shard in 1 2 3 4; do
+        tasks+=("$package#$shard/4")
+      done
+      ;;
+    *) tasks+=("$package") ;;
+  esac
 done
 if [[ ${#tasks[@]} -eq 0 ]]; then
   # Affected selection can retain this row solely for the standalone native proof.
