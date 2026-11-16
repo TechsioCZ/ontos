@@ -968,9 +968,15 @@ jobs:
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
+          GOMEMLIMIT: 1536MiB
+          NODE_OPTIONS: --max-old-space-size=2048
+          ULTRAMODERN_TSGO_BUILDERS: '1'
         run: |
           printf 'Hosted build capacity: %s CPUs\n' "$(nproc)"
           free --mebi
+          vmstat -t 15 &
+          monitor="$!"
+          trap 'kill "$monitor" 2>/dev/null || true' EXIT
           read -ra units <<<"$SHARD_UNITS"
           filters=()
           for unit in "${units[@]}"; do
@@ -978,7 +984,7 @@ jobs:
           done
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=4 "${filters[@]}" run build
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=3 "${filters[@]}" run build
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs

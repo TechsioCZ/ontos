@@ -1979,7 +1979,12 @@ it('builds every Node release from this commit rather than restoring another rel
   expect(build < pack && pack < upload).toBe(true);
   expect(steps[build]?.if).toBeUndefined();
   expect(steps[pack]?.if).toBeUndefined();
-  expect(steps[build]?.run).toContain(`--workspace-concurrency=4 "\${filters[@]}" run build`);
+  expect(steps[build]?.run).toContain(`--workspace-concurrency=3 "\${filters[@]}" run build`);
+  expect(steps[build]?.env).toMatchObject({
+    GOMEMLIMIT: '1536MiB',
+    NODE_OPTIONS: '--max-old-space-size=2048',
+    ULTRAMODERN_TSGO_BUILDERS: '1',
+  });
   expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
 });
 
