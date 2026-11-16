@@ -181,7 +181,7 @@ it.live('cancels a native KV stream that arrives after timeout and handles cance
 import { env } from 'cloudflare:workers';
 import { Effect, Fiber } from 'effect';
 import { ActiveApplicationCompositionSourceLive } from ${JSON.stringify(sourceModule)};
-import { TestClock } from 'effect/testing';
+import * as TestClock from 'effect/testing/TestClock';
 import { ActiveApplicationCompositionSource } from ${JSON.stringify(sourceService)};
 
 export default {
