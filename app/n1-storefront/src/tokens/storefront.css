@@ -11,9 +11,6 @@
   --spacing-tabs-content-padding-md: var(--dimension-0);
   /* Account54:1545/1682: the native sm panel owns x8 / top0 / bottom8. */
   --spacing-tabs-content-padding-sm: var(--dimension-0) var(--dimension-8) var(--dimension-8);
-  /* Desktop PDP parameter rows219:2885/2892 use the existing striped roles. */
-  --color-data-table-row-bg-striped-primary: var(--color-neutral-300);
-  --color-data-table-row-bg-striped-secondary: var(--color-fill-hover);
   /* Category navigation214:3169: preserve canonical text/md16/24.
    * A 32px layout row surrounds the native controls; it is not file-picker UI. */
   --color-tree-view-bg: var(--color-fill-hover);
@@ -294,19 +291,21 @@
   --text-totals-summary-total-size--line-height: var(--leading-n1-copy);
 }
 
-/* Desktop PDP219:2876 uses a neutral strip and compact controls. */
+/* Legacy N1 PDP: white tabs surface, compact desktop controls and a visible rail. */
 @utility n1-product-tabs {
-  --color-tabs-list-bg: var(--color-neutral-200);
+  --color-tabs-list-bg: var(--color-base);
   /* Kit0.57 Tabs uses the shared height role inside this list only. */
   --height-form-control-md: var(--dimension-36);
   --padding-tabs-trigger-md: var(--padding-tabs-trigger-sm);
-  --border-width-tabs: var(--dimension-0);
+  --border-width-tabs: var(--dimension-2);
 }
 
-/* Desktop PDP219:2885 uses text/md with compact Table cell spacing.
- * DataTable delegates cell typography to Table in installed kit0.57. */
+/* Legacy N1 parameter rows: normal text/md labels and subtle alternating surfaces. */
 @utility n1-product-parameters {
   --text-table-sm: var(--text-md);
+  --font-weight-table-header: var(--font-weight-normal);
+  --color-table-row-striped-primary: var(--color-base);
+  --color-table-row-striped-secondary: var(--color-fill-hover);
 }
 
 /* Mini line59:1330 uses14px/medium; card/PDP amounts retain their own roles. */
@@ -370,10 +369,10 @@
   --color-button-border-tertiary: var(--color-border-primary);
 }
 
-/* Desktop variant chips219:2780/2790/2800: native secondary/outlined/sm,
- * regular16/24 labels and neutral unselected surfaces. Mobile keeps its
- * native selected primary/solid/md through the responsive composition scope. */
+/* Legacy N1 keeps the same neutral variant chips on desktop and mobile. */
 @utility n1-product-variants {
+  --height-form-control-sm: var(--dimension-32);
+  --padding-button-sm: var(--dimension-2) var(--padding-button-x-sm);
   --color-button-bg-outlined: var(--color-fill-hover);
   --color-button-border-secondary: var(--color-neutral-300);
   --border-width-button-sm: var(--dimension-1);

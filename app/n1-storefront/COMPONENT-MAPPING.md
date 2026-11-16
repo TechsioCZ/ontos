@@ -629,8 +629,8 @@ nejednoznačné tiers se vynechají, žádné dopočítání21% ani druhý FX p�
 
 PriceBlock.taxLabel a AvailabilityStatus.label používají tyto skutečné údaje.
 Card/quote/cart amount zůstává owner gross. Popis39:2187/2547 je samostatně
-za Tabs.List a přetrvá při přepnutí panelů. Parametry219:2882 mají pouze na
-desktopu vlastní18/28 bold H2, přes native app text role nad dimension18.
+za Tabs.List a přetrvá při přepnutí panelů. Parametry mají po uživatelském upřesnění16.11. společný18/28 bold H2
+a nativní Table na mobilu i desktopu.
 Missing guide61:1716 má title24/36 semibold, p16/gap24 a pravdivý unavailable
 text. Tabs md content padding se váže na dimension0; účet používá size sm.
 Gallery219:2762/2763 má na desktopu oba gapy4 přes existující globální role;
@@ -645,20 +645,23 @@ Selectedvariant stockcorner a responsive Availability typografie mají nadále
 veřejný kit kontrakt gap. Výrobce/sizeguide URL/related
 nejsou vytvářené z fixture, jména, SKU ani náhodného katalogového výběru.
 
-C17 striped řádky219:2885/2892 vážou existující DataTable primary/secondary
-role na canonical neutral300/fill-hover. Palette se nemění.
+Uživatel16.11. výslovně odmítl odlišný mobilní PDP návrh ve Figmě. Pro tyto
+vizuální rozdíly je referencí původní n1-fe.netlify.app, komponenty a paleta
+zůstávají z instalovaného UI kitu. Galerie byla schválena a zůstává beze změny.
 
-C20 řeší desktop Tabs219:2876/223:2174 přes token-only Tailwind utilitu
-`md:n1-product-tabs` na existujícím wrapperu `Tabs.List`: neutral200, base-dark,
-dimension36, padding trigger-sm a nulová základní linka. Sdílený height role
-kit0.57 je přesměrovaný pouze uvnitř tohoto seznamu, nikoli v N1 theme nebo
-na nákupním NumericInput. Account ani mobil tento scope nemají.
+Jednotná tabulka parametrů používá Table/Body/Row/ColumnHeader(scope=row)/Cell,
+nikoli DataTable: jeho striped režim v0.59.3 vynucuje border-b-0 a nedokáže
+vyjádřit původní jemné pruhování současně s řádkovými oddělovači. Nativní Table
+obě vlastnosti podporuje. Stávající n1-product-parameters váže pouze text/md,
+normální váhu popisků a canonical base/fill-hover řádky. Poměr sloupců55/45
+zůstává layoutem; dlouhé hodnoty se při320px zalamují. Skutečné řádky měří37px
+(první36.5 při border-collapse), bez pevně vynucené výšky.
 
-Desktopový wrapper parametrů219:2885 používá `n1-product-parameters`, který
-váže skutečný Table token `--text-table-sm` na canonical `--text-md`.
-DataTable předává velikost do Table; mobilní tabulka je mimo tento wrapper.
-Pozorovaná výška řádku je nyní36 vs cílových37; přesnou geometrickou shodu
-nepotvrzujeme a nedoplňujeme ji nahodilou pevnou výškou.
+Desktopový md:n1-product-tabs nyní používá canonical base a2px rail namísto
+šedého stripu z Figmy. Mobil zachovává přístupné fitted záložky a stejné názvy.
+Kompaktní NumericInput a secondary solid nákupní akce jsou společné pro oba
+viewporty; min/step/error/sold-out/toast chování zůstává zachované. Titulek je
+24/32 a skutečně vybraná varianta se ukazuje také na mobilu.
 
 ### Desktop category panel — 59:1743 / 418:2368
 
@@ -693,7 +696,7 @@ NextImage `fill` inside relative96×96 wrappers preserves proportions for all
 source dimensions, including19×100 artwork. All root/child destinations and
 their ordering remain owner data, including13 original demo text-only items.
 
-### Desktop PDP variant states — 219:2778–2807
+### PDP variant states — legacy reference, user override16.11.
 
 Related products219:2922 are now composed at the product route using the existing
 CatalogView in related mode. Historical N1 selects up to four category products;
@@ -706,15 +709,17 @@ The prior desktop-hidden/mobile-always-empty ProductView placeholder is removed.
 
 Native LinkButton remains secondary/outlined/sm with actual NextLink href and
 aria-current. The existing group/per-variant wrappers bind consumed Button
-roles only at md: unselected fill-hover/neutral300/1px; selected base and
-bg-secondary-base/2px. Both use canonical text-md/normal16/24. Mobile retains
-its existing selected primary/solid/md and selected-option label. No arbitrary
-chip widths or appearance classes on the kit components.
+roles on both viewports: unselected fill-hover/neutral300/1px; selected base and
+bg-secondary-base/2px. Both use canonical text-md/normal16/24 and32px minimum
+height through existing control/padding roles. The mobile yellow selected state
+and added selected-option suffix are removed per user instruction. aria-current
+and the selected-variant summary remain. No arbitrary chip widths or appearance
+classes on the kit components.
 
 Stock corners219:2787/2797/2807 are separate decorative Image/NextImage
 siblings in the existing relative wrapper, not Button icons or CSS shapes.
-The original Figma SVG is local at public/brand/stock-corner.svg,8×8; the
-overlay is hidden on mobile and pointer-events-none/aria-hidden with empty alt.
+The original SVG is local at public/brand/stock-corner.svg,8×8; the overlay is
+visible on both viewports and pointer-events-none/aria-hidden with empty alt.
 It renders only for the individual owner's available/limited variant stock,
 never inferred from selection, group count or parent stock. Historical N1
 showed its green corner and tooltip even at zero stock; that misleading

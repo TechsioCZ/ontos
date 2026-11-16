@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
-import { QuantityField } from "@techsio/ui-kit/molecules/quantity-field";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
 import type { Dictionary } from "@/i18n";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
@@ -84,23 +83,14 @@ export const ProductPurchase = ({
   };
   if (selectionRequired) {
     return (
-      <>
-        <div className="hidden md:block">
-          <Button disabled size="md" theme="solid" variant="primary">
-            {d.selectVariantAction}
-          </Button>
-        </div>
-        <div className="md:hidden">
-          <Button block disabled size="md" theme="solid" variant="primary">
-            {d.selectVariantAction}
-          </Button>
-        </div>
-      </>
+      <Button density="compact" disabled size="md" theme="solid" variant="secondary">
+        {d.selectVariantAction}
+      </Button>
     );
   }
   return (
     <div>
-      <div className="n1-product-quantity-desktop hidden flex-wrap items-center gap-2 md:flex">
+      <div className="n1-product-quantity-desktop flex flex-wrap items-center gap-2">
         <div className="w-26 shrink-0 pointer-coarse:w-40">
           <NumericInput
             allowOverflow={false}
@@ -148,43 +138,10 @@ export const ProductPurchase = ({
           theme="solid"
           variant="secondary"
         >
-          {d.addToCartDetail}
-        </Button>
-      </div>
-      <div className="flex flex-col gap-4 md:hidden">
-        {current.stock !== "unavailable" && (
-          <QuantityField
-            disabled={!purchasable}
-            error={showQuantityError ? d.shopping.invalidQuantity : undefined}
-            helperText={`${d.minimumQuantity}: ${current.minimumQuantity} ${current.unit}`}
-            label={d.quantity}
-            locale={locale}
-            max={1_000_000}
-            min={current.minimumQuantity}
-            onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
-            size="md"
-            step={cartQuantityStep(current.packageQuantity)}
-            translations={{
-              decrementLabel: d.shopping.decreaseQuantity,
-              incrementLabel: d.shopping.increaseQuantity,
-            }}
-            unitLabel={current.unit}
-            value={quantity}
-          />
-        )}
-        <Button
-          aria-describedby={guidanceId}
-          block
-          disabled={purchaseDisabled}
-          onClick={addToCart}
-          size="md"
-          theme="solid"
-          variant="primary"
-        >
           {current.stock === "unavailable" ? d.stock.unavailable : d.addToCartDetail}
         </Button>
       </div>
-      <div className="hidden md:block" id="purchase-quantity-error">
+      <div id="purchase-quantity-error">
         {showQuantityError && <StatusText status="error">{d.shopping.invalidQuantity}</StatusText>}
       </div>
       {guidance !== null && (

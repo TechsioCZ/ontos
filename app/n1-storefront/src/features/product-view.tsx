@@ -4,8 +4,7 @@ import { Fragment, useSyncExternalStore } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
 import { Gallery } from "@techsio/ui-kit/organisms/gallery";
-import { DataTable } from "@techsio/ui-kit/organisms/data-table";
-import type { ColumnDef } from "@techsio/ui-kit/organisms/data-table";
+import { Table } from "@techsio/ui-kit/organisms/table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
 import { Link } from "@techsio/ui-kit/atoms/link";
@@ -22,10 +21,7 @@ import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
 import { productShareHref, productShareOrigin } from "./product-share";
 
-type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
-/** Keep percentage-sized mobile columns within their actual container. */
-const fluidTable = { minWidth: "100%" };
 const galleryItems = (images: readonly string[], imageAlt: string) =>
   images.map((src, index) => ({
     alt: imageAlt,
@@ -34,25 +30,6 @@ const galleryItems = (images: readonly string[], imageAlt: string) =>
     src,
     thumbnailImageProps: { height: 64, width: 64 },
   }));
-const mobileInformationOrder = (selectionRequired: boolean) =>
-  selectionRequired
-    ? { price: "order-1", stock: "order-2" }
-    : { price: "order-4", stock: "order-3" };
-const parameterColumns = (d: Dictionary, desktop = false): ColumnDef<Parameter>[] => {
-  const label: ColumnDef<Parameter> = {
-    accessorKey: "label",
-    header: d.parameterName,
-    id: "label",
-    meta: { width: desktop ? "55%" : "50%" },
-  };
-  const value: ColumnDef<Parameter> = {
-    accessorFn: (row) => (row.unit.length > 0 ? `${row.value} ${row.unit}` : row.value),
-    header: d.parameterValue,
-    id: "value",
-    meta: { width: desktop ? "45%" : "50%" },
-  };
-  return [label, value];
-};
 
 const productStockLabel = (
   { current, selectionRequired }: ReturnType<typeof selectProductDetail>,
@@ -102,7 +79,6 @@ export const ProductView = ({
   );
   const { current, genericVariantSelected, images, parameters, selectionRequired, variant } =
     selection;
-  const informationOrder = mobileInformationOrder(selectionRequired);
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -148,11 +124,9 @@ export const ProductView = ({
         </Breadcrumb>
       </div>
       <div className="relative my-8 md:my-6">
-        <h1 className="text-2xl font-bold leading-normal md:text-xl md:leading-9">
+        <h1 className="text-xl font-bold leading-8">
           {product.name}
-          {variant && !genericVariantSelected && (
-            <span className="hidden md:inline">{` – ${variant.name}`}</span>
-          )}
+          {variant && !genericVariantSelected && <span>{` – ${variant.name}`}</span>}
         </h1>
         <div aria-hidden="true" className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block" />
       </div>
@@ -198,14 +172,13 @@ export const ProductView = ({
           </dl>
           {product.variants.length > 0 && !genericVariantSelected && (
             <ProductVariants
-              desktop={desktop}
               dictionary={d}
               pathname={pathname}
               selectedVariant={variant}
               variants={product.variants}
             />
           )}
-          <div className={`${informationOrder.stock} md:order-2 md:mb-6`}>
+          <div className="order-3 md:order-2 md:mb-6">
             <div className="n1-product-stock-desktop hidden md:block">
               <AvailabilityStatus
                 label={productStockLabel(selection, d, locale)}
@@ -237,7 +210,7 @@ export const ProductView = ({
               </Link>
             </div>
           </div>
-          <div className={`${informationOrder.price} md:order-5 md:mb-n1-product-price-quantity`}>
+          <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
             <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
           </div>
           <div className="order-5 md:hidden">
@@ -310,10 +283,8 @@ export const ProductView = ({
         <Tabs defaultValue="parameters" fitted={!desktop} size="md" variant="line">
           <div className="overflow-x-auto md:n1-product-tabs">
             <Tabs.List>
-              <Tabs.Trigger value="parameters">
-                {desktop ? d.productParameters : d.productParametersTitle}
-              </Tabs.Trigger>
-              <Tabs.Trigger value="sizes">{desktop ? d.sizeGuide : d.sizeGuideTitle}</Tabs.Trigger>
+              <Tabs.Trigger value="parameters">{d.productParameters}</Tabs.Trigger>
+              <Tabs.Trigger value="sizes">{d.sizeGuide}</Tabs.Trigger>
               <Tabs.Indicator />
             </Tabs.List>
           </div>
@@ -328,31 +299,33 @@ export const ProductView = ({
             <div className="flex flex-col gap-2">
               {parameters.length > 0 && (
                 <>
-                  <h2 className="hidden text-n1-product-section font-bold leading-7 md:block">
+                  <h2 className="text-n1-product-section font-bold leading-7">
                     {d.productParameters}
                   </h2>
-                  <div className="md:hidden">
-                    <DataTable
-                      columns={parameterColumns(d)}
-                      data={[...parameters]}
-                      enableSorting={false}
-                      hideHeader
+                  <div className="n1-product-parameters">
+                    <Table
+                      aria-label={d.productParameters}
+                      className="table-fixed"
                       size="sm"
-                      slotProps={{ root: { "aria-label": d.productParameters, style: fluidTable } }}
-                      tableLayout="fixed"
-                      variant="line"
-                    />
-                  </div>
-                  <div className="n1-product-parameters hidden md:block">
-                    <DataTable
-                      columns={parameterColumns(d, true)}
-                      data={[...parameters]}
-                      enableSorting={false}
-                      hideHeader
-                      size="sm"
-                      slotProps={{ root: { "aria-label": d.productParameters } }}
                       variant="striped"
-                    />
+                    >
+                      <colgroup>
+                        <col width="55%" />
+                        <col width="45%" />
+                      </colgroup>
+                      <Table.Body>
+                        {parameters.map((parameter) => (
+                          <Table.Row key={JSON.stringify(parameter)}>
+                            <Table.ColumnHeader scope="row">{parameter.label}</Table.ColumnHeader>
+                            <Table.Cell>
+                              {parameter.unit.length > 0
+                                ? `${parameter.value} ${parameter.unit}`
+                                : parameter.value}
+                            </Table.Cell>
+                          </Table.Row>
+                        ))}
+                      </Table.Body>
+                    </Table>
                   </div>
                 </>
               )}
