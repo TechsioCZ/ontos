@@ -37,7 +37,7 @@ CREATE TEMP TABLE "finance_imported_payments" ON COMMIT DROP AS
                 ELSE '[]'::jsonb END AS payments
       FROM "finance_billing"."finance_states" AS ledger
      WHERE jsonb_typeof(ledger."state" -> 'invoices') = 'array'
-       AND (NOT ledger."state" ? 'manualPayments' OR jsonb_typeof(ledger."state" -> 'manualPayments') = 'array')
+       AND (ledger."state" -> 'manualPayments' IS NULL OR jsonb_typeof(ledger."state" -> 'manualPayments') = 'array')
   ),
   invoices AS (
     SELECT ledgers."tenant_id", ledgers."legal_entity_id", ledgers.payments, entries.invoice, entries.position,
@@ -56,7 +56,7 @@ CREATE TEMP TABLE "finance_imported_payments" ON COMMIT DROP AS
                 THEN CASE WHEN ((invoice -> 'paidMinor') #>> '{}')::numeric = trunc(((invoice -> 'paidMinor') #>> '{}')::numeric)
                           THEN ((invoice -> 'paidMinor') #>> '{}')::numeric END END AS paid,
            CASE
-             WHEN NOT invoice ? 'priorSettlement' THEN 0
+             WHEN invoice -> 'priorSettlement' IS NULL THEN 0
              WHEN jsonb_typeof(invoice -> 'priorSettlement' -> 'entries') = 'array' THEN (
                SELECT CASE WHEN bool_and(amount IS NOT NULL) IS FALSE THEN NULL ELSE coalesce(sum(amount), 0) END
                  FROM (SELECT CASE WHEN jsonb_typeof((entry -> 'amountMinor')) = 'number'
@@ -69,7 +69,8 @@ CREATE TEMP TABLE "finance_imported_payments" ON COMMIT DROP AS
                 THEN CASE WHEN ((payment -> 'amountMinor') #>> '{}')::numeric = trunc(((payment -> 'amountMinor') #>> '{}')::numeric)
                           THEN ((payment -> 'amountMinor') #>> '{}')::numeric END END AS amount
                       FROM jsonb_array_elements(invoices.payments) AS listed_payments(payment)
-                     WHERE payment ->> 'invoiceResourceId' = invoices.resource_id) AS listed) AS recorded
+                     -- Finance reads a record's invoice reference trimmed.
+                     WHERE btrim(payment ->> 'invoiceResourceId', E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') = invoices.resource_id) AS listed) AS recorded
       FROM invoices
   ),
   unrecorded AS (
