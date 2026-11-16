@@ -66,6 +66,7 @@ import { brandCurrentReadApiLive } from './brand-current-read-server.ts';
 import { brandHistoryReadApiLive } from './brand-history-read-server.ts';
 import { catalogDocumentCurrentReadApiLive } from './catalog-document-current-read-server.ts';
 import { catalogMediaCurrentReadApiLive } from './catalog-media-current-read-server.ts';
+import { catalogSourceProductPageReadApiLive } from './catalog-source-product-page-read-server.ts';
 import { catalogSourceProductsReadApiLive } from './catalog-source-products-read-server.ts';
 import { catalogSourceResolutionReadApiLive } from './catalog-source-resolution-read-server.ts';
 import { changeLocalOverrideActionApiLive } from './change-local-override-action-server.ts';
@@ -413,6 +414,7 @@ export const makeCatalogApiRuntime = (
     brandHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogDocumentCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogMediaCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    catalogSourceProductPageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogSourceProductsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     catalogSourceResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     changeLocalOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

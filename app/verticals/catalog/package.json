@@ -46,6 +46,8 @@
     "./resources/variant": "./shared/resources/variant.ts",
     "./Route": "./src/federation-entry.tsx",
     "./Widget": "./src/components/catalog-widget.tsx",
+    "./api/catalog-source-product-page": "./shared/apis/catalog-source-product-page.ts",
+    "./api/catalog-source-product-page-client": "./src/api/catalog-source-product-page-client.ts",
     "./api/catalog-source-products": "./shared/apis/catalog-source-products.ts",
     "./api/catalog-source-products-client": "./src/api/catalog-source-products-client.ts",
     "./domain/catalog-source-correlation": "./shared/domain/catalog-source-correlation.ts",

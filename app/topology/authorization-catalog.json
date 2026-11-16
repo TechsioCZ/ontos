@@ -1548,6 +1548,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.catalog-source-product-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "catalog-source-product-page",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.catalog-source-product-page",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.catalog-source-products.read",
             "kind": "read",
             "modes": [
