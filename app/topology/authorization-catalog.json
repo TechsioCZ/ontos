@@ -19398,6 +19398,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.counterparty-identity.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "counterparties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.counterparty-identities",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.counterparty-migration-correlation.read",
             "kind": "read",
             "modes": [

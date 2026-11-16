@@ -13,7 +13,7 @@ const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId 
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
 const deployedShell = ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' });
 const trusted: FinanceValidators = {
-  exportReferences: Effect.succeed({ issuerName: 'Nájempark', partners: new Map() }),
+  exportReferences: () => Effect.succeed({ issuerName: 'Nájempark', partners: new Map() }),
   invoice: () => Effect.void,
 };
 const counterpartyRef = {

@@ -12,6 +12,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 const apiNames = [
   'aresLookup',
   'counterpartiesSearch',
+  'counterpartyIdentities',
   'counterpartyMigrationCorrelation',
   'counterpartyOrganizationIcoFacts',
   'counterpartyRead',

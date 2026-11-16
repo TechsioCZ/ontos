@@ -119,6 +119,9 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     'counterparty-migration-correlation': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'counterparty-organization-ico-facts': OntosMcpHidden,
+    'counterparty-identities': {
+      title: { cs: 'Identifikace obchodních partnerů', en: 'Counterparty identities' },
+    },
     'counterparty-read': { title: { cs: 'Detail obchodního partnera', en: 'Counterparty details' } },
     'counterparty-role-history': {
       title: { cs: 'Historie rolí obchodního partnera', en: 'Counterparty role history' },

@@ -2,14 +2,16 @@ import { ReadRuntime, agentActivityActorsRead, legalEntityDetailRead } from '@ap
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import {
+  COUNTERPARTY_IDENTITIES_MAX_REFS,
+  executeCounterpartyIdentitiesWithAuthorization,
   executeCounterpartyReadWithAuthorization,
-  executeCustomerListWithAuthorization,
 } from '@app/party-registry/api/client';
+import type { CounterpartyIdentity } from '@app/party-registry/api/client';
 import { executeRecordsWithAuthorization as readAgreements } from '@app/legal-agreements/clients/records';
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
 import { executeRecordsWithAuthorization as readProperty } from '@app/property-portfolio/clients/records';
 import { executeRecordsWithAuthorization as readWork } from '@app/work-tasks/clients/records';
-import { Context, DateTime, Effect, Layer } from 'effect';
+import { Array as Arr, Context, DateTime, Effect, Layer } from 'effect';
 import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
@@ -22,8 +24,8 @@ type MutableExportPartnerReference = { -readonly [Key in keyof ExportPartnerRefe
 type ReferenceFailure = Effect.Error<
   | ReturnType<typeof makeReferenceGatewayCredentialSource>
   | ReturnType<Effect.Success<ReturnType<typeof makeReferenceGatewayCredentialSource>>['issue']>
+  | ReturnType<typeof executeCounterpartyIdentitiesWithAuthorization>
   | ReturnType<typeof executeCounterpartyReadWithAuthorization>
-  | ReturnType<typeof executeCustomerListWithAuthorization>
   | ReturnType<typeof readAgreements>
   | ReturnType<typeof readOccupancies>
   | ReturnType<typeof readProperty>
@@ -40,6 +42,38 @@ const unavailable = (cause?: ReferenceFailure | { readonly _tag: string }) =>
     { value: cause },
   );
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
+
+const exportPartnerOf = (identity: CounterpartyIdentity): ExportPartnerReference => {
+  const partner: MutableExportPartnerReference = {};
+  if (identity.city !== null) {
+    partner.city = identity.city;
+  }
+  if (identity.displayName !== null) {
+    partner.displayName = identity.displayName;
+  }
+  if (identity.companyId !== null) {
+    partner.ico = identity.companyId;
+  }
+  if (identity.vatId !== null) {
+    partner.vatId = identity.vatId;
+  }
+  return partner;
+};
+
+/**
+ * The registry identity of exactly the named counterparties, keyed by counterparty id: each distinct one asked once,
+ * in batches the party registry accepts, so no partner is left out however many an export names.
+ */
+export const resolveExportPartners = Effect.fn('Finance.resolveExportPartners')(function* resolveExportPartners<E, R>(
+  counterpartyRefs: readonly Invoice['counterpartyRef'][],
+  readBatch: (batch: readonly Invoice['counterpartyRef'][]) => Effect.Effect<readonly CounterpartyIdentity[], E, R>,
+) {
+  const distinct = [...new Map(counterpartyRefs.map((ref) => [ref.resourceId, ref])).values()];
+  const batches = Arr.chunksOf(distinct, COUNTERPARTY_IDENTITIES_MAX_REFS);
+  const answered = yield* Effect.forEach(batches, readBatch, { concurrency: 1 });
+  return new Map(answered.flat().map((identity) => [identity.counterpartyRef.resourceId, exportPartnerOf(identity)]));
+});
+
 const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function* makeFinanceValidators(
   scope: OperationalScope,
 ) {
@@ -50,9 +84,14 @@ const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function*
   const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(unavailable));
   const readRuntime = yield* ReadRuntime;
   const taxRates = yield* FinanceTaxRates;
-  /** S08: the issuer name comes from Core's legal entity of the trusted scope, partners from the party registry. */
-  const exportReferences = Effect.gen(function* exportReferences() {
-    const { issuer, target } = yield* readRuntime
+  /**
+   * S08: the issuer name comes from Core's legal entity of the trusted scope, the partners of the selected invoices
+   * from the party registry's identity of exactly those counterparties, whatever role they hold.
+   */
+  const exportReferences = Effect.fn('Finance.exportReferences')(function* exportReferences(
+    counterpartyRefs: readonly Invoice['counterpartyRef'][],
+  ) {
+    const issuer = yield* readRuntime
       .runRead({
         input: {
           legalEntityRef: {
@@ -66,56 +105,47 @@ const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(function*
         registration: legalEntityDetailRead,
         transport: { correlationId: scope.correlationId },
       })
-      .pipe(
-        // No partner credential is issued before the trusted issuer read succeeds.
-        Effect.flatMap((resolvedIssuer) =>
-          source.issue('party-registry').pipe(
-            Effect.map((issuedTarget) => ({
-              issuer: resolvedIssuer,
-              target: issuedTarget,
-            })),
-          ),
-        ),
-      );
+      .pipe(Effect.mapError(unavailable));
     const issuerName = issuer.legalName;
     if (issuerName === undefined || issuerName.trim().length === 0) {
       return yield* unavailable();
     }
-    const customers = yield* executeCustomerListWithAuthorization({}, target.authorization, scope.correlationId, {
-      baseUrl: target.apiBaseUrl,
-      compositionRevision: target.compositionRevision,
-    });
-    const partners = new Map<string, ExportPartnerReference>();
-    for (const customer of customers.items) {
-      const partner: MutableExportPartnerReference = {};
-      if (customer.city !== null) {
-        partner.city = customer.city;
-      }
-      if (customer.displayName !== null) {
-        partner.displayName = customer.displayName;
-      }
-      if (customer.companyId !== null) {
-        partner.ico = customer.companyId;
-      }
-      if (customer.vatId !== null) {
-        partner.vatId = customer.vatId;
-      }
-      partners.set(customer.counterpartyId, partner);
-      partners.set(customer.partyId, partner);
-    }
-    // The file names its author by the display name Core holds for the authenticated principal, never by its id.
-    const actors = yield* readRuntime.runRead({
-      input: {},
-      principal: scope,
-      registration: agentActivityActorsRead,
-      transport: { correlationId: scope.correlationId },
-    });
+    // No partner credential is issued before the trusted issuer read succeeds; each batch carries its own.
+    const { actors, partners } = yield* Effect.all(
+      {
+        partners: resolveExportPartners(counterpartyRefs, (batch) =>
+          source.issue('party-registry').pipe(
+            Effect.flatMap((target) =>
+              executeCounterpartyIdentitiesWithAuthorization(
+                { counterpartyRefs: batch },
+                target.authorization,
+                scope.correlationId,
+                { baseUrl: target.apiBaseUrl, compositionRevision: target.compositionRevision },
+              ),
+            ),
+            Effect.map((response) => response.items),
+            Effect.mapError(unavailable),
+          ),
+        ),
+        // The file names its author by the display name Core holds for the authenticated principal, never by its id.
+        actors: readRuntime
+          .runRead({
+            input: {},
+            principal: scope,
+            registration: agentActivityActorsRead,
+            transport: { correlationId: scope.correlationId },
+          })
+          .pipe(Effect.mapError(unavailable)),
+      },
+      // One after the other, as before: the partner reads first, then the author.
+      { concurrency: 1 },
+    );
     const author = actors.names.find((entry) => entry.principalId === scope.principalId);
     if (author === undefined) {
       return { issuerName, partners };
     }
     return { authorName: author.displayName, issuerName, partners };
-  }).pipe(Effect.mapError(unavailable), Effect.withSpan('Finance.exportReferences'));
+  });
   const validateCounterparty = Effect.fn('Finance.validateCounterparty')(function* validateCounterparty(
     invoice: Invoice,
   ) {

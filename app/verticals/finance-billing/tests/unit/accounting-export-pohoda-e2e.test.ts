@@ -17,11 +17,12 @@ const trustedReferences = (
   issuerName: string,
   partners: Readonly<Record<string, ExportPartnerReference>> = {},
 ): FinanceValidators => ({
-  exportReferences: Effect.succeed({
-    authorName: 'Jana Účetní',
-    issuerName,
-    partners: new Map(Object.entries(partners)),
-  }),
+  exportReferences: () =>
+    Effect.succeed({
+      authorName: 'Jana Účetní',
+      issuerName,
+      partners: new Map(Object.entries(partners)),
+    }),
   invoice: () => Effect.void,
 });
 const counterpartyRef = {

@@ -36,6 +36,8 @@ import { confirmDuplicatePartiesAction } from './src/actions/confirm-duplicate-p
 import { correctPartyFactAction } from './src/actions/correct-party-fact.action.ts';
 import { counterpartyCreateAction } from './src/actions/counterparty-create.action.ts';
 import { counterpartyCustomerOnboardAction } from './src/actions/counterparty-customer-onboard.action.ts';
+import { CounterpartyIdentitiesApi } from './shared/apis/counterparty-identities.ts';
+import { counterpartyIdentitiesRead } from './src/api/counterparty-identities.read.ts';
 import { CounterpartyMigrationCorrelationApi } from './shared/apis/counterparty-migration-correlation.ts';
 import { counterpartyMigrationCorrelationRead } from './src/api/counterparty-migration-correlation.read.ts';
 import { CounterpartyOrganizationIcoFactsApi } from './shared/apis/counterparty-organization-ico-facts.ts';
@@ -64,7 +66,13 @@ import { LegacyIcoInventoryApi } from './shared/apis/legacy-ico-inventory.ts';
 import { legacyIcoInventoryRead } from './src/api/legacy-ico-inventory.read.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
+import { OrganizationBusinessNameExportApi } from './shared/apis/organization-business-name-export.ts';
+import { organizationBusinessNameExportRead } from './src/api/organization-business-name-export.read.ts';
 import { OrganizationEngagementProfileApi } from './shared/apis/organization-engagement-profile.ts';
+import { OrganizationIcoFactsApi } from './shared/apis/organization-ico-facts.ts';
+import { organizationIcoFactsRead } from './src/api/organization-ico-facts.read.ts';
+import { OrganizationRecordFactsApi } from './shared/apis/organization-record-facts.ts';
+import { organizationRecordFactsRead } from './src/api/organization-record-facts.read.ts';
 import { PartyContactPointDetailApi } from './shared/apis/party-contact-point-detail.ts';
 import { partyContactPointDetailRead } from './src/api/party-contact-point-detail.read.ts';
 import { PartyContactPointsApi } from './shared/apis/party-contact-points.ts';
@@ -77,12 +85,6 @@ import { PartyMergeReadinessApi } from './shared/apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './shared/apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './shared/apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './shared/apis/party-relationship-detail.ts';
-import { OrganizationBusinessNameExportApi } from './shared/apis/organization-business-name-export.ts';
-import { organizationBusinessNameExportRead } from './src/api/organization-business-name-export.read.ts';
-import { OrganizationIcoFactsApi } from './shared/apis/organization-ico-facts.ts';
-import { organizationIcoFactsRead } from './src/api/organization-ico-facts.read.ts';
-import { OrganizationRecordFactsApi } from './shared/apis/organization-record-facts.ts';
-import { organizationRecordFactsRead } from './src/api/organization-record-facts.read.ts';
 import { PartySourceEffectReceiptApi } from './shared/apis/party-source-effect-receipt.ts';
 import { partySourceEffectReceiptRead } from './src/api/party-source-effect-receipt.read.ts';
 import { PersonEngagementProfileApi } from './shared/apis/person-engagement-profile.ts';
@@ -219,6 +221,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'party-commands': partyRegistryCommandsApi,
       // <generated-module-manifest-apis>
       'ares-lookup': AresLookupApi,
+      'counterparty-identities': CounterpartyIdentitiesApi,
       'counterparty-migration-correlation': CounterpartyMigrationCorrelationApi,
       'counterparty-organization-ico-facts': CounterpartyOrganizationIcoFactsApi,
       'counterparty-read': CounterpartyReadApi,
@@ -231,9 +234,9 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'legacy-ico-inventory': LegacyIcoInventoryApi,
       'organization-business-name-export': OrganizationBusinessNameExportApi,
       'organization-engagement-profile': OrganizationEngagementProfileApi,
-      'owner-action-approvals': OwnerActionApprovalApi,
       'organization-ico-facts': OrganizationIcoFactsApi,
       'organization-record-facts': OrganizationRecordFactsApi,
+      'owner-action-approvals': OwnerActionApprovalApi,
       'party-contact-point-detail': PartyContactPointDetailApi,
       'party-contact-points': PartyContactPointsApi,
       'party-correction': PartyCorrectionApi,
@@ -290,9 +293,9 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       { apiKey: 'party-commands', operationKey: 'partyCommands.endContactPoint', registration: endContactPointAction },
       // <generated-module-manifest-operation-contracts>
       {
-        apiKey: 'crm-client-intake-review',
-        operationKey: 'crmClientIntakeReview.execute',
-        registration: crmClientIntakeReviewRead,
+        apiKey: 'counterparty-identities',
+        operationKey: 'counterpartyIdentities.execute',
+        registration: counterpartyIdentitiesRead,
       },
       {
         apiKey: 'counterparty-migration-correlation',
@@ -303,6 +306,11 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         apiKey: 'counterparty-organization-ico-facts',
         operationKey: 'counterpartyOrganizationIcoFacts.execute',
         registration: counterpartyOrganizationIcoFactsRead,
+      },
+      {
+        apiKey: 'crm-client-intake-review',
+        operationKey: 'crmClientIntakeReview.execute',
+        registration: crmClientIntakeReviewRead,
       },
       {
         apiKey: 'guest-party-resolution',
@@ -799,9 +807,10 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
     partyMatchDecisionRead,
     partyMatchRead,
     // <generated-module-registration-reads>
-    crmClientIntakeReviewRead,
+    counterpartyIdentitiesRead,
     counterpartyMigrationCorrelationRead,
     counterpartyOrganizationIcoFactsRead,
+    crmClientIntakeReviewRead,
     guestPartyResolutionRead,
     legacyIcoInventoryRead,
     organizationBusinessNameExportRead,

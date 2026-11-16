@@ -33,6 +33,7 @@ import {
 // <generated-governed-http-handler-imports>
 import { aresLookupReadApiLive } from './ares-lookup-read-server.ts';
 import { counterpartiesReadApiLive } from './counterparties-search-server.ts';
+import { counterpartyIdentitiesReadApiLive } from './counterparty-identities-read-server.ts';
 import { counterpartyMigrationCorrelationReadApiLive } from './counterparty-migration-correlation-read-server.ts';
 import { counterpartyOrganizationIcoFactsReadApiLive } from './counterparty-organization-ico-facts-read-server.ts';
 import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts';
@@ -207,6 +208,7 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
       GovernedReadLayer.provide(governedReadRuntimeLive),
       Layer.provide(searchProjectionGateway),
     ),
+    counterpartyIdentitiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyMigrationCorrelationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyOrganizationIcoFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

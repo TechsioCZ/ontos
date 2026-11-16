@@ -61,7 +61,7 @@ export interface ExportReferences {
   /** Core display name of the authenticated principal who creates the export. */
   readonly authorName?: string;
   readonly issuerName: string;
-  /** Keyed by both the counterparty id and the party id, so an invoice resolves whichever one it stores. */
+  /** The party registry's identity of the export's counterparties, keyed by counterparty id. */
   readonly partners: ReadonlyMap<string, ExportPartnerReference>;
 }
 /** Optional Siampark anchors of a budget line, plan item or hand-typed supplier invoice. */
@@ -69,8 +69,13 @@ export type FinanceAnchors = Partial<Pick<Invoice, 'contractRef' | 'propertyRef'
 export interface FinanceValidators {
   /** Checks that the anchors exist in this legal entity. Absent in hosts without reference access (tests, seeds). */
   readonly anchors?: (anchors: FinanceAnchors) => Effect.Effect<void, FinanceError>;
-  /** Absent in hosts that cannot reach Core and the party registry (outbox worker); exports then fail closed. */
-  readonly exportReferences?: Effect.Effect<ExportReferences, FinanceError>;
+  /**
+   * The issuer and the registry identity of exactly these counterparties. Absent in hosts that cannot reach Core and
+   * the party registry (outbox worker); exports then fail closed.
+   */
+  readonly exportReferences?: (
+    counterpartyRefs: readonly Invoice['counterpartyRef'][],
+  ) => Effect.Effect<ExportReferences, FinanceError>;
   readonly invoice: (invoice: Invoice) => Effect.Effect<void, FinanceError>;
   /**
    * The VAT Tax publishes for the company on a date (YYYY-MM-DD). Absent only in seeds and tests, whose lines are stored
@@ -1190,7 +1195,14 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
       ),
     ),
   );
-  const references = yield* validators.exportReferences;
+  // Exactly the registry counterparties of the selected invoices, whatever role each of them holds.
+  const references = yield* validators.exportReferences(
+    selected.flatMap((invoice) =>
+      invoice === undefined || invoice.counterpartyRef.resourceId === MANUAL_COUNTERPARTY_ID
+        ? []
+        : [invoice.counterpartyRef],
+    ),
+  );
   const exports = state.accountingExports ?? [];
   const version = exports.length + 1;
   const batchNumber = `UP-${DateTime.formatIsoDateUtc(input.now).slice(0, 4)}-${String(version).padStart(3, '0')}`;
@@ -1218,8 +1230,7 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
   const registryPartner = (invoice: Invoice) =>
     invoice.counterpartyRef.resourceId === MANUAL_COUNTERPARTY_ID
       ? undefined
-      : (references.partners.get(invoice.partyId ?? invoice.counterpartyRef.resourceId) ??
-        references.partners.get(invoice.counterpartyRef.resourceId));
+      : references.partners.get(invoice.counterpartyRef.resourceId);
   const partnerOf = (invoice: Invoice): ExportPartnerIdentity => {
     const registry = registryPartner(invoice);
     // The IČO captured on the document wins over today's registry value.

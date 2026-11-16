@@ -11,6 +11,7 @@ import { Brand, identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { AresLookupApi } from './apis/ares-lookup.ts';
 import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
+import { CounterpartyIdentitiesApi } from './apis/counterparty-identities.ts';
 import { CounterpartyMigrationCorrelationApi } from './apis/counterparty-migration-correlation.ts';
 import { CounterpartyOrganizationIcoFactsApi } from './apis/counterparty-organization-ico-facts.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
@@ -247,6 +248,26 @@ export {
   CounterpartiesSearchApi,
 } from './apis/counterparties-search.ts';
 export type { CounterpartiesProviderRequest, CounterpartiesProviderResponse } from './apis/counterparties-search.ts';
+export {
+  COUNTERPARTY_IDENTITIES_MAX_REFS,
+  CounterpartyIdentitiesRequestSchema,
+  CounterpartyIdentitiesResponseSchema,
+  CounterpartyIdentitySchema,
+  CounterpartyIdentitiesAuthenticationProblemSchema,
+  CounterpartyIdentitiesInvalidProblemSchema,
+  CounterpartyIdentitiesUnavailableProblemSchema,
+  CounterpartyIdentitiesForbiddenProblemSchema,
+  CounterpartyIdentitiesNotFoundProblemSchema,
+  CounterpartyIdentitiesPolicyProblemSchema,
+  CounterpartyIdentitiesPolicyConflictProblemSchema,
+  CounterpartyIdentitiesInternalProblemSchema,
+  CounterpartyIdentitiesApi,
+} from './apis/counterparty-identities.ts';
+export type {
+  CounterpartyIdentitiesRequest,
+  CounterpartyIdentitiesResponse,
+  CounterpartyIdentity,
+} from './apis/counterparty-identities.ts';
 export {
   CounterpartyReadRequestSchema,
   CounterpartyReadResponseSchema,
@@ -569,6 +590,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(AresLookupApi)
   .addHttpApi(CounterpartiesSearchApi)
+  .addHttpApi(CounterpartyIdentitiesApi)
   .addHttpApi(CounterpartyMigrationCorrelationApi)
   .addHttpApi(CounterpartyOrganizationIcoFactsApi)
   .addHttpApi(CounterpartyReadApi)

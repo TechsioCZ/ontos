@@ -26,7 +26,7 @@ const validators: FinanceValidators = {
     Effect.sync(() => {
       checkedAnchors.push(anchors);
     }),
-  exportReferences: Effect.succeed({ issuerName: 'Siampark', partners: new Map() }),
+  exportReferences: () => Effect.succeed({ issuerName: 'Siampark', partners: new Map() }),
   invoice: () => Effect.void,
 };
 const counterpartyRef = {

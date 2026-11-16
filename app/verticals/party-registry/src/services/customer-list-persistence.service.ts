@@ -223,6 +223,49 @@ const loadContacts = (
     )
     .pipe(Effect.mapError(unavailable));
 
+/** Resolves Counterparty rows to their canonical Party and projects them as customer list items. */
+const itemsOfCounterparties = Effect.fn('CustomerListPersistenceService.itemsOfCounterparties')(
+  function* itemsOfCounterparties(
+    transaction: CustomerListTransaction,
+    tenantId: string,
+    counterpartyRows: readonly CustomerCounterpartyRow[],
+    now: Date,
+    resolveCanonicalPartyIds: (
+      partyIds: readonly string[],
+    ) => Effect.Effect<ReadonlyMap<string, string>, PartyAliasResolutionError>,
+  ) {
+    if (counterpartyRows.length === 0) {
+      return [];
+    }
+    // One set-based alias resolution for the whole page (was two queries per customer).
+    const canonical = yield* resolveCanonicalPartyIds(counterpartyRows.map((row) => row.partyId)).pipe(
+      Effect.mapError(unavailable),
+    );
+    const rows = counterpartyRows.flatMap((row) => {
+      const canonicalPartyId = canonical.get(row.partyId);
+      return canonicalPartyId === undefined ? [] : [{ ...row, canonicalPartyId }];
+    });
+    if (rows.length !== counterpartyRows.length) {
+      return yield* unavailable();
+    }
+    const partyIds = [...new Set(rows.map(({ canonicalPartyId }) => canonicalPartyId))];
+    // One transaction connection: the three reads stay sequential (concurrency 1).
+    const [partyRows, identifierRows, contactRows] = yield* Effect.all(
+      [
+        loadParties(transaction, tenantId, partyIds),
+        loadIdentifiers(transaction, tenantId, partyIds, now),
+        loadContacts(transaction, tenantId, partyIds, now),
+      ],
+      { concurrency: 1 },
+    );
+    const items = assembleCustomerListItems(tenantId, rows, partyRows, identifierRows, contactRows);
+    if (items === undefined) {
+      return yield* unavailable();
+    }
+    return items;
+  },
+);
+
 /**
  * Lists Counterparties of the trusted Legal Entity that hold a CUSTOMER role period effective now,
  * resolved to their canonical Party. Contact Points classified PERSONAL never leave this read.
@@ -270,34 +313,46 @@ export const listCustomerRecords = Effect.fn('CustomerListPersistenceService.lis
       .pipe(Effect.mapError(unavailable));
     // Non-overlapping CUSTOMER periods admit one current period, but stay correct if that ever changes.
     const counterpartyRows = [...new Map(joinedRows.map((row) => [row.counterpartyId, row])).values()];
-    if (counterpartyRows.length === 0) {
+    return yield* itemsOfCounterparties(transaction, scope.tenantId, counterpartyRows, now, resolveCanonicalPartyIds);
+  },
+);
+
+/**
+ * The named Counterparties of the trusted Legal Entity, whatever role they hold and archived ones too, projected
+ * exactly as the customer list projects a customer. A name that is not a Counterparty of this Legal Entity is absent.
+ */
+export const listCounterpartyIdentityRecords = Effect.fn('CustomerListPersistenceService.listCounterpartyIdentities')(
+  function* listCounterpartyIdentities(
+    transaction: CustomerListTransaction,
+    scope: CustomerListScope,
+    counterpartyIds: readonly string[],
+    resolveCanonicalPartyIds: (
+      partyIds: readonly string[],
+    ) => Effect.Effect<ReadonlyMap<string, string>, PartyAliasResolutionError> = (partyIds) =>
+      resolvePartyAliases(transaction, scope.tenantId, partyIds),
+  ) {
+    const ids = [...new Set(counterpartyIds)];
+    if (ids.length === 0) {
       return [];
     }
-    // One set-based alias resolution for the whole page (was two queries per customer).
-    const canonical = yield* resolveCanonicalPartyIds(counterpartyRows.map((row) => row.partyId)).pipe(
-      Effect.mapError(unavailable),
-    );
-    const rows = counterpartyRows.flatMap((row) => {
-      const canonicalPartyId = canonical.get(row.partyId);
-      return canonicalPartyId === undefined ? [] : [{ ...row, canonicalPartyId }];
-    });
-    if (rows.length !== counterpartyRows.length) {
-      return yield* unavailable();
-    }
-    const partyIds = [...new Set(rows.map(({ canonicalPartyId }) => canonicalPartyId))];
-    // One transaction connection: the three reads stay sequential (concurrency 1).
-    const [partyRows, identifierRows, contactRows] = yield* Effect.all(
-      [
-        loadParties(transaction, scope.tenantId, partyIds),
-        loadIdentifiers(transaction, scope.tenantId, partyIds, now),
-        loadContacts(transaction, scope.tenantId, partyIds, now),
-      ],
-      { concurrency: 1 },
-    );
-    const items = assembleCustomerListItems(scope.tenantId, rows, partyRows, identifierRows, contactRows);
-    if (items === undefined) {
-      return yield* unavailable();
-    }
-    return items;
+    const now = yield* DateTime.nowAsDate;
+    const counterpartyRows: readonly CustomerCounterpartyRow[] = yield* transaction
+      .select({
+        archivedAt: counterparties.archivedAt,
+        counterpartyId: counterparties.counterpartyId,
+        createdAt: counterparties.createdAt,
+        partyId: counterparties.partyId,
+      })
+      .from(counterparties)
+      .where(
+        and(
+          eq(counterparties.tenantId, scope.tenantId),
+          eq(counterparties.legalEntityId, scope.legalEntityId),
+          inArray(counterparties.counterpartyId, ids),
+        ),
+      )
+      .orderBy(asc(counterparties.createdAt), asc(counterparties.counterpartyId))
+      .pipe(Effect.mapError(unavailable));
+    return yield* itemsOfCounterparties(transaction, scope.tenantId, counterpartyRows, now, resolveCanonicalPartyIds);
   },
 );
