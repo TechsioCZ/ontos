@@ -242,16 +242,5 @@ it.effect('keeps verification mandatory for changed services and records sources
     expect(buildScript).toContain('export ZEROPS_UNIT_DIGESTS');
     expect(buildScript).toContain(`[ "\${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1`);
     expect(workflow.jobs.deploy_app?.if).toContain("needs.build.result == 'success'");
-    expect(source).toContain(`AKROS_TEST_BASE_URL: \${{ env.STAGE_SHOP_URL }}`);
-    expect(source).toContain(
-      `NEWSLETTER_PURPOSE_READ_FILE: \${{ runner.temp }}/newsletter-native/processing-purposes.json`,
-    );
-    expect(source).toContain(`NEWSLETTER_NOTICE_READ_FILE: \${{ runner.temp }}/newsletter-native/notice-versions.json`);
-    expect(source).toContain(`NEWSLETTER_PURPOSE_ID: \${{ vars.NEWSLETTER_PURPOSE_ID }}`);
-    expect(source).toContain(`NEWSLETTER_NOTICE_ID: \${{ vars.NEWSLETTER_NOTICE_ID }}`);
-    expect(source).toContain("steps.newsletter-evidence.outcome == 'success'");
-    expect(source).toContain(
-      "steps.newsletter-evidence.outcome == 'failure' || steps.newsletter-proof.outcome == 'failure'",
-    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

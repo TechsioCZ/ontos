@@ -2,13 +2,14 @@
 /**
  * The units one stage build shard builds (zerops-stage.yml, job `build`), printed space-separated.
  *
- * The Shell builds alone in shard 0: its build takes several times as long as a module's, and the push waits for
- * the slowest shard. The modules of topology/application-release-intent.json are dealt over the other shards by their
- * measured build seconds (MODULE_BUILD_SECONDS), longest first, each to the shard with the least work so far, so the
- * shards end together when every unit rebuilds. A module that has no measurement yet is dealt after every measured
- * one, at UNMEASURED_MODULE_SECONDS, so adding an unmeasured module moves no measured module (only unmeasured modules
- * dealt after it can move). Adding, changing or removing a measurement, or removing a measured module, can move
- * modules; each moved module then builds once in its new shard.
+ * The push waits for the slowest shard, and a shard ends with its slowest build lane rather than with its total: with
+ * BUILD_LANES = 2, a shard whose lanes hold 160 s each ends in 160 s, one that holds 250 s and 70 s ends in 250 s.
+ * So the modules of topology/application-release-intent.json are dealt lane by lane, by their measured build seconds
+ * (MODULE_BUILD_SECONDS), longest first, each to the lane with the least work so far. A module that has no measurement
+ * yet is dealt after every measured one, at UNMEASURED_MODULE_SECONDS, so adding an unmeasured module moves no
+ * measured module (only unmeasured modules dealt after it can move). Adding, changing or removing a measurement, or
+ * removing a measured module, can move modules; each moved module then builds once in its new shard, because a
+ * shard's cache entry is named by its own units' identities.
  *
  *   node scripts/zerops/build-shard-units.mts <shard> <shards>
  */
@@ -20,45 +21,51 @@ import { Argument, Command } from 'effect/cli';
 
 import { ReleaseIntentSchema, SHELL_ID, workspaceRoot } from './hosted-units.mts';
 
-/** The Shell's own shard. */
+/** The Shell's own shard. It builds alone: measured 74-116 s over the runs below, so shard 0 is never the slowest. */
 export const SHELL_SHARD = 0;
 
+/** `BUILD_JOBS=2` in the build job: every shard builds two units at a time, so every shard has two build lanes. */
+export const BUILD_LANES = 2;
+
 /**
- * Seconds each module's build took in its stage shard, two builds at a time (BUILD_JOBS=2): the `built <unit> in Ns`
- * lines of run 43764570181 (2026-11-15), which rebuilt every unit. The shard waits for the sum over its two lanes.
+ * Each module's build cost in seconds, for dealing only. Measured from the `built <unit> in Ns` lines of the five
+ * stage runs that rebuilt every unit (43715845040, 43764570181, 43797839971, 43803674984, 43810710505), each run
+ * normalised by its own mean module and then averaged, scaled back to the five-run mean of 80.6 s. Normalising first
+ * is what makes the five runs comparable: workforce measured 56 s in one and 97 s in another because runner speed and
+ * the lane-mate it shares a core with differ per run, while its share of the run is stable.
  */
 export const MODULE_BUILD_SECONDS = new Map([
-  ['assortment', 75],
-  ['catalog', 89],
-  ['commerce-customer-context', 108],
-  ['commerce-market-catalog', 100],
-  ['crm', 102],
-  ['crm-activities', 60],
+  ['assortment', 77],
+  ['catalog', 112],
+  ['commerce-customer-context', 130],
+  ['commerce-market-catalog', 83],
+  ['crm', 90],
+  ['crm-activities', 75],
   ['facility-operations', 79],
-  ['finance-billing', 91],
-  ['inventory', 64],
-  ['legal-agreements', 79],
-  ['merchandise', 73],
+  ['finance-billing', 90],
+  ['inventory', 72],
+  ['legal-agreements', 87],
+  ['merchandise', 85],
   ['party-registry', 125],
-  ['payment-term-catalog', 48],
-  ['price-group-catalog', 73],
-  ['pricing', 74],
-  ['privacy', 103],
-  ['projects', 93],
-  ['property-leasing', 99],
-  ['property-portfolio', 62],
-  ['sales-insights', 65],
-  ['sales-pipeline', 55],
-  ['storefront-registry', 52],
-  ['symmy-integration', 46],
-  ['tagging', 77],
-  ['tax', 50],
-  ['work-tasks', 99],
-  ['workforce', 56],
+  ['payment-term-catalog', 46],
+  ['price-group-catalog', 63],
+  ['pricing', 73],
+  ['privacy', 94],
+  ['projects', 75],
+  ['property-leasing', 95],
+  ['property-portfolio', 70],
+  ['sales-insights', 76],
+  ['sales-pipeline', 77],
+  ['storefront-registry', 51],
+  ['symmy-integration', 65],
+  ['tagging', 72],
+  ['tax', 45],
+  ['work-tasks', 94],
+  ['workforce', 74],
 ]);
 
 /** A module without a measurement counts as the median measured module. */
-export const UNMEASURED_MODULE_SECONDS = 75;
+export const UNMEASURED_MODULE_SECONDS = 77;
 
 export class BuildShardError extends Data.TaggedError('BuildShardError')<{ readonly message: string }> {}
 
@@ -66,25 +73,30 @@ export class BuildShardError extends Data.TaggedError('BuildShardError')<{ reado
 export const moduleSeconds = (module: string): number => MODULE_BUILD_SECONDS.get(module) ?? UNMEASURED_MODULE_SECONDS;
 
 /**
- * Every shard's units; shard 0 holds only the Shell. Within a shard the longest build comes first, so its two build
- * lanes start with the long ones. Deterministic: ties go to the module named first and the lowest shard.
+ * Every shard's units; shard 0 holds only the Shell. Dealt longest first to the lightest build lane, so the longest
+ * build of a shard also comes first in its list and build-app.sh's `xargs -P 2` starts the shard with the long ones.
+ * Deterministic: ties go to the module named first and the lowest lane, so the same release intent always deals the
+ * same shards and their cache entries keep hitting. Lanes fill in index order, so every dealt shard holds units while
+ * the intent has two modules per dealt shard (27 over seven dealt shards today); a shard left without a unit list
+ * fails its build job rather than deploying a partial app.
  */
 export const buildShardUnits = (modules: readonly string[], shards: number): readonly (readonly string[])[] => {
   const dealt = Array.from({ length: shards }, (_, shard): string[] => (shard === SHELL_SHARD ? [SHELL_ID] : []));
-  const load = Array.from({ length: shards }, () => 0);
+  const lanes = Array.from({ length: shards * BUILD_LANES }, () => 0);
   const measured = modules
     .filter((module) => MODULE_BUILD_SECONDS.has(module))
     .toSorted((left, right) => moduleSeconds(right) - moduleSeconds(left) || left.localeCompare(right));
   const unmeasured = modules.filter((module) => !MODULE_BUILD_SECONDS.has(module));
   for (const module of [...measured, ...unmeasured]) {
     let lightest = -1;
-    for (let shard = 0; shard < shards; shard += 1) {
-      if (shard !== SHELL_SHARD && (lightest < 0 || (load[shard] ?? 0) < (load[lightest] ?? 0))) {
-        lightest = shard;
+    for (let lane = 0; lane < lanes.length; lane += 1) {
+      const shard = Math.trunc(lane / BUILD_LANES);
+      if (shard !== SHELL_SHARD && (lightest < 0 || (lanes[lane] ?? 0) < (lanes[lightest] ?? 0))) {
+        lightest = lane;
       }
     }
-    dealt[lightest]?.push(module);
-    load[lightest] = (load[lightest] ?? 0) + moduleSeconds(module);
+    dealt[Math.trunc(lightest / BUILD_LANES)]?.push(module);
+    lanes[lightest] = (lanes[lightest] ?? 0) + moduleSeconds(module);
   }
   return dealt;
 };
