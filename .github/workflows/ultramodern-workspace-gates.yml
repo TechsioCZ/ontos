@@ -601,7 +601,10 @@ jobs:
             paths+=("$path")
             # A formatter, linter or hook configuration reformats files nobody touched: the one real
             # failure a changed-file sweep would miss.
-            if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|lefthook)[^/]*$ || "$path" =~ ^(app/)?[^/]+config\.[^/]+$ ]]; then
+            if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|oxfmt|lefthook)[^/]*$ ||
+              "$path" == app/tools/oxlint/* || "$path" == app/patches/* ||
+              "$path" =~ ^app/tsconfig[^/]*\.json$ ||
+              "$path" == app/pnpm-lock.yaml || "$path" == app/pnpm-workspace.yaml || "$path" == app/.mise.toml ]]; then
               sweep=all
               echo "::notice title=Tool configuration changed::$path changes a formatter, linter or hook configuration; every tracked file is linted."
             fi
@@ -1054,7 +1057,7 @@ jobs:
         id: artifacts-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/units.tar.zst
+          path: ${{ runner.temp }}/units-${{ matrix.shard }}.tar.zst
           key: ${{ steps.artifacts.outputs.key }}
 
       # Two units at a time: TS-Go declaration passes of one unit leave cores idle, and the shared-package
@@ -1084,14 +1087,19 @@ jobs:
           read -ra units <<<"$SHARD_UNITS"
           git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
             | grep -zv '/node_modules/$' \
-            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units-${{ matrix.shard }}.tar.zst"
 
       - name: Save this shard's built Node artifacts
         if: steps.artifacts-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/units.tar.zst
+          path: ${{ runner.temp }}/units-${{ matrix.shard }}.tar.zst
           key: ${{ steps.artifacts.outputs.key }}
+
+      # Cache versions include the archived path, not just the key. Match warm-caches' numbered
+      # path above, then use the common artifact name expected by the unpacker.
+      - name: Name the same-run artifact archive
+        run: cp "$RUNNER_TEMP/units-${{ matrix.shard }}.tar.zst" "$RUNNER_TEMP/units.tar.zst"
 
       - name: Upload the shard's build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
