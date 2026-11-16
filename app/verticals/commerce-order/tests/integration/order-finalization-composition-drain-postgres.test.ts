@@ -399,6 +399,33 @@ const services = NodeChildProcessSpawner.layer.pipe(
 );
 const drainLayer = Layer.effect(OrderDrainAuthoredWork, openAuthoredWork).pipe(Layer.provideMerge(services));
 
+const ownerTransport = (
+  observedAfterCompletion: OrderPreparationWorkObservation | typeof failedOrderProofWork,
+  pending: typeof pendingOrderPreparationWork | typeof pendingOrderProofWork = pendingOrderPreparationWork,
+) => {
+  owners.issueGateway.mockReset();
+  // A fixed far-future assertion expiry (2099-01-01) keeps this live test independent of its clock.
+  // Originator subjects carry their release; the stub echoes it as the Shell would.
+  owners.issueGateway.mockImplementation((request) =>
+    Effect.succeed({
+      apiBaseUrl: '/order-api',
+      authorization: 'Bearer drain-token',
+      compositionRevision: Match.value(request.subject).pipe(
+        Match.tag('Originator', (originator) => originator.compositionRevision),
+        Match.orElse(() => null),
+      ),
+      expiresAt: 4_070_908_800,
+    }),
+  );
+  owners.load.mockReset();
+  owners.load.mockReturnValueOnce(Effect.succeed(pending));
+  owners.load.mockReturnValue(Effect.succeed(observedAfterCompletion));
+  owners.complete.mockReset();
+  owners.complete.mockReturnValue(
+    Effect.succeed({ binding: null, intentRef: orderPreparationPayload.intentRef, status: 'FAILED' }),
+  );
+};
+
 it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) => {
   const nativeTest = (
     name: string,
@@ -434,33 +461,6 @@ it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) =>
       expect((yield* test.composition.observe()).phase).toBe('draining');
     }),
   );
-
-  const ownerTransport = (
-    observedAfterCompletion: OrderPreparationWorkObservation | typeof failedOrderProofWork,
-    pending: typeof pendingOrderPreparationWork | typeof pendingOrderProofWork = pendingOrderPreparationWork,
-  ) => {
-    owners.issueGateway.mockReset();
-    // A fixed far-future assertion expiry (2099-01-01) keeps this live test independent of its clock.
-    // Originator subjects carry their release; the stub echoes it as the Shell would.
-    owners.issueGateway.mockImplementation((request) =>
-      Effect.succeed({
-        apiBaseUrl: '/order-api',
-        authorization: 'Bearer drain-token',
-        compositionRevision: Match.value(request.subject).pipe(
-          Match.tag('Originator', (originator) => originator.compositionRevision),
-          Match.orElse(() => null),
-        ),
-        expiresAt: 4_070_908_800,
-      }),
-    );
-    owners.load.mockReset();
-    owners.load.mockReturnValueOnce(Effect.succeed(pending));
-    owners.load.mockReturnValue(Effect.succeed(observedAfterCompletion));
-    owners.complete.mockReset();
-    owners.complete.mockReturnValue(
-      Effect.succeed({ binding: null, intentRef: orderPreparationPayload.intentRef, status: 'FAILED' }),
-    );
-  };
 
   nativeTest('acknowledges an expired preparation delivery done so composition drain completes', (test) =>
     Effect.gen(function* expiredPreparationWork() {
