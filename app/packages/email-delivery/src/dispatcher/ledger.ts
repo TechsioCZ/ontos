@@ -46,7 +46,8 @@ export const recoverInterrupted = Effect.gen(function* recoverInterrupted() {
 export const RETRY_WINDOW_HOURS = 24;
 
 /**
- * Returns true only when THIS call owns the send (fresh claim, or a due RETRY re-claimed).
+ * Returns true only when THIS call owns the send (fresh claim, or a due RETRY re-claimed). A re-claim records the
+ * recipient and subject of this attempt (an inquiry held without an inbox gets the inbox it is finally sent to).
  * RETRY backs off 10 s, 20 s, 40 s, then every 60 s, so an SMTP outage of any length heals by itself once the
  * server is back; after RETRY_WINDOW_HOURS the row becomes FAILED instead.
  */
@@ -68,7 +69,8 @@ export const claim = Effect.fn('EmailLedger.claim')(function* claimDelivery(
         and dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
         and created_at < now() - make_interval(hours => ${RETRY_WINDOW_HOURS})`;
   const retried = yield* sql<{ readonly dedupe_key: string }>`
-      update demo_email.deliveries set status = 'SENDING', attempts = attempts + 1, updated_at = now()
+      update demo_email.deliveries set status = 'SENDING', attempts = attempts + 1, recipient = ${planned.recipient},
+        email_subject = ${planned.subject}, updated_at = now()
       where tenant_id = ${planned.tenantId}::uuid and legal_entity_id = ${planned.legalEntityId}::uuid
         and dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
         and updated_at < now() - make_interval(secs => least(60, 10 * power(2, least(attempts - 1, 3))))
@@ -91,6 +93,21 @@ export const finish = Effect.fn('EmailLedger.finish')(function* finishDelivery(
         sent_at = case when ${outcome.status}::text = 'SENT' then now() else sent_at end, updated_at = now()
       where tenant_id = ${delivery.tenantId}::uuid and legal_entity_id = ${delivery.legalEntityId}::uuid
         and dedupe_key = ${delivery.dedupeKey} and status = 'SENDING'`;
+});
+
+/**
+ * A due inquiry while the deployment names no staff inbox: recorded as RETRY (`inquiry_inbox_missing`), so it is
+ * visible, is retried with the normal backoff and goes out once an inbox is configured, and becomes FAILED after
+ * RETRY_WINDOW_HOURS like any other undeliverable attempt.
+ */
+export const holdInquiryWithoutInbox = Effect.fn('EmailLedger.holdInquiryWithoutInbox')(function* holdInquiry(
+  planned: Omit<PlannedEmail, 'html' | 'text'>,
+) {
+  if (!(yield* claim(planned))) {
+    return false;
+  }
+  yield* finish(planned, { errorTag: 'inquiry_inbox_missing', status: 'RETRY' });
+  return true;
 });
 
 /** Settle an observed invalid reminder without rendering or sending, so old rows cannot block the due page. */

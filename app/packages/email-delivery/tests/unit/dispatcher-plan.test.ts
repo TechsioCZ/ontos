@@ -476,16 +476,26 @@ describe('storefront inquiry notification', () => {
   const options = { ...planOptions, appUrl: 'http://localhost:3020', recipient: 'podpora@example.com' };
   test('plans one staff message from the retained contact task, never a marketing subscription', () => {
     const planned = planStorefrontInquiryEmail(task, options);
-    expect(planned?.dedupeKey).toBe('storefront-inquiry:task-42');
-    expect(planned?.recipient).toBe(options.recipient);
-    expect(planned?.text).toContain('pavel@example.com');
-    expect(planned?.text).toContain('http://localhost:3020/cs/ukoly');
-    expect(planned?.html).toContain('&lt;Pavel&gt;');
-    expect(planned?.html).not.toContain('<Pavel>');
-    expect(planned?.source).toBe('storefront-inquiry');
+    expect(planned?.kind).toBe('SEND');
+    expect(planned?.email.dedupeKey).toBe('storefront-inquiry:task-42');
+    expect(planned?.email.recipient).toBe(options.recipient);
+    expect(planned?.email.text).toContain('pavel@example.com');
+    expect(planned?.email.text).toContain('http://localhost:3020/cs/ukoly');
+    expect(planned?.email.html).toContain('&lt;Pavel&gt;');
+    expect(planned?.email.html).not.toContain('<Pavel>');
+    expect(planned?.email.source).toBe('storefront-inquiry');
   });
-  test('does not invent a mailbox and ignores pre-enablement tasks', () => {
-    expect(planStorefrontInquiryEmail(task, { ...options, recipient: '' })).toBeNull();
+  test('without a staff inbox the inquiry is reported for the ledger, never dropped and never sent elsewhere', () => {
+    for (const recipient of ['', '   ']) {
+      const planned = planStorefrontInquiryEmail(task, { ...options, recipient });
+      expect(planned?.kind).toBe('INBOX_MISSING');
+      expect(planned?.email.recipient).toBe('');
+      expect(planned?.email.dedupeKey).toBe('storefront-inquiry:task-42');
+      expect(planned?.email.tenantId).toBe(options.tenantId);
+      expect(planned?.email.legalEntityId).toBe(options.legalEntityId);
+    }
+  });
+  test('ignores pre-enablement tasks', () => {
     expect(planStorefrontInquiryEmail(task, { ...options, enabledSince: '2026-10-24T00:00:00Z' })).toBeNull();
   });
   test('complaint intake is not represented as a formally opened claim', () => {
@@ -493,7 +503,7 @@ describe('storefront inquiry notification', () => {
       planStorefrontInquiryEmail(
         { ...task, storefrontInquiry: { ...task.storefrontInquiry, kind: 'COMPLAINT' } },
         options,
-      )?.text,
+      )?.email.text,
     ).toContain('zatím ne reklamace');
   });
 });

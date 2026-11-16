@@ -5,7 +5,14 @@ import { EmailDeliveryUnavailable } from '../unavailable.ts';
 import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
-import { claim, finish, readEnabledSince, recoverInterrupted, skipIneligibleRentReminder } from './ledger.ts';
+import {
+  claim,
+  finish,
+  holdInquiryWithoutInbox,
+  readEnabledSince,
+  recoverInterrupted,
+  skipIneligibleRentReminder,
+} from './ledger.ts';
 import type { DeliveryIdentity } from './ledger.ts';
 import {
   deliveryOutcomeOf,
@@ -202,19 +209,28 @@ const planScope = Effect.fn('EmailDispatch.planScope')(function* planScopeEmails
     { concurrency: 1 },
   );
   const tasks = yield* readStorefrontInquiryTasks(scope, work.subjects['storefront-inquiry']);
+  let held = 0;
   const inquiryEmails = yield* Effect.forEach(
     tasks,
-    (task) => {
-      const email = planStorefrontInquiryEmail(task, {
+    Effect.fn('EmailDispatch.planInquiry')(function* planInquiry(task) {
+      const plan = planStorefrontInquiryEmail(task, {
         ...scope,
         appUrl,
         enabledSince,
         recipient: environment.AKROS_INQUIRY_EMAIL_TO ?? '',
       });
-      return email === null
-        ? Effect.succeed([])
-        : senderFor(scope, 'AKROS', environment, transport.kind).pipe(Effect.map((from) => [{ ...email, from }]));
-    },
+      if (plan === null || !work.keys.has(plan.email.dedupeKey)) {
+        return [];
+      }
+      if (plan.kind === 'INBOX_MISSING') {
+        if (yield* holdInquiryWithoutInbox(plan.email)) {
+          held += 1;
+        }
+        return [];
+      }
+      const from = yield* senderFor(scope, 'AKROS', environment, transport.kind);
+      return [{ ...plan.email, from }];
+    }),
     { concurrency: 1 },
   );
   const invitations = yield* readPersonInvitations(scope, work.subjects['person-invitation']);
@@ -233,7 +249,7 @@ const planScope = Effect.fn('EmailDispatch.planScope')(function* planScopeEmails
     ...inquiryEmails.flat(),
     ...invitationEmails,
   ].filter((email) => work.keys.has(email.dedupeKey));
-  return { emails, skipped };
+  return { emails, held, skipped };
 });
 
 export interface DispatchResult {
@@ -291,7 +307,7 @@ const dispatchScope = Effect.fn('EmailDispatch.dispatchScope')(function* process
     (email) => dispatchClaimedEmail(work.scope, email, transport, environment),
     { concurrency: 1 },
   );
-  return sumCounts([{ processed: planned.skipped, skipped: planned.skipped }, ...counts]);
+  return sumCounts([{ processed: planned.skipped + planned.held, skipped: planned.skipped }, ...counts]);
 });
 
 export const dispatchEmailBatchWith = Effect.fn('EmailDispatch.dispatchEmailBatchWith')(function* dispatchBatch(
