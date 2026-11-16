@@ -172,6 +172,7 @@ describe('Symmy price batch plan from the public body', () => {
       expect(item?.source.sourceRecordId).toBe('symmy-price:existing-record');
       expect(reviseOf(effect)).toMatchObject({
         payload: {
+          effectiveFrom: '2026-01-01T12:00:00.000Z',
           expectedCurrent: {
             effectivePeriod: { effectiveFrom: '2026-01-01T00:00:00.000Z', effectiveTo: null },
             priceRef: existingPriceRef,
@@ -189,6 +190,12 @@ describe('Symmy price batch plan from the public body', () => {
             sourceRecord: {
               sourceRecordRef: 'symmy-price:existing-record',
               sourceSystem: templateInput.pricingSourceSystem,
+            },
+            // The source asserts the change at admission, and the same instant is the effective time it asks for.
+            timing: {
+              importedAt: '2026-01-01T12:00:00.000Z',
+              ownerBusinessEffectiveAt: '2026-01-01T12:00:00.000Z',
+              sourceEffectiveAt: '2026-01-01T12:00:00.000Z',
             },
           },
         },

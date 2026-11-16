@@ -180,6 +180,8 @@ const buildRevise = Effect.fn('SymmyPriceBatchPlan.revise')(function* buildRevis
         intent: {
           _tag: 'PriceRevise',
           payload: {
+            // The source asserts the change at admission; the owner takes it as the instant the new value starts.
+            effectiveFrom: imported,
             expectedCurrent: {
               effectivePeriod: known.effectivePeriod,
               priceRef: price.priceRef,

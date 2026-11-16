@@ -108,6 +108,9 @@ const acknowledgementMatchesIntent = (
   if (acknowledgement === undefined) {
     return true;
   }
+  if (payload.intent === 'VALUE_ONLY_CURRENT' && payload.effectiveFrom !== undefined) {
+    return false;
+  }
   if (
     acknowledgement.actingPrincipalId !== actingPrincipalId ||
     acknowledgement.intent !== payload.intent ||
@@ -134,6 +137,7 @@ const sourceEffectiveFromFor = (
   if (payload.intent === 'VALUE_ONLY_CURRENT') {
     return (
       payload.acknowledgement?.intendedEffectivePeriod.effectiveFrom ??
+      payload.effectiveFrom ??
       DateTime.formatIso(DateTime.makeUnsafe(trustedOperationAt))
     );
   }

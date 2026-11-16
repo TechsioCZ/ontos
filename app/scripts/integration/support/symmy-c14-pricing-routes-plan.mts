@@ -45,23 +45,6 @@ export const decodeInternalC14CapturedPriceGrant = (
   });
 
 /** The grant of one exact price identity, as an operator would capture it before the price is defined. */
-export const decodeInternalC14GrantForIdentity = (input: {
-  readonly effectiveFrom: string;
-  readonly exactIdentityKey: typeof DefinePricePayloadSchema.Type.identityKey;
-  readonly verifiedAt: string;
-}) =>
-  Schema.decodeUnknownEffect(ExternalPriceSourceAuthorityGrantSchema)({
-    authority: internalPricingPriceSource.sourceAuthority,
-    effectivePeriod: { effectiveFrom: input.effectiveFrom },
-    exactIdentityKey: input.exactIdentityKey,
-    family: 'PRICE',
-    mapping: internalPricingPriceSource.mapping,
-    ownerModuleId: pricingModule,
-    schemaVersion: '1',
-    verificationRef: 'INTERNAL_C14_EXPLICIT_NATIVE_PRICE_ROUTE_SOURCE_GRANT',
-    verifiedAt: input.verifiedAt,
-  });
-
 export const decodeInternalC14PriceGrantFor = (input: {
   readonly effectiveFrom: string;
   readonly groupRef: typeof PriceGroupRefSchema.Type;
@@ -71,8 +54,9 @@ export const decodeInternalC14PriceGrantFor = (input: {
   readonly unitRef: typeof ProductUnitRefSchema.Type;
   readonly verifiedAt: string;
 }) =>
-  decodeInternalC14GrantForIdentity({
-    effectiveFrom: input.effectiveFrom,
+  Schema.decodeUnknownEffect(ExternalPriceSourceAuthorityGrantSchema)({
+    authority: internalPricingPriceSource.sourceAuthority,
+    effectivePeriod: { effectiveFrom: input.effectiveFrom },
     exactIdentityKey: {
       catalogSelection: input.selection,
       commercialScope: {
@@ -84,5 +68,10 @@ export const decodeInternalC14PriceGrantFor = (input: {
       priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: input.groupRef },
       unitBasis: { quantity: '1', unitRef: input.unitRef },
     },
+    family: 'PRICE',
+    mapping: internalPricingPriceSource.mapping,
+    ownerModuleId: pricingModule,
+    schemaVersion: '1',
+    verificationRef: 'INTERNAL_C14_EXPLICIT_NATIVE_PRICE_ROUTE_SOURCE_GRANT',
     verifiedAt: input.verifiedAt,
   });

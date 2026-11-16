@@ -207,6 +207,39 @@ const acknowledgement = {
   targetRevisionId: scheduledRevision.definition.revision.revisionId,
 };
 
+const assertedAt = '2026-09-27T11:30:00.000Z';
+const assertedAtAssertion = {
+  ...Schema.encodeSync(PriceSourceAssertionInputSchema)(sourceAssertion),
+  timing: {
+    importedAt: '2026-09-27T11:31:00.000Z',
+    ownerBusinessEffectiveAt: assertedAt,
+    sourceEffectiveAt: assertedAt,
+  },
+};
+const revisedAtAsserted = Schema.decodeSync(ScheduledPriceRevisionSchema)({
+  ...revisedScheduledRevision,
+  definition: {
+    ...revisedScheduledRevision.definition,
+    revision: { ...revisedScheduledRevision.definition.revision, effectiveFrom: assertedAt },
+  },
+  effectivePeriod: { effectiveFrom: assertedAt, effectiveTo: null },
+});
+/** The fixed value-only payload with some of its fields replaced. */
+const valueOnlyPayload = (overrides: {
+  readonly acknowledgement?: typeof acknowledgement;
+  readonly effectiveFrom?: string;
+  readonly sourceAssertion?: typeof assertedAtAssertion;
+}) => {
+  const decoded = Schema.decodeSync(RevisePricePayloadSchema)({
+    ...Schema.encodeSync(RevisePricePayloadSchema)(payload),
+    ...overrides,
+  });
+  if (decoded.intent !== 'VALUE_ONLY_CURRENT') {
+    throw new Error('The replaced fixture must still decode as a value-only Current edit');
+  }
+  return decoded;
+};
+
 const currentSchedule = {
   outcome: 'PRICE_SCHEDULE_CURRENT' as const,
   schedule: {
@@ -274,6 +307,52 @@ describe('Revise Price Action', () => {
           trustedOperationAt: trusted.trustedOperationAt,
         },
       ]);
+    }),
+  );
+
+  it.effect('takes the effective time a value-only revision asks for, for the source check and the write', () =>
+    Effect.gen(function* ownEffectiveTime() {
+      const ownTime = valueOnlyPayload({ effectiveFrom: assertedAt, sourceAssertion: assertedAtAssertion });
+      const assessed: unknown[] = [];
+      const written: unknown[] = [];
+      const result = yield* applyPriceRevisionWithServices(
+        ownTime,
+        trusted,
+        servicesFor(
+          (command) => {
+            written.push(command);
+            return Effect.succeed(persistenceSuccess('REVISED', revisedAtAsserted, ownTime.sourceAssertion));
+          },
+          {
+            assessExternalPriceInput: (request) => {
+              assessed.push(request);
+              return Effect.succeed(preparePriceSourceEvidence(request));
+            },
+          },
+        ),
+      );
+      expect(result.outcome).toBe('PRICE_REVISION_CREATED');
+      expect(assessed).toMatchObject([{ effectiveFrom: assertedAt }]);
+      expect(written).toMatchObject([{ effectiveFrom: assertedAt, intent: 'VALUE_ONLY_CURRENT' }]);
+    }),
+  );
+
+  it.effect('refuses an assertion whose time is not the effective time the revision takes', () =>
+    Effect.gen(function* mismatchedEffectiveTime() {
+      // Without an own time the revision starts at the operation time, so an assertion pinned elsewhere is refused.
+      const pinned = valueOnlyPayload({ sourceAssertion: assertedAtAssertion });
+      const failure = yield* applyPriceRevision(pinned, trusted, () => Effect.die('must not persist')).pipe(
+        Effect.flip,
+      );
+      expect(failure).toBeInstanceOf(RevisePriceSourceInvalid);
+    }),
+  );
+
+  it.effect('never combines an acknowledgement with an own effective time', () =>
+    Effect.gen(function* acknowledgementWithOwnTime() {
+      const both = valueOnlyPayload({ acknowledgement, effectiveFrom: assertedAt });
+      const failure = yield* applyPriceRevision(both, trusted, () => Effect.die('must not persist')).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(RevisePriceRejected);
     }),
   );
 

@@ -179,6 +179,46 @@ it.live('stores, resolves, and isolates exact external Price Source Authority gr
           }),
         );
       expect(yield* assess()).toEqual({ grant, outcome: 'AUTHORITY_GRANTED' });
+      // Pricing reads a unit quantity back with nine decimals: the grant stored for "1" covers that same key.
+      const assessKey = (exactIdentityKey: PriceIdentityKey) =>
+        withAuthority(runtime, scope, (authority) =>
+          authority.assess({
+            exactIdentityKey,
+            sourceAssertion,
+            tenantId,
+            trustedOperationAt: instant('2026-09-20T10:00:00.000Z'),
+          }),
+        );
+      const grantedKey = grant.exactIdentityKey;
+      expect(
+        yield* assessKey({ ...grantedKey, unitBasis: { ...grantedKey.unitBasis, quantity: '1.000000000' } }),
+      ).toEqual({ grant, outcome: 'AUTHORITY_GRANTED' });
+      // Only the number is relaxed: another quantity, Price Group, scope, or Unit is another key and has no grant.
+      for (const otherKey of [
+        { ...grantedKey, unitBasis: { ...grantedKey.unitBasis, quantity: '2.000000000' } },
+        {
+          ...grantedKey,
+          priceGroupSelector: {
+            kind: 'PRICE_GROUP' as const,
+            priceGroupRef: {
+              moduleId: 'pricing.price-group-catalog' as const,
+              resourceId: 'e8030000-0000-4000-8000-000000000021',
+              resourceType: 'pricing.price-group-catalog.price-group' as const,
+              tenantId,
+            },
+          },
+        },
+        { ...grantedKey, commercialScope: { ...grantedKey.commercialScope, marketId: 'other-market' } },
+        {
+          ...grantedKey,
+          unitBasis: {
+            quantity: '1.000000000',
+            unitRef: { ...grantedKey.unitBasis.unitRef, resourceId: 'e8030000-0000-4000-8000-000000000022' },
+          },
+        },
+      ]) {
+        expect(yield* assessKey(otherKey)).toEqual({ outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' });
+      }
       expect(
         yield* assess({
           ...sourceAssertion,

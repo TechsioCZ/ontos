@@ -1,5 +1,5 @@
 import { PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
-import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
+import { PriceIdentityKeySchema, priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
 import type { PriceDefinition, PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import {
   PriceSourceAuthoritySchema,
@@ -99,7 +99,17 @@ export class ExternalPriceInputBoundaryFactory extends Context.Service<
   ExternalPriceInputBoundaryFactoryService
 >()('@app/pricing/services/external-price-input-boundary.service/ExternalPriceInputBoundaryFactory') {}
 
-const exactIdentityEquals = Schema.toEquivalence(PriceIdentityKeySchema);
+const identityKeyEquivalence = Schema.toEquivalence(PriceIdentityKeySchema);
+/**
+ * The exact canonical key, with the unit quantity compared as the number it is. Pricing stores and reads a
+ * quantity with nine decimals, so `"1"` and `"1.000000000"` name the same key. Every other part stays exact.
+ */
+const exactIdentityEquals = (grantKey: PriceIdentityKey, requestKey: PriceIdentityKey): boolean =>
+  priceDecimalValuesEqual(grantKey.unitBasis.quantity, requestKey.unitBasis.quantity) &&
+  identityKeyEquivalence(
+    { ...grantKey, unitBasis: { ...grantKey.unitBasis, quantity: requestKey.unitBasis.quantity } },
+    requestKey,
+  );
 
 type InvalidAssessment = Extract<
   PriceSourceAssertionAssessment,
