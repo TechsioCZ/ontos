@@ -23,7 +23,7 @@ interface CatalogViewProps {
   catalog: CatalogModel;
   dictionary: Dictionary;
   locale: string;
-  presentation?: "featured" | "listing";
+  presentation?: "featured" | "listing" | "related";
   title: string;
 }
 

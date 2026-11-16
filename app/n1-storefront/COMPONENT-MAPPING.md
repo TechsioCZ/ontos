@@ -695,6 +695,15 @@ their ordering remain owner data, including13 original demo text-only items.
 
 ### Desktop PDP variant states — 219:2778–2807
 
+Related products219:2922 are now composed at the product route using the existing
+CatalogView in related mode. Historical N1 selects up to four category products;
+the current owner contract supports one categorySlug, so this app uses the real
+primary category, preserves owner ordering, excludes the current product and
+limits the result to four. Unknown categories never fall back to the whole store.
+Read failure is distinct from a successful empty result. Desktop and mobile use
+the existing responsive cards; no populated mobile Figma fixture is claimed.
+The prior desktop-hidden/mobile-always-empty ProductView placeholder is removed.
+
 Native LinkButton remains secondary/outlined/sm with actual NextLink href and
 aria-current. The existing group/per-variant wrappers bind consumed Button
 roles only at md: unselected fill-hover/neutral300/1px; selected base and

@@ -366,15 +366,6 @@ export const ProductView = ({
           </Tabs.Content>
         </Tabs>
       </div>
-      <section
-        aria-labelledby="product-related-heading"
-        className="mt-8 flex flex-col gap-8 md:hidden"
-      >
-        <h2 className="text-xl font-semibold leading-9" id="product-related-heading">
-          {d.relatedProducts}
-        </h2>
-        <p className="text-md leading-6 text-fg-secondary">{d.empty}</p>
-      </section>
     </article>
   );
 };
