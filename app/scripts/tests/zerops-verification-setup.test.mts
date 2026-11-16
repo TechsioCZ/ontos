@@ -345,7 +345,7 @@ for (const scenario of [
     Effect.gen(function* executeWorkflowScripts() {
       const fs = yield* FileSystem.FileSystem;
       const { jobs } = yield* readWorkflow;
-      const {steps} = jobs.verify;
+      const { steps } = jobs.verify;
       const directory = yield* fs.makeTempDirectoryScoped();
       const app = path.join(directory, 'app');
       const bin = path.join(directory, 'bin');
