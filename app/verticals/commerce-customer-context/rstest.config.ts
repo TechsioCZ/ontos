@@ -19,6 +19,9 @@ export default defineConfig({
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,
       testEnvironment: 'node',
+      // Four times the slowest unit test without its own budget, 3_530 ms in gates runs 43616061381
+      // and 43844802542. The silent 5000 ms Rstest default left that test only 1.4x headroom.
+      testTimeout: 14_120,
       tools: { swc },
     },
   ],

@@ -59,6 +59,9 @@ export default defineConfig({
       name: 'unit',
       testEnvironment: 'node',
       include: ['tests/unit/**/*.test.ts'],
+      // Four times the slowest unit test without its own budget, 748 ms in gates runs 43616061381
+      // and 43844802542, instead of the silent 5000 ms Rstest default.
+      testTimeout: 2992,
       tools: { swc },
     },
   ],
