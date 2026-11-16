@@ -6,16 +6,12 @@
       "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\n"
     },
     {
-      "name": "Repository Tooling Tests (1/3)",
-      "commands": "pnpm test:scripts --shard 1/3\n"
+      "name": "Repository Tooling Tests (1/2)",
+      "commands": "pnpm test:scripts --shard 1/2\n"
     },
     {
-      "name": "Repository Tooling Tests (2/3)",
-      "commands": "pnpm test:scripts --shard 2/3\n"
-    },
-    {
-      "name": "Repository Tooling Tests (3/3)",
-      "commands": "pnpm test:scripts --shard 3/3\n"
+      "name": "Repository Tooling Tests (2/2)",
+      "commands": "pnpm test:scripts --shard 2/2\n"
     },
     {
       "name": "Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests",
@@ -24,56 +20,28 @@
   ],
   "unit": [
     {
-      "name": "Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)",
+      "name": "Unit and Component Tests (Catalog and Commerce Customer Context)",
       "node-artifacts": true,
-      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component\n"
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context run test:component\n"
     },
     {
-      "name": "Unit and Component Tests (every other package)",
+      "name": "Unit and Component Tests (Core Runtime, Inventory, and Payment)",
+      "node-artifacts": true,
+      "commands": "pnpm -r --no-sort --if-present --filter ./packages/core-runtime --filter ./verticals/inventory --filter ./verticals/payment run test:unit\npnpm -r --no-sort --if-present --filter ./packages/core-runtime --filter ./verticals/inventory --filter ./verticals/payment run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (Pricing, Shell, and Party Registry)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component\n"
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/pricing --filter ./apps/shell-super-app --filter ./verticals/party-registry run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/pricing --filter ./apps/shell-super-app --filter ./verticals/party-registry run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (contracts, Privacy, Symmy, Tax, and the smaller verticals)",
+      "node-artifacts": true,
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/assortment --filter ./verticals/availability --filter ./verticals/commerce-cart --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/privacy --filter ./verticals/projects --filter ./verticals/promotion --filter ./verticals/storefront-registry --filter ./verticals/symmy-integration --filter ./verticals/tax --filter ./packages/better-auth-effect-drizzle --filter ./packages/catalog-selection-contracts --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/commerce-order-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts --filter ./packages/email-delivery --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/price-group-catalog-contracts --filter ./packages/pricing-contracts --filter ./packages/shared-contracts --filter ./packages/shared-design-tokens --filter ./packages/storefront-registry-contracts run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/assortment --filter ./verticals/availability --filter ./verticals/commerce-cart --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/privacy --filter ./verticals/projects --filter ./verticals/promotion --filter ./verticals/storefront-registry --filter ./verticals/symmy-integration --filter ./verticals/tax --filter ./packages/better-auth-effect-drizzle --filter ./packages/catalog-selection-contracts --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/commerce-order-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts --filter ./packages/email-delivery --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/price-group-catalog-contracts --filter ./packages/pricing-contracts --filter ./packages/shared-contracts --filter ./packages/shared-design-tokens --filter ./packages/storefront-registry-contracts run test:component\n"
     }
   ],
   "integration": [
-    {
-      "suite": "integration",
-      "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
-      "native-composition": true,
-      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects"
-    },
-    {
-      "suite": "integration",
-      "name": "Root Integration (1/3)",
-      "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "1/3"
-    },
-    {
-      "suite": "integration",
-      "name": "Root Integration (2/3)",
-      "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "2/3"
-    },
-    {
-      "suite": "integration",
-      "name": "Root Integration (3/3)",
-      "native-composition": true,
-      "root-suite": true,
-      "root-rstest-shard": "3/3"
-    },
-    {
-      "suite": "integration",
-      "name": "Catalog Integration",
-      "package-filters": "--filter ./verticals/catalog"
-    },
-    {
-      "suite": "integration",
-      "name": "Pricing and Inventory Integration",
-      "native-composition": true,
-      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory"
-    },
     {
       "suite": "integration",
       "name": "Commerce Customer Context Integration (1/6)",
@@ -112,7 +80,7 @@
     },
     {
       "suite": "integration",
-      "name": "Market, Order, Payment Term, Price Group, and Storefront Integration",
+      "name": "Native Preproposal Approval and Storefront Registry Integration",
       "native-preproposal": true,
       "proof-packages": [
         "@app/shell-super-app",
@@ -124,19 +92,103 @@
         "@app/pricing",
         "@app/commerce-customer-context"
       ],
-      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry"
+      "package-filters": "--filter ./verticals/storefront-registry"
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (1/2)",
+      "name": "Shell, Identity, and Module State Integration",
+      "native-composition": true,
+      "package-filters": "--filter ./apps/shell-super-app"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (1/3)",
       "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "1/3"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (2/3)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "2/3"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (3/3)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "3/3"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (1/6)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "1/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (2/6)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "2/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (3/6)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "3/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (4/6)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "4/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (5/6)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "5/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (6/6)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "6/6"
+    },
+    {
+      "suite": "integration",
+      "name": "Pricing and Inventory Integration",
+      "native-composition": true,
+      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory"
+    },
+    {
+      "suite": "integration",
+      "name": "Database, Migration, RLS, Authorization, and Outbox Integration (1/2)",
+      "native-composition": true,
+      "package-filters": "--filter ./packages/core-runtime",
       "rstest-shard": "1/2"
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (2/2)",
-      "package-filters": "--filter ./verticals/privacy",
+      "name": "Database, Migration, RLS, Authorization, and Outbox Integration (2/2)",
+      "native-composition": true,
+      "package-filters": "--filter ./packages/core-runtime",
       "rstest-shard": "2/2"
+    },
+    {
+      "suite": "integration",
+      "name": "Payment Integration",
+      "package-filters": "--filter ./verticals/payment"
+    },
+    {
+      "suite": "integration",
+      "name": "Catalog Integration",
+      "package-filters": "--filter ./verticals/catalog"
     },
     {
       "suite": "integration",
@@ -145,17 +197,17 @@
     },
     {
       "suite": "integration",
-      "name": "Tax Integration",
-      "package-filters": "--filter ./verticals/tax"
-    },
-    {
-      "suite": "integration",
-      "name": "Projects Integration",
-      "package-filters": "--filter ./verticals/projects"
+      "name": "Symmy, Assortment, Promotion, Market, Order, Payment Term, Price Group, Tax, and Projects Integration",
+      "native-composition": true,
+      "package-filters": "--filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/tax --filter ./verticals/projects"
     },
     {
       "suite": "browser",
       "name": "Authenticated Browser Tests"
+    },
+    {
+      "suite": "proof",
+      "name": "Node Backend Federation Proof"
     }
   ]
 }
