@@ -145,8 +145,8 @@ jobs:
           mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
 
   # The default-branch producer of the caches the gates restore, where every pull request and merge
-  # group can read them: the pnpm store, the installed node_modules, the TS-Go typecheck build, every
-  # Node build shard's output archive, the Playwright Chromium build, and the apt packages of Chromium's
+  # group can read them: the pnpm store, the installed node_modules, the TS-Go typecheck build,
+  # the Playwright Chromium build, and the apt packages of Chromium's
   # system libraries. An Actions cache is readable from the current branch or the default branch only, so
   # a merge group run (gh-readonly-queue/main/*) can read nothing a pull request saved, and the gate jobs
   # never run on a proven push to main: this job publishes the shared caches. ci-plan also saves its
@@ -186,44 +186,6 @@ jobs:
         with:
           path: app/node_modules/.cache/tsgo
           key: ${{ steps.install.outputs.typescript-build-key }}
-
-      # Build every Node delivery unit shard by shard and archive each shard exactly as node-artifact-build
-      # packs it, under exactly the key that job restores. Each unit builds from source exports only, so a
-      # shard's archive does not depend on the order the shards are built in here.
-      # ci-workflows.test.mts keeps these unit lists and commands identical to node-artifact-build's: a
-      # drifted archive would hand the integration rows outputs the gates never built.
-      - name: Build and archive every Node build shard
-        id: node-shards
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: http://localhost:8080
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-          SHARD_UNITS_1: verticals/catalog verticals/tax verticals/commerce-cart verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/assortment apps/shell-super-app verticals/promotion verticals/payment verticals/party-registry verticals/inventory verticals/availability verticals/symmy-integration verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects
-        run: |
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          for shard in 1; do
-            variable="SHARD_UNITS_$shard"
-            read -ra units <<<"${!variable}"
-            filters=()
-            for unit in "${units[@]}"; do
-              filters+=(--filter "./$unit")
-            done
-            echo "::group::Build Node shard $shard"
-            mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
-            echo '::endgroup::'
-            git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
-              | grep -zv '/node_modules/$' \
-              | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units-$shard.tar.zst"
-            bash scripts/ci/cache-entry-key.sh build-outputs "node-units-v1-$RUNNER_OS-$RUNNER_ARCH-$shard-" "${units[@]}" \
-              | sed "s/^key=/key-$shard=/" >>"$GITHUB_OUTPUT"
-          done
-
-      - name: Save the Node build shard 1 archive
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-1.tar.zst
-          key: ${{ steps.node-shards.outputs.key-1 }}
 
       - name: Restore the Playwright Chromium build
         id: playwright-cache
@@ -937,8 +899,9 @@ jobs:
           fi
           docker compose down --volumes --remove-orphans
 
-  # Build all delivery units on one runner, two at a time. Restore only exact
-  # content-addressed outputs; the service runners independently prove the topology.
+  # Release outputs embed this exact commit in their identities. Build them here;
+  # source-content caching across commits hands native fixtures another release.
+  # Dependency and incremental typecheck caches remain independent of releases.
   node-artifact-build:
     name: Build node artifacts (${{ matrix.shard }}/1)
     needs: [ci-plan]
@@ -969,33 +932,13 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # The key covers this shard's unit sources and every shared package their builds read, so a commit
-      # that touches none of them reuses the archive instead of rebuilding it. There are deliberately no
-      # restore-keys: a partial match would ship outputs of code this commit does not contain.
-      - name: Name this shard's built Node artifacts
-        id: artifacts
-        working-directory: app
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          bash scripts/ci/cache-entry-key.sh build-outputs "node-units-v1-$RUNNER_OS-$RUNNER_ARCH-${{ matrix.shard }}-" "${units[@]}" >>"$GITHUB_OUTPUT"
-
-      - name: Restore this shard's built Node artifacts
-        id: artifacts-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-${{ matrix.shard }}.tar.zst
-          key: ${{ steps.artifacts.outputs.key }}
-
-      # Two units at a time: TS-Go declaration passes of one unit leave cores idle, and the shared-package
-      # commits that miss the cache are exactly the ones that must not pay the full serial build.
       - name: Build the shard's Node artifacts
-        if: steps.artifacts-cache.outputs.cache-hit != 'true'
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
         run: |
+          printf 'Hosted build capacity: %s CPUs\n' "$(nproc)"
+          free --mebi
           read -ra units <<<"$SHARD_UNITS"
           filters=()
           for unit in "${units[@]}"; do
@@ -1003,11 +946,10 @@ jobs:
           done
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=4 "${filters[@]}" run build
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
-        if: steps.artifacts-cache.outputs.cache-hit != 'true'
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
@@ -1015,19 +957,7 @@ jobs:
           read -ra units <<<"$SHARD_UNITS"
           git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
             | grep -zv '/node_modules/$' \
-            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units-${{ matrix.shard }}.tar.zst"
-
-      - name: Save this shard's built Node artifacts
-        if: steps.artifacts-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-${{ matrix.shard }}.tar.zst
-          key: ${{ steps.artifacts.outputs.key }}
-
-      # Cache versions include the archived path, not just the key. Match warm-caches' numbered
-      # path above, then use the common artifact name expected by the unpacker.
-      - name: Name the same-run artifact archive
-        run: cp "$RUNNER_TEMP/units-${{ matrix.shard }}.tar.zst" "$RUNNER_TEMP/units.tar.zst"
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
 
       - name: Upload the shard's build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
