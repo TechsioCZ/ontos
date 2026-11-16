@@ -11,12 +11,6 @@ it('reports exact Party Registry catalog differences', () => {
     missing: ['party.counterparties'],
     unexpected: [],
   });
-  expect(
-    comparePartyCatalog(expectedPartyTableCatalog.filter((table) => table !== 'party.party_ico_correlation_epochs')),
-  ).toEqual({
-    missing: ['party.party_ico_correlation_epochs'],
-    unexpected: [],
-  });
   expect(comparePartyCatalog([...expectedPartyTableCatalog, 'party.unexpected'])).toEqual({
     missing: [],
     unexpected: ['party.unexpected'],

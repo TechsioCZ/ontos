@@ -336,15 +336,31 @@ const makeFixture = Effect.gen(function* makeFixture() {
   };
 });
 
-it.layer(
-  NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeCrypto.layer), Layer.provideMerge(NodeServices.layer)),
-  { excludeTestServices: true },
-)((suite) => {
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeCrypto.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+/**
+ * `makeFixture` builds a disposable PostgreSQL database, rebuilds the owner schema through the
+ * canonical CLI child process, opens a Core admin layer, grants permissions and mounts the whole
+ * command/read API, so the suite builds it once instead of once per test. Each test below scopes its
+ * state checks to its own Party and keeps its own finalizers, and the declaration order is
+ * load-bearing: the last test leaves `moduleAccess` revoked and `deniedAccess` entries set.
+ */
+const PartyCorrectionReuseFixture = Context.Service<Effect.Success<typeof makeFixture>>(
+  'IdentifierCorrectionReuseTest.fixture',
+);
+const correctionReuseLayer = Layer.effect(PartyCorrectionReuseFixture, makeFixture).pipe(
+  Layer.provideMerge(nativeServices),
+);
+
+it.layer(correctionReuseLayer, { excludeTestServices: true, timeout: 120_000 })((suite) => {
   suite.effect(
     'native public correction preserves new replacement, pure retraction, rollback and lost acknowledgement truth',
     () =>
       Effect.gen(function* correctionSettlement() {
-        const h = yield* makeFixture;
+        const h = yield* PartyCorrectionReuseFixture;
         const partyRef = yield* h.create();
         const a = yield* h.add(partyRef, '27074358', yield* h.options);
         const created = yield* h.correct(partyRef, a.officialIdentifierRef.resourceId, '1000004', yield* h.options);
@@ -458,7 +474,7 @@ it.layer(
     'public Add and Correction serialize in both native lock orders without duplicate canonical assertions',
     () =>
       Effect.gen(function* correctionConcurrency() {
-        const h = yield* makeFixture;
+        const h = yield* PartyCorrectionReuseFixture;
         for (const first of ['ADD', 'CORRECTION'] as const) {
           const partyRef = yield* h.create();
           const a = yield* h.add(partyRef, '27074358', yield* h.options);
@@ -625,21 +641,29 @@ it.layer(
     'public Add and Correction converge to retained B with truthful native history, retry and authority',
     () =>
       Effect.gen(function* currentIdentifierReuseNative() {
-        const h = yield* makeFixture;
+        const h = yield* PartyCorrectionReuseFixture;
         const partyRef = yield* h.create();
+        // The fixture is shared with the tests above, so every absolute count and whole-set
+        // comparison below reads this test's own Party rather than the whole tenant.
+        const ownRows = Effect.fnUntraced(function* ownRows() {
+          return (yield* h.rows()).filter((row) => row.partyId === partyRef.resourceId);
+        });
+        const ownCorrections = Effect.fnUntraced(function* ownCorrections() {
+          return (yield* h.corrections()).filter((row) => row.partyId === partyRef.resourceId);
+        });
         const a = yield* h.add(partyRef, '27074358', yield* h.options);
         const b = yield* h.add(partyRef, '26168685', yield* h.options, 'ICO', h.principal);
-        const before = yield* h.rows();
+        const before = yield* ownRows();
         const beforeB = before.find((row) => row.officialIdentifierId === b.officialIdentifierRef.resourceId);
         assert.isOk(beforeB);
         const repeated = yield* h.add(partyRef, '26168685', yield* h.options);
         expect(repeated.officialIdentifierRef).toEqual(b.officialIdentifierRef);
-        expect(yield* h.rows()).toEqual(before);
+        expect(yield* ownRows()).toEqual(before);
         const commandOptions = yield* h.options;
         const corrected = yield* h.correct(partyRef, a.officialIdentifierRef.resourceId, '26168685', commandOptions);
         expect(Option.getOrThrow(corrected.replacementAssertionId)).toBe(b.officialIdentifierRef.resourceId);
         expect(corrected.retractedAssertionId).toBe(a.officialIdentifierRef.resourceId);
-        const after = yield* h.rows();
+        const after = yield* ownRows();
         expect(after).toHaveLength(2);
         expect(after.find((row) => row.officialIdentifierId === b.officialIdentifierRef.resourceId)).toEqual(beforeB);
         expect(
@@ -661,7 +685,7 @@ it.layer(
         expect(detail.reasonCode).toBe('WRONG_IDENTITY_VALUE');
         expect(detail.evidenceRefs).toEqual(['identifier-correction/review']);
         expect(detail.actingPrincipalId).toBe(h.principal.principalId);
-        expect(yield* h.corrections()).toHaveLength(1);
+        expect(yield* ownCorrections()).toHaveLength(1);
         const evidence = yield* h.fixture.evidence(h.coreEvidenceExecutor);
         const replay = yield* Effect.flip(
           h.correct(partyRef, a.officialIdentifierRef.resourceId, '26168685', {
@@ -689,8 +713,8 @@ it.layer(
           h.correct(partyRef, b.officialIdentifierRef.resourceId, '1000005', yield* h.options),
         );
         expect(Predicate.isTagged(invalid, 'PartyCommandConflictProblem')).toBe(true);
-        expect(yield* h.rows()).toEqual(after);
-        expect(yield* h.corrections()).toHaveLength(1);
+        expect(yield* ownRows()).toEqual(after);
+        expect(yield* ownCorrections()).toHaveLength(1);
         // v2: the one access gate decides every protected Action and Read (O62). The fixture scripts
         // its gate per capability, so a principal it does not admit is refused on the fixture's own
         // per-request owner seam (the removed SpiceDB reader/module tuples no longer refuse anyone).
@@ -702,7 +726,7 @@ it.layer(
           h.correct(foreign, b.officialIdentifierRef.resourceId, '27074358', yield* h.options),
         );
         expect(Predicate.isTagged(wrongParty, 'PartyCommandConflictProblem')).toBe(true);
-        expect(yield* h.rows()).toEqual(after);
+        expect(yield* ownRows()).toEqual(after);
         yield* h.moduleAccess(h.fixture.reader, 'grant');
         yield* Effect.addFinalizer(() => h.moduleAccess(h.fixture.reader, 'revoke').pipe(Effect.orDie));
         expect((yield* h.history(partyRef, h.fixture.reader)).items).toHaveLength(2);
@@ -735,7 +759,7 @@ it.layer(
           h.correct(partyRef, b.officialIdentifierRef.resourceId, '27074358', yield* h.options, foreignActor),
         );
         expect(Predicate.isTagged(crossTenant, 'PartyCommandConflictProblem')).toBe(true);
-        expect(yield* h.rows()).toEqual(after);
+        expect(yield* ownRows()).toEqual(after);
         yield* h.moduleAccess(h.principal, 'revoke');
         h.deniedAccess.deny(h.principal.principalId, 'party.registry.official-identifier.read-history');
         expect(
