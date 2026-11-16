@@ -823,6 +823,28 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm active-composition:publish prove-build
 
+      # These whole-owner scenarios launch several native processes. Run them on
+      # this otherwise idle runner, not beside four lanes competing for four CPUs.
+      - name: Prove whole native Current Pricing without competing fixture processes
+        if: matrix.suite == 'bootstrap'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: >-
+          mise exec -- pnpm --filter ./verticals/pricing run test:integration
+          tests/integration/market-revision-whole-current-pricing-postgres.test.ts --pool.maxWorkers 1
+
+      - name: Prove native Organization customer lifecycle without competing fixture processes
+        if: matrix.suite == 'bootstrap'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: >-
+          mise exec -- pnpm exec rstest --project integration
+          scripts/integration/organization-source-customer-owner-conformance.test.mts --pool.maxWorkers 1
+
       - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
         if: matrix.suite == 'integration'
         working-directory: app

@@ -7,7 +7,15 @@ const LocalDatabaseUrl = Schema.URLFromString.check(
       : 'CI integration workers require a local PostgreSQL cluster',
   ),
 );
-const WorkerSlotSchema = Schema.Literals(['1', '2', '3', '4']);
+const workerSlots = ['1', '2', '3', '4'] as const;
+const WorkerSlotSchema = Schema.Literals(workerSlots);
+export const isIntegrationWorkerEndpoint = (input: {
+  readonly container: string;
+  readonly isolatedWorkers: string;
+  readonly port: number;
+}) =>
+  input.isolatedWorkers === '4' &&
+  workerSlots.some((worker) => input.container === `ontos-ci-db-${worker}` && input.port === 5540 + Number(worker));
 export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({ ONTOS_CI_ISOLATED_WORKERS: Schema.optionalKey(Schema.Undefined) }),
   Schema.Struct({
