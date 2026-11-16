@@ -14,7 +14,7 @@ export default defineConfig({
     {
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
-      setupFiles: [new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname],
+      setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',
       testTimeout: 30_000,
     },
