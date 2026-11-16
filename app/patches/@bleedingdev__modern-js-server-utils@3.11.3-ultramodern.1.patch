@@ -1,0 +1,292 @@
+diff --git a/dist/cjs/compilers/rslib.js b/dist/cjs/compilers/rslib.js
+index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..f24acf1321c12682b9b9bfeea839f0117ac1411a 100644
+--- a/dist/cjs/compilers/rslib.js
++++ b/dist/cjs/compilers/rslib.js
+@@ -131,6 +131,29 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, ass
+         const emitted = script ? `${resolved.replace(SCRIPT_RE, '')}${outputExtension(resolved)}` : resolved;
+         return relativeSpecifier(external_path_default().dirname(contextInfo.issuer), emitted);
+     };
++const discoverServerClosure = async (appDirectory, sources, resolvedConfigPath, excludeFiles) => {
++    // Construct the native parser's module graph, without requesting semantic diagnostics or emit.
++    // TypeScript 7 deliberately has no TS 6 JavaScript compiler API.
++    const { API } = await import('typescript/unstable/sync');
++    const api = new API({ cwd: appDirectory });
++    try {
++        const snapshot = api.updateSnapshot({ openProjects: [resolvedConfigPath] });
++        try {
++            const project = snapshot.getProject(resolvedConfigPath);
++            if (!project) throw new Error(`No server source graph for ${resolvedConfigPath}`);
++            const excluded = new Set(excludeFiles.map(file => external_path_default().resolve(file)));
++            for (const file of project.program.getSourceFileNames()) {
++                const relative = external_path_default().relative(appDirectory, file);
++                if (relative.startsWith('..') || external_path_default().isAbsolute(relative) || file.includes(`${external_path_default().sep}node_modules${external_path_default().sep}`) || excluded.has(external_path_default().resolve(file))) continue;
++                if (SCRIPT_RE.test(file) && !DECLARATION_RE.test(file)) sources.add(file);
++            }
++        } finally {
++            snapshot.dispose();
++        }
++    } finally {
++        api.close();
++    }
++};
+ const compileServerSources = async (appDirectory, config, options)=>{
+     const { sourceDirs, distDir, tsconfigPath, moduleType, excludeFiles = [] } = options;
+     const sources = new Set(await collectSources(sourceDirs, excludeFiles));
+@@ -147,7 +170,8 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         if (checked && !roots.has(external_path_default().resolve(file))) sources.delete(file);
+     }
+     const failOnTypeError = false !== compilerOptions.noEmitOnError;
+-    const declaration = true === compilerOptions.declaration;
++    const separateTypecheck = process.env.ONTOS_CI_TYPECHECK_SEPARATE === '1';
++    const declaration = !separateTypecheck && true === compilerOptions.declaration;
+     const formats = {
+         '.js': 'module' === moduleType ? 'esm' : 'cjs',
+         '.mjs': 'esm',
+@@ -187,6 +211,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         return libs;
+     };
+     const alias = resolveAlias(appDirectory, config.alias);
++    await discoverServerClosure(appDirectory, sources, resolvedConfigPath, excludeFiles);
+     const assets = new Set();
+     const build = async ()=>{
+         if (0 === sources.size) return;
+@@ -196,13 +221,12 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         const nodeRange = 'string' == typeof nodeEngine ? utils_namespaceObject.semver.validRange(nodeEngine) : null;
+         const nodeVersion = nodeRange ? utils_namespaceObject.semver.minVersion(nodeRange) : null;
+         const nodeTarget = nodeVersion?.major ? `node${nodeVersion.major}.${nodeVersion.minor}` : void 0;
+-        let emitDeclarations = declaration;
+-        for(;;){
++        {
+             const reached = new Set();
+             const rslib = await createRslib({
+                 cwd: appDirectory,
+                 config: {
+-                    lib: createLibs(groupEntries(appDirectory, sources), emitDeclarations),
++                    lib: createLibs(groupEntries(appDirectory, sources), declaration),
+                     source: {
+                         tsconfigPath: resolvedConfigPath,
+                         ...compilerOptions.experimentalDecorators ? {
+@@ -220,12 +244,15 @@ const compileServerSources = async (appDirectory, config, options)=>{
+                             root: distDir
+                         },
+                         cleanDistPath: false,
+-                        sourceMap: config.sourceMap ?? {
++                        sourceMap: separateTypecheck ? false : config.sourceMap ?? {
+                             js: 'source-map'
+                         }
+                     },
+                     performance: {
+-                        buildCache: false
++                        buildCache: {
++                            cacheDirectory: external_path_default().join(appDirectory, 'node_modules/.cache/server-rspack'),
++                            cacheDigest: [moduleType, JSON.stringify(config.alias ?? []), String(separateTypecheck)]
++                        }
+                     },
+                     tools: {
+                         rspack: (rspackConfig)=>{
+@@ -248,13 +275,11 @@ const compileServerSources = async (appDirectory, config, options)=>{
+                 }
+             });
+             await rslib.build();
+-            emitDeclarations = false;
+-            if (0 === reached.size) return;
+-            for (const file of reached)sources.add(file);
++            if (reached.size > 0) throw new Error(`Server closure resolution missed: ${[...reached].join(', ')}`);
+         }
+     };
+     const typeCheck = async ()=>{
+-        if (0 === roots.size) return;
++        if (separateTypecheck || 0 === roots.size) return;
+         const result = await (0, external_tsgo_js_namespaceObject.runTsgo)(tsgoBinPath, [
+             '-p',
+             resolvedConfigPath,
+diff --git a/dist/cjs/compilers/tsgo.js b/dist/cjs/compilers/tsgo.js
+index 356ff21f6b9163f58fbb30d5e9d7eac6122af0cc..4a97ebf95d4628c8f552045a4e9ecfc0c2c00f12 100644
+--- a/dist/cjs/compilers/tsgo.js
++++ b/dist/cjs/compilers/tsgo.js
+@@ -46,7 +46,6 @@ const utils_namespaceObject = require("@modern-js/utils");
+ const external_child_process_namespaceObject = require("child_process");
+ const external_path_namespaceObject = require("path");
+ var external_path_default = /*#__PURE__*/ __webpack_require__.n(external_path_namespaceObject);
+-let resolvedConfigCount = 0;
+ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs, tsgoBinPath, excludeFiles = [])=>{
+     const tsconfigDir = external_path_default().dirname(tsconfigPath);
+     const output = await runTsgo(tsgoBinPath, [
+@@ -62,15 +61,19 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs,
+     options.rootDir = appDirectory;
+     options.composite = false;
+     options.declarationMap = false;
+-    options.incremental = false;
++    options.incremental = true;
++    if (process.env.ONTOS_CI_TYPECHECK_SEPARATE === '1') {
++        options.noCheck = true;
++        options.declaration = false;
++    }
+     options.noEmit = true !== options.declaration;
+     options.jsx ??= 'react-jsx';
+     delete options.emitDeclarationOnly;
+     delete options.outDir;
+-    delete options.tsBuildInfoFile;
++    options.tsBuildInfoFile = external_path_default().join(appDirectory, 'node_modules/.cache/server.tsbuildinfo');
+     config.files = filterSourceFiles(tsconfigDir, sourceDirs, config.files, excludeFiles);
+     delete config.include;
+-    delete config.references;
++    // Keep the reference graph; the workspace gate owns its declarations.
+     if (void 0 !== options.baseUrl) {
+         const baseUrl = external_path_default().resolve(tsconfigDir, options.baseUrl);
+         if (options.paths) options.paths = Object.fromEntries(Object.entries(options.paths).map(([key, targets])=>[
+@@ -86,7 +89,7 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs,
+         'node',
+         'node10'
+     ].includes(String(options.moduleResolution).toLowerCase())) delete options.moduleResolution;
+-    const resolvedConfigPath = external_path_default().join(tsconfigDir, `.tsgo.${process.pid}.${resolvedConfigCount++}.resolved.json`);
++    const resolvedConfigPath = external_path_default().join(tsconfigDir, '.tsgo.server.resolved.json');
+     await utils_namespaceObject.fs.writeFile(resolvedConfigPath, JSON.stringify(config, null, 2));
+     return {
+         config,
+diff --git a/dist/esm-node/compilers/rslib.mjs b/dist/esm-node/compilers/rslib.mjs
+index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..9ca218dcfbd87fa728068444422af0e63e3fd144 100644
+--- a/dist/esm-node/compilers/rslib.mjs
++++ b/dist/esm-node/compilers/rslib.mjs
+@@ -90,6 +90,29 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, ass
+         const emitted = script ? `${resolved.replace(SCRIPT_RE, '')}${outputExtension(resolved)}` : resolved;
+         return relativeSpecifier(path.dirname(contextInfo.issuer), emitted);
+     };
++const discoverServerClosure = async (appDirectory, sources, resolvedConfigPath, excludeFiles) => {
++    // Construct the native parser's module graph, without requesting semantic diagnostics or emit.
++    // TypeScript 7 deliberately has no TS 6 JavaScript compiler API.
++    const { API } = await import('typescript/unstable/sync');
++    const api = new API({ cwd: appDirectory });
++    try {
++        const snapshot = api.updateSnapshot({ openProjects: [resolvedConfigPath] });
++        try {
++            const project = snapshot.getProject(resolvedConfigPath);
++            if (!project) throw new Error(`No server source graph for ${resolvedConfigPath}`);
++            const excluded = new Set(excludeFiles.map(file => path.resolve(file)));
++            for (const file of project.program.getSourceFileNames()) {
++                const relative = path.relative(appDirectory, file);
++                if (relative.startsWith('..') || path.isAbsolute(relative) || file.includes(`${path.sep}node_modules${path.sep}`) || excluded.has(path.resolve(file))) continue;
++                if (SCRIPT_RE.test(file) && !DECLARATION_RE.test(file)) sources.add(file);
++            }
++        } finally {
++            snapshot.dispose();
++        }
++    } finally {
++        api.close();
++    }
++};
+ const compileServerSources = async (appDirectory, config, options)=>{
+     const { sourceDirs, distDir, tsconfigPath, moduleType, excludeFiles = [] } = options;
+     const sources = new Set(await collectSources(sourceDirs, excludeFiles));
+@@ -106,7 +129,8 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         if (checked && !roots.has(path.resolve(file))) sources.delete(file);
+     }
+     const failOnTypeError = false !== compilerOptions.noEmitOnError;
+-    const declaration = true === compilerOptions.declaration;
++    const separateTypecheck = process.env.ONTOS_CI_TYPECHECK_SEPARATE === '1';
++    const declaration = !separateTypecheck && true === compilerOptions.declaration;
+     const formats = {
+         '.js': 'module' === moduleType ? 'esm' : 'cjs',
+         '.mjs': 'esm',
+@@ -146,6 +170,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         return libs;
+     };
+     const alias = resolveAlias(appDirectory, config.alias);
++    await discoverServerClosure(appDirectory, sources, resolvedConfigPath, excludeFiles);
+     const assets = new Set();
+     const build = async ()=>{
+         if (0 === sources.size) return;
+@@ -155,13 +180,12 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         const nodeRange = 'string' == typeof nodeEngine ? semver.validRange(nodeEngine) : null;
+         const nodeVersion = nodeRange ? semver.minVersion(nodeRange) : null;
+         const nodeTarget = nodeVersion?.major ? `node${nodeVersion.major}.${nodeVersion.minor}` : void 0;
+-        let emitDeclarations = declaration;
+-        for(;;){
++        {
+             const reached = new Set();
+             const rslib = await createRslib({
+                 cwd: appDirectory,
+                 config: {
+-                    lib: createLibs(groupEntries(appDirectory, sources), emitDeclarations),
++                    lib: createLibs(groupEntries(appDirectory, sources), declaration),
+                     source: {
+                         tsconfigPath: resolvedConfigPath,
+                         ...compilerOptions.experimentalDecorators ? {
+@@ -179,12 +203,15 @@ const compileServerSources = async (appDirectory, config, options)=>{
+                             root: distDir
+                         },
+                         cleanDistPath: false,
+-                        sourceMap: config.sourceMap ?? {
++                        sourceMap: separateTypecheck ? false : config.sourceMap ?? {
+                             js: 'source-map'
+                         }
+                     },
+                     performance: {
+-                        buildCache: false
++                        buildCache: {
++                            cacheDirectory: path.join(appDirectory, 'node_modules/.cache/server-rspack'),
++                            cacheDigest: [moduleType, JSON.stringify(config.alias ?? []), String(separateTypecheck)]
++                        }
+                     },
+                     tools: {
+                         rspack: (rspackConfig)=>{
+@@ -207,13 +234,11 @@ const compileServerSources = async (appDirectory, config, options)=>{
+                 }
+             });
+             await rslib.build();
+-            emitDeclarations = false;
+-            if (0 === reached.size) return;
+-            for (const file of reached)sources.add(file);
++            if (reached.size > 0) throw new Error(`Server closure resolution missed: ${[...reached].join(', ')}`);
+         }
+     };
+     const typeCheck = async ()=>{
+-        if (0 === roots.size) return;
++        if (separateTypecheck || 0 === roots.size) return;
+         const result = await runTsgo(tsgoBinPath, [
+             '-p',
+             resolvedConfigPath,
+diff --git a/dist/esm-node/compilers/tsgo.mjs b/dist/esm-node/compilers/tsgo.mjs
+index e6b6fbd2a1830f8cca17fc867d58d98c5d76060e..5451d8e4cb0ddcae0e1fdf60e8fbea7d692112ec 100644
+--- a/dist/esm-node/compilers/tsgo.mjs
++++ b/dist/esm-node/compilers/tsgo.mjs
+@@ -6,7 +6,6 @@ import path from "path";
+ import { fileURLToPath as __rspack_fileURLToPath } from "node:url";
+ import { dirname as __rspack_dirname } from "node:path";
+ var __rspack_import_meta_dirname__ = __rspack_dirname(__rspack_fileURLToPath(import.meta.url));
+-let resolvedConfigCount = 0;
+ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs, tsgoBinPath, excludeFiles = [])=>{
+     const tsconfigDir = path.dirname(tsconfigPath);
+     const output = await runTsgo(tsgoBinPath, [
+@@ -22,15 +21,19 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs,
+     options.rootDir = appDirectory;
+     options.composite = false;
+     options.declarationMap = false;
+-    options.incremental = false;
++    options.incremental = true;
++    if (process.env.ONTOS_CI_TYPECHECK_SEPARATE === '1') {
++        options.noCheck = true;
++        options.declaration = false;
++    }
+     options.noEmit = true !== options.declaration;
+     options.jsx ??= 'react-jsx';
+     delete options.emitDeclarationOnly;
+     delete options.outDir;
+-    delete options.tsBuildInfoFile;
++    options.tsBuildInfoFile = path.join(appDirectory, 'node_modules/.cache/server.tsbuildinfo');
+     config.files = filterSourceFiles(tsconfigDir, sourceDirs, config.files, excludeFiles);
+     delete config.include;
+-    delete config.references;
++    // Keep the reference graph; the workspace gate owns its declarations.
+     if (void 0 !== options.baseUrl) {
+         const baseUrl = path.resolve(tsconfigDir, options.baseUrl);
+         if (options.paths) options.paths = Object.fromEntries(Object.entries(options.paths).map(([key, targets])=>[
+@@ -46,7 +49,7 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs,
+         'node',
+         'node10'
+     ].includes(String(options.moduleResolution).toLowerCase())) delete options.moduleResolution;
+-    const resolvedConfigPath = path.join(tsconfigDir, `.tsgo.${process.pid}.${resolvedConfigCount++}.resolved.json`);
++    const resolvedConfigPath = path.join(tsconfigDir, '.tsgo.server.resolved.json');
+     await fs.writeFile(resolvedConfigPath, JSON.stringify(config, null, 2));
+     return {
+         config,

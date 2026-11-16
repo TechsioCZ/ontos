@@ -55,14 +55,17 @@ const BuildOutputsSchema = Schema.Record(
   }),
 );
 
-const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(nodeEnvironment: string) {
+const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(
+  nodeEnvironment: string,
+  separateTypecheck: boolean,
+) {
   const result = yield* collectToolingProcess(
     ChildProcess.make(
       process.execPath,
       ['--no-warnings', '--input-type=module', '--eval', probe, JSON.stringify(modernConfigs)],
       {
         cwd: workspaceRoot,
-        env: { NODE_ENV: nodeEnvironment },
+        env: { NODE_ENV: nodeEnvironment, ONTOS_CI_TYPECHECK_SEPARATE: separateTypecheck ? '1' : '0' },
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -93,10 +96,21 @@ it.live(
   'every application build uses the browser baseline and keeps the published workspace preset TypeScript checker',
   Effect.fn(function* testEffect() {
     expect(modernConfigs.length).toBeGreaterThan(0);
-    const outputs = yield* resolveBuildOutputs('production');
+    const outputs = yield* resolveBuildOutputs('production', false);
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must keep output.disableTsChecker: false`).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'CI builds leave checking to the required workspace job only when explicitly separated',
+  Effect.fn(function* testEffect() {
+    const outputs = yield* resolveBuildOutputs('production', true);
+    expectSharedBrowserTargets(outputs);
+    for (const [config, output] of Object.entries(outputs)) {
+      expect(output.disableTsChecker, `${config} must not repeat the workspace typecheck`).toBe(true);
     }
   }),
 );
@@ -105,7 +119,7 @@ it.live(
 it.live(
   'every application dev server uses the browser baseline and leaves type diagnostics to pnpm typecheck',
   Effect.fn(function* testEffect() {
-    const outputs = yield* resolveBuildOutputs('development');
+    const outputs = yield* resolveBuildOutputs('development', false);
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must set output.disableTsChecker in modern dev`).toBe(true);

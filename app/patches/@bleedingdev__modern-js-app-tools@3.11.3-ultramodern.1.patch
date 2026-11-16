@@ -1,0 +1,74 @@
+diff --git a/dist/cjs/plugins/deploy/platforms/node.js b/dist/cjs/plugins/deploy/platforms/node.js
+index a9a3a3a386379a47eccbbd10cb675859b3811d28..4d5eb5219395d48fddb983b99a80658c7b0606a0 100644
+--- a/dist/cjs/plugins/deploy/platforms/node.js
++++ b/dist/cjs/plugins/deploy/platforms/node.js
+@@ -75,7 +75,17 @@ const createNodePreset = ({ appContext, modernConfig })=>{
+             await utils_namespaceObject.fs.writeFile(entryFilePath, code);
+         },
+         async end () {
+-            const filter = (filePath)=>!filePath.startsWith(staticDirectory) && !filePath.endsWith('.map');
++            const effectEntry = modernConfig.bff?.runtimeFramework === 'effect'
++                ? external_node_path_default().resolve(outputDirectory, modernConfig.bff.effect?.entry ?? 'api/index').replace(/\.[cm]?[jt]sx?$/u, '') + '.js'
++                : undefined;
++            const filter = (filePath)=>{
++                if (filePath.startsWith(staticDirectory) || filePath.endsWith('.map')) return false;
++                if (!effectEntry) return true;
++                const relative = external_node_path_default().relative(outputDirectory, filePath).replace(/\\/gu, '/');
++                // nft follows real imports from these roots; do not start a second trace at every
++                // unbundled source file already embedded in the Effect entry bundle.
++                return !/^(?:api|shared|src)\//u.test(relative) || filePath === effectEntry;
++            };
+             const entry = isEsmProject ? await (0, index_js_namespaceObject.resolveESMDependency)('@modern-js/prod-server') : require.resolve('@modern-js/prod-server');
+             const requireFromApp = (0, external_node_module_namespaceObject.createRequire)(external_node_path_default().join(appDirectory, 'package.json'));
+             const pluginEntries = new Set();
+diff --git a/dist/cjs/plugins/serverBuild.js b/dist/cjs/plugins/serverBuild.js
+index aaf2dbcf80fe7b5065def28115413e036641b095..47b1640eaea396a847e814b56ac8a0c320aff7c6 100644
+--- a/dist/cjs/plugins/serverBuild.js
++++ b/dist/cjs/plugins/serverBuild.js
+@@ -62,6 +62,9 @@ const serverBuild = ()=>({
+             api.onAfterBuild(async ()=>{
+                 const { appDirectory, distDirectory, metaName, moduleType } = api.getAppContext();
+                 if (!checkHasCache(appDirectory) && !checkHasConfig(appDirectory, metaName)) return;
++                // A BFF build owns the union of server, API and shared sources.
++                const apiDirectory = api.getAppContext().apiDirectory;
++                if (api.getHooks().onAfterBffCompile && apiDirectory && external_fs_default().existsSync(apiDirectory)) return;
+                 const modernConfig = api.getNormalizedConfig();
+                 const distDir = external_path_default().resolve(distDirectory);
+                 const serverDir = external_path_default().resolve(appDirectory, utils_namespaceObject.SERVER_DIR);
+diff --git a/dist/esm-node/plugins/deploy/platforms/node.mjs b/dist/esm-node/plugins/deploy/platforms/node.mjs
+index 6384cf4e6261450d6d662c381ed68c5c3c0baf7a..c809b6e835b1ad0e8757218470b0f2842f4a30ce 100644
+--- a/dist/esm-node/plugins/deploy/platforms/node.mjs
++++ b/dist/esm-node/plugins/deploy/platforms/node.mjs
+@@ -35,7 +35,17 @@ const createNodePreset = ({ appContext, modernConfig })=>{
+             await fs.writeFile(entryFilePath, code);
+         },
+         async end () {
+-            const filter = (filePath)=>!filePath.startsWith(staticDirectory) && !filePath.endsWith('.map');
++            const effectEntry = modernConfig.bff?.runtimeFramework === 'effect'
++                ? node_path.resolve(outputDirectory, modernConfig.bff.effect?.entry ?? 'api/index').replace(/\.[cm]?[jt]sx?$/u, '') + '.js'
++                : undefined;
++            const filter = (filePath)=>{
++                if (filePath.startsWith(staticDirectory) || filePath.endsWith('.map')) return false;
++                if (!effectEntry) return true;
++                const relative = node_path.relative(outputDirectory, filePath).replace(/\\/gu, '/');
++                // nft follows real imports from these roots; do not start a second trace at every
++                // unbundled source file already embedded in the Effect entry bundle.
++                return !/^(?:api|shared|src)\//u.test(relative) || filePath === effectEntry;
++            };
+             const entry = isEsmProject ? await resolveESMDependency('@modern-js/prod-server') : require.resolve('@modern-js/prod-server');
+             const requireFromApp = createRequire(node_path.join(appDirectory, 'package.json'));
+             const pluginEntries = new Set();
+diff --git a/dist/esm-node/plugins/serverBuild.mjs b/dist/esm-node/plugins/serverBuild.mjs
+index 66b4c76e4d54b9ad4d085ff3e4332c5a9ffc9bc6..1f61612cbde1f75f6cf4ecbaeb3a506fd8bae9f6 100644
+--- a/dist/esm-node/plugins/serverBuild.mjs
++++ b/dist/esm-node/plugins/serverBuild.mjs
+@@ -20,6 +20,9 @@ const serverBuild = ()=>({
+             api.onAfterBuild(async ()=>{
+                 const { appDirectory, distDirectory, metaName, moduleType } = api.getAppContext();
+                 if (!checkHasCache(appDirectory) && !checkHasConfig(appDirectory, metaName)) return;
++                // A BFF build owns the union of server, API and shared sources.
++                const apiDirectory = api.getAppContext().apiDirectory;
++                if (api.getHooks().onAfterBffCompile && apiDirectory && fs.existsSync(apiDirectory)) return;
+                 const modernConfig = api.getNormalizedConfig();
+                 const distDir = path.resolve(distDirectory);
+                 const serverDir = path.resolve(appDirectory, SERVER_DIR);

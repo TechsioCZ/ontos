@@ -168,6 +168,9 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-app-tools@3.11.3-ultramodern.1.patch
+  '@bleedingdev/modern-js-plugin-bff@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-plugin-bff@3.11.3-ultramodern.1.patch
+  '@bleedingdev/modern-js-server-utils@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-server-utils@3.11.3-ultramodern.1.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380 (optional policy/role fields)

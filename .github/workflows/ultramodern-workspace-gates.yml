@@ -974,67 +974,31 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: 'true'
+
+      - name: Restore the server and browser compiler caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            app/apps/*/node_modules/.cache
+            app/verticals/*/node_modules/.cache
+          key: node-compile-v1-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/patches/**', 'app/**/tsconfig*.json', '!app/node_modules/**', '!app/**/node_modules/**') }}-${{ github.sha }}
+          restore-keys: node-compile-v1-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/patches/**', 'app/**/tsconfig*.json', '!app/node_modules/**', '!app/**/node_modules/**') }}-
 
       - name: Build the shard's Node artifacts
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
           NODE_OPTIONS: --max-old-space-size=2048
-          ONTOS_CI_BUILD_PROFILES: ${{ runner.temp }}/build-profiles
+          ONTOS_CI_TYPECHECK_SEPARATE: "1"
         run: |
-          printf 'Hosted build capacity: %s CPUs\n' "$(nproc)"
-          free --mebi
-          vmstat -t 15 &
-          monitor="$!"
-          trap 'kill "$monitor" 2>/dev/null || true' EXIT
           read -ra units <<<"$SHARD_UNITS"
           filters=()
           for unit in "${units[@]}"; do
             filters+=(--filter "./$unit")
           done
-          mkdir -p "$ONTOS_CI_BUILD_PROFILES"
-          /usr/bin/time -v -o "$ONTOS_CI_BUILD_PROFILES/shared-contracts.resources.txt" \
-            mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json --extendedDiagnostics
-          /usr/bin/time -v -o "$ONTOS_CI_BUILD_PROFILES/shared-design-tokens.resources.txt" \
-            mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json --extendedDiagnostics
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" \
-            exec bash ../../scripts/profile-ci-build.sh
-
-      - name: Trace the slow TypeScript projects without replacing the Effect compiler gate
-        working-directory: app
-        env:
-          ONTOS_CI_BUILD_PROFILES: ${{ runner.temp }}/build-profiles
-          SHARD_UNITS: ${{ matrix.units }}
-          NODE_OPTIONS: --max-old-space-size=2048
-        # tsrs reports extendedDiagnostics but explicitly does not implement generateTrace.
-        # Stock TS 7 also ignores generateTrace in --build mode: seed references, then trace --project.
-        # Stock tsc traces are supplementary whole-project analysis, not timings of the build above.
-        run: |
-          for unit in verticals/catalog apps/shell-super-app; do
-            if [[ " $SHARD_UNITS " != *" $unit "* ]]; then
-              continue
-            fi
-            output="$ONTOS_CI_BUILD_PROFILES/$unit/tsc-trace"
-            mkdir -p "$output"
-            /usr/bin/time -v -o "$output/references.resources.txt" \
-              mise exec -- pnpm exec tsc --build "$unit/tsconfig.json" --force \
-                --extendedDiagnostics >"$output/references-diagnostics.txt" 2>&1
-            /usr/bin/time -v -o "$output/resources.txt" \
-              mise exec -- pnpm exec tsc --project "$unit/tsconfig.json" \
-                --composite false --incremental false --noEmit --emitDeclarationOnly false \
-                --extendedDiagnostics --generateTrace "$output" >"$output/diagnostics.txt" 2>&1
-            find "$output" -maxdepth 1 -name 'trace*.json' -print -quit | grep -q .
-          done
-
-      - name: Upload build command timings, Rsdoctor reports, and TypeScript traces
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: node-build-profiles-${{ matrix.shard }}
-          path: ${{ runner.temp }}/build-profiles
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 3
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
