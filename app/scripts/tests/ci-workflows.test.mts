@@ -1619,7 +1619,7 @@ const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
 /** The integration matrix row that proves the stage-shaped deployment bootstrap from a scratch cluster. */
 const BOOTSTRAP_SUITE = 'bootstrap';
 const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
-const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
+const NODE_BUILD_ARTIFACT_NAME = 'node-units-1';
 /**
  * Every row that reads built Node artifacts: the suites and the whole-topology proof. The browser row
  * drives a deployed release instead, and the bootstrap row assembles the migrator and Outbox Worker host
@@ -2225,8 +2225,8 @@ it('restores same-run Node metadata for the unit shards that execute public cont
   expect(job.steps[download]?.if).toBe('matrix.node-artifacts == true');
   expect(job.steps[download]?.uses).toBe('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
   expect(job.steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
+    name: NODE_BUILD_ARTIFACT_NAME,
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units/node-units-1`,
   });
   expect(job.steps[unpack]?.if).toBe('matrix.node-artifacts == true');
   expect(job.steps[unpack]?.['working-directory']).toBe('app');
@@ -2411,7 +2411,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(selected.some((shard) => shardFilters(shard).includes('./verticals/pricing'))).toBe(true);
   expect(selected.some((shard) => shardFilters(shard).includes('./verticals/inventory'))).toBe(true);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
+  const download = steps.findIndex(({ with: inputs }) => inputs?.name === NODE_BUILD_ARTIFACT_NAME);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
@@ -2420,8 +2420,8 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
   // Omitting a repository, token and run-id keeps the download bound to this workflow run.
   expect(steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
+    name: NODE_BUILD_ARTIFACT_NAME,
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units/node-units-1`,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
@@ -2926,7 +2926,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
   expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(true);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
+  const download = steps.findIndex(({ with: inputs }) => inputs?.name === NODE_BUILD_ARTIFACT_NAME);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
   const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
@@ -2935,8 +2935,8 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
   // No run-id, repository or token override: the artifacts must belong to this workflow run.
   expect(steps[download]?.with).toEqual({
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
-    pattern: NODE_BUILD_ARTIFACT_PATTERN,
+    name: NODE_BUILD_ARTIFACT_NAME,
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units/node-units-1`,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[worker]?.run).toBe(
