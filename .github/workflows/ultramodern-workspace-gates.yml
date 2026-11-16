@@ -468,33 +468,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Rows that prepare their services before they need the build outputs start after this lease, not after the
-  # builds. The lease ends once every build shard has a runner, so waiting rows can never hold all 20 runners while
-  # a shard is still queued. It proves nothing and only gates the start of those rows.
-  build-lease:
-    name: Wait until every build shard has a runner
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
-    permissions:
-      actions: read
-      contents: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout the wait script
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: app/scripts/wait-for-build-shards.sh
-          sparse-checkout-cone-mode: false
-
-      - name: Wait until every build shard started
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WAIT_FOR_BUILD_SHARDS_INTERVAL: '5'
-        run: bash app/scripts/wait-for-build-shards.sh started 'Build node artifacts (' 6
-
   # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
     name: ${{ matrix.name }}
@@ -801,10 +774,9 @@ jobs:
   # candidate check, over every file.
   format-and-lint:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/3)
-    # The three shards start once every build shard has a runner (or when no build runs), so they never take the 20
-    # runners' first wave from the builds on the critical path; lint itself is off it.
-    needs: [ci-plan, build-lease]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build-lease.result) && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
+    # Lint needs source only; it never holds a runner waiting for build jobs.
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -866,9 +838,8 @@ jobs:
   # are listed heaviest first, so on a full run the longest jobs take the first free runners.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [ci-plan, build-lease]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.build-lease.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
-    # The build wait reads this run's job results.
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1001,15 +972,6 @@ jobs:
           DROP OWNED BY ontos_runtime;
           DROP ROLE ontos_runtime;
           SQL
-
-      # The services and the fresh database are ready before the build outputs are needed: this row started right after
-      # planning (via build-lease), so its preparation ran while the build shards built. It now needs those outputs.
-      - name: Wait for this run's Node build shards
-        working-directory: app
-        timeout-minutes: 25
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh finished 'Build node artifacts (' 6
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.

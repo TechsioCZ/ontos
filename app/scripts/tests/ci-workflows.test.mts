@@ -32,7 +32,6 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const WORKSPACE_UNIT_ARTIFACTS_JOB = 'workspace-unit-artifacts';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
-const BUILD_LEASE_JOB = 'build-lease';
 const INTEGRATION_SEED_PROOF_JOB = 'integration-seed-proof';
 const BROWSER_INTEGRATION_JOB = 'browser-integration';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
@@ -220,28 +219,22 @@ it('selects work before gates and starts source checks without waiting for artif
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
-  // Integration rows start once every build shard has a runner and wait for the builds inside, after their set-up.
-  expect(jobs[SERVICE_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, BUILD_LEASE_JOB]);
+  // Artifact dependencies belong to the scheduler, not a polling process holding a runner.
+  expect(jobs[SERVICE_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
   expect(jobs[SERVICE_INTEGRATION_JOB]?.if).toBe(
     expression(
-      `!cancelled() && needs.ci-plan.result == 'success' && needs.build-lease.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SERVICE_INTEGRATION_JOB}'] == 'success'`,
-    ),
-  );
-  expect(jobs[BUILD_LEASE_JOB]?.needs).toEqual([CI_PLAN_JOB]);
-  expect(jobs[BUILD_LEASE_JOB]?.if).toBe(
-    expression(
-      "!cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success'",
+      `!cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${SERVICE_INTEGRATION_JOB}'] == 'success'`,
     ),
   );
   // Only the required check waits for the seed producer.
   expect(Object.keys(jobs).filter((job) => jobs[job]?.needs?.includes(INTEGRATION_SEED_PROOF_JOB) === true)).toEqual([
     WORKSPACE_GATES_JOB,
   ]);
-  // The lint shards start once every build shard has a runner, or right away when no build runs.
-  expect(jobs[FORMAT_AND_LINT_JOB]?.needs).toEqual([CI_PLAN_JOB, BUILD_LEASE_JOB]);
+  // Lint reads no build output.
+  expect(jobs[FORMAT_AND_LINT_JOB]?.needs).toEqual([CI_PLAN_JOB]);
   expect(jobs[FORMAT_AND_LINT_JOB]?.if).toBe(
     expression(
-      `!cancelled() && needs.ci-plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build-lease.result) && fromJSON(needs.ci-plan.outputs.expected)['${FORMAT_AND_LINT_JOB}'] == 'success'`,
+      `!cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['${FORMAT_AND_LINT_JOB}'] == 'success'`,
     ),
   );
   for (const gate of ROOT_GATE_JOBS.filter((job) => job !== SERVICE_INTEGRATION_JOB && job !== FORMAT_AND_LINT_JOB)) {
@@ -255,35 +248,6 @@ it('selects work before gates and starts source checks without waiting for artif
       ),
     );
   }
-});
-
-it('starts no more jobs right after planning than the 20 runners the account holds', () => {
-  const FirstWaveSchema = Schema.Struct({
-    jobs: Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        if: Schema.optional(Schema.String),
-        needs: Schema.optional(Schema.Array(Schema.String)),
-        strategy: Schema.optional(
-          Schema.Struct({
-            matrix: Schema.Struct({
-              include: Schema.optional(Schema.Array(Schema.Unknown)),
-              shard: Schema.optional(Schema.Array(Schema.Number)),
-            }),
-          }),
-        ),
-      }),
-    ),
-  });
-  const { jobs } = Schema.decodeUnknownSync(FirstWaveSchema)(readGateWorkflow());
-  // warm-caches runs only on main pushes, where queue-proof skips the gates.
-  const firstWave = Object.entries(jobs).filter(([, job]) => job.needs?.length === 1 && job.needs[0] === CI_PLAN_JOB);
-  const runners = firstWave.reduce(
-    (total, [, job]) => total + (job.strategy?.matrix.shard?.length ?? job.strategy?.matrix.include?.length ?? 1),
-    0,
-  );
-  expect(runners).toBeLessThanOrEqual(20);
-  expect(firstWave.map(([name]) => name)).toContain(NODE_ARTIFACT_BUILD_JOB);
 });
 
 it('classifies documentation before installation and schedules full regression without enabling deployment', () => {
@@ -1237,7 +1201,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const source: unknown = readGateWorkflow();
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[SERVICE_INTEGRATION_JOB];
-  expect(integration.needs).toEqual([CI_PLAN_JOB, BUILD_LEASE_JOB]);
+  expect(integration.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
   // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
   expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
   const ordinary = integration.strategy.matrix.include.filter((shard) => shard['fresh-database-tests'] !== 'only');
@@ -1498,33 +1462,22 @@ it('restores the integration seed from its input-keyed cache and never makes a r
   expect(sorted(FRESH_DATABASE_TESTS)).toEqual(sorted(MUST_MIGRATE_TESTS));
 });
 
-it('prepares every integration row before it waits, with a deadline, for the build shards', () => {
-  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+it('downloads complete same-run artifacts without holding a runner to poll for them', () => {
+  const { needs, steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
   ];
-  const at = (name: string) => steps.findIndex((step) => step.name === name);
-  const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh finished') === true);
-  expect(steps[wait]?.run).toBe("bash scripts/wait-for-build-shards.sh finished 'Build node artifacts (' 6");
-  expect(steps[wait]?.['timeout-minutes']).toBe(25);
-  for (const name of [
-    'Start fresh PostgreSQL and SpiceDB services',
-    'Restore the proven seed databases',
-    INITIALIZE_IDENTITIES_STEP,
-  ]) {
-    expect(at(name), name).toBeGreaterThan(-1);
-    expect(at(name), name).toBeLessThan(wait);
-  }
-  for (const name of [
-    'Download the same-run Node artifacts for native owner fixtures',
-    'Run the assembled stage migrator artifact against the fresh database',
-    WORKER_PROOF_STEP,
-  ]) {
-    expect(at(name), name).toBeGreaterThan(wait);
-  }
-  const build = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs[NODE_ARTIFACT_BUILD_JOB];
-  expect(build.name).toBe(
-    `Build node artifacts (${expression(MATRIX_SHARD)}/${String(build.strategy.matrix.shard.length)})`,
+  expect(needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  expect(steps.some(({ run }) => run?.includes('wait-for-build-shards.sh') === true)).toBe(false);
+  const download = steps.findIndex(
+    ({ name }) => name === 'Download the same-run Node artifacts for native owner fixtures',
   );
+  expect(download).toBeGreaterThan(-1);
+  for (const name of ['Run the assembled stage migrator artifact against the fresh database', WORKER_PROOF_STEP]) {
+    expect(
+      steps.findIndex((step) => step.name === name),
+      name,
+    ).toBeGreaterThan(download);
+  }
 });
 
 /** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
@@ -1810,7 +1763,7 @@ it('keeps deployment out of the workspace gates and guards Action transaction I/
   expect(env.ONTOS_ACTION_TRANSACTION_IO_GUARD).toBe('true');
   // The retired deploy chain stays out of the gates: the workflow only plans and runs checks.
   expect(sorted(Object.keys(jobs))).toEqual(
-    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', BUILD_LEASE_JOB, ...GATE_JOBS, WORKSPACE_GATES_JOB]),
+    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', ...GATE_JOBS, WORKSPACE_GATES_JOB]),
   );
 });
 
