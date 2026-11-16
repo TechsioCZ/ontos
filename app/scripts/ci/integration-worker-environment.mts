@@ -12,10 +12,10 @@ export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({
     DATABASE_ADMIN_URL: LocalDatabaseUrl,
     DATABASE_URL: LocalDatabaseUrl,
-    ONTOS_CI_ISOLATED_WORKERS: Schema.Literal('2'),
+    ONTOS_CI_ISOLATED_WORKERS: Schema.Literal('4'),
     PARTY_REGISTRY_DATABASE_URL: LocalDatabaseUrl,
     PARTY_REGISTRY_WORKER_DATABASE_URL: LocalDatabaseUrl,
-    RSTEST_WORKER_ID: Schema.Literals(['1', '2']),
+    RSTEST_WORKER_ID: Schema.Literals(['1', '2', '3', '4']),
     SHELL_GATEWAY_ISSUER_DATABASE_URL: LocalDatabaseUrl,
   }),
 ]);

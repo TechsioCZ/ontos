@@ -1746,7 +1746,7 @@ it('classifies documentation before installation and schedules full regression w
   expect(readTargetWorkflow().jobs['deploy-target'].if).toContain('inputs.force-ci-full != true');
 });
 
-it('resolves the CI plan from package manifests without lifecycle scripts or a mise environment', () => {
+it('shares a complete install before fan-out without exporting a mise environment', () => {
   const { steps } = Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Struct({
@@ -1763,9 +1763,11 @@ it('resolves the CI plan from package manifests without lifecycle scripts or a m
     }),
   )(readGateWorkflow()).jobs[CI_PLAN_JOB];
   const install = steps.find(({ name }) => name === 'Install the app workspace for code impact analysis');
-  // The planner reads package manifests, not a linked node_modules, so this install only has to resolve
-  // the dependency graph. It gates every other job, so it carries quality-audit.yml's lean install.
-  expect(install?.with).toEqual({ 'install-args': '--ignore-scripts', 'mise-env': 'false' });
+  // The planner precedes every gate, so its install must be complete before it is shared.
+  expect(install?.with).toEqual({
+    'mise-env': 'false',
+    'save-node-modules': expression("github.ref != 'refs/heads/main'"),
+  });
   // Only the planner's changed-path list leaves this job; $RUNNER_TEMP is job-local.
   const publish = steps.find(({ name }) => name === 'Publish the exact changed-path list');
   expect(publish?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
@@ -2034,12 +2036,10 @@ it('reuses a build shard archive only on an exact key over its own inputs, and n
   expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
 });
 
-it('publishes one complete installed workspace for downstream jobs without racing the main warmer', () => {
+it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
   const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const install = steps.find(({ name }) => name === INSTALL_APP_STEP);
-  expect(install?.with).toEqual({
-    'save-node-modules': expression("matrix.shard == 1 && github.ref != 'refs/heads/main'"),
-  });
+  expect(install?.with).toBeUndefined();
 });
 
 it('warms every build shard archive on main, where the blocking gate can read it', () => {
@@ -2270,17 +2270,13 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   ]) {
     expect(commands).toContain(check);
   }
-  // The repository tooling tests are sharded by cost; the shards must cover 1..n exactly once, whatever
-  // n is, or a shard's files would run twice or not at all.
+  // One four-worker process covers the entire tooling project without another runner or install.
   const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
   const tooling = sourceShards
     .map((entry) => entry.commands.trim())
     .filter((command) => command.startsWith('pnpm test:scripts'));
   expect(tooling.length).toBeGreaterThan(0);
-  const shards = Number(tooling[0]?.split('/')[1]);
-  expect(sorted(tooling)).toEqual(
-    sorted(Array.from({ length: shards }, (_, index) => `pnpm test:scripts --shard ${index + 1}/${shards}`)),
-  );
+  expect(tooling).toEqual(['pnpm test:scripts']);
   // The module entrypoint boundary check runs inside the deployment impact gate.
   const { scripts } = readRootScripts();
   expect(scripts['test:deployment-impact']).toContain(scripts['module-entrypoints:check']);
@@ -2654,16 +2650,16 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
-    ONTOS_CI_ISOLATED_WORKERS: '2',
+    ONTOS_CI_ISOLATED_WORKERS: '4',
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
   const isolate = job.steps.findIndex((step) => step.run === 'bash scripts/ci/start-integration-workers.sh');
   expect(isolate).toBeGreaterThan(-1);
   expect(isolate).toBeLessThan(job.steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined));
   expect(job.steps[isolate]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 2');
+  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 4');
   expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 2',
+    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 4',
   );
   expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
   expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"');
