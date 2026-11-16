@@ -20,7 +20,8 @@ const IntegrationEntrySchema = Schema.Struct({
   'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
-  suite: Schema.Literals(['integration', 'browser']),
+  // `proof` rows depend on no package: they prove the build outputs and therefore run on every event.
+  suite: Schema.Literals(['integration', 'browser', 'proof']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' &&
@@ -127,19 +128,22 @@ const broadPath = (changedPath: string) =>
       changedPath,
     ));
 
-const filterPaths = (filters: string) =>
+/** Every literal workspace selector a `--filter` list names, with its exclusion sense. */
+export const filterPaths = (filters: string) =>
   [...filters.matchAll(/--filter\s+['"]?(?<exclude>!)?(?<path>\.\/[a-z0-9/-]+|\.)['"]?/gu)].map(({ groups }) => ({
     exclude: groups?.exclude === '!',
     path: groups?.path?.replace(/^\.\//u, ''),
   }));
 
-const unknownFilters = (command: string) =>
+/** True when a command carries a package selector this planner cannot resolve to a workspace directory. */
+export const unknownFilters = (command: string) =>
   command.includes('--filter=') ||
   [...command.matchAll(/--filter\s+(?<selector>\S+)/gu)].some(
     ({ groups }) => !/^['"]?!?(?:\.\/[a-z0-9/-]+|\.)['"]?$/u.test(groups?.selector ?? ''),
   );
 
-const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage[]) => {
+/** The workspace packages a `--filter` list selects, excluding the repository root. */
+export const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage[]) => {
   const selectors = filterPaths(filters);
   const included = selectors.filter(({ exclude }) => !exclude);
   const excluded = selectors.filter(({ exclude }) => exclude);
@@ -152,7 +156,6 @@ const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage
 };
 
 export const planCiChecks = (input: {
-  readonly applyAffected: boolean;
   readonly changedPaths: readonly string[];
   readonly forceFull?: boolean;
   readonly packages: readonly CiWorkspacePackage[];
@@ -193,8 +196,12 @@ export const planCiChecks = (input: {
         !rootDocumentation(changedPath) &&
         !packages.some(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`)),
     );
-  const mode = !broad && input.applyAffected ? 'affected' : 'full';
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
+    // A row that is neither a package suite nor the browser suite proves the build outputs themselves,
+    // reads no matrix input and has nothing to narrow, so affected selection always keeps it.
+    if (entry.suite !== 'integration' && entry.suite !== 'browser') {
+      return [entry];
+    }
     if (entry.suite === 'browser') {
       return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
     }
@@ -223,21 +230,18 @@ export const planCiChecks = (input: {
       },
     ];
   });
-  // A malformed/empty unit mapping never becomes a green no-op.
-  const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
+  // Affected selection is the default; a malformed or empty unit mapping never becomes a green no-op.
+  const effectiveMode = !broad && selectedUnit.length > 0 ? 'affected' : 'full';
   const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
   const expected = Object.fromEntries(
     gateIds.map((gate) => [gate, gate === 'service-integration' && integration.length === 0 ? 'skipped' : 'success']),
   );
-  let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
-  if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
-    reason = input.applyAffected
+  const reason =
+    effectiveMode === 'affected'
       ? 'Required tests include the changed owners and their transitive consumers.'
-      : 'Affected selection is recorded in shadow mode; the complete suite remains required.';
-  }
+      : 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   return {
     affectedPackages,
-    candidateIntegration: broad ? templates.integration : selectedIntegration,
     expected,
     integration,
     mode: effectiveMode,
@@ -327,11 +331,10 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
 const cli = Command.make(
   'plan-ci-checks',
   {
-    applyAffected: Flag.Boolean('apply-affected').pipe(Flag.withDefault(false)),
     forceFull: Flag.Boolean('full').pipe(Flag.withDefault(false)),
     pathsFile: Flag.String('paths-file'),
   },
-  ({ applyAffected, forceFull, pathsFile }) =>
+  ({ forceFull, pathsFile }) =>
     Effect.gen(function* writeCiPlan() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -347,7 +350,6 @@ const cli = Command.make(
         Effect.orElseSucceed((): readonly CiWorkspacePackage[] => []),
       );
       const plan = planCiChecks({
-        applyAffected,
         changedPaths: paths.split('\0').filter(Boolean),
         forceFull,
         packages,
@@ -373,10 +375,9 @@ const cli = Command.make(
           '',
           `Affected packages: ${plan.affectedPackages.join(', ') || 'full/unknown'}.`,
           `Required integration shards: ${plan.integration.length} of ${templates.integration.length}.`,
-          `Affected-plan integration shards: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
+          `Required unit shards: ${plan.unit.length} of ${templates.unit.length}.`,
           '',
           'Node artifact proof, static policy, compiler diagnostics and lint enforcement remain blocking.',
-          'Set the CI_AFFECTED_ENABLED repository variable to true only after reviewing shadow plans.',
           '',
         ].join('\n'),
         { flag: 'a' },

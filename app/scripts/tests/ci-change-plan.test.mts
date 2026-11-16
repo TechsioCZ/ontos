@@ -1,13 +1,20 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CiTemplatesSchema, planCiChecks, withCiTopologyDependencies } from '../plan-ci-checks.mts';
+import {
+  CiTemplatesSchema,
+  filterPaths,
+  matchingPackages,
+  planCiChecks,
+  unknownFilters,
+  withCiTopologyDependencies,
+} from '../plan-ci-checks.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 
 const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
@@ -23,6 +30,17 @@ const CATALOG_DIRECTORY = 'verticals/catalog';
 const PRIVACY_DIRECTORY = 'verticals/privacy';
 const PRIVACY = '@app/privacy';
 const SHELL_DIRECTORY = 'apps/shell-super-app';
+const AFFECTED_REASON = 'Required tests include the changed owners and their transitive consumers.';
+// check-ci-gates.sh pins these six names three times and plan-ci-changes.sh carries a fourth copy, so a
+// seventh or renamed key fails the single required status check on every event, including push to main.
+const REQUIRED_GATES = [
+  'format-and-lint',
+  'node-artifact-build',
+  'service-integration',
+  'static-contracts',
+  'workspace-gate',
+  'workspace-unit',
+];
 const packages = [
   { dependencies: [], directory: CATALOG_DIRECTORY, name: CATALOG },
   { dependencies: [CATALOG], directory: 'verticals/pricing', name: PRICING },
@@ -35,23 +53,55 @@ const packages = [
   { dependencies: [], directory: 'verticals/commerce-customer-context', name: CUSTOMER_CONTEXT },
 ];
 
+const appRoot = path.resolve(import.meta.dirname, '../..');
+const ManifestNameFromJson = Schema.fromJsonString(Schema.Struct({ name: Schema.String }));
+/** Every pnpm workspace member the planner can see, read from disk rather than restated here. */
+const workspacePackages = ['apps', 'packages', 'verticals'].flatMap((area) =>
+  readdirSync(path.join(appRoot, area), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(path.join(appRoot, area, entry.name, 'package.json')))
+    .map((entry) => ({
+      dependencies: [],
+      directory: `${area}/${entry.name}`,
+      name: Schema.decodeUnknownSync(ManifestNameFromJson)(
+        readFileSync(path.join(appRoot, area, entry.name, 'package.json'), 'utf-8'),
+      ).name,
+    })),
+);
+const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) => directory)]);
+const selectedDirectories = (filters: string) =>
+  matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
+
 it('selects owner and transitive consumer tests without selecting an unrelated owner', () => {
-  const plan = planCiChecks({
-    applyAffected: true,
-    changedPaths: [CATALOG_SOURCE],
-    packages,
-    templates,
-  });
+  const plan = planCiChecks({ changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
+  // Template order decides the order here. The preproposal row is retained through its proof-packages,
+  // and the federation proof row is retained unconditionally because its suite is neither integration nor browser.
   expect(plan.integration.map(({ name }) => name)).toEqual([
-    'Catalog Integration',
+    'Native Preproposal Approval and Storefront Registry Integration',
     'Pricing and Inventory Integration',
-    'Market, Order, Payment Term, Price Group, and Storefront Integration',
+    'Catalog Integration',
+    'Node Backend Federation Proof',
   ]);
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
   );
+});
+
+it('plans affected selection by default and keeps the forced backstop on the complete suite', () => {
+  const plan = planCiChecks({ changedPaths: [CATALOG_SOURCE], packages, templates });
+  expect(plan.mode).toBe('affected');
+  expect(plan.reason).toBe(AFFECTED_REASON);
+  expect(plan.integration).not.toEqual(templates.integration);
+  expect(EffectArray.sort(Object.keys(plan.expected), Order.String)).toEqual(REQUIRED_GATES);
+  expect(plan.expected).not.toHaveProperty('cloudflare-artifact-build');
+  // The nightly cron and workflow_dispatch pass --full; that run is the backstop for a missed impact edge.
+  const forced = planCiChecks({ changedPaths: [CATALOG_SOURCE], forceFull: true, packages, templates });
+  expect(forced.mode).toBe('full');
+  expect(forced.reason).toBe('Shared, sensitive, unknown or explicitly full impact requires the complete suite.');
+  expect(forced.integration).toEqual(templates.integration);
+  expect(forced.unit).toEqual(templates.unit);
+  expect(EffectArray.sort(Object.keys(forced.expected), Order.String)).toEqual(REQUIRED_GATES);
 });
 
 it('retains the native preproposal proof for each runtime owner even without ordinary package-filter matches', () => {
@@ -60,7 +110,6 @@ it('retains the native preproposal proof for each runtime owner even without ord
   for (const owner of native?.['proof-packages'] ?? []) {
     const workspacePackage = packages.find(({ name }) => name === owner);
     const plan = planCiChecks({
-      applyAffected: true,
       changedPaths: [`app/${workspacePackage?.directory ?? 'missing'}/src/service.ts`],
       packages,
       templates,
@@ -77,12 +126,7 @@ it('retains the native preproposal proof for each runtime owner even without ord
 
 it('omits the native preproposal proof for an unrelated owner and widens unknown proof dependencies', () => {
   const plan = (entries: typeof packages) =>
-    planCiChecks({
-      applyAffected: true,
-      changedPaths: ['app/verticals/privacy/src/service.ts'],
-      packages: entries,
-      templates,
-    });
+    planCiChecks({ changedPaths: ['app/verticals/privacy/src/service.ts'], packages: entries, templates });
   expect(plan(packages).mode).toBe('affected');
   expect(plan(packages).integration.some((entry) => entry['native-preproposal'] === true)).toBe(false);
   expect(plan(packages.filter(({ name }) => name !== PRICING)).mode).toBe('full');
@@ -94,31 +138,31 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
   ).toBe(false);
 });
 
-it('keeps affected selection in shadow mode until explicitly enabled', () => {
-  const plan = planCiChecks({
-    applyAffected: false,
+it('keeps the build-proof row in every affected plan so the node artifact gate never disappears', () => {
+  const proof = { name: 'Node Artifact Proof', suite: 'proof' } as const;
+  expect(Schema.is(CiTemplatesSchema)({ ...templates, integration: [proof] })).toBe(true);
+  const alongside = planCiChecks({
     changedPaths: [CATALOG_SOURCE],
     packages,
-    templates,
+    templates: { ...templates, integration: [...templates.integration, proof] },
   });
-  expect(plan.mode).toBe('full');
-  expect(plan.integration).toEqual(templates.integration);
-  expect(plan.expected).not.toHaveProperty('cloudflare-artifact-build');
-  expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
+  expect(alongside.mode).toBe('affected');
+  expect(alongside.integration.map(({ name }) => name)).toContain(proof.name);
+  // It names no package, no root suite and no proof packages, yet it alone keeps the gate required.
+  const alone = planCiChecks({
+    changedPaths: [CATALOG_SOURCE],
+    packages,
+    templates: { ...templates, integration: [proof] },
+  });
+  expect(alone.mode).toBe('affected');
+  expect(alone.integration).toEqual([proof]);
+  expect(alone.expected['service-integration']).toBe('success');
 });
 
 it('keeps mixed documentation and owner changes scoped, but widens a mixed unknown owner', () => {
+  expect(planCiChecks({ changedPaths: ['README.md', CATALOG_SOURCE], packages, templates }).mode).toBe('affected');
   expect(
     planCiChecks({
-      applyAffected: true,
-      changedPaths: ['README.md', CATALOG_SOURCE],
-      packages,
-      templates,
-    }).mode,
-  ).toBe('affected');
-  expect(
-    planCiChecks({
-      applyAffected: true,
       changedPaths: ['app/verticals/missing/src/service.ts', CATALOG_SOURCE],
       packages,
       templates,
@@ -132,14 +176,9 @@ it('widens broken dependency metadata rather than silently dropping its consumer
     { dependencies: [], directory: ANOTHER_DIRECTORY, name: CATALOG },
     { dependencies: [], directory: ANOTHER_DIRECTORY, name: '@app/another', uncertain: true },
   ]) {
-    expect(
-      planCiChecks({
-        applyAffected: true,
-        changedPaths: [CATALOG_SOURCE],
-        packages: [...packages, extra],
-        templates,
-      }).mode,
-    ).toBe('full');
+    expect(planCiChecks({ changedPaths: [CATALOG_SOURCE], packages: [...packages, extra], templates }).mode).toBe(
+      'full',
+    );
   }
 });
 
@@ -152,7 +191,6 @@ it('rejects incomplete full matrices and widens unsupported package-selector syn
   ).toBe(false);
   expect(
     planCiChecks({
-      applyAffected: true,
       changedPaths: [CATALOG_SOURCE],
       packages,
       templates: {
@@ -171,7 +209,6 @@ it('rejects incomplete full matrices and widens unsupported package-selector syn
 
 it('selects browser checks and all root integration shards when they consume a changed package', () => {
   const plan = planCiChecks({
-    applyAffected: true,
     changedPaths: [CATALOG_SOURCE],
     packages: [
       ...packages.map((entry) => (entry.name === SHELL ? { ...entry, dependencies: [CATALOG] } : entry)),
@@ -181,7 +218,7 @@ it('selects browser checks and all root integration shards when they consume a c
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/3', '2/3', '3/3']);
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
   expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
   const shellPackage = plan.integration.filter(
     (entry) => entry['package-filters'] === '--filter ./apps/shell-super-app',
@@ -203,8 +240,7 @@ it('follows topology-only Shell and vertical remote references to browser tests'
     { moduleFederation: { verticalRefs: ['catalog'] } },
   ]) {
     const graph = withCiTopologyDependencies(packages, { shell: { ...shell, ...references }, verticals });
-    const plan = (changedPath: string) =>
-      planCiChecks({ applyAffected: true, changedPaths: [changedPath], packages: graph, templates });
+    const plan = (changedPath: string) => planCiChecks({ changedPaths: [changedPath], packages: graph, templates });
     expect(plan(CATALOG_SOURCE).mode).toBe('affected');
     expect(plan(CATALOG_SOURCE).affectedPackages).toContain(SHELL);
     expect(plan(CATALOG_SOURCE).integration.some(({ suite }) => suite === 'browser')).toBe(true);
@@ -238,7 +274,6 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
   ]) {
     expect(
       planCiChecks({
-        applyAffected: true,
         changedPaths: [CATALOG_SOURCE],
         packages: withCiTopologyDependencies(packages, topology),
         templates,
@@ -249,7 +284,6 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
 
 it('uses all six customer-context shards for any selected customer-context package change', () => {
   const plan = planCiChecks({
-    applyAffected: true,
     changedPaths: ['app/verticals/commerce-customer-context/src/service.ts'],
     packages,
     templates,
@@ -272,7 +306,46 @@ it('widens changed shared infrastructure, unknown paths and package metadata to 
     '.github/workflows/ultramodern-workspace-gates.yml',
     'app/pnpm-lock.yaml',
   ]) {
-    expect(planCiChecks({ applyAffected: true, changedPaths: [changedPath], packages, templates }).mode).toBe('full');
+    expect(planCiChecks({ changedPaths: [changedPath], packages, templates }).mode).toBe('full');
+  }
+});
+
+// In affected mode the planner rewrites a unit entry's commands from the FIRST line's selectors alone.
+// Any other flag on that line is discarded, so these three properties are the unit matrix's contract.
+it('builds every unit entry from literal workspace selectors on its first command line', () => {
+  for (const entry of templates.unit) {
+    const lines = entry.commands.split('\n').filter(Boolean);
+    const firstLine = lines[0] ?? '';
+    expect(unknownFilters(firstLine)).toBe(false);
+    const selectors = filterPaths(firstLine);
+    expect(selectors).toHaveLength([...firstLine.matchAll(/--filter/gu)].length);
+    expect(selectors.filter(({ path: selected }) => !knownSelectors.has(selected ?? ''))).toEqual([]);
+    // Every later line must select the same packages, because only the first line survives rewriting.
+    for (const line of lines.slice(1)) {
+      expect(selectedDirectories(line)).toEqual(selectedDirectories(firstLine));
+    }
+  }
+});
+
+it('runs every workspace package in exactly one unit entry', () => {
+  const covered = templates.unit.flatMap(({ commands }) => selectedDirectories(commands.split('\n')[0] ?? ''));
+  // Disjoint shards: a selector-less reshard (for example `--shard 1/4`) would repeat the whole set per entry.
+  expect(new Set(covered).size).toBe(covered.length);
+  expect(EffectArray.sort(covered, Order.String)).toEqual(
+    EffectArray.sort(
+      workspacePackages.map(({ directory }) => directory),
+      Order.String,
+    ),
+  );
+});
+
+it('keeps every unit and integration template resolvable so one glob cannot disable affected selection', () => {
+  for (const command of [
+    ...templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean)),
+    ...templates.integration.map((entry) => entry['package-filters'] ?? ''),
+  ]) {
+    expect(unknownFilters(command)).toBe(false);
+    expect(filterPaths(command).filter(({ path: selected }) => !knownSelectors.has(selected ?? ''))).toEqual([]);
   }
 });
 
