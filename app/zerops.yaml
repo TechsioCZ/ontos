@@ -159,6 +159,9 @@ zerops:
         # The app host records its boots in .zerops/state (scripts/zerops/app-host.mts, HOST_BOOT_RECORD). It ships with an
         # empty record, so the running container never has to create the directory.
         - mkdir -p 'app/.zerops/state' && printf '[]' >'app/.zerops/state/module-credential-boots.json'
+        # The pack leaves out the installed build, lint and test tools (scripts/zerops/app-runtime-excluded-packages.txt).
+        # This proves the runtime tree complete without them first; a finding fails the build, so nothing deploys.
+        - cd app && node scripts/zerops/prove-app-runtime.mts
         # One compressed archive of the runtime tree, not the tree file by file (858.8 MiB moved in 176 s, 2026-11-15).
         - sh app/scripts/zerops/pack-app-release.sh
       # The runtime tree (scripts/zerops/app-runtime-paths.txt) as one archive with its digest and its unpack step;

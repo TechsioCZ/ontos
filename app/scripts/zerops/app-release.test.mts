@@ -8,6 +8,16 @@ import { ChildProcess } from 'effect/process';
 import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 
 const RUNTIME_PATHS = path.join(import.meta.dirname, 'app-runtime-paths.txt');
+const EXCLUDED_PACKAGES = path.join(import.meta.dirname, 'app-runtime-excluded-packages.txt');
+const LEFT_OUT = [
+  '@effect+tsgo@0.69.0',
+  '@effect+tsgo-linux-x64@0.69.0',
+  'oxlint@1.88.0_oxlint-tsgolint@7.0.2005',
+  'workerd@1.20261012.1',
+  '@bleedingdev+modern-js-ultramodern-create@3.11.3-ultramodern.1_patch_hash=abc',
+];
+const STORE = 'app/node_modules/.pnpm';
+const KEPT = ['@effect+platform-node@4.0.7', 'oxc-resolver@11.1.0', 'typescript@5.9.3', 'drizzle-kit@1.0.0'];
 const PACK = 'pack-app-release.sh';
 const UNPACK = 'unpack-app-release.sh';
 const HOST = 'app/scripts/zerops/app-host.mts';
@@ -50,6 +60,15 @@ const buildTree = (root: string) =>
       path.join(root, 'app/scripts/zerops/app-runtime-paths.txt'),
       yield* fs.readFileString(RUNTIME_PATHS),
     );
+    yield* fs.writeFileString(
+      path.join(root, 'app/scripts/zerops/app-runtime-excluded-packages.txt'),
+      yield* fs.readFileString(EXCLUDED_PACKAGES),
+    );
+    // Store directories the pack leaves out, and look-alikes it keeps.
+    for (const store of [...LEFT_OUT, ...KEPT]) {
+      yield* fs.makeDirectory(path.join(root, STORE, store, 'node_modules'), { recursive: true });
+      yield* fs.writeFileString(path.join(root, STORE, store, 'package.json'), '{}');
+    }
     for (const script of [PACK, UNPACK]) {
       yield* fs.writeFileString(
         path.join(root, 'app/scripts/zerops', script),
@@ -95,6 +114,13 @@ it.live('packs every runtime path and unpacks it whole into app/, then keeps it 
     // The archive is not held twice on disk; the scratch directory is gone.
     expect(yield* fs.exists(path.join(www, ARCHIVE))).toBe(false);
     expect(yield* fs.exists(path.join(www, '.zerops-release-unpack'))).toBe(false);
+    // The build, lint and test tools stay out; everything else of the store ships.
+    for (const store of LEFT_OUT) {
+      expect(yield* fs.exists(path.join(www, STORE, store)), store).toBe(false);
+    }
+    for (const store of KEPT) {
+      expect(yield* fs.exists(path.join(www, STORE, store, 'package.json')), store).toBe(true);
+    }
     // A restart of the same container keeps the complete tree and unpacks nothing.
     const restart = yield* run(www, `${RELEASE}/unpack.sh`);
     expect(restart.status, restart.stderr).toBe(0);

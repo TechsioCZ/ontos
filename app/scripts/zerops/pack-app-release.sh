@@ -4,12 +4,15 @@
 # instead of the whole tree file by file (858.8 MiB, 176 s on 2026-11-15); `run.initCommands` unpacks it with
 # scripts/zerops/unpack-app-release.sh, which this script ships beside the archive.
 #
-#   .zerops-release/app.tar.zst          the paths of scripts/zerops/app-runtime-paths.txt, exactly as built
+#   .zerops-release/app.tar.zst          the paths of scripts/zerops/app-runtime-paths.txt, as built, without the
+#                                        installed packages of scripts/zerops/app-runtime-excluded-packages.txt
+#                                        (proven complete without them by scripts/zerops/prove-app-runtime.mts)
 #   .zerops-release/app.tar.zst.sha256   its SHA-256, checked before anything is unpacked
 #   .zerops-release/unpack.sh            the unpack step
 set -eu
 
 list='app/scripts/zerops/app-runtime-paths.txt'
+excluded='app/scripts/zerops/app-runtime-excluded-packages.txt'
 release='.zerops-release'
 archive="$release/app.tar.zst"
 
@@ -20,6 +23,22 @@ for path in $paths; do
     exit 1
   fi
 done
+
+# Every left-out package is its pnpm store directories, `@scope/name` stored as `@scope+name@<version…>`. GNU tar
+# matches exclusions anywhere unless anchored; bsdtar (local tests) always anchors them at the member name.
+if [ ! -f "$excluded" ]; then
+  echo "the list of left-out packages $excluded is missing" >&2
+  exit 1
+fi
+set --
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then set -- --anchored; fi
+# Names hold no spaces; `set -f` keeps their `*` from matching files here.
+set -f
+# shellcheck disable=SC2013 # one package name per line, no spaces.
+for name in $(grep -v -e '^#' -e '^[[:space:]]*$' "$excluded"); do
+  set -- "$@" "--exclude=app/node_modules/.pnpm/$(printf '%s' "$name" | sed 's#/#+#')@*"
+done
+set +f
 
 started="$(date +%s)"
 rm -rf "$release"
@@ -32,7 +51,7 @@ status="$staging.tar-status"
 rm -f "$status"
 # GNU tar (build prepareCommands): long pnpm paths and relative symlinks stay as they are.
 # shellcheck disable=SC2086 # paths is a list of repository-relative paths without spaces.
-if ! { tar --create --file - $paths; echo "$?" >"$status"; } | zstd -q -T0 -3 -o "$staging/app.tar.zst" ||
+if ! { tar --create --file - "$@" $paths; echo "$?" >"$status"; } | zstd -q -T0 -3 -o "$staging/app.tar.zst" ||
   [ "$(cat "$status" 2>/dev/null || true)" != 0 ]; then
   tar_status="$(cat "$status" 2>/dev/null || echo none)"
   rm -rf "$staging" "$status"

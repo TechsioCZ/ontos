@@ -1,8 +1,9 @@
 # The app container's runtime tree, relative to the repository root: what scripts/zerops/pack-app-release.sh packs
 # into the one release archive and what scripts/prove-zerops-migrator-artifact.sh assembles in CI.
 # Native TS imports, migrations and owner-local drizzle-kit executables run from it, so the whole installed workspace
-# ships, dev dependencies included. Never the unit cache, build logs, storefront sources or builds, docs or agent
-# workspaces.
+# ships, dev dependencies included, except the build, lint and test tools of scripts/zerops/app-runtime-excluded-packages.txt
+# (scripts/zerops/prove-app-runtime.mts proves the tree complete without them). Never the unit cache, build logs,
+# storefront sources or builds, docs or agent workspaces.
 app/node_modules
 app/apps
 app/verticals

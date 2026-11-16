@@ -1,0 +1,53 @@
+# Installed packages the app runtime tree leaves out (scripts/zerops/pack-app-release.sh; the same tree is proven by
+# scripts/zerops/prove-app-runtime.mts and assembled by scripts/prove-zerops-migrator-artifact.sh).
+#
+# One npm package name per line; `*` stands for any characters within the last name segment (platform builds).
+# An entry is admissible only when nothing the runtime runs can load it:
+# - no package that stays depends on it (pnpm-lock.yaml; the proof checks every installed link after the exclusion),
+# - a workspace package names it only as a devDependency, and
+# - no code the app host, the migrator or a unit entry reaches imports it (the proof walks and imports them).
+# All of these run only at install, build, lint, format, test or code-generation time. None is `next`, `typescript`,
+# `drizzle-kit`, `esbuild` or a build framework the unit entries import: those have runtime dependents and stay.
+
+# Type checkers: build and lint time only.
+@effect/tsgo
+@effect/tsgo-*
+tsrs
+@tsrs/*
+
+# Linters, formatters and their plugins.
+oxlint
+@oxlint/binding-*
+@oxlint/plugins
+oxlint-tsgolint
+@oxlint-tsgolint/*
+oxlint-plugin-react-doctor
+oxfmt
+@oxfmt/binding-*
+ultracite
+@nkzw/eslint-plugin
+eslint-plugin-github
+eslint-plugin-perfectionist
+eslint-plugin-sonarjs
+
+# Repository analysis and Git hooks.
+knip
+jscpd
+jscpd-*
+fallow
+fallow-type-aware
+@fallow-cli/*
+lefthook
+lefthook-*
+
+# The Cloudflare Workers local runtime: stage runs only on Zerops (workerd copies its binary into its own package).
+wrangler
+miniflare
+workerd
+@cloudflare/workerd-*
+@cloudflare/unenv-preset
+
+# The UltraModern project CLIs (`ultramodern-create`, code tools): they run at install (postinstall, prepare), in
+# the Outbox Worker host build (`pnpm exec ultramodern-create … zerops-materialize`) and in repository checks.
+@bleedingdev/modern-js-ultramodern-create
+@bleedingdev/modern-js-code-tools

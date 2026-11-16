@@ -34,6 +34,14 @@ printf '%s\n' "$deploy_files" | while IFS= read -r deploy_file; do
   fi
 done
 
+# The release pack leaves these installed packages out (scripts/zerops/pack-app-release.sh); so does this artifact, so
+# the migrator is proven on the tree that ships. The copies are links or copies: removing them touches no source.
+grep -v -e '^#' -e '^[[:space:]]*$' "$app_directory/scripts/zerops/app-runtime-excluded-packages.txt" |
+  while IFS= read -r excluded_package; do
+    find "$artifact/app/node_modules/.pnpm" -mindepth 1 -maxdepth 1 \
+      -name "$(printf '%s' "$excluded_package" | sed 's#/#+#')@*" -exec rm -rf {} +
+  done
+
 log="$artifact/migrator.log"
 (cd "$artifact/app" && exec node scripts/run-zerops-migrator.mjs) >"$log" 2>&1 &
 migrator=$!

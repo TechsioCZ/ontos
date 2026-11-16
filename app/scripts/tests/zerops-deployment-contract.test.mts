@@ -194,6 +194,9 @@ it('runs the whole application in the app container through native Node, from th
   expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['.zerops-release']);
   const buildCommands = serviceStrings(app, ['build', 'buildCommands']);
   expect(buildCommands.at(-1)).toBe('sh app/scripts/zerops/pack-app-release.sh');
+  // The tree without its left-out packages is proven before the pack (prove-app-runtime.test.mts runs the proof).
+  expect(buildCommands.at(-2)).toBe('cd app && node scripts/zerops/prove-app-runtime.mts');
+  expect(buildCommands.indexOf('cd app && sh scripts/zerops/build-app.sh')).toBeLessThan(buildCommands.length - 2);
   expect(serviceStrings(app, ['build', 'prepareCommands'])[0]).toBe('sudo apk add --no-cache curl tar unzip zstd');
   expect(serviceStrings(app, ['run', 'prepareCommands'])).toStrictEqual([APP_RELEASE_TOOLS]);
   expect(serviceStrings(app, ['run', 'initCommands'])).toStrictEqual([APP_RELEASE_UNPACK]);
