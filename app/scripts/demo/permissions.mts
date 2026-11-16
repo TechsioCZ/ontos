@@ -264,25 +264,12 @@ const everything = {
   [workforceModule]: 'write',
 } as const satisfies Readonly<Record<string, ModuleAccess>>;
 
-/** Core's legal identity of the company, which the accounting handover file names as its issuer. */
-export const accountingHandoverIdentityKeys = [
-  'core.identity.legal-entity.read',
-  'core.identity.legal-entity.personal.read',
-] as const;
-
 export const demoRoles = {
   accountant: {
-    capabilityKeys: {
-      // The accounting handover names the company: Core's legal-entity read and its name field, read only.
-      'core.identity': accountingHandoverIdentityKeys,
-      [partyModule]: partyHumanReaderKeys,
-      [taxModule]: taxAccountantKeys,
-    },
+    capabilityKeys: { [partyModule]: partyHumanReaderKeys, [taxModule]: taxAccountantKeys },
     label: 'Účetní',
     modules: {
       [commerceModule]: 'read',
-      // The company's legal identity for the accounting handover, through the two explicit keys only.
-      'core.identity': 'read',
       // Rates and the seller's VAT regime with their histories, through the explicit tax keys only: read, never change.
       [taxModule]: 'read',
       // Invoice lines pick products; without this read the create form's product list fails to load.
@@ -297,7 +284,7 @@ export const demoRoles = {
       'work.tasks': 'write',
     },
     proposalReview: true,
-    restrictedModules: ['core.identity', partyModule, taxModule],
+    restrictedModules: [partyModule, taxModule],
   },
   headOfSales: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys },
@@ -972,6 +959,20 @@ export const demoShellRoutingRole: DemoRole = {
 };
 
 /** Explicit tenant access membership for the reviewed people, never a service identity or warmup phantom. */
+export const accountingCompanyIdentityRoleKey = 'accounting-company-identity';
+/**
+ * The company's legal identity (name and registration details), which the accounting handover file names as its
+ * issuer. Core decides its legal-entity read in the tenant context even when a company is selected, and a grant counts
+ * only in the scope it was assigned in, so these two read-only keys sit in this tenant-scope role, never in the
+ * accountant's company role, where they would grant nothing.
+ */
+export const accountingCompanyIdentityRole: DemoRole = {
+  capabilityKeys: { 'core.identity': ['core.identity.legal-entity.read', 'core.identity.legal-entity.personal.read'] },
+  label: 'Identita firem pro účetní export',
+  modules: { 'core.identity': 'read' },
+  restrictedModules: ['core.identity'],
+};
+
 export const demoTenantMemberships = [
   ...new Set(
     [...demoHumanAccounts, ...companyHumanAccounts, ...siamparkRentalPersonas].map(({ principalId }) => principalId),
@@ -1040,6 +1041,8 @@ export const reviewedDemoAssignments = (): readonly ReviewedDemoAssignment[] => 
     ...demoTenantMemberships.map(({ principalId }) =>
       assignment(principalId, demoShellRoutingRoleKey, demoShellRoutingRole),
     ),
+    // Tenant scope: the company identity read is decided there (see accountingCompanyIdentityRole).
+    assignment(accountant.principalId, accountingCompanyIdentityRoleKey, accountingCompanyIdentityRole),
     ...people.flatMap(({ legalEntityId, principalId, role }) =>
       legalEntityId === undefined || role.companyAdmin !== true
         ? []

@@ -10,6 +10,8 @@ import {
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
   STOREFRONT_MERCHANDISE_WORKLOAD,
+  accountingCompanyIdentityRole,
+  accountingCompanyIdentityRoleKey,
   agentBotPrincipal,
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
@@ -73,13 +75,23 @@ it('names the reviewed company of every company-scoped assignment, and never a f
     }
   }
   const tenantAssignments = reviewedDemoAssignments().filter((entry) => entry.legalEntityId === undefined);
-  expect(tenantAssignments.map(({ principalId }) => principalId).toSorted()).toEqual(
+  const routing = tenantAssignments.filter(({ roleKey }) => roleKey === demoShellRoutingRoleKey);
+  expect(routing.map(({ principalId }) => principalId).toSorted()).toEqual(
     demoTenantMemberships.map(({ principalId }) => principalId).toSorted(),
   );
-  for (const assignment of tenantAssignments) {
-    expect(assignment.roleKey).toBe(demoShellRoutingRoleKey);
+  for (const assignment of routing) {
     expect(assignment.role).toBe(demoShellRoutingRole);
   }
+  // Besides routing, one tenant-scope role: the accountant's company identity, whose read Core decides in the tenant.
+  const accountant = demoHumanAccounts.at(2);
+  const others = tenantAssignments.filter(({ roleKey }) => roleKey !== demoShellRoutingRoleKey);
+  expect(others.map(({ principalId, roleKey }) => [principalId, roleKey])).toEqual([
+    [accountant?.principalId, accountingCompanyIdentityRoleKey],
+  ]);
+  expect(others[0]?.role).toBe(accountingCompanyIdentityRole);
+  expect(accountingCompanyIdentityRole.capabilityKeys).toEqual({
+    'core.identity': ['core.identity.legal-entity.read', 'core.identity.legal-entity.personal.read'],
+  });
 });
 
 it('binds only the declared workload keys, and only for principals whose caller runs them', () => {

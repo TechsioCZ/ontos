@@ -58,6 +58,7 @@ const OWNER = AccessHumanIdSchema.make('493dafec-c9b1-5a84-89cb-bee630de3c34');
 const NAJEMPARK = AccessCompanyIdSchema.make('71000000-0000-4000-8000-000000000021');
 const FULL_ACCESS_ROLE = AccessRoleIdSchema.make('a2542ee7-34b0-8eff-89d5-0b2e4b0dc4ae');
 const ROUTING = 'demo-shell-routing';
+const COMPANY_IDENTITY = 'accounting-company-identity';
 const NEXT_GENERATION = '--generation 2';
 const OUTSIDE = 'outside the three people';
 const AT = DateTime.makeUnsafe('2026-11-10T13:00:00.000Z');
@@ -267,9 +268,9 @@ const firstSave = (steps: readonly PlannedStep[]): SaveRole => {
 };
 const roleId = (key: string) =>
   stableUuid(['ontos.shell.access-roles.role', TENANT_ID, `ontos-demo-reviewed-role:v1:${key}`].join(':'));
-const PEOPLE_STEPS = [...times(3, 'AdmitMember'), ...times(6, 'Assign')];
+const PEOPLE_STEPS = [...times(3, 'AdmitMember'), ...times(7, 'Assign')];
 
-it.effect('pins the reviewed roles, their dangerous cells and the six assignments of the three people', () =>
+it.effect('pins the reviewed roles, their dangerous cells and the seven assignments of the three people', () =>
   Effect.gen(function* exactDesiredState() {
     const state = yield* desired;
     expect(PRINCIPAL_IDS).toEqual([
@@ -288,9 +289,11 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
       ]),
     ).toEqual([
       ['sales', 442, 398, roleId('sales'), COMPANY_SCOPE],
-      ['accounting', 164, 132, roleId('accounting'), COMPANY_SCOPE],
+      ['accounting', 162, 130, roleId('accounting'), COMPANY_SCOPE],
       ['warehouse', 33, 23, roleId('warehouse'), COMPANY_SCOPE],
       [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
+      // The company identity read is decided in the tenant context, so its two keys live in a tenant-scope role.
+      [COMPANY_IDENTITY, 2, 2, roleId(COMPANY_IDENTITY), TENANT_SCOPE],
     ]);
     // Capabilities the release declared after the review stay with full access: no reviewed role holds one.
     const excluded = new Set<string>(Object.values(reviewedExclusions).flat());
@@ -311,18 +314,19 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
       [obchodnik, ROUTING, TENANT_SCOPE],
       [ucetni, 'accounting', COMPANY_SCOPE],
       [ucetni, ROUTING, TENANT_SCOPE],
+      [ucetni, COMPANY_IDENTITY, TENANT_SCOPE],
       [sklad, 'warehouse', COMPANY_SCOPE],
       [sklad, ROUTING, TENANT_SCOPE],
     ]);
   }),
 );
 
-it.effect('writes only the three people, the four roles and tenant or company 0020 on a stage-shaped state', () =>
+it.effect('writes only the three people, the five roles and tenant or company 0020 on a stage-shaped state', () =>
   Effect.gen(function* limitedToNamedPeople() {
     const state = yield* desired;
     const before = stageBefore(state);
     const steps = stepsOf(plan(state, before, apply1));
-    expect(tagsOf(steps)).toEqual([...times(4, ['CreateRole', 'SaveRole']).flat(), ...PEOPLE_STEPS]);
+    expect(tagsOf(steps)).toEqual([...times(5, ['CreateRole', 'SaveRole']).flat(), ...PEOPLE_STEPS]);
     const named = JSON.stringify(steps).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu) ?? [];
     const allowed = new Set<string>([
       ...PRINCIPAL_IDS,
@@ -385,13 +389,13 @@ it.effect('plans exactly the remaining steps from every halfway state and nothin
     const holders = observed.roles
       .filter(({ id }) => MANAGED_ROLE_IDS.includes(id))
       .map(({ holderCount }) => holderCount);
-    expect(holders).toEqual([1, 1, 1, 3]);
-    // All four roles created but still empty: four saves, then the people.
+    expect(holders).toEqual([1, 1, 1, 3, 1]);
+    // All five roles created but still empty: five saves, then the people.
     const created = simulateAll(
       before,
       steps.filter((step) => Predicate.isTagged(step, 'CreateRole')),
     );
-    expect(tagsOf(stepsOf(plan(state, created, apply1)))).toEqual([...times(4, 'SaveRole'), ...PEOPLE_STEPS]);
+    expect(tagsOf(stepsOf(plan(state, created, apply1)))).toEqual([...times(5, 'SaveRole'), ...PEOPLE_STEPS]);
   }),
 );
 
@@ -555,7 +559,7 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     expect(haltOf(plan(state, oneEnded, apply1))?.reason).toContain(NEXT_GENERATION);
     expect(tagsOf(stepsOf(plan(state, oneEnded, apply2)))).toEqual(['Assign']);
 
-    expect(tagsOf(rollback)).toEqual([...times(6, 'RevokeAssignment'), ...times(6, 'EndMembership')]);
+    expect(tagsOf(rollback)).toEqual([...times(7, 'RevokeAssignment'), ...times(6, 'EndMembership')]);
     const rolledBack = simulateAll(done, rollback);
     expect(stepsOf(plan(state, rolledBack, rollback1))).toEqual([]);
     expect(haltOf(plan(state, rolledBack, apply1))?.reason).toContain(NEXT_GENERATION);
@@ -611,7 +615,7 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
 
     // Her managed roles are revoked, but her own memberships are not the script's to end.
     const rollback = stepsOf(plan(state, done, rollback1));
-    expect(tagsOf(rollback)).toEqual([...times(6, 'RevokeAssignment'), ...times(4, 'EndMembership')]);
+    expect(tagsOf(rollback)).toEqual([...times(7, 'RevokeAssignment'), ...times(4, 'EndMembership')]);
     const ended = rollback.flatMap((step) => (Predicate.isTagged(step, 'EndMembership') ? [step.principalId] : []));
     expect(ended).not.toContain(ucetni);
     // A rollback named with a later generation still recognizes the rows generation 1 admitted.

@@ -4,7 +4,7 @@
  * writes, and sends them one at a time. Every decision lives here, so a unit test can pin it.
  *
  * The plan is limited to hard constants: one tenant, one company (Nájempark and every other company are out
- * of reach), exactly three people and exactly four roles whose ids are derived from fixed idempotency keys.
+ * of reach), exactly three people and exactly five roles whose ids are derived from fixed idempotency keys.
  * A planned write that names anything else is refused before it is returned, and again before it is sent.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -44,6 +44,7 @@ import { policyRoleCellRows } from './access-policy.mts';
 import { demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import {
   demoHumanAccounts,
+  accountingCompanyIdentityRoleKey,
   demoShellRoutingRoleKey,
   financeVatReadKeys,
   reviewedDemoAssignments,
@@ -73,7 +74,13 @@ export const PRINCIPAL_IDS: readonly HumanId[] = [
   '4f94471b-1d15-5aa9-a836-c87e0f8a449d',
   '3952547a-564f-5468-9038-8dce11185c44',
 ].map((principalId) => AccessHumanIdSchema.make(principalId));
-export const MANAGED_ROLE_KEYS = ['sales', 'accounting', 'warehouse', demoShellRoutingRoleKey] as const;
+export const MANAGED_ROLE_KEYS = [
+  'sales',
+  'accounting',
+  'warehouse',
+  demoShellRoutingRoleKey,
+  accountingCompanyIdentityRoleKey,
+] as const;
 export const ManagedRoleKeySchema = Schema.Literals(MANAGED_ROLE_KEYS);
 export type ManagedRoleKey = typeof ManagedRoleKeySchema.Type;
 
@@ -280,6 +287,7 @@ const customerContextReadsAfterReview = [
  */
 export const reviewedExclusions = {
   accounting: customerContextReadsAfterReview,
+  [accountingCompanyIdentityRoleKey]: [],
   [demoShellRoutingRoleKey]: [],
   sales: [
     ...customerContextReadsAfterReview,
@@ -364,7 +372,7 @@ const isManagedRole = (roleId: string): boolean => MANAGED_ROLE_IDS.some((id) =>
 
 /**
  * The reviewed matrix restricted to the three people: their roles compiled from the local release, and
- * their six assignments. Anything the matrix gives them outside the four roles and the two scopes fails.
+ * their seven assignments. Anything the matrix gives them outside the five roles and the two scopes fails.
  */
 export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Result.Result<DesiredState, string> => {
   const fixturePeople = demoHumanAccounts.slice(1).map(({ principalId }) => principalId);
@@ -392,7 +400,7 @@ export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Res
   for (const principalId of PRINCIPAL_IDS) {
     for (const { legalEntityId, roleKey } of ours.filter((assignment) => assignment.principalId === principalId)) {
       if (!Schema.is(ManagedRoleKeySchema)(roleKey) || (legalEntityId !== undefined && legalEntityId !== COMPANY_ID)) {
-        return Result.fail(`the matrix gives ${principalId} ${roleKey} outside the four roles of company 0020`);
+        return Result.fail(`the matrix gives ${principalId} ${roleKey} outside the five managed roles`);
       }
       assignments.push({
         principalId,
@@ -582,7 +590,7 @@ const revokedHolder = (step: typeof RevokeAssignmentStep.Type, observed: Observe
   );
 
 /**
- * The last guard before a write: it names only the three people, the four roles, and the tenant or company
+ * The last guard before a write: it names only the three people, the five roles, and the tenant or company
  * 0020, and a revoked assignment is one the three hold on a managed role. The driver calls it again on the
  * exact step it is about to send.
  */
