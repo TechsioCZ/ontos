@@ -447,92 +447,56 @@ describe('Inventory obligation persistence', () => {
     }),
   );
 
-  it.effect('round-trips a supported external authority without rewriting either capability', () =>
-    Effect.gen(function* roundTripSupportedExternalAuthority() {
-      const expected = Schema.decodeUnknownSync(ProvisionalInventoryReservationSchema)({
-        ...reservation,
-        authority: {
-          ...reservation.authority,
-          selection: {
-            ...reservation.authority.selection,
-            stockCorrectionCapability: 'SUPPORTED',
-          },
+  it.effect('round-trips the stored authority capabilities of every supported backend without rewriting them', () =>
+    Effect.gen(function* roundTripStoredAuthorities() {
+      const authorityRoundTrips = [
+        {
+          // Supported external authority: only the stock-correction capability differs from the stored default.
+          authoritySelection: { ...reservation.authority.selection, stockCorrectionCapability: 'SUPPORTED' },
+          rowOverrides: { authorityStockCorrectionCapability: 'SUPPORTED' },
         },
-      });
-      const transaction = {
-        select: () => ({
-          from: (table: unknown) => ({
-            where: () =>
-              table === inventoryObligations
-                ? {
-                    limit: () =>
-                      Effect.succeed([
-                        {
-                          ...obligationRow,
-                          authorityStockCorrectionCapability: 'SUPPORTED',
-                        },
-                      ]),
-                  }
-                : {
-                    orderBy: () =>
-                      Effect.succeed(table === inventoryObligationRequirements ? [requirementRow] : [allocationRow]),
-                  },
-          }),
-        }),
-      };
-      // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
-      const persistence = inventoryObligationPersistenceForScope(transaction, scope);
-
-      const result = Option.getOrThrow(yield* persistence.read(expected.ref));
-
-      expect(result.authority).toEqual(expected.authority);
-    }),
-  );
-
-  it.effect('round-trips the exact OntOS WMS authority capabilities', () =>
-    Effect.gen(function* roundTripOntosWmsAuthority() {
-      const expected = Schema.decodeUnknownSync(ProvisionalInventoryReservationSchema)({
-        ...reservation,
-        authority: {
-          ...reservation.authority,
-          selection: {
+        {
+          // Exact OntOS WMS authority: backend identity and both capabilities differ.
+          authoritySelection: {
             backend: 'ontos_wms',
             backendId: 'ontos-wms',
             exactReservationCapability: 'SUPPORTED',
             stockCorrectionCapability: 'SUPPORTED',
           },
+          rowOverrides: {
+            authorityBackendId: 'ontos-wms',
+            authorityBackendKind: 'ontos_wms',
+            authorityExactReservationCapability: 'SUPPORTED',
+            authorityStockCorrectionCapability: 'SUPPORTED',
+          },
         },
-      });
-      const transaction = {
-        select: () => ({
-          from: (table: unknown) => ({
-            where: () =>
-              table === inventoryObligations
-                ? {
-                    limit: () =>
-                      Effect.succeed([
-                        {
-                          ...obligationRow,
-                          authorityBackendId: 'ontos-wms',
-                          authorityBackendKind: 'ontos_wms',
-                          authorityExactReservationCapability: 'SUPPORTED',
-                          authorityStockCorrectionCapability: 'SUPPORTED',
-                        },
-                      ]),
-                  }
-                : {
-                    orderBy: () =>
-                      Effect.succeed(table === inventoryObligationRequirements ? [requirementRow] : [allocationRow]),
-                  },
+      ];
+
+      for (const { authoritySelection, rowOverrides } of authorityRoundTrips) {
+        const expected = Schema.decodeUnknownSync(ProvisionalInventoryReservationSchema)({
+          ...reservation,
+          authority: { ...reservation.authority, selection: authoritySelection },
+        });
+        const transaction = {
+          select: () => ({
+            from: (table: unknown) => ({
+              where: () =>
+                table === inventoryObligations
+                  ? { limit: () => Effect.succeed([{ ...obligationRow, ...rowOverrides }]) }
+                  : {
+                      orderBy: () =>
+                        Effect.succeed(table === inventoryObligationRequirements ? [requirementRow] : [allocationRow]),
+                    },
+            }),
           }),
-        }),
-      };
-      // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
-      const persistence = inventoryObligationPersistenceForScope(transaction, scope);
+        };
+        // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
+        const persistence = inventoryObligationPersistenceForScope(transaction, scope);
 
-      const result = Option.getOrThrow(yield* persistence.read(expected.ref));
+        const result = Option.getOrThrow(yield* persistence.read(expected.ref));
 
-      expect(result.authority).toEqual(expected.authority);
+        expect(result.authority).toEqual(expected.authority);
+      }
     }),
   );
 

@@ -1340,20 +1340,23 @@ it.live('a shape-valid CURRENT_OWNER_VERIFIED payload cannot replace the unavail
   ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
 );
 
-for (const reason of [
-  'OWNER_EVIDENCE_MISSING',
-  'OWNER_EVIDENCE_STALE',
-  'OWNER_EVIDENCE_UNAVAILABLE',
-  'OWNER_EVIDENCE_INDETERMINATE',
-] as const) {
-  it.live(`preserves the authority's ${reason} failure before a new Reservation or dispatch`, () =>
-    Semaphore.withPermits(
-      scenarioSemaphore,
-      1,
-    )(
-      Effect.scoped(
-        Effect.gen(function* rejectUnavailableOwnerEvidence() {
-          const scenario = yield* makeActionScenario();
+// All four authority failure reasons run inside one scenario: each carries its own
+// idempotency/correlation key, and assertNoNewReservationIntent proves the four intent tables stayed
+// empty, so a leak from an earlier reason fails the next reason instead of passing unnoticed.
+it.live("preserves each of the authority's owner-evidence failures before a new Reservation or dispatch", () =>
+  Semaphore.withPermits(
+    scenarioSemaphore,
+    1,
+  )(
+    Effect.scoped(
+      Effect.gen(function* rejectUnavailableOwnerEvidence() {
+        const scenario = yield* makeActionScenario();
+        for (const reason of [
+          'OWNER_EVIDENCE_MISSING',
+          'OWNER_EVIDENCE_STALE',
+          'OWNER_EVIDENCE_UNAVAILABLE',
+          'OWNER_EVIDENCE_INDETERMINATE',
+        ] as const) {
           const failure = yield* runContextAction(scenario, `inventory-context-${reason}`, {
             authority: {
               resolveCurrent: ({ effectId }) =>
@@ -1373,11 +1376,11 @@ for (const reason of [
             retryable: true,
           });
           yield* assertNoNewReservationIntent(scenario);
-        }),
-      ),
-    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
-  );
-}
+        }
+      }),
+    ),
+  ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+);
 
 const otherTenantId = 'd1000000-0000-4000-8000-000000000002';
 const contradictoryOwnerContexts = [
@@ -1421,15 +1424,18 @@ const contradictoryOwnerContexts = [
   ['owner observation', { ...commerceContext, observedAt: '2026-09-28T09:00:00.000Z' }],
 ] as const;
 
-for (const [dimension, fixture] of contradictoryOwnerContexts) {
-  it.live(`rejects contradictory ${dimension} returned by the authority without repairing the caller intent`, () =>
-    Semaphore.withPermits(
-      scenarioSemaphore,
-      1,
-    )(
-      Effect.scoped(
-        Effect.gen(function* rejectContradictoryOwnerContext() {
-          const scenario = yield* makeActionScenario();
+// All eight contradicted dimensions run inside one scenario: the rejection persists nothing, each
+// dimension carries its own idempotency/correlation key, and assertNoNewReservationIntent proves the
+// four intent tables stayed empty, so a leak from an earlier dimension fails the next one.
+it.live('rejects every contradictory dimension returned by the authority without repairing the caller intent', () =>
+  Semaphore.withPermits(
+    scenarioSemaphore,
+    1,
+  )(
+    Effect.scoped(
+      Effect.gen(function* rejectContradictoryOwnerContext() {
+        const scenario = yield* makeActionScenario();
+        for (const [dimension, fixture] of contradictoryOwnerContexts) {
           const qualified = Schema.decodeUnknownSync(TrustedCurrentCommercePurchasingContextSchema)(fixture);
           const failure = yield* runContextAction(scenario, `inventory-context-mismatch-${dimension}`, {
             authority: { resolveCurrent: () => Effect.succeed(qualified) },
@@ -1439,11 +1445,11 @@ for (const [dimension, fixture] of contradictoryOwnerContexts) {
             reason: 'COMMERCE_CONTEXT_NOT_ELIGIBLE',
           });
           yield* assertNoNewReservationIntent(scenario);
-        }),
-      ),
-    ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
-  );
-}
+        }
+      }),
+    ),
+  ).pipe(Effect.provide(Layer.merge(NodeCrypto.layer, NodeServices.layer))),
+);
 
 /**
  * The v2 access gate decides per Principal: only the allowed Principal's question is answered ALLOWED,

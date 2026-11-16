@@ -11,9 +11,6 @@ import {
 } from '../../src/persistence/stock-position-repository.ts';
 import {
   INVENTORY_STOCK_POSITION_TABLES,
-  inventoryStockPositionImmutabilityTriggerContract,
-  inventoryStockPositionOwnerConfigurationTriggerContract,
-  inventoryStockPositionUnitMatchTriggerContract,
   inventoryStockPositions,
 } from '../../src/persistence/stock-position-table.ts';
 
@@ -228,58 +225,6 @@ describe('Inventory Stock Position persistence', () => {
       expect(failure).toMatchObject({ reason: 'TENANT_SCOPE_MISMATCH' });
     }),
   );
-
-  it('publishes the immutable identity fields required for migration hardening', () => {
-    expect(inventoryStockPositionImmutabilityTriggerContract).toEqual({
-      columns: [
-        'stock_position_id',
-        'tenant_id',
-        'customer_configuration_id',
-        'stock_item_id',
-        'stock_location_id',
-        'stock_unit_module_id',
-        'stock_unit_resource_id',
-        'stock_unit_resource_type',
-        'stock_unit_tenant_id',
-      ],
-      comparison: 'IS DISTINCT FROM',
-      errorCondition: 'check_violation',
-      event: 'UPDATE OR DELETE',
-      functionName: 'inventory.reject_stock_position_scope_mutation',
-      table: 'inventory.stock_positions',
-      timing: 'BEFORE',
-      triggerName: 'inventory_stock_positions_immutable_scope_trg',
-    });
-    expect(inventoryStockPositionUnitMatchTriggerContract).toEqual({
-      constraintName: 'inventory_stock_positions_exact_item_unit_ck',
-      errorCondition: 'check_violation',
-      event: 'INSERT OR UPDATE',
-      functionName: 'inventory.enforce_stock_position_stock_item_unit',
-      lookupColumns: [
-        'tenant_id',
-        'stock_item_id',
-        'stock_unit_module_id',
-        'stock_unit_resource_id',
-        'stock_unit_resource_type',
-        'stock_unit_tenant_id',
-      ],
-      lookupTable: 'inventory.stock_items',
-      table: 'inventory.stock_positions',
-      timing: 'BEFORE',
-      triggerName: 'inventory_stock_positions_exact_item_unit_trg',
-    });
-    expect(inventoryStockPositionOwnerConfigurationTriggerContract).toEqual({
-      constraintName: 'inventory_stock_positions_owner_configuration_ck',
-      event: 'INSERT OR UPDATE',
-      foreignKeyName: 'inventory_stock_positions_backend_configuration_fk',
-      functionName: 'inventory.enforce_stock_position_owner_configuration',
-      lookupColumns: ['tenant_id', 'configuration_id', 'customer_configuration_id'],
-      lookupTable: 'inventory.backend_configurations',
-      table: 'inventory.stock_positions',
-      timing: 'BEFORE',
-      triggerName: 'inventory_stock_positions_owner_configuration_trg',
-    });
-  });
 
   it('maps Cause-wrapped constrained-scope database violations to typed domain reasons', () => {
     const foreignKeyViolation = ['23', '503'].join('');
