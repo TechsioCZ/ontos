@@ -34,6 +34,11 @@ services:
       - --grpc-tls-key-path=/tls/key.pem
       - --http-tls-cert-path=/tls/cert.pem
       - --http-tls-key-path=/tls/key.pem
+      # By default SpiceDB sends a GOAWAY to every client connection once it is 30 seconds old (+/-10%), which
+      # makes clients reconnect while tests are running. The browser fixture's teardown reconcile got gRPC 14
+      # UNAVAILABLE from a healthy engine about 35 seconds after its connection opened (run 43742187508). The test
+      # clients live for one job, so a 24-hour age means the engine never ends their connections.
+      - --grpc-max-conn-age=24h
     environment:
       SPICEDB_GRPC_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
     ports:
