@@ -145,13 +145,13 @@ jobs:
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
 
-  # The only job that saves the caches the gates restore, on main, where every pull request and merge
+  # The default-branch producer of the caches the gates restore, where every pull request and merge
   # group can read them: the pnpm store, the installed node_modules, the TS-Go typecheck build, every
   # Node build shard's output archive, the Playwright Chromium build, and the apt packages of Chromium's
   # system libraries. An Actions cache is readable from the current branch or the default branch only, so
   # a merge group run (gh-readonly-queue/main/*) can read nothing a pull request saved, and the gate jobs
-  # never run on a push to main (queue-proof short-circuits them): this job is the only producer whose
-  # caches the blocking gate can read.
+  # never run on a proven push to main: this job publishes the shared caches. Build shard 1 also saves
+  # its complete installed workspace in a pull-request-scoped cache for the downstream integration wave.
   # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
   warm-caches:
     name: Warm the gate caches on main
@@ -1040,6 +1040,8 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          save-node-modules: ${{ matrix.shard == 1 && github.ref != 'refs/heads/main' }}
 
       # The key covers this shard's unit sources and every shared package their builds read, so a commit
       # that touches none of them reuses the archive instead of rebuilding it. There are deliberately no
