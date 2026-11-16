@@ -1857,6 +1857,7 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
 });
 
 const ArtifactBuildJobSchema = Schema.Struct({
+  env: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number])),
   name: Schema.String,
   // Only a job whose shards read their siblings' results needs `actions: read`.
   permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -1966,42 +1967,19 @@ it('builds Node artifacts on one runner without waiting for or proving the topol
   });
 });
 
-/** The per-shard archive cache: one key, no restore-keys, and the build runs only when it misses. */
-const SHARD_CACHE_KEY = `node-units-v1-$RUNNER_OS-$RUNNER_ARCH-${expression(MATRIX_SHARD)}-`;
-const ARTIFACTS_CACHE_STEP = 'artifacts-cache';
-const SHARD_CACHE_MISS = "steps.artifacts-cache.outputs.cache-hit != 'true'";
-
-it('reuses a build shard archive only on an exact key over its own inputs, and never a partial match', () => {
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  const key = steps.find(({ id }) => id === 'artifacts');
-  // One key script over the shard's units: a key that misses an input would ship outputs of other code.
-  expect(key?.run).toContain(
-    `bash scripts/ci/cache-entry-key.sh build-outputs "${SHARD_CACHE_KEY}" "\${units[@]}" >>"$GITHUB_OUTPUT"`,
-  );
-  expect(key?.env).toEqual({ SHARD_UNITS: expression('matrix.units') });
-  const restore = steps.find(({ id }) => id === ARTIFACTS_CACHE_STEP);
-  expect(restore?.uses).toMatch(/^actions\/cache\/restore@[a-f0-9]{40}$/u);
-  expect(restore?.with).toEqual({
-    key: expression('steps.artifacts.outputs.key'),
-    path: `${RUNNER_TEMP_EXPRESSION}/units-${expression(MATRIX_SHARD)}.tar.zst`,
-  });
-  const stepIndex = (name: string) => steps.findIndex((step) => step.name === name);
-  const save = stepIndex("Save this shard's built Node artifacts");
-  expect(steps[save]?.uses).toMatch(/^actions\/cache\/save@[a-f0-9]{40}$/u);
-  expect(steps[save]?.with).toEqual(restore?.with);
-  // Build, pack and save belong to the miss path only; the exact key is what makes that safe.
-  const build = stepIndex("Build the shard's Node artifacts");
-  const pack = stepIndex("Pack the shard's build outputs");
-  expect(steps.findIndex(({ id }) => id === ARTIFACTS_CACHE_STEP)).toBeLessThan(build);
-  expect(build).toBeLessThan(pack);
-  expect(pack).toBeLessThan(save);
-  for (const index of [build, pack, save]) {
-    expect(`${steps[index]?.name ?? ''}: ${steps[index]?.if ?? ''}`).toBe(
-      `${steps[index]?.name ?? ''}: ${SHARD_CACHE_MISS}`,
-    );
-  }
-  // Two units at a time: the cold-cache shard is the only one that pays the build at all.
-  expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
+it('builds every Node release from this commit rather than restoring another release identity', () => {
+  const { env: environment, steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(expression('github.sha'));
+  expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache/') === true)).toEqual([]);
+  const build = steps.findIndex(({ name }) => name === "Build the shard's Node artifacts");
+  const pack = steps.findIndex(({ name }) => name === "Pack the shard's build outputs");
+  const upload = steps.findIndex(({ name }) => name === UPLOAD_STEP);
+  expect(build).toBeGreaterThan(-1);
+  expect(build < pack && pack < upload).toBe(true);
+  expect(steps[build]?.if).toBeUndefined();
+  expect(steps[pack]?.if).toBeUndefined();
+  expect(steps[build]?.run).toContain(`--workspace-concurrency=4 "\${filters[@]}" run build`);
+  expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
 });
 
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
@@ -2010,74 +1988,22 @@ it('does not repeat the planner’s installed-workspace publication in the build
   expect(install?.with).toBeUndefined();
 });
 
-it('warms every build shard archive on main, where the blocking gate can read it', () => {
+it('warms only reusable dependencies and typecheck state on main, never commit-bound releases', () => {
   const schema = Schema.Struct({
     jobs: Schema.Struct({
       'warm-caches': Schema.Struct({
         if: Schema.String,
-        steps: Schema.Array(
-          Schema.Struct({
-            env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-            id: Schema.optional(Schema.String),
-            name: Schema.String,
-            run: Schema.optional(Schema.String),
-            uses: Schema.optional(Schema.String),
-            with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-          }),
-        ),
+        steps: Schema.Array(PublicationWorkflowStepSchema),
       }),
     }),
   });
   const warm = Schema.decodeUnknownSync(schema)(readGateWorkflow()).jobs['warm-caches'];
-  // An Actions cache is readable from the current branch or the default branch only, so a merge group
-  // run can read nothing a pull request saved, and the gates never run on a push to main.
   expect(warm.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");
-  const build = warm.steps.find(({ id }) => id === 'node-shards');
-  expect(build).toBeDefined();
-  const shards = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.include;
-  for (const { shard, units } of shards) {
-    // Identical unit lists, or this job would save an archive of something else under the gate's key.
-    expect(build?.env?.[`SHARD_UNITS_${shard}`]?.split(/\s+/u).filter(Boolean), `shard ${shard}`).toEqual(
-      units.split(/\s+/u).filter(Boolean),
-    );
-    const save = warm.steps.find(({ name }) => name === `Save the Node build shard ${shard} archive`);
-    expect(save?.uses, `shard ${shard}`).toMatch(/^actions\/cache\/save@[a-f0-9]{40}$/u);
-    expect(save?.with, `shard ${shard}`).toEqual({
-      key: expression(`steps.node-shards.outputs.key-${shard}`),
-      path: `${RUNNER_TEMP_EXPRESSION}/units-${shard}.tar.zst`,
-    });
-    // actions/cache versions the path too: identical keys with different archive names cannot hit.
-    const gateRestore = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(
-      ({ id }) => id === ARTIFACTS_CACHE_STEP,
-    );
-    const gateCachePath = Schema.decodeUnknownSync(Schema.String)(gateRestore?.with?.path);
-    expect(gateCachePath.replace(expression(MATRIX_SHARD), String(shard))).toBe(save?.with?.path);
-  }
-  // Byte-identical keys and byte-identical archives: the same key script, the same build command and the
-  // same pack pipeline as the shard job, with the shard number substituted for the matrix value.
-  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  const shardStep = (name: string) => steps.find((step) => step.name === name)?.run ?? 'missing';
-  const warmRun = build?.run ?? '';
-  expect(warmRun).toContain(
-    `bash scripts/ci/cache-entry-key.sh build-outputs "${SHARD_CACHE_KEY.replace(expression(MATRIX_SHARD), '$shard')}" "\${units[@]}"`,
-  );
-  expect(warmRun).toContain('sed "s/^key=/key-$shard=/"');
-  for (const fragment of [
-    `--workspace-concurrency=2 "\${filters[@]}" run build`,
-    `git ls-files --others --ignored --exclude-standard --directory -z -- "\${units[@]}"`,
-    "| grep -zv '/node_modules/$'",
-  ]) {
-    expect(warmRun, fragment).toContain(fragment);
-    expect(
-      [shardStep("Build the shard's Node artifacts"), shardStep("Pack the shard's build outputs")]
-        .join('\n')
-        .includes(fragment),
-      fragment,
-    ).toBe(true);
-  }
   expect(warm.steps.find(({ name }) => name === INSTALL_APP_STEP)?.with).toMatchObject({
     'save-node-modules': 'true',
   });
+  expect(warm.steps.some(({ run }) => (run ?? '').includes('run build'))).toBe(false);
+  expect(warm.steps.some(({ run }) => (run ?? '').includes('pnpm typecheck'))).toBe(true);
 });
 
 /** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
