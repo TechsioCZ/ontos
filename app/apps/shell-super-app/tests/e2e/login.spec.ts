@@ -355,6 +355,14 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
   authentication,
   page,
 }) => {
+  // The only test in this file that runs a real access-projection write inside its body, so
+  // Playwright's browser-scale 30 s default is the wrong deadline for it. Measured failure chain
+  // (job 132655517964): the SpiceDB projection call returned without a gRPC status under the load of
+  // every parallel worker, the writer retried under the same fence as it is designed to, and the 30 s
+  // deadline cut that retry, surfacing the fence hold instead of the real cause. The budget is the
+  // fixture's own 25 s access-operation bound, the same bound again for its one in-fence retry, and
+  // Playwright's 30 s for the browser work that follows. `retries` stays 0.
+  test.setTimeout(80_000);
   await login(page, 'en', authentication.credentials);
   const revision = await page.locator(compositionRevisionSelector).getAttribute('content');
   const payload = Schema.decodeUnknownSync(ResolveModuleTargetPayloadSchema)({

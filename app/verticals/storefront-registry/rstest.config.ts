@@ -17,6 +17,9 @@ export default defineConfig({
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,
       testEnvironment: 'node',
+      // No unit test here reached the runner's 300 ms slow report in gates runs 43616061381 or
+      // 43844802542; budget is the 2400 ms floor these configs share, not the silent 5000 ms default.
+      testTimeout: 2400,
       tools: { swc },
     },
   ],

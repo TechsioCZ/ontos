@@ -31,5 +31,8 @@ it.live(
       Effect.flatMap((nodeServices) => failedStartup.pipe(Effect.provide(nodeServices))),
       Effect.scoped,
     ),
-  5000,
+  // The fixture spawns a real Node host that type-strips the whole Core import graph: measured
+  // 4.25 s in gates run 43616061381 and 2.72 s in 43844802542, so the previous 5000 ms budget was
+  // the defect. The sibling child-process tests in outbox-process.test.ts use the same scale.
+  12_000,
 );
