@@ -86,6 +86,20 @@ describe('scope schedule', () => {
   });
 });
 
+/** SMTP-shaped transport that records the provider idempotency key of every submission. */
+const recordingTransport = (keys: (string | undefined)[]) => ({
+  deliveryLayer: () =>
+    Layer.succeed(EmailDeliveryService, {
+      send: (message: { readonly idempotencyKey?: string }) =>
+        Effect.sync(() => {
+          keys.push(message.idempotencyKey);
+          return { accepted: true as const, id: `accepted-${keys.length}` };
+        }),
+    }),
+  kind: 'smtp' as const,
+  provider: { configured: true, label: 'recording transport' },
+});
+
 describe('one person in two companies', () => {
   const agendaKey = 'facility-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z';
   const agendaEmail = (scope: { readonly legalEntityId: string; readonly tenantId: string }) =>
@@ -113,43 +127,34 @@ describe('one person in two companies', () => {
     ]);
   });
 
-  it.effect('submits each company e-mail under its own provider idempotency key', () =>
-    Effect.gen(function* submitBothCompanies() {
-      const keys: (string | undefined)[] = [];
-      const transport = {
-        deliveryLayer: () =>
-          Layer.succeed(EmailDeliveryService, {
-            send: (message: { readonly idempotencyKey?: string }) =>
-              Effect.sync(() => {
-                keys.push(message.idempotencyKey);
-                return { accepted: true as const, id: `accepted-${keys.length}` };
-              }),
-          }),
-        kind: 'smtp' as const,
-        provider: { configured: true, label: 'recording transport' },
-      };
-      const first = agendaEmail({ legalEntityId: entityA, tenantId: tenantA });
-      const second = agendaEmail({ legalEntityId: entityB, tenantId: tenantB });
-      yield* submitEmail(first, transport, {});
-      yield* submitEmail(second, transport, {});
-      const providerKey = /^ontos-delivery-v1:[0-9a-f]{64}$/u;
-      const [firstKey, secondKey] = keys;
-      expect(keys).toHaveLength(2);
-      expect(firstKey).toMatch(providerKey);
-      expect(secondKey).toMatch(providerKey);
-      expect(firstKey).not.toBe(secondKey);
-      expect(firstKey).toBe(yield* deliveryIdempotencyKey(first));
-      expect(secondKey).toBe(yield* deliveryIdempotencyKey(second));
-      // Another legal entity of the same tenant is another company.
-      expect(yield* deliveryIdempotencyKey(agendaEmail({ legalEntityId: entityB, tenantId: tenantA }))).not.toBe(
-        firstKey,
-      );
-      // Bounded for any dedupe key: the Resend adapter refuses keys over 256 characters.
-      const long = yield* deliveryIdempotencyKey({ ...first, dedupeKey: `akros-order:${'x'.repeat(1000)}:SHIPPED` });
-      expect(long).toMatch(providerKey);
-      expect(long).toHaveLength(82);
-    }).pipe(Effect.provide(NodeCrypto.layer)),
-  );
+  it.layer(NodeCrypto.layer)((suite) => {
+    suite.effect('submits each company e-mail under its own provider idempotency key', () =>
+      Effect.gen(function* submitBothCompanies() {
+        const keys: (string | undefined)[] = [];
+        const transport = recordingTransport(keys);
+        const first = agendaEmail({ legalEntityId: entityA, tenantId: tenantA });
+        const second = agendaEmail({ legalEntityId: entityB, tenantId: tenantB });
+        yield* submitEmail(first, transport, {});
+        yield* submitEmail(second, transport, {});
+        const providerKey = /^ontos-delivery-v1:[0-9a-f]{64}$/u;
+        const [firstKey, secondKey] = keys;
+        expect(keys).toHaveLength(2);
+        expect(firstKey).toMatch(providerKey);
+        expect(secondKey).toMatch(providerKey);
+        expect(firstKey).not.toBe(secondKey);
+        expect(firstKey).toBe(yield* deliveryIdempotencyKey(first));
+        expect(secondKey).toBe(yield* deliveryIdempotencyKey(second));
+        // Another legal entity of the same tenant is another company.
+        expect(yield* deliveryIdempotencyKey(agendaEmail({ legalEntityId: entityB, tenantId: tenantA }))).not.toBe(
+          firstKey,
+        );
+        // Bounded for any dedupe key: the Resend adapter refuses keys over 256 characters.
+        const long = yield* deliveryIdempotencyKey({ ...first, dedupeKey: `akros-order:${'x'.repeat(1000)}:SHIPPED` });
+        expect(long).toMatch(providerKey);
+        expect(long).toHaveLength(82);
+      }),
+    );
+  });
 });
 
 describe('undeliverable recipients', () => {
