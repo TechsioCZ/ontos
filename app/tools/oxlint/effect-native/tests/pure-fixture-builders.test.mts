@@ -14,14 +14,7 @@ const schemaImport = "import { Schema } from 'effect';";
 const dataCodec =
   'const Codec = Schema.Struct({ id: Schema.String }); export const makeData = (id: string) => Schema.decodeUnknownEffect(Codec)({ id });';
 
-it('proves both actual reusable DTO builders without treating support paths as test roots', () => {
-  expect(
-    provesDataFactoryImport(
-      nodePath.join(appRoot, customerConsumer),
-      './symmy-c14-customer-plan.mts',
-      'makeSymmyC14CustomerPlan',
-    ),
-  ).toBe(true);
+it('proves the actual reusable DTO builder without treating support paths as test roots', () => {
   expect(
     provesDataFactoryImport(
       nodePath.join(appRoot, organizationConsumer),

@@ -32,6 +32,8 @@ import { SymmyStockBatchResponseSchema } from '../api/symmy/stock-batch-public-c
 import { SymmyStockBatchRequestSchema } from '../api/symmy/stock-batch-request-contract.ts';
 import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';
 
+// Every request, response and error shape below is a Schema.* value declared in `../api/symmy/*contract.ts`;
+// this module only wires those schemas to the Symmy routes.
 const nativeSymmyPath = (path: `/${string}`): `/${string}` =>
   `/${path.slice(1).replace('{code}', ':code').replace('{id}', ':id')}`;
 

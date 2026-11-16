@@ -58,7 +58,6 @@ const SymmyProductPriceSchema = Schema.Struct({
   priceGroupCode: Schema.optionalKey(identifierValue),
   unitBasis: Schema.optionalKey(identity.unitBasis),
 });
-export type SymmyProductPrice = typeof SymmyProductPriceSchema.Type;
 
 const SymmyProductVariantSchema = Schema.Struct({
   identifier: Schema.optionalKey(

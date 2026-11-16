@@ -1456,6 +1456,7 @@ it.live(
           'person-engagement-profile-read-server.ts',
           'privacy-measure-execution-read-server.ts',
           'source-counterparty-admission-read-server.ts',
+          'source-party-search-read-server.ts',
           'source-person-admission-read-server.ts',
           'source-profile-export-read-server.ts',
         ]);

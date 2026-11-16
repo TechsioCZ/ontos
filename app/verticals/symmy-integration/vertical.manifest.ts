@@ -3,6 +3,7 @@
 // @ontos-module-id integration.symmy
 import { symmyOwnerOperationRequirementKey } from './shared/domain/symmy-owner-operation-requirements.ts';
 import { defineOntosModuleManifest } from '@app/core-runtime';
+import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { admitSymmyJobAction } from './src/actions/admit-symmy-job.action.ts';
 import { admitSymmySyncAction } from './src/actions/admit-symmy-sync.action.ts';
@@ -158,7 +159,7 @@ const ownerOperationRequirements = ownerOperationProviders.flatMap(({ moduleId, 
   }),
 );
 
-export const symmyIntegrationManifest = defineOntosModuleManifest({
+export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',
     preservesHistoryWhenInactive: true,
