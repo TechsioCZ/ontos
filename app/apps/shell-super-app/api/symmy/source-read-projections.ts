@@ -66,7 +66,7 @@ export interface SymmySourceReadScope {
 type ReadQuery = typeof SymmyInternalReadQuerySchema.Type;
 type RequestIdentifier = Effect.Effect<string, typeof symmyUnavailableProblem>;
 type PriceGroupSourceAssociation = typeof PriceGroupSourceAssociationSchema.Type;
-const priceGroupCatalogAudience = 'price-group-catalog';
+export const priceGroupCatalogAudience = 'price-group-catalog';
 const customerContextModule = 'commerce.customer-context';
 const customerContextAudience = 'commerce-customer-context';
 const partyModule = 'party.registry';
@@ -138,7 +138,7 @@ const routeAllows = (scope: SymmySourceReadScope, moduleId: string, entrypointKe
     (operation) =>
       operation.moduleId === moduleId && operation.entrypointKey === entrypointKey && operation.schemaVersion === '1',
   );
-const requireRouteRead = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string) =>
+export const requireRouteRead = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string) =>
   routeAllows(scope, moduleId, entrypointKey) ? Effect.void : Effect.fail(forbidden);
 const cursorQueryIsInvalid = (query: ReadQuery): boolean =>
   query.offset !== undefined ||
@@ -577,8 +577,8 @@ export const SymmyPriceReadProjectionConfigurationSchema = Schema.Struct({
   ).check(Schema.isMaxLength(64)),
   schemaVersion: Schema.Literal(1),
 });
-type PriceReadSource = (typeof SymmyPriceReadProjectionConfigurationSchema.Type.routes)[number];
-const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSource')(function* priceSource(
+export type PriceReadSource = (typeof SymmyPriceReadProjectionConfigurationSchema.Type.routes)[number];
+export const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSource')(function* priceSource(
   scope: SymmySourceReadScope,
 ) {
   const configuration = yield* Config.option(
@@ -600,7 +600,7 @@ const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSour
   }
   return Option.fromNullishOr(matches[0]);
 });
-const sourcePricesAreValid = (
+export const sourcePricesAreValid = (
   page: PriceGroupSourcePricesResponse,
   request: typeof PriceGroupSourcePricesRequestSchema.Type,
   scope: SymmySourceReadScope,

@@ -18,6 +18,7 @@ import { manageQuotationAction } from './src/actions/manage-quotation.action.ts'
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
 import { priceDefinitionRead } from './src/api/price-definition.read.ts';
 import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
+import { priceScheduleRead } from './src/api/price-schedule.read.ts';
 import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
@@ -94,6 +95,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
     currentSupportedCurrenciesRead,
     priceDefinitionRead,
     priceGroupSourcePricesRead,
+    priceScheduleRead,
     priceSourceResultLookupRead,
     quotationVerificationRead,
     // </generated-module-registration-reads>

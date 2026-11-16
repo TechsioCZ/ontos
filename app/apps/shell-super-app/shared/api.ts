@@ -24,6 +24,7 @@ import {
   SymmyInternalProductsProjectionSchema,
 } from '../api/symmy/read-projection-contracts.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
+import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
 import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
 import { SymmyStockBatchResponseSchema } from '../api/symmy/stock-batch-public-contract.ts';
@@ -69,11 +70,8 @@ const inventoryStockBatchEndpoint = HttpApiEndpoint.post('inventoryStockBatch', 
 const jobEndpoint = HttpApiEndpoint.get('job', nativeSymmyPath(SYMMY_ROUTES.job.path), symmyJobOptions);
 const priceListPricesBatchEndpoint = HttpApiEndpoint.post(
   'priceListPricesBatch',
-  nativeSymmyPath(SYMMY_ROUTES.priceListPricesBatch.path),
-  {
-    ...symmySubmitOptions,
-    params: symmyCodeParams,
-  },
+  SYMMY_ROUTES.priceListPricesBatch.path,
+  { ...symmySubmitOptions, payload: SymmyPriceListPricesBatchRequestSchema },
 );
 const priceListsEndpoint = HttpApiEndpoint.get('priceLists', SYMMY_ROUTES.priceLists.path, {
   ...symmyReadOptions,

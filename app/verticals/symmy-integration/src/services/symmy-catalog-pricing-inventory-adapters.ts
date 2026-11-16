@@ -60,7 +60,7 @@ import {
 } from '@app/pricing/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
 
 import {
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -1371,96 +1371,125 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
 });
 
 const listPriceWriteTag = Schema.Literals(['PriceDefine', 'PriceRevise']);
-const verifySelectedPriceGroup = Effect.fn('SymmyOwnerAdapters.verifySelectedPriceGroup')(function* selectedGroup(
+
+/** The price list a price of the batch route is written to. The body names it, the route enrollment never does. */
+const requestedPriceGroup = (requestIntent: SymmyCatalogPricingInventoryIntent) =>
+  Match.value(requestIntent).pipe(
+    Match.tag('PriceDefine', ({ payload }) => {
+      const selector = payload.identityKey.priceGroupSelector;
+      return selector.kind === 'PRICE_GROUP' ? Option.some(selector.priceGroupRef) : Option.none();
+    }),
+    Match.tag('PriceRevise', ({ priceGroupRef }) => Option.fromNullishOr(priceGroupRef)),
+    Match.orElse(() => Option.none()),
+  );
+
+/** The price list the owner holds the price in now, or none when the price is not current in any list. */
+const readCurrentPriceGroup = Effect.fn('SymmyOwnerAdapters.readCurrentPriceGroup')(function* readCurrentGroup(
   input: SymmyEffectAdapterInput,
-  requestIntent: SymmyCatalogPricingInventoryIntent,
+  priceRef: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'PriceRevise' }>['payload']['priceRef'],
   contract: AdapterContract,
   crypto: Crypto.Crypto,
 ) {
-  if (input.selector === undefined || !Schema.is(listPriceWriteTag)(requestIntent._tag)) {
-    return true;
-  }
-  const { selector } = input;
-  if (
-    !Schema.is(Schema.Literal('PRICE_GROUP'))(selector.kind) ||
-    selector.source.entityKind !== 'PRICE_GROUP' ||
-    selector.target === undefined ||
-    selector.target.moduleId !== priceGroupModuleId ||
-    selector.source.route.tenantId !== input.effect.ref.occurrence.record.route.tenantId
-  ) {
-    return false;
-  }
-  const selected = yield* Match.value(requestIntent).pipe(
-    Match.tag('PriceDefine', ({ payload }) => Effect.succeed(Option.some(payload.identityKey.priceGroupSelector))),
-    Match.tag(
-      'PriceRevise',
-      Effect.fn('SymmyOwnerAdapters.readSelectedPriceGroup')(function* readCurrentGroup({
-        payload,
-      }: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'PriceRevise' }>) {
-        const wire = yield* freshGateway(
-          input,
-          {
-            ...contract,
-            recoveryDeclarationKey: 'commerce.pricing.price.read-definition',
-            recoveryEntrypointKey: 'commerce.pricing.api.price-definition',
-          },
-          true,
-          crypto,
-        );
-        const result = yield* executePriceDefinitionWithAuthorization(
-          { priceRef: payload.priceRef },
-          wire.credential,
-          wire.requestCorrelation,
-          wire.options,
-        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        return Match.value(result).pipe(
-          Match.when({ outcome: 'PRICE_DEFINITION_CURRENT' }, ({ definition }) =>
-            Option.some(definition.identityKey.priceGroupSelector),
-          ),
-          Match.orElse(() => Option.none()),
-        );
-      }),
-    ),
-    Match.orElse(() => Effect.fail(symmyJobWorkerInvalid())),
+  const wire = yield* freshGateway(
+    input,
+    {
+      ...contract,
+      recoveryDeclarationKey: 'commerce.pricing.price.read-definition',
+      recoveryEntrypointKey: 'commerce.pricing.api.price-definition',
+    },
+    true,
+    crypto,
   );
-  if (Option.isNone(selected)) {
-    return false;
-  }
-  const requestedTarget = Match.value(selected.value).pipe(
-    Match.when({ kind: 'PRICE_GROUP' }, ({ priceGroupRef }) => Option.some(priceGroupRef)),
+  const result = yield* executePriceDefinitionWithAuthorization(
+    { priceRef },
+    wire.credential,
+    wire.requestCorrelation,
+    wire.options,
+  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  return Match.value(result).pipe(
+    Match.when({ outcome: 'PRICE_DEFINITION_CURRENT' }, ({ definition }) => {
+      const selector = definition.identityKey.priceGroupSelector;
+      return selector.kind === 'PRICE_GROUP' ? Option.some(selector.priceGroupRef) : Option.none();
+    }),
     Match.orElse(() => Option.none()),
   );
-  if (Option.isNone(requestedTarget) || !sameRef(requestedTarget.value, selector.target)) {
-    return false;
-  }
+});
+
+const sourceAssociationPageSize = 100;
+/**
+ * Whether Price Group Catalog holds the group as a list this route's source created: an association with the
+ * issuer, namespace and source route of the price. The pages are read in order until the group is found.
+ */
+const sourceCreatedPriceGroup = Effect.fn('SymmyOwnerAdapters.sourceCreatedPriceGroup')(function* sourceCreatedGroup(
+  input: SymmyEffectAdapterInput,
+  priceGroupRef: Parameters<typeof sameRef>[0],
+  contract: AdapterContract,
+  crypto: Crypto.Crypto,
+) {
+  const { record } = input.effect.ref.occurrence;
   const groupContract = {
     ...contract,
     audience: priceGroupAudience,
     recoveryDeclarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
     recoveryEntrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
   };
-  const wire = yield* freshGateway(input, groupContract, true, crypto);
-  const { source } = selector;
-  const result = yield* executePriceGroupSourceAssociationsWithAuthorization(
-    {
-      issuer: source.issuerId,
-      limit: 2,
-      namespace: source.sourceNamespace,
-      offset: 0,
-      recordKey: source.sourceRecordId,
-      routeId: source.route.integrationRouteId,
-    },
-    wire.credential,
-    wire.requestCorrelation,
-    wire.options,
-  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-  const [association] = result.associations;
-  return (
-    result.count === 1 &&
-    result.associations.length === 1 &&
-    association !== undefined &&
-    sameRef(association.priceGroupRef, selector.target)
+  const readPage = Effect.fn('SymmyOwnerAdapters.readSourceAssociations')(function* readAssociations(offset: number) {
+    const wire = yield* freshGateway(input, groupContract, true, crypto);
+    const page = yield* executePriceGroupSourceAssociationsWithAuthorization(
+      {
+        issuer: record.issuerId,
+        limit: sourceAssociationPageSize,
+        namespace: record.sourceNamespace,
+        offset,
+        routeId: record.route.integrationRouteId,
+      },
+      wire.credential,
+      wire.requestCorrelation,
+      wire.options,
+    ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+    const next = offset + page.associations.length;
+    return [
+      [page],
+      page.associations.length === 0 || next >= page.count ? Option.none<number>() : Option.some(next),
+    ] as const;
+  });
+  const found = yield* Stream.paginate(0, readPage).pipe(
+    Stream.filter(({ associations }) =>
+      associations.some((association) => sameRef(association.priceGroupRef, priceGroupRef)),
+    ),
+    Stream.runHead,
   );
+  return Option.isSome(found);
+});
+
+/**
+ * A price of the batch route is written only to the list its body named, and only when that list was created
+ * by this route's own source. A REVISE additionally needs the price to be current in that same list.
+ */
+const verifyBatchPriceGroup = Effect.fn('SymmyOwnerAdapters.verifyBatchPriceGroup')(function* batchPriceGroup(
+  input: SymmyEffectAdapterInput,
+  requestIntent: SymmyCatalogPricingInventoryIntent,
+  contract: AdapterContract,
+  crypto: Crypto.Crypto,
+) {
+  if (input.routeKey !== 'priceListPricesBatch' || !Schema.is(listPriceWriteTag)(requestIntent._tag)) {
+    return true;
+  }
+  const requested = requestedPriceGroup(requestIntent);
+  if (Option.isNone(requested) || requested.value.tenantId !== input.effect.ref.occurrence.record.route.tenantId) {
+    return false;
+  }
+  const revised = Match.value(requestIntent).pipe(
+    Match.tag('PriceRevise', ({ payload }) => Option.some(payload.priceRef)),
+    Match.orElse(() => Option.none()),
+  );
+  if (Option.isSome(revised)) {
+    const current = yield* readCurrentPriceGroup(input, revised.value, contract, crypto);
+    if (Option.isNone(current) || !sameRef(current.value, requested.value)) {
+      return false;
+    }
+  }
+  return yield* sourceCreatedPriceGroup(input, requested.value, contract, crypto);
 });
 
 type PriceFromGroupIntent = Extract<
@@ -1612,21 +1641,11 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   contract: AdapterContract,
   crypto: Crypto.Crypto,
 ) {
-  if (
-    input.selector !== undefined ||
-    (input.routeKey !== 'priceListsBatchUpsert' && input.routeKey !== 'priceListPricesBatch') ||
-    !Schema.is(listPriceWriteTag)(intent._tag)
-  ) {
+  if (input.routeKey !== 'priceListsBatchUpsert' || !Schema.is(listPriceWriteTag)(intent._tag)) {
     return true;
   }
-  const requestedGroup = Match.value(intent).pipe(
-    Match.tag('PriceDefine', ({ payload }) => {
-      const selector = payload.identityKey.priceGroupSelector;
-      return selector.kind === 'PRICE_GROUP' ? Option.some(selector.priceGroupRef) : Option.none();
-    }),
-    Match.orElse(() => Option.none()),
-  );
-  if (input.routeKey !== 'priceListsBatchUpsert' || Option.isNone(requestedGroup)) {
+  const requestedGroup = requestedPriceGroup(intent);
+  if (Option.isNone(requestedGroup)) {
     return false;
   }
   // Fresh dependency resolution checked the named parent receipt and current owner source binding.
@@ -1644,6 +1663,20 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   const priceGroupRef = yield* readCreatedPriceGroup(input, dependency.value, contract, crypto);
   return sameRef(priceGroupRef, requestedGroup.value);
 });
+
+const isPriceRevise = Schema.is(Schema.TaggedStruct('PriceRevise', {}));
+const heldPriceReviseCode = Schema.Literals([
+  'price_schedule_absent',
+  'price_schedule_acknowledgement_required',
+  'revise_price_source_held',
+]);
+/**
+ * The owner refuses a revision as a problem, not as a result: a price it does not hold, a change that needs an
+ * acknowledgement it cannot be given, or held source evidence leaves the item unresolved with nothing written, and
+ * any other refusal makes the revision invalid. Neither is retried.
+ */
+const priceReviseRefusalStatus = (error: typeof problemStatus.Type): 'invalid' | 'unresolved' =>
+  Schema.is(Schema.Struct({ code: heldPriceReviseCode }))(error) ? 'unresolved' : 'invalid';
 
 const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(function* commandFailure(
   input: SymmyEffectAdapterInput,
@@ -1663,6 +1696,9 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   if (Schema.is(problemStatus)(error) && error.status === 409) {
     return safeOutcome(input, 'conflict');
   }
+  if (Schema.is(problemStatus)(error) && (error.status === 404 || error.status === 422) && isPriceRevise(intent)) {
+    return safeOutcome(input, priceReviseRefusalStatus(error));
+  }
   return yield* symmyJobWorkerUnavailable(error);
 });
 
@@ -1677,9 +1713,9 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
     if (!input.canExecuteNewEffects) {
       return yield* symmyJobWorkerInvalid();
     }
-    const selectedGroupMatches = yield* verifySelectedPriceGroup(input, intent, contract, crypto);
+    const batchGroupMatches = yield* verifyBatchPriceGroup(input, intent, contract, crypto);
     if (
-      !selectedGroupMatches ||
+      !batchGroupMatches ||
       !(yield* verifyPriceListDependency(input, originalInput.effect, intent, contract, crypto))
     ) {
       return safeOutcome(input, 'unresolved');

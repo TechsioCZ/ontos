@@ -94,7 +94,7 @@ it.effect(
               },
             ],
             selector: {
-              kind: 'PRICE_GROUP',
+              kind: 'CUSTOMER_GROUP',
               source: sourceRef,
               target: {
                 moduleId: 'pricing.price-group-catalog',
@@ -116,7 +116,7 @@ it.effect(
             principalId: scope.principalId,
             routeCode,
             routeId: physicalRouteId,
-            routeKey: 'priceListPricesBatch',
+            routeKey: 'customerGroupCustomersBatch',
             routeRevision: 'physical-1',
             tenantId: scope.tenantId,
           });
@@ -129,7 +129,7 @@ it.effect(
           Effect.gen(function* readContext() {
             const executor = yield* installOperationalScope(transaction, caller);
             const store = yield* symmyJobStoreFactory(executor, caller);
-            const input = { code, routeKey: 'priceListPricesBatch' as const };
+            const input = { code, routeKey: 'customerGroupCustomersBatch' as const };
             if (replayIdempotencyKey !== undefined) {
               Object.assign(input, { replayIdempotencyKey });
             }
@@ -142,13 +142,13 @@ it.effect(
           const selectorScope = {
             ...source,
             routeId: logicalRouteId,
-            selectorKind: 'PRICE_GROUP' as const,
+            selectorKind: 'CUSTOMER_GROUP' as const,
             tenantId: scope.tenantId,
           };
           const code = encodeSymmySourceSelector(selectorScope, source.sourceRecordId, targetId);
           const [native] = yield* admin
             .select({
-              code: sql<string>`symmy_integration.symmy_source_selector_code(${scope.tenantId},${source.issuerId},${source.sourceNamespace},${logicalRouteId},'PRICE_GROUP',${source.sourceRecordId},${targetId})`,
+              code: sql<string>`symmy_integration.symmy_source_selector_code(${scope.tenantId},${source.issuerId},${source.sourceNamespace},${logicalRouteId},'CUSTOMER_GROUP',${source.sourceRecordId},${targetId})`,
             })
             .from(symmyJobRoutes)
             .where(eq(symmyJobRoutes.routeId, physicalRouteId));
@@ -185,7 +185,7 @@ it.effect(
               code: first.routeCode,
               fixtureId: 'selector-fixture',
               idempotencyKey: key,
-              routeKey: 'priceListPricesBatch',
+              routeKey: 'customerGroupCustomersBatch',
             });
           }),
         );
@@ -203,12 +203,12 @@ it.effect(
         principalId: scope.principalId,
         routeCode: first.routeCode,
         routeId: replacementRouteId,
-        routeKey: 'priceListPricesBatch',
+        routeKey: 'customerGroupCustomersBatch',
         routeRevision: 'physical-2',
         tenantId: scope.tenantId,
       });
       const code = encodeSymmySourceSelector(
-        { ...first.source, routeId: logicalRouteId, selectorKind: 'PRICE_GROUP', tenantId: scope.tenantId },
+        { ...first.source, routeId: logicalRouteId, selectorKind: 'CUSTOMER_GROUP', tenantId: scope.tenantId },
         first.source.sourceRecordId,
         targetId,
       );
@@ -237,7 +237,7 @@ it.effect(
       const currentTemplate = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)({
         ...template,
         selector: {
-          kind: 'PRICE_GROUP',
+          kind: 'CUSTOMER_GROUP',
           source: {
             ...currentSource,
             entityKind: 'PriceGroup',
@@ -276,7 +276,7 @@ it.effect(
           ...exact,
           operations: [{ entrypointKey: 'integration.symmy.admit-symmy-job', schemaVersion: '1' }],
           principalId: scope.principalId,
-          routeKey: 'priceListPricesBatch',
+          routeKey: 'customerGroupCustomersBatch',
         }),
       );
       expect(yield* admit(exactScope)).toMatchObject({ inserted: false, jobId: accepted.jobId });
@@ -290,7 +290,7 @@ it.effect(
       ).toMatchObject({ code: 'route_denied' });
 
       const currentCode = encodeSymmySourceSelector(
-        { ...currentSource, routeId: currentSourceRouteId, selectorKind: 'PRICE_GROUP', tenantId: scope.tenantId },
+        { ...currentSource, routeId: currentSourceRouteId, selectorKind: 'CUSTOMER_GROUP', tenantId: scope.tenantId },
         currentSource.sourceRecordId,
         targetId,
       );

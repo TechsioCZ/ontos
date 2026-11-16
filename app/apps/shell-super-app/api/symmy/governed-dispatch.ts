@@ -19,6 +19,7 @@ import {
   SymmyInternalPlanPayloadSchema,
 } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
+import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
 import {
   acquireSymmyReadAssertion,
   mapSymmyOwnerReadProblem,
@@ -77,13 +78,12 @@ type QualifiedSourceSelector = Extract<SymmyDecodedSourceSelector, { readonly _t
 const verifyQualifiedSource = Effect.fn('SymmyGovernedDispatch.verifyQualifiedSource')(function* verifyQualified(
   selector: QualifiedSourceSelector,
   route: typeof SymmyRouteContextResponseSchema.Type,
-  kind: 'PRICE_GROUP' | 'CUSTOMER_GROUP',
 ) {
   const enrolled = route.selector;
   if (enrolled === undefined || enrolled.target === undefined) {
     return yield* unavailable();
   }
-  if (enrolled.kind !== kind) {
+  if (enrolled.kind !== 'CUSTOMER_GROUP') {
     return yield* Effect.fail(forbidden);
   }
   yield* verifySymmySourceSelector(
@@ -103,11 +103,10 @@ const verifyQualifiedSource = Effect.fn('SymmyGovernedDispatch.verifyQualifiedSo
 const verifySelectedSource = (
   selector: SymmyDecodedSourceSelector,
   route: typeof SymmyRouteContextResponseSchema.Type,
-  kind: 'PRICE_GROUP' | 'CUSTOMER_GROUP',
 ) =>
   Match.value(selector).pipe(
     Match.tag('Legacy', ({ code }) => Effect.succeed(code)),
-    Match.tag('Qualified', (qualified) => verifyQualifiedSource(qualified, route, kind)),
+    Match.tag('Qualified', (qualified) => verifyQualifiedSource(qualified, route)),
     Match.exhaustive,
   );
 
@@ -171,6 +170,8 @@ const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[
 /**
  * What a durable job carries besides its key and route. The price lists carry the catalog head read now, as the
  * route enrolls that read: the owner admission fences the first created list on it and ignores it on a replay.
+ * The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
+ * about each REVISE price, which the owner admission uses on the first admission only.
  */
 const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
   request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
@@ -178,6 +179,23 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
   admission: SymmyIngressAdmission,
   newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
 ) {
+  if ('priceBatch' in request) {
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    // The owner price reads need a read scope, which only the price list read route proves. The prices route
+    // borrows it, exactly as GET /price-lists reads the same schedule and source prices.
+    const priceReadScope = acquireScopedRouteContext(admission, { routeKey: 'priceLists' }, newRequestIdentifier).pipe(
+      Effect.map(({ route }) => route),
+    );
+    return {
+      priceBatch: request.priceBatch,
+      reviseFacts: yield* readSymmyPriceBatchFacts(
+        { admission, batch: request.priceBatch, priceReadScope, routeScope: selected.route },
+        newRequestIdentifier,
+      ),
+    };
+  }
   if ('priceLists' in request) {
     if (selected === undefined) {
       return yield* unavailable();
@@ -218,13 +236,7 @@ const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* r
   const prepared = yield* acquireScopedRouteContext(admission, input, newRequestIdentifier);
   const selectedCode =
     selector !== undefined && 'code' in request
-      ? Option.some(
-          yield* verifySelectedSource(
-            selector,
-            prepared.route,
-            request.route === 'priceListPricesBatch' ? 'PRICE_GROUP' : 'CUSTOMER_GROUP',
-          ),
-        )
+      ? Option.some(yield* verifySelectedSource(selector, prepared.route))
       : Option.none<string>();
   return { ...prepared, selectedCode };
 });
@@ -406,6 +418,7 @@ export const makeSymmyGovernedDispatch = (
     const needsRoute =
       Object.hasOwn(SYMMY_FIXTURE_ROUTES, request.route) ||
       'priceLists' in request ||
+      'priceBatch' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;

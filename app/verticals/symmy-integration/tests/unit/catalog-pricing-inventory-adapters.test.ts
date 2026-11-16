@@ -308,20 +308,45 @@ const negativePriceAssessment = Schema.encodeSync(DefinePriceResultSchema)(
     sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
   }),
 );
-const selectedPriceGroup = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
-  items: [{ effects: [priceDefinitionEffect(priceGroupA)], itemId: effect.itemId, itemKey: 'price-item' }],
-  selector: {
-    kind: 'PRICE_GROUP',
-    source: {
-      entityKind: 'PRICE_GROUP',
-      issuerId: 'internal-ebs',
-      route: { integrationRouteId: 'route-1', tenantId },
-      sourceNamespace: 'price-lists',
-      sourceRecordId: 'list-A',
+const priceReviseEffect = (group?: typeof priceGroupA) => {
+  const intent = {
+    _tag: 'PriceRevise',
+    payload: {
+      expectedCurrent: {
+        effectivePeriod: { effectiveFrom: definePriceIntent.payload.effectiveFrom, effectiveTo: null },
+        priceRef,
+        revision: priceRevision.revision,
+        revisionId: priceRevision.revisionId,
+        scheduleRevision: 1,
+      },
+      intent: 'VALUE_ONLY_CURRENT',
+      monetaryAmount: { amount: '30', currencyCode: 'CZK' },
+      priceRef,
+      reason: 'Internal revise proof',
+      sourceAssertion: {
+        ...definePriceIntent.payload.sourceAssertion,
+        lineage: {
+          kind: 'SUPERSESSION',
+          reason: 'Internal revise proof',
+          supersededSourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
+        },
+        originalAssertion: {
+          ...definePriceIntent.payload.sourceAssertion.originalAssertion,
+          monetaryAmount: { amount: '30', currencyCode: 'CZK' },
+        },
+        sourceAssertionId: '10000000-0000-4000-8000-000000000026',
+      },
     },
-    target: priceGroupA,
-  },
-}).selector;
+  };
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...priceDefinitionEffect(priceGroupA),
+    intent: group === undefined ? intent : { ...intent, priceGroupRef: group },
+    ref: {
+      ...priceDefinitionEffect(priceGroupA).ref,
+      operation: { entrypointKey: 'commerce.pricing.revise-price', moduleId: 'commerce.pricing', schemaVersion: '2' },
+    },
+  });
+};
 const priceGroupCreateIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema)({
   _tag: 'PriceGroupCreate',
   payload: {
@@ -493,6 +518,50 @@ const configuration = ConfigProvider.fromEnvRecord({
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 
+interface ReviseProblem {
+  readonly _tag: string;
+  readonly code: string;
+  readonly status: number;
+}
+/** The Pricing owner reads and refusals the batch route adds: the current definition of a price and a REVISE refusal. */
+const pricingOwnerMock = (
+  request: Request,
+  options: { readonly definitionGroup: typeof priceGroupA; readonly reviseProblem: ReviseProblem | undefined },
+): { readonly event: string; readonly response: Response } | undefined => {
+  const { definitionGroup, reviseProblem } = options;
+  if (reviseProblem !== undefined && request.url.includes('/actions/revise-price')) {
+    return {
+      event: 'owner-write',
+      response: Response.json(
+        { ...reviseProblem, detail: 'Internal owner refusal', title: 'Refused', type: 'https://ontos.dev/problems/x' },
+        { headers: { 'content-type': 'application/problem+json' }, status: reviseProblem.status },
+      ),
+    };
+  }
+  return request.url.includes('/reads/price-definition')
+    ? {
+        event: 'owner-price-definition-read',
+        response: Response.json({
+          currentEvidence: {
+            observedAt: '2026-11-07T10:00:02.000Z',
+            priceRef,
+            revision: priceRevision.revision,
+            revisionId: priceRevision.revisionId,
+          },
+          definition: {
+            identityKey: {
+              ...definePriceIntent.payload.identityKey,
+              priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: definitionGroup },
+            },
+            priceRef,
+            revision: priceRevision,
+          },
+          outcome: 'PRICE_DEFINITION_CURRENT',
+        }),
+      }
+    : undefined;
+};
+
 const harness = (
   replay: boolean,
   selectedEffect = effect,
@@ -505,6 +574,8 @@ const harness = (
   },
   groupReceipt?: typeof PriceGroupResultLookupResponseSchema.Encoded,
   variantBindingReceipt?: { readonly changed?: boolean },
+  definitionGroup = priceGroupA,
+  reviseProblem?: ReviseProblem,
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -551,6 +622,11 @@ const harness = (
           offset: 0,
         }),
       );
+    }
+    const pricingMock = pricingOwnerMock(request, { definitionGroup, reviseProblem });
+    if (pricingMock !== undefined) {
+      events.push(pricingMock.event);
+      return Promise.resolve(pricingMock.response);
     }
     if (groupReceipt !== undefined && request.url.includes('/reads/price-group-result-lookup')) {
       events.push('owner-group-recovery');
@@ -1363,57 +1439,119 @@ describe('Symmy native public owner adapter transport', () => {
       );
     },
   );
-  it.effect(
-    'rejects a body Price Group that differs from the trusted code-selected native target before any owner request',
-    () => {
-      const h = harness(false, priceDefinitionEffect(priceGroupB));
-      return h.provide(
-        Effect.gen(function* test() {
-          if (selectedPriceGroup === undefined) {
-            return yield* Effect.die('Missing configured Price Group fixture');
-          }
-          const adapter = yield* h.adapter;
-          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, selector: selectedPriceGroup });
-          expect(outcome.status).toBe('unresolved');
-          expect(h.requests).toHaveLength(0);
-          return yield* Effect.void;
-        }),
-      );
-    },
-  );
-  it.effect('rejects a configured code whose exact source association resolves to another native Price Group', () => {
-    const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupB);
-    return h.provide(
-      Effect.gen(function* test() {
-        if (selectedPriceGroup === undefined) {
-          return yield* Effect.die('Missing configured Price Group fixture');
-        }
-        const adapter = yield* h.adapter;
-        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, selector: selectedPriceGroup });
-        expect(outcome.status).toBe('unresolved');
-        expect(h.events).toEqual(['owner-group-source-read']);
-        expect(h.requests).toHaveLength(2);
-        return yield* Effect.void;
-      }),
-    );
-  });
-  it.effect.each(['priceListsBatchUpsert', 'priceListPricesBatch'] as const)(
-    'rejects a persisted direct Price command without a qualified list binding before owner dispatch',
-    (routeKey) => {
-      const h = harness(false, priceDefinitionEffect(priceGroupB), productId, priceGroupA, false, {
+  it.effect.each([
+    { group: priceGroupA, status: 'accepted_change', writes: 1 },
+    { group: priceGroupB, status: 'unresolved', writes: 0 },
+  ])(
+    'writes a batch Price only to a list this route source created and named by its body',
+    ({ group, status, writes }) => {
+      const h = harness(false, priceDefinitionEffect(group), productId, priceGroupA, false, {
         assessment: canonicalPriceAssessment,
         receipt: originalPriceReceipt('CREATED'),
       });
       return h.provide(
         Effect.gen(function* test() {
           const adapter = yield* h.adapter;
-          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey });
-          expect(outcome.status).toBe('unresolved');
-          expect(h.requests).toHaveLength(0);
+          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+          expect(outcome.status).toBe(status);
+          expect(h.events.filter((event) => event === 'owner-group-source-read')).toHaveLength(1);
+          expect(h.events.filter((event) => event === 'owner-price-write')).toHaveLength(writes);
         }),
       );
     },
   );
+  it.effect.each([
+    { associated: priceGroupA, current: priceGroupB, reason: 'the price is current in another list' },
+    { associated: priceGroupB, current: priceGroupA, reason: 'the named list was not created by this source' },
+  ])('refuses a batch REVISE before any owner write when $reason', ({ associated, current }) => {
+    const h = harness(
+      false,
+      priceReviseEffect(priceGroupA),
+      productId,
+      associated,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      current,
+    );
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.events).not.toContain('owner-write');
+        expect(h.events.filter((event) => event === 'owner-price-definition-read')).toHaveLength(1);
+      }),
+    );
+  });
+  it.effect.each([
+    {
+      _tag: 'RevisePriceActionIneligibleProblem',
+      code: 'revise_price_source_invalid',
+      expected: 'invalid',
+      status: 422,
+    },
+    {
+      _tag: 'RevisePriceActionIneligibleProblem',
+      code: 'revise_price_target_mismatch',
+      expected: 'invalid',
+      status: 422,
+    },
+    {
+      _tag: 'RevisePriceActionIneligibleProblem',
+      code: 'revise_price_source_held',
+      expected: 'unresolved',
+      status: 422,
+    },
+    { _tag: 'RevisePriceActionNotFoundProblem', code: 'price_schedule_absent', expected: 'unresolved', status: 404 },
+  ])('settles a batch REVISE the owner refuses as $code without retrying it', ({ _tag, code, expected, status }) => {
+    const h = harness(
+      false,
+      priceReviseEffect(priceGroupA),
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      { _tag, code, status },
+    );
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+        expect(outcome.status).toBe(expected);
+        expect(h.events.filter((event) => event === 'owner-write')).toHaveLength(1);
+      }),
+    );
+  });
+  it.effect('refuses a batch REVISE whose intent names no price list', () => {
+    const h = harness(false, priceReviseEffect());
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.requests.filter((request) => request.url.includes('/reads/'))).toHaveLength(0);
+      }),
+    );
+  });
+  it.effect('rejects a persisted direct Price command without a qualified list binding before owner dispatch', () => {
+    const h = harness(false, priceDefinitionEffect(priceGroupB), productId, priceGroupA, false, {
+      assessment: canonicalPriceAssessment,
+      receipt: originalPriceReceipt('CREATED'),
+    });
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListsBatchUpsert' });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.requests).toHaveLength(0);
+      }),
+    );
+  });
   it.effect.each([
     { group: priceGroupA, status: 'accepted_change', writes: 1 },
     { group: priceGroupB, status: 'unresolved', writes: 0 },

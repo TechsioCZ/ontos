@@ -46,9 +46,11 @@ const catalogRead = 'commerce.catalog.symmy-product-read';
 const marketRead = 'commerce.market-catalog.source-read';
 const groupModuleId = 'pricing.price-group-catalog';
 const groupAudience = 'price-group-catalog';
+const groupAssociationsRead = 'pricing.price-group-catalog.api.price-group-source-associations';
 const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
 const groupRevisionAction = 'pricing.price-group-catalog.create-price-group-definition-revision';
 const pricingModule = 'commerce.pricing';
+const pricingAudience = 'pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
 const rules = [
@@ -63,7 +65,7 @@ const rules = [
   })),
   ...[definePriceOperation, revisePriceOperation].map((actionKey) => {
     const rule = {
-      audience: 'pricing',
+      audience: pricingAudience,
       declarationKey: 'commerce.pricing.price-source-result-lookup.read',
       entrypointKey: 'commerce.pricing.api.price-source-result-lookup',
       legalEntityScope: 'required' as const,
@@ -74,9 +76,17 @@ const rules = [
     return actionKey === definePriceOperation ? { ...rule, allowHistoricalDeliveryRecovery: true } : rule;
   }),
   {
+    audience: pricingAudience,
+    declarationKey: 'commerce.pricing.price.read-definition',
+    entrypointKey: 'commerce.pricing.api.price-definition',
+    legalEntityScope: 'required' as const,
+    schemaVersion: '1',
+    workloadKey: priceRead,
+  },
+  {
     audience: groupAudience,
     declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+    entrypointKey: groupAssociationsRead,
     legalEntityScope: 'forbidden' as const,
     schemaVersion: '1',
     workloadKey: groupRead,
@@ -106,7 +116,7 @@ const rules = [
     workloadKey: groupWrite,
   },
   {
-    audience: 'pricing',
+    audience: pricingAudience,
     declarationKey: 'commerce.pricing.price.define',
     entrypointKey: definePriceOperation,
     legalEntityScope: 'required' as const,
@@ -114,7 +124,7 @@ const rules = [
     workloadKey: priceWrite,
   },
   {
-    audience: 'pricing',
+    audience: pricingAudience,
     declarationKey: 'commerce.pricing.price.revise',
     entrypointKey: revisePriceOperation,
     legalEntityScope: 'required' as const,
@@ -362,9 +372,17 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
               },
             },
             {
+              effectKey: 'price-schedule-read',
+              operation: {
+                entrypointKey: 'commerce.pricing.api.price-schedule',
+                moduleId: pricingModule,
+                schemaVersion: '1',
+              },
+            },
+            {
               effectKey: 'group-source-read',
               operation: {
-                entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+                entrypointKey: groupAssociationsRead,
                 moduleId: groupModuleId,
                 schemaVersion: '1',
               },
@@ -488,6 +506,35 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     });
     yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
       values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* encodeRoute(configuredPlan)}::jsonb,${internalPricingRouteSource.mappingVersion},'priceListsBatchUpsert',${internalPricingRouteSource.routeRevision},${yield* encodePolicy(lifecyclePolicy)}::jsonb)`;
+    // The prices route enrolls the owner operations it may write with, the read that authorizes a request and the
+    // grant refs of a price assertion. It names no price list: the body does, and the route accepts only lists its
+    // own source created. Its REVISE reads use the scope of the price list read route above.
+    const pricesPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+      items: [
+        enrolled('PRICE', 'price-enrollment', 'INTERNAL_C14_PRICE_ALLOWLIST', {
+          'group-source-associations-read': {
+            entrypointKey: groupAssociationsRead,
+            moduleId: groupModuleId,
+            schemaVersion: '1',
+          },
+          'price-define-authority': {
+            entrypointKey: definePriceOperation,
+            moduleId: pricingModule,
+            schemaVersion: '2',
+          },
+          'price-revise-authority': {
+            entrypointKey: revisePriceOperation,
+            moduleId: pricingModule,
+            schemaVersion: '2',
+          },
+        }),
+      ],
+      priceSource: internalPricingPriceSource,
+      pricingSourceSystem: internalPricingNativeSourceSystem,
+      sourceRouteId,
+    });
+    yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
+      values(${selectedRouteId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* encodeRoute(pricesPlan)}::jsonb,${internalPricingRouteSource.mappingVersion},'priceListPricesBatch',${internalPricingRouteSource.routeRevision},${yield* encodePolicy(lifecyclePolicy)}::jsonb)`;
     return {
       admin,
       at,

@@ -15,7 +15,7 @@ const groupOperation = {
   moduleId: 'pricing.price-group-catalog',
   schemaVersion: '1',
 } as const;
-const priceOperation = {
+export const priceOperation = {
   entrypointKey: 'commerce.pricing.define-price',
   moduleId: 'commerce.pricing',
   schemaVersion: '2',
@@ -24,14 +24,14 @@ const groupEffectKey = 'group-create';
 const priceEffectKey = 'price-define';
 
 /** Every instant the owner receives has the canonical millisecond form, whether or not Symmy sent it. */
-const instant = (value: string): string => DateTime.formatIso(DateTime.makeUnsafe(value));
+export const instant = (value: string): string => DateTime.formatIso(DateTime.makeUnsafe(value));
 
 type TemplateItem = SymmyFixtureExecutionPlan['items'][number];
 /** The template item that enrolls this kind of record together with the exact owner operation. */
-const enrolledItem = (
+export const enrolledItem = (
   template: SymmyFixtureExecutionPlan,
   entityKind: TemplateItem['source']['entityKind'],
-  operation: typeof groupOperation | typeof priceOperation,
+  operation: { readonly entrypointKey: string; readonly moduleId: string; readonly schemaVersion: string },
 ): Option.Option<TemplateItem> =>
   Option.fromNullishOr(
     template.items.find(
@@ -46,11 +46,11 @@ const enrolledItem = (
     ),
   );
 
-type Digest<Failure> = (value: string) => Effect.Effect<string, Failure>;
+export type Digest<Failure> = (value: string) => Effect.Effect<string, Failure>;
 type TemplateSource = Pick<TemplateItem['source'], 'issuerId' | 'sourceNamespace'>;
 
 /** What every price of a request shares: the route enrollment, the selling legal entity and the first admission. */
-interface PriceContext {
+export interface PriceContext {
   readonly legalEntityId: string;
   readonly priceSource: NonNullable<SymmyFixtureExecutionPlan['priceSource']>;
   readonly source: TemplateSource;
@@ -251,12 +251,13 @@ export interface SymmyPriceListPlanInput<Failure> {
   readonly template: SymmyFixtureExecutionPlan;
 }
 
-const priceContextOf = (
+export const priceContextOf = (
   template: SymmyFixtureExecutionPlan,
   legalEntityId: string | undefined,
+  operation: Parameters<typeof enrolledItem>[2] = priceOperation,
 ): Option.Option<PriceContext> => {
   const { priceSource, pricingSourceSystem } = template;
-  const priceItem = enrolledItem(template, 'PRICE', priceOperation);
+  const priceItem = enrolledItem(template, 'PRICE', operation);
   return Option.isSome(priceItem) &&
     legalEntityId !== undefined &&
     priceSource !== undefined &&
