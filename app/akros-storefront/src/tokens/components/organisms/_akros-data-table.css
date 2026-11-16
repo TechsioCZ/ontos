@@ -7,7 +7,7 @@
   --sf-variant-table-border-color: var(--color-base-dark);
   --sf-variant-table-button-font-size: 10px;
   --sf-variant-table-quantity-width: calc(var(--dimension-96) + var(--dimension-32));
-  --sf-variant-table-minimum-button-width: 113px;
+  --sf-variant-table-minimum-button-width: var(--dimension-80);
   --sf-variant-table-package-button-width: 128px;
   --sf-variant-table-package-button-height: 38px;
   --sf-variant-table-package-button-font-size: 13px;
@@ -61,6 +61,8 @@
 
 .sf-variant-table__quantity-control {
   --padding-input-md: var(--dimension-0) var(--dimension-4);
+  --padding-input-inline-sm: var(--dimension-4);
+  --padding-input-inline-md: var(--dimension-4);
   --padding-numeric-input-input-sm: var(--dimension-4);
 }
 

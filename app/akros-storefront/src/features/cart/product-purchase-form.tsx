@@ -404,7 +404,7 @@ export function ProductPurchaseForm({
                   <Table.ColumnHeader
                     className="group/header relative"
                     style={{
-                      width: "9%",
+                      width: "8%",
                       backgroundColor: "var(--color-data-table-bg)",
                       backgroundImage:
                         "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
@@ -417,7 +417,7 @@ export function ProductPurchaseForm({
                   <Table.ColumnHeader
                     className="group/header relative"
                     style={{
-                      width: "12%",
+                      width: "11%",
                       backgroundColor: "var(--color-data-table-bg)",
                       backgroundImage:
                         "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",

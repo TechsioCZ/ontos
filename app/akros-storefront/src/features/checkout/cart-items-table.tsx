@@ -208,6 +208,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
                   <Link
                     as={StoreLink}
                     href={`/produkt/${line.slug}`}
+                    size="current"
                     className="min-w-0 wrap-anywhere text-inherit no-underline"
                   >
                     {formatCartProductName(line.name)}

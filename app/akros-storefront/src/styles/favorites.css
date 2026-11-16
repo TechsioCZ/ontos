@@ -1,15 +1,24 @@
-/* Dialog lacks body/footer slots; this app composition keeps one list scroll area. */
+/* Keep the list scrollable inside Dialog's body wrapper and its actions visible. */
+[data-scope="dialog"][data-part="positioner"]:has(> .sf-favorites-dialog) {
+  --padding-dialog-positioner: var(--dimension-0);
+}
+
 .sf-favorites-dialog {
   width: calc(100% - var(--dimension-32));
   height: min(var(--sf-favorites-height), calc(100dvh - var(--dimension-32)));
   min-height: 0;
   overflow: hidden;
 }
-.sf-favorites-dialog > h2 {
+.sf-favorites-dialog [data-scope="dialog"][data-part="title"] {
   margin: 0;
   padding-inline-end: var(--dimension-44);
 }
-.sf-favorites-dialog > :not(.sf-favorites-table) {
+.sf-favorites-dialog > :has(> .sf-favorites-table) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.sf-favorites-dialog > :has(> .sf-favorites-table) > :not(.sf-favorites-table) {
   flex-shrink: 0;
 }
 .sf-favorites-close {
@@ -110,7 +119,7 @@
     max-height: calc(100dvh - var(--dimension-16));
     padding-bottom: max(var(--sf-favorites-inset), env(safe-area-inset-bottom));
   }
-  .sf-favorites-dialog > div:last-child {
+  .sf-favorites-dialog > :has(> .sf-favorites-total) {
     flex-wrap: wrap;
   }
   .sf-favorites-total {

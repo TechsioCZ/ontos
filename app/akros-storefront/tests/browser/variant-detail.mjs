@@ -118,13 +118,13 @@ try {
     "true",
   );
   await dialog.evaluate((root) => {
-    root.style.setProperty("--container-dialog-center-h-max", "400px");
+    root.style.setProperty("--height-dialog-center-h-max", "400px");
     root.style.setProperty("--container-dialog-center-w-max", "800px");
   });
   const tokenSize = await dialog.boundingBox();
   assert.ok(tokenSize.height <= 401 && Math.abs(tokenSize.width - 800) < 1);
   await dialog.evaluate((root) => {
-    root.style.removeProperty("--container-dialog-center-h-max");
+    root.style.removeProperty("--height-dialog-center-h-max");
     root.style.removeProperty("--container-dialog-center-w-max");
   });
   for (const width of [1920, 1440, 1280, 1024, 768, 767, 390, 320]) {

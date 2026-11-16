@@ -68,7 +68,7 @@ export function ReviewStep() {
             <dt className="grid gap-2">
               <span>{copy.deliveryMethod(getDelivery(draft, methods)?.title ?? "")}</span>
               <span>{getDeliveryLocation(draft)}</span>
-              <Link as={StoreLink} href="/kosik/doprava-platba" className="w-fit">
+              <Link as={StoreLink} href="/kosik/doprava-platba" className="w-fit" size="current">
                 {copy.changeDelivery}
               </Link>
             </dt>

@@ -162,6 +162,7 @@ export function MiniCart() {
             as={StoreLink}
             className="block text-inherit no-underline"
             href="/kosik"
+            size="current"
             onClick={closePreview}
           >
             {!ready ? (
