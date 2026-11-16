@@ -6,7 +6,8 @@
  * ledger of 14 invoices whose 9 payment records already explain every paid amount, which stays byte for byte as it is,
  * revision included. What the migration writes is exactly what `withImportedPaymentRecords` writes for the same ledger.
  * Timestamps Finance reads (date only, no offset, an offset across midnight, a finer fraction) are dated as Finance
- * dates them; a timestamp it cannot convert, a taken record id and a ledger past 5,000 records refuse the whole
+ * dates them; a timestamp it cannot convert, an invoice reference Finance would read back trimmed (a tab, padding),
+ * a taken record id and a ledger past 5,000 records refuse the whole
  * migration, naming the company, before anything is written. A second run changes nothing.
  */
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
@@ -185,6 +186,22 @@ const refusals: readonly { readonly ledger: Ledger; readonly name: string; reado
     name: 'a ledger past 5000 payment records',
     problem: 'cannot become a payment record: the ledger would hold more than 5000 payment records',
   },
+  {
+    ledger: ledger(8, 'tab-only reference', 2, {
+      financialPlanEntries: [],
+      invoices: [invoice(company(8).tenantId, '\t', { paidMinor: 1000, paymentState: 'PARTIALLY_PAID' })],
+    }),
+    name: 'an invoice reference that is only a tab',
+    problem: 'cannot become a payment record: its reference is empty or has surrounding whitespace',
+  },
+  {
+    ledger: ledger(9, 'padded reference', 2, {
+      financialPlanEntries: [],
+      invoices: [invoice(company(9).tenantId, ' invoice-1 ', { paidMinor: 1000, paymentState: 'PARTIALLY_PAID' })],
+    }),
+    name: 'an invoice reference with surrounding spaces',
+    problem: 'invoice  invoice-1  cannot become a payment record: its reference is empty or has surrounding whitespace',
+  },
 ];
 
 const StoredRowsSchema = Schema.Array(
@@ -259,6 +276,10 @@ const loadProbe = Effect.fn('ImportedPaymentRecordsMigration.load')(function* lo
   // No trigger and no function outlives the migration; every check runs before the only write.
   expect(migration).not.toMatch(/CREATE (?:FUNCTION|TRIGGER)/u);
   expect(migration.indexOf('RAISE EXCEPTION')).toBeLessThan(migration.indexOf('UPDATE "finance_billing"'));
+  // Saves wait from before the records are computed until the transaction ends.
+  expect(migration.indexOf('LOCK TABLE "finance_billing"."finance_states" IN SHARE ROW EXCLUSIVE MODE')).toBeLessThan(
+    migration.indexOf('CREATE TEMP TABLE'),
+  );
   expect(migration.match(/UPDATE /gu)?.length).toBe(1);
   // The table becomes the probe.
   const probe = migration.replaceAll('"finance_billing"."finance_states"', PROBE_TABLE);

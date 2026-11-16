@@ -14,7 +14,8 @@
 -- and loses only the IMPORT label. Amounts, totals, payment states and every existing record stay as they are.
 --
 -- Nothing is written unless every changed ledger stays readable by Finance. The migration refuses, naming the tenant,
--- the company and the invoice, when an invoice's `updatedAt` cannot be read as an instant here, when the new record's
+-- the company and the invoice, when an invoice's `updatedAt` cannot be read as an instant here, when its reference is
+-- empty or has surrounding whitespace (Finance trims it as JavaScript trims), when the new record's
 -- id is already taken (by an existing record or by another invoice with the same reference), when the id or the invoice
 -- reference is not a Finance text, or when the ledger would hold more than 5,000 payment records. Parts of a ledger
 -- Finance itself cannot read (a list that is not a list, an amount that is not a whole number, an invoice without its
@@ -23,6 +24,10 @@
 -- wait, and every later write would queue behind it: fail the deploy fast instead. The migrator then fails, the new
 -- container does not publish, the old release keeps serving, and the next deploy runs it again.
 SET LOCAL lock_timeout = '5s';--> statement-breakpoint
+-- No ledger changes between computing the records and writing them: saves wait for this transaction (reads do not).
+-- When the lock is not granted within the timeout, this statement fails, the migration writes nothing and the deploy
+-- fails before the new release publishes.
+LOCK TABLE "finance_billing"."finance_states" IN SHARE ROW EXCLUSIVE MODE;--> statement-breakpoint
 -- Finance reads an instant without an offset as UTC, and so does every conversion below.
 SET LOCAL TIME ZONE 'UTC';--> statement-breakpoint
 CREATE TEMP TABLE "finance_imported_payments" ON COMMIT DROP AS
@@ -77,7 +82,9 @@ CREATE TEMP TABLE "finance_imported_payments" ON COMMIT DROP AS
   SELECT "tenant_id", "legal_entity_id", position, resource_id, amount_minor, paid_at,
          resource_id || ':import' AS record_id,
          jsonb_array_length(payments) AS existing_records,
-         coalesce((SELECT array_agg(payment ->> 'id') FROM jsonb_array_elements(payments) AS listed(payment)),
+         -- Finance trims every stored id as JavaScript trims; the ids are compared as Finance reads them.
+         coalesce((SELECT array_agg(btrim(payment ->> 'id', E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'))
+                     FROM jsonb_array_elements(payments) AS listed(payment)),
                   '{}'::text[]) AS existing_ids,
          jsonb_build_object(
            'amountMinor', amount_minor,
@@ -97,10 +104,13 @@ DO $$
       INTO refusal
       FROM (SELECT imported."tenant_id", imported."legal_entity_id", imported.resource_id, imported.position,
                    CASE
-                     WHEN imported.paid_at IS NULL THEN 'its updatedAt cannot be read as an instant'
-                     WHEN char_length(btrim(imported.resource_id)) NOT BETWEEN 1 AND 500
-                          OR char_length(imported.record_id) > 500
+                     -- A reference is written only as Finance would read it back: trimmed as JavaScript trims.
+                     WHEN btrim(imported.resource_id, E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') <> imported.resource_id
+                          OR btrim(imported.resource_id, E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF') = ''
+                       THEN 'its reference is empty or has surrounding whitespace'
+                     WHEN char_length(imported.record_id) > 500
                        THEN 'its reference makes no readable payment record id'
+                     WHEN imported.paid_at IS NULL THEN 'its updatedAt cannot be read as an instant'
                      WHEN imported.record_id = ANY (imported.existing_ids)
                        THEN 'a payment record already has the id ' || imported.record_id
                      WHEN count(*) OVER (PARTITION BY imported."tenant_id", imported."legal_entity_id",

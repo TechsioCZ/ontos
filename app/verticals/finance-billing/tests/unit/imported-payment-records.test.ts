@@ -219,6 +219,22 @@ describe('imported payment records', () => {
       }),
   );
 
+  it.effect('refuses an invoice reference Finance would read back trimmed', () =>
+    Effect.gen(function* refusesPaddedReferences() {
+      const padded = yield* Effect.flip(
+        withImportedPaymentRecords(ledger([invoice(' invoice-1 ', { paidMinor: 100_000, paymentState: 'PAID' })])),
+      );
+      expect([padded.invoice, padded.problem]).toEqual([
+        ' invoice-1 ',
+        'its reference is empty or has surrounding whitespace',
+      ]);
+      const tab = yield* Effect.flip(
+        withImportedPaymentRecords(ledger([invoice('\t', { paidMinor: 100_000, paymentState: 'PAID' })])),
+      );
+      expect(tab.problem).toBe('its reference is empty or has surrounding whitespace');
+    }),
+  );
+
   it.effect('takes a ledger up to 5000 payment records and refuses one more', () =>
     Effect.gen(function* refusesTooMany() {
       const recorded = Array.from({ length: 4999 }, (_, index) => payment(`user-${index}`, 'settled', 1, '2026-09-01'));

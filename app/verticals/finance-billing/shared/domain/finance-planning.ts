@@ -174,6 +174,16 @@ export const withImportedPaymentRecords = Effect.fn('Finance.withImportedPayment
       return state;
     }
     // The refusals of the Finance migration `imported-payment-records`, so a seed never writes what it would refuse.
+    // A reference becomes a record id only as Finance reads it back: trimmed as JavaScript trims.
+    const padded = unrecorded.find(
+      (record) => record.invoiceResourceId.trim() !== record.invoiceResourceId || record.invoiceResourceId === '',
+    );
+    if (padded !== undefined) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: padded.invoiceResourceId,
+        problem: 'its reference is empty or has surrounding whitespace',
+      });
+    }
     const takenIds = new Set(existing.map((payment) => payment.id));
     const taken = unrecorded.find((record) => takenIds.has(record.id));
     if (taken !== undefined) {
