@@ -430,3 +430,115 @@ it.effect(
       return yield* Effect.void;
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
 );
+
+it.effect('polls items[n] as request item n when a customer plans a contact item of its own', () =>
+  Effect.gen(function* verifyRequestOrder() {
+    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const admin = yield* openDatabase(connections.admin.connectionString);
+    const tenantId = crypto.randomUUID();
+    const scope = makeScope(tenantId, crypto.randomUUID());
+    const routeId = crypto.randomUUID();
+    yield* Effect.addFinalizer(() =>
+      admin
+        .delete(symmyJobEffects)
+        .where(eq(symmyJobEffects.tenantId, tenantId))
+        .pipe(
+          Effect.andThen(admin.delete(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId))),
+          Effect.andThen(admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId))),
+          Effect.orDie,
+        ),
+    );
+    const planItem = (itemKey: string, effectKey: string) => ({
+      effects: [
+        {
+          effectKey,
+          operation: {
+            entrypointKey: 'integration.symmy.fixture-effect',
+            moduleId: 'integration.symmy',
+            schemaVersion: '1',
+          },
+          originalTarget: {
+            moduleId: 'integration.symmy',
+            resourceId: crypto.randomUUID(),
+            resourceType: 'integration.symmy.fixture-target',
+            tenantId,
+          },
+        },
+      ],
+      itemKey,
+      source: {
+        entityKind: 'customer',
+        issuerId: 'internal-issuer',
+        sourceNamespace: 'internal-fixtures',
+        sourceRecordId: itemKey,
+      },
+    });
+    // Two customers, the first with a contact: the plan has three items, the request has two.
+    const fixturePlan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+      items: [
+        planItem('customer-0', 'party-create'),
+        planItem('contact-0-0', 'contact-add'),
+        planItem('customer-1', 'party-create'),
+      ],
+    });
+    yield* admin.insert(symmyJobRoutes).values({
+      active: true,
+      fixtureIds: ['internal-order'],
+      fixturePlan,
+      mappingVersion: 'mapping-original',
+      principalId: scope.principalId,
+      routeId,
+      routeKey: 'productsBatch',
+      routeRevision: 'route-original',
+      tenantId,
+    });
+    const scoped = <A, E>(run: (admission: AdmissionStore, execution: ExecutionStore) => Effect.Effect<A, E>) =>
+      withScopedStores(connections.runtime.connectionString, scope, run);
+    const admitted = yield* scoped((admission) =>
+      admission.admit({ fixtureId: 'internal-order', idempotencyKey: 'internal-order-key', routeKey: 'productsBatch' }),
+    );
+    const job = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(admitted.jobId)));
+    const [customer, contact, second] = job.plan.items;
+    if (customer === undefined || contact === undefined || second === undefined) {
+      return yield* Effect.die('the three plan items must exist');
+    }
+    const waiting = Option.getOrThrow(yield* scoped((admission) => admission.poll(admitted.jobId)));
+    expect(waiting.items.map(({ itemId }) => itemId)).toEqual([customer.itemId, second.itemId]);
+    expect(waiting.items.map(({ effects }) => effects.map(({ status }) => status))).toEqual([
+      ['waiting', 'waiting'],
+      ['waiting'],
+    ]);
+    const settle = (effectId: string, status: 'accepted_change' | 'denied') =>
+      Effect.gen(function* settleEffect() {
+        const token = crypto.randomUUID();
+        const claim = yield* scoped((_admission, execution) => execution.claim(job.jobId, effectId, token));
+        const outcome = Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)(
+          status === 'denied'
+            ? { owner: 'integration.symmy', status }
+            : { effectId, owner: 'integration.symmy', status },
+        );
+        expect(
+          yield* scoped((_admission, execution) =>
+            execution.settle(job.jobId, effectId, token, claim.version, outcome),
+          ),
+        ).toBe(true);
+      });
+    const [customerEffect] = customer.effects;
+    const [contactEffect] = contact.effects;
+    const [secondEffect] = second.effects;
+    if (customerEffect === undefined || contactEffect === undefined || secondEffect === undefined) {
+      return yield* Effect.die('every plan item has an effect');
+    }
+    yield* settle(customerEffect.ref.effectId, 'accepted_change');
+    yield* settle(contactEffect.ref.effectId, 'denied');
+    yield* settle(secondEffect.ref.effectId, 'accepted_change');
+    const settled = Option.getOrThrow(yield* scoped((admission) => admission.poll(admitted.jobId)));
+    expect(settled.phase).toBe('completed_partial');
+    expect(settled.items.map(({ itemId }) => itemId)).toEqual([customer.itemId, second.itemId]);
+    expect(settled.items.map(({ effects }) => effects.map(({ status }) => status))).toEqual([
+      ['accepted_change', 'denied'],
+      ['accepted_change'],
+    ]);
+    return yield* Effect.void;
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);

@@ -365,7 +365,9 @@ it.live(
         ]);
         const existingStatus = yield* jobStatus(fixture, existing.jobId);
         expect(existingStatus.status).toBe('completed_all');
-        expect(existingStatus.items.map(({ outcome }) => outcome)).toEqual(['accepted', 'accepted', 'accepted']);
+        // One customer in the request is one item, whatever contacts and addresses the plan binds beside it.
+        expect(existingStatus.items.map(({ outcome }) => outcome)).toEqual(['accepted']);
+        expect(existingStatus.items[0]?.effects).toHaveLength(4);
         const [contacts] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from party.party_contact_points
@@ -395,14 +397,10 @@ it.live(
         expect(yield* savedAddresses(fixture)).toEqual([streetOf(billingStreet), streetOf(deliveryStreet)]);
         const resendStatus = yield* jobStatus(fixture, resend.jobId);
         expect(resendStatus.status).toBe('completed_partial');
-        expect(sortedStrings(resendStatus.items.map(({ outcome }) => outcome))).toEqual([
-          'accepted',
-          'accepted',
-          'not_accepted',
-        ]);
+        expect(resendStatus.items.map(({ outcome }) => outcome)).toEqual(['partial']);
         // The address sent again is the same source record: the owner refuses it and the job goes on.
         expect(
-          resendStatus.items.flatMap(({ effects, outcome }) => (outcome === 'not_accepted' ? effects : [])),
+          resendStatus.items.flatMap(({ effects }) => effects.filter(({ status }) => status === 'conflict')),
         ).toEqual([{ status: 'conflict' }]);
 
         // No address without its customer: a customer the Party owner cannot match or create (its name belongs to
@@ -415,11 +413,8 @@ it.live(
         const ambiguousRows = yield* settle(fixture, worker, ambiguous.jobId, 5);
         const ambiguousStatus = yield* jobStatus(fixture, ambiguous.jobId);
         expect(ambiguousStatus.status).toBe('completed_partial');
-        expect(sortedStrings(ambiguousStatus.items.map(({ outcome }) => outcome))).toEqual([
-          'accepted',
-          'not_accepted',
-          'not_accepted',
-        ]);
+        // items[n] is customers[n]: the ambiguous customer first, its sibling second.
+        expect(ambiguousStatus.items.map(({ outcome }) => outcome)).toEqual(['not_accepted', 'accepted']);
         const dependents = ambiguousStatus.items.flatMap(({ effects, outcome }) =>
           outcome === 'not_accepted' ? effects.map(({ status }) => status) : [],
         );
@@ -463,7 +458,7 @@ it.live(
         expect(createdRows.map(({ state }) => state)).toEqual(['settled', 'settled', 'settled']);
         const createdStatus = yield* jobStatus(fixture, created.jobId);
         expect(createdStatus.status).toBe('completed_all');
-        expect(createdStatus.items.map(({ outcome }) => outcome)).toEqual(['accepted', 'accepted']);
+        expect(createdStatus.items.map(({ outcome }) => outcome)).toEqual(['accepted']);
         expect(yield* ownerCounts(fixture)).toEqual([{ parties: 3, profiles: 3 }]);
         expect(yield* savedAddresses(fixture)).toEqual([
           streetOf(billingStreet),

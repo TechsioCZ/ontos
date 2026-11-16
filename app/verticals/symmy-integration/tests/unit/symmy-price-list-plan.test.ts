@@ -7,6 +7,7 @@ import { AdmitSymmyJobPayloadSchema } from '../../shared/domain/symmy-job-admiss
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
+import { symmyRequestItemKey } from '../../src/persistence/symmy-job-execution-store.ts';
 import { buildSymmyPriceListPlan } from '../../src/persistence/symmy-price-list-plan.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -189,6 +190,13 @@ describe('Symmy price list plan from the public rows', () => {
       expect(plan.items.map(({ itemKey }) => itemKey)).toEqual([
         'price-list-0',
         'price-list-0-price-0',
+        'price-list-1',
+        'price-list-2',
+      ]);
+      // The poll folds a price item back into its list: items[n] is list n.
+      expect(plan.items.map(({ itemKey }) => symmyRequestItemKey(itemKey))).toEqual([
+        'price-list-0',
+        'price-list-0',
         'price-list-1',
         'price-list-2',
       ]);

@@ -8,6 +8,7 @@ import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-e
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyPartyCommerceIntentSchema } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { buildSymmyCustomerPlan } from '../../src/persistence/symmy-customer-plan.ts';
+import { symmyRequestItemKey } from '../../src/persistence/symmy-job-execution-store.ts';
 
 type PlanItem = SymmyFixtureExecutionPlan['items'][number];
 type PlanEffect = PlanItem['effects'][number];
@@ -217,6 +218,12 @@ describe('Symmy customer plan from the public rows', () => {
         { effects: ['party-create', 'retail-profile'], itemKey: 'customer-0' },
         { effects: ['contact-add'], itemKey: 'contact-0-0' },
         { effects: ['contact-add'], itemKey: 'contact-0-1' },
+      ]);
+      // The poll folds the contact items back into the customer: items[n] is request item n.
+      expect(plan.items.map(({ itemKey }) => symmyRequestItemKey(itemKey))).toEqual([
+        'customer-0',
+        'customer-0',
+        'customer-0',
       ]);
       const [customer, first, second] = plan.items;
       const [contact] = first?.effects ?? [];
