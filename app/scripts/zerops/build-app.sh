@@ -6,6 +6,7 @@
 #
 #   ONTOS_PUBLIC_ORIGIN=https://… ONTOS_STOREFRONT_ORIGIN=https://… sh scripts/zerops/build-app.sh [unit ...]
 #   … sh scripts/zerops/build-app.sh --digests-only <file>      (the unit identity table only)
+#   … sh scripts/zerops/build-app.sh --outbox-host              (the Outbox Worker host only, from built units)
 #
 # Browser assets are served by the host under /_m/<appId>/, so every unit's public URL is that prefix on the one
 # public origin. The AKROS storefront origin is baked into the bundles that link to it or load its product images.
@@ -40,8 +41,13 @@ all_units="shell-super-app $(node -e 'for (const m of require("./topology/applic
 # --digests-only <file> writes the unit identity table below and builds nothing (zerops-stage.yml's unit_identities job:
 # the same environment and the same table as a build, so a build shard can prove its cached units still match).
 digests_out=''
+host_only=''
 if [ "${1:-}" = --unit ]; then
   units="$2"
+elif [ "${1:-}" = --outbox-host ]; then
+  # The Zerops build runs this beside the release pack (scripts/zerops/pack-app-release.sh), once every unit is built.
+  host_only=yes
+  units="$all_units"
 elif [ "${1:-}" = --digests-only ]; then
   digests_out="${2:?usage: build-app.sh --digests-only <file>}"
   units="$all_units"
@@ -136,6 +142,7 @@ fi
 
 started_all="$(date +%s)"
 pending=''
+[ -z "$host_only" ] || units=''
 for unit in $units; do
   status=0
   keep_unit "$unit" || status=$?
@@ -161,11 +168,12 @@ if [ -n "$pending" ]; then
     exit 1
   fi
 fi
-echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(date +%s) - started_all))s"
+[ -n "$host_only" ] || echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(date +%s) - started_all))s"
 
 # The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
-# with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
-if [ "$units" = "$all_units" ]; then
+# with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs). Only
+# --outbox-host builds it, so the release pack can run beside it.
+if [ -n "$host_only" ]; then
   worker_cache="$unit_cache/outbox-worker-host"
   worker_runtime='.zerops/runtime/outbox-worker-host'
   worker_digest=''

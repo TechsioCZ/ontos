@@ -193,7 +193,10 @@ it('runs the whole application in the app container through native Node, from th
   // before that unchanged start command, on every container start (scripts/zerops/unpack-app-release.sh).
   expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['.zerops-release']);
   const buildCommands = serviceStrings(app, ['build', 'buildCommands']);
-  expect(buildCommands.at(-1)).toBe('sh app/scripts/zerops/pack-app-release.sh');
+  // The Outbox Worker host builds beside the pack (build-app.sh --outbox-host); app-release.test.mts runs both.
+  expect(buildCommands.at(-1)).toBe(
+    "sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'",
+  );
   // The tree without its left-out packages is proven before the pack (prove-app-runtime.test.mts runs the proof).
   expect(buildCommands.at(-2)).toBe('cd app && node scripts/zerops/prove-app-runtime.mts');
   expect(buildCommands.indexOf('cd app && sh scripts/zerops/build-app.sh')).toBeLessThan(buildCommands.length - 2);
@@ -202,9 +205,10 @@ it('runs the whole application in the app container through native Node, from th
   expect(serviceStrings(app, ['run', 'initCommands'])).toStrictEqual([APP_RELEASE_UNPACK]);
   const pack = readFileSync(new URL('../zerops/pack-app-release.sh', import.meta.url), 'utf-8');
   expect(pack).toContain("list='app/scripts/zerops/app-runtime-paths.txt'");
-  expect(pack).toContain('archive="$release/app.tar.zst"');
+  expect(pack).toContain('pack app "$@" $main_paths');
+  expect(pack).toContain('pack outbox-worker-host "$host"');
   // Packed beside and renamed in; tar's status and the digest are checked (app-release.test.mts runs the failures).
-  expect(pack).toContain(String.raw`printf '%s\n' "$digest" >"$staging/app.tar.zst.sha256"`);
+  expect(pack).toContain(String.raw`printf '%s\n' "$digest" >"$staging/$name.tar.zst.sha256"`);
   expect(pack).toContain('mv "$staging" "$release"');
   expect(pack).toContain('cp app/scripts/zerops/unpack-app-release.sh "$staging/unpack.sh"');
   const unpack = readFileSync(new URL('../zerops/unpack-app-release.sh', import.meta.url), 'utf-8');
@@ -213,7 +217,7 @@ it('runs the whole application in the app container through native Node, from th
     'if ! actual="$(sha256sum "$archive")"; then',
     'if ! { zstd -q -dc "$archive"; echo "$?" >"$status"; } | tar --extract --file - -C "$scratch" ||',
     'mv "$scratch/app" app',
-    'rm -rf app.previous "$scratch" "$archive"',
+    'rm -rf app.previous "$scratch"\nremove_archives',
   ].map((line) => unpack.lastIndexOf(line));
   expect(order.every((index) => index > -1)).toBe(true);
   expect(order.toSorted((left, right) => left - right)).toStrictEqual(order);

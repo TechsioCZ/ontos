@@ -23,6 +23,9 @@ const UNPACK = 'unpack-app-release.sh';
 const HOST = 'app/scripts/zerops/app-host.mts';
 const RELEASE = '.zerops-release';
 const ARCHIVE = `${RELEASE}/app.tar.zst`;
+const HOST_ARCHIVE = `${RELEASE}/outbox-worker-host.tar.zst`;
+const WORKER = 'app/.zerops/runtime/outbox-worker-host/worker.mjs';
+const STAGING = 'app/.zerops/release.next';
 const STAMP = 'app/.zerops-release-digest';
 const LINK = 'app/node_modules/effect';
 const BUILD_PREFIX = 'app-release-build-';
@@ -56,6 +59,7 @@ const buildTree = (root: string) =>
     yield* fs.symlink('.pnpm/effect@4.0.7/node_modules/effect', path.join(root, LINK));
     yield* fs.makeDirectory(path.join(root, 'app/scripts/zerops'), { recursive: true });
     yield* fs.writeFileString(path.join(root, HOST), 'export {};\n');
+    yield* fs.writeFileString(path.join(root, WORKER), 'export {};\n');
     yield* fs.writeFileString(
       path.join(root, 'app/scripts/zerops/app-runtime-paths.txt'),
       yield* fs.readFileString(RUNTIME_PATHS),
@@ -100,19 +104,24 @@ it.live('packs every runtime path and unpacks it whole into app/, then keeps it 
     expect((yield* fs.readDirectory(path.join(www, RELEASE))).toSorted()).toEqual([
       'app.tar.zst',
       'app.tar.zst.sha256',
+      'outbox-worker-host.tar.zst',
+      'outbox-worker-host.tar.zst.sha256',
       'unpack.sh',
     ]);
     const digest = (yield* fs.readFileString(path.join(www, `${ARCHIVE}.sha256`))).trim();
+    const hostDigest = (yield* fs.readFileString(path.join(www, `${HOST_ARCHIVE}.sha256`))).trim();
     const first = yield* run(www, `${RELEASE}/unpack.sh`);
     expect(first.status, first.stderr).toBe(0);
-    expect(first.stdout).toContain(`unpacked app release ${digest} in`);
+    expect(first.stdout).toContain(`unpacked app release ${digest} with its Outbox Worker host in`);
     for (const entry of yield* runtimePaths) {
       expect(yield* fs.exists(path.join(www, entry)), entry).toBe(true);
     }
     expect(yield* fs.readLink(path.join(www, LINK))).toBe('.pnpm/effect@4.0.7/node_modules/effect');
-    expect((yield* fs.readFileString(path.join(www, STAMP))).trim()).toBe(digest);
+    expect(yield* fs.readFileString(path.join(www, STAMP))).toBe(`${digest}\n${hostDigest}\n`);
+    expect(yield* fs.exists(path.join(www, WORKER))).toBe(true);
     // The archive is not held twice on disk; the scratch directory is gone.
     expect(yield* fs.exists(path.join(www, ARCHIVE))).toBe(false);
+    expect(yield* fs.exists(path.join(www, HOST_ARCHIVE))).toBe(false);
     expect(yield* fs.exists(path.join(www, '.zerops-release-unpack'))).toBe(false);
     // The build, lint and test tools stay out; everything else of the store ships.
     for (const store of LEFT_OUT) {
@@ -156,7 +165,15 @@ it.live('refuses an archive whose digest differs, and a start with neither an ar
     yield* fs.remove(path.join(www, ARCHIVE));
     const missing = yield* run(www, `${RELEASE}/unpack.sh`);
     expect(missing.status).toBe(1);
-    expect(missing.stderr).toContain('no archive and no complete tree to start from');
+    expect(missing.stderr).toContain('no app.tar.zst and no complete tree to start from');
+    // The host archive is checked like the tree's.
+    const other = yield* packedRuntime;
+    yield* fs.writeFileString(path.join(other, `${HOST_ARCHIVE}.sha256`), `${'0'.repeat(64)}\n`);
+    const corruptHost = yield* run(other, `${RELEASE}/unpack.sh`);
+    expect(corruptHost.status).toBe(1);
+    expect(corruptHost.stderr).toContain('archive outbox-worker-host.tar.zst digest');
+    expect(corruptHost.stderr).toContain('refusing to unpack');
+    expect(yield* fs.exists(path.join(other, 'app'))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -250,7 +267,7 @@ it.live('fails the build and writes no release when tar or the digest fails in t
   Effect.gen(function* packFailures() {
     const fs = yield* FileSystem.FileSystem;
     for (const [label, tool, body, reason] of [
-      ['failing tar', 'tar', 'echo "tar: broken" >&2\nexit 2', 'could not be packed (tar status 2)'],
+      ['failing tar', 'tar', 'echo "tar: broken" >&2\nexit 2', 'could not be packed into app.tar.zst (tar status 2)'],
       ['failing sha256sum', 'sha256sum', 'exit 1', 'the app release digest could not be computed'],
       ['empty sha256sum', 'sha256sum', 'echo "  $1"', "the app release digest '' is not a SHA-256"],
     ] as const) {
@@ -260,7 +277,58 @@ it.live('fails the build and writes no release when tar or the digest fails in t
       expect(packed.status, label).toBe(1);
       expect(packed.stderr, label).toContain(reason);
       expect(yield* fs.exists(path.join(build, RELEASE)), label).toBe(false);
-      expect(yield* fs.exists(path.join(build, `${RELEASE}.next`)), label).toBe(false);
+      expect(yield* fs.exists(path.join(build, STAGING)), label).toBe(false);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const runPack = (cwd: string, command: readonly string[]) =>
+  collectToolingProcess(ChildProcess.make('sh', [`app/scripts/zerops/${PACK}`, ...command], { cwd, extendEnv: true }));
+
+const archiveMembers = (archive: string) =>
+  Effect.gen(function* listMembers() {
+    const listed = yield* collectToolingProcess(ChildProcess.make('tar', ['--list', '--zstd', '--file', archive]));
+    expect(listed.status, listed.stderr).toBe(0);
+    return listed.stdout.split('\n').filter((line) => line !== '');
+  });
+
+it.live('builds the Outbox Worker host beside the pack and ships it as its own archive', () =>
+  Effect.gen(function* hostBeside() {
+    const fs = yield* FileSystem.FileSystem;
+    const build = yield* fs.makeTempDirectoryScoped({ prefix: BUILD_PREFIX });
+    yield* buildTree(build);
+    yield* fs.remove(path.join(build, 'app/.zerops/runtime/outbox-worker-host'), { recursive: true });
+    // The host appears only after the pack started, as a real build would make it.
+    const packed = yield* runPack(build, [
+      'sh',
+      '-c',
+      `sleep 1; mkdir -p ${path.dirname(WORKER)} && echo 'export {};' >${WORKER}`,
+    ]);
+    expect(packed.status, packed.stderr).toBe(0);
+    expect(packed.stdout).toContain(`packed the Outbox Worker host into ${HOST_ARCHIVE}`);
+    const tree = yield* archiveMembers(path.join(build, ARCHIVE));
+    expect(tree.some((member) => member.includes('.zerops/runtime/outbox-worker-host'))).toBe(false);
+    expect(tree).toContain(HOST);
+    expect(yield* archiveMembers(path.join(build, HOST_ARCHIVE))).toContain(WORKER);
+    expect(yield* fs.exists(path.join(build, STAGING))).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live('releases nothing when the Outbox Worker host build fails or leaves no worker', () =>
+  Effect.gen(function* hostFails() {
+    const fs = yield* FileSystem.FileSystem;
+    for (const [label, command, reason] of [
+      ['failing build', ['sh', '-c', 'exit 7'], 'the Outbox Worker host build failed'],
+      ['no worker', ['true'], 'the Outbox Worker host build left no'],
+    ] as const) {
+      const build = yield* fs.makeTempDirectoryScoped({ prefix: BUILD_PREFIX });
+      yield* buildTree(build);
+      yield* fs.remove(path.join(build, 'app/.zerops/runtime/outbox-worker-host'), { recursive: true });
+      const packed = yield* runPack(build, command);
+      expect(packed.status, label).toBe(1);
+      expect(packed.stderr, label).toContain(reason);
+      expect(yield* fs.exists(path.join(build, RELEASE)), label).toBe(false);
+      expect(yield* fs.exists(path.join(build, STAGING)), label).toBe(false);
     }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

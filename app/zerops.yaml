@@ -162,10 +162,11 @@ zerops:
         # The pack leaves out the installed build, lint and test tools (scripts/zerops/app-runtime-excluded-packages.txt).
         # This proves the runtime tree complete without them first; a finding fails the build, so nothing deploys.
         - cd app && node scripts/zerops/prove-app-runtime.mts
-        # One compressed archive of the runtime tree, not the tree file by file (858.8 MiB moved in 176 s, 2026-11-15).
-        - sh app/scripts/zerops/pack-app-release.sh
-      # The runtime tree (scripts/zerops/app-runtime-paths.txt) as one archive with its digest and its unpack step;
-      # run.initCommands unpacks it to app/ before the start command.
+        # Compressed archives of the runtime tree, not the tree file by file (858.8 MiB moved in 176 s, 2026-11-15). The
+        # Outbox Worker host builds while the rest of the tree packs; its runtime is packed on its own once built.
+        - sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'
+      # The runtime tree (scripts/zerops/app-runtime-paths.txt) as two archives (the tree, the Outbox Worker host) with
+      # their digests and the unpack step; run.initCommands unpacks both to app/ before the start command.
       deployFiles:
         - .zerops-release
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
