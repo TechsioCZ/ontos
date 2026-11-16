@@ -163,9 +163,9 @@ jobs:
         working-directory: app
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
-          # Only a candidate/* dispatch without force-ci-full narrows the gates to the changed owners (the candidate step
-          # sets a base only then). Pull requests, merge groups and trunk pushes always run the complete suite.
-          APPLY_AFFECTED: ${{ steps.candidate.outputs.base != '' && 'true' || 'false' }}
+          # A candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates to the changed
+          # owners and their consumers. Pull requests, merge groups and pushes to main still run the complete suite.
+          APPLY_AFFECTED: ${{ (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm')) && 'true' || 'false' }}
         run: |
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
