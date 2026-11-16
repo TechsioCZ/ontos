@@ -10,8 +10,18 @@ import type { CustomerProfileSourceItem } from '@app/commerce-customer-context/a
 import { CustomerProfileSourcePageRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source-page';
 import type { CustomerProfileSourcePageResponse } from '@app/commerce-customer-context/api/customer-profile-source-page';
 import { executeCustomerProfileSourcePageWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source-page/client';
+import {
+  CUSTOMER_PROFILE_SOURCE_PARTIES_MAX,
+  CustomerProfileSourcePartiesRequestSchema,
+} from '@app/commerce-customer-context/api/customer-profile-source-parties';
+import { executeCustomerProfileSourcePartiesWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source-parties/client';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import {
+  SOURCE_PARTY_SEARCH_MAX_TERMS,
+  SourcePartySearchRequestSchema,
+} from '@app/party-registry/apis/source-party-search';
+import { executeSourcePartySearchWithAuthorization } from '@app/party-registry/apis/source-party-search/client';
 import { SourceProfileExportRequestSchema } from '@app/party-registry/apis/source-profile-export';
 import { executeSourceProfileExportWithAuthorization } from '@app/party-registry/apis/source-profile-export/client';
 import { OrganizationBusinessNameExportRequestSchema } from '@app/party-registry/apis/organization-business-name-export';
@@ -67,8 +77,11 @@ export const priceGroupCatalogAudience = 'price-group-catalog';
 const customerContextModule = 'commerce.customer-context';
 const customerContextAudience = 'commerce-customer-context';
 const partyModule = 'party.registry';
+const partyAudience = 'party-registry';
 const partyProfileRead = 'party.registry.api.source-profile-export';
 const organizationNameRead = 'party.registry.api.organization-business-name-export';
+const partySearchRead = 'party.registry.api.source-party-search';
+const customerPartiesRead = 'commerce.customer-context.api.customer-profile-source-parties';
 const personalIcoReadKey = 'commerce.customer-context.api.customer-profile-ico';
 const organizationIcoReadKey = 'commerce.customer-context.api.organization-customer-profile-ico';
 type IcoAuthority = NonNullable<CustomerProfileSourceItem['icoAuthority']>;
@@ -346,7 +359,7 @@ const readCustomerParty = Effect.fn('SymmyReadProjection.customerParty')(functio
     partyRef: item.partyRef,
     sourceReference: item.partySourceReference,
   }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'party-registry', scope.legalEntityId);
+  const assertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
   const result = yield* executeSourceProfileExportWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,
@@ -378,7 +391,7 @@ const readOrganizationName = Effect.fn('SymmyReadProjection.organizationName')(f
     partyRef: item.partyRef,
     sourceReference: item.partySourceReference,
   }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'party-registry', scope.legalEntityId);
+  const assertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
   const result = yield* executeOrganizationBusinessNameExportWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,
@@ -467,6 +480,86 @@ const customerUnsupportedFields = (scope: SymmySourceReadScope, customers: reado
   }
   return unsupported;
 };
+/** Whitespace-separated terms, each of which must match at least one searched field of a customer. */
+const searchTerms = (q: string): readonly string[] => [...new Set(q.split(/\s+/u).filter((term) => term.length > 0))];
+interface SearchTerm {
+  readonly partyIds: readonly string[];
+  readonly term: string;
+}
+/**
+ * The search of a customers read, in three owner steps so that the filter is applied before `count`, `offset` and
+ * `limit`: the route's own customers as candidates (at most 500; more is refused, never a partial search), the
+ * Party owner's match of each term over those candidates only (it applies the current Privacy export checks), and
+ * then, in the caller, the customer page read filtered by the matched Party ids or the customer key.
+ */
+const readCustomerSearch = Effect.fn('SymmyReadProjection.customerSearch')(function* customerSearch(
+  scope: SymmySourceReadScope,
+  authority: Pick<
+    typeof CustomerProfileSourcePartiesRequestSchema.Type,
+    'issuer' | 'mappingRevision' | 'namespace' | 'recordType' | 'route'
+  >,
+  q: string,
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: RequestIdentifier,
+): Effect.fn.Return<readonly SearchTerm[], SymmyIngressProblem> {
+  const includePersonProfile = routeAllows(scope, partyModule, partyProfileRead);
+  const includeOrganizationName = routeAllows(scope, partyModule, organizationNameRead);
+  if (
+    !(includePersonProfile || includeOrganizationName) ||
+    !routeAllows(scope, partyModule, partySearchRead) ||
+    !routeAllows(scope, customerContextModule, customerPartiesRead)
+  ) {
+    return yield* Effect.fail(symmyUnsupportedProblem('filter_not_supported'));
+  }
+  const terms = searchTerms(q);
+  if (terms.length > SOURCE_PARTY_SEARCH_MAX_TERMS) {
+    return yield* Effect.fail(symmyUnsupportedProblem('search_too_broad'));
+  }
+  const partiesInput = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePartiesRequestSchema)({
+    ...authority,
+    limit: CUSTOMER_PROFILE_SOURCE_PARTIES_MAX,
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+  const customersAssertion = yield* acquireSymmyReadAssertion(admission, customerContextAudience, scope.legalEntityId);
+  const candidates = yield* executeCustomerProfileSourcePartiesWithAuthorization(
+    partiesInput,
+    `Bearer ${Redacted.value(customersAssertion.assertion)}`,
+    yield* newRequestIdentifier,
+    { baseUrl: customersAssertion.apiBaseUrl, compositionRevision: customersAssertion.compositionRevision },
+  ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+  if (candidates.count > CUSTOMER_PROFILE_SOURCE_PARTIES_MAX) {
+    return yield* Effect.fail(symmyUnsupportedProblem('search_too_broad'));
+  }
+  if (
+    candidates.items.length !== candidates.count ||
+    candidates.items.some(({ partyRef }) => partyRef.tenantId !== scope.tenantId)
+  ) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
+  const byParty = new Map(candidates.items.map((item) => [item.partyRef.resourceId, item]));
+  if (byParty.size === 0) {
+    return terms.map((term) => ({ partyIds: [], term }));
+  }
+  const searchInput = yield* Schema.decodeUnknownEffect(SourcePartySearchRequestSchema)({
+    candidates: [...byParty.values()].map(({ partyRef, partySourceReference }) => ({
+      partyRef,
+      sourceReference: partySourceReference,
+    })),
+    includeOrganizationName,
+    includePersonProfile,
+    terms,
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+  const partyAssertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
+  const found = yield* executeSourcePartySearchWithAuthorization(
+    searchInput,
+    `Bearer ${Redacted.value(partyAssertion.assertion)}`,
+    yield* newRequestIdentifier,
+    { baseUrl: partyAssertion.apiBaseUrl, compositionRevision: partyAssertion.compositionRevision },
+  ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+  if (found.matches.length !== terms.length || found.matches.some((ids) => ids.some((id) => !byParty.has(id)))) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
+  return terms.map((term, index) => ({ partyIds: found.matches[index] ?? [], term }));
+});
 export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.customers')(function* sourceCustomers(
   scope: SymmySourceReadScope,
   query: CustomersQuery,
@@ -477,20 +570,22 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
     return yield* Effect.fail(symmyUnsupportedProblem('projection_not_configured'));
   }
   yield* requireRouteRead(scope, customerContextModule, 'commerce.customer-context.api.customer-profile-source-page');
-  // No owner can search the customer key together with the Party names and contacts yet, and the route
-  // never answers a search over fewer fields. Held back until that owner contract exists.
-  if (query.q !== undefined) {
-    return yield* Effect.fail(symmyUnsupportedProblem('filter_not_supported'));
-  }
   const paging = { limit: query.limit ?? 50, offset: query.offset ?? 0 };
-  const input = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageRequestSchema)({
+  const authority = {
     issuer: scope.issuerId,
-    ...paging,
     mappingRevision: scope.sourceMappingVersion ?? scope.mappingVersion,
     namespace: scope.sourceNamespace,
     recordType: scope.sourceEntityKind,
     route: { id: scope.sourceRouteId ?? scope.routeId, revision: scope.sourceRouteRevision ?? scope.routeRevision },
-  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+  };
+  const terms =
+    query.q === undefined
+      ? undefined
+      : yield* readCustomerSearch(scope, authority, query.q, admission, newRequestIdentifier);
+  const pageRequest = { ...authority, ...paging };
+  const input = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageRequestSchema)(
+    terms === undefined ? pageRequest : { ...pageRequest, search: { terms } },
+  ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
   const assertion = yield* acquireSymmyReadAssertion(admission, customerContextAudience, scope.legalEntityId);
   const page = yield* executeCustomerProfileSourcePageWithAuthorization(
     input,
