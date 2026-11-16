@@ -1625,11 +1625,11 @@ const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
  * from their own zerops.yaml build commands — making it wait for a build shard is what put the whole
  * bootstrap proof in front of the integration wave before it became a row.
  */
-const BACKEND_ARTIFACT_CONDITION = `matrix.suite != 'browser' && matrix.suite != '${BOOTSTRAP_SUITE}'`;
+const BACKEND_ARTIFACT_CONDITION = "matrix.suite != 'browser'";
 const BACKEND_ARTIFACT_DOWNLOAD_STEP = 'Download the same-run Node artifacts for native owner fixtures';
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 /** The integration matrix row that proves the built topology of every delivery unit. */
-const NODE_PROOF_SUITE = 'proof';
+const NODE_PROOF_SUITE = BOOTSTRAP_SUITE;
 const NODE_PROOF_CONDITION = `matrix.suite == '${NODE_PROOF_SUITE}'`;
 const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
@@ -1936,39 +1936,7 @@ it('supplies a placeholder public URL for every unit in Cloudflare builds and ou
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
-it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
-  const jobs = readArtifactBuildJobs();
-  for (const [job, proofs, artifacts] of [
-    [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
-  ] as const) {
-    const { name, permissions, steps, strategy } = jobs[job];
-    // Each proof runs on exactly one shard; the other shards only build.
-    const hosted = strategy.matrix.include.map(({ proof }) => proof).filter((proof) => proof !== 'none');
-    expect(sorted(hosted.map((proof) => proof ?? ''))).toEqual([...proofs]);
-    expect(permissions).toEqual({ actions: 'read', contents: 'read' });
-    // The proving shard waits for every other shard of this job, by the job's own name, before it
-    // downloads them; every step after the shard's own upload runs only on a proving shard.
-    const prefix = name.slice(0, name.indexOf('${{'));
-    const upload = steps.findIndex((step) => step.name === UPLOAD_STEP);
-    const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh') === true);
-    const download = steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
-    expect(steps[wait]?.run).toBe(
-      `bash scripts/wait-for-build-shards.sh '${prefix}' ${strategy.matrix.shard.length} '${name}'`,
-    );
-    expect(upload).toBeGreaterThan(-1);
-    expect(upload < wait && wait < download).toBe(true);
-    for (const step of steps.slice(upload + 1)) {
-      expect(`${step.name}: ${step.if ?? ''}`).toMatch(/matrix\.proof (?:!= 'none'|== '[a-z]+')$/u);
-    }
-    // This target proves on more than one shard, so its download compares by `!= 'none'` rather than
-    // naming a single proof.
-    expect(proofs.length).toBeGreaterThan(1);
-    expect(steps[download]?.if).toBe("matrix.proof != 'none'");
-    expect(steps[download]?.with?.pattern).toBe(artifacts);
-  }
-});
-
-it('builds Node artifacts in five pure shards that neither wait for each other nor prove the topology', () => {
+it('builds Node artifacts on one runner without waiting for or proving the topology', () => {
   const { permissions, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   // Nothing in this job reads another job's results or artifacts any more, so it needs no extra scope.
   expect(permissions).toBeUndefined();
@@ -2273,7 +2241,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   // One four-worker process covers the entire tooling project without another runner or install.
   const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
   const tooling = sourceShards
-    .map((entry) => entry.commands.trim())
+    .flatMap((entry) => entry.commands.trim().split('\n'))
     .filter((command) => command.startsWith('pnpm test:scripts'));
   expect(tooling.length).toBeGreaterThan(0);
   expect(tooling).toEqual(['pnpm test:scripts']);
@@ -2289,7 +2257,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
 it('runs every static contract check on exactly one row of the static contracts job', () => {
   const job = readGateCommandJobs()['static-contracts'];
   const rows = job.strategy.matrix.row;
-  expect(rows.length).toBeGreaterThan(1);
+  expect(rows).toEqual(['contracts']);
   // Every check, including each member of the parallel group, names exactly one row. A check with no
   // row condition would run on all of them, and one naming a row that does not exist would never run.
   const shared = new Set(['Harden Runner', 'Checkout', INSTALL_APP_STEP]);
@@ -2408,10 +2376,8 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'native-composition': Schema.optional(Schema.Boolean),
               'native-preproposal': Schema.optional(Schema.Boolean),
               'package-filters': Schema.optional(Schema.String),
-              'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
               'root-suite': Schema.optional(Schema.Boolean),
-              'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
-              suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser', NODE_PROOF_SUITE]),
+              suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
             }),
           ),
         }),
@@ -2511,14 +2477,13 @@ it('supplies same-run built Composition to selected native owner integration sha
   const selected = integration.strategy.matrix.include.filter((shard) => shard['native-composition'] === true);
   const rootShards = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
   // Derived instead of a literal count, so a reshard cannot be "fixed" by editing a number here: every root
-  // shard must derive the fresh Composition, at least one named owner row must too, and only integration
+  // shard must derive the fresh Composition, the same row may carry named owners, and only integration
   // rows may carry it (a browser or proof row would have no Composition to derive).
-  expect(selected.length).toBeGreaterThan(rootShards.length);
+  expect(selected.length).toBeGreaterThan(0);
   expect(selected.every(({ suite }) => suite === 'integration')).toBe(true);
   expect(selected.filter((shard) => shard['root-suite'] === true)).toEqual(rootShards);
-  expect(selected.map((shard) => shard['package-filters'])).toContain(
-    '--filter ./verticals/pricing --filter ./verticals/inventory',
-  );
+  expect(selected.some((shard) => shardFilters(shard).includes('./verticals/pricing'))).toBe(true);
+  expect(selected.some((shard) => shardFilters(shard).includes('./verticals/inventory'))).toBe(true);
   const { steps } = integration;
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
@@ -2657,17 +2622,11 @@ it('covers every root integration shard and assigns each package integration sui
   expect(isolate).toBeGreaterThan(-1);
   expect(isolate).toBeLessThan(job.steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined));
   expect(job.steps[isolate]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 4');
-  expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 4',
-  );
-  expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
-  expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"');
+  expect(run?.run?.trim()).toBe('bash scripts/ci/run-integration-suites.sh');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(nativeShards).toHaveLength(1);
   expect(nativeShards[0]?.suite).toBe('integration');
-  expect(nativeShards[0]?.['rstest-shard']).toBeUndefined();
   const nativeSteps = job.steps.filter(({ if: condition }) => condition === 'matrix.native-preproposal == true');
   expect(nativeSteps).toHaveLength(1);
   expect(nativeSteps[0]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
@@ -2685,33 +2644,13 @@ it('covers every root integration shard and assigns each package integration sui
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
-  // The root suite is sharded by cost; its shards must cover 1..n exactly once, whatever n is.
-  const rootShards = Number(roots[0]?.['root-rstest-shard']?.split('/')[1]);
-  expect(roots.map((shard) => shard['root-rstest-shard'] ?? '')).toEqual(
-    Array.from({ length: rootShards }, (_, index) => `${index + 1}/${rootShards}`),
-  );
-  expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
-  const packages = shards.filter((shard) => shard['root-suite'] !== true);
+  expect(roots).toHaveLength(1);
+  const packages = shards.filter((shard) => shardFilters(shard).length > 0);
   // Every row names exactly the packages it runs; none negates, so no row silently inherits a package
   // a reshard forgot.
   const named = packages.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
   expect(named).toEqual(packages);
-  // A package too large for one job is split by Rstest shards that are alone in their jobs and cover 1..n once.
-  const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
-  for (const shard of split) {
-    expect(shardFilters(shard)).toHaveLength(1);
-  }
-  for (const filter of new Set(split.flatMap(shardFilters))) {
-    const parts = split
-      .filter((shard) => shardFilters(shard)[0] === filter)
-      .map((shard) => shard['rstest-shard'] ?? '');
-    const count = Number(parts[0]?.split('/')[1]);
-    expect(sorted(parts)).toEqual(sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)));
-  }
-  const namedPackages = [
-    ...new Set(split.flatMap(shardFilters)),
-    ...named.filter((shard) => shard['rstest-shard'] === undefined).flatMap(shardFilters),
-  ];
+  const namedPackages = named.flatMap(shardFilters);
   expect(new Set(namedPackages).size).toBe(namedPackages.length);
   for (const filter of namedPackages) {
     expect(filter).toMatch(/^\.\/(?:apps|packages|verticals)\/[a-z-]+$/u);
@@ -2938,8 +2877,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
   expect(migrations?.if).toBeUndefined();
   expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
-  // The bootstrap row assembles both artifacts from their own zerops.yaml build commands, so it must not
-  // wait for a build shard's outputs: that dependency is exactly what made this proof serial before.
+  // Bootstrap and federation share this row, so it restores the same-run Node artifacts too.
   for (const name of [BACKEND_ARTIFACT_DOWNLOAD_STEP, 'Unpack the Node artifacts for native owner fixtures']) {
     expect(steps.find((candidate) => candidate.name === name)?.if, name).toBe(BACKEND_ARTIFACT_CONDITION);
   }
@@ -3111,5 +3049,52 @@ it('refuses root native integration when the same-run build archives are missing
     ).toThrow(/No shard build outputs/u);
   } finally {
     rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+it('keeps a full run within eight gate executors, excluding planning and the required-check collector', () => {
+  const commands = readGateCommandJobs();
+  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    SERVICE_INTEGRATION_JOB
+  ];
+  const count =
+    commands[WORKSPACE_GATE_JOB].strategy.matrix.include.length +
+    commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
+    commands['static-contracts'].strategy.matrix.row.length +
+    readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.include.length +
+    integration.strategy.matrix.include.length +
+    1;
+  expect(count).toBeLessThanOrEqual(8);
+});
+
+it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
+  const jobs = readArtifactBuildJobs();
+  for (const [job, proofs, artifacts] of [
+    [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
+  ] as const) {
+    const { name, permissions, steps, strategy } = jobs[job];
+    // Each proof runs on exactly one shard; the other shards only build.
+    const hosted = strategy.matrix.include.map(({ proof }) => proof).filter((proof) => proof !== 'none');
+    expect(sorted(hosted.map((proof) => proof ?? ''))).toEqual([...proofs]);
+    expect(permissions).toEqual({ actions: 'read', contents: 'read' });
+    // The proving shard waits for every other shard of this job, by the job's own name, before it
+    // downloads them; every step after the shard's own upload runs only on a proving shard.
+    const prefix = name.slice(0, name.indexOf('${{'));
+    const upload = steps.findIndex((step) => step.name === UPLOAD_STEP);
+    const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh') === true);
+    const download = steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+    expect(steps[wait]?.run).toBe(
+      `bash scripts/wait-for-build-shards.sh '${prefix}' ${strategy.matrix.shard.length} '${name}'`,
+    );
+    expect(upload).toBeGreaterThan(-1);
+    expect(upload < wait && wait < download).toBe(true);
+    for (const step of steps.slice(upload + 1)) {
+      expect(`${step.name}: ${step.if ?? ''}`).toMatch(/matrix\.proof (?:!= 'none'|== '[a-z]+')$/u);
+    }
+    // This target proves on more than one shard, so its download compares by `!= 'none'` rather than
+    // naming a single proof.
+    expect(proofs.length).toBeGreaterThan(1);
+    expect(steps[download]?.if).toBe("matrix.proof != 'none'");
+    expect(steps[download]?.with?.pattern).toBe(artifacts);
   }
 });

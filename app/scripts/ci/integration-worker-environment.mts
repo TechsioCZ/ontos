@@ -7,15 +7,17 @@ const LocalDatabaseUrl = Schema.URLFromString.check(
       : 'CI integration workers require a local PostgreSQL cluster',
   ),
 );
+const WorkerSlotSchema = Schema.Literals(['1', '2', '3', '4']);
 export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({ ONTOS_CI_ISOLATED_WORKERS: Schema.optionalKey(Schema.Undefined) }),
   Schema.Struct({
     DATABASE_ADMIN_URL: LocalDatabaseUrl,
     DATABASE_URL: LocalDatabaseUrl,
     ONTOS_CI_ISOLATED_WORKERS: Schema.Literal('4'),
+    ONTOS_CI_WORKER_SLOT: Schema.optionalKey(WorkerSlotSchema),
     PARTY_REGISTRY_DATABASE_URL: LocalDatabaseUrl,
     PARTY_REGISTRY_WORKER_DATABASE_URL: LocalDatabaseUrl,
-    RSTEST_WORKER_ID: Schema.Literals(['1', '2', '3', '4']),
+    RSTEST_WORKER_ID: WorkerSlotSchema,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: LocalDatabaseUrl,
   }),
 ]);
@@ -32,7 +34,7 @@ export const integrationWorkerEnvironment = (settings: IntegrationWorkerSettings
   if (settings.ONTOS_CI_ISOLATED_WORKERS === undefined) {
     return Option.none();
   }
-  const worker = settings.RSTEST_WORKER_ID;
+  const worker = settings.ONTOS_CI_WORKER_SLOT ?? settings.RSTEST_WORKER_ID;
   return Option.some({
     DATABASE_ADMIN_URL: retargetDatabase(settings.DATABASE_ADMIN_URL, worker),
     DATABASE_URL: retargetDatabase(settings.DATABASE_URL, worker),

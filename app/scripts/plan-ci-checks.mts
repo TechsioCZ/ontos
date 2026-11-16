@@ -17,12 +17,9 @@ const IntegrationEntrySchema = Schema.Struct({
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
   'package-filters': Schema.optionalKey(Schema.String),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
-  'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
-  'rstest-shard': Schema.optionalKey(Schema.String),
-  // `bootstrap` and `proof` rows depend on no package: they prove the deployment bootstrap and the build
-  // outputs, so they run on every event and are never narrowed away by affected selection.
-  suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'proof']),
+  // The bootstrap row proves deployment and federation independently of package selection.
+  suite: Schema.Literals(['bootstrap', 'integration', 'browser']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' &&
@@ -215,7 +212,14 @@ export const planCiChecks = (input: {
       return [];
     }
     const filters = selected.length === 0 ? '' : selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
-    return [{ ...entry, 'package-filters': filters, 'root-suite': rootSuite }];
+    return [
+      {
+        ...entry,
+        'native-preproposal': entry['native-preproposal'] === true && proofAffected,
+        'package-filters': filters,
+        'root-suite': rootSuite,
+      },
+    ];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
     const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
