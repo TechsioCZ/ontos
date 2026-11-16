@@ -13,6 +13,7 @@ const OAUTH_INSTALL =
 const WARMUP_INSTALL = 'mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium';
 const RESTORE = 'Restore the pinned verification browsers';
 const SAVE = 'Save the pinned verification browsers';
+const WAIT_FOR_APP = 'Wait for the app deployment';
 const CACHE_KEY = `zerops-verify-browsers-v1-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}`;
 const Step = Schema.Struct({
   'continue-on-error': Schema.optionalKey(Schema.Boolean),
@@ -250,9 +251,21 @@ it.effect('keeps browser setup failures blocking rather than running proofs with
 it.effect('preserves mandatory verification, source-pin publication and honest newsletter failure reporting', () =>
   Effect.gen(function* proofGatesUnchanged() {
     const { jobs } = yield* readWorkflow;
-    expect(jobs.verify['timeout-minutes']).toBe(20);
-    expect(jobs.verify.if).toContain("needs.deploy_app.result == 'success'");
+    // Verify is prepared beside the app deploy; its proofs start only after that deploy succeeded.
+    expect(jobs.verify['timeout-minutes']).toBe(95);
+    expect(jobs.verify.if).toContain("needs.deploy.result == 'success'");
+    const wait = jobs.verify.steps.findIndex((step) => step.name === WAIT_FOR_APP);
+    expect(jobs.verify.steps[wait]?.if).toBe("needs.plan.outputs.app == 'true'");
+    expect(jobs.verify.steps[wait]?.run).toBe(
+      "bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1",
+    );
+    expect(jobs.verify.steps[wait]?.['continue-on-error']).toBeUndefined();
+    for (const command of ['scripts/zerops/verify-service.mjs app', 'scripts/demo/prove-mcp-oauth.mts']) {
+      const proof = jobs.verify.steps.findIndex((step) => step.run?.includes(command) === true);
+      expect(proof, command).toBeGreaterThan(wait);
+    }
     expect(jobs.record.if).toContain("needs.verify.result == 'success'");
+    expect(jobs.record.if).toContain("needs.deploy_app.result == 'success'");
     const probe = jobs.verify.steps.find(
       (step) => step.name === 'Time /cs and OAuth metadata without waiting for storefronts',
     );
@@ -382,7 +395,8 @@ for (const scenario of [
       };
       let proofRan = false;
       for (const step of steps) {
-        if (step.run === undefined) {
+        // The deploy wait reads this run's jobs from the Actions API; the assertions above pin it.
+        if (step.run === undefined || step.name === WAIT_FOR_APP) {
           continue;
         }
         // GitHub expands expressions before invoking Bash; leave all shell commands and substitutions untouched.

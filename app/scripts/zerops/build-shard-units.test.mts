@@ -5,7 +5,13 @@ import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
-import { buildShardUnits, readReleaseModules, SHELL_SHARD } from './build-shard-units.mts';
+import {
+  buildShardUnits,
+  MODULE_BUILD_SECONDS,
+  moduleSeconds,
+  readReleaseModules,
+  SHELL_SHARD,
+} from './build-shard-units.mts';
 import { SHELL_ID } from './hosted-units.mts';
 
 const BuildWorkflowSchema = Schema.Struct({
@@ -45,22 +51,39 @@ it.effect('builds the Shell alone and every released module in exactly one other
     expect(dealt[SHELL_SHARD]).toEqual([SHELL_ID]);
     const built = dealt.flat().filter((unit) => unit !== SHELL_ID);
     expect(built.toSorted()).toEqual([...modules].toSorted());
-    const sizes = dealt.slice(1).map((units) => units.length);
-    expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('keeps every module that did not share the Shell shard in its cached shard', () =>
+const NEW_MODULE = 'new-module';
+const shardSeconds = (units: readonly string[]) => units.reduce((total, unit) => total + moduleSeconds(unit), 0);
+
+it.effect('balances the module shards by measured build seconds, not by count', () =>
+  Effect.gen(function* balancedShards() {
+    const modules = yield* readReleaseModules;
+    const shards = (yield* readBuildJob).job.env.SHARDS;
+    const loads = buildShardUnits(modules, shards).slice(1).map(shardSeconds);
+    const longest = Math.max(...modules.map(moduleSeconds));
+    // Longest-first dealing ends every shard within one module's build of the others.
+    expect(Math.max(...loads) - Math.min(...loads)).toBeLessThanOrEqual(longest);
+    // Run 43764570181 dealt by count: its slowest module shard summed 487 s of builds.
+    expect(Math.max(...loads)).toBeLessThan(400);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('measures only released modules, and a new module moves no other', () =>
   Effect.gen(function* stableShards() {
     const modules = yield* readReleaseModules;
     const shards = (yield* readBuildJob).job.env.SHARDS;
-    const dealt = buildShardUnits(modules, shards);
-    for (const [position, module] of modules.entries()) {
-      const previous = (position + 1) % shards;
-      if (previous !== SHELL_SHARD) {
-        expect(dealt[previous], module).toContain(module);
-      }
+    for (const measured of MODULE_BUILD_SECONDS.keys()) {
+      expect(modules, measured).toContain(measured);
     }
+    const before = buildShardUnits(modules, shards);
+    const after = buildShardUnits([...modules.slice(0, 3), NEW_MODULE, ...modules.slice(3)], shards);
+    for (const [shard, units] of before.entries()) {
+      expect(after[shard]?.filter((unit) => unit !== NEW_MODULE)).toEqual(units);
+    }
+    expect(after.flat()).toContain(NEW_MODULE);
+    expect(buildShardUnits(modules, shards)).toEqual(before);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

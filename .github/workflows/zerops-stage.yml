@@ -157,11 +157,20 @@ jobs:
   # (`build-app.sh --digests-only`: the declared build environment, the same table), and each shard's unit list. A build
   # shard whose cached units all carry these identities reuses them without installing or building
   # (scripts/zerops/reuse-shard-units.sh). Should this job fail, every shard builds as it always did.
+  # When every unit's identity equals that of the newest earlier unit builds of this branch, this job proves those
+  # builds by identity and names their run: the build matrix is skipped and the app deploy takes that run's archives.
   unit_identities:
     name: Compute this commit's unit identities
     if: github.ref == 'refs/heads/demo/sales-crm'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Reading another run's artifacts needs `actions: read`.
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      all_reused: ${{ steps.earlier-proof.outputs.all_reused }}
+      units_run_id: ${{ steps.earlier-proof.outputs.run_id }}
     env:
       SHARDS: 7
       ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
@@ -202,6 +211,63 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # FRONT PATH. Unit builds (zerops-units-*) exist only in runs whose build matrix ran. The newest one of this branch
+      # is reused when its identity table equals this commit's and every unit in its archives carries this commit's
+      # identity. Anything else (no such run, expired artifacts, a changed unit, any error) leaves the matrix to build
+      # as before; rebuild_units never reuses. The Zerops build proves every kept unit again.
+      - name: Find the newest earlier unit builds of this branch
+        id: earlier
+        if: inputs.rebuild_units != true
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/zerops/reuse-shard-units.sh earlier "$GITHUB_REF_NAME" "$GITHUB_RUN_ID" >>"$GITHUB_OUTPUT"
+
+      - name: Take the identities of the earlier unit builds
+        id: earlier-identities
+        if: steps.earlier.outputs.run_id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zerops-unit-identities
+          path: ${{ runner.temp }}/earlier/identities
+          run-id: ${{ steps.earlier.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Compare the earlier unit identities with this commit's
+        id: earlier-same
+        if: steps.earlier-identities.outcome == 'success'
+        run: |
+          if cmp -s "$RUNNER_TEMP/zerops-unit-identities/digests.tsv" "$RUNNER_TEMP/earlier/identities/digests.tsv"; then
+            echo 'same=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'Unit identities changed since the earlier builds; the build matrix builds.'
+          fi
+
+      - name: Take the earlier unit builds
+        id: earlier-units
+        if: steps.earlier-same.outputs.same == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zerops-units-*
+          path: ${{ runner.temp }}/earlier/units
+          run-id: ${{ steps.earlier.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Prove every unit of the earlier builds by identity
+        id: earlier-proof
+        if: steps.earlier-units.outcome == 'success'
+        working-directory: app
+        env:
+          EARLIER_RUN_ID: ${{ steps.earlier.outputs.run_id }}
+        run: |
+          if bash scripts/zerops/reuse-shard-units.sh prove-archives "$RUNNER_TEMP/zerops-unit-identities" "$RUNNER_TEMP/earlier/units"; then
+            printf 'all_reused=true\nrun_id=%s\n' "$EARLIER_RUN_ID" >>"$GITHUB_OUTPUT"
+          else
+            echo 'The earlier unit builds are not this commit'"'"'s; the build matrix builds.'
+          fi
+
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
   # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
   # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
@@ -210,8 +276,11 @@ jobs:
   build:
     name: Build units (shard ${{ matrix.shard }})
     needs: [plan, unit_identities]
-    # Not blocked by a failed unit_identities job: without its table every shard builds.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' }}
+    # Not blocked by a failed unit_identities job: without its table every shard builds. Skipped only when that job
+    # proved every unit of earlier builds (its front path).
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' &&
+      needs.unit_identities.outputs.all_reused != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -557,10 +626,18 @@ jobs:
 
   deploy_app:
     name: Deploy and check app
-    needs: [plan, deploy, build]
-    if: always() && needs.deploy.result == 'success' && needs.build.result == 'success' && needs.plan.outputs.app == 'true'
+    needs: [plan, deploy, unit_identities, build]
+    # The unit builds come from this run's matrix, or (matrix skipped) from the earlier run unit_identities proved.
+    if: >-
+      always() && needs.deploy.result == 'success' && needs.plan.outputs.app == 'true' &&
+      (needs.build.result == 'success' ||
+      (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    # Downloading the earlier run's unit builds needs `actions: read`.
+    permissions:
+      actions: read
+      contents: read
     environment:
       name: stage-edge
       deployment: false
@@ -587,6 +664,8 @@ jobs:
         with:
           pattern: zerops-units-*
           path: ${{ runner.temp }}/units
+          run-id: ${{ needs.unit_identities.outputs.units_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       # The push carries every prebuilt dist/ (git-ignored) with the checkout; its digests tell the Zerops build to
       # keep them, so Zerops only installs the workspace.
@@ -821,14 +900,23 @@ jobs:
         working-directory: app
         run: mise exec -- node scripts/zerops/verify-service.mjs n1
 
+  # Starts with the app deploy, not after it: checkout, install and browsers are ready while Zerops builds, and the
+  # proofs start once `deploy_app` succeeded (Wait for the app deployment). A failed, skipped or cancelled app deploy
+  # fails this job, so `record` (which needs deploy_app and verify) never records it.
   verify:
     name: Verify stage
-    needs: [plan, deploy, deploy_app]
+    needs: [plan, deploy, unit_identities, build]
     if: >-
       always() && needs.deploy.result == 'success' &&
-      (needs.plan.outputs.app == 'false' || needs.deploy_app.result == 'success')
+      (needs.plan.outputs.app == 'false' || needs.build.result == 'success' ||
+      (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The app deploy's own limit (75 minutes) plus the proofs.
+    timeout-minutes: 95
+    # Reading this run's jobs needs `actions: read`.
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -909,6 +997,18 @@ jobs:
         with:
           path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
           key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
+
+      # Only a succeeded app deploy lets the proofs start; it fails at once on any other end of that job. A plan without
+      # the app proves the kept release without waiting.
+      - name: Wait for the app deployment
+        if: needs.plan.outputs.app == 'true'
+        timeout-minutes: 80
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+          WAIT_FOR_BUILD_SHARDS_TIMEOUT: '4800'
+        run: bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1
 
       - name: Time /cs and OAuth metadata without waiting for storefronts
         working-directory: app

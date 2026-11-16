@@ -14,7 +14,7 @@ const WORKFLOW = path.resolve(APP, '../.github/workflows/zerops-stage.yml');
 const DIGEST = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const NEEDS_BUILD = 3;
-const BUILD_SHARD_CONDITION = `\${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' }}`;
+const BUILD_SHARD_CONDITION = `\${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' && needs.unit_identities.outputs.all_reused != 'true' }}`;
 const FORCE_OFF = "env.ZEROPS_FORCE_BUILD != 'true'";
 const NOT_REUSED = "steps.reuse.outputs.reused != 'true'";
 const IDENTITIES_READY = "needs.unit_identities.result == 'success'";
@@ -335,7 +335,153 @@ it.effect('reuses only by identity, never blocks a build, and rebuild_units alwa
     }
     expect(yield* stepRun(identities, IDENTITY_STEP)).toContain('sh scripts/zerops/build-app.sh --digests-only');
     expect(identities.needs).toBeUndefined();
+    // The front path never runs for rebuild_units, and only its proof names the run whose builds deploy.
+    const front = (name: string) => identities.steps.find((candidate) => candidate.name === name);
+    expect(front('Find the newest earlier unit builds of this branch')?.if).toBe('inputs.rebuild_units != true');
+    expect(yield* stepRun(identities, 'Prove every unit of the earlier builds by identity')).toContain(
+      'reuse-shard-units.sh prove-archives',
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const SHELL = 'shell-super-app';
+const BRANCH = 'demo/sales-crm';
+const PROVE_ARCHIVES = 'prove-archives';
+interface EarlierScenario {
+  readonly name: string;
+  readonly shards: readonly (readonly string[])[];
+  readonly status: number;
+  readonly units: Readonly<Record<string, string>>;
+}
+
+/** An earlier run's unit artifacts: one archive per shard, as `pack` writes them, under <dir>/zerops-units-<n>/. */
+const earlierArchives = (units: Readonly<Record<string, string>>, shards: readonly (readonly string[])[]) =>
+  Effect.gen(function* makeEarlier() {
+    const fs = yield* FileSystem.FileSystem;
+    const { app, identities, root } = yield* fixture({});
+    const archives = path.join(root, 'earlier');
+    for (const [unit, digest] of Object.entries(units)) {
+      const dist = path.join(app, unit === SHELL ? `apps/${SHELL}` : `verticals/${unit}`, 'dist');
+      yield* fs.makeDirectory(dist, { recursive: true });
+      yield* fs.writeFileString(path.join(dist, 'zerops-entry.mjs'), 'export {};\n');
+      yield* fs.writeFileString(path.join(dist, '.zerops-build-digest'), `${digest}\n`);
+    }
+    for (const [shard, members] of shards.entries()) {
+      const directory = path.join(archives, `zerops-units-${String(shard)}`);
+      yield* fs.makeDirectory(directory, { recursive: true });
+      const packed = yield* runReuse(app, ['pack', path.join(directory, 'units.tar.zst'), ...members]);
+      expect(packed.status, packed.stderr).toBe(0);
+    }
+    return { app, archives, identities };
+  });
+
+const EARLIER_SCENARIOS: readonly EarlierScenario[] = [
+  {
+    name: 'every unit, once, with this commit identity',
+    shards: [[SHELL], ['crm', 'tax']],
+    status: 0,
+    units: { crm: DIGEST, [SHELL]: OTHER, tax: DIGEST },
+  },
+  {
+    name: 'a unit built for other inputs',
+    shards: [[SHELL], ['crm', 'tax']],
+    status: NEEDS_BUILD,
+    units: { crm: DIGEST, [SHELL]: OTHER, tax: OTHER },
+  },
+  {
+    name: 'a unit missing from every archive',
+    shards: [[SHELL], ['crm']],
+    status: NEEDS_BUILD,
+    units: { crm: DIGEST, [SHELL]: OTHER },
+  },
+  {
+    name: 'a unit in two archives',
+    shards: [
+      [SHELL, 'crm'],
+      ['crm', 'tax'],
+    ],
+    status: NEEDS_BUILD,
+    units: { crm: DIGEST, [SHELL]: OTHER, tax: DIGEST },
+  },
+];
+
+for (const scenario of EARLIER_SCENARIOS) {
+  it.live(`proves earlier unit builds only for ${scenario.name}`, () =>
+    Effect.gen(function* proveEarlier() {
+      const { app, archives, identities } = yield* earlierArchives(scenario.units, scenario.shards);
+      const result = yield* runReuse(app, [PROVE_ARCHIVES, identities, archives]);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(scenario.status);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.live('proves nothing when there are no earlier archives or one is unreadable', () =>
+  Effect.gen(function* noEarlier() {
+    const fs = yield* FileSystem.FileSystem;
+    const { app, identities, root } = yield* fixture({});
+    const empty = path.join(root, 'none');
+    yield* fs.makeDirectory(empty);
+    expect((yield* runReuse(app, [PROVE_ARCHIVES, identities, empty])).status).toBe(NEEDS_BUILD);
+    yield* fs.makeDirectory(path.join(empty, 'zerops-units-0'));
+    yield* fs.writeFileString(path.join(empty, 'zerops-units-0/units.tar.zst'), 'not an archive');
+    expect((yield* runReuse(app, [PROVE_ARCHIVES, identities, empty])).status).toBe(NEEDS_BUILD);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+/** One entry of the Actions artifact listing. */
+const artifact = (id: number, branch: string, created: string, expired = false) => ({
+  created_at: created,
+  expired,
+  workflow_run: { head_branch: branch, id },
+});
+
+/** A `gh` stub that answers the artifact listing from $GH_ANSWER, or fails when it is empty. */
+const fakeGh = `#!/usr/bin/env bash
+[ -n "\${GH_ANSWER:-}" ] || exit 1
+jq_filter=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in --jq) jq_filter="$2"; shift 2 ;; *) shift ;; esac
+done
+printf '%s' "$GH_ANSWER" | jq -r "$jq_filter"
+`;
+
+it.live('names the newest other unexpired run of the branch that holds unit builds, or nothing', () =>
+  Effect.gen(function* earlierRun() {
+    const fs = yield* FileSystem.FileSystem;
+    const { app, root } = yield* fixture({});
+    const bin = path.join(root, 'bin');
+    yield* fs.makeDirectory(bin);
+    yield* fs.writeFileString(path.join(bin, 'gh'), fakeGh);
+    yield* fs.chmod(path.join(bin, 'gh'), 0o700);
+    const searchPath = `${bin}:${yield* Config.String('PATH')}`;
+    // An empty answer makes the stub fail like an unreachable API.
+    const run = (answer = '') =>
+      collectToolingProcess(
+        ChildProcess.make('bash', [REUSE, 'earlier', BRANCH, '30'], {
+          cwd: app,
+          env: { GH_ANSWER: answer, GITHUB_REPOSITORY: 'owner/repo', PATH: searchPath },
+          extendEnv: true,
+        }),
+      );
+    const listing = {
+      artifacts: [
+        artifact(30, BRANCH, '2026-11-16T03:00:00Z'),
+        artifact(29, 'main', '2026-11-16T02:00:00Z'),
+        artifact(28, BRANCH, '2026-11-16T01:00:00Z'),
+        artifact(27, BRANCH, '2026-11-16T00:00:00Z'),
+        artifact(26, BRANCH, '2026-11-16T04:00:00Z', true),
+      ],
+    };
+    const found = yield* run(JSON.stringify(listing));
+    expect(found.status, found.stderr).toBe(0);
+    expect(found.stdout).toBe('run_id=28\n');
+    const none = yield* run(JSON.stringify({ artifacts: [artifact(30, BRANCH, '2026-11-16T03:00:00Z')] }));
+    expect(none.status).toBe(0);
+    expect(none.stdout).toBe('');
+    const failed = yield* run();
+    expect(failed.status).toBe(0);
+    expect(failed.stdout).toBe('');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.live(

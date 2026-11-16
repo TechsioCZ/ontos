@@ -262,7 +262,8 @@ process_id="$(jq -er '.id' <<<"$process")"
 log "build and deploy request ended"
 log "build and deploy process $process_id for app version $version_id"
 # Polling only reads, so a transient answer (408, 429, 5xx, a timeout) is asked again with back-off; Zerops finishes the
-# deploy regardless. The deadline bounds the whole wait (DEPLOY_LIMIT_SECONDS, default one hour).
+# deploy regardless. The deadline bounds the whole wait (DEPLOY_LIMIT_SECONDS, default one hour). A 5 s period lets the
+# job end within seconds of the deploy (15 s added up to 12 s per push, runs of 2026-11-15); it changes no upload rule.
 deadline=$((SECONDS + ${DEPLOY_LIMIT_SECONDS:-3600}))
 previous_status=''
 while true; do
@@ -285,5 +286,5 @@ while true; do
     log_error "service $service_id ($setup): build and deploy process $process_id still $status after ${DEPLOY_LIMIT_SECONDS:-3600}s"
     exit 1
   fi
-  sleep 15
+  sleep "${DEPLOY_POLL_SECONDS:-5}"
 done
