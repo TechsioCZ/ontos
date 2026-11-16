@@ -209,12 +209,17 @@ it.effect('keeps verification mandatory for changed services and records sources
       path.resolve(import.meta.dirname, '../../../.github/workflows/zerops-stage.yml'),
     );
     const workflow = yield* Schema.decodeUnknownEffect(WorkflowSchema)(parse(source));
-    // A failed unit_identities job never blocks the shards (scripts/zerops/reuse-shard-units.test.mts).
+    // A failed unit_identities job never blocks the shards; only its proven front path skips them
+    // (scripts/zerops/reuse-shard-units.test.mts).
     expect(workflow.jobs.build?.if).toBe(
-      `\${{ !cancelled() && needs.plan.result == 'success' && ${KEEP_APP_CONDITION} }}`,
+      `\${{ !cancelled() && needs.plan.result == 'success' && ${KEEP_APP_CONDITION} && needs.unit_identities.outputs.all_reused != 'true' }}`,
     );
-    expect(workflow.jobs.verify?.needs).toEqual(['plan', 'deploy', 'deploy_app']);
-    expect(workflow.jobs.verify?.if).toContain("needs.deploy_app.result == 'success'");
+    // Verify is prepared beside the app deploy; its proofs wait for that deploy to succeed
+    // (scripts/tests/zerops-verification-setup.test.mts).
+    expect(workflow.jobs.verify?.needs).toEqual(['plan', 'deploy', 'unit_identities', 'build']);
+    expect(workflow.jobs.verify?.steps.find((step) => step.name === 'Wait for the app deployment')?.run).toBe(
+      "bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1",
+    );
     expect(workflow.jobs.record?.if).toContain("needs.verify.result == 'success'");
     for (const name of ['Download the unit builds', 'Pack the unit builds for the push']) {
       expect(workflow.jobs.deploy_app?.steps.find((step) => step.name === name)?.if).toBe(KEEP_APP_CONDITION);
@@ -223,7 +228,7 @@ it.effect('keeps verification mandatory for changed services and records sources
       workflow.jobs.deploy?.steps.find((step) => step.name === 'Sync the owner secret bundle to the app service')?.if,
     ).toBe(KEEP_APP_CONDITION);
     expect(workflow.jobs.deploy?.needs).toEqual(['plan']);
-    expect(workflow.jobs.deploy_app?.needs).toEqual(['plan', 'deploy', 'build']);
+    expect(workflow.jobs.deploy_app?.needs).toEqual(['plan', 'deploy', 'unit_identities', 'build']);
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(
       true,
     );
