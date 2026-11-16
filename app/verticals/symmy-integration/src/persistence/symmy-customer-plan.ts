@@ -45,6 +45,10 @@ const counterpartyProfileOperation = operation(
   'commerce.customer-context.create-counterparty-purchasing-profile',
 );
 const addAddressOperation = operation(commerce, 'commerce.customer-context.add-saved-address');
+const organizationIcoOperation = operation(
+  commerce,
+  'commerce.customer-context.change-organization-customer-profile-ico',
+);
 
 const partyKey = 'party-create';
 const retailProfileKey = 'retail-profile';
@@ -52,6 +56,7 @@ const onboardKey = 'counterparty-onboard';
 const counterpartyProfileKey = 'counterparty-profile';
 const addressKey = 'address-add';
 const contactKey = 'contact-add';
+const icoKey = 'ico-set';
 /** A source record id the owners accept: bounded to the Party source identifier and free of surrounding blanks. */
 const MAX_SOURCE_RECORD_LENGTH = 200;
 
@@ -59,6 +64,8 @@ type TemplateSource = SymmyFixtureExecutionPlan['items'][number]['source'];
 
 /** The route facts every customer shares: the source it enrolls, its authority, the selling legal entity and the instant. */
 interface CustomerContext {
+  /** True when the route enrolls the company ICO change for the customer source: only then an ICO can be written. */
+  readonly icoEnrolled: boolean;
   readonly legalEntityRef: {
     readonly moduleId: 'core.identity';
     readonly resourceId: string;
@@ -159,6 +166,36 @@ const partyCreateIntent = (facts: ItemFacts, row: SymmyCustomerRow) => {
   };
 };
 
+/** The one ICO an organization states, or none when it states none or states two different ones. */
+const organizationIco = (row: SymmyCustomerRow): Option.Option<string> => {
+  const values = row.officialIdentifiers.flatMap(({ identifierType, value }) =>
+    identifierType === 'ICO' ? [value] : [],
+  );
+  const distinct = EffectArray.dedupeWith(values, (left, right) => left.padStart(8, '0') === right.padStart(8, '0'));
+  const [only] = distinct;
+  return row.kind === 'ORGANIZATION' && distinct.length === 1 && only !== undefined ? Option.some(only) : Option.none();
+};
+
+/** The company ICO goes to the profile the same job creates, as the first assertion of that profile. */
+const icoEffect = (facts: ItemFacts, itemKey: string, ico: string) => ({
+  dependsOn: [counterpartyProfileKey],
+  effectKey: icoKey,
+  intent: {
+    _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+    fromProfileEffect: { effectKey: counterpartyProfileKey, itemKey },
+    payload: {
+      countryCode: 'CZ',
+      effectiveAt: observedAt(facts),
+      expectedRevision: 0,
+      identifier: { identifierType: 'ICO', value: ico },
+      operation: 'SET',
+      originalInput: ico,
+    },
+    sourceReference: sourceReference(facts),
+  },
+  operation: organizationIcoOperation,
+});
+
 const profileEffects = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) => {
   if (row.kind === 'PERSON') {
     return [
@@ -221,6 +258,12 @@ const profileEffects = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string
       },
       operation: counterpartyProfileOperation,
     },
+    ...(facts.context.icoEnrolled
+      ? Option.match(organizationIco(row), {
+          onNone: () => [],
+          onSome: (ico) => [icoEffect(facts, itemKey, ico)],
+        })
+      : []),
   ];
 };
 
@@ -254,6 +297,10 @@ const contactItem = (
   sourceOccurrenceId: facts.occurrenceId,
 });
 
+const icoUnwritten = (facts: ItemFacts, row: SymmyCustomerRow) =>
+  row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO') &&
+  !(facts.context.icoEnrolled && Option.isSome(organizationIco(row)));
+
 const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) => ({
   effects: [
     {
@@ -266,12 +313,11 @@ const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) 
   itemKey,
   source: itemSource(facts),
   sourceOccurrenceId: facts.occurrenceId,
-  // The ICO has no Symmy intent (the Party adapter refuses it), so the item reports it instead of dropping it.
+  // An ICO the item does not write is reported instead of dropped: a person's ICO, two different ICOs of one
+  // organization, or an organization of a route that does not enroll the company ICO change.
   ...present(
     'unsupportedBranches',
-    row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO')
-      ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }]
-      : undefined,
+    icoUnwritten(facts, row) ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }] : undefined,
   ),
 });
 
@@ -451,9 +497,15 @@ const enrolledSource = (
     : Option.none();
 };
 
+/** Whether the route enrolls the company ICO change for the one source every customer record shares. */
+const icoEnrolled = (template: SymmyFixtureExecutionPlan, source: TemplateSource): boolean => {
+  const item = enrolledItem(template, source.entityKind, organizationIcoOperation);
+  return Option.isSome(item) && sameSource(item.value.source, source);
+};
+
 /**
  * Maps the public customers to one internal plan: per customer an item with the Party create, its profile (an
- * organization also its counterparty role), one add per contact, and an item per address that saves the address
+ * organization also its counterparty role and its company ICO), one add per contact, and an item per address that saves the address
  * on the profile once the profile effect returned it. A route that does not enroll the owner operations, the
  * selling legal entity or the source yields no plan at all, so nothing is admitted and no owner call is made.
  */
@@ -467,6 +519,7 @@ export const buildSymmyCustomerPlan = Effect.fn('SymmyCustomerPlan.build')(funct
   }
   const revisionDigest = yield* digest(`customer-revision\u0000${idempotencyKey}`);
   const context: CustomerContext = {
+    icoEnrolled: icoEnrolled(template, source.value),
     legalEntityRef: {
       moduleId: 'core.identity',
       resourceId: legalEntityId,
