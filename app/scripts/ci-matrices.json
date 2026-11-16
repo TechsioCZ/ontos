@@ -21,7 +21,7 @@
     },
     {
       "suite": "integration",
-      "name": "Isolated Workspace Integration Tests",
+      "name": "Commerce, Pricing, and Inventory Integration",
       "native-composition": true,
       "native-preproposal": true,
       "proof-packages": [
@@ -35,7 +35,16 @@
         "@app/commerce-customer-context"
       ],
       "root-suite": true,
-      "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry --filter ./apps/shell-super-app --filter ./verticals/privacy --filter ./verticals/pricing --filter ./verticals/inventory --filter ./packages/core-runtime --filter ./verticals/payment --filter ./verticals/catalog --filter ./verticals/party-registry --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/tax --filter ./verticals/projects"
+      "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry --filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/tax --filter ./verticals/projects",
+      "root-rstest-shard": "1/2"
+    },
+    {
+      "suite": "integration",
+      "name": "Core, Shell, Privacy, and Registry Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/privacy --filter ./packages/core-runtime --filter ./verticals/catalog --filter ./verticals/party-registry --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog",
+      "root-rstest-shard": "2/2"
     },
     {
       "suite": "browser",

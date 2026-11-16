@@ -572,9 +572,9 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm test:scripts
 
-  # Three service runners: bootstrap plus federation proof, integration, and browsers.
-  # Integration starts four independent PostgreSQL clusters and SpiceDB datastores
-  # once, then schedules every package and root shard onto those runner-local lanes.
+  # Four service runners: bootstrap and whole-owner proofs, two integration batches, and browsers.
+  # Each integration runner owns two PostgreSQL clusters and SpiceDB datastores.
+  # Two active lanes on four CPUs leave room for their native owner processes.
   # This avoids paying for another hosted runner, install and migration per shard.
   service-integration:
     name: ${{ matrix.name }}
@@ -861,7 +861,8 @@ jobs:
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
           NATIVE_PREPROPOSAL: ${{ matrix.native-preproposal }}
           ROOT_SUITE: ${{ matrix.root-suite }}
-          ONTOS_CI_ISOLATED_WORKERS: '4'
+          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
+          ONTOS_CI_ISOLATED_WORKERS: '2'
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
 

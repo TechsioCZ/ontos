@@ -68,7 +68,7 @@ start_worker() {
 }
 
 pids=()
-for worker in 1 2 3 4; do
+for worker in 1 2; do
   start_worker "$worker" &
   pids+=("$!")
 done
@@ -88,7 +88,7 @@ acl_query="select coalesce(grantor_role.rolname, 'PUBLIC'), coalesce(grantee_rol
   left join pg_roles grantee_role on grantee_role.oid = acl.grantee
   where d.datname = '$POSTGRES_DB' order by 1, 2, 3, 4"
 source_acl="$(docker exec ontos-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$acl_query")"
-for worker in 1 2 3 4; do
+for worker in 1 2; do
   identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
   [[ -n "$identifier" ]]
   for existing in "${identifiers[@]}"; do
@@ -101,4 +101,4 @@ for worker in 1 2 3 4; do
     exit 1
   fi
 done
-echo 'Four independent PostgreSQL clusters and SpiceDB datastores are ready.'
+echo 'Two independent PostgreSQL clusters and SpiceDB datastores are ready.'

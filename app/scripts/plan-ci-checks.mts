@@ -17,6 +17,7 @@ const IntegrationEntrySchema = Schema.Struct({
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
   'package-filters': Schema.optionalKey(Schema.String),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
+  'root-rstest-shard': Schema.optionalKey(Schema.String),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   // The bootstrap row proves deployment and federation independently of package selection.
   suite: Schema.Literals(['bootstrap', 'integration', 'browser']),

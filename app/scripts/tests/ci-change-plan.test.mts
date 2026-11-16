@@ -80,13 +80,13 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   // integration nor browser: they prove the deployment bootstrap and the build outputs, not a package.
   expect(plan.integration.map(({ name }) => name)).toEqual([
     'Deployment Bootstrap and Node Federation Proof',
-    'Isolated Workspace Integration Tests',
+    'Commerce, Pricing, and Inventory Integration',
+    'Core, Shell, Privacy, and Registry Integration',
   ]);
-  const tests = plan.integration.find(({ suite }) => suite === 'integration');
-  expect(matchingPackages(tests?.['package-filters'] ?? '', packages).map(({ name }) => name)).toEqual([
-    CATALOG,
-    PRICING,
-  ]);
+  const tests = plan.integration.filter(({ suite }) => suite === 'integration');
+  expect(
+    matchingPackages(tests.map((entry) => entry['package-filters'] ?? '').join(' '), packages).map(({ name }) => name),
+  ).toEqual([CATALOG, PRICING]);
   expect(plan.unit).toHaveLength(1);
   expect(plan.unit[0]?.commands).toContain('--filter ./verticals/catalog');
   expect(plan.unit[0]?.commands).toContain('--filter ./verticals/pricing');
@@ -225,9 +225,10 @@ it('selects browser checks and all root integration shards when they consume a c
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots).toHaveLength(1);
-  expect(roots[0]?.['package-filters']).toContain('--filter ./apps/shell-super-app');
-  expect(roots[0]?.['package-filters']).toContain('--filter ./verticals/catalog');
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/2', '2/2']);
+  const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
+  expect(filters).toContain('--filter ./apps/shell-super-app');
+  expect(filters).toContain('--filter ./verticals/catalog');
 });
 
 it('follows topology-only Shell and vertical remote references to browser tests', () => {
