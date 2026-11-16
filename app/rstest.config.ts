@@ -24,6 +24,7 @@ export default defineConfig({
       ...shared,
       include: ['scripts/integration/**/*.test.mts'],
       name: 'integration',
+      setupFiles: [new URL('./scripts/ci/integration-worker-setup.mts', import.meta.url).pathname],
     },
     {
       ...shared,

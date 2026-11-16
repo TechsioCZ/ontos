@@ -53,6 +53,7 @@ export default defineConfig({
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
       root: new URL('.', import.meta.url).pathname,
+      setupFiles: [new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname],
       testEnvironment: 'node',
       testTimeout: 30_000,
       tools: { rspack: { module: { rules: ownerBuildRules } }, swc },

@@ -56,7 +56,7 @@ jobs:
   queue-proof:
     name: Find the merge queue proof of this commit
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: read
@@ -83,7 +83,7 @@ jobs:
     name: Select required checks from changed inputs
     needs: [queue-proof]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
@@ -156,7 +156,7 @@ jobs:
   warm-caches:
     name: Warm the gate caches on main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Harden Runner
@@ -312,7 +312,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -363,7 +363,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -430,7 +430,7 @@ jobs:
     name: Static Contracts (${{ matrix.row }})
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -558,7 +558,7 @@ jobs:
     name: Format and Lint through the pre-commit hook
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Harden Runner
@@ -662,7 +662,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -906,6 +906,11 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm active-composition:publish prove-build
 
+      - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
+        if: matrix.suite == 'integration'
+        working-directory: app
+        run: bash scripts/ci/start-integration-workers.sh
+
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         if: matrix.suite == 'integration'
         working-directory: app
@@ -918,14 +923,15 @@ jobs:
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
+          ONTOS_CI_ISOLATED_WORKERS: '2'
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: |
           if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 2 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
           fi
           if [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 2 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
           fi
 
       - name: Prove native preproposal basis and genuine approval through registered owners
@@ -977,7 +983,12 @@ jobs:
       - name: Remove isolated service containers and volumes
         if: always()
         working-directory: app
-        run: docker compose down --volumes --remove-orphans
+        run: |
+          workers="$(docker ps --all --quiet --filter label=ontos-ci-worker)"
+          if [[ -n "$workers" ]]; then
+            docker rm --force --volumes $workers
+          fi
+          docker compose down --volumes --remove-orphans
 
   # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
   # the units build in shards on parallel runners, and each shard caches its own archive: a commit that
@@ -991,7 +1002,7 @@ jobs:
     name: Build node artifacts (${{ matrix.shard }}/5)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1100,7 +1111,7 @@ jobs:
       contents: read
     # Cloudflare Workers are retired from CI/CD. Keep the job definition, but never run its builds or proofs.
     if: ${{ false }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1343,7 +1354,7 @@ jobs:
         service-integration,
         node-artifact-build,
       ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1372,7 +1383,7 @@ jobs:
   deploy-target:
     name: Resolve the deploy target of the deployment environment
     if: vars.MAIN_DEPLOY_ENABLED == 'true' && inputs.force-ci-full != true && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment:
       name: ${{ inputs.environment || 'stage' }}
@@ -1430,7 +1441,7 @@ jobs:
       ${{ !cancelled() && needs.deploy-target.outputs.configured == 'true'
       && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true') }}
     needs: [deploy-target, edge-deploy-readiness]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
       name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -1528,7 +1539,7 @@ jobs:
       && needs.capture-application-baseline.result == 'success'
       && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true')
     needs: [deploy-target, edge-deploy-readiness, capture-application-baseline]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: ${{ needs.deploy-target.outputs.environment }}
@@ -1704,7 +1715,7 @@ jobs:
     name: Read the Node public-asset origin configuration
     if: needs.deploy-target.outputs.configured == 'true' && needs.deploy-target.outputs.target == 'zerops'
     needs: [deploy-target]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment:
       name: ${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -1723,7 +1734,7 @@ jobs:
     name: Plan the selected Node releases with registered provider origins
     if: ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops' && needs.deploy-plan.result == 'success' && needs.node-asset-config.result == 'success' }}
     needs: [deploy-target, deploy-plan, node-asset-config]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: ${{ needs.deploy-target.outputs.environment }}
@@ -1843,7 +1854,7 @@ jobs:
       ${{ !cancelled() && needs.node-release-plan.result == 'success'
       && needs.node-release-plan.outputs.fresh-units != '[]' }}
     needs: [deploy-plan, node-release-plan]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       actions: read
@@ -1926,7 +1937,7 @@ jobs:
       ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success'
       && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-plan.result == 'success') }}
     needs: [workspace-gates, deploy-target, deploy-plan, edge-plan]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
       name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -2009,7 +2020,7 @@ jobs:
         initial-composition-cutover-guard,
         capture-application-baseline,
       ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Public artifact uploads use the existing deployment gateway's credentials, never a runtime token.
     environment:
@@ -2275,7 +2286,7 @@ jobs:
         deploy-cloudflare,
         prepare-node-composition,
       ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment:
       name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -2443,7 +2454,7 @@ jobs:
       ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops'
       && needs.deploy-migrations.result == 'success' && needs.prepare-node-composition.result == 'success' }}
     needs: [deploy-target, node-release-plan, prepare-node-composition, deploy-migrations]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     environment:
       name: ${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
@@ -2664,7 +2675,7 @@ jobs:
       ${{ !cancelled() && needs.deploy-migrations.result == 'success'
       && (needs.deploy-target.outputs.target == 'cloudflare' || needs.deploy-node-backends.result == 'success') }}
     needs: [deploy-target, deploy-plan, deploy-migrations, deploy-node-backends]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Each Zerops push builds its unit remotely for about 12 minutes and units deploy one after another in
     # plan order, so a full topology deploy (12 units plus publication) needs about 3 hours.
     timeout-minutes: 240
@@ -2834,7 +2845,7 @@ jobs:
     # Keep the retired Workers deploy chain disabled even if old Cloudflare credentials remain configured.
     if: ${{ false }}
     needs: [deploy-target]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment:
       name: stage-edge
@@ -2911,7 +2922,7 @@ jobs:
       && needs.edge-deploy-readiness.outputs.configured == 'true' && needs.capture-application-baseline.result == 'success'
       && needs.deploy-plan.result == 'success' }}
     needs: [deploy-target, edge-deploy-readiness, capture-application-baseline, deploy-plan]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: stage-edge
@@ -3041,7 +3052,7 @@ jobs:
     name: Build edge unit ${{ matrix.unit.id }}
     if: ${{ !cancelled() && needs.edge-plan.result == 'success' && needs.edge-plan.outputs.cloudflare != '[]' }}
     needs: [edge-plan]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -3139,7 +3150,7 @@ jobs:
       ${{ !cancelled() && needs.initial-composition-cutover-guard.result == 'success' && needs.edge-plan.result == 'success'
       && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]')) }}
     needs: [deploy-target, initial-composition-cutover-guard, edge-plan, edge-build, capture-application-baseline]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Artifact creation, authority changes, refresh and publication share the environment lock.
     concurrency:
       group: zerops-stage
@@ -3417,7 +3428,7 @@ jobs:
       ${{ !cancelled() && needs.deploy-zerops.result == 'success' && needs.deploy-cloudflare.result == 'success'
       && needs.deploy-target.outputs.target == 'cloudflare' }}
     needs: [deploy-target, deploy-zerops, deploy-cloudflare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: stage-edge
@@ -3524,7 +3535,7 @@ jobs:
       && needs.edge-plan.result == 'success' && needs.deploy-cloudflare.result == 'success'
       && needs.publish-edge-composition.result == 'success' }}
     needs: [deploy-target, edge-plan, deploy-cloudflare, publish-edge-composition]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: stage-edge
     concurrency:

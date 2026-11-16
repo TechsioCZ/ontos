@@ -2636,10 +2636,18 @@ it('covers every root integration shard and assigns each package integration sui
   ];
   const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
-  expect(run?.env).toMatchObject({ APP_ENV_PATH: '/dev/null', SPICEDB_DATABASE_PASSWORD: 'spicedb' });
-  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1');
+  expect(run?.env).toMatchObject({
+    APP_ENV_PATH: '/dev/null',
+    ONTOS_CI_ISOLATED_WORKERS: '2',
+    SPICEDB_DATABASE_PASSWORD: 'spicedb',
+  });
+  const isolate = job.steps.findIndex((step) => step.run === 'bash scripts/ci/start-integration-workers.sh');
+  expect(isolate).toBeGreaterThan(-1);
+  expect(isolate).toBeLessThan(job.steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined));
+  expect(job.steps[isolate]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(run?.run).toContain('mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 2');
   expect(run?.run).toContain(
-    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
+    'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 2',
   );
   expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
   expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"');
