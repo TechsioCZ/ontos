@@ -17,6 +17,7 @@ import type { ApplicationMigrationRequirements } from '../application-migration-
 import { planDeploymentImpact } from '../plan-deployment-impact.mts';
 import { quoteIdentifier } from '../postgres/database-login-roles.mts';
 import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
+import { isIntegrationWorkerEndpoint } from '../ci/integration-worker-environment.mts';
 import {
   ScopedOwnerNativeStateSchema,
   ScopedOwnerPreparedPlanSchema,
@@ -198,7 +199,14 @@ const fixture = Effect.fn('ScopedOwnerMigrations.ownedDatabase')(function* owned
   });
   const { admin } = connections;
   const ownedCluster = admin.database === 'ontos_1293_bootstrap' && admin.user === 'ontos_admin' && admin.port !== 5433;
-  const disposableCiCluster = admin.database === 'ontos_ci' && admin.user === 'ontos_ci_admin' && admin.port === 5433;
+  const worker = yield* Config.all({
+    container: Config.String('ONTOS_TEST_DB_CONTAINER').pipe(Config.withDefault('')),
+    isolatedWorkers: Config.String('ONTOS_CI_ISOLATED_WORKERS').pipe(Config.withDefault('')),
+  });
+  const disposableCiCluster =
+    admin.database === 'ontos_ci' &&
+    admin.user === 'ontos_ci_admin' &&
+    (admin.port === 5433 || isIntegrationWorkerEndpoint({ ...worker, port: admin.port }));
   if (!['127.0.0.1', 'localhost', '::1'].includes(admin.host) || !(ownedCluster || disposableCiCluster)) {
     return yield* new ScopedOwnerNativeFailure({ stage: 'reject_non_disposable_cluster' });
   }

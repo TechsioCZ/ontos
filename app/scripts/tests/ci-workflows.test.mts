@@ -3024,3 +3024,21 @@ it('proves each target on its own shards only after every other shard of the tar
     expect(steps[download]?.with?.pattern).toBe(artifacts);
   }
 });
+
+it('runs excluded whole-owner scenarios exactly once on the bootstrap runner', () => {
+  const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    SERVICE_INTEGRATION_JOB
+  ];
+  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  for (const file of [
+    'scripts/integration/organization-source-customer-owner-conformance.test.mts',
+    'tests/integration/market-revision-whole-current-pricing-postgres.test.ts',
+  ]) {
+    expect(scheduler).toContain(`--exclude ${file}`);
+    const proofs = job.steps.filter(({ run }) => run?.includes(file) === true);
+    expect(proofs).toHaveLength(1);
+    expect(proofs[0]?.if).toBe(BOOTSTRAP_CONDITION);
+    expect(proofs[0]?.env?.APP_ENV_PATH).toBe('/dev/null');
+    expect(proofs[0]?.run).toContain('--pool.maxWorkers 1');
+  }
+});

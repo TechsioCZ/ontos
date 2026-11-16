@@ -9,6 +9,7 @@ import { expect, it } from 'effect-rstest';
 import {
   IntegrationWorkerSettingsSchema,
   integrationWorkerEnvironment,
+  isIntegrationWorkerEndpoint,
 } from '../ci/integration-worker-environment.mts';
 
 const decode = Schema.decodeUnknownResult(IntegrationWorkerSettingsSchema);
@@ -98,12 +99,12 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', pricingSelector], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '3',
-      'exec -- pnpm --filter ./verticals/pricing run test:integration --pool.maxWorkers 1',
+      'exec -- pnpm --filter ./verticals/pricing run test:integration --pool.maxWorkers 1 --exclude tests/integration/market-revision-whole-current-pricing-postgres.test.ts',
     ]);
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '3',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
@@ -127,6 +128,17 @@ it('launches package and root suites with the assigned lane and propagates failu
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
+});
+
+it('recognizes only a provisioned worker container and port pair in isolated CI mode', () => {
+  for (const slot of [1, 2, 3, 4]) {
+    const endpoint = { container: `ontos-ci-db-${slot}`, isolatedWorkers: '4', port: 5540 + slot };
+    expect(isIntegrationWorkerEndpoint(endpoint)).toBe(true);
+    expect(isIntegrationWorkerEndpoint({ ...endpoint, isolatedWorkers: '' })).toBe(false);
+    expect(isIntegrationWorkerEndpoint({ ...endpoint, port: 5433 })).toBe(false);
+    expect(isIntegrationWorkerEndpoint({ ...endpoint, container: 'unowned-cluster' })).toBe(false);
+  }
+  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-5', isolatedWorkers: '4', port: 5545 })).toBe(false);
 });
 
 it('partitions the two long direct-Rstest suites without duplicating compound package scripts', () => {

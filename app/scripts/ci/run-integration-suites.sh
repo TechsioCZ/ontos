@@ -8,10 +8,15 @@ if [[ "${1:-}" == --task ]]; then
   [[ "${ONTOS_CI_WORKER_SLOT:?}" =~ ^[0-3]$ ]] || exit 2
   export ONTOS_CI_WORKER_SLOT="$((ONTOS_CI_WORKER_SLOT + 1))"
   if [[ "$task" == root:* ]]; then
-    exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}"
+    exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}" \
+      --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts
   fi
   if [[ "$task" == *#* ]]; then
     exec mise exec -- pnpm --filter "${task%#*}" run test:integration --pool.maxWorkers 1 --shard "${task##*#}"
+  fi
+  if [[ "$task" == ./verticals/pricing ]]; then
+    exec mise exec -- pnpm --filter "$task" run test:integration --pool.maxWorkers 1 \
+      --exclude tests/integration/market-revision-whole-current-pricing-postgres.test.ts
   fi
   exec mise exec -- pnpm --filter "$task" run test:integration --pool.maxWorkers 1
 fi
