@@ -8,10 +8,15 @@ import {
   seedCommittedProfileSourceProcessingNativeFixture,
   seedSourceProcessingNativeFixture,
 } from '@app/privacy/testing/source-processing-native';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
-import { assert, expect, it } from 'effect-rstest';
+import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
+import {
+  SymmyInternalExecutionPlanSchema,
+  SymmyRouteExecutionConfigurationSchema,
+} from '@app/symmy-integration/symmy-internal-contracts';
+import { expect, it } from 'effect-rstest';
 import { DateTime, Duration, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
+import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
 import { customerIntakeContext, customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
@@ -60,6 +65,195 @@ const nativeSchema = Schema.Struct({
   requestHash: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
 });
 
+type AssignmentFixture = Effect.Success<ReturnType<typeof makeAssignmentFixture>>;
+const carrierEffectSchema = Schema.Struct({
+  effect_id: Schema.String,
+  effect_key: Schema.String,
+  owner_invocation_id: Schema.OptionFromNullOr(uuidText),
+  owner_receipt: Schema.Unknown,
+  state: Schema.String,
+});
+const symmyApp = 'symmy-integration';
+const carrierCode = 'INTERNAL_C14_ASSIGNMENT_CARRIER';
+const priceGroupRecordId = 'INTERNAL_C14_EXPLICIT_GROUP';
+const carrierGroupRecordId = 'INTERNAL_C14_CARRIER_GROUP';
+
+const enrolled = (effectKey: string, entrypointKey: string, moduleId: string) => ({
+  effects: [{ effectKey, operation: { entrypointKey, moduleId, schemaVersion: '1' } }],
+});
+/** The internal Price Group plan: the public routes have no Price Group create for a customer assignment. */
+const makePriceGroupPlan = Effect.fn('SymmyC14Assignment.priceGroupPlan')(function* makePriceGroupPlan(
+  fixture: AssignmentFixture,
+  effectiveFrom: DateTime.Utc,
+) {
+  return yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+    items: [
+      {
+        effects: [
+          {
+            effectKey: 'price-group-create',
+            intent: {
+              _tag: 'PriceGroupCreate',
+              payload: {
+                businessCode: priceGroupRecordId,
+                classificationPurpose: 'Explicit internal assignment fixture',
+                compatibilityContracts: [{ contractId: 'commerce.customer-price-group-assignment.v1', version: 1 }],
+                description: 'Actual native producer for the explicit Retail assignment',
+                displayName: 'Internal explicit group',
+                effectiveFrom: DateTime.formatIso(effectiveFrom),
+                effectiveTo: null,
+                expectedCatalogRevision: 0,
+                reason: 'INTERNAL_C14 genuine owner producer fixture',
+                sourceCorrelation: {
+                  issuer: internalCustomerSource.issuerId,
+                  mappingVersion: internalCustomerSource.mappingVersion,
+                  namespace: internalCustomerSource.namespace,
+                  recordKey: priceGroupRecordId,
+                  routeId: fixture.sourceRouteId,
+                },
+              },
+            },
+            operation: {
+              entrypointKey: priceGroupCreateAction,
+              moduleId: 'pricing.price-group-catalog',
+              schemaVersion: '1',
+            },
+          },
+        ],
+        itemKey: 'price-group',
+        source: {
+          entityKind: 'PRICE_GROUP',
+          issuerId: internalCustomerSource.issuerId,
+          sourceNamespace: internalCustomerSource.namespace,
+          sourceRecordId: priceGroupRecordId,
+        },
+        sourceOccurrenceId: yield* uuid,
+      },
+    ],
+  });
+});
+
+/**
+ * A test-only carrier for the internal plans of this suite. The public customers route no longer takes a plan, and the
+ * price group and the explicit assignment have no public route. The still internal selected group route carries them
+ * under a test-only enrollment of this fixture: it changes no production route and no allowed effect of one.
+ */
+const enrollInternalPlanCarrier = Effect.fn('SymmyC14Assignment.carrier')(function* enrollInternalPlanCarrier(
+  fixture: AssignmentFixture,
+) {
+  const { admin, integration, legalEntityId, shell, sourceIdentity, sourceRouteId, tenantId } = fixture;
+  const routeId = yield* uuid;
+  const groupRef = {
+    moduleId: commerceModuleId,
+    resourceId: yield* uuid,
+    resourceType: 'commerce.customer-context.customer-group',
+    tenantId,
+  };
+  const source = (entityKind: string, sourceRecordId: string) => ({
+    entityKind,
+    issuerId: sourceIdentity.issuer,
+    sourceNamespace: sourceIdentity.namespace,
+    sourceRecordId,
+  });
+  const configuration = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+    items: [
+      {
+        ...enrolled('enrolled-price-group', priceGroupCreateAction, 'pricing.price-group-catalog'),
+        itemKey: 'price-group',
+        source: source('PRICE_GROUP', priceGroupRecordId),
+      },
+      {
+        ...enrolled('enrolled-assignment', actionKey, commerceModuleId),
+        itemKey: 'assignment',
+        source: source('CUSTOMER', fixture.recordId),
+      },
+    ],
+    selector: {
+      kind: 'CUSTOMER_GROUP',
+      source: {
+        entityKind: 'CUSTOMER_GROUP',
+        issuerId: sourceIdentity.issuer,
+        route: { integrationRouteId: sourceRouteId, tenantId },
+        sourceNamespace: sourceIdentity.namespace,
+        sourceRecordId: carrierGroupRecordId,
+      },
+      target: groupRef,
+    },
+    sourceRouteId,
+  });
+  const policy = { policyId: 'INTERNAL_C14_ASSIGNMENT_CARRIER_RETENTION', revision: '1' };
+  yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_code,route_revision,lifecycle_policy)
+    values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(configuration)}::jsonb,${internalCustomerSource.mappingVersion},'customerGroupCustomersBatch',${carrierCode},${internalCustomerSource.routeRevision},${yield* json(policy)}::jsonb)`;
+  const existing = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Json)))(
+    fixture.environment.ONTOS_SYMMY_JOB_RETENTION_POLICIES,
+  );
+  const environment = {
+    ...fixture.environment,
+    ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
+      ...existing,
+      {
+        ...policy,
+        governanceLegalEntityId: legalEntityId,
+        retentionMs: 60_000,
+        routeId,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      },
+    ]),
+  };
+  const symmyRuntime = fixture.ownerRuntimes.get(symmyApp);
+  if (symmyRuntime === undefined) {
+    return yield* unavailable('The actual Symmy receiver is required');
+  }
+  yield* symmyRuntime.receiver.child.kill();
+  yield* symmyRuntime.receiver.child.exitCode;
+  const restarted = yield* startProductOwner({
+    artifacts: symmyRuntime.artifacts,
+    contract: symmyRuntime.contract,
+    environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: symmyRuntime.moduleKey },
+    port: symmyRuntime.port,
+    prefix: '/symmy-integration-api',
+  });
+  fixture.ownerRuntimes.set(symmyApp, { ...symmyRuntime, receiver: restarted });
+  fixture.ownerDiagnostics.set(symmyApp, restarted.diagnostic);
+  const selectedCode = encodeSymmySourceSelector(
+    {
+      issuerId: sourceIdentity.issuer,
+      routeId: sourceRouteId,
+      selectorKind: 'CUSTOMER_GROUP',
+      sourceNamespace: sourceIdentity.namespace,
+      tenantId,
+    },
+    carrierGroupRecordId,
+    groupRef.resourceId,
+  );
+  const client = yield* HttpClient.HttpClient;
+  const submit = (idempotencyKey: string, plan: typeof SymmyInternalExecutionPlanSchema.Type) =>
+    Effect.gen(function* submitPlan() {
+      const response = yield* client.post(
+        `${shell.baseUrl}/api/symmy/v1/customer-groups/${selectedCode}/customers/batch`,
+        {
+          body: yield* HttpBody.json({
+            contractVersion: 'INTERNAL_C14',
+            plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan),
+          }),
+          headers: { 'idempotency-key': idempotencyKey, 'x-api-key': Redacted.value(fixture.providerKey.secret) },
+        },
+      );
+      if (response.status !== 202) {
+        return yield* unavailable(`The internal plan carrier returned ${response.status}: ${yield* response.text}`);
+      }
+      return yield* response.json.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Struct({ jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId, status: Schema.String }),
+          ),
+        ),
+      );
+    });
+  return { environment, submit };
+});
+
 it.live(
   'INTERNAL_C14 explicit Retail assignment retains its native command and admits only current minimal recovery after write retirement',
   () =>
@@ -76,9 +270,28 @@ it.live(
             ),
         });
         const { admin, legalEntityId, systemId, tenantId } = fixture;
-        const priceGroup = fixture.completed.find(({ effect_key }) => effect_key === 'price-group-create');
-        assert.isOk(priceGroup);
-        if (priceGroup.owner_receipt === null) {
+        const carrier = yield* enrollInternalPlanCarrier(fixture);
+        const priceGroupEffectiveFrom = DateTime.add(yield* DateTime.now, { seconds: 45 });
+        const priceGroupJob = yield* carrier.submit(
+          'INTERNAL_C14_EXPLICIT_PRICE_GROUP',
+          yield* makePriceGroupPlan(fixture, priceGroupEffectiveFrom),
+        );
+        const groupWorker = yield* startProductWorker(fixture.workerArtifact, {
+          ...carrier.environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICE_GROUP_WORKER',
+          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
+        });
+        const priceGroupRows = yield* observeAssignmentUntil(
+          admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects
+            where job_id=${priceGroupJob.jobId}`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(carrierEffectSchema))),
+          ),
+          (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
+        );
+        const priceGroup = priceGroupRows.at(0);
+        yield* groupWorker.child.kill();
+        yield* groupWorker.child.exitCode;
+        if (priceGroup === undefined || priceGroup.owner_receipt === null) {
           return yield* unavailable(
             'The native Price Group producer did not commit; no assignment recovery proof can proceed',
           );
@@ -185,7 +398,7 @@ it.live(
         const privacy = yield* startProductOwner({
           ...privacyRuntime,
           environment: {
-            ...fixture.environment,
+            ...carrier.environment,
             ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
@@ -195,7 +408,7 @@ it.live(
         });
         fixture.ownerDiagnostics.set('privacy', privacy.diagnostic);
         yield* Effect.sleep(
-          Duration.max(Duration.zero, DateTime.distance(yield* DateTime.now, fixture.priceGroupEffectiveFrom)),
+          Duration.max(Duration.zero, DateTime.distance(yield* DateTime.now, priceGroupEffectiveFrom)),
         );
         const effectiveFrom = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 2 }));
         const payload = {
@@ -239,9 +452,9 @@ it.live(
             },
           ],
         });
-        const accepted = yield* fixture.submitFor('INTERNAL_C14_EXPLICIT_ASSIGNMENT', plan);
+        const accepted = yield* carrier.submit('INTERNAL_C14_EXPLICIT_ASSIGNMENT', plan);
         const worker = yield* startProductWorker(fixture.workerArtifact, {
-          ...fixture.environment,
+          ...carrier.environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSIGNMENT_WORKER',
           ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
         });
@@ -313,7 +526,7 @@ it.live(
         const recoveryParty = yield* startProductOwner({
           ...partyRuntime,
           environment: {
-            ...fixture.environment,
+            ...carrier.environment,
             ONTOS_GATEWAY_MODULE_API_KEY: partyRuntime.moduleKey,
             ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: yield* json(
               [systemId, recoveryReaderId].map((principalId) => ({
@@ -387,7 +600,7 @@ it.live(
               },
               {
                 apiKey: Redacted.make(fixture.moduleKey),
-                baseUrl: fixture.environment.ONTOS_SHELL_GATEWAY_BASE_URL,
+                baseUrl: carrier.environment.ONTOS_SHELL_GATEWAY_BASE_URL,
                 requestCorrelation: yield* uuid,
               },
             );
