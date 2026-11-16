@@ -168,7 +168,7 @@ const awaitNativeLockWait = (state: Effect.Success<typeof fixture>, blockerPid: 
     const observed = yield* state.admin<{
       blocked: boolean;
     }>`select ${blockerPid}::integer=any(pg_blocking_pids(${blockedPid}::integer)) as blocked`;
-    if (observed[0]?.blocked === true) {
+    if (observed[0]?.blocked) {
       return true;
     }
     return yield* Effect.fail('native_lock_wait_unregistered' as const);

@@ -48,9 +48,9 @@ const WorkflowSchema = Schema.Struct({
   }),
 });
 // The workflow is read, parsed and decoded once: no test mutates the decoded jobs.
-const jobs = Schema.decodeUnknownSync(WorkflowSchema)(
+const { jobs } = Schema.decodeUnknownSync(WorkflowSchema)(
   parse(readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8')),
-).jobs;
+);
 const IMMUTABLE_SCRIPT = 'immutable-application-release.mts';
 const RECEIPT_FILE_FLAG = '--receipt-file';
 const SHARED_LOCK = 'zerops-stage';

@@ -993,7 +993,7 @@ it.live(
       ) as blocked`,
             'objects',
           );
-          if (state?.blocked === true) {
+          if (state?.blocked) {
             return true;
           }
           return yield* Effect.fail('native_lock_wait_unregistered' as const);

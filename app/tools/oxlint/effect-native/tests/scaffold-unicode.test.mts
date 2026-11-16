@@ -4,6 +4,7 @@ import { maskText } from '../shared/scaffold-text.ts';
 import { testEffectNativeRule, virtualFile } from './rule-tester.mts';
 
 const supplementaryCharacter = '\u{1F600}';
+const environmentAccess = 'process.env.X';
 
 // The source covers every masked form the pattern accepts: a line comment, a block comment that
 // spans a CRLF, and a quoted literal, each carrying supplementary characters. Asserting the offset
@@ -17,8 +18,8 @@ it('scaffold masking preserves UTF-16 offsets and line endings', () => {
     expect([...masked.matchAll(/\r\n/gu)].map((match) => match.index)).toStrictEqual(
       [...source.matchAll(/\r\n/gu)].map((match) => match.index),
     );
-    expect(masked.indexOf('process.env.X')).toBe(source.indexOf('process.env.X'));
-    expect(masked.endsWith('process.env.X')).toBeTruthy();
+    expect(masked.indexOf(environmentAccess)).toBe(source.indexOf(environmentAccess));
+    expect(masked.endsWith(environmentAccess)).toBeTruthy();
     expect(masked.includes(supplementaryCharacter)).toBe(!strings);
   }
 });

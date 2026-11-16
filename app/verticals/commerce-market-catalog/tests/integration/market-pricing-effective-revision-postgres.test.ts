@@ -306,10 +306,10 @@ const makeScenarioDatabase = Effect.fn('MarketRevisionNative.makeScenarioDatabas
   );
   if (
     replayPrivileges === undefined ||
-    replayPrivileges.canDelete !== true ||
-    replayPrivileges.canInsert !== true ||
-    replayPrivileges.canSelect !== true ||
-    replayPrivileges.canUpdate !== false
+    !replayPrivileges.canDelete ||
+    !replayPrivileges.canInsert ||
+    !replayPrivileges.canSelect ||
+    replayPrivileges.canUpdate
   ) {
     return yield* new NativeSetupFailed({
       reason: 'Pre-authentication replay storage does not retain its exact production privileges',

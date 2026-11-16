@@ -30,6 +30,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer, defineEffectBff } from
 import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
 import { exportJWK, generateKeyPair, importJWK, SignJWT } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -509,6 +510,18 @@ const expectSanitized = (problem: typeof ProblemDetailsSchema.Type, secrets: rea
 };
 
 describe('Price Group governed Read HTTP integration', () => {
+  it.effect('refreshes snapshot validity after the shared composition outlives its original observation', () =>
+    Effect.gen(function* refreshSnapshotValidity() {
+      const first = yield* priceGroupCompositionSnapshot;
+      yield* TestClock.adjust('2 hours');
+      const second = yield* priceGroupCompositionSnapshot;
+
+      expect(second.composition).toEqual(first.composition);
+      expect(DateTime.toEpochMillis(second.observedAt) - DateTime.toEpochMillis(first.observedAt)).toBe(7_200_000);
+      expect(DateTime.toEpochMillis(second.validUntil) - DateTime.toEpochMillis(second.observedAt)).toBe(3_600_000);
+    }),
+  );
+
   it.effect('decodes the payload closed and ignores browser transport headers', () =>
     Effect.gen(function* decodeClosedPayload() {
       const assertion = yield* makeAssertion();
