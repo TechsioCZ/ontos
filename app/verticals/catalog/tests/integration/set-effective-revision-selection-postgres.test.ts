@@ -1360,8 +1360,8 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
           .pipe(Effect.map(Option.map(canonicalStored))),
       ),
     ).toEqual(original);
-    const draftedAt = yield* DateTime.now;
-    const t3 = DateTime.toEpochMillis(draftedAt) + 1500;
+    const draftedAt = afterInstant;
+    const t3 = t2 + 1500;
     const beforeDraftInstant = DateTime.makeUnsafe(t3 - 1);
     const atDraftInstant = DateTime.makeUnsafe(t3);
     const draft = yield* Schema.decodeUnknownEffect(SetCompositionMutationPayloadSchema)({
