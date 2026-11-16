@@ -321,8 +321,8 @@ jobs:
         if: matrix.node-artifacts == true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: node-units-1
-          path: ${{ runner.temp }}/native-composition-units/node-units-1
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
 
       - name: Unpack the Node artifacts for unit contract fixtures
         if: matrix.node-artifacts == true
@@ -631,8 +631,8 @@ jobs:
         if: matrix.suite != 'browser'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: node-units-1
-          path: ${{ runner.temp }}/native-composition-units/node-units-1
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
 
       - name: Unpack the Node artifacts for native owner fixtures
         if: matrix.suite != 'browser'
@@ -935,7 +935,7 @@ jobs:
   # source-content caching across commits hands native fixtures another release.
   # Dependency and incremental typecheck caches remain independent of releases.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/1)
+    name: Build node artifacts (${{ matrix.shard }}/2)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-24.04
@@ -943,9 +943,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1]
+        shard: [1, 2]
         include:
-          - { shard: 1, units: verticals/catalog verticals/tax verticals/commerce-cart verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/assortment apps/shell-super-app verticals/promotion verticals/payment verticals/party-registry verticals/inventory verticals/availability verticals/symmy-integration verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects }
+          - { shard: 1, units: verticals/catalog verticals/tax verticals/commerce-cart verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/assortment verticals/privacy verticals/price-group-catalog verticals/inventory }
+          - { shard: 2, units: apps/shell-super-app verticals/promotion verticals/payment verticals/party-registry verticals/availability verticals/symmy-integration verticals/commerce-market-catalog verticals/pricing verticals/payment-term-catalog verticals/projects }
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -968,9 +969,7 @@ jobs:
         working-directory: app
         env:
           SHARD_UNITS: ${{ matrix.units }}
-          GOMEMLIMIT: 1536MiB
           NODE_OPTIONS: --max-old-space-size=2048
-          ULTRAMODERN_TSGO_BUILDERS: '1'
         run: |
           printf 'Hosted build capacity: %s CPUs\n' "$(nproc)"
           free --mebi
@@ -984,7 +983,7 @@ jobs:
           done
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=3 "${filters[@]}" run build
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
