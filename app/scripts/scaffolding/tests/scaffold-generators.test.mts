@@ -1453,6 +1453,7 @@ it.live(
         expect(serverNames.toSorted()).toEqual([
           'ares-lookup-read-server.ts',
           'counterparties-search-server.ts',
+          'counterparty-identities-read-server.ts',
           'counterparty-migration-correlation-read-server.ts',
           'counterparty-organization-ico-facts-read-server.ts',
           'counterparty-read-read-server.ts',
