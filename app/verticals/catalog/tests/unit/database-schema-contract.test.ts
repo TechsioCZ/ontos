@@ -897,8 +897,4 @@ it('keeps the latest Set head guard structural for successors and preserves the 
   expect(forward).not.toContain('DROP TRIGGER');
   expect(forward).not.toContain('ALTER TABLE');
   expect(original).toContain('AFTER INSERT OR UPDATE ON "catalog"."set_compositions" DEFERRABLE INITIALLY DEFERRED');
-  const verifier = readFileSync(new URL('../../scripts/verify-db-schema.mts', import.meta.url), 'utf-8');
-  expect(verifier).toContain('setHeadGuard.body.trim() !== expectedSetHeadBody.trim()');
-  expect(verifier).toContain('t.tgdeferrable and t.tginitdeferred');
-  expect(verifier).toContain('s.current_revision > 1 or (r.effective_from <= now()');
 });

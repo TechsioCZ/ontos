@@ -117,15 +117,30 @@ const axisServices = (overrides: Partial<VariantAxisPersistence> = {}): VariantA
   ...overrides,
 });
 
+/**
+ * Both context helpers read only the content-digest revision of one identical Application Composition
+ * bundle, so the full decode/encode/digest/validate pass runs once for the whole file.
+ */
+const compositionRevisionCache: { value?: string } = {};
+const catalogCompositionRevision = Effect.gen(function* catalogCompositionRevision() {
+  const cached = compositionRevisionCache.value;
+  if (cached !== undefined) {
+    return cached;
+  }
+  const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+  compositionRevisionCache.value = snapshot.composition.revision;
+  return snapshot.composition.revision;
+});
+
 const confirmContext = (confirm: VariantPersistence['confirm']) =>
-  makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker).pipe(
+  catalogCompositionRevision.pipe(
     Effect.map(
-      ({ composition }) =>
+      (compositionRevision) =>
         ({
           actionInvocationId: '99999999-9999-4999-8999-999999999999',
           addDomainEvent: () => Effect.succeed(Object.create(null)),
           addOutboxMessage: () => Effect.void,
-          compositionRevision: composition.revision,
+          compositionRevision,
           recordAuditEvidence: () => Effect.void,
           recordDataAccess: () => Effect.void,
           scope,
@@ -135,14 +150,14 @@ const confirmContext = (confirm: VariantPersistence['confirm']) =>
   );
 
 const allowedValuesContext = (governAllowedValues: VariantAxisPersistence['governAllowedValues']) =>
-  makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker).pipe(
+  catalogCompositionRevision.pipe(
     Effect.map(
-      ({ composition }) =>
+      (compositionRevision) =>
         ({
           actionInvocationId: '99999999-9999-4999-8999-999999999999',
           addDomainEvent: () => Effect.succeed(Object.create(null)),
           addOutboxMessage: () => Effect.void,
-          compositionRevision: composition.revision,
+          compositionRevision,
           recordAuditEvidence: () => Effect.void,
           recordDataAccess: () => Effect.void,
           scope,

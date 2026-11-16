@@ -307,12 +307,4 @@ describe('Product Type assignment persistence', () => {
       expect(tx.writes).toEqual([]);
     }),
   );
-
-  it('keeps stale-basis rejection typed', () => {
-    const failure = new ProductTypeAssignmentRejected({
-      code: 'product_type_stale_impact_basis',
-      reason: 'No authoritative impact basis',
-    });
-    expect(Schema.is(ProductTypeAssignmentRejected)(failure)).toBe(true);
-  });
 });

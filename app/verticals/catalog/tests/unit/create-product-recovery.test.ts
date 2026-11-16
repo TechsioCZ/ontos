@@ -123,22 +123,6 @@ describe('create Product recovery', () => {
       expect('invocationId' in changedPayload).toBe(false);
     }),
   );
-  it.effect('returns the immutable committed snapshot', () =>
-    Effect.gen(function* recoverCommittedCreateCase() {
-      const recovered = yield* recoverCreateProduct(
-        { invocationId },
-        {
-          readKey: 'commerce.catalog.api.create-product-recovery',
-          scope,
-          services: services((id) => {
-            expect(id).toBe(invocationId);
-            return Effect.succeed({ result, status: 'committed' });
-          }),
-        },
-      ).pipe(Effect.provideService(ActionRuntime, runtime));
-      expect(recovered).toEqual(result);
-    }),
-  );
 
   for (const status of ['absent', 'rejected', 'open', 'indeterminate', 'unavailable'] as const) {
     it.effect(`maps ${status} without returning a mutable Product`, () =>

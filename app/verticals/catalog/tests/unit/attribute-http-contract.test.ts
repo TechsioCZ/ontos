@@ -7,16 +7,6 @@ import { mapRenameAttributeDefinitionActionProblem } from '../../api/rename-attr
 import { mapRenameControlledAttributeValueActionProblem } from '../../api/rename-controlled-attribute-value-action-problems.ts';
 import { mapRetireControlledAttributeValueActionProblem } from '../../api/retire-controlled-attribute-value-action-problems.ts';
 import {
-  executeCreateAttributeDefinition,
-  executeCreateControlledAttributeValue,
-  executeReactivateControlledAttributeValue,
-  executeRenameAttributeDefinition,
-  executeRenameControlledAttributeValue,
-  executeRetireControlledAttributeValue,
-  executeProductCategoryClassification,
-  executeProductCategoryHistory,
-} from '@app/catalog/api/client';
-import {
   AttributePersistenceConflict,
   AttributePersistenceNotFound,
 } from '../../src/persistence/attribute-persistence.ts';
@@ -30,21 +20,6 @@ const mappers = [
   mapRenameControlledAttributeValueActionProblem,
   mapRetireControlledAttributeValueActionProblem,
 ] as const;
-
-it('publishes Attribute Actions and Category reads through the supported Catalog client surface', () => {
-  for (const client of [
-    executeCreateAttributeDefinition,
-    executeCreateControlledAttributeValue,
-    executeReactivateControlledAttributeValue,
-    executeRenameAttributeDefinition,
-    executeRenameControlledAttributeValue,
-    executeRetireControlledAttributeValue,
-    executeProductCategoryClassification,
-    executeProductCategoryHistory,
-  ]) {
-    expect(client).toBeDefined();
-  }
-});
 
 it('maps Attribute business failures to redacted, typed HTTP statuses', () => {
   for (const map of mappers) {

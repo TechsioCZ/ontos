@@ -66,9 +66,24 @@ const scope = {
   correlationId: 'set-composition-event-test',
 };
 
+/**
+ * Every context here reads only the content-digest revision of one identical Application Composition
+ * bundle, so the full decode/encode/digest/validate pass runs once for the whole file.
+ */
+const compositionRevisionCache: { value?: string } = {};
+const catalogCompositionRevision = Effect.gen(function* catalogCompositionRevision() {
+  const cached = compositionRevisionCache.value;
+  if (cached !== undefined) {
+    return cached;
+  }
+  const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+  compositionRevisionCache.value = snapshot.composition.revision;
+  return snapshot.composition.revision;
+});
+
 const testContext = (publish: SetCompositionPersistence['publish']) =>
   Effect.gen(function* makeTestContext() {
-    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const compositionRevision = yield* catalogCompositionRevision;
     const events: unknown[] = [];
     const messages: unknown[] = [];
     const context: ActionHandlerContext<
@@ -85,7 +100,7 @@ const testContext = (publish: SetCompositionPersistence['publish']) =>
         Effect.sync(() => {
           messages.push(message);
         }),
-      compositionRevision: snapshot.composition.revision,
+      compositionRevision,
       recordAuditEvidence: () => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,

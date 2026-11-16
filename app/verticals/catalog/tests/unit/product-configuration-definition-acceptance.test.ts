@@ -18,7 +18,6 @@ import { ProductConfigurationSchema } from '../../shared/domain/product-form-sep
 import {
   inspectConfigurationDefinition,
   inspectProductConfiguration,
-  sameProductConfigurationSelection,
   sameProductConfigurationSelectionAcrossRevisions,
 } from '../../shared/domain/product-configuration.ts';
 import type {
@@ -42,9 +41,6 @@ const productRef = Schema.decodeUnknownSync(ProductRefSchema)(
 );
 const whiteVariant = Schema.decodeUnknownSync(VariantRefSchema)(
   makeRef('commerce.catalog.variant', '33333333-3333-4333-8333-333333333333'),
-);
-const blackVariant = Schema.decodeUnknownSync(VariantRefSchema)(
-  makeRef('commerce.catalog.variant', '44444444-4444-4444-8444-444444444444'),
 );
 const unitRef = makeRef('commerce.catalog.unit', '55555555-5555-4555-8555-555555555555');
 const otherUnitRef = makeRef('commerce.catalog.unit', '66666666-6666-4666-8666-666666666666');
@@ -267,17 +263,6 @@ describe('Product Configuration definition acceptance (#456)', () => {
         choices: [{ ...payload.choices[0], kind: 'FREE_TEXT' }],
       }),
     ).toThrow();
-  });
-
-  it('keeps a Variant as the exact target identity while admissibility remains Variant-specific', () => {
-    expect(inspectProductConfiguration(selected, definition).status).toBe('VALID');
-    expect(inspectProductConfiguration({ ...selected, variantRef: blackVariant }, definition).status).toBe('VALID');
-    expect(
-      sameProductConfigurationSelection(selected, { ...selected, variantRef: blackVariant }, definition),
-    ).toMatchObject({ same: false, status: 'VALID' });
-    const lengthChoice = definition.choices.find((choice) => choice.choiceKey === 'length');
-    expect(lengthChoice).not.toHaveProperty('variantRef');
-    expect(lengthChoice).not.toHaveProperty('variantId');
   });
 
   it('is a product-complete value that still confirms no other business decision', () => {

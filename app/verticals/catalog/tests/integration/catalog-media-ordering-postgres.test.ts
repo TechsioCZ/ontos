@@ -22,6 +22,7 @@ import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg';
 import {
   Cause,
+  Clock,
   Config,
   Context,
   Crypto,
@@ -112,6 +113,18 @@ const MediaOwnerSourceSchema = Schema.Struct({
   composition: ActiveApplicationCompositionSnapshotSchema,
   contract: OntosModuleDeploymentContractSchema,
   shellRuntime: OntosShellRuntimeContractSchema,
+});
+/** One observed document is decoded per test, so no two tests share one mutable owner-source graph. */
+const decodeOwnerSource = Effect.fn('MediaOrderingNative.decodeOwnerSource')(function* decodeOwnerSource(
+  document: string,
+) {
+  const source = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MediaOwnerSourceSchema))(document);
+  yield* requireCondition(
+    source.contract.deployment.appId === 'catalog' &&
+      source.contract.deployment.buildMarker === source.buildIdentity.buildMarker,
+    'owner-source-identity',
+  );
+  return source;
 });
 /** Derive current source metadata before bundling; no published backend or browser-build receipt is claimed. */
 const describeOwnerSource = Effect.fn('MediaOrderingNative.describeOwnerSource')(function* describeOwnerSource() {
@@ -210,13 +223,9 @@ const describeOwnerSource = Effect.fn('MediaOrderingNative.describeOwnerSource')
     { concurrency: 3 },
   );
   yield* requireCondition(code === 0, 'owner-source-description');
-  const source = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MediaOwnerSourceSchema))(output.join(''));
-  yield* requireCondition(
-    source.contract.deployment.appId === 'catalog' &&
-      source.contract.deployment.buildMarker === source.buildIdentity.buildMarker,
-    'owner-source-identity',
-  );
-  return source;
+  const document = output.join('');
+  yield* decodeOwnerSource(document);
+  return document;
 });
 const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function* bundleReceiver(
   identity: typeof MediaBuildIdentitySchema.Type,
@@ -418,7 +427,9 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
   yield* guardMediaOwnedDatabase(bootstrap.database);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const diagnostics = `${bundle.artifact}.diagnostics`;
+  // One bundle serves the whole suite, so the diagnostics directory is named per receiver run and
+  // keeps its exclusive create: two receivers can never write over one another's logs.
+  const diagnostics = `${bundle.artifact}.${yield* nextId}.diagnostics`;
   yield* fs.makeDirectory(diagnostics, { mode: 0o700 });
   const stderr = yield* fs.open(path.join(diagnostics, 'receiver.stderr.log'), { flag: 'wx', mode: 0o600 });
   const commands = yield* Queue.bounded<Uint8Array>(4);
@@ -506,15 +517,48 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
 const makeCatalogComposition = Effect.fn('MediaOrderingNative.makeCatalogComposition')(function* makeCatalogComposition(
   source: typeof MediaOwnerSourceSchema.Type,
 ) {
-  // The source-native candidate retains the fixture placement/window and uses the publisher's
-  // actual observed Federation policy. This does not claim browser execution or a deployment receipt.
-  return yield* validateActiveApplicationCompositionSnapshot(source.composition);
+  // The source-native candidate retains the fixture placement and uses the publisher's actual
+  // observed Federation policy. This does not claim browser execution or a deployment receipt.
+  // The owner source is observed once for the suite, so the observation window is renewed from the
+  // current clock: every test publishes a snapshot that is current for its own run, and a later
+  // test never inherits the first one's expiry.
+  const observedFor =
+    DateTime.toEpochMillis(source.composition.validUntil) - DateTime.toEpochMillis(source.composition.observedAt);
+  const observedAt = (yield* Clock.currentTimeMillis) - 1000;
+  return yield* validateActiveApplicationCompositionSnapshot({
+    ...source.composition,
+    observedAt: DateTime.makeUnsafe(observedAt),
+    validUntil: DateTime.makeUnsafe(observedAt + observedFor),
+  });
 });
+/**
+ * The verified owner-source description and the bundled receiver are pure functions of the source
+ * tree and its build marker, with no per-test state, so the suite observes them once instead of
+ * spawning three child processes per test. The owned database, its migrations and initial
+ * composition, the live operation fixture and the receiver process all stay per test.
+ */
+class MediaOrderingOwnerBuild extends Context.Service<
+  MediaOrderingOwnerBuild,
+  {
+    readonly bundle: Effect.Success<ReturnType<typeof bundleReceiver>>;
+    readonly ownerSourceDocument: string;
+  }
+>()('@app/catalog/tests/integration/MediaOrderingOwnerBuild') {}
+const MediaOrderingOwnerBuildLive = Layer.effect(
+  MediaOrderingOwnerBuild,
+  Effect.gen(function* observeMediaOrderingOwnerBuild() {
+    yield* requireCondition((yield* Config.String('APP_ENV_PATH')) === '/dev/null', 'closed-parent-environment');
+    const ownerSourceDocument = yield* describeOwnerSource();
+    const source = yield* decodeOwnerSource(ownerSourceDocument);
+    const bundle = yield* bundleReceiver(source.buildIdentity);
+    yield* describeReceiver(bundle, source);
+    return { bundle, ownerSourceDocument };
+  }),
+);
+const mediaOrderingSuiteServices = MediaOrderingOwnerBuildLive.pipe(Layer.provideMerge(services));
 const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() {
-  yield* requireCondition((yield* Config.String('APP_ENV_PATH')) === '/dev/null', 'closed-parent-environment');
-  const source = yield* describeOwnerSource();
-  const bundle = yield* bundleReceiver(source.buildIdentity);
-  yield* describeReceiver(bundle, source);
+  const { bundle, ownerSourceDocument } = yield* MediaOrderingOwnerBuild;
+  const source = yield* decodeOwnerSource(ownerSourceDocument);
   const composition = yield* makeCatalogComposition(source);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
@@ -910,29 +954,98 @@ const verifyIdentityDispatch = Effect.fn('MediaOrderingNative.verifyIdentityDisp
     yield* client`select * from catalog.variant_localized_facts where tenant_id=${tenantId} and variant_id=${variantId} order by locale`,
   ).toEqual(beforeVariantFacts);
 });
-it.live(
-  'commits reorder and middle insertion through real Catalog media Actions with truthful revisions',
-  () =>
-    Effect.gen(function* nativeOrderingRegression() {
-      const native = yield* makeNative();
-      const subjects = yield* produceSubjects(native);
-      const protection = yield* observeOriginalProtection(native);
-      const firstId = yield* nextId;
-      const secondId = yield* nextId;
-      const thirdId = yield* nextId;
-      const reason = 'Observe requested media order without technical removal history';
-      const evidenceRefs = ['TEST:1274:observed-media-order'];
-      const subjectRef = subjects.productRef;
-      for (const [assignmentId, order, expectedSetRevision] of [
-        [firstId, 1, 0],
-        [secondId, 2, 1],
-      ] as const) {
-        const payload = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
-          assignmentId,
+it.layer(mediaOrderingSuiteServices, { excludeTestServices: true })((suite) => {
+  suite.effect(
+    'commits reorder and middle insertion through real Catalog media Actions with truthful revisions',
+    () =>
+      Effect.gen(function* nativeOrderingRegression() {
+        const native = yield* makeNative();
+        const subjects = yield* produceSubjects(native);
+        const protection = yield* observeOriginalProtection(native);
+        const firstId = yield* nextId;
+        const secondId = yield* nextId;
+        const thirdId = yield* nextId;
+        const reason = 'Observe requested media order without technical removal history';
+        const evidenceRefs = ['TEST:1274:observed-media-order'];
+        const subjectRef = subjects.productRef;
+        for (const [assignmentId, order, expectedSetRevision] of [
+          [firstId, 1, 0],
+          [secondId, 2, 1],
+        ] as const) {
+          const payload = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
+            assignmentId,
+            evidenceRefs,
+            expectedSetRevision,
+            order,
+            purpose: 'photo',
+            reason,
+            resourceKind: 'MEDIA',
+            resourceRef: subjects.resourceRef,
+            subjectRef,
+          });
+          expect(
+            yield* executeAssignCatalogMediaWithAuthorization(
+              payload,
+              yield* native.authority.issue(yield* DateTime.now),
+              yield* nextId,
+              yield* native.options(),
+            ),
+          ).toEqual({
+            assignmentId,
+            setRevision: expectedSetRevision + 1,
+          });
+        }
+        const read = Effect.fn('MediaOrderingNative.publicCurrent')(function* publicCurrent(
+          target: typeof subjects.productRef | typeof subjects.variantRef = subjectRef,
+        ) {
+          return yield* executeCatalogMediaCurrentWithAuthorization(
+            { target },
+            yield* native.authority.issue(yield* DateTime.now, {
+              ...native.fixture.manager,
+              legalEntityId: native.fixture.legalEntityId,
+            }),
+            yield* nextId,
+            { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
+          );
+        });
+        const current = yield* read();
+        expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([firstId, secondId]);
+        expect(current.ordered.map(({ ownerAvailability }) => ownerAvailability)).toEqual(['UNVERIFIED', 'UNVERIFIED']);
+        const variantFallback = yield* read(subjects.variantRef);
+        expect(variantFallback).toMatchObject({ illustrativeFallback: true, source: 'PRODUCT' });
+        expect(variantFallback.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([firstId, secondId]);
+        const before = yield* observeMedia(native);
+        const reorder = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
+          assignmentId: secondId,
           evidenceRefs,
-          expectedSetRevision,
-          order,
-          purpose: 'photo',
+          expectedSetRevision: 2,
+          order: 1,
+          reason,
+          subjectRef,
+        });
+        const replayOptions = yield* native.options();
+        const moved = yield* executeReorderCatalogMediaWithAuthorization(
+          reorder,
+          yield* native.authority.issue(yield* DateTime.now),
+          yield* nextId,
+          replayOptions,
+        );
+        expect(moved).toEqual({ assignmentId: secondId, setRevision: 3 });
+        expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([secondId, firstId]);
+        const afterReorder = yield* observeMedia(native);
+        expect(afterReorder.revisions).toHaveLength(before.revisions.length + 2);
+        expect(afterReorder.revisions.filter((row) => row.state === 'REMOVED')).toEqual([]);
+        for (const assignmentId of [firstId, secondId]) {
+          expect(
+            afterReorder.revisions.filter((row) => row.assignment_id === assignmentId).map((row) => row.revision),
+          ).toEqual([1, 2]);
+        }
+        const insertion = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
+          assignmentId: thirdId,
+          evidenceRefs,
+          expectedSetRevision: 3,
+          order: 2,
+          purpose: 'detail',
           reason,
           resourceKind: 'MEDIA',
           resourceRef: subjects.resourceRef,
@@ -940,600 +1053,535 @@ it.live(
         });
         expect(
           yield* executeAssignCatalogMediaWithAuthorization(
-            payload,
+            insertion,
             yield* native.authority.issue(yield* DateTime.now),
             yield* nextId,
             yield* native.options(),
           ),
-        ).toEqual({
-          assignmentId,
-          setRevision: expectedSetRevision + 1,
+        ).toEqual({ assignmentId: thirdId, setRevision: 4 });
+        expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([
+          secondId,
+          thirdId,
+          firstId,
+        ]);
+        const remove = yield* Schema.decodeUnknownEffect(RemoveCatalogMediaPayloadSchema)({
+          assignmentId: thirdId,
+          evidenceRefs,
+          expectedSetRevision: 4,
+          reason,
+          subjectRef,
         });
-      }
-      const read = Effect.fn('MediaOrderingNative.publicCurrent')(function* publicCurrent(
-        target: typeof subjects.productRef | typeof subjects.variantRef = subjectRef,
-      ) {
-        return yield* executeCatalogMediaCurrentWithAuthorization(
-          { target },
-          yield* native.authority.issue(yield* DateTime.now, {
-            ...native.fixture.manager,
-            legalEntityId: native.fixture.legalEntityId,
-          }),
-          yield* nextId,
-          { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
+        expect(
+          yield* executeRemoveCatalogMediaWithAuthorization(
+            remove,
+            yield* native.authority.issue(yield* DateTime.now),
+            yield* nextId,
+            yield* native.options(),
+          ),
+        ).toEqual({ assignmentId: thirdId, setRevision: 5 });
+        expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([secondId, firstId]);
+        const beforeNoOp = yield* observeMedia(native);
+        const noOp = { ...reorder, expectedSetRevision: 5 };
+        expect(
+          yield* executeReorderCatalogMediaWithAuthorization(
+            noOp,
+            yield* native.authority.issue(yield* DateTime.now),
+            yield* nextId,
+            yield* native.options(),
+          ),
+        ).toEqual({ assignmentId: secondId, setRevision: 6 });
+        const afterNoOp = yield* observeMedia(native);
+        expect(afterNoOp.assignments).toEqual(beforeNoOp.assignments);
+        expect(afterNoOp.revisions).toEqual(beforeNoOp.revisions);
+        expect(afterNoOp.setRevisions).toHaveLength(beforeNoOp.setRevisions.length + 1);
+        const originalResult = afterReorder.results.find(
+          (row) => row.action_key === 'commerce.catalog.reorder-catalog-media',
         );
-      });
-      const current = yield* read();
-      expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([firstId, secondId]);
-      expect(current.ordered.map(({ ownerAvailability }) => ownerAvailability)).toEqual(['UNVERIFIED', 'UNVERIFIED']);
-      const variantFallback = yield* read(subjects.variantRef);
-      expect(variantFallback).toMatchObject({ illustrativeFallback: true, source: 'PRODUCT' });
-      expect(variantFallback.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([firstId, secondId]);
-      const before = yield* observeMedia(native);
-      const reorder = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
-        assignmentId: secondId,
-        evidenceRefs,
-        expectedSetRevision: 2,
-        order: 1,
-        reason,
-        subjectRef,
-      });
-      const replayOptions = yield* native.options();
-      const moved = yield* executeReorderCatalogMediaWithAuthorization(
-        reorder,
-        yield* native.authority.issue(yield* DateTime.now),
-        yield* nextId,
-        replayOptions,
-      );
-      expect(moved).toEqual({ assignmentId: secondId, setRevision: 3 });
-      expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([secondId, firstId]);
-      const afterReorder = yield* observeMedia(native);
-      expect(afterReorder.revisions).toHaveLength(before.revisions.length + 2);
-      expect(afterReorder.revisions.filter((row) => row.state === 'REMOVED')).toEqual([]);
-      for (const assignmentId of [firstId, secondId]) {
+        const invocationId = yield* Schema.decodeUnknownEffect(ProductActionInvocationIdSchema)(
+          originalResult?.action_invocation_id,
+        );
         expect(
-          afterReorder.revisions.filter((row) => row.assignment_id === assignmentId).map((row) => row.revision),
-        ).toEqual([1, 2]);
-      }
-      const insertion = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
-        assignmentId: thirdId,
-        evidenceRefs,
-        expectedSetRevision: 3,
-        order: 2,
-        purpose: 'detail',
-        reason,
-        resourceKind: 'MEDIA',
-        resourceRef: subjects.resourceRef,
-        subjectRef,
-      });
-      expect(
-        yield* executeAssignCatalogMediaWithAuthorization(
-          insertion,
+          yield* executeReorderCatalogMediaRecoveryWithAuthorization(
+            { invocationId },
+            yield* native.authority.issue(yield* DateTime.now),
+            yield* nextId,
+            { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
+          ),
+        ).toEqual(moved);
+        // A committed replay advertises recovery of its original invocation after subsequent mutations.
+        const replayFailure = yield* executeReorderCatalogMediaWithAuthorization(
+          reorder,
           yield* native.authority.issue(yield* DateTime.now),
           yield* nextId,
-          yield* native.options(),
-        ),
-      ).toEqual({ assignmentId: thirdId, setRevision: 4 });
-      expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([
-        secondId,
-        thirdId,
-        firstId,
-      ]);
-      const remove = yield* Schema.decodeUnknownEffect(RemoveCatalogMediaPayloadSchema)({
-        assignmentId: thirdId,
-        evidenceRefs,
-        expectedSetRevision: 4,
-        reason,
-        subjectRef,
-      });
-      expect(
-        yield* executeRemoveCatalogMediaWithAuthorization(
-          remove,
-          yield* native.authority.issue(yield* DateTime.now),
-          yield* nextId,
-          yield* native.options(),
-        ),
-      ).toEqual({ assignmentId: thirdId, setRevision: 5 });
-      expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([secondId, firstId]);
-      const beforeNoOp = yield* observeMedia(native);
-      const noOp = { ...reorder, expectedSetRevision: 5 };
-      expect(
-        yield* executeReorderCatalogMediaWithAuthorization(
-          noOp,
-          yield* native.authority.issue(yield* DateTime.now),
-          yield* nextId,
-          yield* native.options(),
-        ),
-      ).toEqual({ assignmentId: secondId, setRevision: 6 });
-      const afterNoOp = yield* observeMedia(native);
-      expect(afterNoOp.assignments).toEqual(beforeNoOp.assignments);
-      expect(afterNoOp.revisions).toEqual(beforeNoOp.revisions);
-      expect(afterNoOp.setRevisions).toHaveLength(beforeNoOp.setRevisions.length + 1);
-      const originalResult = afterReorder.results.find(
-        (row) => row.action_key === 'commerce.catalog.reorder-catalog-media',
-      );
-      const invocationId = yield* Schema.decodeUnknownEffect(ProductActionInvocationIdSchema)(
-        originalResult?.action_invocation_id,
-      );
-      expect(
-        yield* executeReorderCatalogMediaRecoveryWithAuthorization(
-          { invocationId },
-          yield* native.authority.issue(yield* DateTime.now),
-          yield* nextId,
-          { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
-        ),
-      ).toEqual(moved);
-      // A committed replay advertises recovery of its original invocation after subsequent mutations.
-      const replayFailure = yield* executeReorderCatalogMediaWithAuthorization(
-        reorder,
-        yield* native.authority.issue(yield* DateTime.now),
-        yield* nextId,
-        replayOptions,
-      ).pipe(Effect.flip);
-      const alreadyCommitted = yield* Schema.decodeUnknownEffect(
-        ReorderCatalogMediaActionAlreadyCommittedProblemSchema,
-      )(replayFailure);
-      expect(alreadyCommitted).toMatchObject({
-        code: 'action_already_committed',
-        invocationId,
-        resolution: 'RECOVER_REORDER_CATALOG_MEDIA',
-        retryCommand: false,
-        status: 409,
-      });
-      const recoveryInvocationId = yield* Schema.decodeUnknownEffect(ProductActionInvocationIdSchema)(
-        alreadyCommitted.invocationId,
-      );
-      expect(
-        yield* executeReorderCatalogMediaRecoveryWithAuthorization(
-          { invocationId: recoveryInvocationId },
-          yield* native.authority.issue(yield* DateTime.now),
-          yield* nextId,
-          { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
-        ),
-      ).toEqual(moved);
-      expect(yield* observeMedia(native)).toEqual(afterNoOp);
-      const changedIntent = yield* executeReorderCatalogMediaWithAuthorization(
-        { ...reorder, order: 2 },
-        yield* native.authority.issue(yield* DateTime.now),
-        yield* nextId,
-        replayOptions,
-      ).pipe(Effect.result);
-      expect(Result.isFailure(changedIntent)).toBe(true);
-      if (Result.isFailure(changedIntent)) {
-        expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(changedIntent.failure)).toBe(true);
-      }
-      const stale = yield* executeReorderCatalogMediaWithAuthorization(
-        reorder,
-        yield* native.authority.issue(yield* DateTime.now),
-        yield* nextId,
-        yield* native.options(),
-      ).pipe(Effect.result);
-      expect(Result.isFailure(stale)).toBe(true);
-      if (Result.isFailure(stale)) {
-        expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(stale.failure)).toBe(true);
-      }
-      expect(yield* observeMedia(native)).toEqual(afterNoOp);
-      // Two separately authenticated requests compete for the same complete-set CAS.
-      const race = yield* Effect.forEach(
-        [1, 2],
-        (order) =>
-          Effect.gen(function* raceAttempt() {
-            const payload = { ...reorder, expectedSetRevision: 6, order };
-            return yield* executeReorderCatalogMediaWithAuthorization(
-              payload,
-              yield* native.authority.issue(yield* DateTime.now),
-              yield* nextId,
-              yield* native.options(),
-            ).pipe(Effect.result);
-          }),
-        { concurrency: 2 },
-      );
-      expect(race.filter(Result.isSuccess)).toHaveLength(1);
-      const failures = race.filter(Result.isFailure);
-      expect(failures).toHaveLength(1);
-      expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(failures[0]?.failure)).toBe(true);
-      const afterRace = yield* observeMedia(native);
-      yield* verifyIdentityDispatch(native, subjects, firstId);
-      expect(afterRace.setRevisions).toHaveLength(afterNoOp.setRevisions.length + 1);
-      expect((yield* read()).ordered.map(({ assignment }) => assignment.order)).toEqual([1, 2]);
-      // A deferred guard accepts transient overlap in the real reorder above but refuses an invalid final state.
-      let duplicateStatementsCompleted = false;
-      const invalidFinal = yield* native.owned.client
-        .withTransaction(
-          Effect.gen(function* duplicateAtCommit() {
-            yield* native.owned.client`update catalog.catalog_media_assignments
-        set position=1,current_revision=current_revision+1 where assignment_id=${firstId}`;
-            yield* native.owned.client`update catalog.catalog_media_assignments
-        set position=1,current_revision=current_revision+1 where assignment_id=${secondId}`;
-            yield* Effect.sync(() => {
-              duplicateStatementsCompleted = true;
-            });
-          }),
-        )
-        .pipe(Effect.exit);
-      expect(duplicateStatementsCompleted).toBe(true);
-      expect(Exit.isFailure(invalidFinal)).toBe(true);
-      if (Exit.isFailure(invalidFinal)) {
-        const sqlFailure = yield* Schema.decodeUnknownEffect(Schema.toType(SqlError))(Cause.squash(invalidFinal.cause));
-        expect(Schema.is(UniqueViolation)(sqlFailure.reason)).toBe(true);
+          replayOptions,
+        ).pipe(Effect.flip);
+        const alreadyCommitted = yield* Schema.decodeUnknownEffect(
+          ReorderCatalogMediaActionAlreadyCommittedProblemSchema,
+        )(replayFailure);
+        expect(alreadyCommitted).toMatchObject({
+          code: 'action_already_committed',
+          invocationId,
+          resolution: 'RECOVER_REORDER_CATALOG_MEDIA',
+          retryCommand: false,
+          status: 409,
+        });
+        const recoveryInvocationId = yield* Schema.decodeUnknownEffect(ProductActionInvocationIdSchema)(
+          alreadyCommitted.invocationId,
+        );
         expect(
-          Schema.is(
-            Schema.Struct({
-              code: Schema.Literal('23505'),
-              constraint: Schema.Literal('catalog_media_assignments_active_position_commit_uk'),
+          yield* executeReorderCatalogMediaRecoveryWithAuthorization(
+            { invocationId: recoveryInvocationId },
+            yield* native.authority.issue(yield* DateTime.now),
+            yield* nextId,
+            { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
+          ),
+        ).toEqual(moved);
+        expect(yield* observeMedia(native)).toEqual(afterNoOp);
+        const changedIntent = yield* executeReorderCatalogMediaWithAuthorization(
+          { ...reorder, order: 2 },
+          yield* native.authority.issue(yield* DateTime.now),
+          yield* nextId,
+          replayOptions,
+        ).pipe(Effect.result);
+        expect(Result.isFailure(changedIntent)).toBe(true);
+        if (Result.isFailure(changedIntent)) {
+          expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(changedIntent.failure)).toBe(true);
+        }
+        const stale = yield* executeReorderCatalogMediaWithAuthorization(
+          reorder,
+          yield* native.authority.issue(yield* DateTime.now),
+          yield* nextId,
+          yield* native.options(),
+        ).pipe(Effect.result);
+        expect(Result.isFailure(stale)).toBe(true);
+        if (Result.isFailure(stale)) {
+          expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(stale.failure)).toBe(true);
+        }
+        expect(yield* observeMedia(native)).toEqual(afterNoOp);
+        // Two separately authenticated requests compete for the same complete-set CAS.
+        const race = yield* Effect.forEach(
+          [1, 2],
+          (order) =>
+            Effect.gen(function* raceAttempt() {
+              const payload = { ...reorder, expectedSetRevision: 6, order };
+              return yield* executeReorderCatalogMediaWithAuthorization(
+                payload,
+                yield* native.authority.issue(yield* DateTime.now),
+                yield* nextId,
+                yield* native.options(),
+              ).pipe(Effect.result);
             }),
-          )(sqlFailure.reason.cause),
-        ).toBe(true);
-      }
-      expect(yield* observeMedia(native)).toEqual(afterRace);
-      for (const mutation of [
-        native.owned
-          .client`update catalog.catalog_media_assignments set position=position where assignment_id=${firstId}`,
-        native.owned
-          .client`update catalog.catalog_media_assignments set assignment_id=${yield* nextId},current_revision=current_revision+1 where assignment_id=${firstId}`,
-        native.owned.client`delete from catalog.catalog_media_assignments where assignment_id=${firstId}`,
-      ]) {
-        const protectedExit = yield* mutation.pipe(Effect.exit);
-        expect(Exit.isFailure(protectedExit)).toBe(true);
-        if (Exit.isFailure(protectedExit)) {
+          { concurrency: 2 },
+        );
+        expect(race.filter(Result.isSuccess)).toHaveLength(1);
+        const failures = race.filter(Result.isFailure);
+        expect(failures).toHaveLength(1);
+        expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(failures[0]?.failure)).toBe(true);
+        const afterRace = yield* observeMedia(native);
+        yield* verifyIdentityDispatch(native, subjects, firstId);
+        expect(afterRace.setRevisions).toHaveLength(afterNoOp.setRevisions.length + 1);
+        expect((yield* read()).ordered.map(({ assignment }) => assignment.order)).toEqual([1, 2]);
+        // A deferred guard accepts transient overlap in the real reorder above but refuses an invalid final state.
+        let duplicateStatementsCompleted = false;
+        const invalidFinal = yield* native.owned.client
+          .withTransaction(
+            Effect.gen(function* duplicateAtCommit() {
+              yield* native.owned.client`update catalog.catalog_media_assignments
+        set position=1,current_revision=current_revision+1 where assignment_id=${firstId}`;
+              yield* native.owned.client`update catalog.catalog_media_assignments
+        set position=1,current_revision=current_revision+1 where assignment_id=${secondId}`;
+              yield* Effect.sync(() => {
+                duplicateStatementsCompleted = true;
+              });
+            }),
+          )
+          .pipe(Effect.exit);
+        expect(duplicateStatementsCompleted).toBe(true);
+        expect(Exit.isFailure(invalidFinal)).toBe(true);
+        if (Exit.isFailure(invalidFinal)) {
           const sqlFailure = yield* Schema.decodeUnknownEffect(Schema.toType(SqlError))(
-            Cause.squash(protectedExit.cause),
+            Cause.squash(invalidFinal.cause),
           );
+          expect(Schema.is(UniqueViolation)(sqlFailure.reason)).toBe(true);
           expect(
             Schema.is(
               Schema.Struct({
-                code: Schema.Literal('55000'),
-                message: IdentityProtectionMessageSchema,
+                code: Schema.Literal('23505'),
+                constraint: Schema.Literal('catalog_media_assignments_active_position_commit_uk'),
               }),
             )(sqlFailure.reason.cause),
           ).toBe(true);
         }
         expect(yield* observeMedia(native)).toEqual(afterRace);
-      }
-      // The fixed negative path fails inside the actual receiving Action transaction after real writes.
-      const currentOrder = (yield* read()).ordered;
-      const target = yield* Schema.decodeUnknownEffect(CatalogMediaAssignmentIdSchema)(
-        currentOrder[1]?.assignment.assignmentId,
-      );
-      const cleanupFault = yield* installRollbackFault(native, target);
-      const forced = yield* executeReorderCatalogMediaWithAuthorization(
-        { ...reorder, assignmentId: target, expectedSetRevision: 7, order: 1, reason: 'TEST:1274:forced-rollback' },
-        yield* native.authority.issue(yield* DateTime.now),
-        yield* nextId,
-        yield* native.options(),
-      ).pipe(Effect.result);
-      expect(Result.isFailure(forced)).toBe(true);
-      if (Result.isFailure(forced)) {
-        expect(Schema.is(ReorderCatalogMediaActionUnavailableProblemSchema)(forced.failure)).toBe(true);
-      }
-      const reached = yield* native.owned.client<{ called: boolean; value: string }>`
-      select is_called as called,last_value::text as value from catalog.test_1274_rollback_reached`;
-      expect(reached).toEqual([{ called: true, value: '1' }]);
-      expect(yield* observeMedia(native)).toEqual(afterRace);
-      expect((yield* read()).ordered).toEqual(currentOrder);
-      expect(
-        yield* executeReorderCatalogMediaWithAuthorization(
-          { ...reorder, assignmentId: target, expectedSetRevision: 7, order: 1 },
+        for (const mutation of [
+          native.owned
+            .client`update catalog.catalog_media_assignments set position=position where assignment_id=${firstId}`,
+          native.owned
+            .client`update catalog.catalog_media_assignments set assignment_id=${yield* nextId},current_revision=current_revision+1 where assignment_id=${firstId}`,
+          native.owned.client`delete from catalog.catalog_media_assignments where assignment_id=${firstId}`,
+        ]) {
+          const protectedExit = yield* mutation.pipe(Effect.exit);
+          expect(Exit.isFailure(protectedExit)).toBe(true);
+          if (Exit.isFailure(protectedExit)) {
+            const sqlFailure = yield* Schema.decodeUnknownEffect(Schema.toType(SqlError))(
+              Cause.squash(protectedExit.cause),
+            );
+            expect(
+              Schema.is(
+                Schema.Struct({
+                  code: Schema.Literal('55000'),
+                  message: IdentityProtectionMessageSchema,
+                }),
+              )(sqlFailure.reason.cause),
+            ).toBe(true);
+          }
+          expect(yield* observeMedia(native)).toEqual(afterRace);
+        }
+        // The fixed negative path fails inside the actual receiving Action transaction after real writes.
+        const currentOrder = (yield* read()).ordered;
+        const target = yield* Schema.decodeUnknownEffect(CatalogMediaAssignmentIdSchema)(
+          currentOrder[1]?.assignment.assignmentId,
+        );
+        const cleanupFault = yield* installRollbackFault(native, target);
+        const forced = yield* executeReorderCatalogMediaWithAuthorization(
+          { ...reorder, assignmentId: target, expectedSetRevision: 7, order: 1, reason: 'TEST:1274:forced-rollback' },
           yield* native.authority.issue(yield* DateTime.now),
           yield* nextId,
           yield* native.options(),
-        ),
-      ).toEqual({ assignmentId: target, setRevision: 8 });
-      yield* cleanupFault;
-      expect(yield* observeOriginalProtection(native)).toEqual(protection);
-      yield* native.receiver.stop;
-    }).pipe(Effect.scoped, Effect.provide(services)),
-  120_000,
-);
+        ).pipe(Effect.result);
+        expect(Result.isFailure(forced)).toBe(true);
+        if (Result.isFailure(forced)) {
+          expect(Schema.is(ReorderCatalogMediaActionUnavailableProblemSchema)(forced.failure)).toBe(true);
+        }
+        const reached = yield* native.owned.client<{ called: boolean; value: string }>`
+      select is_called as called,last_value::text as value from catalog.test_1274_rollback_reached`;
+        expect(reached).toEqual([{ called: true, value: '1' }]);
+        expect(yield* observeMedia(native)).toEqual(afterRace);
+        expect((yield* read()).ordered).toEqual(currentOrder);
+        expect(
+          yield* executeReorderCatalogMediaWithAuthorization(
+            { ...reorder, assignmentId: target, expectedSetRevision: 7, order: 1 },
+            yield* native.authority.issue(yield* DateTime.now),
+            yield* nextId,
+            yield* native.options(),
+          ),
+        ).toEqual({ assignmentId: target, setRevision: 8 });
+        yield* cleanupFault;
+        expect(yield* observeOriginalProtection(native)).toEqual(protection);
+        yield* native.receiver.stop;
+      }).pipe(Effect.scoped),
+    120_000,
+  );
 
-for (const subjectKind of ['PRODUCT', 'VARIANT'] as const) {
-  for (const resourceKind of ['MEDIA', 'DOCUMENT'] as const) {
-    it.live(
-      `preserves truthful ${subjectKind} ${resourceKind} lifecycle and first-item semantics`,
-      () =>
-        Effect.gen(function* completeLifecycle() {
-          const native = yield* makeNative();
-          const subjects = yield* produceSubjects(native);
-          const subjectRef = subjectKind === 'PRODUCT' ? subjects.productRef : subjects.variantRef;
-          const reason = 'Verified native media lifecycle';
-          const evidenceRefs = ['TEST:1274:complete-lifecycle'];
-          const assign = Effect.fn('MediaOrderingLifecycle.assign')(function* assign(
-            assignmentId: string,
-            expectedSetRevision: number,
-            order: number,
-            kind: 'MEDIA' | 'DOCUMENT' = resourceKind,
-            target: typeof subjectRef = subjectRef,
-          ) {
-            const payload = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
-              assignmentId,
-              evidenceRefs,
-              expectedSetRevision,
-              order,
-              purpose: 'detail',
-              reason,
-              resourceKind: kind,
-              resourceRef: subjects.resourceRef,
-              subjectRef: target,
+  for (const subjectKind of ['PRODUCT', 'VARIANT'] as const) {
+    for (const resourceKind of ['MEDIA', 'DOCUMENT'] as const) {
+      suite.effect(
+        `preserves truthful ${subjectKind} ${resourceKind} lifecycle and first-item semantics`,
+        () =>
+          Effect.gen(function* completeLifecycle() {
+            const native = yield* makeNative();
+            const subjects = yield* produceSubjects(native);
+            const subjectRef = subjectKind === 'PRODUCT' ? subjects.productRef : subjects.variantRef;
+            const reason = 'Verified native media lifecycle';
+            const evidenceRefs = ['TEST:1274:complete-lifecycle'];
+            const assign = Effect.fn('MediaOrderingLifecycle.assign')(function* assign(
+              assignmentId: string,
+              expectedSetRevision: number,
+              order: number,
+              kind: 'MEDIA' | 'DOCUMENT' = resourceKind,
+              target: typeof subjectRef = subjectRef,
+            ) {
+              const payload = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
+                assignmentId,
+                evidenceRefs,
+                expectedSetRevision,
+                order,
+                purpose: 'detail',
+                reason,
+                resourceKind: kind,
+                resourceRef: subjects.resourceRef,
+                subjectRef: target,
+              });
+              return yield* executeAssignCatalogMediaWithAuthorization(
+                payload,
+                yield* native.authority.issue(yield* DateTime.now),
+                yield* nextId,
+                yield* native.options(),
+              );
             });
-            return yield* executeAssignCatalogMediaWithAuthorization(
-              payload,
-              yield* native.authority.issue(yield* DateTime.now),
-              yield* nextId,
-              yield* native.options(),
-            );
-          });
-          const read = Effect.fn('MediaOrderingLifecycle.read')(function* read() {
-            return yield* executeCatalogMediaCurrentWithAuthorization(
-              { target: subjectRef },
-              yield* native.authority.issue(yield* DateTime.now, {
-                ...native.fixture.manager,
-                legalEntityId: native.fixture.legalEntityId,
-              }),
-              yield* nextId,
-              { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
-            );
-          });
-          // A real Product media set proves Variant fallback before and after Variant-owned MEDIA.
-          const fallbackId = yield* nextId;
-          if (subjectKind === 'VARIANT' && resourceKind === 'MEDIA') {
-            yield* assign(fallbackId, 0, 1, 'MEDIA', subjects.productRef);
-            expect(yield* read()).toMatchObject({ illustrativeFallback: true, source: 'PRODUCT' });
-          }
-          // DOCUMENT ordering shares a set CAS with MEDIA while retaining an independent dense position key.
-          const otherKindId = yield* nextId;
-          const offset = resourceKind === 'DOCUMENT' ? 1 : 0;
-          if (resourceKind === 'DOCUMENT') {
-            yield* assign(otherKindId, 0, 1, 'MEDIA');
-          }
-          const firstId = yield* nextId;
-          const secondId = yield* nextId;
-          const thirdId = yield* nextId;
-          const insertedId = yield* nextId;
-          yield* assign(firstId, offset, 1);
-          yield* assign(secondId, offset + 1, 2);
-          yield* assign(thirdId, offset + 2, 3);
-          const reorder = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
-            assignmentId: thirdId,
-            evidenceRefs,
-            expectedSetRevision: offset + 3,
-            order: 1,
-            reason,
-            subjectRef,
-          });
-          expect(
-            yield* executeReorderCatalogMediaWithAuthorization(
-              reorder,
-              yield* native.authority.issue(yield* DateTime.now),
-              yield* nextId,
-              yield* native.options(),
-            ),
-          ).toEqual({ assignmentId: thirdId, setRevision: offset + 4 });
-          if (resourceKind === 'MEDIA') {
-            const current = yield* read();
-            expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([
-              thirdId,
-              firstId,
-              secondId,
-            ]);
-            expect(Option.getOrUndefined(current.main)?.assignment.assignmentId).toBe(thirdId);
-            expect(current).toMatchObject({ illustrativeFallback: false, source: subjectKind });
-          }
-          yield* assign(insertedId, offset + 4, 2);
-          const remove = Effect.fn('MediaOrderingLifecycle.remove')(function* remove(
-            assignmentId: string,
-            revision: number,
-          ) {
-            const payload = yield* Schema.decodeUnknownEffect(RemoveCatalogMediaPayloadSchema)({
-              assignmentId,
+            const read = Effect.fn('MediaOrderingLifecycle.read')(function* read() {
+              return yield* executeCatalogMediaCurrentWithAuthorization(
+                { target: subjectRef },
+                yield* native.authority.issue(yield* DateTime.now, {
+                  ...native.fixture.manager,
+                  legalEntityId: native.fixture.legalEntityId,
+                }),
+                yield* nextId,
+                { baseUrl: native.receiver.baseUrl, compositionRevision: native.composition.composition.revision },
+              );
+            });
+            // A real Product media set proves Variant fallback before and after Variant-owned MEDIA.
+            const fallbackId = yield* nextId;
+            if (subjectKind === 'VARIANT' && resourceKind === 'MEDIA') {
+              yield* assign(fallbackId, 0, 1, 'MEDIA', subjects.productRef);
+              expect(yield* read()).toMatchObject({ illustrativeFallback: true, source: 'PRODUCT' });
+            }
+            // DOCUMENT ordering shares a set CAS with MEDIA while retaining an independent dense position key.
+            const otherKindId = yield* nextId;
+            const offset = resourceKind === 'DOCUMENT' ? 1 : 0;
+            if (resourceKind === 'DOCUMENT') {
+              yield* assign(otherKindId, 0, 1, 'MEDIA');
+            }
+            const firstId = yield* nextId;
+            const secondId = yield* nextId;
+            const thirdId = yield* nextId;
+            const insertedId = yield* nextId;
+            yield* assign(firstId, offset, 1);
+            yield* assign(secondId, offset + 1, 2);
+            yield* assign(thirdId, offset + 2, 3);
+            const reorder = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
+              assignmentId: thirdId,
               evidenceRefs,
-              expectedSetRevision: revision,
+              expectedSetRevision: offset + 3,
+              order: 1,
               reason,
               subjectRef,
             });
-            return yield* executeRemoveCatalogMediaWithAuthorization(
-              payload,
+            expect(
+              yield* executeReorderCatalogMediaWithAuthorization(
+                reorder,
+                yield* native.authority.issue(yield* DateTime.now),
+                yield* nextId,
+                yield* native.options(),
+              ),
+            ).toEqual({ assignmentId: thirdId, setRevision: offset + 4 });
+            if (resourceKind === 'MEDIA') {
+              const current = yield* read();
+              expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([
+                thirdId,
+                firstId,
+                secondId,
+              ]);
+              expect(Option.getOrUndefined(current.main)?.assignment.assignmentId).toBe(thirdId);
+              expect(current).toMatchObject({ illustrativeFallback: false, source: subjectKind });
+            }
+            yield* assign(insertedId, offset + 4, 2);
+            const remove = Effect.fn('MediaOrderingLifecycle.remove')(function* remove(
+              assignmentId: string,
+              revision: number,
+            ) {
+              const payload = yield* Schema.decodeUnknownEffect(RemoveCatalogMediaPayloadSchema)({
+                assignmentId,
+                evidenceRefs,
+                expectedSetRevision: revision,
+                reason,
+                subjectRef,
+              });
+              return yield* executeRemoveCatalogMediaWithAuthorization(
+                payload,
+                yield* native.authority.issue(yield* DateTime.now),
+                yield* nextId,
+                yield* native.options(),
+              );
+            });
+            yield* remove(insertedId, offset + 5);
+            const beforeNoOp = yield* observeMedia(native);
+            yield* executeReorderCatalogMediaWithAuthorization(
+              { ...reorder, expectedSetRevision: offset + 6 },
               yield* native.authority.issue(yield* DateTime.now),
               yield* nextId,
               yield* native.options(),
             );
+            const afterNoOp = yield* observeMedia(native);
+            expect(afterNoOp.assignments).toEqual(beforeNoOp.assignments);
+            expect(afterNoOp.revisions).toEqual(beforeNoOp.revisions);
+            yield* remove(secondId, offset + 7);
+            yield* remove(thirdId, offset + 8);
+            if (resourceKind === 'MEDIA') {
+              const current = yield* read();
+              expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([firstId]);
+              expect(Option.getOrUndefined(current.main)?.assignment.assignmentId).toBe(firstId);
+            }
+            yield* remove(firstId, offset + 9);
+            const final = yield* observeMedia(native);
+            for (const [assignmentId, expectedRevisions] of [
+              [firstId, [1, 2, 3, 4, 5, 6]],
+              [secondId, [1, 2, 3, 4, 5]],
+              [thirdId, [1, 2, 3]],
+              [insertedId, [1, 2]],
+            ] as const) {
+              const history = final.revisions.filter((row) => row.assignment_id === assignmentId);
+              expect(history.map((row) => row.revision)).toEqual(expectedRevisions);
+              expect(history.slice(0, -1).every((row) => row.state === 'ACTIVE')).toBe(true);
+              expect(history.at(-1)?.state).toBe('REMOVED');
+              for (const revision of history) {
+                expect(revision.acting_principal_id).toBe(native.fixture.manager.principalId);
+                expect(revision.reason).toBe(reason);
+                expect(revision.evidence_refs).toEqual(evidenceRefs);
+                expect(Schema.is(ProductActionInvocationIdSchema)(revision.action_invocation_id)).toBe(true);
+              }
+              const head = final.assignments.find((row) => row.assignment_id === assignmentId);
+              expect(head?.current_revision).toBe(expectedRevisions.at(-1));
+              expect(head?.position).toBe(history.at(-1)?.position);
+              expect(head?.state).toBe('REMOVED');
+            }
+            if (resourceKind === 'DOCUMENT') {
+              expect(final.revisions.filter((row) => row.assignment_id === otherKindId)).toHaveLength(1);
+              expect(final.assignments.find((row) => row.assignment_id === otherKindId)).toMatchObject({
+                current_revision: 1,
+                position: 1,
+                state: 'ACTIVE',
+              });
+            } else {
+              const current = yield* read();
+              if (subjectKind === 'VARIANT') {
+                expect(current).toMatchObject({ illustrativeFallback: true, source: 'PRODUCT' });
+                expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([fallbackId]);
+              } else {
+                expect(current.ordered).toEqual([]);
+                expect(Option.isNone(current.main)).toBe(true);
+              }
+            }
+            yield* native.receiver.stop;
+          }).pipe(Effect.scoped),
+        120_000,
+      );
+    }
+  }
+
+  suite.effect(
+    'denies forged, ungranted and foreign-tenant writes and serializes cross-kind set changes',
+    () =>
+      Effect.gen(function* authorizationAndCrossKind() {
+        const native = yield* makeNative();
+        const subjects = yield* produceSubjects(native);
+        const mediaId = yield* nextId;
+        const documentId = yield* nextId;
+        const reason = 'Verify media and document authorization and shared set CAS';
+        const evidenceRefs = ['TEST:1274:authorization-cross-kind'];
+        for (const [assignmentId, resourceKind, expectedSetRevision] of [
+          [mediaId, 'MEDIA', 0],
+          [documentId, 'DOCUMENT', 1],
+        ] as const) {
+          const payload = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
+            assignmentId,
+            evidenceRefs,
+            expectedSetRevision,
+            order: 1,
+            purpose: 'detail',
+            reason,
+            resourceKind,
+            resourceRef: subjects.resourceRef,
+            subjectRef: subjects.productRef,
           });
-          yield* remove(insertedId, offset + 5);
-          const beforeNoOp = yield* observeMedia(native);
-          yield* executeReorderCatalogMediaWithAuthorization(
-            { ...reorder, expectedSetRevision: offset + 6 },
+          yield* executeAssignCatalogMediaWithAuthorization(
+            payload,
             yield* native.authority.issue(yield* DateTime.now),
             yield* nextId,
             yield* native.options(),
           );
-          const afterNoOp = yield* observeMedia(native);
-          expect(afterNoOp.assignments).toEqual(beforeNoOp.assignments);
-          expect(afterNoOp.revisions).toEqual(beforeNoOp.revisions);
-          yield* remove(secondId, offset + 7);
-          yield* remove(thirdId, offset + 8);
-          if (resourceKind === 'MEDIA') {
-            const current = yield* read();
-            expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([firstId]);
-            expect(Option.getOrUndefined(current.main)?.assignment.assignmentId).toBe(firstId);
-          }
-          yield* remove(firstId, offset + 9);
-          const final = yield* observeMedia(native);
-          for (const [assignmentId, expectedRevisions] of [
-            [firstId, [1, 2, 3, 4, 5, 6]],
-            [secondId, [1, 2, 3, 4, 5]],
-            [thirdId, [1, 2, 3]],
-            [insertedId, [1, 2]],
-          ] as const) {
-            const history = final.revisions.filter((row) => row.assignment_id === assignmentId);
-            expect(history.map((row) => row.revision)).toEqual(expectedRevisions);
-            expect(history.slice(0, -1).every((row) => row.state === 'ACTIVE')).toBe(true);
-            expect(history.at(-1)?.state).toBe('REMOVED');
-            for (const revision of history) {
-              expect(revision.acting_principal_id).toBe(native.fixture.manager.principalId);
-              expect(revision.reason).toBe(reason);
-              expect(revision.evidence_refs).toEqual(evidenceRefs);
-              expect(Schema.is(ProductActionInvocationIdSchema)(revision.action_invocation_id)).toBe(true);
-            }
-            const head = final.assignments.find((row) => row.assignment_id === assignmentId);
-            expect(head?.current_revision).toBe(expectedRevisions.at(-1));
-            expect(head?.position).toBe(history.at(-1)?.position);
-            expect(head?.state).toBe('REMOVED');
-          }
-          if (resourceKind === 'DOCUMENT') {
-            expect(final.revisions.filter((row) => row.assignment_id === otherKindId)).toHaveLength(1);
-            expect(final.assignments.find((row) => row.assignment_id === otherKindId)).toMatchObject({
-              current_revision: 1,
-              position: 1,
-              state: 'ACTIVE',
-            });
-          } else {
-            const current = yield* read();
-            if (subjectKind === 'VARIANT') {
-              expect(current).toMatchObject({ illustrativeFallback: true, source: 'PRODUCT' });
-              expect(current.ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([fallbackId]);
-            } else {
-              expect(current.ordered).toEqual([]);
-              expect(Option.isNone(current.main)).toBe(true);
-            }
-          }
-          yield* native.receiver.stop;
-        }).pipe(Effect.scoped, Effect.provide(services)),
-      120_000,
-    );
-  }
-}
-
-it.live(
-  'denies forged, ungranted and foreign-tenant writes and serializes cross-kind set changes',
-  () =>
-    Effect.gen(function* authorizationAndCrossKind() {
-      const native = yield* makeNative();
-      const subjects = yield* produceSubjects(native);
-      const mediaId = yield* nextId;
-      const documentId = yield* nextId;
-      const reason = 'Verify media and document authorization and shared set CAS';
-      const evidenceRefs = ['TEST:1274:authorization-cross-kind'];
-      for (const [assignmentId, resourceKind, expectedSetRevision] of [
-        [mediaId, 'MEDIA', 0],
-        [documentId, 'DOCUMENT', 1],
-      ] as const) {
-        const payload = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
-          assignmentId,
+        }
+        const payload = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
+          assignmentId: mediaId,
           evidenceRefs,
-          expectedSetRevision,
+          expectedSetRevision: 2,
           order: 1,
-          purpose: 'detail',
           reason,
-          resourceKind,
-          resourceRef: subjects.resourceRef,
           subjectRef: subjects.productRef,
         });
-        yield* executeAssignCatalogMediaWithAuthorization(
+        const before = yield* observeMedia(native);
+        const denied = yield* executeReorderCatalogMediaWithAuthorization(
           payload,
+          yield* native.authority.issue(yield* DateTime.now, native.fixture.denied),
+          yield* nextId,
+          yield* native.options(),
+        ).pipe(Effect.result);
+        expect(Result.isFailure(denied)).toBe(true);
+        if (Result.isFailure(denied)) {
+          expect(Schema.is(ReorderCatalogMediaActionForbiddenProblemSchema)(denied.failure)).toBe(true);
+        }
+        expect(yield* observeMedia(native)).toEqual(before);
+        const credential = yield* native.authority.issue(yield* DateTime.now);
+        const signatureOffset = credential.lastIndexOf('.') + 1;
+        const forged =
+          credential.slice(0, signatureOffset) +
+          (credential[signatureOffset] === 'A' ? 'B' : 'A') +
+          credential.slice(signatureOffset + 1);
+        const forgedResult = yield* executeReorderCatalogMediaWithAuthorization(
+          payload,
+          forged,
+          yield* nextId,
+          yield* native.options(),
+        ).pipe(Effect.result);
+        expect(Result.isFailure(forgedResult)).toBe(true);
+        if (Result.isFailure(forgedResult)) {
+          expect(Schema.is(ReorderCatalogMediaActionAuthenticationProblemSchema)(forgedResult.failure)).toBe(true);
+        }
+        expect(yield* observeMedia(native)).toEqual(before);
+        const other = yield* Effect.acquireRelease(
+          makeLiveOperationFixture({
+            access: 'allowed',
+            actionExecutor: 'manager-only',
+            actionKeys: ['commerce.catalog.reorder-catalog-media'],
+            adminConnectionString: Redacted.make(native.isolated.connections.admin.connectionString),
+            allowedAudiences: ['catalog'],
+            authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+            compositionRevision: native.composition.composition.revision,
+            moduleKeys: ['commerce.catalog'],
+            ownerRegistration: catalogRegistration,
+            runtimeConnectionString: Redacted.make(native.isolated.connections.runtime.connectionString),
+          }),
+          (fixture) => fixture.close().pipe(Effect.orDie),
+        );
+        const foreign = yield* executeReorderCatalogMediaWithAuthorization(
+          payload,
+          yield* native.authority.issue(yield* DateTime.now, other.manager),
+          yield* nextId,
+          yield* native.options(),
+        ).pipe(Effect.result);
+        expect(Result.isFailure(foreign)).toBe(true);
+        if (Result.isFailure(foreign)) {
+          expect(Schema.is(ReorderCatalogMediaActionNotFoundProblemSchema)(foreign.failure)).toBe(true);
+        }
+        expect(yield* observeMedia(native)).toEqual(before);
+        const invalidOrder = yield* executeReorderCatalogMediaWithAuthorization(
+          { ...payload, order: 2 },
           yield* native.authority.issue(yield* DateTime.now),
           yield* nextId,
           yield* native.options(),
+        ).pipe(Effect.result);
+        expect(Result.isFailure(invalidOrder)).toBe(true);
+        if (Result.isFailure(invalidOrder)) {
+          expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(invalidOrder.failure)).toBe(true);
+        }
+        expect(yield* observeMedia(native)).toEqual(before);
+        const race = yield* Effect.forEach(
+          [mediaId, documentId],
+          (assignmentId) =>
+            Effect.gen(function* crossKindAttempt() {
+              const input = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
+                ...payload,
+                assignmentId,
+              });
+              return yield* executeReorderCatalogMediaWithAuthorization(
+                input,
+                yield* native.authority.issue(yield* DateTime.now),
+                yield* nextId,
+                yield* native.options(),
+              ).pipe(Effect.result);
+            }),
+          { concurrency: 2 },
         );
-      }
-      const payload = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
-        assignmentId: mediaId,
-        evidenceRefs,
-        expectedSetRevision: 2,
-        order: 1,
-        reason,
-        subjectRef: subjects.productRef,
-      });
-      const before = yield* observeMedia(native);
-      const denied = yield* executeReorderCatalogMediaWithAuthorization(
-        payload,
-        yield* native.authority.issue(yield* DateTime.now, native.fixture.denied),
-        yield* nextId,
-        yield* native.options(),
-      ).pipe(Effect.result);
-      expect(Result.isFailure(denied)).toBe(true);
-      if (Result.isFailure(denied)) {
-        expect(Schema.is(ReorderCatalogMediaActionForbiddenProblemSchema)(denied.failure)).toBe(true);
-      }
-      expect(yield* observeMedia(native)).toEqual(before);
-      const credential = yield* native.authority.issue(yield* DateTime.now);
-      const signatureOffset = credential.lastIndexOf('.') + 1;
-      const forged =
-        credential.slice(0, signatureOffset) +
-        (credential[signatureOffset] === 'A' ? 'B' : 'A') +
-        credential.slice(signatureOffset + 1);
-      const forgedResult = yield* executeReorderCatalogMediaWithAuthorization(
-        payload,
-        forged,
-        yield* nextId,
-        yield* native.options(),
-      ).pipe(Effect.result);
-      expect(Result.isFailure(forgedResult)).toBe(true);
-      if (Result.isFailure(forgedResult)) {
-        expect(Schema.is(ReorderCatalogMediaActionAuthenticationProblemSchema)(forgedResult.failure)).toBe(true);
-      }
-      expect(yield* observeMedia(native)).toEqual(before);
-      const other = yield* Effect.acquireRelease(
-        makeLiveOperationFixture({
-          access: 'allowed',
-          actionExecutor: 'manager-only',
-          actionKeys: ['commerce.catalog.reorder-catalog-media'],
-          adminConnectionString: Redacted.make(native.isolated.connections.admin.connectionString),
-          allowedAudiences: ['catalog'],
-          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-          compositionRevision: native.composition.composition.revision,
-          moduleKeys: ['commerce.catalog'],
-          ownerRegistration: catalogRegistration,
-          runtimeConnectionString: Redacted.make(native.isolated.connections.runtime.connectionString),
-        }),
-        (fixture) => fixture.close().pipe(Effect.orDie),
-      );
-      const foreign = yield* executeReorderCatalogMediaWithAuthorization(
-        payload,
-        yield* native.authority.issue(yield* DateTime.now, other.manager),
-        yield* nextId,
-        yield* native.options(),
-      ).pipe(Effect.result);
-      expect(Result.isFailure(foreign)).toBe(true);
-      if (Result.isFailure(foreign)) {
-        expect(Schema.is(ReorderCatalogMediaActionNotFoundProblemSchema)(foreign.failure)).toBe(true);
-      }
-      expect(yield* observeMedia(native)).toEqual(before);
-      const invalidOrder = yield* executeReorderCatalogMediaWithAuthorization(
-        { ...payload, order: 2 },
-        yield* native.authority.issue(yield* DateTime.now),
-        yield* nextId,
-        yield* native.options(),
-      ).pipe(Effect.result);
-      expect(Result.isFailure(invalidOrder)).toBe(true);
-      if (Result.isFailure(invalidOrder)) {
-        expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(invalidOrder.failure)).toBe(true);
-      }
-      expect(yield* observeMedia(native)).toEqual(before);
-      const race = yield* Effect.forEach(
-        [mediaId, documentId],
-        (assignmentId) =>
-          Effect.gen(function* crossKindAttempt() {
-            const input = yield* Schema.decodeUnknownEffect(ReorderCatalogMediaPayloadSchema)({
-              ...payload,
-              assignmentId,
-            });
-            return yield* executeReorderCatalogMediaWithAuthorization(
-              input,
-              yield* native.authority.issue(yield* DateTime.now),
-              yield* nextId,
-              yield* native.options(),
-            ).pipe(Effect.result);
-          }),
-        { concurrency: 2 },
-      );
-      expect(race.filter(Result.isSuccess)).toHaveLength(1);
-      const rejected = race.filter(Result.isFailure);
-      expect(rejected).toHaveLength(1);
-      expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(rejected[0]?.failure)).toBe(true);
-      const after = yield* observeMedia(native);
-      expect(after.assignments).toEqual(before.assignments);
-      expect(after.revisions).toEqual(before.revisions);
-      expect(after.setRevisions).toHaveLength(before.setRevisions.length + 1);
-      yield* native.receiver.stop;
-    }).pipe(Effect.scoped, Effect.provide(services)),
-  120_000,
-);
+        expect(race.filter(Result.isSuccess)).toHaveLength(1);
+        const rejected = race.filter(Result.isFailure);
+        expect(rejected).toHaveLength(1);
+        expect(Schema.is(ReorderCatalogMediaActionConflictProblemSchema)(rejected[0]?.failure)).toBe(true);
+        const after = yield* observeMedia(native);
+        expect(after.assignments).toEqual(before.assignments);
+        expect(after.revisions).toEqual(before.revisions);
+        expect(after.setRevisions).toHaveLength(before.setRevisions.length + 1);
+        yield* native.receiver.stop;
+      }).pipe(Effect.scoped),
+    120_000,
+  );
+});

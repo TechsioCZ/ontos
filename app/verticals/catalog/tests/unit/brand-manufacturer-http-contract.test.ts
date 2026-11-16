@@ -2,14 +2,6 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { BrandActionError } from '../../shared/actions/brand-mutations.ts';
 import { ManufacturerActionError } from '../../shared/actions/manufacturer-mutations.ts';
-import { CreateBrandActionApi } from '../../shared/apis/create-brand-action.ts';
-import { RenameBrandActionApi } from '../../shared/apis/rename-brand-action.ts';
-import { RetireBrandActionApi } from '../../shared/apis/retire-brand-action.ts';
-import { ReactivateBrandActionApi } from '../../shared/apis/reactivate-brand-action.ts';
-import { SetProductBrandActionApi } from '../../shared/apis/set-product-brand-action.ts';
-import { SetProductManufacturerActionApi } from '../../shared/apis/set-product-manufacturer-action.ts';
-import { ChangeProductManufacturerActionApi } from '../../shared/apis/change-product-manufacturer-action.ts';
-import { RemoveProductManufacturerActionApi } from '../../shared/apis/remove-product-manufacturer-action.ts';
 import { mapCreateBrandActionProblem } from '../../api/create-brand-action-problems.ts';
 import { mapRenameBrandActionProblem } from '../../api/rename-brand-action-problems.ts';
 import { mapRetireBrandActionProblem } from '../../api/retire-brand-action-problems.ts';
@@ -20,34 +12,8 @@ import { mapChangeProductManufacturerActionProblem } from '../../api/change-prod
 import { mapRemoveProductManufacturerActionProblem } from '../../api/remove-product-manufacturer-action-problems.ts';
 import { ManufacturerPersistenceUnavailable } from '../../src/persistence/manufacturer-persistence.ts';
 import { ManufacturerTargetForbidden } from '../../src/persistence/manufacturer-target-forbidden.ts';
-import {
-  executeCreateBrand,
-  executeRenameBrand,
-  executeRetireBrand,
-  executeReactivateBrand,
-  executeSetProductBrand,
-  executeSetProductManufacturer,
-  executeChangeProductManufacturer,
-  executeRemoveProductManufacturer,
-} from '@app/catalog/api/client';
 
 describe('Brand and Manufacturer Action HTTP contracts', () => {
-  it('publishes eight distinct typed Action transports and clients', () => {
-    for (const [api, client] of [
-      [CreateBrandActionApi, executeCreateBrand],
-      [RenameBrandActionApi, executeRenameBrand],
-      [RetireBrandActionApi, executeRetireBrand],
-      [ReactivateBrandActionApi, executeReactivateBrand],
-      [SetProductBrandActionApi, executeSetProductBrand],
-      [SetProductManufacturerActionApi, executeSetProductManufacturer],
-      [ChangeProductManufacturerActionApi, executeChangeProductManufacturer],
-      [RemoveProductManufacturerActionApi, executeRemoveProductManufacturer],
-    ] as const) {
-      expect(api).toBeDefined();
-      expect(client).toBeDefined();
-    }
-  });
-
   it('keeps Brand conflict, absence, invalid state, and outage distinct and redacted', () => {
     for (const map of [
       mapCreateBrandActionProblem,

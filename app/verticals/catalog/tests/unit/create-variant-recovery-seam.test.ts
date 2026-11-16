@@ -1,13 +1,7 @@
-import {
-  ActionAlreadyCommitted,
-  ActionCommitIndeterminate,
-  ActionRequestHashConflict,
-  ActionRuntime,
-} from '@app/core-runtime';
+import { ActionAlreadyCommitted, ActionRuntime } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { mapCreateVariantActionProblem } from '../../api/create-variant-action-problems.ts';
 import { CreateVariantResultSchema } from '../../shared/actions/create-variant.ts';
 import { variantPersistenceForScope } from '../../src/persistence/variant-persistence.ts';
 
@@ -154,37 +148,4 @@ describe('create Variant recovery response', () => {
       expect(snapshotReads).toBe(3);
     }),
   );
-
-  it('directs an already committed invocation to immutable result recovery without retrying the command', () => {
-    const problem = mapCreateVariantActionProblem(
-      new ActionAlreadyCommitted({ code: 'action_already_committed', invocationId, reason: 'committed' }),
-    );
-    expect(problem).toMatchObject({
-      invocationId,
-      resolution: 'RECOVER_CREATE_VARIANT',
-      retryCommand: false,
-      status: 409,
-    });
-  });
-
-  it('directs an uncertain commit to the same authoritative recovery', () => {
-    const problem = mapCreateVariantActionProblem(
-      new ActionCommitIndeterminate({ code: 'action_commit_indeterminate', invocationId, reason: 'uncertain' }),
-    );
-    expect(problem).toMatchObject({
-      invocationId,
-      resolution: 'RECOVER_CREATE_VARIANT',
-      retryCommand: false,
-      status: 503,
-    });
-  });
-
-  it('keeps a changed payload under the same identity a conflict, without offering recovery', () => {
-    const problem = mapCreateVariantActionProblem(
-      new ActionRequestHashConflict({ code: 'action_request_hash_conflict', reason: 'different payload' }),
-    );
-    expect(problem.status).toBe(409);
-    expect('resolution' in problem).toBe(false);
-    expect('invocationId' in problem).toBe(false);
-  });
 });

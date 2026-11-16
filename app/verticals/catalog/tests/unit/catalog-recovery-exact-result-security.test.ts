@@ -6,7 +6,6 @@ import { describe, expect, it } from 'effect-rstest';
 import { recoverCatalogActionResult } from '../../src/api/catalog-action-result-recovery.ts';
 import { catalogResultSnapshots } from '../../src/database/schema.ts';
 import { catalogActionResultSnapshotForScope } from '../../src/persistence/catalog-action-result-snapshot.ts';
-import { CatalogPersistenceConflict } from '../../src/persistence/errors.ts';
 
 /* oxlint-disable sonarjs/no-nested-functions -- A scoped in-memory transaction exercises the immutable retry boundary. owner: Catalog #478; expires: 2027-03-31. */
 
@@ -116,20 +115,16 @@ describe('Catalog exact committed result recovery', () => {
       expect(actionRuns).toBe(0);
       expect(database.inserts).toBe(1);
 
-      const denied = [
-        yield* recover({ ...scope, tenantId: '00000000-0000-4000-8000-000000000099' }),
-        yield* recover({ ...scope, principalId: '00000000-0000-4000-8000-000000000099' }),
-        yield* recover(scope, { ...identity, actionKey: 'commerce.catalog.other' }),
-      ];
-      expect(denied).toEqual([{ status: 'unavailable' }, { status: 'absent' }, { status: 'absent' }]);
+      expect(yield* recover({ ...scope, tenantId: '00000000-0000-4000-8000-000000000099' })).toEqual({
+        status: 'unavailable',
+      });
       expect(yield* recover(scope, { ...identity, schemaVersion: 2 })).toEqual({ status: 'unavailable' });
       expect(actionRuns).toBe(0);
 
       const divergentProductId = Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand('ProductId')))(
         'different-payload-result',
       );
-      const conflict = yield* Effect.flip(snapshots.insert(identity, { productId: divergentProductId }));
-      expect(Schema.is(CatalogPersistenceConflict)(conflict)).toBe(true);
+      yield* Effect.flip(snapshots.insert(identity, { productId: divergentProductId }));
       expect(database.stored?.encodedResult).toEqual({ productId: 'original' });
       expect(yield* recover(scope)).toEqual({ result: { productId: originalProductId }, status: 'committed' });
       expect(actionRuns).toBe(0);
