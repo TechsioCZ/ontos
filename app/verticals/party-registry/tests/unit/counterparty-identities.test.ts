@@ -1,6 +1,4 @@
-/* eslint-disable anti-slop/no-chained-type-assertions -- This focused test harness models the narrow Drizzle native Effect select surface used by the counterparty identities service. expires: 2026-12-31. */
-import type { SQL, Table } from 'drizzle-orm';
-import { getTableName, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -13,6 +11,7 @@ import {
 import { counterpartyIdentitiesRead } from '../../src/api/counterparty-identities.read.ts';
 import { customerListRead } from '../../src/api/customer-list.read.ts';
 import { listCounterpartyIdentityRecords } from '../../src/services/customer-list-persistence.service.ts';
+import { customerListSelectHarness as harness } from '../support/customer-list-select-harness.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -28,35 +27,6 @@ const ref = (index: number) => ({
 });
 const refs = (count: number) => Array.from({ length: count }, (_, index) => ref(index + 1));
 const date = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
-
-const harness = (selects: readonly (readonly object[])[]) => {
-  const queue = [...selects];
-  const selectedTables: string[] = [];
-  const conditions: SQL[] = [];
-  const select = () => {
-    const rows = queue.shift() ?? [];
-    const chain = Object.assign(Effect.succeed(rows), {
-      from: (table: Table) => {
-        selectedTables.push(getTableName(table));
-        return chain;
-      },
-      innerJoin: (table: Table) => {
-        selectedTables.push(getTableName(table));
-        return chain;
-      },
-      limit: () => chain,
-      orderBy: () => chain,
-      where: (condition: SQL) => {
-        conditions.push(condition);
-        return chain;
-      },
-    });
-    return chain;
-  };
-  // SAFETY: the harness implements precisely the select fluent methods exercised here.
-  const transaction = { select } as unknown as Parameters<typeof listCounterpartyIdentityRecords>[0];
-  return { conditions, selectedTables, transaction };
-};
 
 it.effect('reads named supplier-only and archived Counterparties of the company, with no role or archive filter', () =>
   Effect.gen(function* testIdentities() {

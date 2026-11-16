@@ -1,6 +1,3 @@
-/* eslint-disable anti-slop/no-chained-type-assertions -- This focused test harness models the narrow Drizzle native Effect select surface used by the customer list service. expires: 2026-12-31. */
-import type { Table } from 'drizzle-orm';
-import { getTableName } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -10,6 +7,7 @@ import {
   assembleCustomerListItems,
   listCustomerRecords,
 } from '../../src/services/customer-list-persistence.service.ts';
+import { customerListSelectHarness as harness } from '../support/customer-list-select-harness.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -30,31 +28,6 @@ const partyRow = {
   currentDisplayName: 'Strojírny Vysočina s.r.o.',
   partyId: canonicalPartyId,
   revision: 3,
-};
-
-const harness = (selects: readonly (readonly object[])[]) => {
-  const queue = [...selects];
-  const selectedTables: string[] = [];
-  const select = () => {
-    const rows = queue.shift() ?? [];
-    const chain = Object.assign(Effect.succeed(rows), {
-      from: (table: Table) => {
-        selectedTables.push(getTableName(table));
-        return chain;
-      },
-      innerJoin: (table: Table) => {
-        selectedTables.push(getTableName(table));
-        return chain;
-      },
-      limit: () => chain,
-      orderBy: () => chain,
-      where: () => chain,
-    });
-    return chain;
-  };
-  // SAFETY: the harness implements precisely the select fluent methods exercised here.
-  const transaction = { select } as unknown as Parameters<typeof listCustomerRecords>[0];
-  return { selectedTables, transaction };
 };
 
 it('flattens identifiers and the first current channel of each type onto the canonical Party', () => {
