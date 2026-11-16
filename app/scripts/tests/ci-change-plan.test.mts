@@ -79,15 +79,18 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   // the bootstrap and federation proof rows are retained unconditionally because their suite is neither
   // integration nor browser: they prove the deployment bootstrap and the build outputs, not a package.
   expect(plan.integration.map(({ name }) => name)).toEqual([
-    'Deployment Bootstrap Proof',
-    'Native Preproposal Approval and Storefront Registry Integration',
-    'Pricing and Inventory Integration',
-    'Catalog Integration',
-    'Node Backend Federation Proof',
+    'Deployment Bootstrap and Node Federation Proof',
+    'Isolated Workspace Integration Tests',
   ]);
-  expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
-    'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
-  );
+  const tests = plan.integration.find(({ suite }) => suite === 'integration');
+  expect(matchingPackages(tests?.['package-filters'] ?? '', packages).map(({ name }) => name)).toEqual([
+    CATALOG,
+    PRICING,
+  ]);
+  expect(plan.unit).toHaveLength(1);
+  expect(plan.unit[0]?.commands).toContain('--filter ./verticals/catalog');
+  expect(plan.unit[0]?.commands).toContain('--filter ./verticals/pricing');
+  expect(plan.unit[0]?.commands).not.toContain('--filter ./verticals/privacy');
 });
 
 it('plans affected selection by default and keeps the forced backstop on the complete suite', () => {
@@ -120,7 +123,9 @@ it('retains the native preproposal proof for each runtime owner even without ord
     expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
     if (owner === PRICING) {
       expect(plan.affectedPackages).toEqual([PRICING]);
-      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters']).toBe('');
+      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters']).toBe(
+        '--filter ./verticals/pricing',
+      );
       expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['root-suite']).toBe(false);
     }
   }
@@ -141,7 +146,7 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
 });
 
 it('keeps the build-proof row in every affected plan so the node artifact gate never disappears', () => {
-  const proof = { name: 'Node Artifact Proof', suite: 'proof' } as const;
+  const proof = { name: 'Node Artifact Proof', suite: 'bootstrap' } as const;
   expect(Schema.is(CiTemplatesSchema)({ ...templates, integration: [proof] })).toBe(true);
   const alongside = planCiChecks({
     changedPaths: [CATALOG_SOURCE],
@@ -220,13 +225,9 @@ it('selects browser checks and all root integration shards when they consume a c
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
-  expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
-  const shellPackage = plan.integration.filter(
-    (entry) => entry['package-filters'] === '--filter ./apps/shell-super-app',
-  );
-  expect(shellPackage).toHaveLength(1);
-  expect(shellPackage[0]?.['root-suite']).toBe(false);
+  expect(roots).toHaveLength(1);
+  expect(roots[0]?.['package-filters']).toContain('--filter ./apps/shell-super-app');
+  expect(roots[0]?.['package-filters']).toContain('--filter ./verticals/catalog');
 });
 
 it('follows topology-only Shell and vertical remote references to browser tests', () => {
@@ -284,16 +285,17 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
   }
 });
 
-it('uses all six customer-context shards for any selected customer-context package change', () => {
+it('selects the complete customer-context suite once, with its standalone native proof', () => {
   const plan = planCiChecks({
     changedPaths: ['app/verticals/commerce-customer-context/src/service.ts'],
     packages,
     templates,
   });
-  expect(
-    plan.integration.filter((entry) => entry['rstest-shard'] !== undefined).map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
-  expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
+  const selected = plan.integration.filter((entry) =>
+    (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
+  );
+  expect(selected).toHaveLength(1);
+  expect(selected[0]?.['native-preproposal']).toBe(true);
 });
 
 it('widens changed shared infrastructure, unknown paths and package metadata to the complete suite', () => {

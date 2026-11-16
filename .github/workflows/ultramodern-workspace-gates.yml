@@ -198,17 +198,11 @@ jobs:
         env:
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-          SHARD_UNITS_1: verticals/catalog verticals/tax verticals/commerce-cart
-          SHARD_UNITS_2: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order
-          SHARD_UNITS_3: verticals/assortment apps/shell-super-app verticals/promotion verticals/payment
-          SHARD_UNITS_4: verticals/party-registry verticals/inventory verticals/availability verticals/symmy-integration
-          SHARD_UNITS_5: >-
-            verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing
-            verticals/payment-term-catalog verticals/privacy verticals/projects
+          SHARD_UNITS_1: verticals/catalog verticals/tax verticals/commerce-cart verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/assortment apps/shell-super-app verticals/promotion verticals/payment verticals/party-registry verticals/inventory verticals/availability verticals/symmy-integration verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          for shard in 1 2 3 4 5; do
+          for shard in 1; do
             variable="SHARD_UNITS_$shard"
             read -ra units <<<"${!variable}"
             filters=()
@@ -230,30 +224,6 @@ jobs:
         with:
           path: ${{ runner.temp }}/units-1.tar.zst
           key: ${{ steps.node-shards.outputs.key-1 }}
-
-      - name: Save the Node build shard 2 archive
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-2.tar.zst
-          key: ${{ steps.node-shards.outputs.key-2 }}
-
-      - name: Save the Node build shard 3 archive
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-3.tar.zst
-          key: ${{ steps.node-shards.outputs.key-3 }}
-
-      - name: Save the Node build shard 4 archive
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-4.tar.zst
-          key: ${{ steps.node-shards.outputs.key-4 }}
-
-      - name: Save the Node build shard 5 archive
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/units-5.tar.zst
-          key: ${{ steps.node-shards.outputs.key-5 }}
 
       - name: Restore the Playwright Chromium build
         id: playwright-cache
@@ -421,10 +391,8 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  # One gate id over two rows on one job key: the whole-workspace analyzers are the longest single
-  # branch of the run, and they are independent of each other. The row that carries the parallel group
-  # also carries I18n Boundaries, in that order, because module contract generation creates and deletes
-  # bundles inside the vertical source directories the i18n scanner walks.
+  # Share one install. Keep the memory-heavy API analyzer after the parallel group;
+  # module generation must finish before the i18n scanner walks generated directories.
   static-contracts:
     name: Static Contracts (${{ matrix.row }})
     needs: [ci-plan]
@@ -434,7 +402,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        row: [boundaries, api]
+        row: [contracts]
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -451,7 +419,7 @@ jobs:
           persist-credentials: false
 
       - name: Keep package manifests, lockfiles, and hook configs out of the repository root
-        if: matrix.row == 'api'
+        if: matrix.row == 'contracts'
         run: |
           stray="$(
             git ls-files -- ':(glob)**/package.json' ':(glob)**/package-lock.json' ':(glob)**/npm-shrinkwrap.json' \
@@ -472,7 +440,7 @@ jobs:
 
       # zerops.yaml still defines a cloudflared service, so this verifies live stage infrastructure.
       - name: Verify the pinned Cloudflare Tunnel binary
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
         working-directory: app
         timeout-minutes: 5
         run: |
@@ -494,39 +462,39 @@ jobs:
           )
 
       # Share one install across independent checks and retain a log for each check.
-      # Keep the memory-heavy API analyzer outside this group, on its own row.
+      # Keep the memory-heavy API analyzer outside this group.
       - parallel:
           - name: Validate the root lefthook config
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             run: app/node_modules/.bin/lefthook validate
 
           - name: Skills
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm skills:check
 
           - name: Database Access Boundaries
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'boundaries' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm database-access:check
 
           - name: Lean Core Dependencies
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'boundaries' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm lean-core:check
 
           - name: Workspace Contract
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'boundaries' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm contract:check
 
           - name: Module Contract Generation
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'boundaries' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm check:module-contracts
 
           - name: Action Unit Tests
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'boundaries' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm action:test:unit
 
@@ -534,12 +502,12 @@ jobs:
       # Wait for it before the i18n scanner walks those source directories: it shares this row with the
       # group above for exactly that reason, and the scanner costs seconds.
       - name: I18n Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'boundaries' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm i18n:boundaries
 
       - name: API Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
         working-directory: app
         env:
           # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
@@ -633,33 +601,10 @@ jobs:
             <"$files"
           git diff --exit-code HEAD
 
-  # Suites on fresh services, run side by side: the integration tests, the whole-topology Node artifact
-  # proof, the stage-shaped deployment bootstrap proof, and the authenticated browser tests. Every row
-  # starts its own PostgreSQL and SpiceDB and migrates it.
-  #
-  # The bootstrap proof is the `bootstrap` row, not an upstream job. Three of its steps used to run on
-  # every one of 19 rows with no matrix input at all — the stage migrator artifact proof (45.3
-  # machine-minutes per run), the runtime-grant audit (2.0) and the Outbox Worker host proof (10.7),
-  # 256 s of them on the critical row — for 19 identical results. Proving them once in a job of its own
-  # bought that machine time back but put 5.7 measured minutes in front of every row, because `needs` is
-  # job-level: in run 43877762519 the proof ended at 6.9 min and the slowest row could not start before
-  # it, landing the branch at 14.1 min. As a row it proves exactly the same thing on the same cluster
-  # shape, beside the suites instead of ahead of them, and it still blocks the required check through
-  # this job's single gate id. It is the one place the real migrator runs against a scratch cluster, so
-  # deployment bootstrap ordering is still proved end to end: it removes the pre-seeded runtime role
-  # first, then migrates.
-  #
-  # The integration tests are split into package shards that each fit the job timeout. Every row names
-  # exactly the packages it runs, and ci-workflows.test.mts requires every package with an integration
-  # suite to be named by one of them, so a new package cannot fall out of the gate. A shard that carried
-  # several packages' suites always finished last, so the heaviest packages get a job each: a PR waits for
-  # the slowest job, not for the sum of the packages a single job used to run one after another.
-  #
-  # Sharding is set by what a package's own files cost, not by package size. Rstest splits shards by file,
-  # so a package with one dominant file cannot be balanced below that file - but more shards still shorten
-  # it, because fewer other files ride along in the shard that carries it. Commerce Customer Context has a
-  # single 10.3-minute file among 48, so its shards stay under a small share of the rest. Privacy's files
-  # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
+  # Three service runners: bootstrap plus federation proof, integration, and browsers.
+  # Integration starts four independent PostgreSQL clusters and SpiceDB datastores
+  # once, then schedules every package and root shard onto those runner-local lanes.
+  # This avoids paying for another hosted runner, install and migration per shard.
   service-integration:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
@@ -668,7 +613,6 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 8
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
     env:
@@ -711,17 +655,16 @@ jobs:
       # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
       # proof row derives the whole Composition from every delivery unit.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
-      # The bootstrap row assembles the migrator and Outbox Worker host artifacts from their own
-      # zerops.yaml build commands, so it reads no build shard's outputs.
+      # Bootstrap also proves federation, so both backend rows read these exact outputs.
       - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.suite != 'browser' && matrix.suite != 'bootstrap'
+        if: matrix.suite != 'browser'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/native-composition-units
 
       - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.suite != 'browser' && matrix.suite != 'bootstrap'
+        if: matrix.suite != 'browser'
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
@@ -879,7 +822,7 @@ jobs:
       # on the PostgreSQL this job already starts and migrates, and it still blocks the required check
       # through this job's single gate id.
       - name: Generate federated types and check performance readiness over every unit
-        if: matrix.suite == 'proof'
+        if: matrix.suite == 'bootstrap'
         working-directory: app
         env:
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
@@ -891,7 +834,7 @@ jobs:
           mise exec -- pnpm performance:readiness
 
       - name: Prove Node backend-federation artifacts
-        if: matrix.suite == 'proof'
+        if: matrix.suite == 'bootstrap'
         working-directory: app
         env:
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
@@ -902,7 +845,7 @@ jobs:
       # output decodes with the consumers' ActiveApplicationCompositionSnapshotSchema before stage
       # depends on it.
       - name: Prove the active Application Composition publisher output decodes
-        if: matrix.suite == 'proof'
+        if: matrix.suite == 'bootstrap'
         working-directory: app
         env:
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
@@ -923,19 +866,11 @@ jobs:
           APP_ENV_PATH: /dev/null
           SPICEDB_DATABASE_PASSWORD: spicedb
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
-          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
+          NATIVE_PREPROPOSAL: ${{ matrix.native-preproposal }}
           ROOT_SUITE: ${{ matrix.root-suite }}
-          RSTEST_SHARD: ${{ matrix.rstest-shard }}
           ONTOS_CI_ISOLATED_WORKERS: '4'
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
-        run: |
-          if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 4 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
-          fi
-          if [[ -n "$PACKAGE_FILTERS" ]]; then
-            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 4 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
-          fi
+        run: bash scripts/ci/run-integration-suites.sh
 
       - name: Prove native preproposal basis and genuine approval through registered owners
         if: matrix.native-preproposal == true
@@ -1002,16 +937,10 @@ jobs:
           fi
           docker compose down --volumes --remove-orphans
 
-  # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
-  # the units build in shards on parallel runners, and each shard caches its own archive: a commit that
-  # changes nothing a shard reads reuses it instead of rebuilding.
-  # Each target balances its shards by its own measured build times; a new unit joins one shard of each
-  # target (a test checks). These are five pure build rows: the whole-topology Node proof moved into the
-  # service-integration matrix, because every integration row waited for it here. Two Cloudflare shards
-  # still run the two independent Worker proofs side by side (the outputs and their SSR, and the topology
-  # on real services), and that target is retired and never runs.
+  # Build all delivery units on one runner, two at a time. Restore only exact
+  # content-addressed outputs; the service runners independently prove the topology.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/5)
+    name: Build node artifacts (${{ matrix.shard }}/1)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-24.04
@@ -1019,19 +948,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1]
         include:
-          - { shard: 1, units: verticals/catalog verticals/tax verticals/commerce-cart }
-          - { shard: 2, units: verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order }
-          - { shard: 3, units: verticals/assortment apps/shell-super-app verticals/promotion verticals/payment }
-          - {
-              shard: 4,
-              units: verticals/party-registry verticals/inventory verticals/availability verticals/symmy-integration,
-            }
-          - {
-              shard: 5,
-              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects,
-            }
+          - { shard: 1, units: verticals/catalog verticals/tax verticals/commerce-cart verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/assortment apps/shell-super-app verticals/promotion verticals/payment verticals/party-registry verticals/inventory verticals/availability verticals/symmy-integration verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog verticals/privacy verticals/projects }
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
