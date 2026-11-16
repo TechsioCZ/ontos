@@ -8,6 +8,7 @@ import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-e
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyProductRowsSchema, symmyProductPlanSize } from '../../shared/domain/symmy-product-batch.ts';
 import type { SymmyProductPriceGroupFacts } from '../../shared/domain/symmy-product-batch.ts';
+import { symmyRequestItemKey } from '../../src/persistence/symmy-job-execution-store.ts';
 import { buildSymmyProductPlan } from '../../src/persistence/symmy-product-plan.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -274,6 +275,8 @@ describe('Symmy product plan from the public rows', () => {
         'product-0-variant-0-price-0',
         'product-0-variant-1-price-0',
       ]);
+      // The poll folds variants and prices back into their product: items[n] is product n.
+      expect(new Set(itemKeys(plan).map(symmyRequestItemKey))).toEqual(new Set(['product-0']));
       const initial = effectOf(plan, 'product-0-variant-0-price-0', 'price-define');
       expect(initial.operation).toEqual(priceDefine);
       expect(dependentOf(initial)?.parent).toEqual({ effectKey: 'product-create', itemKey: 'product-0' });

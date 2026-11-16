@@ -1257,7 +1257,9 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(publicJobStatusSchema)),
         );
         expect(supportedStatus.status).toBe('completed_all');
-        expect(supportedStatus.items).toHaveLength(2);
+        // One product in the request is one item, with the effects of its create replay and of its price.
+        expect(supportedStatus.items).toHaveLength(1);
+        expect(supportedStatus.items?.[0]?.outcome).toBe('accepted');
         expect(supportedStatus.items?.flatMap((item) => item.effects)).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ originalStatus: 'accepted_change', owner: catalogModule, status: 'duplicate' }),
