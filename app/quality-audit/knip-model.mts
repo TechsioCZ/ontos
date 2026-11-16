@@ -196,7 +196,12 @@ const objectValue = (object: ObjectExpression | undefined, name: string): Node |
   return property?.type === 'Property' ? property.value : undefined;
 };
 
-const rstestEnvironmentEvidence = (facts: SourceFacts, workspace: string): KnipModelEvidence[] => {
+const rstestEnvironmentEvidence = (
+  facts: SourceFacts,
+  workspace: string,
+  directory: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
   if (!/rstest\.config\.[cm]?[jt]s$/u.test(facts.file)) {
     return [];
   }
@@ -214,18 +219,39 @@ const rstestEnvironmentEvidence = (facts: SourceFacts, workspace: string): KnipM
   return configurations.flatMap((object) => {
     const environment = objectValue(object, 'testEnvironment');
     const target = staticString(environment, facts.variables);
-    return target === undefined || target === 'node'
-      ? []
-      : [
-          evidenceAt(
-            facts,
-            workspace,
-            'dependency',
-            target,
-            environment?.start ?? 0,
-            'Rstest testEnvironment consumer',
-          ),
-        ];
+    const environmentEvidence =
+      target === undefined || target === 'node'
+        ? []
+        : [
+            evidenceAt(
+              facts,
+              workspace,
+              'dependency',
+              target,
+              environment?.start ?? 0,
+              'Rstest testEnvironment consumer',
+            ),
+          ];
+    const setup = unwrap(objectValue(object, 'setupFiles'), facts.variables);
+    const setupFiles = setup?.type === 'ArrayExpression' ? setup.elements : [setup];
+    return [
+      ...environmentEvidence,
+      ...setupFiles.flatMap((file) => {
+        const setupFile = staticString(file ?? undefined, facts.variables);
+        return setupFile === undefined || path.isAbsolute(setupFile) || setupFile.includes(':')
+          ? []
+          : [
+              evidenceAt(
+                facts,
+                workspace,
+                'file',
+                path.join(directory, setupFile),
+                file?.start ?? 0,
+                'Rstest setupFiles consumer',
+              ),
+            ];
+      }),
+    ];
   });
 };
 
@@ -2507,7 +2533,7 @@ const sourceEvidence = (
     NewExpression: recordUrl,
     ObjectExpression: recordLintPlugin,
   }).visit(facts.program);
-  result.push(...rstestEnvironmentEvidence(facts, workspace));
+  result.push(...rstestEnvironmentEvidence(facts, workspace, directory, path));
   if (facts.file === 'scripts/quality-audit.mts') {
     const recordAuditStep = (node: ObjectExpression) => {
       const tool = staticString(objectValue(node, 'tool'), facts.variables);
