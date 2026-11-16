@@ -232,7 +232,12 @@ const rstestEnvironmentEvidence = (
               'Rstest testEnvironment consumer',
             ),
           ];
-    const setup = unwrap(objectValue(object, 'setupFiles'), facts.variables);
+    // A relocated root changes what a relative setup path names. Do not invent
+    // file liveness when that framework resolution has not been established.
+    const setup =
+      objectValue(config, 'root') === undefined && objectValue(object, 'root') === undefined
+        ? unwrap(objectValue(object, 'setupFiles'), facts.variables)
+        : undefined;
     const setupFiles = setup?.type === 'ArrayExpression' ? setup.elements : [setup];
     return [
       ...environmentEvidence,
