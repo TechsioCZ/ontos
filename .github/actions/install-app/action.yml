@@ -13,10 +13,9 @@ inputs:
     default: "false"
   save-node-modules:
     description: >-
-      Save a missed installed workspace (app/node_modules and every workspace package's node_modules) on main.
-      Exactly one job sets this, so parallel jobs never race to save. Only a save from a push to main is
-      readable by the gate that blocks main: an Actions cache written on a pull_request branch is invisible to
-      the merge_group ref, which reads the current branch and the default branch only.
+      Save a missed complete installed workspace. One build shard saves the current pull-request cache so
+      downstream jobs do not relink it; warm-caches saves on main for future pull requests and merge groups.
+      GitHub scopes pull-request caches to that pull request; they cannot replace main caches.
     default: "false"
   restore-typescript-build:
     description: >-
@@ -144,7 +143,7 @@ runs:
     - name: Check that the installed workspace may be published
       id: publishable
       if: >-
-        inputs.save-node-modules == 'true' && github.ref == 'refs/heads/main' &&
+        inputs.save-node-modules == 'true' &&
         steps.restored.outputs.usable != 'true'
       shell: bash
       working-directory: app
@@ -176,7 +175,7 @@ runs:
     # reaching this one means the check passed, and an unsupported `outcome` could silently never save anything.
     - name: Save the installed workspace
       if: >-
-        inputs.save-node-modules == 'true' && github.ref == 'refs/heads/main' &&
+        inputs.save-node-modules == 'true' &&
         steps.restored.outputs.usable != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:

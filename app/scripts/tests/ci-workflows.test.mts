@@ -78,6 +78,7 @@ const readGateWorkflow = () => {
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
 /** The step after which a build shard's outputs are downloadable by the target's proving shards. */
+const INSTALL_APP_STEP = 'Install the app workspace';
 const UPLOAD_STEP = "Upload the shard's build outputs";
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
@@ -2033,6 +2034,14 @@ it('reuses a build shard archive only on an exact key over its own inputs, and n
   expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
 });
 
+it('publishes one complete installed workspace for downstream jobs without racing the main warmer', () => {
+  const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const install = steps.find(({ name }) => name === INSTALL_APP_STEP);
+  expect(install?.with).toEqual({
+    'save-node-modules': expression("matrix.shard == 1 && github.ref != 'refs/heads/main'"),
+  });
+});
+
 it('warms every build shard archive on main, where the blocking gate can read it', () => {
   const schema = Schema.Struct({
     jobs: Schema.Struct({
@@ -2098,7 +2107,7 @@ it('warms every build shard archive on main, where the blocking gate can read it
       fragment,
     ).toBe(true);
   }
-  expect(warm.steps.find(({ name }) => name === 'Install the app workspace')?.with).toMatchObject({
+  expect(warm.steps.find(({ name }) => name === INSTALL_APP_STEP)?.with).toMatchObject({
     'save-node-modules': 'true',
   });
 });
@@ -2287,7 +2296,7 @@ it('runs every static contract check on exactly one row of the static contracts 
   expect(rows.length).toBeGreaterThan(1);
   // Every check, including each member of the parallel group, names exactly one row. A check with no
   // row condition would run on all of them, and one naming a row that does not exist would never run.
-  const shared = new Set(['Harden Runner', 'Checkout', 'Install the app workspace']);
+  const shared = new Set(['Harden Runner', 'Checkout', INSTALL_APP_STEP]);
   const checks = job.steps.flatMap(({ if: condition, name, parallel }) =>
     parallel ? parallel.map((step) => ({ condition: step.if, name: step.name })) : [{ condition, name: name ?? '' }],
   );
