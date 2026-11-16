@@ -66,7 +66,7 @@ jobs:
   plan:
     name: Plan selective delivery
     if: github.ref == 'refs/heads/demo/sales-crm'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       app: ${{ steps.plan.outputs.app }}
       storefront: ${{ steps.plan.outputs.storefront }}
@@ -168,7 +168,7 @@ jobs:
   unit_identities:
     name: Compute this commit's unit identities
     if: github.ref == 'refs/heads/demo/sales-crm'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Reading another run's artifacts needs `actions: read`.
     permissions:
@@ -293,7 +293,7 @@ jobs:
     if: >-
       ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' &&
       needs.unit_identities.outputs.all_reused != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: true
@@ -428,7 +428,7 @@ jobs:
     needs: [plan]
     if: >-
       needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true' || needs.plan.outputs.n1 == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       # One storefront's failure must not cancel the other's build: each deploy job needs only its own archive.
@@ -545,7 +545,7 @@ jobs:
     needs: [plan]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     # Reading the cache index before the deploy needs `actions: read`; the deploy itself still needs only
     # `contents: read`.
@@ -644,7 +644,7 @@ jobs:
       always() && needs.deploy.result == 'success' && needs.plan.outputs.app == 'true' &&
       (needs.build.result == 'success' ||
       (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     # Downloading the earlier run's unit builds needs `actions: read`.
     permissions:
@@ -717,50 +717,6 @@ jobs:
           # The CLI selects the latest appVersion; correlate it with the failed push process.
           zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --show-build-logs --limit 300 || true
 
-  # The app runtime tree leaves the installed build, lint and test tools out (app/scripts/zerops/
-  # app-runtime-excluded-packages.txt). The Zerops build proves the tree complete without them before its pack and
-  # fails before anything deploys; this job runs the same proof on the runner beside the app deploy, so a finding shows
-  # here and `record` does not record the run.
-  prove_app_runtime:
-    name: Prove the app runtime without its left-out packages
-    needs: [plan, unit_identities, build]
-    if: >-
-      always() && needs.plan.outputs.app == 'true' &&
-      (needs.build.result == 'success' ||
-      (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Downloading the earlier run's unit builds needs `actions: read`.
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-
-      - name: Download the unit builds
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: zerops-units-*
-          path: ${{ runner.temp }}/units
-          run-id: ${{ needs.unit_identities.outputs.units_run_id || github.run_id }}
-          github-token: ${{ github.token }}
-
-      - name: Lay out the unit builds as the Zerops build does
-        run: for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C app; done
-
-      - name: Prove the runtime tree without its left-out packages
-        working-directory: app
-        run: mise exec -- node scripts/zerops/prove-app-runtime.mts
-
   deploy_storefront:
     name: Deploy and check storefront
     needs: [plan, deploy, build_storefronts]
@@ -770,7 +726,7 @@ jobs:
       always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
       (needs.plan.outputs.storefront != 'true' || needs.build_storefronts.result == 'success' ||
       needs.build_storefronts.result == 'failure')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     environment:
       name: stage-edge
@@ -832,7 +788,7 @@ jobs:
       always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
       (needs.plan.outputs.shop != 'true' || needs.build_storefronts.result == 'success' ||
       needs.build_storefronts.result == 'failure')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     environment:
       name: stage-edge
@@ -894,7 +850,7 @@ jobs:
       always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
       (needs.plan.outputs.n1 != 'true' || needs.build_storefronts.result == 'success' ||
       needs.build_storefronts.result == 'failure')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     environment:
       name: stage-edge
@@ -970,7 +926,7 @@ jobs:
       always() && needs.deploy.result == 'success' &&
       (needs.plan.outputs.app == 'false' || needs.build.result == 'success' ||
       (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The app deploy's own limit (75 minutes) plus the proofs.
     timeout-minutes: 95
     # Reading this run's jobs needs `actions: read`.
@@ -1125,16 +1081,16 @@ jobs:
 
   record:
     name: Record verified service source pins
-    needs: [plan, build, deploy, deploy_app, prove_app_runtime, deploy_storefront, deploy_shop, deploy_n1, verify]
+    needs: [plan, build, deploy, deploy_app, deploy_storefront, deploy_shop, deploy_n1, verify]
     if: >-
       always() && needs.plan.result == 'success' &&
       (needs.plan.outputs.any == 'false' ||
       (needs.deploy.result == 'success' && needs.verify.result == 'success' &&
       (needs.plan.outputs.app == 'false' ||
-      (needs.deploy_app.result == 'success' && needs.prove_app_runtime.result == 'success')) &&
+      (needs.deploy_app.result == 'success')) &&
       needs.deploy_storefront.result == 'success' && needs.deploy_shop.result == 'success' &&
       needs.deploy_n1.result == 'success'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # validatedHead is the input-comparison base, NOT every service's deployed revision. A reused
       # service retains its real older source pin. The app still publishes its own composition at readiness.
