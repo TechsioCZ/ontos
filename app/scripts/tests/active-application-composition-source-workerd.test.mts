@@ -179,8 +179,9 @@ it.live('cancels a native KV stream that arrives after timeout and handles cance
   Effect.gen(function* delayedSnapshotAcquisition() {
     const delayedProbeWorker = `
 import { env } from 'cloudflare:workers';
-import { Effect } from 'effect';
-import { makeActiveApplicationCompositionSourceLayer } from ${JSON.stringify(sourceModule)};
+import { Effect, Fiber } from 'effect';
+import { ActiveApplicationCompositionSourceLive } from ${JSON.stringify(sourceModule)};
+import { TestClock } from 'effect/testing';
 import { ActiveApplicationCompositionSource } from ${JSON.stringify(sourceService)};
 
 export default {
@@ -215,11 +216,16 @@ export default {
       return pendingRead;
     };
     const result = await Effect.runPromise(
-      ActiveApplicationCompositionSource.pipe(
-        Effect.flatMap(({ load }) => load),
-        Effect.provide(makeActiveApplicationCompositionSourceLayer('50 millis')),
-        Effect.match({ onFailure: (error) => ({ failure: error.reason }), onSuccess: (snapshot) => ({ snapshot }) }),
-      ),
+      Effect.gen(function* timeOutRead() {
+        const fiber = yield* ActiveApplicationCompositionSource.pipe(
+          Effect.flatMap(({ load }) => load),
+          Effect.provide(ActiveApplicationCompositionSourceLive),
+          Effect.match({ onFailure: (error) => ({ failure: error.reason }), onSuccess: (snapshot) => ({ snapshot }) }),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust('5 seconds');
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestClock.layer())),
     );
     releaseStream();
     await pendingRead;
