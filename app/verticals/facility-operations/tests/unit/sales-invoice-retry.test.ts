@@ -8,9 +8,10 @@ import { issueSalesInvoice } from '../../src/routes/[lang]/provoz/nakupy/sales-t
 import type { FinanceInvoiceView } from '../../src/ui/finance-reads.ts';
 import { recordingRunner } from './form-save-fixture.ts';
 
-const { create, credentials, read, vat } = rstest.hoisted(() => ({
+const { create, credentials, failed, read, vat } = rstest.hoisted(() => ({
   create: rstest.fn(),
   credentials: rstest.fn(),
+  failed: rstest.fn(),
   read: rstest.fn(),
   vat: rstest.fn(),
 }));
@@ -69,6 +70,7 @@ beforeEach(() => {
   read.mockReset();
   vat.mockReset();
   credentials.mockReset();
+  failed.mockReset();
   create.mockReturnValue(Effect.succeed({ invoice }));
   read.mockReturnValue(Effect.succeed(snapshot([])));
   credentials.mockReturnValue(Effect.succeed([]));
@@ -95,7 +97,16 @@ beforeEach(() => {
 
 const attempt = (runner: ReturnType<typeof recordingRunner>, current = order) =>
   // Every attempt starts with nothing kept in the browser: a new panel, tab, device or person.
-  issueSalesInvoice({ busy: { current: false }, dueDate: issueDate, issueDate, order: current, run: runner.run });
+  issueSalesInvoice({
+    busy: { current: false },
+    dueDate: issueDate,
+    issueDate,
+    onFailed: () => {
+      failed();
+    },
+    order: current,
+    run: runner.run,
+  });
 
 it.effect('Finance drafts the invoice under the identity of the order, never under a guessed number', () =>
   Effect.gen(function* draftUnderOrderIdentity() {
@@ -120,8 +131,8 @@ it.effect('Finance drafts the invoice under the identity of the order, never und
 it.effect('after a failed link a fresh attempt links the invoice Finance holds for the order and creates none', () =>
   Effect.gen(function* retryOnlyLink() {
     const runner = recordingRunner(['unavailable']);
-    const failed = yield* attempt(runner);
-    expect(failed).toMatchObject({ number: invoice.number, ok: false, reason: 'link' });
+    const failedLink = yield* attempt(runner);
+    expect(failedLink).toMatchObject({ number: invoice.number, ok: false, reason: 'link' });
     read.mockReturnValue(Effect.succeed(snapshot([invoice])));
     const linked = yield* attempt(runner);
     expect(linked).toMatchObject({ number: invoice.number, ok: true });
@@ -140,6 +151,8 @@ it.effect('when Finance stored the invoice but its answer was lost, the retry li
     const lost = yield* attempt(runner);
     expect(lost.ok).toBe(false);
     expect(runner.sent).toEqual([]);
+    // Finance is read again, so the panel shows the invoice that now waits for its link.
+    expect(failed).toHaveBeenCalledOnce();
     read.mockReturnValue(Effect.succeed(snapshot([invoice])));
     const linked = yield* attempt(runner);
     expect(linked).toMatchObject({ number: invoice.number, ok: true });
@@ -148,7 +161,7 @@ it.effect('when Finance stored the invoice but its answer was lost, the retry li
   }),
 );
 
-it.effect('an invoice of another order or customer, or a voided one, is never linked to this order', () =>
+it.effect('an invoice of another order, an advance or a voided one is not the order invoice and is never linked', () =>
   Effect.gen(function* foreignInvoices() {
     const runner = recordingRunner();
     read.mockReturnValue(
@@ -156,7 +169,7 @@ it.effect('an invoice of another order or customer, or a voided one, is never li
         snapshot([
           { ...invoice, businessState: 'VOIDED', ref: { resourceId: 'voided' } },
           { ...invoice, ref: { resourceId: 'other-order' }, sourceOrder: { id: 'order-2', number: 'PRO-2026-002' } },
-          { ...invoice, counterpartyRef: { resourceId: 'customer-2' }, ref: { resourceId: 'other-customer' } },
+          { ...invoice, documentKind: 'ADVANCE', ref: { resourceId: 'advance' } },
         ]),
       ),
     );
@@ -166,6 +179,54 @@ it.effect('an invoice of another order or customer, or a voided one, is never li
     expect(outcome.ok).toBe(false);
     expect(create.mock.calls).toHaveLength(1);
     expect(runner.sent).toEqual([]);
+  }),
+);
+
+it.effect('the order invoice issued to another customer in Finance is refused, never created again or linked', () =>
+  Effect.gen(function* otherCustomerInFinance() {
+    const runner = recordingRunner();
+    read.mockReturnValue(Effect.succeed(snapshot([{ ...invoice, counterpartyRef: { resourceId: 'customer-2' } }])));
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ ok: false, reason: 'customer' });
+    expect(create.mock.calls).toHaveLength(0);
+    expect(runner.sent).toEqual([]);
+    expect(failed).toHaveBeenCalledOnce();
+  }),
+);
+
+it.effect("Finance's refusal for another customer reads as that, not as a generic failure", () =>
+  Effect.gen(function* otherCustomerRefusal() {
+    const runner = recordingRunner();
+    create.mockReturnValue(
+      Effect.fail({
+        _tag: 'FinanceConflictProblem',
+        code: 'finance_conflict',
+        detail: 'source_order_invoice_other_counterparty',
+        status: 409,
+      }),
+    );
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ ok: false, reason: 'customer' });
+    expect(runner.sent).toEqual([]);
+  }),
+);
+
+it.effect('amounts edited in Finance are still the order invoice; the link takes number and amount from Finance', () =>
+  Effect.gen(function* editedInFinance() {
+    const runner = recordingRunner();
+    read.mockReturnValue(Effect.succeed(snapshot([{ ...invoice, number: 'FV-2026-002', totalMinor: 36_300 }])));
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ number: 'FV-2026-002', ok: true });
+    expect(create.mock.calls).toHaveLength(0);
+    expect(runner.sent).toEqual([
+      {
+        _tag: 'SalesOrderLinkInvoice',
+        invoiceId: invoice.ref.resourceId,
+        number: 'FV-2026-002',
+        orderId: order.id,
+        totalMinor: 36_300,
+      },
+    ]);
   }),
 );
 

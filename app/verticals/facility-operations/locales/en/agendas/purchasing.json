@@ -342,6 +342,7 @@
     "quoteTitle": "Quote {{number}}",
     "orderTitle": "Sales order {{number}}",
     "invoicePendingLink": "Invoice {{number}} already exists in Finance but is not linked to this order yet. Choose “Issue invoice” and Save links it without creating another invoice.",
+    "invoiceOtherCustomer": "Invoice {{number}} of this order in Finance is issued to another customer. Correct it in Finance (its customer, or void it); only then can it be linked to the order.",
     "invoiceAlreadyLinked": "This order is already invoiced ({{numbers}}). A second invoice for the whole order is not issued.",
     "ordersTitle": "Sales orders ({{count}}, open {{open}})",
     "quotesTitle": "Customer quotes ({{count}})",
@@ -435,6 +436,7 @@
       "invoiceIntro": "Finance creates an issued invoice draft for {{customer}} with a copy of this order’s lines and prices. The invoice links to the order and the order to the invoice.",
       "invoiceFailed": "The invoice draft could not be created or linked. Check the document in Finance before creating another.",
       "invoiceLinkFailed": "The invoice already exists in Finance, but linking it to the order failed. Save retries only the link and does not create another invoice.",
+      "invoiceOtherCustomer": "The invoice of this order in Finance is issued to another customer. Correct it in Finance (its customer, or void it); only then can it be linked to the order.",
       "invoiceRetained": "Invoice {{number}} already exists in Finance. Save only links it to this order; its issue and due dates stay as on the invoice.",
       "invoiceVatUnresolved": "The order VAT cannot be verified unambiguously for the issue date. Check the VAT settings and prepare the invoice in Finance with the appropriate tax treatment."
     },

@@ -11,6 +11,7 @@ import {
   FinanceReferenceUnavailable,
   FinanceRejected,
   MAX_DOCUMENT_BYTES,
+  SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY,
 } from '../../shared/actions/apply-command.ts';
 import {
   DEMO_BUSINESS_DATE,
@@ -34,7 +35,7 @@ import type { VatChoices } from '../../shared/apis/vat-choices.ts';
 import { lineVatChoice, lineVatIssue, lineVatOf, rateOf, withCurrentTaxRate } from '../../shared/domain/line-vat.ts';
 import type { InvoiceDirection, LineVatChoice } from '../../shared/domain/line-vat.ts';
 import { computeInvoiceTotals, isLineDiscountValid, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
-import { invoiceOfSourceOrder } from '../../shared/domain/source-order-invoice.ts';
+import { invoiceOfSourceOrderPart } from '../../shared/domain/source-order-invoice.ts';
 import {
   addCalendarDaysTo,
   buildAccountingExport,
@@ -338,14 +339,6 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const { input, scope, state, validators } = context;
 
-  // An order of Provoz has one invoice in each direction: asking again for it returns the invoice it already has.
-  const existing =
-    command.sourceOrder === undefined
-      ? undefined
-      : invoiceOfSourceOrder(state.invoices, command.direction, command.sourceOrder);
-  if (existing !== undefined) {
-    return unchanged(state, existing);
-  }
   if (state.invoices.some((record) => record.ref.resourceId === input.resourceId)) {
     return yield* conflict(INVOICE_ALREADY_EXISTS);
   }
@@ -358,7 +351,6 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   }
   const { _tag: _commandTag, lines: _lines, totalMinor: _totalMinor, ...fields } = command;
   const totals = yield* draftTotals(command);
-  yield* validateLineVat(command.lines, command.issueDate, command.direction, validators);
   const invoice: Invoice = {
     ...fields,
     ...totals,
@@ -378,6 +370,25 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
     },
     updatedAt: input.now,
   };
+  // A billing part of a Provoz order has one invoice: asking for it again returns it. The caller still passes every
+  // check of its own request (company, the references it names and Finance's lookups of them); only the new content
+  // (VAT of the lines, the number) is not checked again. Another counterparty than the invoice's is refused.
+  const existing =
+    command.sourceOrder === undefined
+      ? undefined
+      : invoiceOfSourceOrderPart(state.invoices, {
+          direction: command.direction,
+          documentKind: command.documentKind,
+          sourceOrder: command.sourceOrder,
+        });
+  if (existing !== undefined) {
+    yield* validate(invoice, scope, validators);
+    if (!matchesFinanceRef(existing.counterpartyRef, command.counterpartyRef)) {
+      return yield* conflict(SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY);
+    }
+    return unchanged(state, existing);
+  }
+  yield* validateLineVat(command.lines, command.issueDate, command.direction, validators);
   if (documentNumberTaken(state.invoices, invoice)) {
     return yield* conflict(INVOICE_ALREADY_EXISTS);
   }
@@ -790,7 +801,14 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
     if (command.lines === undefined) {
       return yield* rejected('source_order_lines_required');
     }
-    if (invoiceOfSourceOrder(state.invoices, 'INCOMING', command.sourceOrder) !== undefined) {
+    if (
+      state.invoices.some(
+        (record) =>
+          record.direction === 'INCOMING' &&
+          record.businessState !== 'VOIDED' &&
+          record.sourceOrder?.id === command.sourceOrder?.id,
+      )
+    ) {
       return yield* conflict('source_order_invoice_already_prepared');
     }
   }

@@ -32,6 +32,7 @@ export const FinanceInvoiceViewSchema = Schema.Struct({
   counterpartyName: optionalText,
   counterpartyRef: RefSchema,
   direction: Schema.String,
+  documentKind: optionalText,
   documentNumber: Schema.String,
   dueDate: CalendarDateWireSchema,
   issueDate: CalendarDateWireSchema,

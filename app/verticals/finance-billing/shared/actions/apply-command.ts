@@ -57,11 +57,18 @@ const AnchorFields = {
   unitRef: Schema.optionalKey(UnitRefSchema),
 };
 
+/**
+ * Refusal reason (a FinanceConflict) of a CreateInvoiceDraft for a billing part of an order that Finance already holds
+ * for another counterparty: the invoice has to be corrected in Finance, asking again changes nothing.
+ */
+export const SOURCE_ORDER_INVOICE_OTHER_COUNTERPARTY = 'source_order_invoice_other_counterparty';
+
 export const FinanceCommandSchema = Schema.Union([
   /**
    * Our own (outgoing) invoice takes the next number of the company's series, allocated by Finance from the complete
    * ledger; `documentNumber` is only for a caller's own reference or a supplier's number, never a series guess.
-   * With `sourceOrder`, a draft for an order that already has its invoice in this direction returns that invoice.
+   * With `sourceOrder`, a draft for a billing part of an order (direction and document kind) that already has its
+   * invoice returns that invoice; one for another counterparty is refused (`source_order_invoice_other_counterparty`).
    */
   Schema.TaggedStruct('CreateInvoiceDraft', {
     ...InvoiceDraftCommandFields,
