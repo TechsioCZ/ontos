@@ -1619,7 +1619,7 @@ const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
 /** The integration matrix row that proves the stage-shaped deployment bootstrap from a scratch cluster. */
 const BOOTSTRAP_SUITE = 'bootstrap';
 const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
-const NODE_BUILD_ARTIFACT_NAME = 'node-units-1';
+const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 /**
  * Every row that reads built Node artifacts: the suites and the whole-topology proof. The browser row
  * drives a deployed release instead, and the bootstrap row assembles the migrator and Outbox Worker host
@@ -1938,7 +1938,7 @@ it('supplies a placeholder public URL for every unit in Cloudflare builds and ou
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
-it('builds Node artifacts on one runner without waiting for or proving the topology', () => {
+it('builds Node artifacts on two independent runners without waiting for or proving the topology', () => {
   const { permissions, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   // Nothing in this job reads another job's results or artifacts any more, so it needs no extra scope.
   expect(permissions).toBeUndefined();
@@ -1969,7 +1969,8 @@ it('builds Node artifacts on one runner without waiting for or proving the topol
 });
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
-  const { env: environment, steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
+  expect(strategy.matrix.shard).toEqual([1, 2]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache/') === true)).toEqual([]);
   const build = steps.findIndex(({ name }) => name === "Build the shard's Node artifacts");
@@ -1979,11 +1980,9 @@ it('builds every Node release from this commit rather than restoring another rel
   expect(build < pack && pack < upload).toBe(true);
   expect(steps[build]?.if).toBeUndefined();
   expect(steps[pack]?.if).toBeUndefined();
-  expect(steps[build]?.run).toContain(`--workspace-concurrency=3 "\${filters[@]}" run build`);
+  expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
   expect(steps[build]?.env).toMatchObject({
-    GOMEMLIMIT: '1536MiB',
     NODE_OPTIONS: '--max-old-space-size=2048',
-    ULTRAMODERN_TSGO_BUILDERS: '1',
   });
   expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
 });
@@ -2230,8 +2229,8 @@ it('restores same-run Node metadata for the unit shards that execute public cont
   expect(job.steps[download]?.if).toBe('matrix.node-artifacts == true');
   expect(job.steps[download]?.uses).toBe('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333');
   expect(job.steps[download]?.with).toEqual({
-    name: NODE_BUILD_ARTIFACT_NAME,
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units/node-units-1`,
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
+    pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
   expect(job.steps[unpack]?.if).toBe('matrix.node-artifacts == true');
   expect(job.steps[unpack]?.['working-directory']).toBe('app');
@@ -2417,7 +2416,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(selected.some((shard) => shardFilters(shard).includes('./verticals/pricing'))).toBe(true);
   expect(selected.some((shard) => shardFilters(shard).includes('./verticals/inventory'))).toBe(true);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.name === NODE_BUILD_ARTIFACT_NAME);
+  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
@@ -2426,8 +2425,8 @@ it('supplies same-run built Composition to selected native owner integration sha
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
   // Omitting a repository, token and run-id keeps the download bound to this workflow run.
   expect(steps[download]?.with).toEqual({
-    name: NODE_BUILD_ARTIFACT_NAME,
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units/node-units-1`,
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
+    pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
@@ -2932,7 +2931,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
   expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(true);
   const { steps } = integration;
-  const download = steps.findIndex(({ with: inputs }) => inputs?.name === NODE_BUILD_ARTIFACT_NAME);
+  const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
   const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
@@ -2941,8 +2940,8 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
   // No run-id, repository or token override: the artifacts must belong to this workflow run.
   expect(steps[download]?.with).toEqual({
-    name: NODE_BUILD_ARTIFACT_NAME,
-    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units/node-units-1`,
+    path: `${RUNNER_TEMP_EXPRESSION}/native-composition-units`,
+    pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[worker]?.run).toBe(
@@ -2984,7 +2983,7 @@ it('refuses root native integration when the same-run build archives are missing
   }
 });
 
-it('keeps a full run within nine gate executors, excluding planning and the required-check collector', () => {
+it('keeps a full run within ten gate executors, excluding planning and the required-check collector', () => {
   const commands = readGateCommandJobs();
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
@@ -2996,7 +2995,7 @@ it('keeps a full run within nine gate executors, excluding planning and the requ
     readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.include.length +
     integration.strategy.matrix.include.length +
     1;
-  expect(count).toBeLessThanOrEqual(9);
+  expect(count).toBeLessThanOrEqual(10);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
