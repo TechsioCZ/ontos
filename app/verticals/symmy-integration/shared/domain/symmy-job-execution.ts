@@ -63,6 +63,7 @@ const unsupportedBranchSchema = Schema.Struct({
     'DescriptiveHint',
     'ClassificationHint',
     'PriceHint',
+    'IdentifierHint',
   ]),
 });
 const unsupportedBranches = Schema.optionalKey(
@@ -347,6 +348,7 @@ const unsupportedBranchOutcomes = {
   CategoryHint: { ...unsupportedCatalogMeaning, branchKind: 'CategoryHint' },
   ClassificationHint: { ...unsupportedCatalogMeaning, branchKind: 'ClassificationHint' },
   DescriptiveHint: { ...unsupportedCatalogMeaning, branchKind: 'DescriptiveHint' },
+  IdentifierHint: { branchKind: 'IdentifierHint', owner: 'party.registry', reason: 'owner_not_activated' },
   MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },
   PriceHint: { branchKind: 'PriceHint', owner: 'commerce.pricing', reason: 'missing_context' },
   ReservedQuantityHint: { owner: 'commerce.inventory', reason: 'unsupported_meaning' },

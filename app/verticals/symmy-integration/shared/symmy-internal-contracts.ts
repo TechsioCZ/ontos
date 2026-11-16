@@ -29,3 +29,12 @@ export type {
   SymmyProductRow,
   SymmyProductRows,
 } from './domain/symmy-product-batch.ts';
+export {
+  SymmyCustomerPlanSizeSchema,
+  SymmyCustomerRowsSchema,
+  symmyCustomerAddressRecordSeed,
+  symmyCustomerContactRecordSeed,
+  symmyCustomerOccurrenceSeed,
+  symmyCustomerRecordSeed,
+} from './domain/symmy-customer-batch.ts';
+export type { SymmyCustomerRow, SymmyCustomerRows } from './domain/symmy-customer-batch.ts';

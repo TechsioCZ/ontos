@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-identities.ts';
+import { SymmyCustomerRowsSchema } from './symmy-customer-batch.ts';
 import { SymmyInternalExecutionPlanSchema } from './symmy-job-execution.ts';
 import { SymmyPriceBatchSchema, SymmyPriceReviseFactsListSchema } from './symmy-price-batch.ts';
 import { SymmyCatalogHeadSchema, SymmyPriceListRowsSchema } from './symmy-price-list-batch.ts';
@@ -21,6 +22,7 @@ interface AdmissionFields {
   readonly catalogHead?: unknown;
   readonly code?: unknown;
   readonly contractVersion?: unknown;
+  readonly customers?: unknown;
   readonly fixtureId?: unknown;
   readonly plan?: unknown;
   readonly priceBatch?: unknown;
@@ -32,6 +34,7 @@ interface AdmissionFields {
 }
 const carriesNoProductSource = ({ priceGroupFacts, products }: AdmissionFields) =>
   products === undefined && priceGroupFacts === undefined;
+const carriesNoCustomerSource = ({ customers }: AdmissionFields) => customers === undefined;
 const carriesNoFixtureSource = ({ code, contractVersion, fixtureId, plan }: AdmissionFields) =>
   code === undefined && fixtureId === undefined && contractVersion === undefined && plan === undefined;
 const priceListsAdmissionValid = (fields: AdmissionFields) =>
@@ -39,6 +42,7 @@ const priceListsAdmissionValid = (fields: AdmissionFields) =>
   fields.catalogHead !== undefined &&
   fields.priceBatch === undefined &&
   fields.reviseFacts === undefined &&
+  carriesNoCustomerSource(fields) &&
   carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
 const priceBatchAdmissionValid = (fields: AdmissionFields) =>
@@ -46,6 +50,7 @@ const priceBatchAdmissionValid = (fields: AdmissionFields) =>
   fields.reviseFacts !== undefined &&
   fields.priceLists === undefined &&
   fields.catalogHead === undefined &&
+  carriesNoCustomerSource(fields) &&
   carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
 const productsAdmissionValid = (fields: AdmissionFields) =>
@@ -55,8 +60,18 @@ const productsAdmissionValid = (fields: AdmissionFields) =>
   fields.priceBatch === undefined &&
   fields.catalogHead === undefined &&
   fields.reviseFacts === undefined &&
+  carriesNoCustomerSource(fields) &&
+  carriesNoFixtureSource(fields);
+const customersAdmissionValid = (fields: AdmissionFields) =>
+  fields.customers !== undefined &&
+  fields.priceLists === undefined &&
+  fields.priceBatch === undefined &&
+  fields.catalogHead === undefined &&
+  fields.reviseFacts === undefined &&
+  carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
 const fixtureAdmissionValid = (fields: AdmissionFields) =>
+  carriesNoCustomerSource(fields) &&
   carriesNoProductSource(fields) &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
@@ -74,6 +89,8 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   catalogHead: Schema.optionalKey(SymmyCatalogHeadSchema),
   code: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300))),
   contractVersion: Schema.optionalKey(Schema.Literal('INTERNAL_C14')),
+  /** The public customers. The route enrollment and the admission supply every owner fact the body lacks. */
+  customers: Schema.optionalKey(SymmyCustomerRowsSchema),
   fixtureId: Schema.optionalKey(SymmyFixtureIdSchema),
   idempotencyKey: SymmyClientIdempotencyKeySchema,
   plan: Schema.optionalKey(SymmyInternalExecutionPlanSchema),
@@ -92,6 +109,9 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   Schema.makeFilter((fields) => {
     if (fields.routeKey === 'priceListsBatchUpsert') {
       return priceListsAdmissionValid(fields) || 'Price lists need the catalog head and no other source';
+    }
+    if (fields.routeKey === 'customersBatch' && fields.customers !== undefined) {
+      return customersAdmissionValid(fields) || 'Customers carry no other source';
     }
     if (fields.routeKey === 'productsBatch') {
       return (

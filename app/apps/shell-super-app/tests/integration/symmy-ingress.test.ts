@@ -398,6 +398,55 @@ const publicProductRows = [
   },
 ];
 
+const publicCustomersBody = {
+  customers: [
+    { customerId: 'customer-1', firstName: ' Jana ', kind: 'PERSON', lastName: 'Nováková' },
+    {
+      addresses: [
+        {
+          label: 'Sídlo',
+          postalAddress: { addressLine1: 'Ulice 1', city: 'Praha', countryCode: 'CZ', postalCode: '11000' },
+          purposes: ['BILLING'],
+        },
+      ],
+      businessName: 'Firma s.r.o.',
+      contacts: [{ preferred: true, type: 'EMAIL', value: 'office@example.test' }],
+      customerId: 'customer-2',
+      kind: 'ORGANIZATION',
+      officialIdentifiers: [{ type: 'CZ_DIC', value: 'CZ00000019' }],
+    },
+  ],
+} satisfies Schema.Json;
+const publicCustomerRows = [
+  {
+    addresses: [],
+    contacts: [],
+    customerId: 'customer-1',
+    firstName: 'Jana',
+    kind: 'PERSON',
+    lastName: 'Nováková',
+    officialIdentifiers: [],
+  },
+  {
+    addresses: [
+      {
+        label: 'Sídlo',
+        postalAddress: { addressLine1: 'Ulice 1', city: 'Praha', countryCode: 'CZ', postalCode: '11000' },
+        purposes: ['BILLING'],
+      },
+    ],
+    businessName: 'Firma s.r.o.',
+    contacts: [{ preferred: true, type: 'EMAIL', value: 'office@example.test' }],
+    customerId: 'customer-2',
+    kind: 'ORGANIZATION',
+    officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ00000019' }],
+  },
+];
+const customersJson = (body: Schema.Json = publicCustomersBody) => ({
+  body: JSON.stringify(body),
+  headers: { 'content-type': 'application/json' },
+});
+
 const texts = (count: number) => Array.from({ length: count }, (_, index) => ({ locale: `l${index}`, name: 'N' }));
 const productsJson = (body: Schema.Json = publicProductsBody) => ({
   body: JSON.stringify(body),
@@ -414,6 +463,9 @@ const routeBody = (path: string) => {
   }
   if (path === SYMMY_ROUTES.productsBatch.path) {
     return productsJson();
+  }
+  if (path === SYMMY_ROUTES.customersBatch.path) {
+    return customersJson();
   }
   return path === SYMMY_ROUTES.priceListsBatchUpsert.path ? priceListsBatchJson([priceListRow]) : fixtureJson;
 };
@@ -542,6 +594,159 @@ it.effect(
       expect((yield* submit({ products: Array.from({ length: 9 }, () => priced) })).status).toBe(400);
       expect(server.authAttempts).toEqual([]);
     }),
+);
+
+/** A server whose dispatch admits every request, so a body that passes the decoder answers 202. */
+const acceptingServer = () =>
+  Effect.gen(function* acceptingServerFixture() {
+    const admittedJobId = yield* Schema.decodeUnknownEffect(SymmyFixtureJobIdSchema)(jobId);
+    return yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.fail(symmyUnavailableProblem),
+            submit: () => Effect.succeed(admittedJobId),
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+  });
+
+it.effect('accepts the public customers body and forwards the rows with their identity and no contract version', () =>
+  Effect.gen(function* publicCustomers() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const admittedJobId = yield* Schema.decodeUnknownEffect(SymmyFixtureJobIdSchema)(jobId);
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.fail(symmyUnavailableProblem),
+            submit: () => Effect.succeed(admittedJobId),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.customersBatch.path, {
+        ...customersJson(),
+        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+        method: 'POST',
+      }),
+    );
+    expect(response.status).toBe(202);
+    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
+    expect(forwarded).toEqual([{ customers: publicCustomerRows, idempotencyKey, route: 'customersBatch' }]);
+  }),
+);
+
+it.effect('rejects the internal plan, groups, metadata and credentials nested in the public customers', () =>
+  Effect.gen(function* publicCustomerBoundaries() {
+    const server = yield* acceptingServer();
+    const submit = (payload: Schema.Json, query = '', headers: Record<string, string> = {}) =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.customersBatch.path}${query}`, {
+          body: JSON.stringify(payload),
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': idempotencyKey,
+            'x-api-key': validKey,
+            ...headers,
+          },
+          method: 'POST',
+        }),
+      );
+    const person = { customerId: 'c-1', firstName: 'Jana', kind: 'PERSON', lastName: 'Nováková' };
+    const organization = { businessName: 'Firma', customerId: 'c-2', kind: 'ORGANIZATION' };
+    const postalAddress = { addressLine1: 'Ulice 1', city: 'Praha', countryCode: 'CZ', postalCode: '11000' };
+    const address = { postalAddress, purposes: ['BILLING'] };
+    expect((yield* submit(publicCustomersBody)).status).toBe(202);
+    expect((yield* submit(internalProductInput)).status).toBe(400);
+    expect((yield* submit({ fixtureId: 'internal-c14-fixture' })).status).toBe(400);
+    expect((yield* submit({ ...publicCustomersBody, contractVersion: 'INTERNAL_C14' })).status).toBe(400);
+    expect((yield* submit({ ...publicCustomersBody, tenantId: '90000000-0000-4000-8000-000000000001' })).status).toBe(
+      400,
+    );
+    expect((yield* submit({ customers: [{ ...person, customerGroupCodes: ['g'] }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ ...person, metadata: {} }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ ...person, contractVersion: 'INTERNAL_C14' }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ ...person, unknownField: true }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ customerId: 'c-1', kind: 'PERSON', lastName: 'N' }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ ...person, businessName: 'Firma' }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ ...organization, firstName: 'Jana' }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ customerId: 'c-1', kind: 'ORGANIZATION' }] })).status).toBe(400);
+    expect((yield* submit({ customers: [{ firstName: 'Jana', kind: 'PERSON', lastName: 'N' }] })).status).toBe(400);
+    expect(
+      (yield* submit({ customers: [{ ...person, officialIdentifiers: [{ type: 'ICO', value: '00000018' }] }] })).status,
+    ).toBe(400);
+    expect(
+      (yield* submit({
+        customers: [{ ...person, contacts: [{ preferred: false, type: 'PHONE', value: '123456789' }] }],
+      })).status,
+    ).toBe(400);
+    expect(
+      (yield* submit({
+        customers: [{ ...organization, addresses: [{ ...address, postalAddress: { city: 'Praha' } }] }],
+      })).status,
+    ).toBe(400);
+    expect((yield* submit({ customers: [] })).status).toBe(400);
+    expect((yield* submit({})).status).toBe(400);
+    expect((yield* submit({ customers: Array.from({ length: 17 }, () => person) })).status).toBe(400);
+    expect(
+      (yield* submit({
+        customers: [
+          {
+            ...organization,
+            contacts: Array.from({ length: 11 }, () => ({ preferred: false, type: 'EMAIL', value: 'a@b.cz' })),
+          },
+        ],
+      })).status,
+    ).toBe(400);
+    expect(
+      (yield* submit({ customers: [{ ...organization, addresses: Array.from({ length: 11 }, () => address) }] }))
+        .status,
+    ).toBe(400);
+    expect((yield* submit(publicCustomersBody, '?contractVersion=INTERNAL_C14')).status).toBe(400);
+    expect((yield* submit(publicCustomersBody, '', { 'idempotency-key': 'not valid!' })).status).toBe(400);
+    const reflected = yield* submit({ customers: [{ ...person, firstName: `Private ${validKey}` }] });
+    expect(reflected.status).toBe(400);
+    expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
+  }),
+);
+
+it.effect('refuses a customers request whose customers and addresses need more than sixteen plan items', () =>
+  Effect.gen(function* customerPlanLimits() {
+    const server = yield* acceptingServer();
+    const submit = (payload: Schema.Json) =>
+      Effect.promise(() =>
+        server.request(SYMMY_ROUTES.customersBatch.path, {
+          body: JSON.stringify(payload),
+          headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          method: 'POST',
+        }),
+      );
+    const address = {
+      postalAddress: { addressLine1: 'Ulice 1', city: 'Praha', countryCode: 'CZ', postalCode: '11000' },
+      purposes: ['BILLING'],
+    };
+    const withAddresses = (count: number) => ({
+      addresses: Array.from({ length: count }, () => address),
+      customerId: 'c-1',
+      firstName: 'Jana',
+      kind: 'PERSON',
+      lastName: 'Nováková',
+    });
+    expect((yield* submit({ customers: [withAddresses(10), withAddresses(4)] })).status).toBe(202);
+    expect((yield* submit({ customers: [withAddresses(10), withAddresses(5)] })).status).toBe(400);
+  }),
 );
 
 it.effect('requires a replay key for versioned synchronous writes before any owner dispatch', () =>
@@ -1039,6 +1244,57 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
   }),
 );
 
+it.effect('admits the public customers through the governed route without a plan or a contract version', () =>
+  Effect.gen(function* governedCustomerAdmission() {
+    const bodies: Schema.Json[] = [];
+    const paths: string[] = [];
+    const ownerFetch: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      paths.push(path);
+      bodies.push(Schema.decodeUnknownSync(Schema.Json)(await request.json()));
+      return Response.json(
+        path.endsWith('/reads/symmy-route-context')
+          ? { ...internalRoute, allowedOwnerOperations: [internalProductInput.plan.items[0].effects[0].operation] }
+          : { jobId, phase: 'admitted' },
+      );
+    };
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          acquireOwnerAssertion: () =>
+            Effect.succeed({
+              apiBaseUrl,
+              assertion: Redacted.make('fresh-scoped-job-assertion'),
+              compositionRevision: revision,
+            }),
+          dispatch: makeSymmyGovernedDispatch(Effect.succeed('internal-request-correlation')),
+          ownerFetch,
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.customersBatch.path, {
+        ...customersJson(),
+        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+        method: 'POST',
+      }),
+    );
+    expect(response.status).toBe(202);
+    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
+    expect(paths).toEqual([
+      `${releasePath}/reads/symmy-route-context`,
+      `${releasePath}/symmy-integration/actions/admit-symmy-job`,
+    ]);
+    expect(bodies).toEqual([
+      { replayIdempotencyKey: idempotencyKey, routeKey: 'customersBatch' },
+      { customers: publicCustomerRows, idempotencyKey, routeKey: 'customersBatch' },
+    ]);
+    expect(JSON.stringify(bodies)).not.toContain('INTERNAL_C14');
+  }),
+);
+
 it.effect('derives async scope from the governed route and obtains a fresh scoped admission assertion', () =>
   Effect.gen(function* governedBusinessAdmission() {
     const scopes: { readonly audience: string; readonly legalEntityId?: string }[] = [];
@@ -1383,7 +1639,7 @@ it.effect('uses each approved route’s declared success status for internal fix
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
       { fixtureId, route: 'customerGroupsBatch' },
-      { fixtureId, idempotencyKey, route: 'customersBatch' },
+      { customers: publicCustomerRows, idempotencyKey, route: 'customersBatch' },
       {
         idempotencyKey,
         route: 'inventoryStockBatch',
@@ -2432,24 +2688,40 @@ it.effect('projects owner admission and polling failures without owner details',
     ] as const;
     const privateDetail = 'owner-only diagnostic';
     let ownerCase: (typeof cases)[number] = cases[0];
-    const fetchOwner: typeof fetch = () =>
+    const fetchOwner: typeof fetch = (input, init) =>
       Promise.resolve(
-        Response.json(
-          {
-            _tag: ownerCase.tag,
-            code: 'code' in ownerCase ? ownerCase.code : undefined,
-            detail: privateDetail,
-            retryable: ownerCase.ownerStatus === 503 ? true : undefined,
-            status: ownerCase.ownerStatus,
-            title: 'Private owner operation',
-            type: 'https://ontos.dev/problems/test-owner-operation',
-          },
-          { headers: { 'content-type': 'application/problem+json' }, status: ownerCase.ownerStatus },
-        ),
+        new URL(new Request(input, init).url).pathname.endsWith('/reads/symmy-route-context')
+          ? Response.json({
+              ...internalRoute,
+              allowedOwnerOperations: [internalProductInput.plan.items[0].effects[0].operation],
+            })
+          : Response.json(
+              {
+                _tag: ownerCase.tag,
+                code: 'code' in ownerCase ? ownerCase.code : undefined,
+                detail: privateDetail,
+                retryable: ownerCase.ownerStatus === 503 ? true : undefined,
+                status: ownerCase.ownerStatus,
+                title: 'Private owner operation',
+                type: 'https://ontos.dev/problems/test-owner-operation',
+              },
+              { headers: { 'content-type': 'application/problem+json' }, status: ownerCase.ownerStatus },
+            ),
       );
     const dispatch = makeSymmyGovernedDispatch(Effect.succeed('fresh-action-key'));
     const server = yield* Effect.acquireRelease(
-      Effect.sync(() => start({ dispatch, ownerFetch: fetchOwner })),
+      Effect.sync(() =>
+        start({
+          acquireOwnerAssertion: () =>
+            Effect.succeed({
+              apiBaseUrl,
+              assertion: Redacted.make('fresh-scoped-job-assertion'),
+              compositionRevision: revision,
+            }),
+          dispatch,
+          ownerFetch: fetchOwner,
+        }),
+      ),
       (fixture) => Effect.promise(fixture.dispose),
     );
     for (const entry of cases) {
@@ -2461,7 +2733,7 @@ it.effect('projects owner admission and polling failures without owner details',
               method: 'GET',
             })
           : server.request(SYMMY_ROUTES.customersBatch.path, {
-              ...fixtureJson,
+              ...customersJson(),
               headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
               method: 'POST',
             }),

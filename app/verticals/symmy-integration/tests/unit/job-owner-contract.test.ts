@@ -45,6 +45,47 @@ describe('Symmy internal job owner contracts', () => {
     expect(Result.isFailure(parseReceipt({ jobId, phase: 'completed' }))).toBe(true);
   });
 
+  it('admits the public customers only on the customers route and never beside a plan or a fixture', () => {
+    const customers = [
+      {
+        addresses: [],
+        contacts: [],
+        customerId: 'customer-1',
+        firstName: 'Jana',
+        kind: 'PERSON',
+        lastName: 'Nováková',
+        officialIdentifiers: [],
+      },
+    ];
+    const admission = { customers, idempotencyKey: 'customers-key', routeKey: 'customersBatch' };
+    expect(Result.isSuccess(parseAdmission(admission))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, customers: [] }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, fixtureId: 'fixture-safe' }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, contractVersion: 'INTERNAL_C14' }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'productsBatch' }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'priceListsBatchUpsert' }))).toBe(true);
+    expect(
+      Result.isFailure(
+        parseAdmission({ ...admission, code: 'customer-group', routeKey: 'customerGroupCustomersBatch' }),
+      ),
+    ).toBe(true);
+    // A request no plan can hold never reaches the owner: 17 customers, or customers and addresses beyond 16 items.
+    expect(
+      Result.isFailure(parseAdmission({ ...admission, customers: Array.from({ length: 17 }, () => customers[0]) })),
+    ).toBe(true);
+    const postalAddress = { addressLine1: 'Ulice 1', city: 'Praha', countryCode: 'CZ', postalCode: '11000' };
+    const withAddresses = (count: number) => ({
+      ...customers[0],
+      addresses: Array.from({ length: count }, () => ({ postalAddress, purposes: ['BILLING'] })),
+    });
+    expect(Result.isSuccess(parseAdmission({ ...admission, customers: [withAddresses(10), withAddresses(4)] }))).toBe(
+      true,
+    );
+    expect(Result.isFailure(parseAdmission({ ...admission, customers: [withAddresses(10), withAddresses(5)] }))).toBe(
+      true,
+    );
+  });
+
   it('admits stock rows only on the stock route and never beside a plan or a fixture', () => {
     const stockRow = {
       businessObservedAt: '2026-01-01T10:00:00.000Z',
