@@ -1,17 +1,9 @@
-import {
-  PricingMaterialOwnerTransitionEvidenceSchema,
-  PricingMaterialStateSnapshotSchema,
-} from '@app/pricing-contracts/domain/material-change';
+import { PricingMaterialStateSnapshotSchema } from '@app/pricing-contracts/domain/material-change';
 import type {
   PricingMaterialBindingKind,
-  PricingMaterialOwnerTransitionEvidence,
   PricingMaterialStateSnapshot,
 } from '@app/pricing-contracts/domain/material-change';
 import type { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
-import {
-  PricingSourceEvidenceVerifiedAbsentSchema,
-  PricingSourceEvidenceVerifiedPresentSchema,
-} from '@app/pricing-contracts/domain/source-revision-evidence';
 import type { PricingSourceEvidenceFamily } from '@app/pricing-contracts/domain/source-revision-evidence';
 import { Schema } from 'effect';
 
@@ -297,40 +289,5 @@ export const makeIssue787Snapshot = (options: Issue787SnapshotOptions = {}): Pri
     ],
     requestedAt,
     snapshotId: options.snapshotId ?? `snapshot-${revision}`,
-  });
-};
-
-export const makeIssue787OwnerTransition = (
-  previous: PricingMaterialStateSnapshot,
-  current: PricingMaterialStateSnapshot,
-): PricingMaterialOwnerTransitionEvidence => {
-  const [previousBinding] = previous.materialBindings;
-  const [currentBinding] = current.materialBindings;
-  if (previousBinding === undefined || currentBinding === undefined) {
-    throw new Error('Issue #787 fixture requires one exact material binding');
-  }
-  const currentSource = currentBinding.sourceEvidence;
-  if (
-    (!Schema.is(PricingSourceEvidenceVerifiedPresentSchema)(previousBinding.sourceEvidence) &&
-      !Schema.is(PricingSourceEvidenceVerifiedAbsentSchema)(previousBinding.sourceEvidence)) ||
-    (!Schema.is(PricingSourceEvidenceVerifiedPresentSchema)(currentSource) &&
-      !Schema.is(PricingSourceEvidenceVerifiedAbsentSchema)(currentSource))
-  ) {
-    throw new Error('Issue #787 owner transition requires verified before and after evidence');
-  }
-  return Schema.decodeSync(PricingMaterialOwnerTransitionEvidenceSchema, { onExcessProperty: 'error' })({
-    bindingRef: currentBinding.bindingRef,
-    confirmedAt: current.capturedAt,
-    currentEvidence: currentSource,
-    currentSnapshotId: current.snapshotId,
-    family: currentSource.request.family,
-    ownerScope: currentSource.request.ownerScope,
-    previousEvidence: previousBinding.sourceEvidence,
-    previousSnapshotId: previous.snapshotId,
-    transitionRef: `transition:${previous.snapshotId}:${current.snapshotId}`,
-    verification: {
-      kind: 'OWNER_CONFIRMED_NON_MATERIAL_TRANSITION',
-      verificationRef: `transition-proof:${previous.snapshotId}:${current.snapshotId}`,
-    },
   });
 };

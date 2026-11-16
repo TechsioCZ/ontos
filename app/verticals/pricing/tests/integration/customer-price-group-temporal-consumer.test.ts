@@ -588,6 +588,7 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     return yield* fail('party-create-order');
   }
   yield* resource(party.partyRef);
+  const profileWriteStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
   const profile = yield* requireExecutedAction(
     () => fail('retail-profile-parked-proposal'),
     executeEnsureRetailCustomerProfileWithAuthorization(
@@ -610,6 +611,12 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       yield* native.options(),
     ),
   );
+  // Every schedule boundary below is fenced only against the writer's own trusted clock
+  // (CustomerPriceGroupRetroactiveScheduleRejected), so a boundary has to outlast exactly one
+  // authorized write. Measure that cost on this machine from the write just performed instead of
+  // assuming whole seconds of it, so the waits that follow are the real cost and nothing more.
+  const authorizedWriteCost = DateTime.toEpochMillis(yield* DateTime.now) - profileWriteStartedAt;
+  const scheduleMargin = Math.max(2 * authorizedWriteCost, 250);
   yield* resource(profile.profileRef);
   yield* preparePriceGroupTemporalRetailAccess({
     certificate: native.owned.certificate,
@@ -628,8 +635,7 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     yield* Effect.sleep(wait + 1);
   }
   const now = DateTime.toEpochMillis(yield* DateTime.now);
-  const start = DateTime.formatIso(DateTime.makeUnsafe(now + 5000));
-  const transition = DateTime.formatIso(DateTime.makeUnsafe(now + 8000));
+  const start = DateTime.formatIso(DateTime.makeUnsafe(now + scheduleMargin));
   const end = DateTime.formatIso(DateTime.makeUnsafe(now + 60_000));
   const target = { ...profile.profileRef, kind: 'RETAIL' as const };
   const assign = Effect.fn('PricingTemporal.assignPublishedGroup')(function* assignPublishedGroup(
@@ -654,6 +660,11 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     );
   });
   const initial = yield* assign(first.identity.priceGroupRef, start);
+  // G2 only has to begin after G1, so its boundary is taken from the clock the first write left
+  // behind. Deriving it before both writes is what previously pushed T seconds into the future.
+  const afterFirstAssignment = DateTime.toEpochMillis(yield* DateTime.now) + scheduleMargin;
+  const earliestTransition = DateTime.toEpochMillis(DateTime.makeUnsafe(start)) + 1;
+  const transition = DateTime.formatIso(DateTime.makeUnsafe(Math.max(afterFirstAssignment, earliestTransition)));
   const replacement = yield* assign(second.identity.priceGroupRef, transition);
   // The owner connection is the only Shell-issued boundary; the receiver stands in for it here.
   const acquire: OwnerGatewayConnectionAcquire = (input) =>
@@ -704,7 +715,8 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
   expect(before.priceGroupRef).toEqual(first.identity.priceGroupRef);
   expect(at.assignmentRef).toEqual(replacement.assignment.assignmentRef);
   expect(at.priceGroupRef).toEqual(second.identity.priceGroupRef);
-  const removalAt = DateTime.formatIso(DateTime.makeUnsafe(DateTime.toEpochMillis(yield* DateTime.now) + 3000));
+  const beforeRemoval = DateTime.toEpochMillis(yield* DateTime.now);
+  const removalAt = DateTime.formatIso(DateTime.makeUnsafe(beforeRemoval + scheduleMargin));
   yield* executeRemoveCustomerPriceGroupWithAuthorization(
     {
       assignmentRef: replacement.assignment.assignmentRef,

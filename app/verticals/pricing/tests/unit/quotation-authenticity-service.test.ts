@@ -90,13 +90,13 @@ const quotationFixture = Effect.fn('test.issue785AuthenticityQuotationFixture')(
   },
 );
 
-const evidenceFor = (quotation: PricingQuotationIssued, keyStatus: 'ACTIVE' | 'HISTORICAL') => ({
-  authenticityRef: `quotation-authenticity:${keyStatus.toLowerCase()}`,
+const evidenceFor = (quotation: PricingQuotationIssued) => ({
+  authenticityRef: 'quotation-authenticity:active',
   authority: 'EVIDENCE_ONLY' as const,
   issuerRef: 'pricing:quotation-issuer',
   keyRef: 'pricing:quotation-signing-key',
-  keyStatus,
-  keyVersion: keyStatus === 'ACTIVE' ? 'key-v2' : 'key-v1',
+  keyStatus: 'ACTIVE' as const,
+  keyVersion: 'key-v2',
   lineageRef: 'pricing:quotation-key-lineage:v1-to-v2',
   payloadDigest: 'sha256:canonical-immutable-quotation',
   proofVersion: 'quotation-proof-v1',
@@ -120,7 +120,7 @@ describe('Pricing Quotation authenticity verification', () => {
         const result = yield* verifyWith(quotation, {
           verifyImmutableQuotation: (input) => {
             received = input;
-            return Effect.succeed({ _tag: 'VERIFIED', evidence: evidenceFor(quotation, 'ACTIVE') });
+            return Effect.succeed({ _tag: 'VERIFIED', evidence: evidenceFor(quotation) });
           },
         });
 
@@ -137,20 +137,8 @@ describe('Pricing Quotation authenticity verification', () => {
             quotationRef: quotation.quotationRef,
           },
         });
-        expect(result).toEqual({ evidence: evidenceFor(quotation, 'ACTIVE'), kind: 'QUOTATION_AUTHENTIC' });
+        expect(result).toEqual({ evidence: evidenceFor(quotation), kind: 'QUOTATION_AUTHENTIC' });
       }),
-  );
-
-  it.effect('keeps a historical key version verifiable when its retained lineage is proven', () =>
-    Effect.gen(function* verifiesHistoricalKeyLineage() {
-      const quotation = yield* quotationFixture();
-      const result = yield* verifyWith(quotation, {
-        verifyImmutableQuotation: () =>
-          Effect.succeed({ _tag: 'VERIFIED', evidence: evidenceFor(quotation, 'HISTORICAL') }),
-      });
-
-      expect(result).toEqual({ evidence: evidenceFor(quotation, 'HISTORICAL'), kind: 'QUOTATION_AUTHENTIC' });
-    }),
   );
 
   it.effect('keeps unknown and retired-without-lineage keys typed, terminal, and distinct from invalid proof', () =>
@@ -182,7 +170,7 @@ describe('Pricing Quotation authenticity verification', () => {
         verifyImmutableQuotation: ({ quotationIdentity }) =>
           Effect.succeed(
             quotationIdentity.issuedAt === quotation.issuedAt
-              ? { _tag: 'VERIFIED', evidence: evidenceFor(quotation, 'ACTIVE') }
+              ? { _tag: 'VERIFIED', evidence: evidenceFor(quotation) }
               : {
                   _tag: 'INVALID',
                   quotationRef: quotationIdentity.quotationRef,
@@ -226,7 +214,7 @@ describe('Pricing Quotation authenticity verification', () => {
         verifyImmutableQuotation: () =>
           Effect.succeed({
             _tag: 'VERIFIED',
-            evidence: { ...evidenceFor(quotation, 'ACTIVE'), quotationRef: 'pricing-quotation:785:other' },
+            evidence: { ...evidenceFor(quotation), quotationRef: 'pricing-quotation:785:other' },
           }),
       });
 

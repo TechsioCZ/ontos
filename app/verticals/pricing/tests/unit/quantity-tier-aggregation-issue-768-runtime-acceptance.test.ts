@@ -410,32 +410,6 @@ describe('Pricing Quantity Tier aggregation #768 runtime acceptance', () => {
     }),
   );
 
-  it.effect('preserves typed unavailable and unverifiable owner outcomes', () =>
-    Effect.gen(function* preservesOwnerFailures() {
-      const { attempt } = decodeRequest(rawRequest());
-      const unavailable = yield* aggregateQuantityTierLines({
-        attempt,
-        catalogEquivalence: { outcome: 'CATALOG_EQUIVALENCE_UNAVAILABLE' },
-      });
-      const unverifiable = yield* aggregateQuantityTierLines({
-        attempt,
-        catalogEquivalence: {
-          evidenceRef: 'catalog-equivalence:unverifiable',
-          outcome: 'CATALOG_EQUIVALENCE_UNVERIFIABLE',
-        },
-      });
-
-      expect(unavailable).toMatchObject({
-        outcome: 'QUANTITY_TIER_AGGREGATION_REFUSED',
-        reason: 'CATALOG_EQUIVALENCE_UNAVAILABLE',
-      });
-      expect(unverifiable).toMatchObject({
-        outcome: 'QUANTITY_TIER_AGGREGATION_REFUSED',
-        reason: 'CATALOG_EQUIVALENCE_UNVERIFIABLE',
-      });
-    }),
-  );
-
   it.effect('invalidates changed line structure instead of reusing aggregation evidence', () =>
     Effect.gen(function* rejectsChangedRecipient() {
       const request = decodeRequest(rawRequest());

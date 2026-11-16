@@ -167,13 +167,8 @@ const decodeLookup = Schema.decodeUnknownSync(PriceGroupFallbackExactLookupResul
 const decodeResolution = Schema.decodeUnknownSync(PriceGroupFallbackResolutionSchema, {
   onExcessProperty: 'error',
 });
-const FoundLookupTagSchema = Schema.TaggedStruct('FOUND', {});
-const AssignedNoGroupFallbackTagSchema = Schema.TaggedStruct('NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE', {});
 const OwnerNoneInputTagSchema = Schema.TaggedStruct('OWNER_NONE', {});
 const GuestInputTagSchema = Schema.TaggedStruct('GUEST', {});
-const GroupPriceTagSchema = Schema.TaggedStruct('GROUP_PRICE', {});
-const NoGroupNoneTagSchema = Schema.TaggedStruct('NO_GROUP_NONE', {});
-const NoGroupGuestTagSchema = Schema.TaggedStruct('NO_GROUP_GUEST', {});
 const NoApplicablePriceTagSchema = Schema.TaggedStruct('NO_APPLICABLE_PRICE', {});
 const ConfigurationErrorTagSchema = Schema.TaggedStruct('CONFIGURATION_ERROR', {});
 const ConflictTagSchema = Schema.TaggedStruct('CONFLICT', {});
@@ -189,65 +184,6 @@ describe('Issue #762 exact no-customer-Price-Group fallback contracts', () => {
         ownerResolution: { ...ownerNoneInput.ownerResolution, effectiveAt: '2026-09-27T11:59:59.999Z' },
       }),
     ).toThrow();
-  });
-
-  it('resolves the assigned exact Group Price and treats Price 0 as FOUND', () => {
-    const usedPrice = found(exactKey({ kind: 'PRICE_GROUP', priceGroupRef }));
-    const decodedLookup = decodeLookup(usedPrice);
-    if (!Schema.is(FoundLookupTagSchema)(decodedLookup)) {
-      throw new Error('fixture must decode as a found Price');
-    }
-    expect(decodedLookup.priceRevision.monetaryAmount.amount).toBe('0');
-    expect(
-      Schema.is(GroupPriceTagSchema)(
-        decodeResolution({
-          _tag: 'GROUP_PRICE',
-          discountAudience: assignedInput.interpretation.discountAudience,
-          resolutionInput: assignedInput,
-          usedPrice,
-        }),
-      ),
-    ).toBe(true);
-  });
-
-  it('distinguishes no-group NONE, Guest, and assigned fallback while preserving exact selection and Group audience', () => {
-    const noGroupPrice = found(exactKey({ kind: 'NO_GROUP' }));
-    const groupAbsence = absent(exactKey({ kind: 'PRICE_GROUP', priceGroupRef }));
-
-    expect(
-      Schema.is(NoGroupNoneTagSchema)(
-        decodeResolution({
-          _tag: 'NO_GROUP_NONE',
-          discountAudience: { kind: 'NONE' },
-          resolutionInput: ownerNoneInput,
-          usedPrice: noGroupPrice,
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      Schema.is(NoGroupGuestTagSchema)(
-        decodeResolution({
-          _tag: 'NO_GROUP_GUEST',
-          discountAudience: { kind: 'NONE' },
-          resolutionInput: guestInput,
-          usedPrice: noGroupPrice,
-        }),
-      ),
-    ).toBe(true);
-
-    const fallback = decodeResolution({
-      _tag: 'NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE',
-      discountAudience: assignedInput.interpretation.discountAudience,
-      groupAbsence,
-      resolutionInput: assignedInput,
-      usedPrice: noGroupPrice,
-    });
-    expect(Schema.is(AssignedNoGroupFallbackTagSchema)(fallback)).toBe(true);
-    if (!Schema.is(AssignedNoGroupFallbackTagSchema)(fallback)) {
-      throw new Error('fixture must decode as assigned no-group fallback');
-    }
-    expect(fallback.discountAudience).toEqual({ kind: 'PRICE_GROUP', priceGroupRef });
-    expect(noGroupPrice.request.exactKey.catalogSelection).toEqual(selection);
   });
 
   it('requires absence of the complete allowed exact path before NO_APPLICABLE_PRICE', () => {

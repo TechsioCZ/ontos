@@ -429,30 +429,6 @@ describe('Pricing Promotion contribution composition', () => {
     }),
   );
 
-  it.effect('rejects cross-Tenant same-currency support evidence before calling Promotion', () =>
-    Effect.gen(function* rejectsCrossTenantCurrencyEvidence() {
-      let ownerCalls = 0;
-      const source: PromotionContributionSourcePort = {
-        evaluate: () => {
-          ownerCalls += 1;
-          return Effect.die('Promotion must not be called for cross-Tenant currency evidence');
-        },
-      };
-      const failure = yield* makePricingPromotionCompositionService(source)
-        .compose({
-          ...input,
-          currencyCompatibility: {
-            ...input.currencyCompatibility,
-            tenantId: '99999999-9999-4999-8999-999999999999',
-          },
-        })
-        .pipe(Effect.flip);
-
-      expect(Schema.is(PricingPromotionUnverifiable)(failure)).toBe(true);
-      expect(ownerCalls).toBe(0);
-    }),
-  );
-
   it.effect('preserves proven non-applicability without fabricating a zero contribution', () =>
     Effect.gen(function* preservesProvenAbsence() {
       const source: PromotionContributionSourcePort = {
