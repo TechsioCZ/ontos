@@ -3,7 +3,12 @@ import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import { FinanceInvoiceResourceIdSchema } from '../../shared/apis/records.ts';
 import type { FinanceState, Invoice, ManualPayment } from '../../shared/apis/records.ts';
-import { cashFlowMonths, paymentEvents, withImportedPaymentRecords } from '../../shared/domain/finance-planning.ts';
+import {
+  ImportedPaymentRecordsRefused,
+  cashFlowMonths,
+  paymentEvents,
+  withImportedPaymentRecords,
+} from '../../shared/domain/finance-planning.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceValidators } from '../../src/services/persistence.service.ts';
 
@@ -196,4 +201,45 @@ describe('imported payment records', () => {
       ['MANUAL', '2026-09-18'],
     ]);
   });
+  it.effect(
+    'refuses a record id that is already taken, by a record or by another invoice with the same reference',
+    () =>
+      Effect.gen(function* refusesCollisions() {
+        const paid = invoice('paid', { paidMinor: 100_000, paymentState: 'PAID' });
+        const taken = yield* Effect.flip(
+          withImportedPaymentRecords(ledger([paid], [payment('paid:import', 'other', 10_000, '2026-09-01')])),
+        );
+        expect(taken).toBeInstanceOf(ImportedPaymentRecordsRefused);
+        expect([taken.invoice, taken.problem]).toEqual(['paid', 'a payment record already has the id paid:import']);
+        const twice = yield* Effect.flip(withImportedPaymentRecords(ledger([paid, paid])));
+        expect([twice.invoice, twice.problem]).toEqual([
+          'paid',
+          'another invoice of the ledger has the same reference',
+        ]);
+      }),
+  );
+
+  it.effect('takes a ledger up to 5000 payment records and refuses one more', () =>
+    Effect.gen(function* refusesTooMany() {
+      const recorded = Array.from({ length: 4999 }, (_, index) => payment(`user-${index}`, 'settled', 1, '2026-09-01'));
+      const settled = invoice('settled', { paidMinor: 4999, paymentState: 'PARTIALLY_PAID' });
+      const atLimit = yield* withImportedPaymentRecords(
+        ledger([settled, invoice('paid', { paidMinor: 100_000, paymentState: 'PAID' })], recorded),
+      );
+      expect(atLimit.manualPayments?.length).toBe(5000);
+      const over = yield* Effect.flip(
+        withImportedPaymentRecords(
+          ledger(
+            [
+              settled,
+              invoice('paid', { paidMinor: 100_000, paymentState: 'PAID' }),
+              invoice('paid-2', { paidMinor: 100_000, paymentState: 'PAID' }),
+            ],
+            recorded,
+          ),
+        ),
+      );
+      expect(over.problem).toBe('the ledger would hold more than 5000 payment records');
+    }),
+  );
 });

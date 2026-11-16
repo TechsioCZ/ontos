@@ -450,6 +450,8 @@ export const OpportunityAwaitingVatSchema = Schema.Struct({
   opportunityId: FinanceOpportunityIdSchema,
 });
 export type OpportunityAwaitingVat = typeof OpportunityAwaitingVatSchema.Type;
+/** Most payment records one company's ledger holds. */
+export const MAX_PAYMENT_RECORDS = 5000;
 export const FinanceStateSchema = Schema.Struct({
   accountingExports: Schema.optionalKey(Schema.Array(AccountingExportSchema).check(Schema.isMaxLength(200))),
   accountingSetup: Schema.optionalKey(AccountingSetupSchema),
@@ -458,7 +460,7 @@ export const FinanceStateSchema = Schema.Struct({
   documents: Schema.optionalKey(Schema.Array(FinanceDocumentSchema).check(Schema.isMaxLength(500))),
   financialPlanEntries: Schema.Array(FinancialPlanEntrySchema).check(Schema.isMaxLength(1000)),
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
-  manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
+  manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(MAX_PAYMENT_RECORDS))),
   opportunitiesAwaitingVat: Schema.optionalKey(
     Schema.Array(OpportunityAwaitingVatSchema).check(Schema.isMaxLength(1000)),
   ),

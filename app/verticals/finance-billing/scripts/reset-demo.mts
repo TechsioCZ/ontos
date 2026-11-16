@@ -50,10 +50,6 @@ const AdminDatabaseLive = Layer.effect(
 const writeState = Effect.fn('Finance.writeDemoState')(function* writeDemoState(input: typeof FixtureSchema.Type) {
   // A seeded paid amount becomes a dated payment record here, before any later edit of the invoice can move its date.
   const recorded = yield* withImportedPaymentRecords(input.state);
-  const paymentIds = new Set((recorded.manualPayments ?? []).map((payment) => payment.id));
-  if (paymentIds.size !== (recorded.manualPayments ?? []).length) {
-    return yield* new ResetInputError({ reason: 'Payment record identities are not unique' });
-  }
   const state = yield* Schema.encodeEffect(FinanceStateSchema)(recorded);
   const db = yield* makeWithDefaults({ relations: financeRelations });
   const now = yield* DateTime.now;

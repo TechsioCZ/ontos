@@ -1,254 +1,345 @@
 /*
  * The imported-payment-records migration on PostgreSQL, run on a private temporary copy of the Finance state table
- * inside one transaction (the shared database is never migrated). Its rows follow what Finance holds: a sales ledger
- * seeded with paid and partially paid invoices and no payment records, a ledger whose payments a user recorded (one of
- * them only in part) with an advance taken into account, a company with no ledger content, and a row with every odd
- * stored value the migration might meet. The only change allowed is appending one IMPORT payment record for the part of
- * an invoice's paid amount no record explains; everything stored stays as it is. Its functions and trigger are created
- * in the session's own schema, so nothing outlives the test. The release still serving rewrites a whole ledger without
- * the `source` it does not know, or from a ledger it read before the backfill: the trigger keeps the IMPORT records.
+ * inside one transaction (the shared database is never migrated). Every ledger is a complete Finance ledger encoded
+ * by `FinanceStateSchema`, and every ledger the migration leaves is decoded by it again. The two stage ledgers are
+ * modelled as they are: a sales ledger of 30 invoices with no payment list whose 24 paid balances become records, and a
+ * ledger of 14 invoices whose 9 payment records already explain every paid amount, which stays byte for byte as it is,
+ * revision included. What the migration writes is exactly what `withImportedPaymentRecords` writes for the same ledger.
+ * Timestamps Finance reads (date only, no offset, an offset across midnight, a finer fraction) are dated as Finance
+ * dates them; a timestamp it cannot convert, a taken record id and a ledger past 5,000 records refuse the whole
+ * migration, naming the company, before anything is written. A second run changes nothing.
  */
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Effect, FileSystem, Path, Redacted, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, FileSystem, Path, Predicate, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
+import { FinanceInvoiceResourceIdSchema, FinanceStateSchema } from '../../shared/apis/records.ts';
+import type { FinanceState, Invoice, ManualPayment } from '../../shared/apis/records.ts';
+import { withImportedPaymentRecords } from '../../shared/domain/finance-planning.ts';
 
 const MIGRATION = 'drizzle/20261116003317_imported-payment-records/migration.sql';
 const PROBE_TABLE = 'pg_temp.finance_states_payment_probe';
 
+type EncodedState = typeof FinanceStateSchema.Encoded;
 interface Ledger {
-  readonly after: string;
-  readonly before: string;
+  readonly legalEntityId: string;
   readonly name: string;
-  /** What the release still serving writes over the migrated ledger, and what the row holds after that write. */
-  readonly staleWrite?: { readonly kept: string; readonly written: string };
+  readonly revision: number;
+  readonly state: EncodedState;
+  readonly tenantId: string;
 }
 
-const salesInvoices = `[
-  {"ref":{"resourceId":"inv-paid"},"businessState":"CONFIRMED","paidMinor":242000,"totalMinor":242000,
-   "updatedAt":"2026-09-22T12:00:00.000Z"},
-  {"ref":{"resourceId":"inv-half"},"businessState":"CONFIRMED","paidMinor":60500,"totalMinor":121001,
-   "updatedAt":"2026-10-13T12:00:00.000Z"},
-  {"ref":{"resourceId":"inv-unpaid"},"businessState":"CONFIRMED","paidMinor":0,"totalMinor":50000,
-   "updatedAt":"2026-10-01T12:00:00.000Z"},
-  {"ref":{"resourceId":"inv-draft"},"businessState":"DRAFT","paidMinor":0,"totalMinor":10000,
-   "updatedAt":"2026-10-02T12:00:00.000Z"}]`;
-const salesImports = `[
-  {"amountMinor":242000,"id":"inv-paid:import","invoiceResourceId":"inv-paid","paidOn":"2026-09-22",
-   "recordedAt":"2026-09-22T12:00:00.000Z","source":"IMPORT"},
-  {"amountMinor":60500,"id":"inv-half:import","invoiceResourceId":"inv-half","paidOn":"2026-10-13",
-   "recordedAt":"2026-10-13T12:00:00.000Z","source":"IMPORT"}]`;
-const editedSalesInvoices = salesInvoices.replace('"2026-09-22T12:00:00.000Z"', '"2026-11-16T09:00:00.000Z"');
+const company = (index: number) => ({
+  legalEntityId: `b0000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+  tenantId: `a0000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+});
+const at = (instant: string) => DateTime.makeUnsafe(instant);
+const invoice = (tenantId: string, id: string, overrides: Partial<Invoice> = {}): Invoice => ({
+  accountingCorrelation: `acc-${id}`,
+  accountingSyncState: 'NOT_SYNCED',
+  businessState: 'CONFIRMED',
+  counterpartyRef: {
+    moduleId: 'party.registry',
+    resourceId: 'c0000000-0000-4000-8000-000000000001',
+    resourceType: 'party.registry.counterparty',
+    tenantId,
+  },
+  createdAt: at('2025-12-01T09:00:00.000Z'),
+  currency: 'CZK',
+  direction: 'OUTGOING',
+  documentNumber: `FV-${id}`,
+  dueDate: '2026-12-31',
+  issueDate: '2025-12-01',
+  paidMinor: 0,
+  paymentState: 'UNPAID',
+  ref: { moduleId: 'finance.billing', resourceId: id, resourceType: 'finance.billing.invoice', tenantId },
+  totalMinor: 121_000,
+  updatedAt: at('2025-12-01T09:00:00.000Z'),
+  ...overrides,
+});
+const record = (invoiceId: string, id: string, amountMinor: number, paidOn: string): ManualPayment => ({
+  amountMinor,
+  id,
+  invoiceResourceId: Schema.decodeSync(FinanceInvoiceResourceIdSchema)(invoiceId),
+  paidOn,
+  recordedAt: at(`${paidOn}T10:00:00.000Z`),
+});
+const encode = (state: FinanceState): EncodedState => Schema.encodeSync(FinanceStateSchema)(state);
+const ledger = (index: number, name: string, revision: number, state: FinanceState): Ledger => ({
+  ...company(index),
+  name,
+  revision,
+  state: encode(state),
+});
+/** The ledger with one invoice's stored `updatedAt` replaced by a value Finance may hold. */
+const withStamp = (entry: Ledger, invoiceId: string, updatedAt: string): Ledger => ({
+  ...entry,
+  state: {
+    ...entry.state,
+    invoices: entry.state.invoices.map((stored) =>
+      stored.ref.resourceId === invoiceId ? { ...stored, updatedAt } : stored,
+    ),
+  },
+});
 
-const ledgers: readonly Ledger[] = [
+// Stage ledger A: 30 invoices, 24 of them paid (18 in full, 6 in half) between 2025-12-06 and 2026-10-13, no list.
+const importDays = Array.from({ length: 24 }, (_, index) =>
+  DateTime.formatIsoDateUtc(DateTime.add(at('2025-12-06T12:00:00.000Z'), { days: Math.round((index * 311) / 23) })),
+);
+const salesTenant = company(1).tenantId;
+const salesLedger = ledger(1, 'sales ledger with paid balances and no payment list', 5, {
+  financialPlanEntries: [],
+  invoices: Array.from({ length: 30 }, (_, index) => {
+    const id = `sales-${String(index + 1).padStart(2, '0')}`;
+    const day = importDays[index];
+    if (day === undefined) {
+      return invoice(salesTenant, id, { updatedAt: at('2026-10-13T12:00:00.000Z') });
+    }
+    const half = index % 4 === 3;
+    return invoice(salesTenant, id, {
+      paidMinor: half ? 60_500 : 121_000,
+      paymentState: half ? 'PARTIALLY_PAID' : 'PAID',
+      updatedAt: at(`${day}T12:00:00.000Z`),
+    });
+  }),
+});
+// Stage ledger B: 14 invoices, 9 paid, each paid amount explained by its own payment record.
+const recordedTenant = company(2).tenantId;
+const recordedLedger = ledger(2, 'ledger whose payment records explain every paid amount', 75, {
+  financialPlanEntries: [],
+  invoices: Array.from({ length: 14 }, (_, index) =>
+    index < 9
+      ? invoice(recordedTenant, `rec-${index + 1}`, { paidMinor: 121_000, paymentState: 'PAID' })
+      : invoice(recordedTenant, `rec-${index + 1}`),
+  ),
+  manualPayments: Array.from({ length: 9 }, (_, index) =>
+    record(`rec-${index + 1}`, `payment-${index + 1}`, 121_000, '2026-01-15'),
+  ),
+});
+// Timestamps Finance reads besides a plain UTC instant.
+const oddTenant = company(3).tenantId;
+const oddStamps = [
+  ['date-only', '2026-09-10', '2026-09-10'],
+  ['no-offset', '2026-09-10T12:00:00', '2026-09-10'],
+  ['offset-past-midnight', '2026-09-10T23:30:00-02:00', '2026-09-11'],
+  ['finer-fraction', '2026-09-10T23:59:59.9999999Z', '2026-09-10'],
+] as const;
+const oddBase = ledger(3, 'ledger with timestamps Finance reads', 3, {
+  financialPlanEntries: [],
+  invoices: oddStamps.map(([id]) => invoice(oddTenant, id, { paidMinor: 1000, paymentState: 'PARTIALLY_PAID' })),
+});
+const oddStampOf = new Map<string, string>(oddStamps.map(([id, stamp]) => [id, stamp]));
+const oddLedger: Ledger = {
+  ...oddBase,
+  state: {
+    ...oddBase.state,
+    invoices: oddBase.state.invoices.map((stored) => ({
+      ...stored,
+      updatedAt: oddStampOf.get(stored.ref.resourceId) ?? stored.updatedAt,
+    })),
+  },
+};
+// 4,999 records and one import: exactly 5,000 records after the migration.
+const limitTenant = company(4).tenantId;
+const limitState = (extra: number): FinanceState => ({
+  financialPlanEntries: [],
+  invoices: [
+    invoice(limitTenant, 'many', { paidMinor: 4999, paymentState: 'PARTIALLY_PAID' }),
+    ...Array.from({ length: extra }, (_, index) =>
+      invoice(limitTenant, `one-${index + 1}`, { paidMinor: 100, paymentState: 'PARTIALLY_PAID' }),
+    ),
+  ],
+  manualPayments: Array.from({ length: 4999 }, (_, index) => record('many', `many-${index + 1}`, 1, '2026-02-01')),
+});
+const limitLedger = ledger(4, 'ledger reaching exactly 5000 payment records', 9, limitState(1));
+
+const refusals: readonly { readonly ledger: Ledger; readonly name: string; readonly problem: string }[] = [
   {
-    after: `{"financialPlanEntries":[],"invoices":${salesInvoices},"manualPayments":${salesImports}}`,
-    before: `{"financialPlanEntries":[],"invoices":${salesInvoices}}`,
-    name: 'sales ledger seeded with paid balances and no payment records',
-    // The old release edits the paid invoice from the ledger it read before the backfill: no records at all.
-    staleWrite: {
-      kept: `{"financialPlanEntries":[],"invoices":${editedSalesInvoices},"manualPayments":${salesImports}}`,
-      written: `{"financialPlanEntries":[],"invoices":${editedSalesInvoices}}`,
-    },
+    ledger: withStamp(
+      ledger(5, 'invalid calendar date', 2, {
+        financialPlanEntries: [],
+        invoices: [invoice(company(5).tenantId, 'feb-30', { paidMinor: 1000, paymentState: 'PARTIALLY_PAID' })],
+      }),
+      'feb-30',
+      '2026-02-30T12:00:00Z',
+    ),
+    name: 'a timestamp Finance reads but PostgreSQL cannot convert',
+    problem: 'invoice feb-30 cannot become a payment record: its updatedAt cannot be read as an instant',
   },
   {
-    after: `{"financialPlanEntries":[],"invoices":[
-      {"ref":{"resourceId":"adv"},"businessState":"CONFIRMED","paidMinor":30000,"updatedAt":"2026-08-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"fin"},"businessState":"CONFIRMED","paidMinor":80000,"updatedAt":"2026-09-20T21:30:00+00:00",
-       "priorSettlement":{"confirmedAt":"2026-09-01T10:00:00.000Z","entries":[{"amountMinor":30000,"invoiceResourceId":"adv","number":"ZF-1"}]}},
-      {"ref":{"resourceId":"part"},"businessState":"CONFIRMED","paidMinor":60000,"updatedAt":"2026-09-30T22:30:00-02:00"},
-      {"ref":{"resourceId":"full"},"businessState":"CONFIRMED","paidMinor":100000,"updatedAt":"2026-09-30T10:00:00.000Z"}],
-      "manualPayments":[
-        {"amountMinor":30000,"id":"u-adv","invoiceResourceId":"adv","paidOn":"2026-08-01","recordedAt":"2026-08-01T10:00:00.000Z"},
-        {"amountMinor":20000,"id":"u-part","invoiceResourceId":"part","paidOn":"2026-09-05","recordedAt":"2026-09-05T10:00:00.000Z",
-         "actorLabel":"Účetní"},
-        {"amountMinor":100000,"id":"u-full","invoiceResourceId":"full","paidOn":"2026-09-06","recordedAt":"2026-09-06T10:00:00.000Z"},
-        {"amountMinor":50000,"id":"fin:import","invoiceResourceId":"fin","paidOn":"2026-09-20",
-         "recordedAt":"2026-09-20T21:30:00+00:00","source":"IMPORT"},
-        {"amountMinor":40000,"id":"part:import","invoiceResourceId":"part","paidOn":"2026-10-01",
-         "recordedAt":"2026-09-30T22:30:00-02:00","source":"IMPORT"}]}`,
-    before: `{"financialPlanEntries":[],"invoices":[
-      {"ref":{"resourceId":"adv"},"businessState":"CONFIRMED","paidMinor":30000,"updatedAt":"2026-08-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"fin"},"businessState":"CONFIRMED","paidMinor":80000,"updatedAt":"2026-09-20T21:30:00+00:00",
-       "priorSettlement":{"confirmedAt":"2026-09-01T10:00:00.000Z","entries":[{"amountMinor":30000,"invoiceResourceId":"adv","number":"ZF-1"}]}},
-      {"ref":{"resourceId":"part"},"businessState":"CONFIRMED","paidMinor":60000,"updatedAt":"2026-09-30T22:30:00-02:00"},
-      {"ref":{"resourceId":"full"},"businessState":"CONFIRMED","paidMinor":100000,"updatedAt":"2026-09-30T10:00:00.000Z"}],
-      "manualPayments":[
-        {"amountMinor":30000,"id":"u-adv","invoiceResourceId":"adv","paidOn":"2026-08-01","recordedAt":"2026-08-01T10:00:00.000Z"},
-        {"amountMinor":20000,"id":"u-part","invoiceResourceId":"part","paidOn":"2026-09-05","recordedAt":"2026-09-05T10:00:00.000Z",
-         "actorLabel":"Účetní"},
-        {"amountMinor":100000,"id":"u-full","invoiceResourceId":"full","paidOn":"2026-09-06","recordedAt":"2026-09-06T10:00:00.000Z"}]}`,
-    name: 'ledger with user payments, one recorded only in part, and an advance taken into account',
+    ledger: ledger(6, 'taken record id', 2, {
+      financialPlanEntries: [],
+      invoices: [
+        invoice(company(6).tenantId, 'paid', { paidMinor: 1000, paymentState: 'PARTIALLY_PAID' }),
+        invoice(company(6).tenantId, 'other', { paidMinor: 500, paymentState: 'PARTIALLY_PAID' }),
+      ],
+      manualPayments: [record('other', 'paid:import', 500, '2026-03-01')],
+    }),
+    name: 'a record id that is already taken',
+    problem: 'invoice paid cannot become a payment record: a payment record already has the id paid:import',
   },
   {
-    after: '{"financialPlanEntries":[],"invoices":[]}',
-    before: '{"financialPlanEntries":[],"invoices":[]}',
-    name: 'company with no ledger content',
-  },
-  {
-    after: `{"financialPlanEntries":[],"invoices":[
-      {"ref":{"resourceId":"odd-1"},"businessState":"CONFIRMED","paidMinor":"100","updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"odd-2"},"businessState":"CONFIRMED","paidMinor":100.5,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"odd-3"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"včera"},
-      {"ref":{"resourceId":"odd-4"},"businessState":"CONFIRMED","paidMinor":100},
-      {"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"odd-5"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z",
-       "priorSettlement":{"entries":"none"}},
-      {"ref":{"resourceId":"odd-6"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z",
-       "priorSettlement":{"entries":[{"amountMinor":"40"}]}},
-      {"ref":{"resourceId":"odd-7"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"over"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"void"},"businessState":"VOIDED","paidMinor":100,"updatedAt":"2026-09-02T10:00:00.000Z",
-       "priorSettlement":{"entries":[{"amountMinor":100}]}},
-      "not an invoice"],
-      "manualPayments":[{"amountMinor":"x","invoiceResourceId":"odd-7"},{"amountMinor":300,"invoiceResourceId":"over"},
-        "not a payment"]}`,
-    before: `{"financialPlanEntries":[],"invoices":[
-      {"ref":{"resourceId":"odd-1"},"businessState":"CONFIRMED","paidMinor":"100","updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"odd-2"},"businessState":"CONFIRMED","paidMinor":100.5,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"odd-3"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"včera"},
-      {"ref":{"resourceId":"odd-4"},"businessState":"CONFIRMED","paidMinor":100},
-      {"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"odd-5"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z",
-       "priorSettlement":{"entries":"none"}},
-      {"ref":{"resourceId":"odd-6"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z",
-       "priorSettlement":{"entries":[{"amountMinor":"40"}]}},
-      {"ref":{"resourceId":"odd-7"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"over"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"},
-      {"ref":{"resourceId":"void"},"businessState":"VOIDED","paidMinor":100,"updatedAt":"2026-09-02T10:00:00.000Z",
-       "priorSettlement":{"entries":[{"amountMinor":100}]}},
-      "not an invoice"],
-      "manualPayments":[{"amountMinor":"x","invoiceResourceId":"odd-7"},{"amountMinor":300,"invoiceResourceId":"over"},
-        "not a payment"]}`,
-    name: 'unknown ledger with every odd stored value',
-  },
-  {
-    after: `{"financialPlanEntries":[],"manualPayments":null,"invoices":[
-      {"ref":{"resourceId":"x"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"}]}`,
-    before: `{"financialPlanEntries":[],"manualPayments":null,"invoices":[
-      {"ref":{"resourceId":"x"},"businessState":"CONFIRMED","paidMinor":100,"updatedAt":"2026-09-01T10:00:00.000Z"}]}`,
-    name: 'ledger whose payment list is not a list',
-  },
-  {
-    after: '{"financialPlanEntries":[],"invoices":"legacy"}',
-    before: '{"financialPlanEntries":[],"invoices":"legacy"}',
-    name: 'ledger whose invoices are not a list',
+    ledger: ledger(7, 'one record past the limit', 9, limitState(2)),
+    name: 'a ledger past 5000 payment records',
+    problem: 'cannot become a payment record: the ledger would hold more than 5000 payment records',
   },
 ];
 
-const ComparisonSchema = Schema.Array(
-  Schema.Struct({
-    kept_wanted: Schema.Boolean,
-    name: Schema.String,
-    revision: Schema.Number,
-    stripped_restored: Schema.Boolean,
-    unchanged_by_new_write: Schema.Boolean,
-    wanted: Schema.Boolean,
-  }),
+const StoredRowsSchema = Schema.Array(
+  Schema.Struct({ name: Schema.String, revision: Schema.Number, state: Schema.Unknown, text: Schema.String }),
 );
 
-const migrateProbe = Effect.fn('ImportedPaymentRecordsMigration.probe')(function* migrateProbe(probe: string) {
+const messageOf = (cause: Cause.Cause<unknown>): string => {
+  const error = Cause.squash(cause);
+  const inner = Predicate.hasProperty(error, 'cause') ? error.cause : undefined;
+  // The PostgreSQL error the driver wraps carries the RAISE text as its message.
+  return Predicate.hasProperty(inner, 'message') && Predicate.isString(inner.message) ? inner.message : String(error);
+};
+
+/** The probe holding `ledgers`, the migration run `runs` times (each in its own savepoint), and what is stored then. */
+const migrateProbe = Effect.fn('ImportedPaymentRecordsMigration.probe')(function* migrateProbe(
+  probe: readonly string[],
+  ledgers: readonly Ledger[],
+  runs: number,
+) {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const admin = yield* PgClient.make({ url: Redacted.make(connections.admin.connectionString) }).pipe(
     Effect.provideService(Reactivity.Reactivity, yield* Reactivity.make),
   );
   return yield* admin.withTransaction(
     Effect.gen(function* inTransaction() {
-      // A session-private table of the same shape, dropped with the transaction.
       yield* admin.unsafe(
-        `create temp table finance_states_payment_probe (tenant_id uuid, legal_entity_id uuid, name text,
-           revision integer, state jsonb not null, wanted jsonb not null, written jsonb, kept jsonb) on commit drop`,
+        `create temp table finance_states_payment_probe (name text primary key, tenant_id uuid not null,
+           legal_entity_id uuid not null, revision integer not null, state jsonb not null) on commit drop`,
       );
-      for (const ledger of ledgers) {
+      for (const entry of ledgers) {
         yield* admin.unsafe(
-          `insert into ${PROBE_TABLE} (tenant_id, legal_entity_id, name, revision, state, wanted, written, kept)
-           values (gen_random_uuid(), gen_random_uuid(), $1, 7, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb)`,
+          `insert into ${PROBE_TABLE} (name, tenant_id, legal_entity_id, revision, state) values ($1, $2, $3, $4, $5::jsonb)`,
           [
-            ledger.name,
-            ledger.before,
-            ledger.after,
-            ledger.staleWrite?.written ?? null,
-            ledger.staleWrite?.kept ?? null,
+            entry.name,
+            entry.tenantId,
+            entry.legalEntityId,
+            entry.revision,
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(entry.state),
           ],
         );
       }
-      // One statement per query, as the migrator sends them.
-      for (const statement of probe.split('--> statement-breakpoint')) {
-        yield* admin.unsafe(statement);
+      const before = yield* admin.unsafe(`select name, revision, state, state::text as text from ${PROBE_TABLE}`);
+      const failures: string[] = [];
+      for (let run = 0; run < runs; run += 1) {
+        yield* admin.unsafe('savepoint migration_run');
+        // One statement per query, as the migrator sends them.
+        const outcome = yield* Effect.exit(
+          Effect.forEach(probe, (statement) => admin.unsafe(statement), { discard: true }),
+        );
+        if (Exit.isFailure(outcome)) {
+          failures.push(messageOf(outcome.cause));
+          yield* admin.unsafe('rollback to savepoint migration_run');
+        } else {
+          yield* admin.unsafe('release savepoint migration_run');
+        }
       }
-      yield* admin.unsafe(
-        `create temp table finance_states_payment_once on commit drop as select name, state from ${PROBE_TABLE}`,
-      );
-      // The new release writes each ledger as it reads it: the trigger changes nothing.
-      yield* admin.unsafe(`update ${PROBE_TABLE} set state = state`);
-      yield* admin.unsafe(
-        `create temp table finance_states_payment_rewritten on commit drop as select name, state from ${PROBE_TABLE}`,
-      );
-      // The old release rewrites each ledger without the `source` it does not know: the trigger restores it.
-      yield* admin.unsafe(
-        `update ${PROBE_TABLE}
-            set state = state || jsonb_build_object('manualPayments', (
-                  select jsonb_agg(case when jsonb_typeof(payment) = 'object' then payment - 'source' else payment end
-                                   order by position)
-                    from jsonb_array_elements(state -> 'manualPayments') with ordinality as entries(payment, position)))
-          where jsonb_typeof(state -> 'manualPayments') = 'array'`,
-      );
-      yield* admin.unsafe(
-        `create temp table finance_states_payment_stripped on commit drop as select name, state from ${PROBE_TABLE}`,
-      );
-      // The old release writes from a ledger it read before the backfill: the trigger keeps the IMPORT records.
-      yield* admin.unsafe(`update ${PROBE_TABLE} set state = written where written is not null`);
-      return yield* admin.unsafe(
-        `select probe.name, probe.revision, once.state = probe.wanted as wanted,
-                rewritten.state = once.state as unchanged_by_new_write,
-                stripped.state = once.state as stripped_restored,
-                coalesce(probe.state = probe.kept, probe.state = once.state) as kept_wanted
-           from ${PROBE_TABLE} as probe
-           join pg_temp.finance_states_payment_once as once using (name)
-           join pg_temp.finance_states_payment_rewritten as rewritten using (name)
-           join pg_temp.finance_states_payment_stripped as stripped using (name)
-          order by probe.name`,
-      );
+      const after = yield* admin.unsafe(`select name, revision, state, state::text as text from ${PROBE_TABLE}`);
+      return {
+        after: yield* Schema.decodeUnknownEffect(StoredRowsSchema)(after),
+        before: yield* Schema.decodeUnknownEffect(StoredRowsSchema)(before),
+        failures,
+      };
     }),
   );
 });
 
+const loadProbe = Effect.fn('ImportedPaymentRecordsMigration.load')(function* loadProbe() {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const migration = yield* fs.readFileString(path.join(import.meta.dirname, '..', '..', MIGRATION));
+  expect(migration).toContain('"finance_billing"."finance_states"');
+  // No trigger and no function outlives the migration; every check runs before the only write.
+  expect(migration).not.toMatch(/CREATE (?:FUNCTION|TRIGGER)/u);
+  expect(migration.indexOf('RAISE EXCEPTION')).toBeLessThan(migration.indexOf('UPDATE "finance_billing"'));
+  expect(migration.match(/UPDATE /gu)?.length).toBe(1);
+  // The table becomes the probe.
+  const probe = migration.replaceAll('"finance_billing"."finance_states"', PROBE_TABLE);
+  expect(probe).not.toContain('finance_billing');
+  return probe.split('--> statement-breakpoint');
+});
+
+const byName = (rows: typeof StoredRowsSchema.Type) => new Map(rows.map((row) => [row.name, row]));
+const decodeLedger = Schema.decodeUnknownEffect(FinanceStateSchema);
+
 it.layer(NodeServices.layer, { excludeTestServices: true })('Imported payment records migration', (suite) => {
   suite.effect(
-    'records the unexplained paid part of every invoice once, dated as stored, and changes nothing else',
+    'records the unexplained paid part of every invoice as the app does, changes nothing else, and runs once',
     () =>
       Effect.scoped(
         Effect.gen(function* importedPaymentRecordsMigration() {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const migration = yield* fs.readFileString(path.join(import.meta.dirname, '..', '..', MIGRATION));
-          expect(migration).toContain('"finance_billing"."finance_states"');
-          // Every function it creates runs with a fixed search path.
-          const created = migration.split('CREATE FUNCTION').slice(1);
-          expect(created.length).toBe(6);
-          expect(created.filter((body) => !body.includes('SET search_path = pg_catalog, pg_temp'))).toEqual([]);
-          // The table becomes the probe; the functions and the trigger live in this session's own schema.
-          const probe = migration
-            .replaceAll('"finance_billing"."finance_states"', PROBE_TABLE)
-            .replaceAll('"finance_billing".', 'pg_temp.');
-          expect(probe).not.toContain('finance_billing');
-          const rows = yield* Schema.decodeUnknownEffect(ComparisonSchema)(yield* migrateProbe(probe));
-          expect(rows.map((row) => row.name).toSorted()).toEqual(ledgers.map((ledger) => ledger.name).toSorted());
-          for (const row of rows) {
-            expect([row.name, row.wanted, row.unchanged_by_new_write, row.stripped_restored, row.kept_wanted]).toEqual([
-              row.name,
-              true,
-              true,
-              true,
-              true,
-            ]);
-            // The Finance revision the next command names is untouched.
-            expect(row.revision).toBe(7);
+          const probe = yield* loadProbe();
+          const ledgers = [salesLedger, recordedLedger, oddLedger, limitLedger];
+          const { after, before, failures } = yield* migrateProbe(probe, ledgers, 2);
+          expect(failures).toEqual([]);
+          const stored = byName(after);
+          const original = byName(before);
+          // Every ledger stays readable, and a changed one holds exactly what the app's own rule writes.
+          for (const entry of ledgers) {
+            const row = stored.get(entry.name);
+            const decoded = yield* decodeLedger(row?.state);
+            const expected = yield* withImportedPaymentRecords(yield* decodeLedger(entry.state));
+            expect([entry.name, decoded]).toEqual([entry.name, expected]);
           }
+          // A: the list is created with its 24 records, and the revision goes up once over two runs.
+          const sales = yield* decodeLedger(stored.get(salesLedger.name)?.state);
+          expect(salesLedger.state.manualPayments).toBeUndefined();
+          expect(sales.manualPayments?.map((entry) => [entry.id, entry.paidOn, entry.source])).toEqual(
+            importDays.map((day, index) => [`sales-${String(index + 1).padStart(2, '0')}:import`, day, 'IMPORT']),
+          );
+          expect(sales.manualPayments?.at(0)?.paidOn).toBe('2025-12-06');
+          expect(sales.manualPayments?.at(-1)?.paidOn).toBe('2026-10-13');
+          expect(stored.get(salesLedger.name)?.revision).toBe(6);
+          // B: byte for byte as stored, revision unchanged.
+          expect(stored.get(recordedLedger.name)?.text).toBe(original.get(recordedLedger.name)?.text);
+          expect(stored.get(recordedLedger.name)?.revision).toBe(75);
+          // Odd timestamps are dated on the UTC day Finance reads them as.
+          const odd = yield* decodeLedger(stored.get(oddLedger.name)?.state);
+          expect(odd.manualPayments?.map((entry) => [entry.invoiceResourceId, entry.paidOn])).toEqual(
+            oddStamps.map(([id, , day]) => [id, day]),
+          );
+          expect(stored.get(oddLedger.name)?.revision).toBe(4);
+          // Exactly 5,000 records is still a readable ledger.
+          const limit = yield* decodeLedger(stored.get(limitLedger.name)?.state);
+          expect(limit.manualPayments?.length).toBe(5000);
+          expect(stored.get(limitLedger.name)?.revision).toBe(10);
         }),
       ),
-    60_000,
+    120_000,
   );
+
+  for (const refusal of refusals) {
+    suite.effect(
+      `refuses ${refusal.name}, naming the company, and writes no ledger`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* refusedMigration() {
+            const probe = yield* loadProbe();
+            const { after, before, failures } = yield* migrateProbe(probe, [salesLedger, refusal.ledger], 1);
+            expect(failures).toHaveLength(1);
+            expect(failures[0]).toContain(
+              `Finance ledger of tenant ${refusal.ledger.tenantId} company ${refusal.ledger.legalEntityId}`,
+            );
+            expect(failures[0]).toContain(refusal.problem);
+            // The ledger it could change is untouched as well.
+            const stored = byName(after);
+            for (const row of before) {
+              expect([row.name, stored.get(row.name)?.revision, stored.get(row.name)?.text]).toEqual([
+                row.name,
+                row.revision,
+                row.text,
+              ]);
+            }
+          }),
+        ),
+      120_000,
+    );
+  }
 });

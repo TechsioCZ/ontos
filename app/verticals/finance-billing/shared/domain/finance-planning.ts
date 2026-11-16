@@ -14,6 +14,7 @@ import {
   InvoiceSchema,
   IssuerIcoSchema,
   IssuerVatIdSchema,
+  MAX_PAYMENT_RECORDS,
   ManualPaymentSchema,
 } from '../apis/records.ts';
 import { buildPohodaDataPack } from './pohoda-xml.ts';
@@ -128,9 +129,26 @@ export const paymentEvents = (
  * `updatedAt` as the ledger hands it over. Taken over once, at the import boundary, before any edit can move that
  * date. The Finance migration `imported-payment-records` applies exactly this rule to the ledgers already stored.
  */
+/** A seeded or imported ledger whose paid amounts cannot all become readable payment records. */
+export class ImportedPaymentRecordsRefused extends Schema.TaggedError<ImportedPaymentRecordsRefused>()(
+  'ImportedPaymentRecordsRefused',
+  { invoice: Schema.String, problem: Schema.String },
+) {}
+
+const firstRepeated = <Item>(items: readonly Item[], key: (item: Item) => string): Item | undefined => {
+  const seen = new Set<string>();
+  return items.find((item) => {
+    const value = key(item);
+    const repeated = seen.has(value);
+    seen.add(value);
+    return repeated;
+  });
+};
+
 export const withImportedPaymentRecords = Effect.fn('Finance.withImportedPaymentRecords')(
   function* withImportedPaymentRecords(state: FinanceState) {
-    const records = recordsByInvoice(state.manualPayments ?? []);
+    const existing = state.manualPayments ?? [];
+    const records = recordsByInvoice(existing);
     const unrecorded = state.invoices.flatMap((invoice) => {
       const { resourceId } = invoice.ref;
       const settledByPrior = (invoice.priorSettlement?.entries ?? []).reduce(
@@ -155,8 +173,42 @@ export const withImportedPaymentRecords = Effect.fn('Finance.withImportedPayment
     if (unrecorded.length === 0) {
       return state;
     }
-    const imported = yield* Schema.decodeUnknownEffect(Schema.Array(ManualPaymentSchema))(unrecorded);
-    return { ...state, manualPayments: [...(state.manualPayments ?? []), ...imported] };
+    // The refusals of the Finance migration `imported-payment-records`, so a seed never writes what it would refuse.
+    const takenIds = new Set(existing.map((payment) => payment.id));
+    const taken = unrecorded.find((record) => takenIds.has(record.id));
+    if (taken !== undefined) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: taken.invoiceResourceId,
+        problem: `a payment record already has the id ${taken.id}`,
+      });
+    }
+    const repeated = firstRepeated(unrecorded, (record) => record.id);
+    if (repeated !== undefined) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: repeated.invoiceResourceId,
+        problem: 'another invoice of the ledger has the same reference',
+      });
+    }
+    const [first] = unrecorded;
+    if (existing.length + unrecorded.length > MAX_PAYMENT_RECORDS) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: first?.invoiceResourceId ?? '',
+        problem: `the ledger would hold more than ${MAX_PAYMENT_RECORDS} payment records`,
+      });
+    }
+    const imported = yield* Schema.decodeUnknownEffect(Schema.Array(ManualPaymentSchema))(unrecorded).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new ImportedPaymentRecordsRefused({
+            invoice: first?.invoiceResourceId ?? '',
+            problem: 'its reference makes no readable payment record id',
+          }),
+          'cause',
+          { value: cause },
+        ),
+      ),
+    );
+    return { ...state, manualPayments: [...existing, ...imported] };
   },
 );
 

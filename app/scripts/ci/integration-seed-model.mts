@@ -58,6 +58,7 @@ export const MUST_MIGRATE_TESTS = [
   'verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts',
   'verticals/work-tasks/tests/integration/assignment-migration.test.mts',
   'verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts',
+  'verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts',
   'verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts',
   'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
   'verticals/party-registry/tests/integration/organization-migration-fixture.test.ts',
