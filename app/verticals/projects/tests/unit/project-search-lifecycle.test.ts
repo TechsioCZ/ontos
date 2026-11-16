@@ -20,6 +20,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
+import { ProjectUuidSchema } from '../../shared/domain/project.ts';
 import { projectsRelations } from '../../src/db/schema.ts';
 import {
   buildProjectSearchDocuments,
@@ -201,26 +202,36 @@ it.effect(
     }),
 );
 
-it.effect(
-  'does not split a 10,001-row first population into destructive replacement pages',
-  () =>
-    Effect.gen(function* noReplacementPageCap() {
-      const rows = Array.from({ length: 10_001 }, (_, index) => row(index + 1));
-      const source = yield* sourceFixture(() => rows);
-      const store = makeInMemoryCoreSearchProjectionStore();
-      yield* refreshProjectSearchProjection(claim(true)).pipe(
-        Effect.provideService(CoreSearchWorkerSnapshot, source.reader),
-        Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, projectSearchIngestionRegistrations)),
-      );
-      const documents = yield* candidates(store, 'ONTO');
-      expect(source.statements).toHaveLength(1);
-      expect(documents).toHaveLength(10_001);
-      expect(documents.at(-1)?.ref.resourceId).toBe(row(10_001).projectId);
-    }),
-  // Loaded CI ran this case at 1.98-3.58 s over seven gates runs and timed out at 5.04 s against the 5000 ms default
-  // this project inherits (run 43840297523, job 133208057513); no local figure, this checkout installs no dependencies.
-  // 30_000 is the sibling integration project's budget and ~8x the slowest passing CI run, so a real regression fails.
-  30_000,
+it.effect('does not split a 10,001-row first population into destructive replacement pages', () =>
+  Effect.gen(function* noReplacementPageCap() {
+    const rows = Array.from({ length: 10_001 }, (_, index) => row(index + 1));
+    const source = yield* sourceFixture(() => rows);
+    const published: unknown[] = [];
+    yield* refreshProjectSearchProjection(claim(true)).pipe(
+      Effect.provideService(CoreSearchWorkerSnapshot, source.reader),
+      Effect.provideService(CoreSearchIngestion, {
+        ingest: (input) =>
+          Effect.sync(() => {
+            expect(source.isReading()).toBe(false);
+            published.push(input);
+          }),
+      }),
+    );
+    expect(source.statements).toHaveLength(1);
+    const observations = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          mutation: Schema.Struct({
+            document: Schema.Struct({ ref: Schema.Struct({ resourceId: ProjectUuidSchema }) }),
+            kind: Schema.Literal('upsert'),
+          }),
+        }),
+      ),
+    )(published);
+    expect(observations.map(({ mutation }) => mutation.document.ref.resourceId)).toEqual(
+      rows.map(({ projectId }) => projectId),
+    );
+  }),
 );
 
 it.effect(
