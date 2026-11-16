@@ -1,5 +1,7 @@
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Context, Crypto, Effect, Layer, Redacted } from 'effect';
+import { Hex } from 'effect/encoding';
 import { EmailDeliveryService } from '../server.ts';
+import { EmailDeliveryUnavailable } from '../unavailable.ts';
 import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
@@ -31,11 +33,25 @@ type OutgoingEmail = PlannedEmail & { readonly from: string };
 export const DISPATCH_BATCH_SIZE = 10;
 
 /**
- * The provider-facing never-twice identity (Resend `Idempotency-Key`, SMTP `Message-ID` seed): the ledger identity, company
- * included, so one person's same-keyed e-mails from two companies are never merged or dropped as duplicates downstream.
+ * The provider-facing never-twice identity (Resend `Idempotency-Key`, SMTP `Message-ID` seed): a SHA-256 of the whole
+ * ledger identity, company included, so one person's same-keyed e-mails from two companies are never merged or dropped
+ * as duplicates downstream, and the key stays 82 characters for a dedupe key of any length. Tenant and legal entity are
+ * UUIDs, so the `/`-joined input is unambiguous.
  */
-export const deliveryIdempotencyKey = (planned: DeliveryIdentity): string =>
-  `${planned.tenantId}/${planned.legalEntityId}/${planned.dedupeKey}`;
+export const deliveryIdempotencyKey = Effect.fn('EmailDispatch.deliveryIdempotencyKey')(function* idempotencyKey(
+  planned: DeliveryIdentity,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const identity = `${planned.tenantId}/${planned.legalEntityId}/${planned.dedupeKey}`;
+  const digest = yield* crypto.digest('SHA-256', new TextEncoder().encode(identity)).pipe(
+    Effect.mapError((cause) =>
+      Object.defineProperty(new EmailDeliveryUnavailable({ reason: 'configuration' }), 'cause', {
+        value: Redacted.make(cause),
+      }),
+    ),
+  );
+  return `ontos-delivery-v1:${Hex.encode(digest)}`;
+});
 
 /** Called only after a ledger claim. Seeded fake recipients settle visibly as SKIPPED without touching the transport. */
 export const submitEmail = Effect.fn('EmailDispatch.submitEmail')(function* submitPlannedEmail(
@@ -49,20 +65,21 @@ export const submitEmail = Effect.fn('EmailDispatch.submitEmail')(function* subm
   }
   const context = yield* Layer.build(transport.deliveryLayer(planned.from, planned.recipient));
   const service = Context.get(context, EmailDeliveryService);
-  return yield* service
-    .send({
-      html: Redacted.make(planned.html),
-      idempotencyKey: deliveryIdempotencyKey(planned),
-      subject: planned.subject,
-      text: Redacted.make(planned.text),
-      to: planned.recipient,
-    })
-    .pipe(
-      Effect.match({
-        onFailure: deliveryOutcomeOf,
-        onSuccess: (receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' }),
+  return yield* deliveryIdempotencyKey(planned).pipe(
+    Effect.flatMap((idempotencyKey) =>
+      service.send({
+        html: Redacted.make(planned.html),
+        idempotencyKey,
+        subject: planned.subject,
+        text: Redacted.make(planned.text),
+        to: planned.recipient,
       }),
-    );
+    ),
+    Effect.match({
+      onFailure: deliveryOutcomeOf,
+      onSuccess: (receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' }),
+    }),
+  );
 }, Effect.scoped);
 
 /** Work of one tenant + legal entity this tick: due delivery ids grouped by source subject. */

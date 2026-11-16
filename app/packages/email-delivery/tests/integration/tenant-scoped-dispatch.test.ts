@@ -54,6 +54,20 @@ const reminder = (id: string, recipient: string, text: string) => ({
   text,
 });
 
+/** Finance state whose reminders each have an invoice, except `a1-missing`; `a1-incoming` is a supplier invoice. */
+const financeStateJson = (reminders: readonly ReturnType<typeof reminder>[]) =>
+  Schema.encodeEffect(SeedFinanceStateJsonSchema)({
+    invoices: reminders
+      .filter((entry) => entry.id !== 'a1-missing')
+      .map((entry) => ({
+        direction: entry.id === 'a1-incoming' ? 'INCOMING' : 'OUTGOING',
+        ref: { resourceId: entry.invoiceResourceId },
+      })),
+    reminders,
+  });
+/** The same reminder id to the same person in two companies is two e-mails. */
+const sharedReminder = (text: string) => reminder('shared', 'spolecna@firma.cz', text);
+
 class DeliveryTestFixture extends Context.Service<
   DeliveryTestFixture,
   {
@@ -141,18 +155,10 @@ const DeliveryTestLive = Layer.effectContext(
           tenantA,
           entityA2,
           'Firma A2 s.r.o.',
-          [
-            reminder('a2', 'eva@firma-a2.cz', 'A2-only text'),
-            // The same reminder id to the same person in two companies is two e-mails.
-            reminder('shared', 'spolecna@firma.cz', 'A2 shared text'),
-          ],
+          // B issues a reminder with the same id to the same person only after A2's is settled (see below).
+          [reminder('a2', 'eva@firma-a2.cz', 'A2-only text'), sharedReminder('A2 shared text')],
         ],
-        [
-          tenantB,
-          entityB,
-          'Firma B a.s.',
-          [reminder('b', 'petr@firma-b.cz', 'B-only text'), reminder('shared', 'spolecna@firma.cz', 'B shared text')],
-        ],
+        [tenantB, entityB, 'Firma B a.s.', [reminder('b', 'petr@firma-b.cz', 'B-only text')]],
       ] as const,
       ([tenant, entity, name, reminders]) =>
         Effect.gen(function* seedCompany() {
@@ -160,15 +166,7 @@ const DeliveryTestLive = Layer.effectContext(
           yield* admin.unsafe('insert into finance_billing.finance_states values ($1, $2, $3::jsonb)', [
             tenant,
             entity,
-            yield* Schema.encodeEffect(SeedFinanceStateJsonSchema)({
-              invoices: reminders
-                .filter((entry) => entry.id !== 'a1-missing')
-                .map((entry) => ({
-                  direction: entry.id === 'a1-incoming' ? 'INCOMING' : 'OUTGOING',
-                  ref: { resourceId: entry.invoiceResourceId },
-                })),
-              reminders,
-            }),
+            yield* financeStateJson(reminders),
           ]);
         }),
       { discard: true },
@@ -209,7 +207,7 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         readonly tenant_id: string;
       }>`select * from demo_email.pending_deliveries(10, ${workerTenantId}::uuid, ${workerEntityId}::uuid)`;
       expect(rows.map((row) => Object.keys(row).toSorted((left, right) => left.localeCompare(right)))).toEqual(
-        Array.from({ length: 8 }, () => ['delivery_id', 'legal_entity_id', 'tenant_id']),
+        Array.from({ length: 7 }, () => ['delivery_id', 'legal_entity_id', 'tenant_id']),
       );
       expect(rows.map((row) => row.delivery_id).toSorted((left, right) => left.localeCompare(right))).toEqual([
         'rent-reminder:a1',
@@ -218,7 +216,6 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         'rent-reminder:a1-seeded',
         'rent-reminder:a2',
         'rent-reminder:b',
-        'rent-reminder:shared',
         'rent-reminder:shared',
       ]);
     }),
@@ -252,20 +249,13 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
     Effect.gen(function* verifyTenantDispatch() {
       const { admin, scopeA1, scopeA2, scopeB } = yield* DeliveryTestFixture;
       const result = yield* dispatchEmailBatchWith(transport, {});
-      expect(result).toEqual({ configured: true, processed: 8, skipped: 3 });
+      expect(result).toEqual({ configured: true, processed: 7, skipped: 3 });
       expect(sent.map((email) => email.recipient).toSorted((left, right) => left.localeCompare(right))).toEqual([
         'eva@firma-a2.cz',
         'jana@firma-a.cz',
         'petr@firma-b.cz',
         'spolecna@firma.cz',
-        'spolecna@firma.cz',
       ]);
-      expect(
-        sent
-          .filter((email) => email.recipient === 'spolecna@firma.cz')
-          .map((email) => email.text.split('\n')[0])
-          .toSorted((left, right) => (left ?? '').localeCompare(right ?? '')),
-      ).toEqual(['A2 shared text', 'B shared text']);
       for (const [recipient, own] of [
         ['jana@firma-a.cz', 'A1-only text'],
         ['eva@firma-a2.cz', 'A2-only text'],
@@ -288,9 +278,7 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
       const shared = yield* admin.unsafe<{ readonly legal_entity_id: string; readonly status: string }>(
         "select legal_entity_id::text, status from demo_email.deliveries where dedupe_key = 'rent-reminder:shared'",
       );
-      expect(shared.map((row) => `${row.legal_entity_id}:${row.status}`).toSorted(byCompany)).toEqual(
-        [`${scopeA2.legalEntityId}:SENT`, `${scopeB.legalEntityId}:SENT`].toSorted(byCompany),
-      );
+      expect(shared.map((row) => `${row.legal_entity_id}:${row.status}`)).toEqual([`${scopeA2.legalEntityId}:SENT`]);
       expect(ledger).toEqual([
         {
           dedupe_key: 'rent-reminder:a1',
@@ -341,6 +329,52 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         processed: 0,
         skipped: 0,
       });
+      expect(sent).toHaveLength(4);
+    }),
+  );
+
+  test.effect("a key already settled in another company does not hide this company's e-mail", () =>
+    Effect.gen(function* settledKeyInAnotherCompany() {
+      const { admin, scopeA2, scopeB } = yield* DeliveryTestFixture;
+      const sql = yield* PgClient.PgClient;
+      const crypto = yield* Crypto.Crypto;
+      const settled = yield* admin.unsafe<{ readonly legal_entity_id: string; readonly status: string }>(
+        "select legal_entity_id::text, status from demo_email.deliveries where dedupe_key = 'rent-reminder:shared'",
+      );
+      expect(settled).toEqual([{ legal_entity_id: scopeA2.legalEntityId, status: 'SENT' }]);
+      // Only now does company B issue a reminder under the key A2 has already settled.
+      yield* admin.unsafe(
+        'update finance_billing.finance_states set state = $3::jsonb where tenant_id = $1 and legal_entity_id = $2',
+        [
+          scopeB.tenantId,
+          scopeB.legalEntityId,
+          yield* financeStateJson([reminder('b', 'petr@firma-b.cz', 'B-only text'), sharedReminder('B shared text')]),
+        ],
+      );
+      const due = yield* sql<{
+        readonly delivery_id: string;
+        readonly legal_entity_id: string;
+        readonly tenant_id: string;
+      }>`select * from demo_email.pending_deliveries(10, ${yield* crypto.randomUUIDv4()}::uuid, ${yield* crypto.randomUUIDv4()}::uuid)`;
+      expect(due).toEqual([
+        { delivery_id: 'rent-reminder:shared', legal_entity_id: scopeB.legalEntityId, tenant_id: scopeB.tenantId },
+      ]);
+      expect(yield* dispatchEmailBatchWith(transport, {})).toEqual({ configured: true, processed: 1, skipped: 0 });
+      expect(sent).toHaveLength(5);
+      // B's e-mail is sent once with B's content; A2's is not sent again.
+      expect(
+        sent
+          .filter((email) => email.recipient === 'spolecna@firma.cz')
+          .map((email) => email.text.split('\n')[0] ?? '')
+          .toSorted(byCompany),
+      ).toEqual(['A2 shared text', 'B shared text']);
+      const ledger = yield* admin.unsafe<{ readonly legal_entity_id: string; readonly status: string }>(
+        "select legal_entity_id::text, status from demo_email.deliveries where dedupe_key = 'rent-reminder:shared'",
+      );
+      expect(ledger.map((row) => `${row.legal_entity_id}:${row.status}`).toSorted(byCompany)).toEqual(
+        [`${scopeA2.legalEntityId}:SENT`, `${scopeB.legalEntityId}:SENT`].toSorted(byCompany),
+      );
+      expect(yield* dispatchEmailBatchWith(transport, {})).toEqual({ configured: true, processed: 0, skipped: 0 });
       expect(sent).toHaveLength(5);
     }),
   );

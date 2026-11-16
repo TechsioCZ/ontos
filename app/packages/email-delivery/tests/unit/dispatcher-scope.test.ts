@@ -132,11 +132,22 @@ describe('one person in two companies', () => {
       const second = agendaEmail({ legalEntityId: entityB, tenantId: tenantB });
       yield* submitEmail(first, transport, {});
       yield* submitEmail(second, transport, {});
-      expect(keys).toEqual([`${tenantA}/${entityA}/${agendaKey}`, `${tenantB}/${entityB}/${agendaKey}`]);
-      expect(deliveryIdempotencyKey(first)).not.toBe(deliveryIdempotencyKey(second));
-      expect(deliveryIdempotencyKey(agendaEmail({ legalEntityId: entityB, tenantId: tenantA }))).not.toBe(
-        deliveryIdempotencyKey(first),
+      const providerKey = /^ontos-delivery-v1:[0-9a-f]{64}$/u;
+      const [firstKey, secondKey] = keys;
+      expect(keys).toHaveLength(2);
+      expect(firstKey).toMatch(providerKey);
+      expect(secondKey).toMatch(providerKey);
+      expect(firstKey).not.toBe(secondKey);
+      expect(firstKey).toBe(yield* deliveryIdempotencyKey(first));
+      expect(secondKey).toBe(yield* deliveryIdempotencyKey(second));
+      // Another legal entity of the same tenant is another company.
+      expect(yield* deliveryIdempotencyKey(agendaEmail({ legalEntityId: entityB, tenantId: tenantA }))).not.toBe(
+        firstKey,
       );
+      // Bounded for any dedupe key: the Resend adapter refuses keys over 256 characters.
+      const long = yield* deliveryIdempotencyKey({ ...first, dedupeKey: `akros-order:${'x'.repeat(1000)}:SHIPPED` });
+      expect(long).toMatch(providerKey);
+      expect(long).toHaveLength(82);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
