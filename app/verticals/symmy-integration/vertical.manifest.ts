@@ -65,6 +65,7 @@ const ownerOperationProviders = [
       { entrypointKey: 'pricing.price-group-catalog.create-price-group-definition-revision', schemaVersion: '1' },
       { entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup', schemaVersion: '1' },
       { entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations', schemaVersion: '1' },
+      { entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head', schemaVersion: '1' },
     ],
   },
   {

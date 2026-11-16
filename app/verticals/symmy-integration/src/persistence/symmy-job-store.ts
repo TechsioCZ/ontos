@@ -47,7 +47,7 @@ import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batc
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
-import { SymmyPriceListRowsSchema } from '../../shared/domain/symmy-price-list-batch.ts';
+import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
 import type { SymmyPriceListRows } from '../../shared/domain/symmy-price-list-batch.ts';
 import { SymmyProductRowsSchema } from '../../shared/domain/symmy-product-batch.ts';
 import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared/domain/symmy-product-batch.ts';
@@ -74,7 +74,6 @@ export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()
 }) {}
 
 export interface SymmyJobAdmissionRequest {
-  readonly catalogHead?: number;
   readonly code?: string;
   readonly contractVersion?: 'INTERNAL_C14';
   readonly customers?: SymmyCustomerRows;
@@ -472,6 +471,10 @@ const carriesCallerPlan = (input: SymmyJobAdmissionRequest): boolean =>
   input.priceBatch !== undefined ||
   input.products !== undefined;
 
+/** The tenant of the route scope, as the tenant every ref of a price request must carry. */
+const requestTenant = (scope: OperationalScope) =>
+  Schema.decodeUnknownEffect(SymmyRequestTenantSchema)(scope.tenantId).pipe(Effect.mapError(unavailable));
+
 /**
  * What a durable admission pins: the caller's internal plan, the route template, or the plan built from the public
  * price lists, price batch, products or customers. They are admitted for the enrolled operations only, so a route that does not
@@ -522,23 +525,22 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
           receivedAt: yield* DateTime.now,
           reviseFacts: input.reviseFacts,
           template,
+          tenantId: yield* requestTenant(scope),
         });
   }
   if (input.priceLists === undefined) {
-    return input.catalogHead === undefined ? Option.some(input.plan ?? template) : Option.none();
+    return Option.some(input.plan ?? template);
   }
-  return input.catalogHead === undefined
-    ? Option.none<SymmyFixtureExecutionPlan>()
-    : yield* buildSymmyPriceListPlan({
-        catalogHead: input.catalogHead,
-        digest: hash,
-        idempotencyKey: input.idempotencyKey,
-        legalEntityId: scope.legalEntityId,
-        receivedAt: yield* DateTime.now,
-        route,
-        rows: input.priceLists,
-        template,
-      });
+  return yield* buildSymmyPriceListPlan({
+    digest: hash,
+    idempotencyKey: input.idempotencyKey,
+    legalEntityId: scope.legalEntityId,
+    receivedAt: yield* DateTime.now,
+    route,
+    rows: input.priceLists,
+    template,
+    tenantId: yield* requestTenant(scope),
+  });
 });
 
 const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(function* prepareAdmissionPlan(

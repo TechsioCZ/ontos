@@ -368,6 +368,48 @@ const priceGroupCreateIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInven
     },
   },
 });
+const priceGroupAtHeadEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...effect,
+  effectKey: 'group-create',
+  intent: {
+    _tag: 'PriceGroupCreateAtCatalogHead',
+    payload: {
+      businessCode: 'INTERNAL_GROUP',
+      classificationPurpose: 'Internal price classification',
+      compatibilityContracts: [{ contractId: 'internal-contract', version: 1 }],
+      description: 'Internal fixture definition',
+      displayName: 'Internal Group',
+      effectiveFrom: '2026-11-07T10:00:00.000Z',
+      effectiveTo: null,
+      reason: 'Explicit internal source definition',
+      sourceCorrelation: {
+        issuer: 'internal-ebs',
+        mappingVersion: 'internal-1',
+        namespace: 'price-lists',
+        recordKey: 'list-A',
+        routeId: 'route-1',
+        sourceOccurrenceId: 'occurrence-1',
+      },
+    },
+  },
+  ref: {
+    ...effect.ref,
+    occurrence: {
+      occurrenceId: 'occurrence-1',
+      record: {
+        ...effect.ref.occurrence.record,
+        entityKind: 'PRICE_GROUP',
+        sourceNamespace: 'price-lists',
+        sourceRecordId: 'list-A',
+      },
+    },
+    operation: {
+      entrypointKey: 'pricing.price-group-catalog.create-price-group',
+      moduleId: 'pricing.price-group-catalog',
+      schemaVersion: '1',
+    },
+  },
+});
 const groupParentInvocationId = '10000000-0000-4000-8000-000000000070';
 const groupBusinessOriginalId = '10000000-0000-4000-8000-000000000071';
 const groupParentEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
@@ -529,6 +571,9 @@ const pricingOwnerMock = (
   options: { readonly definitionGroup: typeof priceGroupA; readonly reviseProblem: ReviseProblem | undefined },
 ): { readonly event: string; readonly response: Response } | undefined => {
   const { definitionGroup, reviseProblem } = options;
+  if (request.url.includes('/reads/price-group-catalog-head')) {
+    return { event: 'owner-catalog-head-read', response: Response.json({ catalogRevision: 6 }) };
+  }
   if (reviseProblem !== undefined && request.url.includes('/actions/revise-price')) {
     return {
       event: 'owner-write',
@@ -1830,6 +1875,55 @@ describe('Symmy native public owner adapter transport', () => {
           const rejected = yield* Effect.exit(adapter.execute(h.input));
           expect(Exit.isFailure(rejected)).toBe(true);
           expect(h.requests).toHaveLength(0);
+        }),
+      );
+    }),
+  );
+  it.effect(
+    'reads the catalog head right before a head-fenced Price Group create and records the resolved create',
+    () => {
+      const h = harness(false, priceGroupAtHeadEffect);
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          yield* Effect.exit(adapter.execute(h.input));
+          const [resolved] = h.resolvedEffects;
+          expect(resolved?.intent).toMatchObject({
+            payload: { businessCode: 'INTERNAL_GROUP', expectedCatalogRevision: 6 },
+          });
+          expect(Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[5])(resolved?.intent)).toBe(true);
+          expect(resolved?.ref.originalTarget).toBeUndefined();
+          expect(h.events.indexOf('owner-catalog-head-read')).toBeLessThan(h.events.indexOf('resolved-target'));
+          expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+          expect(h.events.filter((event) => event === 'owner-catalog-head-read')).toHaveLength(1);
+        }),
+      );
+    },
+  );
+  it.effect('never resolves a head-fenced create again once the owner call has begun or without authority', () =>
+    Effect.gen(function* refuses() {
+      const resumed = harness(false, priceGroupAtHeadEffect);
+      yield* resumed.provide(
+        Effect.gen(function* resumedAfterOwnerCall() {
+          const adapter = yield* resumed.adapter;
+          const exit = yield* Effect.exit(
+            adapter.execute({
+              ...resumed.input,
+              originalExecutorPrincipalId: executorId,
+              originalInvocationId: invocationId,
+            }),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(resumed.events).not.toContain('owner-catalog-head-read');
+        }),
+      );
+      const unauthorized = harness(false, priceGroupAtHeadEffect);
+      yield* unauthorized.provide(
+        Effect.gen(function* withoutAuthority() {
+          const adapter = yield* unauthorized.adapter;
+          const exit = yield* Effect.exit(adapter.execute({ ...unauthorized.input, canExecuteNewEffects: false }));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(unauthorized.requests).toHaveLength(0);
         }),
       );
     }),

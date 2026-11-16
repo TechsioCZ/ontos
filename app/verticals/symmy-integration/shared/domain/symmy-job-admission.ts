@@ -3,7 +3,7 @@ import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-ide
 import { SymmyCustomerRowsSchema } from './symmy-customer-batch.ts';
 import { SymmyInternalExecutionPlanSchema } from './symmy-job-execution.ts';
 import { SymmyPriceBatchSchema, SymmyPriceReviseFactsListSchema } from './symmy-price-batch.ts';
-import { SymmyCatalogHeadSchema, SymmyPriceListRowsSchema } from './symmy-price-list-batch.ts';
+import { SymmyPriceListRowsSchema } from './symmy-price-list-batch.ts';
 import { SymmyProductPriceGroupFactsSchema, SymmyProductRowsSchema } from './symmy-product-batch.ts';
 
 import { SymmyPolicyFixtureRouteKeySchema } from './symmy-policy-fixture-intents.ts';
@@ -19,7 +19,6 @@ const SymmyClientIdempotencyKeySchema = Schema.String.check(Schema.isPattern(/^[
 );
 
 interface AdmissionFields {
-  readonly catalogHead?: unknown;
   readonly code?: unknown;
   readonly contractVersion?: unknown;
   readonly customers?: unknown;
@@ -39,7 +38,6 @@ const carriesNoFixtureSource = ({ code, contractVersion, fixtureId, plan }: Admi
   code === undefined && fixtureId === undefined && contractVersion === undefined && plan === undefined;
 const priceListsAdmissionValid = (fields: AdmissionFields) =>
   fields.priceLists !== undefined &&
-  fields.catalogHead !== undefined &&
   fields.priceBatch === undefined &&
   fields.reviseFacts === undefined &&
   carriesNoCustomerSource(fields) &&
@@ -49,7 +47,6 @@ const priceBatchAdmissionValid = (fields: AdmissionFields) =>
   fields.priceBatch !== undefined &&
   fields.reviseFacts !== undefined &&
   fields.priceLists === undefined &&
-  fields.catalogHead === undefined &&
   carriesNoCustomerSource(fields) &&
   carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
@@ -58,7 +55,6 @@ const productsAdmissionValid = (fields: AdmissionFields) =>
   fields.priceGroupFacts !== undefined &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
-  fields.catalogHead === undefined &&
   fields.reviseFacts === undefined &&
   carriesNoCustomerSource(fields) &&
   carriesNoFixtureSource(fields);
@@ -66,7 +62,6 @@ const customersAdmissionValid = (fields: AdmissionFields) =>
   fields.customers !== undefined &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
-  fields.catalogHead === undefined &&
   fields.reviseFacts === undefined &&
   carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
@@ -75,7 +70,6 @@ const fixtureAdmissionValid = (fields: AdmissionFields) =>
   carriesNoProductSource(fields) &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
-  fields.catalogHead === undefined &&
   fields.reviseFacts === undefined &&
   ((fields.fixtureId !== undefined && fields.contractVersion === undefined && fields.plan === undefined) ||
     (fields.fixtureId === undefined &&
@@ -85,8 +79,6 @@ const fixtureAdmissionValid = (fields: AdmissionFields) =>
   Schema.is(codedRoutes)(fields.routeKey) === (fields.code !== undefined);
 
 export const AdmitSymmyJobPayloadSchema = Schema.Struct({
-  /** The tenant catalog head read for the request. It fences the first created price list and is not caller intent. */
-  catalogHead: Schema.optionalKey(SymmyCatalogHeadSchema),
   code: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300))),
   contractVersion: Schema.optionalKey(Schema.Literal('INTERNAL_C14')),
   /** The public customers. The route enrollment and the admission supply every owner fact the body lacks. */
@@ -108,7 +100,7 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
 }).check(
   Schema.makeFilter((fields) => {
     if (fields.routeKey === 'priceListsBatchUpsert') {
-      return priceListsAdmissionValid(fields) || 'Price lists need the catalog head and no other source';
+      return priceListsAdmissionValid(fields) || 'Price lists carry no other source';
     }
     if (fields.routeKey === 'customersBatch' && fields.customers !== undefined) {
       return customersAdmissionValid(fields) || 'Customers carry no other source';

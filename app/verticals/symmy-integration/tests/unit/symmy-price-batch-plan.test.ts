@@ -7,10 +7,12 @@ import { AdmitSymmyJobPayloadSchema } from '../../shared/domain/symmy-job-admiss
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyPriceBatchSchema, SymmyPriceReviseFactsSchema } from '../../shared/domain/symmy-price-batch.ts';
+import { SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
 import { buildSymmyPriceBatchPlan } from '../../src/persistence/symmy-price-batch-plan.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
+const otherTenantId = '77777777-7777-4777-8777-777777777777';
 const ref = (moduleId: string, resourceType: string, suffix: string) => ({
   moduleId,
   resourceId: `33333333-3333-4333-8333-${suffix.padStart(12, '0')}`,
@@ -86,6 +88,7 @@ const build = (
     readonly idempotencyKey?: string;
     readonly reviseFacts?: readonly ReturnType<typeof factsOf>[];
     readonly template?: SymmyFixtureExecutionPlan;
+    readonly tenantId?: string;
     readonly withoutLegalEntity?: boolean;
   } = {},
 ) =>
@@ -97,6 +100,7 @@ const build = (
     receivedAt: DateTime.makeUnsafe('2026-01-01T12:00:00.000Z'),
     reviseFacts: overrides.reviseFacts ?? [factsOf()],
     template: overrides.template ?? template,
+    tenantId: Schema.decodeUnknownSync(SymmyRequestTenantSchema)(overrides.tenantId ?? tenantId),
   });
 type Effect_ = SymmyFixtureExecutionPlan['items'][number]['effects'][number];
 const defineOf = (effect: Effect_ | undefined) =>
@@ -199,6 +203,43 @@ describe('Symmy price batch plan from the public body', () => {
       expect(plan.items.map(({ itemKey }) => itemKey)).toEqual(['price-0', 'price-1']);
       const [, item] = plan.items;
       expect(reviseOf(item?.effects[0])).toMatchObject({ priceGroupRef });
+    }),
+  );
+
+  it.effect('refuses only the DEFINE that names another tenant and plans the rest of the request', () =>
+    Effect.gen(function* refuses() {
+      const foreign = { ...define('8'), productRef: { ...productRef, tenantId: otherTenantId } };
+      const plan = Option.getOrThrow(yield* build(batchOf(define('7'), foreign, define('9'))));
+      expect(plan.items.map(({ itemKey }) => itemKey)).toEqual(['price-0', 'price-1', 'price-2']);
+      expect(plan.items.map(({ effects: [effect] }) => Object.hasOwn(effect ?? {}, 'originalTarget'))).toEqual([
+        true,
+        false,
+        true,
+      ]);
+      expect(defineOf(plan.items[1]?.effects[0])?.payload.priceRef.tenantId).toBe(tenantId);
+    }),
+  );
+
+  it.effect('refuses only the REVISE that names a price of another tenant, and trusts no facts for it', () =>
+    Effect.gen(function* refuses() {
+      const foreignRef = { ...existingPriceRef, tenantId: otherTenantId };
+      const foreign = { ...revise('31'), priceRef: foreignRef };
+      const plan = Option.getOrThrow(yield* build(batchOf(define('7'), foreign, revise('32'))));
+      expect(plan.items.map(({ effects: [effect] }) => Object.hasOwn(effect ?? {}, 'originalTarget'))).toEqual([
+        true,
+        false,
+        true,
+      ]);
+      const refused = reviseOf(plan.items[1]?.effects[0]);
+      expect(refused?.payload.priceRef.tenantId).toBe(tenantId);
+      expect(refused).toMatchObject({ payload: { expectedCurrent: { priceRef: { tenantId } } } });
+      expect(plan.items[1]?.source.sourceRecordId).not.toBe('symmy-price:existing-record');
+    }),
+  );
+
+  it.effect('admits no plan when the price list of the request is of another tenant', () =>
+    Effect.gen(function* denies() {
+      expect(Option.isNone(yield* build(batchOf(define('7')), { tenantId: otherTenantId }))).toBe(true);
     }),
   );
 

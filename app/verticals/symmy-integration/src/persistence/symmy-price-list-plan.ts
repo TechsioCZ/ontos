@@ -7,7 +7,11 @@ import {
   SYMMY_PRICE_LIST_REASON,
   SYMMY_PRICE_REASON,
 } from '../../shared/domain/symmy-price-list-batch.ts';
-import type { SymmyPriceListPrice, SymmyPriceListRows } from '../../shared/domain/symmy-price-list-batch.ts';
+import type {
+  SymmyPriceListPrice,
+  SymmyPriceListRows,
+  SymmyRequestTenant,
+} from '../../shared/domain/symmy-price-list-batch.ts';
 import { uuidFromDigest } from './derived-identity.ts';
 
 const groupOperation = {
@@ -56,6 +60,30 @@ export interface PriceContext {
   readonly source: TemplateSource;
   readonly sourceSystem: NonNullable<SymmyFixtureExecutionPlan['pricingSourceSystem']>;
 }
+
+/** Every ref a price names must belong to the tenant of the request. */
+export const namesOnlyTenant = (price: SymmyPriceListPrice, tenantId: SymmyRequestTenant): boolean =>
+  [price.productRef, price.variantRef, price.unitBasis.unitRef].every((ref) => ref.tenantId === tenantId);
+
+/** The same price with every ref moved into the tenant of the request, so the plan stays one tenant's plan. */
+export const inRequestTenant = (price: SymmyPriceListPrice, tenantId: SymmyRequestTenant): SymmyPriceListPrice => ({
+  ...price,
+  productRef: { ...price.productRef, tenantId },
+  unitBasis: { ...price.unitBasis, unitRef: { ...price.unitBasis.unitRef, tenantId } },
+  variantRef: { ...price.variantRef, tenantId },
+});
+
+/**
+ * The item of a price that names another tenant. It keeps its place in the plan and names no original target, which
+ * the adapter refuses before any owner call, so the item ends not accepted with nothing written and its siblings run.
+ * An original target in another tenant would instead make the pin refuse the whole request.
+ */
+export const refusedItem = <Item extends { readonly effects: readonly object[] }>(item: Item) => ({
+  ...item,
+  effects: item.effects.map((effect) =>
+    Object.fromEntries(Object.entries(effect).filter(([key]) => key !== 'originalTarget')),
+  ),
+});
 
 interface PriceFacts<Failure> {
   readonly context: PriceContext;
@@ -167,7 +195,6 @@ interface GroupContext {
 }
 
 interface ListFacts<Failure> {
-  readonly catalogHead: number;
   readonly digest: Digest<Failure>;
   readonly group: GroupContext;
   readonly idempotencyKey: string;
@@ -175,32 +202,35 @@ interface ListFacts<Failure> {
   readonly index: number;
   readonly prices: Option.Option<PriceContext>;
   readonly row: SymmyPriceListRows[number];
+  readonly tenantId: SymmyRequestTenant;
 }
 
-/** One list item and the items of its prices. List i fences on the head plus i and waits for list i - 1. */
+/** One list item and the items of its prices. A list waits for no other list: each fences on the head it meets. */
 const buildList = Effect.fn('SymmyPriceListPlan.list')(function* buildList<Failure>(facts: ListFacts<Failure>) {
-  const { catalogHead, digest, group, idempotencyKey, importedAt, index, prices, row } = facts;
+  const { digest, group, idempotencyKey, importedAt, index, prices, row, tenantId } = facts;
   const occurrence = yield* digest(`price-list-occurrence\u0000${idempotencyKey}\u0000${index}`);
   const priceItems = Option.isNone(prices)
     ? []
     : yield* Effect.forEach(
         row.prices ?? [],
-        (price, position) =>
-          buildPrice({
+        (price, position) => {
+          const own = namesOnlyTenant(price, tenantId);
+          return buildPrice({
             context: prices.value,
             digest,
             idempotencyKey,
             importedAt,
             index: [index, position],
             listCode: row.code,
-            price,
-          }),
+            price: own ? price : inRequestTenant(price, tenantId),
+          }).pipe(Effect.map((item) => (own ? item : refusedItem(item))));
+        },
         { concurrency: 1 },
       );
   const effect = {
     effectKey: groupEffectKey,
     intent: {
-      _tag: 'PriceGroupCreate',
+      _tag: 'PriceGroupCreateAtCatalogHead',
       payload: {
         businessCode: row.businessCode,
         classificationPurpose: row.purpose,
@@ -209,7 +239,6 @@ const buildList = Effect.fn('SymmyPriceListPlan.list')(function* buildList<Failu
         displayName: row.name,
         effectiveFrom: instant(row.effectiveFrom),
         effectiveTo: null,
-        expectedCatalogRevision: catalogHead + index,
         reason: SYMMY_PRICE_LIST_REASON,
         sourceCorrelation: {
           issuer: group.source.issuerId,
@@ -222,9 +251,8 @@ const buildList = Effect.fn('SymmyPriceListPlan.list')(function* buildList<Failu
     },
     operation: groupOperation,
   };
-  const dependsOn = index === 0 ? [] : [{ effectKey: groupEffectKey, itemKey: `price-list-${index - 1}` }];
   const listItem = {
-    effects: [dependsOn.length === 0 ? effect : { ...effect, dependsOn }],
+    effects: [effect],
     itemKey: `price-list-${index}`,
     source: {
       entityKind: 'PRICE_GROUP',
@@ -238,8 +266,6 @@ const buildList = Effect.fn('SymmyPriceListPlan.list')(function* buildList<Failu
 });
 
 export interface SymmyPriceListPlanInput<Failure> {
-  /** The tenant ledger head. The first created list fences on it, each later list on the head plus its position. */
-  readonly catalogHead: number;
   readonly digest: Digest<Failure>;
   readonly idempotencyKey: string;
   /** The selling legal entity of every price. It comes from the route scope, never from the body. */
@@ -249,6 +275,8 @@ export interface SymmyPriceListPlanInput<Failure> {
   readonly route: { readonly mappingVersion: string; readonly routeId: string };
   readonly rows: SymmyPriceListRows;
   readonly template: SymmyFixtureExecutionPlan;
+  /** The tenant of the route scope. A price that names another tenant ends not accepted for its item. */
+  readonly tenantId: SymmyRequestTenant;
 }
 
 export const priceContextOf = (
@@ -268,14 +296,14 @@ export const priceContextOf = (
 
 /**
  * Maps the public price lists to one internal plan: a Price Group create per list and a Price define per
- * price, named by the list it belongs to. The lists are chained, because each create moves the tenant
- * catalog head by one and the next list fences on the value its predecessor leaves. A route that does not
- * enroll the owner operations, the price source or the selling legal entity yields no plan at all.
+ * price, named by the list it belongs to. A create carries no fence: the adapter reads the tenant catalog head
+ * right before the owner call, so lists neither wait for nor depend on each other. A route that does not enroll
+ * the owner operations, the price source or the selling legal entity yields no plan at all.
  */
 export const buildSymmyPriceListPlan = Effect.fn('SymmyPriceListPlan.build')(function* buildSymmyPriceListPlan<Failure>(
   input: SymmyPriceListPlanInput<Failure>,
 ) {
-  const { catalogHead, digest, idempotencyKey, legalEntityId, receivedAt, route, rows, template } = input;
+  const { digest, idempotencyKey, legalEntityId, receivedAt, route, rows, template, tenantId } = input;
   const groupItem = enrolledItem(template, 'PRICE_GROUP', groupOperation);
   const prices = priceContextOf(template, legalEntityId);
   if (Option.isNone(groupItem) || (rows.some((row) => (row.prices?.length ?? 0) > 0) && Option.isNone(prices))) {
@@ -288,8 +316,7 @@ export const buildSymmyPriceListPlan = Effect.fn('SymmyPriceListPlan.build')(fun
   };
   const lists = yield* Effect.forEach(
     rows,
-    (row, index) =>
-      buildList({ catalogHead, digest, group, idempotencyKey, importedAt: receivedAt, index, prices, row }),
+    (row, index) => buildList({ digest, group, idempotencyKey, importedAt: receivedAt, index, prices, row, tenantId }),
     { concurrency: 1 },
   );
   return Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items: EffectArray.flatten(lists) });

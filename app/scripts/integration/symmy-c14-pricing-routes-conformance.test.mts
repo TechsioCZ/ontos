@@ -182,6 +182,84 @@ const assertPriceBatchRefusals = Effect.fn('InternalC14PricingRoutes.priceBatchR
   return yield* Effect.void;
 });
 
+/** An existing list does not hold back the new one behind it: each create fences on the head it meets. */
+const assertExistingListDoesNotBlockNewOne = Effect.fn('InternalC14PricingRoutes.existingThenNew')(
+  function* existingThenNew<E, R>(
+    fixture: PricingFixture,
+    existing: ReturnType<typeof publicList>,
+    settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>,
+  ) {
+    const groupCount = fixture.admin<{ count: number }>`select count(*)::integer as count
+      from price_group_catalog.price_groups where tenant_id=${fixture.tenantId}`;
+    const [before] = yield* groupCount;
+    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
+    const settled = yield* settleLists('INTERNAL_C14_EXISTING_AND_NEW_LISTS', [
+      existing,
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_MIXED',
+        code: 'INTERNAL_C14_MIXED_NEW_LIST',
+        effectiveFrom: startsAt,
+        prices: [],
+        purpose: 'Explicit INTERNAL_C14 existing list followed by a new list',
+      }),
+    ]);
+    expect(outcomesOf(settled)).toEqual(['conflict', 'accepted_change']);
+    expect((yield* groupCount)[0]?.count).toBe((before?.count ?? 0) + 1);
+    // A list is readable once its definition starts, so the projections that follow wait for it.
+    yield* waitUntil(DateTime.makeUnsafe(startsAt));
+  },
+);
+
+const refRecord = Schema.Record(Schema.String, Schema.Json);
+const inTenant = (ref: Schema.Json, tenantId: string): Schema.Json => ({
+  ...Schema.decodeUnknownSync(refRecord)(ref),
+  tenantId,
+});
+
+/**
+ * A price that names another tenant is not accepted for its item. It neither fails the request nor holds back the
+ * list it belongs to or the lists beside it.
+ */
+const assertForeignTenantPrices = Effect.fn('InternalC14PricingRoutes.foreignTenantPrices')(
+  function* foreignTenantPrices<E, R>(
+    fixture: PricingFixture,
+    input: {
+      readonly priceFacts: Omit<Parameters<typeof publicPrice>[0], 'at'>;
+      readonly settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>;
+    },
+  ) {
+    const foreignTenantId = randomUUID();
+    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
+    const own = publicPrice({ ...input.priceFacts, at: startsAt });
+    const foreignUnit = { ...input.priceFacts, unitRef: inTenant(input.priceFacts.unitRef, foreignTenantId) };
+    const foreign = yield* input.settleLists('INTERNAL_C14_FOREIGN_TENANT_PRICE', [
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_FOREIGN',
+        code: 'INTERNAL_C14_FOREIGN_PRICE_LIST',
+        effectiveFrom: startsAt,
+        prices: [
+          { ...own, productRef: inTenant(own.productRef, foreignTenantId) },
+          publicPrice({ ...foreignUnit, at: startsAt }),
+        ],
+        purpose: 'Explicit INTERNAL_C14 prices of another tenant',
+      }),
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_AFTER_FOREIGN',
+        code: 'INTERNAL_C14_AFTER_FOREIGN_LIST',
+        effectiveFrom: startsAt,
+        prices: [],
+        purpose: 'Explicit INTERNAL_C14 list after prices of another tenant',
+      }),
+    ]);
+    expect(outcomesOf(foreign)).toEqual(['accepted_change', 'unsupported', 'unsupported', 'accepted_change']);
+    const [prices] = yield* fixture.admin<{
+      count: number;
+    }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
+    expect(prices?.count).toBe(1);
+    yield* waitUntil(DateTime.makeUnsafe(startsAt));
+  },
+);
+
 it.live(
   'INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority',
   () =>
@@ -404,11 +482,8 @@ it.live(
           (value) =>
             value.status.startsWith('completed_') || value.status === 'blocked' || value.status === 'indeterminate',
         );
-        // The first list ends conflict; the second is chained behind it by its catalog fence and is not accepted.
-        expect((replayed.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
-          'conflict',
-          'unsupported',
-        ]);
+        // Every list answers for itself: both business codes are owned, so both end conflict.
+        expect(outcomesOf(replayed)).toEqual(['conflict', 'conflict']);
         const replayProjectionResponse = yield* get('limit=2&offset=0');
         expect(replayProjectionResponse.status).toBe(200);
         const replayProjection = yield* replayProjectionResponse.json.pipe(
@@ -647,6 +722,19 @@ it.live(
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
         expect(afterDuplicate?.count).toBe(1);
 
+        const settleLists = (idempotencyKey: string, lists: readonly unknown[]) =>
+          submit(idempotencyKey, lists).pipe(
+            Effect.flatMap((job) =>
+              observe(
+                `The price lists ${idempotencyKey} did not settle`,
+                readStatus(job.jobId),
+                (value) => value.status.startsWith('completed_') || value.status === 'indeterminate',
+              ),
+            ),
+          );
+        yield* assertExistingListDoesNotBlockNewOne(fixture, groupLists[0], settleLists);
+        yield* assertForeignTenantPrices(fixture, { priceFacts, settleLists });
+
         const selectedAt = DateTime.formatIso(yield* DateTime.now);
         const batchPrice = { ...publicPrice({ ...priceFacts, at: selectedAt }), operation: 'DEFINE' };
         const otherGroup = all.find(({ code }) => code === fixture.secondRecordId);
@@ -771,6 +859,20 @@ it.live(
         );
         expect(otherList.status).toBe('completed_none');
         expect(outcomesOf(otherList)).toEqual(['unresolved']);
+        expect(yield* priceCounts).toEqual(beforeRevise);
+        // A price that names another tenant is not accepted for its item, whatever its operation. It neither fails the
+        // request nor changes the items beside it, which are still judged on their own.
+        const foreignRefTenantId = randomUUID();
+        const ungrantedBeside = { ...batchPrice, unitBasis: { ...batchPrice.unitBasis, quantity: '3' } };
+        const foreignBatch = yield* settle(
+          yield* submitPrices('INTERNAL_C14_FOREIGN_TENANT_BATCH', originalGroupRef, [
+            { ...batchPrice, productRef: inTenant(batchPrice.productRef, foreignRefTenantId) },
+            ungrantedBeside,
+            { ...reviseOf('31'), priceRef: { ...listed.priceRef, tenantId: foreignRefTenantId } },
+          ]),
+        );
+        expect(foreignBatch.status).toBe('completed_none');
+        expect(outcomesOf(foreignBatch)).toEqual(['unsupported', 'unresolved', 'unsupported']);
         expect(yield* priceCounts).toEqual(beforeRevise);
         // Items are independent. A price without a source authority grant for its exact identity is held, and a
         // revision that is no longer the current one ends conflict. Neither writes anything.
