@@ -43,9 +43,24 @@ const payload = {
 } as const;
 const unexpected = () => Effect.die('Unexpected persistence call');
 
+/**
+ * Every context here reads only the content-digest revision of one identical Application Composition
+ * bundle, so the full decode/encode/digest/validate pass runs once for the whole file.
+ */
+const compositionRevisionCache: { value?: string } = {};
+const catalogCompositionRevision = Effect.gen(function* catalogCompositionRevision() {
+  const cached = compositionRevisionCache.value;
+  if (cached !== undefined) {
+    return cached;
+  }
+  const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+  compositionRevisionCache.value = snapshot.composition.revision;
+  return snapshot.composition.revision;
+});
+
 const context = (govern: VariantAxisPersistence['govern']) =>
   Effect.gen(function* makeContext() {
-    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const compositionRevision = yield* catalogCompositionRevision;
     const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
     const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
     const services: VariantAxisPersistence = {
@@ -77,7 +92,7 @@ const context = (govern: VariantAxisPersistence['govern']) =>
         Effect.sync(() => {
           outbox.push({ event, message });
         }),
-      compositionRevision: snapshot.composition.revision,
+      compositionRevision,
       recordAuditEvidence: () => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,

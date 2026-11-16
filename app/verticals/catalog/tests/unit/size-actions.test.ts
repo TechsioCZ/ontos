@@ -65,6 +65,20 @@ const context = (compositionRevision: string, overrides: Partial<SizeUsagePersis
   };
   return { accesses, audits, handler };
 };
+/**
+ * Every test here reads only the content-digest revision of one identical Application Composition
+ * bundle, so the full decode/encode/digest/validate pass runs once for the whole file.
+ */
+const compositionRevisionCache: { value?: string } = {};
+const catalogCompositionRevision = Effect.gen(function* catalogCompositionRevision() {
+  const cached = compositionRevisionCache.value;
+  if (cached !== undefined) {
+    return cached;
+  }
+  const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+  compositionRevisionCache.value = snapshot.composition.revision;
+  return snapshot.composition.revision;
+});
 
 describe('governed Size Actions', () => {
   it.effect('captures each decoded success in the supplied transaction with its declared identity', () =>
@@ -169,17 +183,14 @@ describe('governed Size Actions', () => {
   );
   it.effect('preserves local order and revision CAS with trusted actor and evidence', () =>
     Effect.gen(function* replaceSizes() {
-      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-        ['catalog'],
-        ultramodernApiMarker.buildMarker,
-      );
+      const compositionRevision = yield* catalogCompositionRevision;
       const payload = Schema.decodeUnknownSync(ReplaceProductSizesPayloadSchema)({
         evidenceRefs: ['catalog-range-2026'],
         expectedRevision: 2,
         list: { orderedSizeRefs: [size42, sizeM], productRef },
         reason: 'Product range confirmed',
       });
-      const { accesses, audits, handler } = context(compositionSnapshot.composition.revision, {
+      const { accesses, audits, handler } = context(compositionRevision, {
         replace: (input) =>
           Effect.sync(() => {
             expect(input.actionInvocationId).toBe(handler.actionInvocationId);
@@ -200,10 +211,7 @@ describe('governed Size Actions', () => {
 
   it.effect('passes only evidenced scoped assertions through persistence', () =>
     Effect.gen(function* assertEquivalence() {
-      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-        ['catalog'],
-        ultramodernApiMarker.buildMarker,
-      );
+      const compositionRevision = yield* catalogCompositionRevision;
       const payload = Schema.decodeUnknownSync(AssertSizeEquivalencePayloadSchema)({
         assertion: {
           evidence: 'manufacturer-chart-2026',
@@ -213,7 +221,7 @@ describe('governed Size Actions', () => {
         },
         reason: 'Manufacturer chart reviewed',
       });
-      const { audits, handler } = context(compositionSnapshot.composition.revision, {
+      const { audits, handler } = context(compositionRevision, {
         assertEquivalence: (input) =>
           Effect.sync(() => {
             expect(input.actionInvocationId).toBe(handler.actionInvocationId);
@@ -231,10 +239,7 @@ describe('governed Size Actions', () => {
 
   it.effect('rejects cross-tenant references before persistence and preserves typed CAS failures', () =>
     Effect.gen(function* rejectInvalidSizes() {
-      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-        ['catalog'],
-        ultramodernApiMarker.buildMarker,
-      );
+      const compositionRevision = yield* catalogCompositionRevision;
       const foreign = Schema.decodeUnknownSync(ReplaceProductSizesPayloadSchema)({
         evidenceRefs: [],
         expectedRevision: 0,
@@ -244,10 +249,8 @@ describe('governed Size Actions', () => {
         },
         reason: 'Range reviewed',
       });
-      const invalid = yield* handleReplaceProductSizes(
-        foreign,
-        context(compositionSnapshot.composition.revision).handler,
-      ).pipe(Effect.flip);
+      const foreignHandler = context(compositionRevision).handler;
+      const invalid = yield* handleReplaceProductSizes(foreign, foreignHandler).pipe(Effect.flip);
       expect(invalid).toMatchObject({ conflict: 'INVALID_INPUT' });
       const valid = Schema.decodeUnknownSync(ReplaceProductSizesPayloadSchema)({
         evidenceRefs: [],
@@ -257,7 +260,7 @@ describe('governed Size Actions', () => {
       });
       const stale = yield* handleReplaceProductSizes(
         valid,
-        context(compositionSnapshot.composition.revision, {
+        context(compositionRevision, {
           replace: () =>
             Effect.fail(
               new SizePersistenceConflict({

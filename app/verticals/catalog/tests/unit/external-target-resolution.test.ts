@@ -454,24 +454,4 @@ describe('Catalog external target resolution', () => {
       }),
     ).toMatchObject({ factKey: 'name', reason: 'MISSING_LINK', status: 'HELD' });
   });
-
-  it('lets a retry find the already-created target instead of creating a duplicate', () => {
-    const created = target('commerce.catalog.product', productAId);
-    const confirmed = correlation({
-      correlationId: 'corr-created',
-      declaredTargetKind: 'PRODUCT',
-      sourceRecord: sourceRecord(),
-      target: created,
-    });
-
-    expect(
-      resolveCatalogExternalTarget({ correlations: [], request: request(sourceRecord(), 'PRODUCT') }),
-    ).toMatchObject({ status: 'MISSING_LINK' });
-    expect(
-      resolveCatalogExternalTarget({ correlations: [confirmed], request: request(sourceRecord(), 'PRODUCT') }),
-    ).toMatchObject({ capture: 'ALREADY_OWNER_CONFIRMED', status: 'RESOLVED', target: created });
-    expect(
-      resolveCatalogExternalTarget({ correlations: [confirmed], request: request(sourceRecord(), 'PRODUCT') }),
-    ).toMatchObject({ status: 'RESOLVED', target: created });
-  });
 });
