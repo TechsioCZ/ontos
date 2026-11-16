@@ -3,9 +3,9 @@ import {
   makeOwnerActionApproveHandler,
   makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
-import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
   ActionMandateDispatcher,
+  OwnerActionApprovals,
   makeOwnerActionApprovalsLive,
 } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
@@ -30,9 +30,11 @@ import {
   ReadRuntime,
   makeReadRuntimeLive,
   TenantModuleStateServiceLive,
+  CoreSearchQueryRuntime,
+  GatewayAssertionRedemptionService,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type {
-  AccessDecisionGate,
   AccessDecisionLog,
   AccessIntent,
   AccessPrincipalKindSource,
@@ -49,8 +51,6 @@ import type {
   ActionRuntimeService,
   ReadRuntimeService,
   OperationalScopeResolverService,
-  CoreSearchQueryRuntime,
-  GatewayAssertionRedemptionService,
 } from '@app/core-runtime';
 import { RetireMarketPayloadSchema, MarketCommandRejected } from '../shared/action-contracts.ts';
 import type { RetireMarketPayload } from '../shared/action-contracts.ts';
@@ -103,6 +103,7 @@ import {
 // <generated-governed-http-handler-imports>
 import { activateMarketActionApiLive } from './activate-market-action-server.ts';
 import { associateStorefrontActionApiLive } from './associate-storefront-action-server.ts';
+import { assortmentFixtureMarketAssociationReadApiLive } from './assortment-fixture-market-association-read-server.ts';
 import { createMarketActionApiLive } from './create-market-action-server.ts';
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
@@ -638,6 +639,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
     // <generated-governed-http-handler-layers>
     activateMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     associateStorefrontActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    assortmentFixtureMarketAssociationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     createMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -689,6 +691,36 @@ export const makeCommerceMarketCatalogApiRuntime = (
     transport: transportLive,
   });
 };
+
+/**
+ * Assemble this owner's unchanged HTTP runtime from caller-owned scoped services. Market retirement keeps its own
+ * Action runtime over the caller's bindings, so every per-invocation retirement service stays on the path.
+ */
+export const commerceMarketCatalogApiRuntimeFromContext = Effect.gen(
+  function* commerceMarketCatalogApiRuntimeFromContext() {
+    const readRuntime = yield* ReadRuntime;
+    const retirementBindings = yield* MarketRetirementRuntimeBindings;
+    const ownerApprovals = yield* OwnerActionApprovals;
+    const redemption = yield* GatewayAssertionRedemptionService;
+    const administrationAuthority = yield* AccessDecisionGate;
+    const searchRuntime = yield* CoreSearchQueryRuntime;
+    return makeCommerceMarketCatalogApiRuntime(
+      Layer.succeed(ReadRuntime, readRuntime),
+      MarketRetirementActionRuntimeLive.pipe(
+        Layer.provideMerge(Layer.succeed(OwnerActionApprovals, ownerApprovals)),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(MarketRetirementRuntimeBindings, retirementBindings),
+            MarketRetirementImpactAuthorityLive.pipe(Layer.provide(nodeCryptoLayer)),
+          ),
+        ),
+      ),
+      Layer.succeed(GatewayAssertionRedemptionService, redemption),
+      Layer.succeed(AccessDecisionGate, administrationAuthority),
+      Layer.succeed(CoreSearchQueryRuntime, searchRuntime),
+    );
+  },
+);
 
 const apiRuntime = makeCommerceMarketCatalogApiRuntime(
   productionReadRuntimeLive,

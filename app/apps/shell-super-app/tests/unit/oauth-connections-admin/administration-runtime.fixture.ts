@@ -8,6 +8,7 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/access/ids';
 import { makeAccessProjectionCompiler } from '@app/core-runtime/access/compiler/spice-db-compiler';
+import { makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import type { AccessProjectionTransport } from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
 import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
@@ -20,8 +21,6 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Option } from 'effect';
 import { expect } from 'effect-rstest';
 
-import { makeShellTestAccessGate } from '../../support/access-decision-double.ts';
-
 interface AdministrationRequest {
   readonly principal: TrustedPrincipalContext & { readonly legalEntityId: string };
 }
@@ -32,8 +31,9 @@ export const administrationScopeLayer = (request: AdministrationRequest) =>
     OperationalScopeResolver,
     Effect.gen(function* administrationScopeResolver() {
       const namespaces = yield* AuthenticationNamespaceRegistry;
-      const access = makeShellTestAccessGate({
-        selectableLegalEntityIds: [request.principal.legalEntityId],
+      // Answers the company question with the request's own company; every other question is denied.
+      const access = makeTestAccessDecision({
+        legalEntityIds: [LegalEntityIdSchema.make(request.principal.legalEntityId)],
       });
       const resolver = yield* makeOperationalScopeResolver(
         {
@@ -55,7 +55,7 @@ export const administrationScopeLayer = (request: AdministrationRequest) =>
             });
           },
         },
-        access.bound,
+        access,
       );
       return {
         resolve: (input) =>
@@ -168,11 +168,17 @@ export const administrationProjectionLayer = (
   const loader: IntentLoader = {
     loadAuthorityCells: () => Effect.die('Unexpected authority read'),
     loadAuthorityCellsMany: () => Effect.die('Unexpected authority read'),
+    loadCompanyOwnership: () => Effect.die('Unexpected company ownership read'),
     loadConfigureBases: () => Effect.die('Unexpected configuration read'),
     loadConnection: () => Effect.die('Unexpected connection read'),
     loadProjection: (scope) =>
       Effect.gen(function* loadProjection() {
         assertScope(scope);
+        // The writer reads the intent twice per reconcile: before it takes the fence, and again under it to see any
+        // intent written in between. Only the first read starts a reconcile, so only it is observed and recorded.
+        if (fence.state === 'Changing') {
+          return intent;
+        }
         yield* observe(scope);
         reconciled.push(scope.tenantId);
         scopes.push(scope);

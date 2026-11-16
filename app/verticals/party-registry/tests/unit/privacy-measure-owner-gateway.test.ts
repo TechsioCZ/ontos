@@ -28,7 +28,7 @@ rs.mock('@app/shared-contracts/gateway-context-server', () => ({
     return Effect.succeed({ authorization: 'Bearer fixture-token' });
   },
 }));
-rs.mock('@app/privacy/api/client', () => ({
+rs.mock('@app/privacy/api/record-owner-execution-outcome-action/client', () => ({
   executeRecordOwnerExecutionOutcomeWithAuthorization: clients.recordOutcome,
 }));
 const originator = {
@@ -85,6 +85,7 @@ it.layer(gatewayLive)('privacy measure owner gateway', (suite) => {
       const request = acquiredRequests.at(-1);
       expect(request).toMatchObject({
         audience: 'privacy',
+        callingAppId: 'party-registry',
         legalEntityScope: 'subject',
         requestCorrelation: 'correlation:1',
         subject: {

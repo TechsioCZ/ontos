@@ -69,6 +69,7 @@ import {
   encodeState,
   withMerchandise,
 } from './support/merchandise-database.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 type RecordsViewInput = typeof RecordsViewSchema.Encoded;
 type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
@@ -76,8 +77,11 @@ type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
 type StaffProductPage = Effect.Success<ReturnType<typeof staffProducts>>;
 type OrderPage = Effect.Success<ReturnType<typeof orderPage>>;
 type StorefrontProductPage = Effect.Success<ReturnType<typeof storefrontProducts>>;
-const staffProductIds = (page: StaffProductPage) => page.products.map((product) => product.id);
-const staffProductPageSummary = (page: StaffProductPage) => [page.total, staffProductIds(page)];
+const staffProductIds = (page: Pick<StaffProductPage, 'products'>) => page.products.map((product) => product.id);
+const staffProductPageSummary = (page: Pick<StaffProductPage, 'products' | 'total'>) => [
+  page.total,
+  staffProductIds(page),
+];
 const orderPageSummary = (page: OrderPage) => [page.total, page.orders.map((order) => order.id)];
 const orderIdsFor = (fixture: Pick<MerchandiseFixture, 'db' | 'scope'>) => (view: RecordsViewInput) =>
   orderPage(fixture.db, fixture.scope, Schema.decodeSync(RecordsViewSchema)(view)).pipe(Effect.map(orderPageSummary));
@@ -636,6 +640,8 @@ const changeSearchVariantActivity = (fixture: MerchandiseFixture, activity: Opti
         working,
         changed,
         DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
+        TEST_RATES,
+        {},
       );
       expect(revision).toBe(head.revision + 1);
       return revision;
@@ -1414,7 +1420,7 @@ it.live('lists only the products a market offers, with every price in the market
         convertGrossMinor(czkProduct?.currentPriceMinor ?? -1, halfPriceMarket),
       );
       expect(eurProduct?.variantRecords?.map((variant) => variant.grossPriceMinor)).toEqual(
-        czkProduct?.variantRecords?.map((variant) => convertGrossMinor(variant.grossPriceMinor, halfPriceMarket)),
+        czkProduct?.variantRecords?.map((variant) => convertGrossMinor(variant.grossPriceMinor ?? -1, halfPriceMarket)),
       );
       expect(eurProduct?.variantSummary?.minGrossPriceMinor).toEqual(Option.some(61));
       // Price bounds are market-currency amounts: 61 (p1) passes, 18 (p3: 36 Kč) does not.
@@ -1587,9 +1593,10 @@ const placeMarketOrder = (
         market,
         now: marketNow,
         resourceId,
+        tax: TEST_TAX,
       });
       if (change.state !== working.state) {
-        yield* persistChange(transaction, fixture.scope, working, change.state, marketNow);
+        yield* persistChange(transaction, fixture.scope, working, change.state, marketNow, TEST_RATES, {});
       }
       return { resourceId, result: change.storefrontOrder };
     }),
@@ -2064,9 +2071,11 @@ it.live(
       Effect.gen(function* canonicalInlineFullOffer() {
         const full = yield* catalogPage(fixture, { fields: 'full', productIds: ['p1'] });
         const leaf = approvedInlineLeaf(full, 'legacy-exact');
+        // Minimum 3 in packages of 2: the smallest order is 4, which reaches the break from 2 (net 50, 124), and that
+        // is what checkout charges (`grossForQuantity`); the first stored tier (121, from 1) is a price nobody can pay.
         expect(leaf).toMatchObject({
           active: true,
-          grossPriceMinor: 121,
+          grossPriceMinor: 124,
           id: 'legacy-exact',
           imageSrc: 'media:legacy-image',
           minimumQuantity: 3,

@@ -35,41 +35,21 @@ const ActionErrorSchema = Schema.Union([
   AssortmentPolicyPersistenceUnavailable,
 ]);
 
-export const handleCreateApplicabilityBinding = Effect.fn('CreateApplicabilityBindingAction.handle')(
-  function* createBinding(
+export const recordApplicabilityBindingCreation = Effect.fn('CreateApplicabilityBindingAction.recordCreation')(
+  function* recordCreation(
     payload: CreateApplicabilityBindingPayload,
-    context: ActionHandlerContext<typeof domainEvents, AssortmentPolicyPersistence>,
+    outcome: Readonly<{ readonly bindingId: string; readonly created: boolean }>,
+    context: Omit<ActionHandlerContext<typeof domainEvents>, 'services'>,
   ) {
-    const legalEntityId = payload.commercialScope.sellingLegalEntityRef.resourceId;
-    const outcome = yield* context.services.createBinding({
-      ...payload,
-      actionInvocationId: context.actionInvocationId,
-      actorPrincipalId: context.scope.principalId,
-      legalEntityId,
-      tenantId: context.scope.tenantId,
-    });
-    if ('kind' in outcome) {
-      if (outcome.kind === 'not_found') {
-        return yield* new AssortmentPolicyNotFound({
-          code: 'assortment_policy_not_found',
-          reason: 'The Rule Revision does not exist',
-        });
-      }
-      return yield* new AssortmentPolicyConflict({
-        code: 'assortment_policy_conflict',
-        conflict: outcome.conflict,
-        reason: 'The Applicability Binding conflicts with durable state',
-      });
-    }
     const ref = bindingRef(context.scope.tenantId, outcome.bindingId);
-    yield* context.recordAuditEvidence({
+    const auditEvidence = {
       action: 'CREATE_APPLICABILITY_BINDING',
       changed: outcome.created,
       meaningFingerprint: bindingMeaningFingerprint(payload),
       operation: 'CREATE',
       resourceId: ref.resourceId,
       resourceType: ref.resourceType,
-    });
+    };
     if (outcome.created) {
       const eventPayload = yield* Schema.encodeEffect(
         CreateApplicabilityBindingCommerceAssortmentBindingCreatedV1OutboxPayloadSchema,
@@ -96,7 +76,40 @@ export const handleCreateApplicabilityBinding = Effect.fn('CreateApplicabilityBi
         createCreateApplicabilityBindingCommerceAssortmentBindingCreatedV1OutboxMessage(eventPayload),
       );
     }
-    return { applicabilityBindingRef: ref, created: outcome.created };
+    const result = { applicabilityBindingRef: ref, created: outcome.created };
+    return { auditEvidence, result };
+  },
+);
+
+export const handleCreateApplicabilityBinding = Effect.fn('CreateApplicabilityBindingAction.handle')(
+  function* createBinding(
+    payload: CreateApplicabilityBindingPayload,
+    context: ActionHandlerContext<typeof domainEvents, AssortmentPolicyPersistence>,
+  ) {
+    const legalEntityId = payload.commercialScope.sellingLegalEntityRef.resourceId;
+    const outcome = yield* context.services.createBinding({
+      ...payload,
+      actionInvocationId: context.actionInvocationId,
+      actorPrincipalId: context.scope.principalId,
+      legalEntityId,
+      tenantId: context.scope.tenantId,
+    });
+    if ('kind' in outcome) {
+      if (outcome.kind === 'not_found') {
+        return yield* new AssortmentPolicyNotFound({
+          code: 'assortment_policy_not_found',
+          reason: 'The Rule Revision does not exist',
+        });
+      }
+      return yield* new AssortmentPolicyConflict({
+        code: 'assortment_policy_conflict',
+        conflict: outcome.conflict,
+        reason: 'The Applicability Binding conflicts with durable state',
+      });
+    }
+    const { auditEvidence, result } = yield* recordApplicabilityBindingCreation(payload, outcome, context);
+    yield* context.recordAuditEvidence(auditEvidence);
+    return result;
   },
 );
 

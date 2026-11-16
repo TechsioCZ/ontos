@@ -21,6 +21,7 @@ import {
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { requestPaymentCancellationAction } from '../../src/actions/request-payment-cancellation.action.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { makeTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
@@ -79,6 +80,8 @@ const makeRuntimes = Effect.fn('CancellationContradiction.makeRuntimes')(functio
 });
 
 const scenario = Effect.fn('CancellationContradiction.scenario')(function* scenario() {
+  // Gateway dispatches admitted under R1 are completion-bound executor work of R1 (#1158).
+  yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
   const database = yield* nativeDatabase;
   const scope = yield* makeTestScope;
   yield* seedCoreScope(database, scope);

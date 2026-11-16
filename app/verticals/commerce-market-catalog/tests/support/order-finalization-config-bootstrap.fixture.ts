@@ -1,4 +1,9 @@
 import { readFileSync, writeSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import type {
+  holdOwnStoreCopy,
+  receiveModuleCredentialHandover,
+} from '../../../../scripts/zerops/module-credentials.mts';
 import {
   ActionRuntime,
   ContextAccessLive,
@@ -21,11 +26,12 @@ import {
   OperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { ownModuleCredential } from '@app/core-runtime/auth/owner-module-credential';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { NodeCrypto, NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Layer, Logger, Redacted, Schema } from 'effect';
+import { Cause, Effect, Layer, Logger, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -72,9 +78,31 @@ class OwnerProducerUnavailable extends Schema.TaggedError<OwnerProducerUnavailab
 }) {}
 const unavailable = () => new OwnerProducerUnavailable({ reason: 'The isolated owner producer failed' });
 
+/**
+ * Market's Actions call the Storefront Registry with Market's own module key. Like an owners process, this child claims
+ * its credential store copy and takes the key on its private channel (file descriptor 3) before any Action runs. The
+ * host side loads from the workspace at run time and is never bundled, so it claims the one store copy that the
+ * workspace's delegated gateway client reads.
+ */
+const holdOwnModuleCredential = Effect.gen(function* holdOwnModuleCredential() {
+  const host: {
+    readonly holdOwnStoreCopy: typeof holdOwnStoreCopy;
+    readonly receiveModuleCredentialHandover: typeof receiveModuleCredentialHandover;
+  } = yield* Effect.tryPromise({
+    catch: unavailable,
+    try: async () => await import(pathToFileURL(`${process.cwd()}/scripts/zerops/module-credentials.mts`).href),
+  });
+  yield* host.holdOwnStoreCopy(yield* host.receiveModuleCredentialHandover([OWNER_AUDIENCE]), [OWNER_AUDIENCE]);
+  // The channel is read in the background: wait until the copy holds the key.
+  while (Option.isNone(yield* ownModuleCredential(OWNER_AUDIENCE))) {
+    yield* Effect.sleep('20 millis');
+  }
+}).pipe(Effect.timeout('20 seconds'));
+
 /** Real owner Actions only: verification, one-shot redemption, Core grants and transactional audit remain mandatory. */
 const main = Effect.scoped(
   Effect.gen(function* runOwnerProducerChild() {
+    yield* holdOwnModuleCredential;
     const request = yield* Effect.sync(() => readFileSync(0, 'utf-8')).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(RequestSchema))),
     );
@@ -174,7 +202,7 @@ const main = Effect.scoped(
       )({ operation: request.operation, result });
     }).pipe(Effect.provideContext(context));
     // Secret-bearing input and all child output use dedicated private parent IPC, never logs/stdout.
-    yield* Effect.sync(() => writeSync(3, `${line}\n`));
+    yield* Effect.sync(() => writeSync(5, `${line}\n`));
   }),
 ).pipe(
   Effect.tapCause((cause) =>

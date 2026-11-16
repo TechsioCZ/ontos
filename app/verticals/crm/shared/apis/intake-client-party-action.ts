@@ -30,6 +30,7 @@ export const IntakeClientPartyActionForbiddenProblemSchema = makeProblemDetailsS
       'crm_permission_denied',
       'crm_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const IntakeClientPartyActionNotFoundProblemSchema = makeProblemDetailsSchema(

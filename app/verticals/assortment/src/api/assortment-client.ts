@@ -20,6 +20,7 @@ export * from './create-rule-action-client.ts';
 export * from './create-rule-revision-action-client.ts';
 export * from './end-applicability-binding-action-client.ts';
 export * from './end-closed-assortment-boundary-action-client.ts';
+export * from './import-symmy-rule-action-client.ts';
 export * from './issue-assortment-commitment-confirmation-action-client.ts';
 export * from './replace-applicability-binding-action-client.ts';
 export * from './replace-closed-assortment-boundary-action-client.ts';

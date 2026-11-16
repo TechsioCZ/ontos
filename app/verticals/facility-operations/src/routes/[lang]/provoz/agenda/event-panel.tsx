@@ -9,6 +9,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Schema } from 'effect';
+import type { Types } from 'effect';
 import { constVoid } from 'effect/Function';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useState } from 'react';
@@ -228,7 +229,7 @@ export const CreateEventPanel = ({
   const commandOf = (value: Draft): CreateEventCommand => {
     const related = locationRef(value.location);
     const assignee = personOf(value.assignee === NONE ? undefined : value.assignee);
-    const command: { -readonly [Key in keyof CreateEventCommand]: CreateEventCommand[Key] } = {
+    const command: Types.Mutable<CreateEventCommand> = {
       _tag: 'AgendaEventCreate',
       date: value.date,
       kind: value.kind,

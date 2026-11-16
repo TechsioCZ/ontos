@@ -31,6 +31,7 @@ export const ChangePrincipalPurchaseLimitOverrideActionForbiddenProblemSchema = 
       'operation_context_invalid',
       'purchase_limit_subject_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ChangePrincipalPurchaseLimitOverrideActionNotFoundProblemSchema = makeProblemDetailsSchema(

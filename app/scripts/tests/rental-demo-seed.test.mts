@@ -9,6 +9,7 @@ import {
 } from '../../verticals/merchandise/shared/apis/records.ts';
 import { evolveMerchandiseState } from '../../verticals/merchandise/src/services/persistence.service.ts';
 import { computeProductRecords } from '../../verticals/merchandise/src/services/stock-levels.ts';
+import { TEST_RATES, TEST_TAX } from '../../verticals/merchandise/tests/support/tax-fixtures.ts';
 import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';
 import { seedAkrosStock } from '../demo/seed-akros-stock.mts';
 import { applyImportsCommand, ImportsCommandSchema } from '../../verticals/crm/shared/commands/imports.ts';
@@ -29,7 +30,7 @@ import {
 import { NodeServices } from '@effect/platform-node';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/party.ts';
-import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Redacted, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Predicate, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -456,13 +457,13 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
     } else if (url.pathname.endsWith(applyCommandPath)) {
       const { command, expectedRevision } = decodeSeedBody(CaseCommand, body);
       expect(expectedRevision).toBe(revision);
-      if (command._tag === 'CreateOpportunity') {
+      if (Predicate.isTagged(command, 'CreateOpportunity')) {
         expect(customers.some(({ partyRef }) => partyRef.resourceId === command.partyId)).toBe(true);
         if (command.ownerEmployeeId === undefined) {
           return Effect.die('Reviewed case fixture needs an employee display owner');
         }
         items.push({ ...command, id: demoId('seed.case', command.title), ownerEmployeeId: command.ownerEmployeeId });
-      } else if (command._tag === 'UpdateOpportunity') {
+      } else if (Predicate.isTagged(command, 'UpdateOpportunity')) {
         const index = items.findIndex(({ id }) => id === command.id);
         const current = items[index];
         if (current === undefined) {
@@ -906,7 +907,7 @@ it.effect('repairs every stock page through native updates and reruns without mo
           const offset = view?.offset ?? 0;
           offsets.push(offset);
           const records = EffectArray.sort(
-            computeProductRecords(state),
+            computeProductRecords(state, TEST_RATES, {}),
             Order.mapInput(Order.String, (product: ReturnType<typeof computeProductRecords>[number]) => product.sku),
           );
           return HttpClientResponse.fromWeb(
@@ -921,6 +922,7 @@ it.effect('repairs every stock page through native updates and reruns without mo
             actor: { principalId: demoId('test', 'stock-owner'), tenantId: target.tenantId },
             now: DateTime.makeUnsafe(seedTestInstant),
             resourceId: `stock-repair-${revision}`,
+            tax: TEST_TAX,
           });
           ({ state } = result);
           revision += 1;
@@ -1005,6 +1007,7 @@ it.effect('cancels only the exact QA order through native staff status change, w
             actor,
             now: DateTime.makeUnsafe(seedTestInstant),
             resourceId: `cancel-${revision}`,
+            tax: TEST_TAX,
           });
           ({ state } = result);
           revision += 1;
@@ -1048,7 +1051,7 @@ it.effect('refuses a foreign case entrustment tenant before any owner reads or w
       caseOwners,
       'unused-checkpoint',
     ).pipe(Effect.flip, Effect.provideService(HttpClient.HttpClient, fixture.http));
-    expect(failure).toMatchObject({ _tag: 'DemoSeedError' });
+    expect(Schema.is(DemoSeedError)(failure)).toBe(true);
     expect(fixture.items).toEqual([]);
     expect(fixture.parties).toEqual([]);
   }).pipe(Effect.provide(NodeServices.layer)),

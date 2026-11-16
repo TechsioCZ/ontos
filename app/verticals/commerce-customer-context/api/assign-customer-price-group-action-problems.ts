@@ -127,6 +127,7 @@ const mapDomainProblem = (error: DomainError): AssignCustomerPriceGroupActionPro
         assignCustomerPriceGroupActionProblem.conflict('customer_price_group_revision_conflict'),
       CustomerPriceGroupScopeMismatch: () =>
         assignCustomerPriceGroupActionProblem.forbidden('customer_price_group_scope_mismatch'),
+      CustomerPriceGroupSourceRejected: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
     }),
     Match.exhaustive,
   );
@@ -163,7 +164,8 @@ const mapCoreProblem = (error: ActionCoreError): AssignCustomerPriceGroupActionP
       ActionInvocationStateError: (failure) => assignCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignCustomerPriceGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => assignCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        assignCustomerPriceGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => assignCustomerPriceGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => assignCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => assignCustomerPriceGroupActionProblem.conflict(failure.code),

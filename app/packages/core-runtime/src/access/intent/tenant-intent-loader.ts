@@ -22,7 +22,7 @@ import {
   tenantModuleStates,
 } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
-import { tenantStatesAllowingAccess } from '../../modules/module-state-gate.ts';
+import { INSTALLED_TENANT_MODULE_STATES } from '../../modules/module-state-gate.ts';
 import { configureBasesOf } from '../changes/authority.ts';
 import type { AccessConfigureBasis } from '../changes/authority.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -41,6 +41,7 @@ import type {
   AuthorityCell,
   AuthorityCellQuery,
   AuthorityDeadline,
+  CompanyOwnershipQuery,
   ConnectionQuery,
   HolderMembershipDeadlines,
   ResolvedAccessScope,
@@ -134,6 +135,14 @@ export interface TenantIntentLoaderService {
     scope: OperationalScope,
     queries: readonly AuthorityCellQuery[],
   ) => Effect.Effect<readonly (readonly AuthorityCell[])[], AccessIntentError>;
+  /**
+   * Whether the named company is one of the tenant's own scopes. It reads that one scope row and nothing about
+   * anyone's membership: it is the company-of-tenant check every gate path asks before a decision (O66, O88).
+   */
+  readonly loadCompanyOwnership: (
+    scope: OperationalScope,
+    query: CompanyOwnershipQuery,
+  ) => Effect.Effect<boolean, AccessIntentError>;
   /** Same owner, scope-admin and delegated bases used by change commands (O81). */
   readonly loadConfigureBases: (
     scope: OperationalScope,
@@ -218,9 +227,6 @@ const decodeDelegatedEnvelope = Schema.decodeUnknownResult(
   }),
   ACCESS_MODEL_PARSE_OPTIONS,
 );
-
-/** Module states that still offer the module's data; anything narrower stops the installation (O7). */
-const INSTALLED_MODULE_STATES = tenantStatesAllowingAccess('read');
 
 /** The transaction's instant: the clock the caller runs under, so a test can pin it. */
 const now = Effect.fn('TenantIntentLoader.now')(function* nowEffect() {
@@ -811,6 +817,11 @@ const makeIntentLoaderOver = (
       [readScopeRows(transaction, query.tenantId), readMemberships(transaction, query.tenantId)],
       { concurrency: 1 },
     );
+    const { checkedCompany } = query;
+    if (checkedCompany !== undefined && !scopeRows.some((candidate) => candidate.legalEntityId === checkedCompany)) {
+      // The request pairs the tenant with a company it does not own: nothing here is decided (O66, O88).
+      return Option.none<ResolvedAccessScope>();
+    }
     const row = scopeRows.find((candidate) =>
       query.legalEntityId === undefined
         ? candidate.legalEntityId === null
@@ -1306,7 +1317,10 @@ const makeIntentLoaderOver = (
       .select({ moduleKey: tenantModuleStates.moduleKey })
       .from(tenantModuleStates)
       .where(
-        and(eq(tenantModuleStates.tenantId, tenantId), inArray(tenantModuleStates.state, [...INSTALLED_MODULE_STATES])),
+        and(
+          eq(tenantModuleStates.tenantId, tenantId),
+          inArray(tenantModuleStates.state, [...INSTALLED_TENANT_MODULE_STATES]),
+        ),
       );
     return yield* Effect.forEach(
       rows,
@@ -1386,6 +1400,20 @@ const makeIntentLoaderOver = (
       );
     },
   );
+
+  const loadCompanyOwnership: TenantIntentLoaderService['loadCompanyOwnership'] = Effect.fn(
+    'TenantIntentLoader.loadCompanyOwnership',
+  )(function* loadCompanyOwnershipEffect(scope: OperationalScope, query: CompanyOwnershipQuery) {
+    yield* assertScope(scope, query.tenantId);
+    return yield* readScoped<boolean>(scope, (transaction) =>
+      transaction
+        .select({ scopeId: accessScopes.scopeId })
+        .from(accessScopes)
+        .where(and(eq(accessScopes.tenantId, query.tenantId), eq(accessScopes.legalEntityId, query.legalEntityId)))
+        .limit(1)
+        .pipe(Effect.map((rows) => rows.length === 1)),
+    );
+  });
 
   const loadTenantContextScopeId: TenantIntentLoaderService['loadTenantContextScopeId'] = Effect.fn(
     'TenantIntentLoader.loadTenantContextScopeId',
@@ -1479,6 +1507,7 @@ const makeIntentLoaderOver = (
       makeIntentLoaderOver(callerTransactions(transaction, enrollment), enrollment),
     loadAuthorityCells,
     loadAuthorityCellsMany,
+    loadCompanyOwnership,
     loadConfigureBases,
     loadConnection,
     loadProjection,

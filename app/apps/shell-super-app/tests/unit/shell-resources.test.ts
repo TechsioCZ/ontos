@@ -1,7 +1,7 @@
 import type { ApplicationCompositionModule, TenantModuleState } from '@app/core-runtime';
 import { ReadPermissionDenied } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
-import { DateTime, Duration, Effect, Fiber, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Fiber, Logger, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -18,7 +18,10 @@ import {
 import type { ShellProviderAssertionIssuer } from '../../api/modules/shell-resources.ts';
 import type { ShellAccessGate } from '../../api/modules/shell-access-decisions.ts';
 import { makeModuleSearchProviderGateway } from '../../api/modules/shell-search-provider-gateway.ts';
-import { SHELL_SEARCH_REQUEST_BUDGET_MILLIS } from '../../api/modules/shell-governed-search.ts';
+import {
+  SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS,
+  SHELL_SEARCH_REQUEST_BUDGET_MILLIS,
+} from '../../api/modules/shell-governed-search.ts';
 import {
   cell,
   makeAuthority,
@@ -1297,7 +1300,7 @@ it.effect('an owner-filtered200 collection remains successful and is not confuse
   }),
 );
 
-it.effect('fresh-assertion retries consume the original request budget instead of extending it', () =>
+it.effect('fresh-assertion retries consume the original provider deadline instead of extending it', () =>
   Effect.gen(function* boundedRetry() {
     const baseline = dependencies({ access: 'allowed' });
     const installed = yield* baseline.catalog;
@@ -1309,7 +1312,8 @@ it.effect('fresh-assertion retries consume the original request budget instead o
         search: ({ authorization }) => {
           assertions.push(authorization);
           const first = assertions.length === 1;
-          return Effect.sleep(SHELL_SEARCH_REQUEST_BUDGET_MILLIS * 0.6).pipe(
+          // The first attempt fails inside the provider deadline and gets its retry; the deadline then cuts the retry.
+          return Effect.sleep(SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS * 0.6).pipe(
             Effect.flatMap(() =>
               first
                 ? Effect.fail(new ShellProviderUnavailableError({}))
@@ -1330,5 +1334,90 @@ it.effect('fresh-assertion retries consume the original request budget instead o
     expect(new Set(assertions).size).toBe(2);
     yield* TestClock.adjust(SHELL_SEARCH_REQUEST_BUDGET_MILLIS);
     expect(completed).toBe(false);
+  }),
+);
+
+it.effect('a provider past its own deadline is left out, the answer is partial and the other hits survive', () =>
+  Effect.gen(function* slowProviderHitsItsDeadline() {
+    const both = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract, partyContract]));
+    const access = makeShellTestAccessGate({ answers: { [PARTY_SEARCH_KEY]: 'allowed', [SEARCH_KEY]: 'allowed' } });
+    const logs: string[] = [];
+    let slowInterrupted = false;
+    const logger = Logger.layer([
+      Logger.make((options) => {
+        logs.push(JSON.stringify(Logger.formatStructured.log(options)));
+      }),
+    ]);
+    const fiber = yield* makeShellSearch(
+      { ...dependencies({ access: 'allowed' }), access, catalog: Effect.succeed(both) },
+      {
+        search: ({ searchKey }) =>
+          searchKey === PARTY_SEARCH_KEY
+            ? Effect.never.pipe(
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    slowInterrupted = true;
+                  }),
+                ),
+              )
+            : Effect.succeed([resourceHit]),
+      },
+    )
+      .search(context, 'unit')
+      .pipe(Effect.provide(logger), Effect.forkChild);
+    // Let the forked search reach its own waits before the clock moves past the deadline.
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust(Duration.millis(SHELL_SEARCH_PROVIDER_DEADLINE_MILLIS));
+    // Checked without waiting, so a search still stuck on the slow owner fails here instead of hanging.
+    expect(fiber.pollUnsafe()).not.toBeUndefined();
+    expect(yield* Fiber.join(fiber)).toEqual({
+      partial: true,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
+    // The slow owner's call is interrupted, not left running unawaited.
+    expect(slowInterrupted).toBe(true);
+    // The provider that never answered writes one line saying it passed its deadline: its id, never the query.
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain(PARTY_SEARCH_KEY);
+    expect(logs[0]).toContain('deadline');
+  }),
+);
+
+it.effect('providers that answer at once are unchanged by the per-provider deadline', () =>
+  Effect.gen(function* fastProvidersAreNotCut() {
+    const both = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract, partyContract]));
+    const access = makeShellTestAccessGate({ answers: { [PARTY_SEARCH_KEY]: 'allowed', [SEARCH_KEY]: 'allowed' } });
+    expect(
+      yield* makeShellSearch(
+        { ...dependencies({ access: 'allowed' }), access, catalog: Effect.succeed(both) },
+        {
+          search: ({ searchKey }) =>
+            searchKey === PARTY_SEARCH_KEY ? Effect.succeed([]) : Effect.succeed([resourceHit]),
+        },
+      ).search(context, 'unit'),
+    ).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
+  }),
+);
+
+it.effect('an owner that fails once and answers on the retry still counts', () =>
+  Effect.gen(function* retryAnswerCounts() {
+    let calls = 0;
+    const result = yield* makeShellSearch(dependencies({ access: 'allowed' }), {
+      search: () => {
+        calls += 1;
+        return calls === 1 ? Effect.fail(new ShellProviderUnavailableError()) : Effect.succeed([resourceHit]);
+      },
+    }).search(context, 'unit');
+    expect(result).toEqual({
+      partial: false,
+      presentation: emptyPresentation,
+      results: [{ ...resourceHit, kind: 'resource' }],
+    });
+    expect(calls).toBe(2);
   }),
 );

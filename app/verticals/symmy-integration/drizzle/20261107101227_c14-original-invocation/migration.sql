@@ -1,0 +1,1 @@
+ALTER TABLE "symmy_integration"."job_effects" ADD COLUMN "owner_invocation_id" uuid;

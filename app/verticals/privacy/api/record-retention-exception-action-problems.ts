@@ -81,10 +81,12 @@ export const recordRetentionExceptionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordRetentionExceptionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordRetentionExceptionActionForbiddenProblem'> =>
     RecordRetentionExceptionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordRetentionExceptionActionP
       ActionInvocationStateError: (failure) => recordRetentionExceptionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordRetentionExceptionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordRetentionExceptionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordRetentionExceptionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordRetentionExceptionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordRetentionExceptionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordRetentionExceptionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordRetentionExceptionActionProblem.conflict(failure.code),

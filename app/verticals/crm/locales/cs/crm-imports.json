@@ -1,1 +1,38 @@
-{ "imports": {} }
+{
+  "imports": {
+    "csv": {
+      "column": {
+        "cas_udalosti": "Čas události",
+        "castka": "Částka",
+        "cislo_objednavky": "Číslo objednávky",
+        "datum_objednavky": "Datum objednávky",
+        "email_zakaznika": "E-mail zákazníka",
+        "ico_zakaznika": "IČO zákazníka",
+        "id_objednavky": "ID objednávky",
+        "id_udalosti": "ID události",
+        "id_zakaznika": "ID zákazníka",
+        "mena": "Měna",
+        "nazev_zakaznika": "Název zákazníka",
+        "polozky": "Položky",
+        "stav": "Stav",
+        "zdroj": "Zdroj"
+      },
+      "problem": {
+        "AmountWithoutCurrency": "Řádek {{row}}: částka nemá měnu. Doplňte sloupec „Měna“.",
+        "DuplicateHeader": "Řádek 1, sloupec „{{column}}“ je uveden vícekrát (i pod jiným názvem). Ponechte jej jen jednou.",
+        "EmptyFile": "Soubor je prázdný.",
+        "InvalidAmount": "Řádek {{row}}, sloupec „Částka“: „{{value}}“ není platné desetinné číslo.",
+        "InvalidCurrency": "Řádek {{row}}, sloupec „Měna“: „{{value}}“ není kód ISO 4217 (např. CZK, EUR).",
+        "InvalidHeaderCell": "Řádek 1, sloupec {{position}}: text musí mít 1 až {{maxLength}} znaků.",
+        "InvalidLine": "Řádek {{row}}, sloupec „Položky“, položka {{item}}: zkontrolujte název a SKU (nejvýše {{maxLength}} znaků) a desetinné množství a částku.",
+        "InvalidText": "Řádek {{row}}, sloupec „{{column}}“: text musí mít 1 až {{maxLength}} znaků.",
+        "InvalidTime": "Řádek {{row}}, sloupec „{{column}}“: zadejte platné datum nebo čas, nejvýše se třemi desetinnými místy sekundy. Čas bez pásma se vykládá v pásmu Europe/Prague.",
+        "LineAmountWithoutCurrency": "Řádek {{row}}: částka položky nemá měnu. Doplňte sloupec „Měna“.",
+        "MissingColumns": "Řádek 1: v hlavičce chybí povinné sloupce {{columns}}.",
+        "MissingValue": "Řádek {{row}}, sloupec „{{column}}“: chybí hodnota.",
+        "SurplusCells": "Řádek {{row}}: za posledním sloupcem {{position}} jsou další hodnoty. Opravte oddělovače nebo uvozovky.",
+        "UnterminatedQuote": "Řádek {{row}}, sloupec {{position}}: chybí uzavírací uvozovka. Opravte CSV a import opakujte."
+      }
+    }
+  }
+}

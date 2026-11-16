@@ -1,8 +1,10 @@
-import { and, eq, isNull, like, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, like, sql } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 
 import { stableUuid } from '../access/catalog/stable-id.ts';
 import {
+  accessWorkloadBindings,
+  accessWorkloadCompanyBindings,
   applicationCompositionAuthority,
   auditEvents,
   principalAuthBindings,
@@ -12,22 +14,16 @@ import {
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { ModuleAppIdSchema } from './hosted-module-credentials.ts';
 import { ModuleCredentialUnavailableError } from './module-credential-unavailable-error.ts';
-import { principalManagementRepositoryFromTransaction } from './principal-management.ts';
+import {
+  INTERNAL_WORKLOAD_PLATFORM_ROLE,
+  principalManagementRepositoryFromTransaction,
+} from './principal-management.ts';
+import { PLATFORM_TENANT } from './platform-tenant.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './staff-authentication-namespace.ts';
 
 export { ModuleCredentialUnavailableError } from './module-credential-unavailable-error.ts';
 
-/**
- * The platform tenant. The platform creates it and nobody administers it: it has no person, membership, Role or
- * company, so no Action, grant or tenant-managed key can reach what it holds. It holds exactly one service
- * principal per calling module, and the module credentials the platform issues to those principals.
- */
-export const PLATFORM_TENANT = Object.freeze({
-  defaultLocale: 'cs',
-  name: 'OntOS platform',
-  slug: 'ontos-platform',
-  tenantId: stableUuid('ontos.platform/tenant'),
-});
+export { PLATFORM_TENANT } from './platform-tenant.ts';
 
 /**
  * Whether a tenant serves people and so holds access: every tenant but the platform's own. The platform tenant holds
@@ -196,10 +192,14 @@ export const ensureModulePrincipal = Effect.fn('ModuleCredentials.ensureModulePr
   return created.principalId;
 });
 
-/** Binds a newly issued key to the module's principal, through the writer `core.identity.bind-managed-api-key` uses. */
-export const bindModuleCredential = Effect.fn('ModuleCredentials.bind')(function* bind(
+/**
+ * Binds a newly issued platform key to its principal, through the writer `core.identity.bind-managed-api-key` uses:
+ * a module's own principal in the platform tenant, or a module's registered internal workload principal in the tenant
+ * where the operator bound it.
+ */
+export const bindPlatformCredential = Effect.fn('ModuleCredentials.bind')(function* bind(
   transaction: PlatformTransaction,
-  input: { readonly principalId: string; readonly providerKeyId: string },
+  input: { readonly principalId: string; readonly providerKeyId: string; readonly tenantId: string },
 ) {
   const repository = principalManagementRepositoryFromTransaction(transaction, STAFF_AUTHENTICATION_NAMESPACE_ID);
   const bound = yield* repository
@@ -207,16 +207,25 @@ export const bindModuleCredential = Effect.fn('ModuleCredentials.bind')(function
       managed: true,
       principalId: input.principalId,
       providerSubjectId: input.providerKeyId,
-      tenantId: PLATFORM_TENANT.tenantId,
+      tenantId: input.tenantId,
     })
-    .pipe(Effect.mapError(unavailable('The module credential could not be bound')));
+    .pipe(Effect.mapError(unavailable('The platform credential could not be bound')));
   return bound.authBindingId;
 });
 
-/** Revokes a superseded module credential's binding, through the API-key binding lifecycle writer. */
-export const revokeModuleCredential = Effect.fn('ModuleCredentials.revoke')(function* revoke(
+/** One active binding of a platform-issued key: whose key it is, in which tenant, and since when. */
+export interface PlatformCredentialBinding {
+  readonly authBindingId: string;
+  readonly boundAt: Date;
+  readonly principalId: string;
+  readonly providerKeyId: string;
+  readonly tenantId: string;
+}
+
+/** Revokes a platform key's binding, through the API-key binding lifecycle writer, in the tenant it is bound in. */
+export const revokePlatformCredential = Effect.fn('ModuleCredentials.revoke')(function* revoke(
   transaction: PlatformTransaction,
-  credential: Pick<ModuleCredentialEnrolment, 'authBindingId' | 'principalId'>,
+  credential: Pick<PlatformCredentialBinding, 'authBindingId' | 'principalId' | 'tenantId'>,
 ) {
   const repository = principalManagementRepositoryFromTransaction(transaction, STAFF_AUTHENTICATION_NAMESPACE_ID);
   yield* repository
@@ -226,12 +235,139 @@ export const revokeModuleCredential = Effect.fn('ModuleCredentials.revoke')(func
       managed: true,
       newStatus: 'revoked',
       principalId: credential.principalId,
-      reason: 'Superseded by the module credential of a newer platform provisioning pass',
-      tenantId: PLATFORM_TENANT.tenantId,
+      reason: 'Superseded by a newer platform provisioning pass',
+      tenantId: credential.tenantId,
     })
-    .pipe(Effect.mapError(unavailable('The superseded module credential could not be revoked')));
+    .pipe(Effect.mapError(unavailable('The superseded platform credential could not be revoked')));
   return yield* Effect.void;
 });
+
+/** The active bindings of the given provider keys, in whatever tenant each is bound. */
+export const loadPlatformCredentialBindings = Effect.fn('ModuleCredentials.loadBindings')(function* loadBindings(
+  executor: Pick<CoreDatabaseExecutor, 'select'>,
+  providerKeyIds: readonly string[],
+) {
+  if (providerKeyIds.length === 0) {
+    return [];
+  }
+  return yield* executor
+    .select({
+      authBindingId: principalAuthBindings.principalAuthBindingId,
+      boundAt: principalAuthBindings.createdAt,
+      principalId: principalAuthBindings.principalId,
+      providerKeyId: principalAuthBindings.providerSubjectId,
+      tenantId: principalAuthBindings.tenantId,
+    })
+    .from(principalAuthBindings)
+    .where(
+      and(
+        inArray(principalAuthBindings.providerSubjectId, [...providerKeyIds]),
+        eq(principalAuthBindings.authenticationNamespaceId, STAFF_AUTHENTICATION_NAMESPACE_ID),
+        eq(principalAuthBindings.provider, 'better_auth'),
+        eq(principalAuthBindings.subjectType, 'api_key'),
+        eq(principalAuthBindings.status, 'active'),
+        isNull(principalAuthBindings.revokedAt),
+      ),
+    )
+    .pipe(
+      Effect.timeout(DATABASE_OPERATION_TIMEOUT),
+      Effect.mapError(unavailable('The platform credential bindings could not be read')),
+    );
+});
+
+/** One registered internal workload of a module in a tenant (O73): the principal the operator bound to it. */
+export interface InternalWorkloadBinding {
+  /** The one company the binding acts for (one active workload binding acts for one company). */
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}
+
+/**
+ * The principal the platform registers for a module's own internal workload in one company of one tenant. Its id is
+ * derived from those three and is computable by anyone, so it is not proof on its own: the platform's mark is the
+ * `internal_workload` marker only Core's platform writer sets. No product Action takes a principal id (Core gives every
+ * principal an Action creates its id in its own namespace), so no tenant can place a principal at this id; a principal
+ * created here before that rule holds no marker and is never keyed. Key provisioning keys a binding only when its
+ * principal carries the marker and exactly the id derived from that binding's tenant, workload and company.
+ */
+export const internalWorkloadPrincipalId = (input: {
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}): string =>
+  stableUuid(`ontos.internal-workload/principal:${input.tenantId}:${input.workloadKey}:${input.legalEntityId}`);
+
+/**
+ * Every active platform registration of the given internal workload keys, in every tenant that serves people: one per
+ * company, each with its principal, workload binding and company binding active. Registrations the platform did not
+ * make are left out, so they get no key. Each tenant is read in its own scope (row level security).
+ */
+export const loadInternalWorkloadBindings = Effect.fn('ModuleCredentials.loadWorkloadBindings')(
+  function* loadWorkloadBindings(
+    executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>,
+    workloadKeys: readonly string[],
+  ) {
+    if (workloadKeys.length === 0) {
+      return [];
+    }
+    const active = yield* executor
+      .select({ tenantId: tenants.tenantId })
+      .from(tenants)
+      .where(eq(tenants.status, 'active'))
+      .pipe(Effect.mapError(unavailable('The tenants could not be read')));
+    const perTenant = yield* Effect.forEach(
+      active.filter(({ tenantId }) => tenantServesPeople(tenantId)),
+      ({ tenantId }) =>
+        executor
+          .transaction(
+            Effect.fn('ModuleCredentials.loadTenantWorkloadBindings')(function* loadTenant(transaction) {
+              yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`);
+              const rows = yield* transaction
+                .select({
+                  legalEntityId: accessWorkloadCompanyBindings.legalEntityId,
+                  principalId: accessWorkloadBindings.principalId,
+                  tenantId: accessWorkloadBindings.tenantId,
+                  workloadKey: accessWorkloadBindings.workloadKey,
+                })
+                .from(accessWorkloadBindings)
+                .innerJoin(
+                  principals,
+                  and(
+                    eq(principals.tenantId, accessWorkloadBindings.tenantId),
+                    eq(principals.principalId, accessWorkloadBindings.principalId),
+                  ),
+                )
+                .innerJoin(
+                  accessWorkloadCompanyBindings,
+                  and(
+                    eq(accessWorkloadCompanyBindings.tenantId, accessWorkloadBindings.tenantId),
+                    eq(accessWorkloadCompanyBindings.workloadBindingId, accessWorkloadBindings.bindingId),
+                  ),
+                )
+                .where(
+                  and(
+                    eq(accessWorkloadBindings.tenantId, tenantId),
+                    eq(accessWorkloadBindings.status, 'active'),
+                    eq(accessWorkloadCompanyBindings.status, 'active'),
+                    inArray(accessWorkloadBindings.workloadKey, [...workloadKeys]),
+                    eq(principals.kind, 'service'),
+                    eq(principals.status, 'active'),
+                    eq(principals.platformRole, INTERNAL_WORKLOAD_PLATFORM_ROLE),
+                  ),
+                );
+              // Only the registrations the platform made: its marker and the id derived from tenant, workload and company.
+              // A hand-made one (no marker, or another id, even one chosen to match) gets no key.
+              return rows.filter((row) => row.principalId === internalWorkloadPrincipalId(row));
+            }),
+          )
+          .pipe(Effect.mapError(unavailable('The internal workload bindings could not be read'))),
+      { concurrency: 1 },
+    );
+    return perTenant.flat() satisfies readonly InternalWorkloadBinding[];
+  },
+);
 
 /** The authority row's revision and when that revision took the authority, if a release holds it. */
 export const loadCompositionAuthorityActivation = Effect.fn('ModuleCredentials.loadAuthorityActivation')(

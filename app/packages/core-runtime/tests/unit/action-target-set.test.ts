@@ -1,11 +1,12 @@
 import { Cause, Effect, Exit, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionProposalAcceptedSchema } from '../../src/actions/proposal-accepted.ts';
 import type {
   ActionMandateDispatch,
   ActionProposalParkInput,
 } from '../../src/access/approvals/action-mandate-dispatch.ts';
-import { freezeActionCommandV2, makeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import { defineActionGoverningRead } from '../../src/actions/governing-read.ts';
 import type { AccessIntentSource } from '../../src/access/decision/authority.ts';
 import type { GateInput } from '../../src/access/enforcement/contract.ts';
@@ -454,6 +455,43 @@ it.effect('does not require a field grant when the command writes none of that g
   }),
 );
 
+for (const [label, malformed] of [
+  ['ALLOWED', 'ALLOWED'],
+  ['{decision: allowed}', { decision: 'allowed' }],
+  ['{}', {}],
+] as const) {
+  it.effect(`one owner answer outside the contract (${label}) among allowed targets refuses the whole set`, () =>
+    Effect.gen(function* oneMalformedOwnerAnswer() {
+      const subject = fixture();
+      const gate = canonicalGate();
+      let answers = 0;
+      const harness = yield* makeActionTestHarness({
+        accessDecision: gate.bound,
+        applicationComposition: subject.owner.applicationComposition,
+        expectedDeployment: subject.owner.expectedDeployment,
+        onOwnerAuthorization: () => {
+          answers += 1;
+          // An untyped value, as a separately built owner unit could answer for the second record only.
+          return answers === 2 ? Schema.decodeUnknownSync(Schema.Any)(malformed) : 'allowed';
+        },
+        ownerRegistration: subject.owner.ownerRegistration,
+      });
+      const exit = yield* Effect.exit(
+        harness.runtime.runAction({
+          payload,
+          principal,
+          registration: subject.action,
+          transport: { correlationId: `bulk-odd-${label}`, idempotencyKey: `bulk-odd-${label}` },
+        }),
+      );
+      expect(Schema.is(ActionPermissionCheckError)(failureOf(exit))).toBe(true);
+      expect(answers).toBe(2);
+      expect(subject.writes).toEqual([]);
+      expect(harness.snapshot().committed).toHaveLength(0);
+    }),
+  );
+}
+
 it.effect('any unavailable target is retryable, even beside a denied record', () =>
   Effect.gen(function* unavailableRecord() {
     const subject = fixture();
@@ -791,7 +829,7 @@ it.effect('preserves forward mandate execution for an exact singleton with APPRO
       },
     });
     const { calls, dispatch: recording } = scalarDispatch({ employeeIds: [firstId] });
-    const command = yield* makeActionCommandV2({
+    const command = yield* resolveActionCommandV2({
       payload: { employeeIds: [firstId] },
       registration: action,
       scope: { ...principal, correlationId: 'single-approved' },
@@ -878,7 +916,7 @@ it.effect('preserves the scalar proposal contract for an exact singleton target 
       successContract: 'result-or-proposal',
       transport: { correlationId: 'single-set-proposal', idempotencyKey: 'single-set-proposal', intent: 'propose' },
     });
-    expect(result).toHaveProperty('_tag', 'ActionProposalAccepted');
+    expect(Schema.is(ActionProposalAcceptedSchema)(result)).toBe(true);
     expect(parks).toHaveLength(1);
     expect(parks[0]?.target).toBe(firstId);
     expect(parks[0]?.payload).toEqual({ employeeIds: [firstId] });

@@ -28,8 +28,12 @@ import { EnqueueRetentionEvaluationActionApi } from './apis/enqueue-retention-ev
 import { EvaluateProcessingEligibilityActionApi } from './apis/evaluate-processing-eligibility-action.ts';
 import { IssueDsrDeliveryAccessActionApi } from './apis/issue-dsr-delivery-access-action.ts';
 import { LegalBasisAssignmentsApi } from './apis/legal-basis-assignments.ts';
+import { MeasureExecutionEligibilityApi } from './apis/measure-execution-eligibility.ts';
 import { NoticePresentationApi } from './apis/notice-presentation.ts';
 import { NoticeVersionsApi } from './apis/notice-versions.ts';
+import { OrganizationBusinessApplicabilityApi } from './apis/organization-business-applicability.ts';
+import { OrganizationIcoApplicabilityApi } from './apis/organization-ico-applicability.ts';
+import { OrganizationProfileIcoApplicabilityApi } from './apis/organization-profile-ico-applicability.ts';
 import { OwnerInventoryApi } from './apis/owner-inventory.ts';
 import { PrivacySubjectsApi } from './apis/privacy-subjects.ts';
 import { ProcessingActivitiesApi } from './apis/processing-activities.ts';
@@ -55,6 +59,7 @@ import { RecordProcessingInterventionActionApi } from './apis/record-processing-
 import { RecordRetentionExceptionActionApi } from './apis/record-retention-exception-action.ts';
 import { ResponsibilityAssignmentsApi } from './apis/responsibility-assignments.ts';
 import { RetentionRulesApi } from './apis/retention-rules.ts';
+import { SourceProcessingEligibilityApi } from './apis/source-processing-eligibility.ts';
 import { TransitionProcessingActivityActionApi } from './apis/transition-processing-activity-action.ts';
 import { UpdateDsrCaseActionApi } from './apis/update-dsr-case-action.ts';
 import { UpsertDsrOwnerTaskActionApi } from './apis/upsert-dsr-owner-task-action.ts';
@@ -278,8 +283,12 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(EvaluateProcessingEligibilityActionApi)
   .addHttpApi(IssueDsrDeliveryAccessActionApi)
   .addHttpApi(LegalBasisAssignmentsApi)
+  .addHttpApi(MeasureExecutionEligibilityApi)
   .addHttpApi(NoticePresentationApi)
   .addHttpApi(NoticeVersionsApi)
+  .addHttpApi(OrganizationBusinessApplicabilityApi)
+  .addHttpApi(OrganizationIcoApplicabilityApi)
+  .addHttpApi(OrganizationProfileIcoApplicabilityApi)
   .addHttpApi(OwnerInventoryApi)
   .addHttpApi(PrivacySubjectsApi)
   .addHttpApi(ProcessingActivitiesApi)
@@ -305,6 +314,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(RecordRetentionExceptionActionApi)
   .addHttpApi(ResponsibilityAssignmentsApi)
   .addHttpApi(RetentionRulesApi)
+  .addHttpApi(SourceProcessingEligibilityApi)
   .addHttpApi(TransitionProcessingActivityActionApi)
   .addHttpApi(UpdateDsrCaseActionApi)
   .addHttpApi(UpsertDsrOwnerTaskActionApi)
@@ -338,3 +348,63 @@ export {
   CreatePrivacySubjectPayloadSchema,
   CreatePrivacySubjectResultSchema,
 } from './actions/create-privacy-subject.ts';
+export {
+  SourceProcessingContextSchema,
+  SourceProcessingIdentitySchema,
+  SourceProcessingEligibilityRequestSchema,
+  SourceProcessingEligibilityResponseSchema,
+} from './apis/source-processing-eligibility.ts';
+export type {
+  SourceProcessingContext,
+  SourceProcessingEligibilityRequest,
+  SourceProcessingEligibilityResponse,
+} from './apis/source-processing-eligibility.ts';
+
+export {
+  MeasureExecutionEligibilityRequestSchema,
+  MeasureExecutionEligibilityResponseSchema,
+} from './apis/measure-execution-eligibility.ts';
+export type {
+  MeasureExecutionEligibilityRequest,
+  MeasureExecutionEligibilityResponse,
+} from './apis/measure-execution-eligibility.ts';
+
+export {
+  OrganizationIcoApplicabilityContextSchema,
+  OrganizationIcoApplicabilityRequestSchema,
+  OrganizationIcoApplicabilityResponseSchema,
+} from './apis/organization-ico-applicability.ts';
+export type {
+  OrganizationIcoApplicabilityContext,
+  OrganizationIcoApplicabilityRequest,
+  OrganizationIcoApplicabilityResponse,
+} from './apis/organization-ico-applicability.ts';
+export {
+  OrganizationProfileIcoApplicabilityContextSchema,
+  OrganizationProfileIcoApplicabilityRequestSchema,
+  OrganizationProfileIcoApplicabilityResponseSchema,
+} from './apis/organization-profile-ico-applicability.ts';
+export type {
+  OrganizationProfileIcoApplicabilityContext,
+  OrganizationProfileIcoApplicabilityRequest,
+  OrganizationProfileIcoApplicabilityResponse,
+} from './apis/organization-profile-ico-applicability.ts';
+export {
+  OrganizationBusinessApplicabilityIntentSchema,
+  OrganizationBusinessSourceIntentSchema,
+  OrganizationBusinessApplicabilityRequestSchema,
+  OrganizationBusinessApplicabilityContextSchema,
+  OrganizationBusinessApplicabilityCurrentSchema,
+  OrganizationBusinessApplicabilityLiveProofSchema,
+  OrganizationBusinessSourceOnboardLiveProofSchema,
+  OrganizationBusinessSourceProfileCreateLiveProofSchema,
+  OrganizationBusinessApplicabilityResponseSchema,
+} from './apis/organization-business-applicability.ts';
+export type {
+  OrganizationBusinessApplicabilityIntent,
+  OrganizationBusinessSourceIntent,
+  OrganizationBusinessApplicabilityRequest,
+  OrganizationBusinessApplicabilityContext,
+  OrganizationBusinessApplicabilityCurrent,
+  OrganizationBusinessApplicabilityResponse,
+} from './apis/organization-business-applicability.ts';

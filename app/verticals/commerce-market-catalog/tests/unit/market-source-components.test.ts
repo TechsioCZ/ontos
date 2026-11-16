@@ -1,6 +1,6 @@
 import { OntosComponentContractSchema } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { marketSourceComponentContracts } from '../fixtures/market-source-components.ts';
@@ -30,7 +30,7 @@ it.layer(NodeServices.layer)('Market source component contracts', (suite) => {
             }),
           ),
         );
-        expect(failure._tag).toBe('MarketSourceComponentUnavailable');
+        expect(Predicate.isTagged(failure, 'MarketSourceComponentUnavailable')).toBe(true);
       }),
     );
   }

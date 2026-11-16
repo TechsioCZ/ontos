@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Result } from "effect";
 import type { InquiryOutcome } from "../src/ontos/inquiry";
 import type { InquirySubmissionRef } from "../src/ontos/inquiry-client";
 import { inquiryRuntime, startInquirySubmission } from "../src/ontos/inquiry-client";
@@ -247,7 +247,7 @@ describe("N1 contact owner integration", () => {
           }),
       }).pipe(Effect.result);
       expect(writes).toBe(0);
-      expect(outcome._tag).toBe("Failure");
+      expect(Result.isFailure(outcome)).toBe(true);
     }),
   );
   it.effect("rejects invalid customer input before reaching the owner", () =>

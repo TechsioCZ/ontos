@@ -25,6 +25,7 @@ import { TaxEvaluationApi } from './apis/tax-evaluation.ts';
 import { TaxMaterialityComparisonApi } from './apis/tax-materiality-comparison.ts';
 import { TaxPrivacyOwnerCoverageApi } from './apis/tax-privacy-owner-coverage.ts';
 import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
+import { VatChangeRightsApi } from './apis/vat-change-rights.ts';
 // </generated-governed-http-api-imports>
 
 export {
@@ -107,6 +108,7 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(TaxMaterialityComparisonApi)
   .addHttpApi(TaxPrivacyOwnerCoverageApi)
   .addHttpApi(TaxRuleHistoryApi)
+  .addHttpApi(VatChangeRightsApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

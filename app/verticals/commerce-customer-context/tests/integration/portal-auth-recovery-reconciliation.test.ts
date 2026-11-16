@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
-import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
 import { makeCommercePortalAuthRecoveryStore } from '../../src/portal-auth/persistence/portal-auth-recovery-store.ts';
 import {

@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./actions/create-applicability-binding": "./shared/actions/create-applicability-binding.ts",
+    "./actions/create-rule": "./shared/actions/create-rule.ts",
+    "./actions/import-symmy-rule": "./shared/actions/import-symmy-rule.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/assortment-client.ts",
+    "./api/import-symmy-rule-action-client": "./src/api/import-symmy-rule-action-client.ts",
     "./contracts/consumer-evidence": "./shared/domain/consumer-evidence.ts",
     "./outbox/commerce-assortment-binding-created-v1": "./shared/outbox/commerce-assortment-binding-created-v1.ts",
     "./outbox/commerce-assortment-binding-ended-v1": "./shared/outbox/commerce-assortment-binding-ended-v1.ts",
@@ -46,11 +50,14 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/catalog": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
+    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/storefront-registry-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",
@@ -77,23 +84,23 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.67.0",
+    "@effect/tsgo": "0.69.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
     "@rsbuild/plugin-tailwindcss": "^2.0.3",
-    "@rstest/core": "0.11.12",
+    "@rstest/core": "0.12.6",
     "@types/node": "^26.4.1",
     "@types/pg": "8.20.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@typescript/native": "npm:typescript@7.0.2",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "effect-rstest": "1.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "tsrs": "0.21.0-ts7.1.0-beta"
+    "tsrs": "0.25.0-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

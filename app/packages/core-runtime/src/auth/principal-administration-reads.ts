@@ -1,4 +1,4 @@
-import { and, asc, eq, or, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import { Cause, DateTime, Effect, Schema } from 'effect';
 
 import { auditEvents, principalAuthBindings, principals } from '../db/schema.ts';
@@ -137,6 +137,8 @@ const services = (
           input.scope === 'company-agent'
             ? and(eq(principals.kind, 'agent'), eq(principals.principalId, input.principalId))
             : or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
+          // The platform's own principals and their keys are the platform's to manage, not a tenant administrator's.
+          isNull(principals.platformRole),
         ),
       )
       .orderBy(asc(principals.displayName), asc(principals.principalId), asc(principalAuthBindings.createdAt))
@@ -341,30 +343,6 @@ const managedReadServices = (transaction: ScopedTransactionExecutor, scope: Oper
 };
 
 /** The field groups both managed-key lists declare, with the exact keys their own declaration owns. */
-const managedAccessFieldGroups = (keyPrefix: string) =>
-  [
-    {
-      fieldClass: 'personal_data',
-      fields: ['items.displayName'],
-      key: `${keyPrefix}.read-personal-data`,
-      kind: 'field_read',
-      modes: ['run'],
-      placement: { group: 'identity', level: 'manage' },
-      risk: 'sensitive',
-      selectors: [],
-    },
-    {
-      fieldClass: 'authentication_metadata',
-      fields: ['items.authBindingId', 'items.bindingCreatedAt', 'items.bindingRevokedAt', 'items.bindingStatus'],
-      key: `${keyPrefix}.read-authentication-metadata`,
-      kind: 'field_read',
-      modes: ['run'],
-      placement: { group: 'identity', level: 'manage' },
-      risk: 'sensitive',
-      selectors: [],
-    },
-  ] as const;
-
 /**
  * Tenant-managed keys: `legalEntityScope: 'optional'` means the gate decides in the tenant context
  * (O7, O12), so only the tenant's own identity administration may read this list.
@@ -388,7 +366,28 @@ export const managedPrincipalsRead = defineRead<
     },
     // Human principal names are personal data and the credential linkage/status metadata is
     // security-sensitive (O58); each is its own group over this managed-principal list.
-    accessFieldGroups: managedAccessFieldGroups('core.identity.principal'),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['items.displayName'],
+        key: 'core.identity.principal.read-personal-data',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'authentication_metadata',
+        fields: ['items.authBindingId', 'items.bindingCreatedAt', 'items.bindingRevokedAt', 'items.bindingStatus'],
+        key: 'core.identity.principal.read-authentication-metadata',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
@@ -444,7 +443,28 @@ export const companyManagedPrincipalsRead = defineRead<
       risk: 'sensitive',
       selectors: [],
     },
-    accessFieldGroups: managedAccessFieldGroups('core.identity.company-agent-key'),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['items.displayName'],
+        key: 'core.identity.company-agent-key.read-personal-data',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'authentication_metadata',
+        fields: ['items.authBindingId', 'items.bindingCreatedAt', 'items.bindingRevokedAt', 'items.bindingStatus'],
+        key: 'core.identity.company-agent-key.read-authentication-metadata',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',

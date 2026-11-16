@@ -1,12 +1,6 @@
-import { v1 } from '@authzed/authzed-node';
 import { Schema } from 'effect';
 
-import { toLegalEntityAccessObjectId } from './context-access.ts';
 import { PrincipalRefSchema } from './principal-ref.ts';
-
-const InvalidCompanyMembershipScope = Schema.TaggedError<Error>()('InvalidCompanyMembershipScope', {
-  reason: Schema.String,
-});
 
 const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('CompanyMembershipLegalEntityId'),
@@ -43,39 +37,4 @@ export const companyActorKind = (
     return affiliation === null ? 'agent' : undefined;
   }
   return affiliation ?? undefined;
-};
-
-/** Current, owner-verified SQL rows project access only; affiliation never creates a role or grant. */
-export const buildCompanyMembershipUpdates = (input: {
-  readonly affiliation: CompanyAffiliation | null;
-  readonly companyActive: boolean;
-  readonly kind: string;
-  readonly legalEntityId: string;
-  readonly principalId: string;
-  readonly principalStatus: string;
-  readonly status: CompanyMembershipStatus;
-  readonly tenantActive: boolean;
-  readonly tenantId: string;
-}): readonly v1.RelationshipUpdate[] => {
-  const companyObjectId = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
-  if (companyObjectId === undefined) {
-    throw new InvalidCompanyMembershipScope({ reason: 'Membership requires an exact canonical company scope' });
-  }
-  return [
-    v1.RelationshipUpdate.create({
-      operation:
-        input.status === 'active' &&
-        input.principalStatus === 'active' &&
-        input.tenantActive &&
-        input.companyActive &&
-        isCompanyAffiliationValid(input.kind, input.affiliation)
-          ? v1.RelationshipUpdate_Operation.TOUCH
-          : v1.RelationshipUpdate_Operation.DELETE,
-      relationship: {
-        relation: 'member',
-        resource: { objectId: companyObjectId, objectType: 'legal_entity' },
-        subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-      },
-    }),
-  ];
 };

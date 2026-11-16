@@ -100,3 +100,15 @@ export const getPriceGroupCatalogReadiness = (
     ...options,
     operationContext: options.operationContext ?? priceGroupCatalogOperationContexts.readiness,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
+
+export {
+  executePriceGroupSourceAssociations,
+  executePriceGroupSourceAssociationsWithAuthorization,
+} from './price-group-source-associations-client.ts';
+export type { PriceGroupSourceAssociationsClientOptions } from './price-group-source-associations-client.ts';
+
+export {
+  executePriceGroupResultLookup,
+  executePriceGroupResultLookupWithAuthorization,
+} from './price-group-result-lookup-client.ts';
+export type { PriceGroupResultLookupClientOptions } from './price-group-result-lookup-client.ts';

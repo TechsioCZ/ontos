@@ -88,7 +88,7 @@ Probes:
 
 1. **Build units**: seven shards, as above.
 2. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups in parallel with `scripts/zerops/push-service.sh`, using the commit SHA as the version name. That script uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
-3. **Verify**: runs the timing probe (`/cs`, OAuth metadata and the storefront home) and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
+3. **Verify**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
 
 Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
 
@@ -236,7 +236,7 @@ Rotation (human operator, during stage maintenance):
 
 ### Order-flow owner credentials
 
-Commerce Order, Customer Context, Commerce Cart and Pricing call each other through the Shell's delegated issuance. A calling module presents its own module credential, `ONTOS_GATEWAY_MODULE_API_KEY`; the Shell binds each credential to exactly one module, build and release (see [Module credentials and bindings](#module-credentials-and-bindings)) and signs that module as the actor of the call, with the original person as its subject. The receiving owner admits the actor by module (for example, only `commerce-order` may consume an order approval, and only for the approval's buyer). No owner admits another by Principal ID, grant list or API-key namespace. `scripts/ops/owner-runtime-configuration.mts` names the other values each owner reads, and the app host derives each owner's API bases from it:
+Commerce Order, Customer Context, Commerce Cart and Pricing call each other through the Shell's delegated issuance. A calling module presents its own module credential, which the platform hands its process on a private channel (never an environment variable); the Shell binds each credential to exactly one module, build and release (see [Module credentials and bindings](#module-credentials-and-bindings)) and signs that module as the actor of the call, with the original person as its subject. The receiving owner admits the actor by module (for example, only `commerce-order` may consume an order approval, and only for the approval's buyer). No owner admits another by Principal ID, grant list or API-key namespace. `scripts/ops/owner-runtime-configuration.mts` names the other values each owner reads, and the app host derives each owner's API bases from it:
 
 | Owner                       | Credentials (sensitive)                                                   | Per-environment values (not secret)                        |
 | --------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -245,32 +245,74 @@ Commerce Order, Customer Context, Commerce Cart and Pricing call each other thro
 
 Add these to the owner's entry, keyed by its `appId`, in the GitHub secret `DEMO_IMMUTABLE_RELEASE_SECRETS` of the `stage-edge` environment. Each deploy writes that JSON to the `app` service as `ONTOS_OWNER_SECRETS_JSON` (see [Secrets](#secrets)), and the app host hands each process only the entries of the owners it serves; the Outbox Worker host receives every owner's entries, because it runs their workers. Every owner base is the owner's loopback API origin `<origin>/<unit>-api`, derived, never stored. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in the shared process.
 
+### Payment gateway relay
+
+Providers deliver notifications to the Shell's typed relay at `/api/payment/v1/notifications/{gopay,stripe,comgate}/<tenantId>/<routeKey>`, and the Payment reconciliation driver requests recoveries at `/api/payment/v1/reconciliation/<routeKey>/recoveries`. The Shell mounts `/api/payment/v1` as its own always-on prefix beside `/shell-super-app-api`, and the app host routes every path outside `/_m/<appId>/` to the Shell, so the relay is served at the public origin.
+
+| Owner             | Credentials (sensitive, in `DEMO_IMMUTABLE_RELEASE_SECRETS`)                     |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `payment`         | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS`, `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` |
+| `shell-super-app` | `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS`                                   |
+
+- `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` is derived by the app host from the public origin (`scripts/zerops/app-host.mts`), never stored. Payment composes each binding's notification URL from it, the provider family, the tenant and the binding's generated route key. Outside an `https` origin (the local demo), configuring a provider binding fails with 503 `payment_notification_route_unavailable` and the rest of Payment keeps working.
+- `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. While it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
+- `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (Shell) and `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (Payment; read by the Payment Outbox Worker in the Outbox Worker host) are each a JSON array `[{ "tenantId": "<tenant uuid>", "apiKey": "<managed API key>" }]`, one entry per tenant. Each entry is decoded on its own and only when its tenant is needed, so a malformed entry fails only that tenant and an absent value makes the relay or the driver unavailable while the rest keeps working. Two entries for one tenant mean no key. A provider notification for a tenant with no relay entry gets the same 404 as an unknown route.
+- The driver calls the Shell at the origin of `ONTOS_SHELL_GATEWAY_BASE_URL` (the host-derived loopback Shell base) and drops the `/shell-super-app-api` path. Without a valid tenant entry, that tenant is skipped and logged at most once per hour.
+
+Before a tenant uses a payment gateway, a human operator, never an agent, provisions two integration principals in that tenant and records their keys:
+
+1. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment notification relay`. Register its workloads `payment.provider-notification-ingress` and `payment.source-ingress` (on stage through the accounts file `workloads`).
+2. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment reconciliation driver`. Register its workloads `payment.provider-reconciliation` and `payment.source-ingress`.
+3. For each principal, issue a managed API key through Shell's API key service and run `core.identity.bind-managed-api-key` with the principal ID and provider key ID.
+4. Add the relay key to the Shell's `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` and the driver key to Payment's `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS`, each under the tenant's ID.
+
+Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload registration makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
+
+Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own `accept-payment-observation` Action with a registered-workload assertion. Payment calls through the Shell's delegated issuance with its own module credential (`MODULE_CREDENTIAL_CALLERS`), and the Shell derives the registered-workload rules of the Payment binding from the installed contracts; nobody records them. Each tenant needs exactly one active system principal registered for `payment.source-ingress`; it is the executor.
+
 ### Module credentials and bindings
 
 The platform provisions module credentials itself, on every environment and with no human step. Nobody issues, copies or rotates a module key by hand, and no module key or binding is stored in GitHub, Zerops or an env file. Every module key ends 24 hours after it was issued (`MODULE_CREDENTIAL_LIFETIME`), so a key nobody retired still dies on its own.
 
-- **Who holds them.** Every module that calls another module through the Shell's delegated issuance gets one module credential: `MODULE_CREDENTIAL_CALLERS` in `scripts/zerops/module-credentials.mts`, which a test derives from source. Each credential is a managed API key bound to that module's own service principal, `module:<appId>`, in the platform tenant. The platform creates that tenant and nobody administers it: it has no person, membership, Role or company, so no Action, grant or tenant-managed key reaches it, and release access verification skips it. Principals, keys and bindings go through the same writers `core.identity.create-non-human-principal`, `core.identity.bind-managed-api-key` and the API-key binding lifecycle use. The key belongs to a platform provider user with no account and no password, through a server-only issuance no HTTP endpoint reaches. The database keeps only what it keeps for every managed key: hashes and bindings.
+- **Who holds them.** Every module that calls another module through the Shell's delegated issuance gets one module credential. The list is not kept by hand: every module a carrier admits as its delegated caller (`accessActor.callers`) is one, generated with the catalog artifact into `scripts/zerops/module-credential-callers.generated.mts` (`pnpm authorization:catalog:artifact`; `--check` fails when it is stale), and a test fails when a module calls another without a carrier that admits it. Each credential is a managed API key bound to that module's own service principal, `module:<appId>`, in the platform tenant. The platform creates that tenant and nobody administers it: it has no person, membership, Role or company, so no Action, grant or tenant-managed key reaches it, and release access verification skips it. Principals, keys and bindings go through the same writers `core.identity.create-non-human-principal`, `core.identity.bind-managed-api-key` and the API-key binding lifecycle use. The key belongs to a platform provider user with no account and no password, through a server-only issuance no HTTP endpoint reaches. The database keeps only what it keeps for every managed key: hashes and bindings.
 - **When.** `scripts/zerops/provision-module-credentials.mts issue` runs with the Shell's settings and issues every hosted caller a fresh key. The app host starts its owners holding no key, runs the migrator (migrations, the runtime role bootstrap and schema verification), observes the owners, and only then runs the pass for the observed release, before it verifies release access, publishes and opens its public port. An observe-only host (`ONTOS_APP_HOST_PUBLISH=false`) runs the same pass after observing. The local demo (`scripts/demo/up.sh`) runs `issue-installed` once its local composition is published, and the native test fixtures call the same service.
 - **Database role.** The pass runs as the shared runtime role `ontos_runtime` (`DATABASE_URL`), with the grants the role manifest already gives it and no migration of its own: `insert`/`select` on `core.tenants` and `core.principals`, `insert`/`select`/`update` on `core.principal_auth_bindings`, `insert` on `core.audit_events`, `select` on `core.application_composition_authority`, and `insert`/`select`/`update` on Better Auth's `user` and `apikey` tables. It never receives `DATABASE_ADMIN_URL`. The integration test `apps/shell-super-app/tests/integration/module-credential-provisioning.test.ts` runs the real program as that role (no superuser, no `BYPASSRLS`).
 - **Bound to a build and a release.** At issue, the key's provider metadata records what the issuing host attested: the module, that module's build marker, the composition revision of the release it serves, and the issuing host (its container's host name) and boot (a fresh id each time the host process starts) (`apps/shell-super-app/api/auth/module-credential-attestation.ts`, `attested_v2`). A key that is bound but not attested binds nothing.
-- **How a key reaches its owner.** Only through process memory and a private channel: a pipe on file descriptor 3, beside standard output and standard error, which stay logs. The provisioning child writes its pass to its file descriptor 3, closes its database pools and exits; the app host reads it (one attempt with a two-minute budget, `PROVISIONING_BUDGET`, never retried before publishing, so module credentials add at most two minutes to a start that Zerops allows 15) and writes each process's handover as one line to that process's file descriptor 3: the owners process and the Outbox Worker host. Each of those processes claims its owners before any owner loads; each owner has one slot, which only the claimed receiver writes, fed by the host's channel: the first key at boot or later, then a replacement whenever the host renews or rotates keys. The channel stays open for the life of the process, so no key change needs a restart. The store is module-private (`packages/core-runtime/src/auth/hosted-module-credential-store.ts`): no package export and no global handle reaches it, only the host program imports it, and every owner bundle of the process resolves that same module (`scripts/tests/hosted-module-credential-instance.test.mts`). The delegated gateway client (`acquireDelegatedGatewayContext`) is the only reader of a module credential and the only importer of the reader, `@app/core-runtime/auth/owner-module-credential`: every call names its calling module, and it reads that module's slot, whichever runtime, worker or background fiber it runs in. Every module names itself by its own topology app id (`scripts/tests/module-credential-reader-boundary.test.mts` holds the importers and the names). An owner without a key has none: its delegated calls fail closed, never falling back to the shared environment. If a process can no longer read its channel (a malformed line is only refused, and a channel the launcher closed after one handover, as the local demo does, is not a failure), it logs `HANDOVER CHANNEL LOST` and stops: the owners process ends its command, the Outbox Worker host stops through its `watch`. The app host treats either exit as fatal, so the container restarts with fresh keys on fresh channels. That costs a container restart (the owners and the Outbox are unavailable until the new boot publishes), in exchange for never running a process whose keys are retired under it; an acknowledgement from each process before its old key is retired would avoid the restart and is the follow-up. Both processes keep that descriptor open for later handovers, and a subprocess would inherit it, so neither starts one: their command line runs with a spawner that refuses every command (`scripts/zerops/no-subprocess-services.mts`), and a source test walks everything they load and finds no code that spawns (`scripts/tests/module-credential-channel-subprocesses.test.mts`, following imports, re-exports, `require` and `createRequire` calls; third-party code bundled into an owner and the built owner bundles `owner-entry.mts` loads are outside that walk). File descriptor 3 is not close-on-exec: Node cannot set that flag on an inherited descriptor, so any subprocess these processes did start would inherit the open channel and could read every later handover line (each owner's current key) from it. A worker thread shares the process and its descriptors: it could open descriptor 3 itself, and it can already reach every owner's slot through the shared store, like any code in the process (the cooperative isolation below). The Shell process receives no key. A dedicated module process (a fixture child) that was not claimed reads its own environment.
+- **How a key reaches its owner.** Only through process memory and a private channel: a pipe on file descriptor 3, beside standard output and standard error, which stay logs. The provisioning child writes its pass to its file descriptor 3, closes its database pools and exits; the app host reads it (one attempt with a two-minute budget, `PROVISIONING_BUDGET`, never retried before publishing, so module credentials add at most two minutes to a start that Zerops allows 15) and writes each process's handover as one line to that process's file descriptor 3: the owners process and the Outbox Worker host. The store is module-private (`packages/core-runtime/src/auth/hosted-module-credential-store.ts`): no package export and no global handle reaches it. Every built owner API bundle inlines its own copy of it (the API bundler inlines workspace sources), so a process holds one copy per bundle it loaded, and only a copy the host claimed can ever hold a key. Each unit's build therefore exposes exactly its API bundle's own one-time claim, and nothing else of the store, as one export that the unit's generated entry re-exports (`scripts/zerops/hosted-credential-claim.mts`, run by `owner-entry.mts`; the build fails if anything the unit serves carries a copy no host can claim). The host program claims each unit's copy for that unit's module right after loading the unit and before it serves (`serve-units.mts`; `scripts/demo/serve-module.mts` locally; the Outbox Worker host's `worker.mjs` is one bundle with one copy, which it claims itself), and refuses to serve a unit whose bundle carries a copy its entry does not let it claim. Every handover line then reaches every claimed copy, each of which takes only its own module's slot and refuses any other; the latest keys stay with the host, so a unit loaded after a line arrived gets them at once. A second claim of a copy is refused. Each owner's slot is written only by that receiver, fed by the host's channel: the first key at boot or later, then a replacement whenever the host renews or rotates keys. The channel stays open for the life of the process, so no key change needs a restart (`scripts/tests/hosted-credential-claim.test.mts` checks a real bundle and every built unit; the packaged relay and CRM tests run owners exactly this way). The delegated gateway client (`acquireDelegatedGatewayContext`) is the only reader of a module credential and the only importer of the reader, `@app/core-runtime/auth/owner-module-credential`: every call names its calling module, and it reads that module's slot, whichever runtime, worker or background fiber it runs in. Every module names itself by its own topology app id (`scripts/tests/module-credential-reader-boundary.test.mts` holds the importers and the names). An owner without a key has none: its delegated calls fail closed (`No module credential of <module> in this process`); there is no environment variable to read one from. If a process can no longer read its channel (a malformed line is only refused, and a channel the launcher closed after one handover, as the local demo does, is not a failure), it logs `HANDOVER CHANNEL LOST` and stops: the owners process ends its command, the Outbox Worker host stops through its `watch`. The app host treats either exit as fatal, so the container restarts with fresh keys on fresh channels. That costs a container restart (the owners and the Outbox are unavailable until the new boot publishes), in exchange for never running a process whose keys are retired under it; an acknowledgement from each process before its old key is retired would avoid the restart and is the follow-up. Both processes keep that descriptor open for later handovers, and a subprocess would inherit it, so neither starts one: their command line runs with a spawner that refuses every command (`scripts/zerops/no-subprocess-services.mts`), and a source test walks everything they load and finds no code that spawns (`scripts/tests/module-credential-channel-subprocesses.test.mts`, following imports, re-exports, `require` and `createRequire` calls; third-party code bundled into an owner and the built owner bundles `owner-entry.mts` loads are outside that walk). File descriptor 3 is not close-on-exec: Node cannot set that flag on an inherited descriptor, so any subprocess these processes did start would inherit the open channel and could read every later handover line (each owner's current key) from it. A worker thread shares the process and its descriptors: it could open descriptor 3 itself, and it can already reach every owner's slot through the shared store, like any code in the process (the cooperative isolation below). The Shell process receives no key, and its bundle carries no store copy. A copy nobody claimed holds no key.
 - **In-process isolation is cooperative.** Owners that share one process share one heap: the store keeps each owner to its own slot by code, not by an operating-system boundary, and code running in that process could ask for another owner's slot. Running each calling owner in its own process (one channel each) is the stronger option for later.
 - **Bindings are derived.** The Shell reads the platform's enrolment (which provider key belongs to which module) with each key's attestation and joins it with the release it has installed: a key binds only while the installed release runs exactly the attested build of that module at exactly the attested revision. During a deploy overlap the keys of the release that holds the authority bind, and the other host's keys bind nothing; after a rollback, the keys issued for the restored release bind again. A credential of a module the release does not install binds nothing. Any enrolled module key is refused as an ordinary key on every other API-key entry point: the API-key gateway context, the agent-platform key caller and the external-identity workload endpoints (403; an unreadable enrolment answers 503).
+- **The Shell verifies with its own key.** A live delegated call carries the subject's assertion that the Shell itself signed for the calling module. The Shell verifies it with the public half of its own signing key (`ONTOS_GATEWAY_PRIVATE_JWK`) and its own issuer (`ONTOS_GATEWAY_ISSUER`), never with a separate public key set: the Shell process does not receive `ONTOS_GATEWAY_PUBLIC_JWKS`, which only the owners and the Outbox Worker host use.
+- **Background work is bound to its message's company.** An `Originator` delegation (asynchronous work acting for a recorded invocation) carries the company of the Outbox message being handled whenever the Outbox runtime provides one (`OutboxMessageCompany`, from the message's domain event). The Shell accepts it only if Core recorded a domain event of that invocation in that company, then issues the context for exactly that company; another company named beside it (`originator_company_mismatch`) or a company Core never recorded for the invocation (`originator_company_not_recorded`) is refused. Without one, admission is unchanged.
+- **Every refusal names its step.** The delegated endpoint writes one warning per refusal, `gateway delegation refused`, with a stable `reason` code (`GatewayRefusalReasonSchema` in `packages/shared-contracts/src/gateway-context.ts`), the calling module (`callerAppId`), the subject's tenant (`subjectTenant`) and the audience, and returns the same `reason` in the problem body. The caller logs `gateway context not issued` with that reason, or its own (`No module credential of <module>…`, `No credential of <workload>…`). Neither line carries a key, a token or a subject.
 - **Rotation and retirement.** Every boot issues new keys. Eight hours before its keys end (`MODULE_CREDENTIAL_ROTATION_LEAD`, so at about 16 hours) the host issues every caller a fresh key, hands the fresh keys to the owners process and the Outbox Worker host on their channels, and after two minutes for in-flight delegated calls retires the keys they replaced. A host retires its own keys itself with `retire-own`, and "own" is proven by boot, never by host name alone: after a renewal it names exactly the provider key ids it replaced (keys only its current boot ever held), and at boot it names the ended boots its container recorded, whose keys are attested for its host name and one of those boots. It never retires a key of its current boot it still holds, or any key of another boot, so two containers that share a host name never retire each other's keys. Each host process records its boot id in the container (`.zerops/state/module-credential-boots.json`) before it issues any key; a container runs one host process at a time, so every other boot recorded there has ended. A new container (every deploy) starts with no record and retires none of the keys of the container it replaces, which keeps serving until the switch even if both carry the same host name. `retire-own` runs once the grace period passed after boot (after it published, for a host that takes the authority) and after each renewal. A key of an ended boot this host cannot prove is its own (a container replaced without a record) still ends within a day. Once the host published and two minutes passed for in-flight delegated calls, it also runs `retire`, keeping the keys it holds at that moment (and running even when its boot pass issued none), which acts only while the host's release holds the authority (`core.application_composition_authority`, phase `active`, revision equal to its own). Its cutoff is the moment that revision took the authority, `revision_activated_at`, which a renewal of the same revision keeps and a different revision (a newer release or a rollback) moves. Credentials bound before the cutoff are disabled and then their bindings revoked; credentials bound after it (another container of the same release, an observe-only host, a newer host still booting) and the host's own are never touched by `retire`. The authority is re-read with each revocation. Only the release holding the authority retires another host's keys; an observe-only host runs `retire-own` only.
 - **Audit.** Every issue and retire pass writes one system-actor row to `core.audit_events` in the platform tenant (`platform.module_credentials.issued` / `.retired` / `.retired_own`): operation id, host name and boot id, composition revision, module ids and provider key ids, the cutoff and what failed. Never a key.
 - **Healing and failure.** A pass that fails or overruns never stops the host or holds its publication: it logs `MODULE CREDENTIAL PROVISIONING FAILED` (or `MODULE CREDENTIALS UNAVAILABLE for <modules>`), the affected owners' delegated calls fail closed, and a background loop retries every minute, backing off to a quarter hour while it keeps failing; a key it obtains is handed to the empty slots without a restart. If the host finds its own keys revoked (a binding no longer active, or a key disabled or ended in the key store, checked every minute), it logs `MODULE CREDENTIALS OF THIS HOST WERE REVOKED`, issues every caller a fresh key and hands it over on the open channels, without a restart. A renewal or rotation that issues nothing changes nothing: the keys held stay in use until they end, and the loop retries with backoff; a module the pass missed keeps its old key. Healing stops once a newer release holds the authority. A retirement that fails is logged and repeated by the next boot.
 - **Local demo.** `scripts/demo/up.sh` keeps the pass's output in its own memory (never exported) and gives each calling module's server (`scripts/demo/serve-module.mts`, which runs `modern serve` in-process) a private FIFO on its file descriptor 3, writing that module's line once the keys exist; the Outbox Worker host gets its line on a pipe. The demo does not rotate or run `retire-own`: its keys simply end after 24 hours, so a demo left running longer than a day needs `up.sh` again.
+- **Internal workload credentials.** A calling module whose own server acts as one of its own internal workloads (O73) gets that workload's keys the same way: `MODULE_INTERNAL_WORKLOADS` in `scripts/zerops/module-credentials.mts` (today only CRM's Party intake, `demo.crm.party-intake`; a test derives the module list from source and checks that the module's own access declarations name each workload).
+  - **Registration is the platform's (ADR-0028).** At release `scripts/demo/release-internal-workloads.mts` (core: `packages/core-runtime/src/install/release-internal-workloads.ts`) registers each such workload that the reviewed catalogue also declares. It does so in every tenant that serves people where the module is installed, once per active company: one service principal, one workload binding, one company binding. One active workload binding acts for one company, so each company has its own registration and key.
+    - It writes through Core's own writers as the tenant's release actor, under the tenant's workload fence, with one audit row per tenant it changed.
+    - The principal's id is derived from tenant, workload and company. It holds no role, grant or relationship, is never a person, and never appears in People.
+    - It retires what is no longer wanted: module not installed, workload no longer declared, company not active. Company binding and workload binding are revoked and the principal is disabled; nothing is deleted. Re-running changes nothing.
+    - Only the platform changes a registration's status: the principal-status Action refuses any principal with a platform role and any principal of the platform tenant. A registration found disabled or archived anyway is made active again by the next release and reported as healed. The database refuses any change to `platform_role` (`core.keep_system_principals`), but all writers share one runtime role, so it cannot tell the release step's status writer from an Action's: that guard is in code.
+    - A registration someone made by hand is never adopted and never keyed.
+    - A principal that holds a derived id without the platform's marker is never adopted. One of another tenant is reported as `id taken by another principal (tenant …)`. One of the same tenant (an earlier build registered it before the marker existed) is reported as `derived id held by an unmarked principal of the same tenant created by an earlier build`; that company's registration stays unmade until an operator removes the old principal. Local fix (wipes the local demo database and builds it again): `docker --context orbstack compose -f docker-compose.yml -f scripts/demo/compose.demo.yml down -v && scripts/demo/up.sh`. On stage, count such principals with `select count(*) from core.principals where display_name like 'internal-workload:%'`.
+  - **Keys.**
+    - Each provisioning pass reads the active platform registrations tenant by tenant (one short transaction per tenant, the platform tenant skipped). For each it issues one key owned by the platform key owner, binds it to that principal in that tenant (a managed `api_key` binding) and attests it (`workload_attested_v2`: module, workload, tenant, company, principal, build, release, host, boot).
+    - The key travels beside its module's key, keyed `<app id>/<workload>/<tenant id>/<company id>`. The module reads exactly the entry of the request's tenant and company (`ownWorkloadCredential`), never another company's and never the environment; without one it fails closed and logs the tenant and company ids.
+    - It is rotated with its module's key, retired with the host's own and the superseded keys, audited in the same pass rows, and dropped (and retired) at the next renewal once its registration ends.
+  - **Order.** The publishing boot registers first and then provisions, so a first deploy keys every registration in the same pass. After publishing, the release fiber runs the registration again, after the release-time module install where that step exists. When the registrations then differ from the keys held, the next healing step renews them within a minute. The local demo (`up.sh`) registers right after the permissions and then provisions.
+  - **Admission does not change.** It is an ordinary key of the registered principal, admitted at `/auth/api-key/gateway-context` and only for what that registration admits; it is no module credential, so the delegated endpoint refuses it.
 
 What happens to the owners process or the Outbox Worker host on its key channel:
 
-| Channel state                                                                                                                              | What the process does                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `ONTOS_MODULE_CREDENTIAL_HANDOVER` unset                                                                                                   | Opens no socket; no owner holds a key and none falls back to the environment (as before) |
-| End of the channel, local demo (`fd3`: the launcher may close its side after a hand-over)                                                  | Keeps running with the keys it holds                                                     |
-| End of the channel, app host (`fd3-lifetime`: the host keeps it open while it lives; the kernel closes it when the host dies, even killed) | Stops, so it never serves as an orphan with keys nobody rotates                          |
-| Malformed or partial line                                                                                                                  | Refuses that line, keeps reading                                                         |
-| Socket error or a premature close while reading                                                                                            | Stops (`HANDOVER CHANNEL LOST`); the app host stops and the container restarts           |
-| File descriptor 3 is not a pipe                                                                                                            | Stops, as for a socket error                                                             |
+| Channel state                                                                                                                              | What the process does                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `ONTOS_MODULE_CREDENTIAL_HANDOVER` unset                                                                                                   | Opens no socket; no owner holds a key, and none can come from the environment  |
+| End of the channel, local demo (`fd3`: the launcher may close its side after a hand-over)                                                  | Keeps running with the keys it holds                                           |
+| End of the channel, app host (`fd3-lifetime`: the host keeps it open while it lives; the kernel closes it when the host dies, even killed) | Stops, so it never serves as an orphan with keys nobody rotates                |
+| Malformed or partial line                                                                                                                  | Refuses that line, keeps reading                                               |
+| Socket error or a premature close while reading                                                                                            | Stops (`HANDOVER CHANNEL LOST`); the app host stops and the container restarts |
+| File descriptor 3 is not a pipe                                                                                                            | Stops, as for a socket error                                                   |
 
 How long delegated calls can be without a key around a deploy:
 
@@ -521,6 +563,39 @@ gates.
 
 Stage deploys from `demo/sales-crm` (`zerops-stage.yml`), never from `main`.
 
+## Demo branch divergence from main
+
+When `main` merges into `demo/sales-crm`, main's design wins except for these recorded exceptions:
+
+1. Owner-action approvals and agent proposals, including the AI staleness comparators.
+2. The optional `mcp` key in module manifests.
+3. Staged prepare/load/finish reads (helpers with the `Staged` suffix).
+4. Owner-declared Search presentation.
+5. Build-time public components.
+6. The module-declared external identity provider (Customer Context portal auth).
+7. Demo capability issuers.
+8. Manifest-declared registered-workload calls.
+9. Declared in-transaction evidence calls. The demo's transaction I/O guard refuses remote I/O inside every governed read and Action transaction, but main's source-evidence design makes its owner proof reads (current Privacy, Party, Customer Profile and source facts) from inside the owner write or read transaction. Its request can only be derived there, from sealed invocation facts (the current invocation and its idempotency key, the admitted workload) and from correlation and replay lookups. Those proof calls are declared at their call sites with `declaredEvidenceCallInsideTransaction`, from one registry per owner (`src/declared-evidence-calls.ts`). Inside a declared call the remote refusals are lifted and a second pool connection is still refused. `scripts/tests/declared-evidence-calls-ratchet.test.mts` pins the 23 declarations by value and every file that uses one (and how often), so the number can only go down:
+   - Assortment (1): `assortment.symmy-rule-fixture-owner-currentness` (its owner authorization overlay for the enrolled Symmy rule fixture import reads current Catalog, Customer Context, Market Catalog and Storefront Registry facts).
+   - Party Registry (3): `party.client-source-privacy`, `party.client-source-organization-privacy`, `party.legacy-ico-privacy`.
+   - Privacy (9): `privacy.organization-ico-owner-facts`, `privacy.organization-profile-ico-owner-facts`, `privacy.organization-business-owner-context`, `privacy.organization-business-owner-facts`, `privacy.organization-source-owner-facts`, `privacy.organization-profile-owner-facts`, `privacy.organization-party-record-facts`, `privacy.customer-intake-owner-context`, `privacy.source-person-party-owner`.
+   - Symmy (2): `symmy.customer-intake-privacy`, `symmy.retention-privacy-current` (both retention checks, before and after the source fence cancellation wait).
+   - Customer Context (8): `commerce.organization-business-eligibility`, `commerce.source-processing-eligibility`, `commerce.source-counterparty-admission`, `commerce.source-person-admission`, `commerce.organization-profile-ico-eligibility`, `commerce.counterparty-organization-ico-facts`, `commerce.counterparty-migration-correlation`, `commerce.legacy-ico-inventory`.
+
+   Known follow-ups:
+   - Three Privacy declarations wrap an injected owner-provider seam that no production layer provides (`OrganizationBusinessFactsOwner`, `OrganizationIcoFactsOwner`, `OrganizationProfileIcoFactsOwner` in `organization-business-applicability.service.ts`, `organization-ico-applicability.service.ts` and `organization-profile-ico-applicability.service.ts`). They exist so main's integration tests, whose injected providers fetch, pass under the guard; they go once those test fakes stop doing remote I/O inside the read.
+   - A fiber forked as a daemon, or a finalizer registered on an outer scope, from inside a declared call would inherit the lifted state. No wrapped code does this today; the follow-up is a guard test for it and clearing the lifted state by identity when the declared effect exits, a guard change that needs its digest re-pinned and a re-review.
+
+   What removes each: staging that proof in the operation's prepare step (or a read's finish step) and revalidating it against transaction-local owner state, once Core exposes the sealed invocation facts to preparation. Privacy's read-only proofs can move first: their requests need no sealed facts (branch `fix/merge4-a2-restaging-20261114` holds a first attempt).
+
+10. Lint suppression counts. Main still fails the Quality Audit workflow on an increase; the demo reports changes, totals, and GitHub Actions warnings without enforcing a count limit. Removed when main adopts report-only monitoring.
+
+Zerops-only deployment: the demo keeps main's GATES and none of main's deploy jobs or Cloudflare/edge workflows; it deploys through `zerops-stage.yml`. The deploy chain behind `MAIN_DEPLOY_ENABLED` in `ultramodern-workspace-gates.yml` and the workflows `active-application-composition-refresh.yml`, `initial-composition-cutover.yml` and `stage-edge-cost-guard.yml` are absent on purpose.
+
+The owner generator no longer scaffolds a Cloudflare build script.
+
+Upstream risk when the demo merges back into `main`: Tax keeps the demo's migrations `20261023223119_gateway-assertion-redemptions` and `20261030121613_gateway-assertion-redemption-main-shape` instead of main's `20261109213238_tax_gateway_assertion_redemptions`. A database that already ran main's migration would replay the demo's two by name. Reconcile the Tax migration history before that merge lands.
+
 ## Pull-request and release hygiene
 
 Every deploy-affecting PR includes a deployment-impact section containing:
@@ -574,7 +649,7 @@ Core acquires its exclusive authority fence before requesting owner leases, matc
 
 ## Dead Outbox deliveries during a composition drain
 
-A dead delivery never finishes by itself. While publication drains the old release, a dead delivery that carries completion debt blocks the durable-work phase, and any dead delivery blocks the final Outbox phase. The publisher keeps waiting so an operator can act. It logs a warning that names each blocking delivery as the exact command arguments, for example `--tenant-id <uuid> --message-id <uuid> --worker-key commerce.order.finalize-order-work (attempts 60)`. If the drain does not finish within its freshness lease (at most 20 minutes), the publisher fails, and the timeout error names the same deliveries. Durable admission stays closed, and the old release keeps running.
+A dead delivery never finishes by itself. While publication drains the old release, a dead delivery that carries completion debt blocks the durable-work phase, and any dead delivery blocks the final Outbox phase. The publisher keeps waiting so an operator can act. It logs a warning that names each blocking delivery as the exact command arguments, for example `--tenant-id <uuid> --message-id <uuid> --worker-key commerce.order.finalize-order-work (attempts 60)`. If the drain does not finish within its freshness lease (at most 20 minutes), the publisher fails, and the timeout error names the same deliveries. Before it exits it returns the authority to `active` with durable admission open (see [Returning a stuck authority to `active`](#returning-a-stuck-authority-to-active)), so the old release keeps serving. A dead delivery is now usually refused before the drain starts at all.
 
 Resolve each named delivery with the administrative database identity the publisher uses (`DATABASE_ADMIN_URL` and `DATABASE_URL`). A waiting drain then continues by itself; after a timeout, rerun the same publication:
 
@@ -595,3 +670,230 @@ mise exec -- pnpm outbox:dead-delivery release --tenant-id <uuid> --message-id <
 Order finalization retries for about 24.5 hours, so a dead finalization delivery means a lasting owner refusal. When Customer Context refused PROOF revalidation while the approval request was still valid, redrive the delivery once the owner is available. When CONSUME died after commit because the approval was cancelled or revised, the Order already exists and no automatic terminal outcome is safe. First reconcile the buyer-facing Order by hand, then release the delivery with a reason that records that reconciliation.
 
 Privacy still verifies its own successful measure outcome before publication, so a released Privacy delivery does not satisfy the Privacy legacy-completion gate. Redrive Privacy work instead.
+
+## Outbox work that cannot drain, and Core's own work that crosses the boundary
+
+Before a publication closes durable admission it asks what the drain would wait for and refuses to start when some of that work can never finish: a dead delivery; a pending delivery whose consumer module is not background-eligible in its tenant or whose tenant is not active; a delivery whose next attempt falls after the drain budget; and, as a catch-all, work nothing has picked up for longer than a whole drain budget — a due, never-attempted, unclaimed delivery, or a `processing` one whose claim lease expired that long ago. Age is measured from `available_at`, not `created_at`, so a deploy straight after a redrive is not refused for a row that has been claimable for seconds. It also refuses when an Outbox message has waited longer than a whole drain budget without being matched: the matcher keeps running while a release drains, so a freshly written message is in-flight work, but one that old means no matcher is running and the drain could never finish. Restore the running release's Outbox Worker host (it runs the matcher) and the refusal clears by itself. The refusal names every such row with its reason (`no-eligible-consumer: --tenant-id … --message-id … --worker-key … (consumer …, pending, attempts 0, available at …)`). Durable admission is unchanged and the authority stays `active`, so the running release keeps serving reads and writes. (Earlier boot steps — the migrator, workload registration, credential provisioning and the expand-only completion-schema expansion — have already run and stay applied; they are safe under the old release.)
+
+The consumer and tenant terms are the Outbox claim's own predicates, so the drain cannot wait for work the claim would refuse for those reasons. Two of the claim's terms cannot be asked without a running host — whether each worker's intrinsic provider modules are active for the tenant, and whether any live host registers the worker key at all — and those are what the age catch-all covers: nothing has picked the row up for a whole budget, whatever the cause. Work that is genuinely in flight — claimed, or retrying inside the budget with a live consumer — is not reported and still drains.
+
+The pre-flight fails closed: if it cannot read the outstanding Outbox work, the drain is not started (`its pre-flight could not read the outstanding Outbox work`) and the authority stays `active` with admission unchanged. A core-system delivery counts as having a live consumer only where it carries over: nothing in the authority row says whether the retiring release can claim core-system work (releases before the claim-eligibility fix never do), so a pending core-system row whose worker key's descriptor CHANGED between the releases is refused as `no-eligible-consumer` rather than waited for. A key whose descriptor is identical keeps its consumer: its attempted or redriven rows do not carry over, but they are drained like any other in-flight work. On a retiring release that does claim core-system work, the refusal for a changed descriptor is transient: its host finishes the row and the next deploy proceeds.
+
+The pre-flight is a point in time, so the check runs again at the enter-draining fence, under the exclusive authority lock where the matcher cannot move it. The publisher first waits up to 10 seconds for the running matcher to take freshly written messages; a message still unmatched at the fence, or any delivery that arrived since the pre-flight and could never drain, refuses the drain there. Durable admission, already closed by then, is reopened for the same revision, so the authority is exactly as it was before the publication began.
+
+Once drained, a promote or a seal re-drains if a live host of the retiring release claimed a carried-over row in the meantime. All of those re-drains share one deadline — at most one drain budget, and never past the retiring lease less 75 seconds — and after the last refused attempt the publisher gives up with a message naming the phase the authority is left in.
+
+An `unclaimed-longer-than-budget` refusal means no process is taking that worker key: check which host should serve it. For a core-system key (`core.authorization.*`, `core.identity.*`) that is the app container's Outbox Worker host, which always serves the Shell's core entry; for a tenant module's key it is that owner's worker in the same host. Compare the key against `ONTOS_OUTBOX_HOST_SERVED_UNITS` at build time and the authority's `subscriptions_json`, and check whether the worker's intrinsic provider modules are active in that tenant (an inactive provider holds its work back without ever attempting it). The refusal clears by itself as soon as something claims the row — re-run `composition:drain-preflight` to confirm — and there is no override: the budget cannot be argued with, only the missing consumer fixed.
+
+A `no-eligible-consumer` refusal blocks every deploy until it is resolved, and no command resolves it today. Resolve it by making the consumer claimable again: reactivate or install the consumer module in that tenant (`core.modules.change-tenant-module-state`, or the release module installation), or reactivate the tenant if that is the reason. There is no supported way to discard such a delivery — the dead-delivery commands only accept a `dead` row, and a pending delivery with no consumer never reaches `dead` because nothing ever attempts it. No command discards a delivery whose module is intentionally gone; that needs its own reviewed change.
+
+Core's own system work crosses the release boundary instead of blocking the drain. A delivery carries over only when all of this holds: its worker key is one of `CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS`, the descriptor the retiring authority approved under that key is identical to the one this release ships, the delivery is `pending` with zero attempts and no claim, its message is matched and carries no completion debt of the retiring revision, and no `core.outbox_delivery_resolutions` row names it (a redriven delivery looks untouched, but an operator chose to run it on _this_ release, so this release drains it). The drain, the pre-flight and `composition:drain-preflight` all ask that one predicate, so what the pre-flight exempts is exactly what the drain carries over.
+
+The descriptor equivalence proves the topic and the entrypoint — not the payload schema and not the handler body. The rest rests on the handler being a whole-tenant reconcile that ignores its message payload and is idempotent, and on one rule: **a core-system payload schema change requires a new topic version.** `scripts/tests/core-system-carry-over.test.mts` pins each core-system worker key to its versioned topic so reusing a topic for a changed shape has to be a reviewed edit. Such work is not old-release work in flight: the handler is a whole-tenant reconcile owned by Core and identical in both releases, so the next release's own Outbox host finishes it under the new authority. A core-system descriptor that changed between releases does not carry over and is drained by the release that approved it.
+
+### First deploy with the fail-closed pre-flight
+
+The first deploy of a release with this pre-flight refuses to start its drain, leaving the running release serving,
+on any of: a `dead` delivery; a `pending` delivery with no eligible consumer (consumer module not background-eligible
+in its tenant, or tenant not active); a `pending` core-system delivery whose worker key's descriptor changed between the releases (a key with an
+identical descriptor stays eligible, even for an attempted or redriven row) — this refusal can be transient, since a
+retiring release that claims core-system work finishes the row and the next deploy proceeds; a delivery due after the drain's deadline, including one its owner
+deferred (the refusal says `deferred by its owner until …`); a delivery nothing has picked up for longer than a whole
+drain budget; and an Outbox message unmatched for longer than a whole drain budget. Before pushing, run the read-only
+check below, `pnpm composition:drain-preflight`, against the target environment.
+
+### Checking before a deploy
+
+Run this from a checkout of the release you are about to deploy, whenever anything looks stuck, before the deploy rather than during it. It writes nothing, takes no advisory lock, and so cannot stall a running publisher or release; its verdict is advisory for that reason, and the publisher re-asks under its own publication lock before it acts. It prints identifiers, worker keys, statuses and times only, never a payload.
+
+```sh
+mise exec -- pnpm composition:drain-preflight [--budget-ms <ms>] [--limit <rows>]
+```
+
+It needs the same database identities as the dead-delivery command — `DATABASE_ADMIN_URL` and `DATABASE_URL` — and reports the authority's phase, revision and durable admission; non-terminal Outbox work counted by worker key and status; for each outstanding delivery whether the next drain would `DRAIN` it (a live consumer can claim it), `CARRY OVER` it (Core's own untouched work, with `identity=identical`) or `BLOCK` on it (with the reason), where `identity` is how that worker key compares with the retiring authority's `subscriptions_json` (`identical`, `differs`, `not-core-system`, `absent`); and the verdict `a publication of this release would start its drain: yes/no`. It exits non-zero on `no`. A `BLOCK` with `identity=absent` is a delivery for a worker key the running composition no longer approves at all.
+
+## Returning a stuck authority to `active`
+
+A publication that ends early in or after its drain returns the authority itself before it exits: the same revision
+goes from `draining` back to `active` with durable admission open, in one transaction under the exclusive authority
+lock. That covers an ordinary failure — the drain budget or the old release's freshness lease expires, the
+enter-draining fence refuses, a quiescence check after draining fails, a promote or seal exhausts its re-drains — and
+also an interruption (the platform's SIGTERM after its readiness timeout, an outer deadline) or a defect. A failure
+message ends with `The authority was returned to active with durable admission open (drain abandonment …)`; an
+interruption is recorded in the ledger as one. The restore is bounded by the database (`lock_timeout` 5 s,
+`statement_timeout` 10 s) and commits whole or not at all. When it fails only because a lock was not available in time
+(SQLSTATE `55P03`), it tries the whole transaction again, up to four more times with a doubling backoff from 250 ms.
+One attempt can wait on two locks in turn — the exclusive authority advisory lock
+(`ontos.application-composition-authority`), then the authority row — each for just under 5 s, so all five attempts
+take about 55 s at most; a rolled-back attempt leaves no ledger row, so a restore that succeeds is recorded once, and
+one that never succeeds reports that the authority could not be returned. Every drain and re-drain therefore ends at
+least 75 seconds before the retiring lease expires (and a drain does not start on a lease with less than that left):
+an expired lease is never returned to `active`, so a restore that outlived it would leave the authority `draining`.
+
+A drain also ends early on its own when it meets Outbox work it could never finish. Each poll of the Outbox wait that
+finds work outstanding asks what of it can never finish before the drain's deadline: a delivery that died during the
+drain, one deferred or backed off past the deadline, or one with no consumer at all stops the wait at once (`The
+Application Composition drain was stopped: …`, naming the rows), and the restore above runs then rather than when the
+budget expires. The poll asks less than the pre-flight, so a healthy drain is never stopped: it counts every
+core-system key the retiring authority approved as consumed (a changed-descriptor row the retiring host claimed and
+then retries is still in flight), and it never stops on age alone (a row that has waited long may still be claimed
+before the deadline; if it is not, the deadline ends the drain as before). If that extra check cannot be read, the
+poll keeps waiting and logs it once per kind of failure. The pre-flight, the fence and every poll measure the deadline
+from the same moment, when the drain's budget clock started; stalled work is always aged by one whole standard drain
+budget (300 s), never by what is left of a migration's budget.
+
+What it cannot cover is a process that never runs its exit hook: a `SIGKILL`, an out-of-memory kill, a lost
+container, or a database the publisher can no longer reach. Then the authority stays `draining` and an operator
+returns it with the command below. A container that vanished without closing its connection can leave its database
+session holding the publication lock for a while; see
+[A publisher that is gone still holds the lock](#a-publisher-that-is-gone-still-holds-the-lock).
+
+The rule, enforced by the database rather than by the caller: a revision returns from `draining` to `active` only
+through a row in `core.application_composition_drain_abandonments`, and only while the authority row is exactly that
+revision, `draining` and unexpired. Phases only move forward and a seal precedes every publisher-run schema
+migration, so `draining` also proves that nothing was sealed and that migration never started; a `sealed` or
+`migrated` revision is never returned. `draining` admits only workers — a strict subset of `active` — so the release
+that held `active` retakes exactly the reads and writes it had before its drain began. A hand-written `UPDATE` of the
+authority row from `draining` to `active` is refused. Owner migrations of the failed release stay applied: they ran
+before the publication, are expand-only, and the old release is rehearsed against the migrated database.
+
+The ledger is append-only and written only by the migration administrator. Each row records the revision, who
+initiated it (`publisher` or `operator`), the operator name and reason, the session user, the transaction, the time
+and the lease it found.
+
+If the publisher could not return the authority (its message then names this command), or it died before it could,
+use the operator command with the administrative identity (`DATABASE_ADMIN_URL` and `DATABASE_URL`):
+
+```sh
+mise exec -- pnpm composition:abandon-drain --revision <the revision the old release serves> \
+  --operator <who> --reason <why>
+```
+
+- It proves no publisher is alive: on the session it holds for the whole run it takes the publication lock without
+  waiting, and refuses at once (`A publisher is alive`) when another session holds it. A live publisher restores the
+  authority itself when it fails. If you are sure the publisher is gone and it still refuses, see
+  [A publisher that is gone still holds the lock](#a-publisher-that-is-gone-still-holds-the-lock).
+- It refuses unless the authority row is exactly `--revision`, `draining` and unexpired, writes exactly one ledger
+  row, and prints the abandonment's id, who recorded it, when, and the lease — never a payload.
+
+### Plain-SQL fallback
+
+Use this only when no publisher is alive and the command is unavailable (an image or checkout that predates it). It is
+the same transition, through the same audited ledger insert: the database refuses a direct `UPDATE` of the authority
+row, so there is no shorter route. Run the whole block in ONE `psql` session with the administrative identity
+(`psql "$DATABASE_ADMIN_URL"`); the publication lock it takes is held by that session and released at the end.
+
+Preconditions, all checked by the block before it writes, and all of which must hold:
+
+- **No publisher is alive**: the session takes the environment-wide publication lock without waiting. `false` means a
+  publisher holds it; it restores the authority itself when it fails, so stop and let it finish.
+- **The running revision**: the authority row names the revision the OLD release serves — the one the last successful
+  deploy published, still running in the old app container — never the revision of the image that just failed.
+- **Phase `draining`**: an `active` row needs nothing; a `sealed` or `migrated` row is never returned (its seal precedes
+  the schema migration), so stop and read the deploy log instead.
+- **A valid lease**: `unexpired` must be `true`. If it is `false`, renew first (below), then run the block again.
+- **The stuck delivery is known**: step 2 lists the Outbox work that kept the drain from finishing — usually one
+  delivery no consumer can claim. Put its ids in the reason, and resolve it (see
+  [Outbox work that cannot drain](#outbox-work-that-cannot-drain-and-cores-own-work-that-crosses-the-boundary)) before
+  the next deploy, whose pre-flight would otherwise refuse on the same row.
+
+```sql
+\set ON_ERROR_STOP on
+-- Never wait on a lock for long: a statement that cannot get one in 5 s fails and the block stops.
+set lock_timeout = '5s';
+-- 0. Prove no publisher is alive; this session holds the lock until step 4.
+select pg_try_advisory_lock(hashtextextended('ontos.application-composition-publication', 0)) as no_publisher \gset
+\if :no_publisher
+-- 1. The authority: must be the old release's revision, 'draining', unexpired = true.
+select revision, phase, durable_work_admission, valid_until, valid_until > clock_timestamp() as unexpired
+  from core.application_composition_authority where authority_key = 'active';
+-- 2. The work the drain was waiting for; name the stuck delivery in the reason below.
+select d.outbox_delivery_id, m.tenant_id, d.outbox_message_id, d.worker_key, d.consumer_module_key, d.status,
+       d.attempts_count, d.available_at, d.claim_expires_at
+  from core.outbox_deliveries d join core.outbox_messages m on m.outbox_message_id = d.outbox_message_id
+  where d.status not in ('done', 'released') order by d.available_at limit 20;
+-- 3. The guarded transition: one ledger row only while every precondition still holds, otherwise none.
+insert into core.application_composition_drain_abandonments
+  (revision, initiated_by, operator_name, reason, lease_valid_until)
+select a.revision, 'operator', '<who>', '<why, naming the stuck delivery id>', a.valid_until
+  from core.application_composition_authority a
+  where a.authority_key = 'active'
+    and a.revision = '<the revision the old release serves>'
+    and a.phase = 'draining'
+    and a.valid_until > clock_timestamp()
+returning drain_abandonment_id, revision, recorded_by, recorded_at, lease_valid_until;
+-- 4. Confirm phase = 'active' and durable_work_admission = 'open', then release the lock.
+select revision, phase, durable_work_admission from core.application_composition_authority where authority_key = 'active';
+select pg_advisory_unlock(hashtextextended('ontos.application-composition-publication', 0));
+\else
+\echo 'A publisher is alive: stop and let it finish.'
+\endif
+```
+
+Step 3 must return exactly one row. No row means a precondition no longer held when it ran: nothing was written, so
+read the authority row again before doing anything else. The insert's triggers re-check the same rules under the
+exclusive authority lock, stamp the session user, transaction, time and the real lease (the `lease_valid_until` given
+is replaced), and return the revision to `active` with durable admission open in the same statement; any refusal
+there aborts the block with nothing written.
+
+Cancelling the block (Ctrl-C), or a statement stopped by its `lock_timeout`, is always safe: each statement is its own
+transaction, the insert writes its ledger row and moves the authority together or not at all, and closing the session
+releases the publication lock. Read the authority row and run the block again. If you ran it interactively (`\i` or
+pasted into `psql`) and it stopped on an error, the session is still open and still holds the publication lock, so
+every publisher and this command now see `A publisher is alive`: quit `psql` (`\q`), or release it in that session
+with `select pg_advisory_unlock_all();`, before anything else.
+
+If it refuses because the lease has expired, **renew first, then run the command again**:
+
+1. Restart the OLD app container — the one serving the revision in the row — and nothing else. Its host boots, finds
+   the row naming its own revision, and takes the renewal path: the lease becomes fresh again and the phase stays
+   `draining` (renewal never changes the phase, so the release still refuses reads until step 2). A running old host
+   renews by itself, so an expired lease means its host had stopped; the restart is what brings the renewal back.
+2. Confirm the row is `draining` for that revision and now unexpired
+   (`select revision, phase, valid_until > clock_timestamp() as unexpired from core.application_composition_authority`),
+   then run the command again. Reads return.
+
+Do not try to recover an expired lease by deploying again: a replacement publication refuses an expired authority, and
+a fresh deploy waits on the same `draining` row. A refusal for another revision or phase means the situation is not
+the one this command is for; read the row before doing anything else.
+
+### A publisher that is gone still holds the lock
+
+A container that vanished without closing its connection — a lost host, a network cut — can leave its PostgreSQL
+session alive until TCP keepalive notices, holding the publication lock. Then both the command and the plain-SQL
+block answer `A publisher is alive` while the release still refuses reads. Nothing ends that session automatically;
+an operator does, and only under this precondition: **the container that holds the lock is verifiably gone.**
+
+1. Find the session holding the publication lock, with the administrative identity:
+
+   ```sql
+   with k as (select hashtextextended('ontos.application-composition-publication', 0) as key)
+   select a.pid, a.usename, a.application_name, a.client_addr, a.backend_start, a.state, a.state_change
+     from k, pg_locks l join pg_stat_activity a on a.pid = l.pid
+     where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+       and l.classid = ((k.key >> 32) & 4294967295)::oid
+       and l.objid = (k.key & 4294967295)::oid;
+   ```
+
+2. Confirm its container is gone. `client_addr` alone is not proof — a connection pooler, NAT or the VPN can show the
+   same address for a live container — so require all of these:
+   - no running container of the project has that `client_addr` (check the service's containers in Zerops), and no
+     deploy or publication is in progress;
+   - the session is `idle` with an old `state_change` (minutes, not seconds), AND no other session from the same
+     `client_addr` and `application_name` changed state recently. The holder alone proves little: a live publisher
+     holds the lock on a reserved session that stays idle while it works on its other connections, and those
+     change state every few seconds as it polls (`select pid, state, state_change from pg_stat_activity where
+client_addr = '<addr>'`);
+   - its `application_name` and `backend_start` match the vanished container: it connected when that container's
+     publication started, and no running container started then.
+
+   If any of these fails, treat it as a live publisher: stop, and let it finish and restore the authority itself.
+
+3. End that one session: `select pg_terminate_backend(<pid>);`. Its open transaction, if any, rolls back, and the
+   lock is released. Terminating a LIVE publisher by mistake is recoverable: it fails that deploy, its own restore
+   or the next step here returns the authority, and the database-enforced abandonment rules keep the authority
+   consistent whichever runs first.
+4. Run `composition:abandon-drain` (or the plain-SQL block) again.
+
+Without server keepalive settings (`tcp_keepalives_idle` and friends at their defaults), PostgreSQL may not notice a
+vanished client for about two hours, so a stale session can hold the lock that long if no one ends it.

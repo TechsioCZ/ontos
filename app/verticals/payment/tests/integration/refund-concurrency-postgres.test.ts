@@ -13,7 +13,8 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { paymentTestRelations } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import { paymentTestRelations, COMPOSITION_REVISION } from './database-fixture.ts';
 
 import type { RequestPaymentRefundPayload } from '../../shared/actions/request-payment-refund.ts';
 import {
@@ -40,8 +41,14 @@ import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
  * proves both are queued on the owner boundary before the lock is released, then exactly one wins.
  */
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 /** The real Core Action runtime over the worktree database with the registered Payment owner. */
 const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
@@ -59,6 +66,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;

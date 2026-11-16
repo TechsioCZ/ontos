@@ -22,6 +22,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
+  gatewayAssertionRedemptionPgClient,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 
 class RedemptionNativeSetupFailed extends Schema.TaggedError<RedemptionNativeSetupFailed>()(
@@ -64,7 +65,11 @@ const fixture = Effect.fn('tax.RedemptionNative.fixture')(function* fixture() {
   const redemption = Effect.gen(function* makeProductionRedemptionLayer() {
     const services = yield* Layer.build(
       GatewayAssertionRedemptionLive.pipe(
-        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+        Layer.provide(
+          GatewayAssertionRedemptionDatabaseLive.pipe(
+            Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+          ),
+        ),
         Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
       ),
     );

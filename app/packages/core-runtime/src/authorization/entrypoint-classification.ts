@@ -1,16 +1,4 @@
-import { getOrThrow as getResultOrThrow } from 'effect/Result';
-import {
-  Literal,
-  Literals,
-  String as StringSchema,
-  Struct,
-  Union,
-  decodeUnknownResult,
-  isMaxLength,
-  isMinLength,
-  isPattern,
-} from 'effect/Schema';
-import type { Schema } from 'effect/Schema';
+import { Result, Schema } from 'effect';
 
 export const ACTION_PROVISIONING_INTENTS = [
   'tenant_membership_default',
@@ -18,21 +6,21 @@ export const ACTION_PROVISIONING_INTENTS = [
   'principal_self_credentials',
 ] as const;
 
-export const ActionProvisioningIntentSchema = Literals(ACTION_PROVISIONING_INTENTS);
-export type ActionProvisioningIntent = Schema.Type<typeof ActionProvisioningIntentSchema>;
+export const ActionProvisioningIntentSchema = Schema.Literals(ACTION_PROVISIONING_INTENTS);
+export type ActionProvisioningIntent = Schema.Schema.Type<typeof ActionProvisioningIntentSchema>;
 
-const stablePermissionSchema = StringSchema.check(
-  isMinLength(3),
-  isMaxLength(200),
-  isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u),
+const stablePermissionSchema = Schema.String.check(
+  Schema.isMinLength(3),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u),
 );
 
-export const IntentionalPublicAuthorizationSchema = Struct({
-  kind: Literal('public'),
+export const IntentionalPublicAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('public'),
 });
 
-export const AuthenticatedPrincipalAuthorizationSchema = Struct({
-  kind: Literal('authenticated_principal'),
+export const AuthenticatedPrincipalAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('authenticated_principal'),
 });
 
 /**
@@ -40,30 +28,30 @@ export const AuthenticatedPrincipalAuthorizationSchema = Struct({
  * replaces both `action_execution` and `context_permission`, because the capability now lives only
  * in the carrier. The two legacy kinds are accepted beside it until L03b removes them (O62, O68).
  */
-export const ProtectedAuthorizationSchema = Struct({
-  kind: Literal('protected'),
+export const ProtectedAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('protected'),
 });
 
-export const ContextPermissionAuthorizationSchema = Struct({
-  kind: Literal('context_permission'),
+export const ContextPermissionAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('context_permission'),
   permission: stablePermissionSchema,
 });
 
-export const ActionExecutionAuthorizationSchema = Struct({
-  kind: Literal('action_execution'),
+export const ActionExecutionAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('action_execution'),
   provisioning: ActionProvisioningIntentSchema,
 });
 
-export const OwnerLocalBackgroundAuthorizationSchema = Struct({
-  kind: Literal('owner_local_background'),
+export const OwnerLocalBackgroundAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('owner_local_background'),
 });
 
-export const CapabilityIssuanceAuthorizationSchema = Struct({
-  credential: Literals(['api_key', 'session']),
-  kind: Literal('capability_issuance'),
+export const CapabilityIssuanceAuthorizationSchema = Schema.Struct({
+  credential: Schema.Literals(['api_key', 'session']),
+  kind: Schema.Literal('capability_issuance'),
 });
 
-export const EntrypointAuthorizationSchema = Union([
+export const EntrypointAuthorizationSchema = Schema.Union([
   IntentionalPublicAuthorizationSchema,
   AuthenticatedPrincipalAuthorizationSchema,
   ProtectedAuthorizationSchema,
@@ -73,17 +61,17 @@ export const EntrypointAuthorizationSchema = Union([
   CapabilityIssuanceAuthorizationSchema,
 ]);
 
-export type EntrypointAuthorization = Schema.Type<typeof EntrypointAuthorizationSchema>;
-export type ActionExecutionAuthorization = Schema.Type<typeof ActionExecutionAuthorizationSchema>;
-export type ProtectedAuthorization = Schema.Type<typeof ProtectedAuthorizationSchema>;
-export type OwnerLocalBackgroundAuthorization = Schema.Type<typeof OwnerLocalBackgroundAuthorizationSchema>;
-export type CapabilityIssuanceAuthorization = Schema.Type<typeof CapabilityIssuanceAuthorizationSchema>;
-export type ContextPermissionAuthorization = Schema.Type<typeof ContextPermissionAuthorizationSchema>;
+export type EntrypointAuthorization = Schema.Schema.Type<typeof EntrypointAuthorizationSchema>;
+export type ActionExecutionAuthorization = Schema.Schema.Type<typeof ActionExecutionAuthorizationSchema>;
+export type ProtectedAuthorization = Schema.Schema.Type<typeof ProtectedAuthorizationSchema>;
+export type OwnerLocalBackgroundAuthorization = Schema.Schema.Type<typeof OwnerLocalBackgroundAuthorizationSchema>;
+export type CapabilityIssuanceAuthorization = Schema.Schema.Type<typeof CapabilityIssuanceAuthorizationSchema>;
+export type ContextPermissionAuthorization = Schema.Schema.Type<typeof ContextPermissionAuthorizationSchema>;
 
 export const decodeEntrypointAuthorization = <Input>(input: Input): EntrypointAuthorization =>
   Object.freeze(
-    getResultOrThrow(
-      decodeUnknownResult(EntrypointAuthorizationSchema, {
+    Result.getOrThrow(
+      Schema.decodeUnknownResult(EntrypointAuthorizationSchema, {
         onExcessProperty: 'error',
       })(input),
     ),

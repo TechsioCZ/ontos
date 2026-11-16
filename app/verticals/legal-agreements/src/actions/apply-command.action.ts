@@ -3,7 +3,7 @@
 // @ontos-action-slug apply-command
 import type { Crypto } from 'effect';
 import type { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   defineAction,
   defineTenantModuleEntrypoint,
@@ -15,8 +15,6 @@ import type {
   ActionServiceFactory,
   ActionServicePreflight,
   ActionServicePreparationContext,
-  OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import {
   ApplyCommandErrorSchema,
@@ -25,8 +23,11 @@ import {
   AgreementsConflict,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload, AgreementsError } from '../../shared/actions/apply-command.ts';
-import { persistenceService, transitionAgreements, makeAgreementsValidators } from '../services/persistence.service.ts';
-import type { AgreementsValidators } from '../services/persistence.service.ts';
+import {
+  AgreementsReferenceValidators,
+  persistenceService,
+  transitionAgreements,
+} from '../services/persistence.service.ts';
 
 import { OutboxPayloadSchema as SearchChangedPayloadSchema } from '../../shared/outbox/legal-agreements-search-changed-v1.ts';
 import { createApplyCommandLegalAgreementsSearchChangedV1OutboxMessage } from './apply-command-legal-agreements-search-changed-v1.outbox-message.ts';
@@ -35,9 +36,11 @@ const domainEvents = { 'legal.agreements.search-changed.v1': SearchChangedPayloa
 
 const OWNER_MODULE_KEY = 'legal.agreements';
 type Persistence = Effect.Success<ReturnType<typeof persistenceService>>;
-export class CommandReferenceValidators extends Context.Service<CommandReferenceValidators, AgreementsValidators>()(
-  '@app/legal-agreements/actions/apply-command.action/CommandReferenceValidators',
-) {}
+/** The preflight and the factory it returns share one requirement set, so defineAction infers it once. */
+type PreparationRequirements =
+  | AgreementsReferenceValidators
+  | Crypto.Crypto
+  | Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>;
 export type ApplyCommandServices = Persistence & {
   readonly prepared: {
     readonly payload: ApplyCommandPayload;
@@ -97,22 +100,17 @@ export const prepareApplyCommandServices = Effect.fn('Agreements.prepareApplyCom
     if (current.revision !== payload.expectedRevision) {
       return yield* new AgreementsConflict({ code: 'agreements_conflict', reason: 'stale_revision' });
     }
-    const injected = yield* Effect.serviceOption(CommandReferenceValidators);
-    const validators = yield* Option.match(injected, {
-      onNone: () => makeAgreementsValidators(context.scope),
-      onSome: Effect.succeed,
-    });
+    const referenceValidators = yield* AgreementsReferenceValidators;
+    const validators = yield* referenceValidators.forScope(context.scope);
     const transition = yield* transitionAgreements(
       current.snapshot,
       payload.command,
       { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
       validators,
     );
-    return Effect.fn('Agreements.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
+    const factory: ActionServiceFactory<ApplyCommandServices, PreparationRequirements> = Effect.fn(
+      'Agreements.revalidatePreparedCommand',
+    )(function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
       const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
       if (
         age < 0 ||
@@ -142,13 +140,9 @@ export const prepareApplyCommandServices = Effect.fn('Agreements.prepareApplyCom
       );
       return { ...persistence, prepared: { payload, transition } };
     });
+    return factory;
   },
-) satisfies ActionServicePreflight<
-  ApplyCommandPayload,
-  ApplyCommandServices,
-  AgreementsError,
-  Crypto.Crypto | Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
->;
+) satisfies ActionServicePreflight<ApplyCommandPayload, ApplyCommandServices, AgreementsError, PreparationRequirements>;
 
 export const applyCommandAction = defineAction(
   {

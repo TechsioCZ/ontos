@@ -1,86 +1,454 @@
 {
+  "test-weights": {
+    "access-admin-people-stage-shape.test.ts": 35,
+    "access-admin-people-writes-admission": 110,
+    "access-admin-people-writes-admission.test.ts": 61,
+    "access-admin-people-writes-delegation": 61,
+    "access-admin-people-writes-delegation.test.ts": 20,
+    "access-admin-people-writes-membership": 111,
+    "access-admin-people-writes-membership.test.ts": 33,
+    "access-admin-people-writes-ownership": 58,
+    "access-admin-people-writes-ownership.test.ts": 24,
+    "access-admin-real-gate-administration": 72,
+    "access-admin-real-gate-administration.test.ts": 67,
+    "access-admin-real-gate-scope": 109,
+    "access-admin-real-gate-scope.test.ts": 57,
+    "access-admin-shell-http.test.ts": 23,
+    "action-live-v2-dispatch.test.ts": 19,
+    "action-live-v2-durable-dispatch.test.ts": 29,
+    "address-book-owner-rule-refusal-postgres.test.ts": 8,
+    "agent-approval-path-stage-shape.test.ts": 26,
+    "agent-caller-authority-full-catalog-actions": 39,
+    "agent-caller-authority-full-catalog-actions.test.ts": 37,
+    "agent-caller-authority-full-catalog-batch": 58,
+    "agent-caller-authority-full-catalog-batch.test.ts": 34,
+    "agent-caller-authority-full-catalog-installed": 54,
+    "agent-caller-authority-full-catalog-installed.test.ts": 24,
+    "agents-administration-real-gate.test.ts": 56,
+    "api-key-gateway-multimodule-native.test.ts": 16,
+    "auth-runtime.test.ts": 62,
+    "better-auth-effect-adapter.test.ts": 1,
+    "crm-party-intake-workload-native.test.ts": 31,
+    "current-retail-enrollment.test.ts": 1,
+    "customer-commerce-policy-persistence-postgres.test.ts": 18,
+    "customer-consent-receipt-postgres.test.ts": 1,
+    "customer-group-archive-scheduled-end-postgres.test.ts": 178,
+    "customer-portal-carriers.test.ts": 24,
+    "customer-portal-generic-dispatch.test.ts": 3,
+    "customer-profile-ico-postgres.test.ts": 21,
+    "customer-profile-organization-ico-facts-postgres.test.ts": 6,
+    "customer-profile-source-postgres.test.ts": 7,
+    "database-security-catalog.test.ts": 1,
+    "demo-newsletter-choice-postgres.test.ts": 1,
+    "email-request-database.test.ts": 1,
+    "enrollment-acceptance-identity.test.ts": 3,
+    "enrollment-acceptance-journeys.test.ts": 7,
+    "enrollment-account-creation-correlation.test.ts": 5,
+    "enrollment-attempts.test.ts": 1,
+    "enrollment-counterparty-invitation.test.ts": 40,
+    "enrollment-due-work.test.ts": 6,
+    "enrollment-invitation-claimability.test.ts": 6,
+    "enrollment-journeys-http.test.ts": 34,
+    "enrollment-parked-composition.test.ts": 2,
+    "enrollment-profile-reconciliation.test.ts": 8,
+    "enrollment-registration-account.test.ts": 6,
+    "enrollment-terminal-failure.test.ts": 3,
+    "external-identity-http.test.ts": 2,
+    "gate-call-sites.test.ts": 144,
+    "gate-company-tenant-invariant.test.ts": 184,
+    "gateway-assertion-redemption-postgres.test.ts": 22,
+    "gateway-delegation-exchanges.test.ts": 1,
+    "gateway-originator-message-company.test.ts": 14,
+    "generated-owner-isolation.test.ts": 2,
+    "group-persistence-postgres.test.ts": 6,
+    "group-source-definition-postgres.test.ts": 11,
+    "guest-attribution-evidence-authority-postgres.test.ts": 108,
+    "identity-modes-runtime.test.ts": 4,
+    "legacy-context-access-v2.test.ts": 96,
+    "market-retirement-production-http-postgres.test.ts": 3,
+    "market-retirement-reservation-postgres.test.ts": 2,
+    "module-api-dispatch.test.ts": 1,
+    "module-api-node-process.test.ts": 22,
+    "module-catalog-runtime.test.ts": 1,
+    "module-credential-provisioning.test.ts": 29,
+    "module-entrypoint-boundaries-aggregate": 91,
+    "module-entrypoint-boundaries-catalog": 49,
+    "module-entrypoint-boundaries-clients": 85,
+    "module-entrypoint-boundaries-customer-context": 98,
+    "module-entrypoint-boundaries-governance": 15,
+    "module-entrypoint-boundaries-pricing": 51,
+    "module-entrypoint-boundaries-recovery": 201,
+    "module-federation-i18n-runtime.test.ts": 1,
+    "native-human-sessions-contract.test.ts": 1,
+    "oauth-acting-authority-full-catalog.test.ts": 191,
+    "organization-governance-gateway-native.test.ts": 6,
+    "organization-profile-ico-postgres.test.ts": 11,
+    "organization-profile-source-postgres.test.ts": 8,
+    "original-request-diagnostic-postgres.test.ts": 2,
+    "owner-action-approvals-http-native.test.ts": 10,
+    "party-postal-future-end-postgres.test.ts": 44,
+    "payment-gateway-ingress-native.test.ts": 8,
+    "payment-self-registered-workload-probe.test.ts": 10,
+    "payment-term-finite-cancellation-postgres.test.ts": 21,
+    "payment-term-legacy-intent-postgres.test.ts": 8,
+    "payment-term-preference-period-removal-postgres.test.ts": 16,
+    "payment-term-replacement-continuity-postgres.test.ts": 1,
+    "people-directory-scope-agreement.test.ts": 66,
+    "portal-auth-acceptance-non-enumeration.test.ts": 3,
+    "portal-auth-acceptance-permission.test.ts": 14,
+    "portal-auth-audit.test.ts": 3,
+    "portal-auth-configured-composition.test.ts": 3,
+    "portal-auth-cross-realm.test.ts": 4,
+    "portal-auth-customer-address-book-http.test.ts": 2,
+    "portal-auth-mfa.test.ts": 5,
+    "portal-auth-optional-composition.test.ts": 2,
+    "portal-auth-recovery-reconciliation.test.ts": 1,
+    "portal-auth-recovery.test.ts": 20,
+    "portal-auth-session-provider.test.ts": 4,
+    "portal-auth-session.test.ts": 2,
+    "portal-auth-step-up.test.ts": 2,
+    "portal-auth-verification-http.test.ts": 5,
+    "portal-auth-verification-settlement.test.ts": 16,
+    "portal-session-rule-journeys.test.ts": 1,
+    "price-group-compatibility-evidence-postgres.test.ts": 1,
+    "price-group-effective-period-postgres-history": 86,
+    "price-group-effective-period-postgres-history.test.ts": 114,
+    "price-group-effective-period-postgres-receipts": 86,
+    "price-group-effective-period-postgres-receipts.test.ts": 80,
+    "price-group-effective-period-postgres-resolution": 86,
+    "price-group-effective-period-postgres-resolution.test.ts": 118,
+    "price-group-persistence-postgres.test.ts": 1,
+    "privacy-dispatch-gateway-native.test.ts": 11,
+    "privacy-measure-owner-postgres.test.ts": 1,
+    "purchase-approval-currentness-postgres.test.ts": 11,
+    "purchase-approval-expiry-postgres.test.ts": 91,
+    "purchase-approval-fresh-proof-postgres-consumption": 105,
+    "purchase-approval-fresh-proof-postgres-consumption.test.ts": 83,
+    "purchase-approval-fresh-proof-postgres-expiry": 106,
+    "purchase-approval-fresh-proof-postgres-expiry.test.ts": 79,
+    "purchase-approval-fresh-proof-postgres-identity": 97,
+    "purchase-approval-fresh-proof-postgres-identity.test.ts": 70,
+    "purchase-approval-fresh-proof-postgres-order": 75,
+    "purchase-approval-fresh-proof-postgres-order.test.ts": 85,
+    "purchase-approval-fresh-proof-postgres-reconciliation": 95,
+    "purchase-approval-fresh-proof-postgres-reconciliation.test.ts": 92,
+    "purchase-approval-fresh-proof-postgres-scope": 107,
+    "purchase-approval-fresh-proof-postgres-scope.test.ts": 119,
+    "purchase-resolution-permission-plan-postgres.test.ts": 17,
+    "quantity-profile-admission-postgres.test.ts": 194,
+    "registered-workload-gateway-native.test.ts": 8,
+    "retail-enrollment-restart.test.ts": 2,
+    "retail-portal-enrollment-access.test.ts": 3,
+    "retail-purchasing-subject-current-v1-postgres.test.ts": 1,
+    "reviewed-people-apply.test.ts": 23,
+    "saved-address-source-postgres.test.ts": 11,
+    "server-owner-relay-native.test.ts": 116,
+    "shell-member-baseline-real-gate.test.ts": 29,
+    "stage-accounts-bootstrap.test.ts": 2,
+    "symmy-ingress.test.ts": 5,
+    "tenant-binding-isolation.test.ts": 1
+  },
+  "fresh-database-tests": [
+    "scripts/integration/migration-equivalence.test.mts",
+    "scripts/integration/migrator-runtime-owner-access.test.mts",
+    "scripts/integration/stage-recovery-lifecycle.test.mts",
+    "scripts/integration/vat-deploy-sequence.test.mts",
+    "packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts",
+    "packages/core-runtime/tests/integration/application-composition-authority-migration.test.ts",
+    "packages/core-runtime/tests/integration/application-composition-durable-work-migration.test.ts",
+    "packages/core-runtime/tests/integration/auth-namespace-migration.test.ts",
+    "packages/core-runtime/tests/integration/contacts-identity-migration.test.ts",
+    "packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts",
+    "verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts",
+    "verticals/commerce-customer-context/tests/integration/organization-profile-ico-migration-postgres.test.ts",
+    "verticals/work-tasks/tests/integration/assignment-migration.test.mts",
+    "verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts",
+    "verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts",
+    "verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts",
+    "verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts",
+    "verticals/party-registry/tests/integration/organization-migration-fixture.test.ts",
+    "verticals/party-registry/tests/integration/verification-removal-migration.test.ts"
+  ],
   "source": [
     {
       "name": "Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules",
       "typescript-build": true,
-      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
+      "commands": "pnpm typecheck\npnpm lint:effect-diagnostics\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm handler-services:check\n"
     },
     {
-      "name": "Repository Tooling, Module Entrypoint, and Codesmith Generation Tests",
-      "commands": "pnpm shell:ui-candidates:check\npnpm test:scripts\npnpm module-entrypoints:check\npnpm test:generation\n"
+      "name": "Repository Tooling Tests (1/3)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 1/3 scripts --pool.maxWorkers 2\n"
+    },
+    {
+      "name": "Repository Tooling Tests (2/3)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 2/3 scripts --pool.maxWorkers 2\n"
+    },
+    {
+      "name": "Repository Tooling Tests (3/3)",
+      "commands": "bash scripts/ci/rstest-weighted-shard.sh 3/3 scripts --pool.maxWorkers 2\n"
+    },
+    {
+      "name": "Storefront Typecheck (AKROS and N1)",
+      "commands": "pnpm --filter akros-storefront --filter n1-storefront run typecheck\n"
+    },
+    {
+      "name": "Module Entrypoint and Codesmith Generation Tests",
+      "commands": "pnpm shell:ui-candidates:check\npnpm module-entrypoints:check\npnpm test:generation\n"
     }
   ],
   "unit": [
+    {
+      "name": "Unit Tests (Shell 1/2)",
+      "node-artifacts": true,
+      "commands": "pnpm --filter ./apps/shell-super-app exec bash \"$PWD/scripts/ci/rstest-weighted-shard.sh\" 1/2 unit\n"
+    },
+    {
+      "name": "Unit Tests (Shell 2/2)",
+      "node-artifacts": true,
+      "commands": "pnpm --filter ./apps/shell-super-app exec bash \"$PWD/scripts/ci/rstest-weighted-shard.sh\" 2/2 unit\n"
+    },
+    {
+      "name": "Unit Tests (Party Registry 1/2)",
+      "commands": "pnpm --filter ./verticals/party-registry exec bash \"$PWD/scripts/ci/rstest-weighted-shard.sh\" 1/2 unit\n"
+    },
+    {
+      "name": "Unit and Component Tests (Party Registry 2/2)",
+      "commands": "pnpm --filter ./verticals/party-registry exec bash \"$PWD/scripts/ci/rstest-weighted-shard.sh\" 2/2 unit\npnpm -r --no-sort --if-present --filter ./verticals/party-registry run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (Core Runtime)",
+      "commands": "pnpm -r --no-sort --if-present --filter ./packages/core-runtime run test:unit\npnpm -r --no-sort --if-present --filter ./packages/core-runtime run test:component\n"
+    },
     {
       "name": "Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)",
       "node-artifacts": true,
       "commands": "pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component\n"
     },
     {
-      "name": "Unit and Component Tests (every other package)",
+      "name": "Unit and Component Tests (Pricing, Market Catalog, Privacy, and Symmy)",
       "node-artifacts": true,
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/pricing --filter ./verticals/commerce-market-catalog --filter ./verticals/privacy --filter ./verticals/symmy-integration run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/pricing --filter ./verticals/commerce-market-catalog --filter ./verticals/privacy --filter ./verticals/symmy-integration run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (Merchandise)",
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/merchandise run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/merchandise run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (every other package)",
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component\n"
+      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:component\n"
     }
   ],
   "integration": [
     {
       "suite": "integration",
-      "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
-      "native-composition": true,
-      "root-suite": true,
-      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects"
+      "name": "Commerce Customer Context Integration (1/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "1/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
-      "name": "Catalog Integration",
-      "package-filters": "--filter ./verticals/catalog"
+      "name": "Commerce Customer Context Integration (2/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "2/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (3/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "3/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (4/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "4/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (5/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "5/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (6/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "6/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Customer Context Integration (7/7)",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
+      "rstest-shard": "7/7",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (1/6)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "1/6",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (2/6)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "2/6",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (3/6)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "3/6",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (4/6)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "4/6",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (5/6)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "5/6",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Integration (6/6)",
+      "package-filters": "--filter ./apps/shell-super-app",
+      "rstest-shard": "6/6",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (1/4)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "1/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (2/4)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "2/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (3/4)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "3/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Root Integration (4/4)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "4/4",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (1/4)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "1/4",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (2/4)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "2/4",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (3/4)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "3/4",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Integration (4/4)",
+      "package-filters": "--filter ./verticals/privacy",
+      "rstest-shard": "4/4",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Core Runtime Integration (1/2)",
+      "package-filters": "--filter ./packages/core-runtime",
+      "rstest-shard": "1/2",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Core Runtime Integration (2/2)",
+      "package-filters": "--filter ./packages/core-runtime",
+      "rstest-shard": "2/2",
+      "seed": true,
+      "fresh-database-tests": "skip"
+    },
+    {
+      "suite": "integration",
+      "name": "Party Registry Integration",
+      "package-filters": "--filter ./verticals/party-registry",
+      "rstest-shard": "1/1",
+      "rstest-projects": "integration integration-worker-cycle",
+      "seed": true,
+      "fresh-database-tests": "skip"
     },
     {
       "suite": "integration",
       "name": "Pricing and Inventory Integration",
       "native-composition": true,
-      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory"
+      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory",
+      "seed": true
     },
     {
       "suite": "integration",
-      "name": "Commerce Customer Context Integration (1/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "1/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (2/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "2/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (3/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "3/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (4/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "4/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (5/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "5/6"
-    },
-    {
-      "suite": "integration",
-      "name": "Commerce Customer Context Integration (6/6)",
-      "package-filters": "--filter ./verticals/commerce-customer-context",
-      "rstest-shard": "6/6"
+      "name": "Catalog Integration",
+      "package-filters": "--filter ./verticals/catalog",
+      "seed": true
     },
     {
       "suite": "integration",
       "name": "Market, Order, Payment Term, Price Group, and Storefront Integration",
+      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry",
+      "seed": true
+    },
+    {
+      "suite": "integration",
+      "name": "Native Preproposal Basis and Approval Proof",
       "native-preproposal": true,
       "proof-packages": [
         "@app/shell-super-app",
@@ -91,35 +459,33 @@
         "@app/commerce-market-catalog",
         "@app/pricing",
         "@app/commerce-customer-context"
-      ],
-      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry"
+      ]
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (1/2)",
-      "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "1/2"
+      "name": "Fresh Database Integration (1/2)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "1/2",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
+      "rstest-shard": "1/2",
+      "fresh-database-tests": "only"
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration (2/2)",
-      "package-filters": "--filter ./verticals/privacy",
-      "rstest-shard": "2/2"
+      "name": "Fresh Database Integration (2/2)",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "2/2",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry",
+      "rstest-shard": "2/2",
+      "fresh-database-tests": "only"
     },
     {
       "suite": "integration",
-      "name": "Party Registry Integration",
-      "package-filters": "--filter ./verticals/party-registry"
-    },
-    {
-      "suite": "integration",
-      "name": "Tax Integration",
-      "package-filters": "--filter ./verticals/tax"
-    },
-    {
-      "suite": "integration",
-      "name": "Projects Integration",
-      "package-filters": "--filter ./verticals/projects"
+      "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
+      "native-composition": true,
+      "package-filters": "--filter !. --filter !./verticals/commerce-customer-context --filter !./apps/shell-super-app --filter !./verticals/privacy --filter !./packages/core-runtime --filter !./verticals/party-registry --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/catalog --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry"
     },
     {
       "suite": "browser",

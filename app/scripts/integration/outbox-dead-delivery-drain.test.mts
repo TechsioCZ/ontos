@@ -262,20 +262,24 @@ it.layer(services, { excludeTestServices: true })('composition drain with a dead
         // A short freshness lease bounds the drain wait at about ten seconds.
         yield* f.admin.executor
           .update(applicationCompositionAuthority)
-          .set({ validUntil: sql`clock_timestamp() + interval '40 seconds'` });
+          .set({ validUntil: sql`clock_timestamp() + interval '85 seconds'` });
         const failure = yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(
           Effect.provide(f.layer),
           Effect.flip,
         );
         expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
         const reason = Schema.is(ApplicationCompositionAuthorityError)(failure) ? failure.reason : '';
-        expect(reason).toContain('did not finish within its freshness lease');
-        expect(reason).toContain('Dead tracked Outbox deliveries block the drain');
+        // The pre-flight now refuses before durable admission closes, so the old release never stops serving.
+        expect(reason).toContain('drain was not started: durable admission is unchanged');
+        expect(reason).toContain('Dead Outbox deliveries block the drain');
         expect(reason).toContain(
           `--tenant-id ${f.tenantId} --message-id ${f.messageId} --worker-key ${f.workerKey} (attempts 1)`,
         );
-        // The failed drain changed nothing but durable admission; the debt still waits for the operator.
-        expect((yield* f.runtime.select().from(applicationCompositionAuthority))[0]?.phase).toBe('active');
+        // The refused drain changed nothing at all; the debt still waits for the operator.
+        expect((yield* f.runtime.select().from(applicationCompositionAuthority))[0]).toMatchObject({
+          durableWorkAdmission: 'open',
+          phase: 'active',
+        });
         expect(yield* f.runtime.select().from(applicationCompositionDurableWork)).toHaveLength(1);
 
         yield* f.admin.executor

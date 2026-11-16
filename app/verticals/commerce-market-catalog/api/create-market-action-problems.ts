@@ -95,10 +95,12 @@ export const createMarketActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateMarketActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateMarketActionForbiddenProblem'> =>
     CreateMarketActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -207,7 +209,7 @@ const mapCoreProblem = (error: ActionCoreError): CreateMarketActionProblem =>
       ActionInvocationStateError: (failure) => createMarketActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createMarketActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createMarketActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createMarketActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => createMarketActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createMarketActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createMarketActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createMarketActionProblem.conflict(failure.code),

@@ -127,3 +127,37 @@ it.effect('logs one request line with its round trips, when the request succeeds
     expect(entries[1]).toContain('"outcome":"failed"');
   }),
 );
+
+/** One owner dispatch that reported `timing` itself. */
+const owner = (app: string, timing: string) =>
+  Effect.void.pipe(
+    Effect.tap(() => Effect.annotateCurrentSpan({ 'ontos.owner_app': app, 'ontos.owner_timing': timing })),
+    Effect.withSpan('ModuleApi.dispatchApprovedRequest'),
+  );
+
+it.effect(
+  'logs what a request waited on beyond its round trips: owners, Core Reads and Actions, authority checks',
+  () =>
+    Effect.gen(function* requestSteps() {
+      const entries: string[] = [];
+      const work = Effect.all(
+        [
+          owner('work-tasks', 'prepare;dur=12, gate;dur=40'),
+          owner('party-registry', 'read;dur=3'),
+          span('ReadRuntime.runRead'),
+          span('ReadRuntime.runRead'),
+          span('ActionRuntime.runAction'),
+          span('ActionAuthority.checkActionAuthorities'),
+        ],
+        { concurrency: 1 },
+      );
+      yield* withRoundTripLog('decide', work).pipe(Effect.provide(capturedLogs(entries)));
+      const [entry = ''] = entries;
+      expect(entry).toContain('"ownerCalls":2');
+      expect(entry).toContain('"coreReads":2');
+      expect(entry).toContain('"coreActions":1');
+      expect(entry).toContain('"actionAuthorityChecks":1');
+      // The slowest owner call names its app and the phases it reported itself.
+      expect(entry).toMatch(/"slowestOwner":"(?<app>work-tasks|party-registry) \d+ ms: /u);
+    }),
+);

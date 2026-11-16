@@ -700,6 +700,11 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
     yield* fs.makeDirectory(cache, { recursive: true });
     const artifact = path.join(cache, `${yield* nextId}.mjs`);
     yield* Effect.addFinalizer(() => Effect.orDie(fs.remove(artifact, { force: true })));
+    // The receiver holds its module key in the same credential store copy its owner code reads through the external
+    // `@app/core-runtime`: the store stays an external file, never a second inlined copy nobody reads.
+    const credentialStore = yield* fs.realPath(
+      path.resolve(directory, '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
+    );
     const bundle = yield* ChildProcess.make(
       '../../node_modules/esbuild/bin/esbuild',
       [
@@ -708,6 +713,7 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--external:${credentialStore}`,
         `--define:ULTRAMODERN_BUILD_MARKER=${yield* encode(buildIdentity.buildMarker)}`,
         `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encode(buildIdentity.sourceRevision)}`,
         `--outfile=${artifact}`,

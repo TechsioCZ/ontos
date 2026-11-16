@@ -8,12 +8,8 @@ import { FetchHttpClient } from 'effect/http';
  * What must never run between BEGIN and COMMIT of a governed operation: every one of them would hold the
  * transaction's pooled connection idle while it waits on something else.
  */
-export const TransactionIoSchema = Schema.Literals([
-  'module-transport',
-  'outbound-fetch',
-  'pool-acquisition',
-  'spicedb',
-]);
+const POOL_ACQUISITION = 'pool-acquisition';
+export const TransactionIoSchema = Schema.Literals(['module-transport', 'outbound-fetch', POOL_ACQUISITION, 'spicedb']);
 export type TransactionIo = typeof TransactionIoSchema.Type;
 
 /** A defect: owner code reached remote I/O or a second pooled connection inside a database transaction. */
@@ -27,8 +23,12 @@ export class IoInsideDatabaseTransaction extends Data.TaggedError('IoInsideDatab
   }
 }
 
+type Fetch = typeof globalThis.fetch;
+
 interface OpenTransaction {
   readonly operationKey: string;
+  /** The fiber's fetch before the outermost mark replaced it; only a declared evidence call gets it back. */
+  readonly originalFetch: Fetch;
   /** Fetch refusals surface as transport failures, which owner code may map away; the mark re-raises them. */
   readonly refusedFetches: IoInsideDatabaseTransaction[];
 }
@@ -39,12 +39,54 @@ export const OpenDatabaseTransaction = Context.Reference<Option.Option<OpenTrans
   { defaultValue: Option.none },
 );
 
-/** Dies when the fiber runs inside a marked database transaction. Every Core transport calls it first. */
+/**
+ * One owner proof read that main's source-evidence design makes from inside its write transaction, because its
+ * request can only be derived there (DEPLOYMENT.md, demo divergence: declared in-transaction evidence calls).
+ * `owner` is the owning module id; `evidence` is a short stable name of the proof.
+ */
+export interface DeclaredEvidenceCall {
+  readonly evidence: string;
+  readonly owner: string;
+}
+
+interface SuspendedTransaction {
+  readonly declaration: DeclaredEvidenceCall;
+  readonly transaction: OpenTransaction;
+}
+
+/** The marked transaction a declared evidence call suspended: its connection is still held. */
+const DeclaredEvidenceCallTransaction = Context.Reference<Option.Option<SuspendedTransaction>>(
+  '@app/core-runtime/db/transaction-io-guard/DeclaredEvidenceCallTransaction',
+  { defaultValue: Option.none },
+);
+
+/** The operation whose open or suspended transaction refuses `io`: a declared evidence call keeps the pool refusal. */
+const refusingOperationKey = (
+  io: TransactionIo,
+  open: Option.Option<OpenTransaction>,
+  suspended: Option.Option<SuspendedTransaction>,
+): Option.Option<string> => {
+  if (Option.isSome(open)) {
+    return Option.some(open.value.operationKey);
+  }
+  if (io === POOL_ACQUISITION && Option.isSome(suspended)) {
+    return Option.some(suspended.value.transaction.operationKey);
+  }
+  return Option.none();
+};
+
+/**
+ * Dies when the fiber runs inside a marked database transaction. Every Core transport calls it first. A declared
+ * evidence call lifts the remote refusals, never the pool refusal: its transaction still holds its connection.
+ */
 export const refuseInsideDatabaseTransaction = (io: TransactionIo, target: string): Effect.Effect<void> =>
   Effect.flatMap(Effect.service(OpenDatabaseTransaction), (open) =>
-    Option.isNone(open)
-      ? Effect.void
-      : Effect.die(new IoInsideDatabaseTransaction({ io, operationKey: open.value.operationKey, target })),
+    Effect.flatMap(Effect.service(DeclaredEvidenceCallTransaction), (suspended) =>
+      Option.match(refusingOperationKey(io, open, suspended), {
+        onNone: () => Effect.void,
+        onSome: (operationKey) => Effect.die(new IoInsideDatabaseTransaction({ io, operationKey, target })),
+      }),
+    ),
   );
 
 const isRequest = Schema.is(Schema.instanceOf(Request));
@@ -70,6 +112,21 @@ const refusingFetch = (open: OpenTransaction) =>
     Promise.reject.bind(Promise)<Response>,
   );
 
+/** Runs `effect` under `open`'s mark and dies with the first fetch the mark refused, whatever the effect did with it. */
+const runMarked = <Value, Failure, Requirements>(
+  open: OpenTransaction,
+  effect: Effect.Effect<Value, Failure, Requirements>,
+): Effect.Effect<Value, Failure, Requirements> =>
+  effect.pipe(
+    Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
+    Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
+    Effect.exit,
+    Effect.flatMap((exit) => {
+      const [refusal] = open.refusedFetches;
+      return refusal === undefined ? exit : Effect.die(refusal);
+    }),
+  );
+
 /**
  * Marks `effect` as the body of the named operation's database transaction: SpiceDB, module transport,
  * outbound fetch, and a second pool acquisition all die inside it. Apply it inside the transaction, after
@@ -80,18 +137,42 @@ export const insideDatabaseTransaction =
   <Value, Failure, Requirements>(
     effect: Effect.Effect<Value, Failure, Requirements>,
   ): Effect.Effect<Value, Failure, Requirements> =>
-    Effect.suspend(() => {
-      const open: OpenTransaction = { operationKey, refusedFetches: [] };
-      return effect.pipe(
-        Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
-        Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
-        Effect.exit,
-        Effect.flatMap((exit) => {
-          const [refusal] = open.refusedFetches;
-          return refusal === undefined ? exit : Effect.die(refusal);
-        }),
-      );
-    });
+    Effect.flatMap(Effect.service(OpenDatabaseTransaction), (outer) =>
+      Effect.flatMap(Effect.service(FetchHttpClient.Fetch), (currentFetch) =>
+        runMarked(
+          {
+            operationKey,
+            // A nested mark keeps the outermost original, never an outer mark's refusing fetch.
+            originalFetch: Option.isSome(outer) ? outer.value.originalFetch : currentFetch,
+            refusedFetches: [],
+          },
+          effect,
+        ),
+      ),
+    );
+
+/**
+ * Runs one declared owner evidence call inside a marked transaction: within `effect` only, the mark reads as
+ * absent (SpiceDB and module transport are not refused) and fetch is the one the outermost mark replaced. A
+ * second pool acquisition still dies, and statements through the transaction's own client still join it. Outside
+ * a marked transaction it is the identity. Every use is pinned in the declared evidence call inventory.
+ */
+export const declaredEvidenceCallInsideTransaction =
+  (declaration: DeclaredEvidenceCall) =>
+  <Value, Failure, Requirements>(
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ): Effect.Effect<Value, Failure, Requirements> =>
+    Effect.flatMap(Effect.service(OpenDatabaseTransaction), (open) =>
+      Option.isNone(open)
+        ? effect
+        : effect.pipe(
+            Effect.updateService(FetchHttpClient.Fetch, () => open.value.originalFetch),
+            Effect.updateService(OpenDatabaseTransaction, () => Option.none()),
+            Effect.updateService(DeclaredEvidenceCallTransaction, () =>
+              Option.some({ declaration, transaction: open.value }),
+            ),
+          ),
+    );
 
 /** A statement that borrows its connection (no scoped lease) when it runs outside a transaction. */
 const BorrowingStatementSchema = Schema.Struct({
@@ -154,6 +235,6 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
     Effect.flatMap(Effect.serviceOption(client.transactionService), (connection) =>
       Option.isSome(connection)
         ? Effect.void
-        : refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool'),
+        : refuseInsideDatabaseTransaction(POOL_ACQUISITION, 'PostgreSQL connection pool'),
     ),
   );

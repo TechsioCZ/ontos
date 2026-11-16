@@ -4,7 +4,14 @@ import { Array as EffectArray, Effect, Order, Schema, Redacted } from 'effect';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 
-import { PRIVACY_SCHEMA_NAME, PRIVACY_TABLE_INVENTORY, PRIVACY_TABLES } from '../src/database/schema.ts';
+import {
+  PRIVACY_SCHEMA_NAME,
+  PRIVACY_TABLE_INVENTORY,
+  PRIVACY_TABLES,
+  PRIVACY_INGRESS_TABLE_INVENTORY,
+} from '../src/database/schema.ts';
+
+const INGRESS_TABLES: ReadonlySet<string> = new Set(PRIVACY_INGRESS_TABLE_INVENTORY);
 
 const EXPECTED_TABLES = EffectArray.sort(
   PRIVACY_TABLES.map((table) => getTableConfig(table).name),
@@ -285,15 +292,25 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
       );
     }
     const unsafeTables = catalog.rows.filter((table) => {
-      const redemption = table.table_name === 'gateway_assertion_redemptions';
+      if (INGRESS_TABLES.has(table.table_name)) {
+        return (
+          table.owner_name !== connections.admin.user ||
+          table.rls_enabled ||
+          table.rls_forced ||
+          !table.can_select ||
+          !table.can_insert ||
+          table.can_update ||
+          !table.can_delete
+        );
+      }
       const mutable = !IMMUTABLE_TABLE_SET.has(table.table_name);
       return (
         table.owner_name !== connections.admin.user ||
-        table.rls_enabled === redemption ||
-        table.rls_forced === redemption ||
+        !table.rls_enabled ||
+        !table.rls_forced ||
         !table.can_select ||
         !table.can_insert ||
-        table.can_update !== (mutable && !redemption) ||
+        table.can_update !== mutable ||
         table.can_delete !== mutable
       );
     });
@@ -505,5 +522,5 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
 
 await Effect.runPromise(verify);
 process.stdout.write(
-  `Verified ${EXPECTED_TABLES.length} governed tables, ${EXPECTED_FOREIGN_KEYS.length} foreign keys, and ${EXPECTED_IMMUTABLE_TRIGGERS.length} immutable ledgers in ${PRIVACY_SCHEMA_NAME}\n`,
+  `Verified ${EXPECTED_TABLES.length - INGRESS_TABLES.size} governed tables, ${INGRESS_TABLES.size} ingress tables, ${EXPECTED_FOREIGN_KEYS.length} foreign keys, and ${EXPECTED_IMMUTABLE_TRIGGERS.length} immutable ledgers in ${PRIVACY_SCHEMA_NAME}\n`,
 );

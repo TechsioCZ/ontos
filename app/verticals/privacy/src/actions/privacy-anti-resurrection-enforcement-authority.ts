@@ -55,7 +55,11 @@ export const preparedAntiResurrectionAuthority = (
   receipt: AntiResurrectionEnforcementReceipt,
 ): AntiResurrectionEnforcementAuthorityService => ({
   resolve: Effect.fn('AntiResurrectionEnforcementAuthority.resolvePrepared')(function* resolvePrepared(context) {
-    yield* preparedOwnerExecutionAuthority(prepared).resolve(context.request, context);
+    yield* preparedOwnerExecutionAuthority(prepared).resolve(context.request, {
+      ...context,
+      dispatchOriginator: prepared.dispatchOriginator,
+      scope: prepared.context.scope,
+    });
     if (!Schema.toEquivalence(OwnerExecutionAuthorityResultSchema)(context.authority, prepared.authority)) {
       return yield* new PrivacyActionRejected({
         code: 'privacy_action_rejected',

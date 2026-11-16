@@ -3,8 +3,8 @@ import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contr
 import { Schema } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
-import type { ShellSearchResult } from '../../../shared/api.ts';
-import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../shared/api.ts';
+import type { ShellSearchResult } from '../../../shared/browser-api.ts';
+import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../../shared/browser-api.ts';
 import type { ShellSearchResultLinkComponent } from '../../../src/routes/shell-search-result-row.tsx';
 import { ShellSearchResultRow } from '../../../src/routes/shell-search-result-row.tsx';
 import type { ShellSearchPresentationIndex } from '../../../src/routes/shell-search-resource-types.ts';

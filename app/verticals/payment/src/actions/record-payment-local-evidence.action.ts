@@ -38,7 +38,7 @@ const domainEvents = {
  * Its own critical permission is necessary but not sufficient: the method must have an explicitly
  * configured local/POS/operator (or manual refund) source for the exact fact family, capability and
  * amount. There is no generic "mark paid": a missing source refuses the statement without changing
- * coverage, and a manual refund route never confirms returned money on an operator assertion.
+ * coverage. Manual refund outcomes require evidence verified through the original executor.
  */
 export const handleRecordPaymentLocalEvidence = Effect.fn('RecordPaymentLocalEvidence.handle')(
   function* recordPaymentLocalEvidence(

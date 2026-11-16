@@ -1,0 +1,674 @@
+import { NodeServices } from '@effect/platform-node';
+import type { PgClient } from '@effect/sql-pg';
+import { DateTime, Duration, Effect, Ref, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
+import { expect, it } from 'effect-rstest';
+
+import { TenantAccessBootstrap } from '../../src/access/bootstrap/index.ts';
+import { AccessProjectionError } from '../../src/access/compiler/projection-error.ts';
+import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import type { TenantId } from '../../src/access/ids.ts';
+import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
+import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
+import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
+import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
+import {
+  deriveReleaseTenantModules,
+  installReleaseTenantModules,
+  installUnderLock,
+  LockedInstallSchema,
+} from '../../src/install/release-tenant-modules.ts';
+import type { ReleaseTenantModule } from '../../src/install/release-tenant-modules.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
+import { insertTenantStatement } from '../support/access-scenarios/database.ts';
+import {
+  ownerScope,
+  SCENARIO_COMPANY,
+  scenarioUid,
+  withProjectionTenant,
+} from '../support/projection-tenant-scenario.ts';
+
+/*
+ * Release-time module installation end to end: a selling Tenant bootstrapped with "Plný přístup" on a deployment that
+ * declares a tax module it has not installed. The release step installs it as the platform (state, history, the
+ * Action's event and Outbox wake-up, recorded as `system`), projects the Tenant through the one Core writer, and the
+ * owner's rights in the module are effective as soon as the step returns. A second release changes nothing; a state
+ * a person set is never touched.
+ */
+const SELLING = 'billing.invoices';
+const MERCHANDISE = 'shop.goods';
+const TAX = 'tax.rates';
+const OTHER = 'crm.notes';
+const TAX_READ = 'tax.rates.rule-set.read';
+const TOPIC = 'core.modules.tenant-module-state-changed.v1';
+const RUN = 'a'.repeat(64);
+
+const entrypoint = (moduleKey: string, key: string) =>
+  defineTenantModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    entrypointKey: `${moduleKey}.api.${key}`,
+    moduleKey,
+    role: 'api',
+  });
+const readOf = (key: string): AccessDeclarationInput => ({
+  key,
+  kind: 'read',
+  modes: ['run'],
+  placement: { group: 'records', level: 'basic' },
+  risk: 'routine',
+  selectors: [],
+});
+const moduleOf = (moduleKey: string, key: string): AccessCatalogModule => ({
+  descriptors: [{ accessDeclaration: readOf(key), entrypoint: entrypoint(moduleKey, 'read') }],
+  moduleId: moduleKey,
+});
+/** The deployment: the selling module, the tax module, and one module the composition does not publish below. */
+const deployment: readonly AccessCatalogModule[] = [
+  moduleOf(SELLING, `${SELLING}.invoice.read`),
+  moduleOf(TAX, TAX_READ),
+  moduleOf(OTHER, `${OTHER}.note.read`),
+];
+const taxCarrier = { accessDeclaration: decodeAccessDeclarationOrThrow(readOf(TAX_READ), entrypoint(TAX, 'read')) };
+/** The active composition publishes the selling and the tax module, not `crm.notes`. */
+const catalog = makeInstalledCatalogFixture(
+  makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+  makeModuleContractFixture({ appId: 'tax', moduleId: TAX }),
+);
+
+/** The Tenant's owner bootstrapped with "Plný přístup" over the whole deployment, and projected. */
+const bootstrapOwner = (tenantId: TenantId) =>
+  Effect.gen(function* bootstrapTenantOwner() {
+    const scope = yield* ownerScope(tenantId);
+    const bootstrap = yield* TenantAccessBootstrap;
+    yield* bootstrap
+      .bootstrapTenantAccess({ legalEntityIds: [SCENARIO_COMPANY], modules: deployment, scope })
+      .pipe(Effect.orDie);
+    const writer = yield* AccessProjectionWriter;
+    yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+  });
+
+const decide = (tenantId: TenantId) =>
+  Effect.gen(function* decideTaxRead() {
+    const gate = yield* AccessDecisionGate;
+    const decision = yield* gate.decide({
+      carrier: taxCarrier,
+      legalEntityScope: 'required',
+      now: DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00Z')),
+      scope: yield* ownerScope(tenantId, SCENARIO_COMPANY),
+    });
+    return `${decision.outcome} ${decision.reasons.map(({ code }) => code).join(',')}`;
+  });
+
+const declared = (tenantId: TenantId): readonly ReleaseTenantModule[] => [
+  { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId },
+  { moduleKey: OTHER, sellingModuleKeys: [], tenantId },
+  { moduleKey: TAX, sellingModuleKeys: [], tenantId: scenarioUid(99) },
+];
+
+const stateRow = (index: number, tenantId: string, moduleKey: string, state = 'active') =>
+  `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
+     ('${scenarioUid(700 + index)}', '${tenantId}', '${moduleKey}', '${state}')`;
+
+const install = (modules: readonly ReleaseTenantModule[]) =>
+  installReleaseTenantModules({ catalog, modules, reconcileRetrySpacing: Duration.zero, runReference: RUN });
+
+const HistoryRowSchema = Schema.Struct({
+  action_invocation_id: Schema.Null,
+  change_source: Schema.String,
+  changed_by_principal_id: Schema.Null,
+  module_key: Schema.String,
+  new_state: Schema.String,
+  previous_state: Schema.Null,
+});
+const historyOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select module_key, previous_state, new_state, change_source, changed_by_principal_id, action_invocation_id
+         from core.tenant_module_state_changes where tenant_id = '${tenantId}' order by occurred_at`,
+    )
+    .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(HistoryRowSchema))), Effect.orDie);
+
+/** The wake-ups the Core installation worker consumes, with their events. */
+const wakeUpsOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select m.topic, m.producer_module_key, m.payload_json, e.subject_module_key, e.action_invocation_id
+         from core.outbox_messages m join core.domain_events e
+           on e.tenant_id = m.tenant_id and e.domain_event_id = m.domain_event_id
+        where m.tenant_id = '${tenantId}' and m.topic = '${TOPIC}'`,
+    )
+    .pipe(Effect.orDie);
+
+/** An engine whose writes reach the engine and then lose the connection while `failing` is set. */
+const failingMidWrite =
+  (failing: Ref.Ref<boolean>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.get(failing).pipe(
+        Effect.flatMap((fail) =>
+          fail
+            ? (options.beforeWrite ?? Effect.void).pipe(
+                Effect.andThen(
+                  Effect.fail([
+                    new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'connection lost' }),
+                  ]),
+                ),
+              )
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+const tenantFenceOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select f.state from core.access_scope_fences f join core.access_scopes s on s.scope_id = f.scope_id
+        where f.tenant_id = '${tenantId}' and s.legal_entity_id is null`,
+    )
+    .pipe(Effect.orDie);
+
+/** The lapse of the hold, as time passing would bring it. */
+const lapseLeaseOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `update core.access_scope_fences set lease_expires_at = now() - interval '1 second'
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie);
+
+/** An engine whose write fails while the countdown is above zero, each failure taking ten seconds of the run. */
+const failingSlowly =
+  (left: Ref.Ref<number>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.getAndUpdate(left, (count) => count - 1).pipe(
+        Effect.flatMap((count) =>
+          count > 0
+            ? TestClock.adjust('10 seconds').pipe(
+                Effect.andThen(
+                  Effect.fail([new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'slow' })]),
+                ),
+              )
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+/** An engine whose write fails while the countdown is above zero, as a lost race or a blip would. */
+const failingFirst =
+  (left: Ref.Ref<number>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.getAndUpdate(left, (count) => count - 1).pipe(
+        Effect.flatMap((count) =>
+          count > 0
+            ? Effect.fail([new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'engine busy' })])
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) => {
+  suite.effect('installs a missing module as the platform, makes it effective at once, and repeats nothing', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* installsOnce() {
+        yield* bootstrapOwner(tenantId);
+        // Every deploy's migrator first activates the deployed catalog: "Plný přístup" follows it, tax rights included.
+        const activation = yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie);
+        expect(activation.tenants.find((entry) => entry.tenantId === tenantId)?.outcome).not.toBe('failed');
+        const before = yield* decide(tenantId);
+
+        const first = yield* install(declared(tenantId));
+        expect(first.modules.map(({ moduleKey, outcome, tenantId: id }) => [id, moduleKey, outcome])).toEqual([
+          [tenantId, TAX, 'installed'],
+          [tenantId, OTHER, 'not_published'],
+          [scenarioUid(99), TAX, 'tenant_absent'],
+        ]);
+        expect(first.reconciles).toHaveLength(1);
+        expect(first.reconciles[0]).toMatchObject({ tenantId });
+        expect(first.reconciles[0]).not.toHaveProperty('failure');
+        // Recorded exactly as a module-state change, but by the platform: no person, no Action invocation.
+        expect(yield* historyOf(admin, tenantId)).toEqual([
+          {
+            action_invocation_id: null,
+            change_source: 'system',
+            changed_by_principal_id: null,
+            module_key: TAX,
+            new_state: 'active',
+            previous_state: null,
+          },
+        ]);
+        // No Outbox wake-up: the Core installation worker admits only a claim a real Action invocation attests, so a
+        // wake-up from the platform could never be processed and would block the next deploy as a dead message.
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+        // The preset already holds the tax cells, but they reach the engine only for an installed module: the owner's
+        // right becomes effective the moment the step returns, with no Outbox worker in between.
+        expect({ after: yield* decide(tenantId), before }).toEqual({
+          after: 'ALLOWED allow.granted',
+          before: 'DENIED deny.insufficient_grant',
+        });
+        const actor = yield* admin
+          .unsafe(`select kind, status from core.principals where principal_id = '${releaseActorId(tenantId)}'`)
+          .pipe(Effect.orDie);
+        expect(actor).toEqual([{ kind: 'system', status: 'active' }]);
+        // Audited like the Action (critical, sensitive): the system actor, the Tenant, the module and the release.
+        const audit = yield* admin
+          .unsafe(
+            `select principal_id, auth_method, audit_profile, outcome, target_module_key, evidence_json
+               from core.audit_events
+              where tenant_id = '${tenantId}' and event_type = 'core.modules.tenant-module-installed-by-release'`,
+          )
+          .pipe(Effect.orDie);
+        expect(audit).toEqual([
+          {
+            audit_profile: 'sensitive',
+            auth_method: 'system',
+            evidence_json: {
+              compositionRevision: RUN,
+              moduleKey: TAX,
+              newState: 'active',
+              previousState: null,
+              risk: 'critical',
+            },
+            outcome: 'succeeded',
+            principal_id: releaseActorId(tenantId),
+            target_module_key: TAX,
+          },
+        ]);
+
+        // The next release finds it active: nothing installed, no new history or wake-up, and its reconcile of the
+        // Tenant writes nothing because the projection is current.
+        const second = yield* install(declared(tenantId));
+        expect(second.modules[0]).toMatchObject({ moduleKey: TAX, outcome: 'already_active' });
+        expect(second.reconciles).toEqual([{ deletions: 0, tenantId, touches: 0 }]);
+        expect(yield* historyOf(admin, tenantId)).toHaveLength(1);
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+      }),
+    ),
+  );
+
+  suite.effect('a projection that loses a race once is tried again; one that keeps failing writes no wake-up', () =>
+    Effect.gen(function* retriedProjection() {
+      const left = yield* Ref.make(0);
+      yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingFirst(left) }, (tenantId, admin) =>
+        Effect.gen(function* raceAndFailure() {
+          yield* bootstrapOwner(tenantId);
+          yield* Ref.set(left, 1);
+          const retried = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+          expect(retried.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(retried.reconciles).toHaveLength(1);
+          expect(retried.reconciles[0]).not.toHaveProperty('failure');
+
+          yield* Ref.set(left, 100);
+          const failed = yield* installReleaseTenantModules({
+            catalog: makeInstalledCatalogFixture(
+              makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+              makeModuleContractFixture({ appId: 'tax-extra', moduleId: 'tax.extra' }),
+            ),
+            modules: [{ moduleKey: 'tax.extra', sellingModuleKeys: [], tenantId }],
+            reconcileRetrySpacing: Duration.zero,
+            runReference: RUN,
+          });
+          // The install committed; the projection did not, and the run says so. It failed before any engine write, so
+          // the fence is open and the module's rights stay denied until the next reconcile (the next deploy's catalog
+          // activation reconciles every Tenant). Nothing is left in the Outbox.
+          expect(failed.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(failed.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+          expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+          yield* Ref.set(left, 0);
+        }),
+      );
+    }),
+  );
+
+  suite.effect('repairs on its next run a module it installed whose reconcile failed, and makes it effective', () =>
+    Effect.gen(function* repairedNextRun() {
+      const left = yield* Ref.make(0);
+      yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingFirst(left) }, (tenantId) =>
+        Effect.gen(function* failedThenRepaired() {
+          yield* bootstrapOwner(tenantId);
+          yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie);
+          // The engine refuses the first projection and every retry: the module is installed, its rights are not.
+          yield* Ref.set(left, 100);
+          const first = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+          expect(first.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(first.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+          expect(yield* decide(tenantId)).toBe('DENIED deny.insufficient_grant');
+          // The next run (the next deploy) finds the module active and reconciles the Tenant anyway.
+          yield* Ref.set(left, 0);
+          const next = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+          expect(next.modules[0]).toMatchObject({ outcome: 'already_active' });
+          expect(next.reconciles[0]).not.toHaveProperty('failure');
+          expect(next.reconciles[0]?.touches).toBeGreaterThan(0);
+          expect(yield* decide(tenantId)).toBe('ALLOWED allow.granted');
+        }),
+      );
+    }),
+  );
+
+  suite.effect('starts nothing past its deadline, and never starts a projection it may not have time to finish', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* boundedRun() {
+        yield* bootstrapOwner(tenantId);
+        // The suite runs on the test clock, which starts at the epoch: that is the step's `now` as well.
+        const now = DateTime.makeUnsafe(0);
+        const late = yield* installReleaseTenantModules({
+          catalog,
+          deadline: DateTime.subtract(now, { seconds: 1 }),
+          modules: declared(tenantId),
+          runReference: RUN,
+        });
+        expect(late.modules.map(({ outcome }) => outcome)).toEqual(['deferred', 'deferred', 'deferred']);
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+        // Time for the install, not for the projection: the module is installed and its projection deferred.
+        const tight = yield* installReleaseTenantModules({
+          catalog,
+          deadline: DateTime.add(now, { seconds: 30 }),
+          modules: declared(tenantId),
+          runReference: RUN,
+        });
+        expect(tight.modules[0]).toMatchObject({ outcome: 'installed' });
+        expect(tight.reconciles).toEqual([
+          {
+            deletions: 0,
+            failure: 'deferred: too little of the release budget was left to start the projection',
+            tenantId,
+            touches: 0,
+          },
+        ]);
+      }),
+    ),
+  );
+
+  suite.effect('tries a failed projection again only while the run budget still holds a whole projection', () =>
+    Effect.gen(function* budgetedRetries() {
+      const left = yield* Ref.make(0);
+      yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingSlowly(left) }, (tenantId) =>
+        Effect.gen(function* retriesWithinBudget() {
+          yield* bootstrapOwner(tenantId);
+          yield* Ref.set(left, 100);
+          // The test clock starts at the epoch. 65 seconds of budget start the first projection (a minute is
+          // reserved for one); it fails ten seconds in, and the 55 seconds left start no retry.
+          const run = yield* installReleaseTenantModules({
+            catalog,
+            deadline: DateTime.add(DateTime.makeUnsafe(0), { seconds: 65 }),
+            modules: [{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }],
+            reconcileRetrySpacing: Duration.zero,
+            runReference: RUN,
+          });
+          expect(run.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(run.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+          expect(yield* Ref.get(left)).toBe(99);
+          yield* Ref.set(left, 0);
+        }),
+      );
+    }),
+  );
+
+  suite.effect('never installs a module into the platform tenant, nor gives it a release actor', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (_tenantId, admin) =>
+      Effect.gen(function* platformTenant() {
+        const run = yield* install([{ moduleKey: TAX, sellingModuleKeys: [], tenantId: PLATFORM_TENANT.tenantId }]);
+        expect(run.modules).toEqual([
+          {
+            detail: 'the platform tenant serves no people; nothing is installed into it',
+            moduleKey: TAX,
+            outcome: 'tenant_absent',
+            tenantId: PLATFORM_TENANT.tenantId,
+          },
+        ]);
+        expect(run.reconciles).toEqual([]);
+        const actors = yield* admin
+          .unsafe(
+            `select count(*)::int as actors from core.principals where principal_id = '${releaseActorId(PLATFORM_TENANT.tenantId)}'`,
+          )
+          .pipe(Effect.orDie);
+        expect(actors).toEqual([{ actors: 0 }]);
+      }),
+    ),
+  );
+
+  suite.effect('never changes a state a person set, and installs nothing where the Tenant does not sell', () =>
+    withProjectionTenant({}, (tenantId, admin) =>
+      Effect.gen(function* additiveOnly() {
+        yield* bootstrapOwner(tenantId);
+        const notSelling = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+        expect(notSelling.modules[0]).toMatchObject({ outcome: 'selling_module_missing' });
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+
+        yield* admin
+          .unsafe(
+            `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
+               ('${scenarioUid(7)}', '${tenantId}', '${TAX}', 'inactive')`,
+          )
+          .pipe(Effect.orDie);
+        const left = yield* install([{ moduleKey: TAX, sellingModuleKeys: [], tenantId }]);
+        expect(left.modules[0]).toMatchObject({ detail: expect.stringContaining('inactive'), outcome: 'left_as_set' });
+        expect(left.reconciles).toEqual([]);
+        const state = yield* admin
+          .unsafe(
+            `select state from core.tenant_module_states where tenant_id = '${tenantId}' and module_key = '${TAX}'`,
+          )
+          .pipe(Effect.orDie);
+        expect(state).toEqual([{ state: 'inactive' }]);
+        expect(yield* decide(tenantId)).toBe('DENIED deny.insufficient_grant');
+      }),
+    ),
+  );
+
+  suite.effect('decides selling under the Tenant lock, so a selling module ended since the first read is seen', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* sellingUnderLock() {
+        yield* bootstrapOwner(tenantId);
+        // Between the step's first read and its lock, a person ended the selling module.
+        yield* admin
+          .unsafe(
+            `update core.tenant_module_states set state = 'inactive' where tenant_id = '${tenantId}' and module_key = '${SELLING}'`,
+          )
+          .pipe(Effect.orDie);
+        const { executor } = yield* CoreDatabase;
+        const locked = yield* executor
+          .transaction((transaction) =>
+            installUnderLock(transaction, { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }, [], RUN),
+          )
+          .pipe(Effect.orDie);
+        expect(locked).toEqual(LockedInstallSchema.members[2].make({}));
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+      }),
+    ),
+  );
+
+  suite.effect('refuses a module whose intrinsic dependency is not active, and writes nothing', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* dependencyRefused() {
+        yield* bootstrapOwner(tenantId);
+        const base = makeModuleContractFixture({ appId: 'tax', moduleId: TAX });
+        // The tax module needs `crm.notes`, which the composition publishes but the Tenant has not installed.
+        const needsNotes = makeInstalledCatalogFixture(
+          makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+          makeModuleContractFixture({ appId: 'notes', moduleId: OTHER }),
+          {
+            ...base,
+            manifest: {
+              ...base.manifest,
+              requirements: {
+                coreCapabilities: [],
+                intrinsic: [{ moduleId: OTHER, requiredOperations: [] }],
+                operations: [],
+                schemaVersion: '1',
+              },
+            },
+          },
+        );
+        const refused = yield* installReleaseTenantModules({
+          catalog: needsNotes,
+          modules: [{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }],
+          reconcileRetrySpacing: Duration.zero,
+          runReference: RUN,
+        });
+        expect(refused.modules[0]).toMatchObject({ outcome: 'failed' });
+        expect(refused.modules[0]?.detail).toContain('a module it needs is not active');
+        expect(refused.reconciles).toEqual([]);
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+      }),
+    ),
+  );
+
+  suite.effect('derives Tax for every Tenant that sells or invoices, from the module states, and for no other', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (invoicing, admin) =>
+      Effect.gen(function* derivesFromStates() {
+        const selling = scenarioUid(81);
+        const both = scenarioUid(82);
+        const neither = scenarioUid(83);
+        const suspended = scenarioUid(84);
+        const ended = scenarioUid(85);
+        const platform = PLATFORM_TENANT.tenantId;
+        yield* Effect.forEach(
+          [
+            ...[selling, both, neither, suspended, ended].map(insertTenantStatement),
+            `insert into core.tenants (tenant_id, slug, name, status, default_locale)
+               values ('${platform}', 'platform-test', 'Platform', 'active', 'cs') on conflict do nothing`,
+            `update core.tenants set status = 'suspended' where tenant_id = '${suspended}'`,
+            stateRow(1, selling, MERCHANDISE),
+            stateRow(2, both, MERCHANDISE),
+            stateRow(3, both, SELLING),
+            stateRow(4, both, TAX),
+            stateRow(5, neither, OTHER),
+            stateRow(6, suspended, SELLING),
+            stateRow(7, ended, SELLING, 'inactive'),
+            stateRow(8, platform, SELLING),
+          ],
+          (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+          { concurrency: 1, discard: true },
+        );
+        const derived = yield* deriveReleaseTenantModules([
+          { moduleKey: TAX, whereActive: [MERCHANDISE, SELLING] },
+        ]).pipe(Effect.orDie);
+        // Finance only, Merchandise only, and both (Tax already active, kept so its install is a no-op); never the
+        // platform tenant, a Tenant with neither, a suspended Tenant, or one whose selling module was ended.
+        expect(derived).toEqual(
+          [invoicing, selling, both]
+            .toSorted()
+            .map((tenantId) => ({ moduleKey: TAX, sellingModuleKeys: [MERCHANDISE, SELLING], tenantId })),
+        );
+      }),
+    ),
+  );
+
+  suite.effect('a derived Tenant that already has Tax active is a no-op: no state, history or audit written', () =>
+    withProjectionTenant({ activeModules: [SELLING, TAX] }, (tenantId, admin) =>
+      Effect.gen(function* alreadyActiveNoOp() {
+        yield* bootstrapOwner(tenantId);
+        const derived = yield* deriveReleaseTenantModules([{ moduleKey: TAX, whereActive: [SELLING] }]).pipe(
+          Effect.orDie,
+        );
+        expect(derived).toEqual([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+        const run = yield* install(derived);
+        expect(run.modules.map(({ outcome }) => outcome)).toEqual(['already_active']);
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+        const audit = yield* admin
+          .unsafe(
+            `select 1 from core.audit_events
+              where tenant_id = '${tenantId}' and event_type = 'core.modules.tenant-module-installed-by-release'`,
+          )
+          .pipe(Effect.orDie);
+        expect(audit).toEqual([]);
+      }),
+    ),
+  );
+
+  suite.effect('installs the modules the manifest installs with it in the same transaction, never a set state', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* installsCompanions() {
+        yield* bootstrapOwner(tenantId);
+        const base = makeModuleContractFixture({ appId: 'tax', moduleId: TAX });
+        const withNotes = makeInstalledCatalogFixture(
+          makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+          makeModuleContractFixture({ appId: 'notes', moduleId: OTHER }),
+          {
+            ...base,
+            manifest: { ...base.manifest, activation: { ...base.manifest.activation, installsWith: [OTHER] } },
+          },
+        );
+        const run = yield* installReleaseTenantModules({
+          catalog: withNotes,
+          modules: [{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }],
+          reconcileRetrySpacing: Duration.zero,
+          runReference: RUN,
+        });
+        expect(run.modules).toEqual([
+          {
+            detail: `installed active by the release, with ${OTHER}`,
+            moduleKey: TAX,
+            outcome: 'installed',
+            tenantId,
+          },
+        ]);
+        expect(run.reconciles).toHaveLength(1);
+        expect((yield* historyOf(admin, tenantId)).map(({ module_key: moduleKey }) => moduleKey).toSorted()).toEqual([
+          OTHER,
+          TAX,
+        ]);
+        const audit = yield* admin
+          .unsafe(
+            `select target_module_key, evidence_json->>'installedWith' as installed_with from core.audit_events
+              where tenant_id = '${tenantId}' and event_type = 'core.modules.tenant-module-installed-by-release'
+              order by target_module_key`,
+          )
+          .pipe(Effect.orDie);
+        // `crm.notes` sorts before `tax.rates`.
+        expect(audit).toEqual([
+          { installed_with: TAX, target_module_key: OTHER },
+          { installed_with: null, target_module_key: TAX },
+        ]);
+      }),
+    ),
+  );
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('release-time installation healing', (suite) => {
+  suite.effect(
+    'a Tenant whose direct projection failed mid-write is reopened by the fence sweeper, with no wake-up',
+    () =>
+      Effect.gen(function* healedBySweeper() {
+        const failing = yield* Ref.make(false);
+        yield* withProjectionTenant(
+          { activeModules: [SELLING], wrapCompiler: failingMidWrite(failing) },
+          (tenantId, admin) =>
+            Effect.gen(function* sweptAfterRelease() {
+              yield* bootstrapOwner(tenantId);
+              yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie);
+              yield* Ref.set(failing, true);
+              const run = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+              expect(run.modules[0]).toMatchObject({ outcome: 'installed' });
+              expect(run.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+              // The engine may be half-written, so the Tenant stays closed; nothing waits in the Outbox.
+              expect(yield* tenantFenceOf(admin, tenantId)).toEqual([{ state: 'Changing' }]);
+              expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+              yield* Ref.set(failing, false);
+              yield* lapseLeaseOf(admin, tenantId);
+              const backoffs = yield* makeAccessFenceSweepBackoffs;
+              expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+                busy: [],
+                deferred: 0,
+                failed: [],
+                healed: [tenantId],
+              });
+              expect(yield* tenantFenceOf(admin, tenantId)).toEqual([{ state: 'Ready' }]);
+              expect(yield* decide(tenantId)).toBe('ALLOWED allow.granted');
+            }),
+        );
+      }),
+  );
+});

@@ -1,3 +1,4 @@
+import { readVerifiedGatewayRecovery } from '../auth/system-principal-context-provenance.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
@@ -28,6 +29,7 @@ import {
   getActionInvocationPersistenceErrorCause,
 } from './errors.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
+import { ReportableReasonCodesSchema, reportableReasonCodes } from '../access/enforcement/reason-codes.ts';
 import { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
 import { ReadEvidencePersistenceError } from '../reads/read-evidence-persistence-error.ts';
 import {
@@ -48,7 +50,7 @@ export interface ActionRequestHashInput {
   readonly actionKey: string;
   readonly normalizedPayload: unknown;
   readonly owningModuleKey: string;
-  readonly principal: TrustedPrincipalContext;
+  readonly principal: Pick<TrustedPrincipalContext, 'legalEntityId' | 'principalId' | 'tenantId'>;
   readonly schemaVersion: string;
   readonly target: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>;
 }
@@ -58,6 +60,7 @@ type CanonicalValue =
   | readonly ['bigint', string]
   | readonly ['boolean', boolean]
   | readonly ['date', string]
+  | readonly ['dateTimeUtc', string]
   | readonly ['null']
   | readonly ['number', string]
   | readonly ['object', readonly (readonly [string, CanonicalValue])[]]
@@ -146,6 +149,9 @@ const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): Canonical
   if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
   }
+  if (DateTime.isDateTime(value) && DateTime.isUtc(value)) {
+    return ['dateTimeUtc', DateTime.formatIso(value)];
+  }
   if (Predicate.isDate(value)) {
     return ['date', value.toISOString()];
   }
@@ -227,8 +233,22 @@ export interface ActionInvocationRecord {
 
 /** The recorded reason a terminal `rejected` invocation was refused. */
 export type ActionRecordedRejection =
-  | { readonly stage: 'authz' }
+  /** `reasons`: the refusal's reportable codes, so a same-key retry answers exactly as the first request did. */
+  | { readonly reasons?: readonly string[]; readonly stage: 'authz' }
   | { readonly policyReasonCode: string; readonly stage: 'policy' };
+
+/** Evidence carrying the codes a recorded refusal kept; a row that predates them, or holds anything else, has none. */
+// A guard, not a decoder: published hash routines import this module, so it may only allocate native schemas.
+const hasRecordedReasonCodes = Schema.is(Schema.Struct({ reasonCodes: ReportableReasonCodesSchema }));
+
+/** A refusal's evidence: the denied-audit fields, the Action key and, when it has any, its reportable codes. */
+const rejectionEvidence = (input: RejectPermissionDeniedInput) => {
+  // A module's own evidence never supplies the codes: Core's own reportable codes are the only ones kept.
+  const { reasonCodes: _moduleCodes, ...moduleEvidence } = input.deniedAuditEvidence ?? {};
+  const base = { ...moduleEvidence, actionKey: input.actionKey };
+  const reasonCodes = Option.getOrElse(reportableReasonCodes(input.reasonCodes ?? []), () => []);
+  return reasonCodes.length === 0 ? base : { ...base, reasonCodes: [...reasonCodes] };
+};
 
 export interface ActionPolicyEvidence {
   readonly owningModuleKey?: string;
@@ -266,6 +286,8 @@ export interface RejectPermissionDeniedInput {
   readonly auditProfile: ActionAuditProfile;
   readonly deniedAuditEvidence?: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>;
   readonly principal: TrustedPrincipalContext;
+  /** The refusal's reason codes; only codes Core may report are recorded (never request data). */
+  readonly reasonCodes?: readonly string[] | undefined;
   readonly transport: ActionTransportMetadata;
 }
 
@@ -498,9 +520,18 @@ export const recoverSqlTransactionError = <A, E, R>(
 const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
   const failureReason = 'Unable to resolve the Action invocation commit state';
   const hasInvocationId = input.invocationId !== undefined;
+  const recovery = readVerifiedGatewayRecovery(input.principal);
+  if (recovery !== undefined && input.invocationId !== recovery.originalActionInvocationId) {
+    return Effect.fail(
+      new ActionInvocationNotFound({
+        code: 'action_invocation_not_found',
+        reason: 'The Action invocation does not match the exact recovery authority',
+      }),
+    );
+  }
   return executor
-    .transaction((transaction) =>
-      transaction
+    .transaction((transaction) => {
+      const query = transaction
         .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(
@@ -515,25 +546,32 @@ const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executo
               ? isNull(actionInvocations.legalEntityId)
               : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
             eq(actionInvocations.tenantId, input.principal.tenantId),
-            eq(actionInvocations.principalId, input.principal.principalId),
+            eq(actionInvocations.principalId, recovery?.originalPrincipalId ?? input.principal.principalId),
+            ...(recovery === undefined
+              ? []
+              : [
+                  eq(actionInvocations.actionKey, recovery.originalActionKey),
+                  eq(actionInvocations.requestHash, recovery.originalRequestHash),
+                  eq(actionInvocations.idempotencyKey, recovery.originalIdempotencyKey),
+                  eq(actionInvocations.authContextRef, recovery.originalAuthContextRef),
+                ]),
           ),
         )
-        .for('update')
-        .limit(1)
-        .pipe(
-          Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
-          Effect.flatMap(([invocation]) =>
-            invocation === undefined
-              ? Effect.fail(
-                  new ActionInvocationNotFound({
-                    code: 'action_invocation_not_found',
-                    reason: 'The Action invocation does not exist in this principal scope',
-                  }),
-                )
-              : Effect.succeed(invocation),
-          ),
+        .limit(1);
+      return (recovery === undefined ? query.for('update') : query).pipe(
+        Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
+        Effect.flatMap(([invocation]) =>
+          invocation === undefined
+            ? Effect.fail(
+                new ActionInvocationNotFound({
+                  code: 'action_invocation_not_found',
+                  reason: 'The Action invocation does not exist in this principal scope',
+                }),
+              )
+            : Effect.succeed(invocation),
         ),
-    )
+      );
+    })
     .pipe(
       recoverSqlTransactionError,
       Effect.catchTags({
@@ -627,7 +665,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     function* lockInvocationEffect(transaction: CoreTransaction, invocationId: string) {
       const failureReason = 'Unable to lock the Action invocation';
       const rows = yield* transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(eq(actionInvocations.actionInvocationId, invocationId))
         .for('update')
@@ -652,14 +690,21 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     'makeActionRepository.loadRecordedRejection',
   )(function* loadRecordedRejectionEffect(executor: Pick<CoreDatabaseExecutor, 'select'>, invocationId: string) {
     const rows = yield* executor
-      .select({ outcomeCode: auditEvents.outcomeCode, outcomeStage: auditEvents.outcomeStage })
+      .select({
+        evidence: auditEvents.evidenceJson,
+        outcomeCode: auditEvents.outcomeCode,
+        outcomeStage: auditEvents.outcomeStage,
+      })
       .from(auditEvents)
       .where(and(eq(auditEvents.actionInvocationId, invocationId), eq(auditEvents.eventType, 'action.rejected')))
       .limit(1)
       .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the recorded Action rejection', cause)));
     const [rejection] = rows;
     if (rejection?.outcomeStage === 'authz') {
-      return Option.some<ActionRecordedRejection>({ stage: 'authz' });
+      const reasons: readonly string[] = hasRecordedReasonCodes(rejection.evidence)
+        ? rejection.evidence.reasonCodes
+        : [];
+      return Option.some<ActionRecordedRejection>({ reasons, stage: 'authz' });
     }
     if (rejection?.outcomeStage === 'policy') {
       return Option.some<ActionRecordedRejection>({ policyReasonCode: rejection.outcomeCode, stage: 'policy' });
@@ -762,7 +807,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
             authContextRef: input.principal.authContextRef,
             authMethod: input.principal.authMethod,
             eventType: 'action.rejected',
-            evidenceJson: { ...input.deniedAuditEvidence, actionKey: input.actionKey },
+            evidenceJson: rejectionEvidence(input),
             impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
             legalEntityId: input.principal.legalEntityId,
             outcome: 'denied',
@@ -803,7 +848,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       transaction: CoreTransaction,
     ) {
       const rows = yield* transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
         .for('update')

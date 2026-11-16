@@ -2,8 +2,8 @@ import { CoreSearchProjectionStore } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 
-import { buildSearchDocuments, invalidSearchSource } from '../search/projection.ts';
-import type { SearchSourceSnapshot } from '../search/projection.ts';
+import { buildSearchDocuments, invalidSearchSource } from './search-projection.ts';
+import type { SearchSourceSnapshot } from './search-projection.ts';
 import { loadSearchSnapshot } from './search-source.ts';
 
 export const projectSearchSnapshot = Effect.fn('OwnerSearch.projectSnapshot')(function* projectSnapshot(

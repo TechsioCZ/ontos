@@ -388,25 +388,14 @@ const validateDiscoveryReferences = (
   return undefined;
 };
 
-const encodePresentationMetadata = Schema.encodeResult(Schema.fromJsonString(CoreSearchPresentationMetadataSchema));
-const searchMetadataIdentity = (metadata: CoreSearchPresentationMetadata): string => {
-  const encoded = encodePresentationMetadata(metadata);
-  return Result.isSuccess(encoded) ? encoded.success : `invalid-presentation-metadata:${metadata.key}`;
-};
+/** Two declarations of one key are the same presentation when every field the metadata schema declares agrees. */
+const samePresentationMetadata = Schema.toEquivalence(CoreSearchPresentationMetadataSchema);
 
-const searchMetadataIssue = (
-  claimed: Map<string, string>,
+/** Whether an earlier declaration claimed this key with a different label, icon or order. */
+const disagreesWithEarlier = (
+  earlier: readonly CoreSearchPresentationMetadata[],
   metadata: CoreSearchPresentationMetadata,
-  kind: 'family' | 'group',
-): string | undefined => {
-  const identity = searchMetadataIdentity(metadata);
-  const previous = claimed.get(metadata.key);
-  if (previous !== undefined && previous !== identity) {
-    return `search presentation ${kind} label/icon/order must agree across contributions for key ${metadata.key}`;
-  }
-  claimed.set(metadata.key, identity);
-  return undefined;
-};
+): boolean => earlier.some((claimed) => claimed.key === metadata.key && !samePresentationMetadata(claimed, metadata));
 
 /**
  * Page and metadata references that need no search descriptor: exact same-owner page contribution,
@@ -415,18 +404,18 @@ const searchMetadataIssue = (
  */
 export const shellSearchPresentationPageIssue = (contributions: OntosShellContributions): string | undefined => {
   const pages = new Map(contributions.pages.map((page) => [String(page.contributionKey), page] as const));
-  const claimedFamilies = new Map<string, string>();
-  const claimedGroups = new Map<string, string>();
+  const earlierFamilies: CoreSearchPresentationMetadata[] = [];
+  const earlierGroups: CoreSearchPresentationMetadata[] = [];
   for (const { presentation } of contributions.search) {
     if (presentation !== undefined) {
-      const familyIssue = searchMetadataIssue(claimedFamilies, presentation.family, 'family');
-      if (familyIssue !== undefined) {
-        return familyIssue;
+      if (disagreesWithEarlier(earlierFamilies, presentation.family)) {
+        return `search presentation family label/icon/order must agree across contributions for key ${presentation.family.key}`;
       }
-      const groupIssue = searchMetadataIssue(claimedGroups, presentation.group, 'group');
-      if (groupIssue !== undefined) {
-        return groupIssue;
+      if (disagreesWithEarlier(earlierGroups, presentation.group)) {
+        return `search presentation group label/icon/order must agree across contributions for key ${presentation.group.key}`;
       }
+      earlierFamilies.push(presentation.family);
+      earlierGroups.push(presentation.group);
       for (const agendaPageKey of presentation.agendaPageKeys ?? []) {
         if (!pages.has(agendaPageKey)) {
           return `search presentation agenda references undeclared page contribution ${agendaPageKey}`;

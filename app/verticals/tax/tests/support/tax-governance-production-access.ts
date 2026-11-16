@@ -104,7 +104,8 @@ export const makeTaxGovernanceAccessFixture = Effect.fn('TaxProductionRuntimeTes
       };
       if (sql.startsWith('select "kind" from "core"."principals"')) {
         expect(scope.tenantId).toBe(tenantId);
-        expect(params).toEqual([principalId, 1]);
+        // Core reads the kind by tenant and principal, inside the installed tenant scope.
+        expect(params).toEqual([tenantId, principalId, 1]);
         return Option.some(Effect.succeed([{ kind: 'human' }]));
       }
       if (sql.includes('from "core"."access_scopes"')) {

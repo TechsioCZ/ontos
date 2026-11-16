@@ -175,6 +175,52 @@ export const describeMigrationFailure = (
  * Native Drizzle owns DDL, savepoints and real journal inserts; convergence itself never rewrites rows,
  * though an owner preparation may additively extend them inside the same transaction before any plan runs.
  */
+/**
+ * The effect driver sends each statement as one prepared statement, which PostgreSQL refuses for a chunk
+ * holding several commands (SQLSTATE 42601), while `drizzle-kit migrate` sends chunks as simple queries.
+ * Split every chunk into its top-level commands so one migration file applies identically through both;
+ * the file and its recorded hash are unchanged. Dollar-quoted bodies, quoted text and comments are kept whole.
+ */
+export const topLevelCommands = (chunk: string): readonly string[] => {
+  const commands: string[] = [];
+  let start = 0;
+  let index = 0;
+  while (index < chunk.length) {
+    const rest = chunk.slice(index);
+    const dollar = /^\$[A-Za-z_]*\$/u.exec(rest);
+    if (dollar !== null) {
+      const close = chunk.indexOf(dollar[0], index + dollar[0].length);
+      index = close === -1 ? chunk.length : close + dollar[0].length;
+    } else if (rest.startsWith('--')) {
+      const end = chunk.indexOf('\n', index);
+      index = end === -1 ? chunk.length : end + 1;
+    } else if (rest.startsWith('/*')) {
+      const end = chunk.indexOf('*/', index + 2);
+      index = end === -1 ? chunk.length : end + 2;
+    } else if (rest.startsWith("'") || rest.startsWith('"')) {
+      const quote = rest.charAt(0);
+      let cursor = index + 1;
+      while (cursor < chunk.length && !(chunk.charAt(cursor) === quote && chunk.charAt(cursor + 1) !== quote)) {
+        cursor += chunk.charAt(cursor) === quote ? 2 : 1;
+      }
+      index = cursor + 1;
+    } else if (rest.startsWith(';')) {
+      commands.push(chunk.slice(start, index + 1));
+      index += 1;
+      start = index;
+    } else {
+      index += 1;
+    }
+  }
+  commands.push(chunk.slice(start));
+  return commands.filter((command) => command.replaceAll(/--[^\n]*|\/\*[^]*?\*\/|;/gu, '').trim().length > 0);
+};
+
+const singleCommandChunks = (migration: MigrationMeta): MigrationMeta => ({
+  ...migration,
+  sql: migration.sql.flatMap(topLevelCommands),
+});
+
 export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(function* converge(
   sources: readonly ConvergentMigrationSource[],
   preparation: Effect.Effect<void, MigrationEquivalenceError, PgClient.PgClient> = Effect.void,
@@ -203,7 +249,7 @@ export const convergeMigrationHistories = Effect.fn('MigrationConvergence.run')(
           { concurrency: 1 },
         );
         for (const { manifest, plan } of plans) {
-          yield* migrate(plan.migrations, database._.session, {
+          yield* migrate(plan.migrations.map(singleCommandChunks), database._.session, {
             migrationsFolder: manifest.folder,
             migrationsSchema: 'drizzle',
             migrationsTable: journal(plan.history),

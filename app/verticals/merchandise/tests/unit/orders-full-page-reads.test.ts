@@ -2,6 +2,7 @@
 // The records reads of the full order page: the one-row permissions list, and the open order's own refreshes. The
 // hooks are the real `useOrders` and `useOrderDetail` over the real strict stores, wired as `OrderDetailPage` wires
 // them, with only the generated records client replaced and the clock faked.
+import { listCustomers } from '@app/party-registry/api/client';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
@@ -16,12 +17,14 @@ import {
   orderCountsData,
   orderDetailData,
   ordersPageData,
+  preloadOrdersPage,
   useOrderDetail,
   useOrders,
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { LIST_WARM_ROWS } from '@app/admin-ui';
 
+rstest.mock('@app/party-registry/api/client');
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('../../src/api/cleanup-demo-action-client.ts');
@@ -44,6 +47,8 @@ const orders = Array.from({ length: ROWS }, (_, index) =>
           productName: 'Cable',
           quantity: 1,
           sku: 'CABLE',
+          taxClassificationCode: 'cz.vat.standard',
+          taxRuleRevisionId: 'tax-rule-revision-standard-21',
           unitPriceMinor: 100,
           vatRate: 21,
         },
@@ -71,9 +76,9 @@ const product = Schema.encodeSync(ProductRecordSchema)(
     sku: 'CABLE',
     stockOnHand: 10,
     stockValueMinor: 1000,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: instant,
-    vatRate: 21,
   }),
 );
 
@@ -92,6 +97,7 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
     orders: rows.orders ?? [],
     products: rows.products ?? [],
     revision: register.revision,
+    taxRates: [],
     totalOrders: ROWS,
   });
 
@@ -225,6 +231,23 @@ it.effect('a background refresh of the open order on the full page does not read
     yield* idle(25);
     expect(count('list-50')).toBe(0);
     expect(count('order')).toBeGreaterThanOrEqual(1);
+  }),
+);
+
+it.effect('a list mounted after the preload of its first page reads neither the page nor the counts again', () =>
+  Effect.gen(function* preloaded() {
+    rstest.mocked(listCustomers).mockImplementation(() => Effect.succeed([]));
+    yield* Effect.promise(() =>
+      browserRuntime.runPromise(preloadOrdersPage(company.legalEntityId, PAGE_SIZE, company)),
+    );
+    expect(count('list-50')).toBe(1);
+    expect(count('count')).toBe(2);
+    reads.length = 0;
+
+    yield* mount(OrdersList);
+    yield* idle(1);
+    expect(count('list-50')).toBe(0);
+    expect(count('count')).toBe(0);
   }),
 );
 

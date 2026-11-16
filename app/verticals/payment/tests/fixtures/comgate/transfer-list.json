@@ -1,0 +1,9 @@
+[
+  {
+    "transferId": 1234567,
+    "transferDate": "2023-01-25",
+    "accountCounterparty": "0/0000",
+    "accountOutgoing": "123456789/0000",
+    "variableSymbol": "12345678"
+  }
+]

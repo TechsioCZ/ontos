@@ -1,7 +1,7 @@
 import { Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { SafeAuthenticatedIdentitySchema } from '../../shared/api.ts';
+import { SafeAuthenticatedIdentitySchema } from '../../shared/browser-api.ts';
 import { browserReadKey, browserStaleWhileRevalidateCache } from '../../src/routes/browser-swr-cache.ts';
 
 const personOf = (principalUuid: string) =>

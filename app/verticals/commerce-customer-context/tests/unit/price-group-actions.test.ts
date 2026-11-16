@@ -294,10 +294,12 @@ describe('customer PriceGroup Actions', () => {
           recordDataAccess: assignCollector.recordDataAccess,
           scope: temporalScope,
           services: {
+            captureAssignmentReceipt: unreachable,
             catalog: unreachableCatalog,
             now,
             profileValidation: unreachableProfileValidation,
             store: unreachableStore,
+            validateAssignmentSource: () => Effect.void,
           },
         },
       ).pipe(Effect.flip);
@@ -394,6 +396,12 @@ describe('customer PriceGroup Actions', () => {
           recordDataAccess: collector.recordDataAccess,
           scope: temporalScope,
           services: {
+            captureAssignmentReceipt: (invocationId, result, originalCommand) => {
+              observed.push(
+                `receipt:${invocationId}:${result.assignment.assignmentRef.resourceId}:${originalCommand.payload.effectiveFrom}`,
+              );
+              return Effect.void;
+            },
             catalog: {
               resolveCurrent: (_ref, _contract, effectiveAt) => {
                 observed.push(`catalog:${effectiveAt}`);
@@ -452,6 +460,7 @@ describe('customer PriceGroup Actions', () => {
                 });
               },
             },
+            validateAssignmentSource: () => Effect.void,
           },
         },
       );
@@ -459,6 +468,7 @@ describe('customer PriceGroup Actions', () => {
         `profile:${effectiveFrom}`,
         `catalog:${recordedAt}`,
         `store:${effectiveFrom}:${recordedAt}`,
+        `receipt:44444444-4444-4444-8444-444444444444:${assignmentRef.resourceId}:${effectiveFrom}`,
       ]);
     }),
   );

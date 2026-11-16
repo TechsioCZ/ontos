@@ -59,6 +59,8 @@ import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { actionCreatedPrincipalId } from '../../src/auth/action-principal-ids.ts';
+import { PLATFORM_TENANT } from '../../src/auth/platform-tenant.ts';
 
 const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
@@ -147,7 +149,19 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
       const providerKeyId = `identity-runtime-key-${yield* nextUuid}`;
       const selfProviderKeyId = `identity-runtime-self-key-${yield* nextUuid}`;
       const companyId = yield* nextUuid;
-      const agentPrincipalId = yield* nextUuid;
+      // Core gives the created agent its id from this creation reference; the test never chooses it.
+      const agentCreationReference = `identity-runtime-agent-${yield* nextUuid}`;
+      const agentPrincipalId = actionCreatedPrincipalId({
+        kind: 'agent',
+        reference: agentCreationReference,
+        tenantId,
+      });
+      // The platform's own principals: a module's internal workload in one company, the release actor, and a module
+      // principal of the platform tenant. No tenant-managed key may be bound to any of them, nor changed.
+      const workloadPrincipalId = yield* nextUuid;
+      const workloadAuthBindingId = yield* nextUuid;
+      const releaseActorPrincipalId = yield* nextUuid;
+      const platformModulePrincipalId = yield* nextUuid;
       const agentProviderKeyId = `identity-runtime-agent-key-${yield* nextUuid}`;
       const supportTargetUserId = `identity-runtime-target-${yield* nextUuid}`;
       const spiceDbClient = newSpiceDbGrpcClient(spiceDbConfiguration);
@@ -327,7 +341,46 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
             status: 'active',
             tenantId,
           },
+          {
+            displayName: 'CRM · zakládání klientů · Firma',
+            kind: 'service',
+            platformRole: 'internal_workload',
+            principalId: workloadPrincipalId,
+            status: 'active',
+            tenantId,
+          },
+          {
+            displayName: 'OntOS · vydání oprávnění',
+            kind: 'system',
+            platformRole: 'access_release_actor',
+            principalId: releaseActorPrincipalId,
+            status: 'active',
+            tenantId,
+          },
         ]);
+        yield* admin
+          .insert(tenants)
+          .values({ ...PLATFORM_TENANT, status: 'active' })
+          .onConflictDoNothing();
+        // Any principal of the platform tenant is refused; it is never named like a module principal, so it can never
+        // stand beside the platform's own `module:<app id>` principals that other suites on this database resolve.
+        yield* admin.insert(principals).values({
+          displayName: `identity-runtime platform-tenant principal ${platformModulePrincipalId}`,
+          kind: 'service',
+          principalId: platformModulePrincipalId,
+          status: 'active',
+          tenantId: PLATFORM_TENANT.tenantId,
+        });
+        yield* admin.insert(principalAuthBindings).values({
+          authenticationNamespaceId: staffAuthenticationNamespaceId,
+          principalAuthBindingId: workloadAuthBindingId,
+          principalId: workloadPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: `identity-runtime-workload-key-${workloadAuthBindingId}`,
+          status: 'active',
+          subjectType: 'api_key',
+          tenantId,
+        });
         yield* admin.insert(principalAuthBindings).values([
           {
             authenticationNamespaceId: staffAuthenticationNamespaceId,
@@ -419,12 +472,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
         yield* runIdentityAction(
           actionRuntime.runAction({
             payload: {
+              creationReference: agentCreationReference,
               description: null,
               displayName: 'Identity runtime agent',
               modules: [],
               operation: 'create-agent',
               ownerPrincipalId: null,
-              principalId: agentPrincipalId,
               writePolicy: 'approval',
             },
             principal: companyPrincipal,
@@ -533,6 +586,62 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           'identity_target_invalid',
           'identity_target_invalid',
         ]);
+        // Only the platform keys and retires its own principals' keys: a tenant administrator binds no key to the
+        // internal workload principal, the release actor or a platform-tenant principal, and changes none of their keys.
+        const platformRefusals = [
+          yield* Effect.flip(
+            bindManaged(
+              principal,
+              { principalId: workloadPrincipalId, scope: 'tenant-managed' },
+              `${providerKeyId}-platform-workload`,
+              yield* freshTransport,
+            ),
+          ),
+          yield* Effect.flip(
+            bindManaged(
+              principal,
+              { principalId: releaseActorPrincipalId, scope: 'tenant-managed' },
+              `${providerKeyId}-platform-release-actor`,
+              yield* freshTransport,
+            ),
+          ),
+          yield* Effect.flip(
+            bindManaged(
+              principal,
+              { principalId: platformModulePrincipalId, scope: 'tenant-managed' },
+              `${providerKeyId}-platform-module`,
+              yield* freshTransport,
+            ),
+          ),
+          yield* Effect.flip(
+            runIdentityAction(
+              actionRuntime.runAction({
+                payload: {
+                  authBindingId: workloadAuthBindingId,
+                  expectedStatus: 'active',
+                  newStatus: 'revoked',
+                  principalId: workloadPrincipalId,
+                  reason: 'Not a tenant key',
+                  scope: 'tenant-managed',
+                },
+                principal,
+                registration: setManagedApiKeyBindingStatusAction,
+                transport: yield* freshTransport,
+              }),
+            ),
+          ),
+        ];
+        expect(platformRefusals.map((failure) => refusedCode(failure))).toEqual([
+          'identity_target_invalid',
+          'identity_target_invalid',
+          'identity_target_invalid',
+          'identity_target_invalid',
+        ]);
+        const [workloadBinding] = yield* admin
+          .select({ status: principalAuthBindings.status })
+          .from(principalAuthBindings)
+          .where(eq(principalAuthBindings.principalAuthBindingId, workloadAuthBindingId));
+        expect(workloadBinding?.status).toBe('active');
         yield* runIdentityAction(
           actionRuntime.runAction({
             payload: {

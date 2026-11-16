@@ -16,7 +16,7 @@ import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts'
 import { MetersProviderRequestSchema, MetersProviderResponseSchema } from '../../shared/apis/meters-search.ts';
 import { MeterRefSchema, meterResourceDescriptor } from '../../shared/resources/meter.ts';
 import { metersRead } from '../../src/search/meters.provider.ts';
-import { loadFacilitySearch } from '../../src/search/search-read.ts';
+import { loadFacilitySearch } from '../../src/services/facility-search-read.ts';
 import {
   buildFacilitySearchDocuments,
   facilitySearchChanged,

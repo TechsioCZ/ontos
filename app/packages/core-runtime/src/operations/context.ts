@@ -16,11 +16,14 @@ import {
   isTrustedSystemPrincipalContext,
   preserveSystemPrincipalContextTrust,
   readVerifiedGatewayScopeAssertion,
+  readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
-import { DatabaseIdentityEnrollmentContext, gatewayScopeGrantRoleForAudience } from '../db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { InstalledOperationalScopeAuthority } from '../db/scoped-transaction.ts';
 import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { decodeProtectedAccessDeclaration } from '../authorization/access-declaration.ts';
@@ -96,25 +99,31 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 /**
- * A verified gateway principal resolves through a request role whose Core identity rows are
- * tenant-bound by row-level security. Its lookup runs after the database derives the scope from the
- * redeemed assertion, so it can read only the assertion's own tenant.
+ * A verified gateway principal resolves inside a transaction whose scope the connected role installed:
+ * a dedicated request role's Core identity rows are tenant-bound by row-level security after the
+ * database derives the scope from the redeemed assertion, and the shared runtime installs the same
+ * scope through its session settings. The lookup receives the authority the connected role actually
+ * installed with, never one inferred from the assertion's audience. Without an assertion no gateway
+ * grant can be installed, so the lookup runs on the shared connection with session authority.
  */
 const selectPersistedScope = <Row, E>(
   database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
   principal: TrustedPrincipalContext,
   enrollment: DatabaseIdentityEnrollment,
-  select: (executor: Pick<CoreTransaction, 'select'>) => Effect.Effect<readonly Row[], E>,
+  select: (
+    executor: Pick<CoreTransaction, 'select'>,
+    authority: InstalledOperationalScopeAuthority,
+  ) => Effect.Effect<readonly Row[], E>,
 ) =>
   Effect.suspend(() =>
     readVerifiedGatewayScopeAssertion(principal) === undefined
-      ? select(database.executor)
+      ? select(database.executor, 'session_setting')
       : database.executor.transaction((transaction) =>
           installOperationalScope(
             transaction,
             preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' }),
             enrollment,
-          ).pipe(Effect.andThen(() => select(transaction))),
+          ).pipe(Effect.andThen((scoped) => select(transaction, scoped.authority))),
         ),
   );
 
@@ -123,13 +132,12 @@ export const makeOperationalScopeRepository = (
   enrollment: DatabaseIdentityEnrollment,
 ): OperationalScopeRepository => ({
   load: (principal) =>
-    selectPersistedScope(database, principal, enrollment, (executor) => {
+    selectPersistedScope(database, principal, enrollment, (executor, authority) => {
       const impersonators = alias(principals, 'impersonators');
       const bindingAudit = alias(auditEvents, 'binding_creation_audit');
-      const scopeAssertion = readVerifiedGatewayScopeAssertion(principal);
-      const gatewayScoped =
-        scopeAssertion !== undefined &&
-        Option.isSome(gatewayScopeGrantRoleForAudience(enrollment, scopeAssertion.audience));
+      // Only a connection that installed its scope as the dedicated gateway-grant role takes the attestation; the
+      // shared runtime may carry an assertion for an audience with such a role, yet it cannot execute the routine.
+      const gatewayScoped = authority === 'gateway_grant';
       const query = executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
@@ -177,7 +185,8 @@ export const makeOperationalScopeRepository = (
               ),
         );
       // The dedicated request role cannot read binding-creation audit evidence. Its hardened
-      // attestation returns only the issuing company within the sealed tenant and company scope.
+      // attestation returns only the issuing company within the sealed tenant and company scope;
+      // only gateway-grant roles may execute it, so the shared runtime keeps the audit join.
       const attestedQuery = gatewayScoped
         ? query.$dynamic()
         : query
@@ -441,6 +450,21 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
       });
     }
 
+    // Registered workload scope was bound by Shell to this original admission; its exact owner capability
+    // and current binding incarnation are checked by the owner gate, never a person's company selector.
+    if (readVerifiedGatewayWorkload(principal)?.legalEntityId === legalEntityId) {
+      return yield* Effect.void;
+    }
+    const routeScope = readVerifiedGatewayRouteScope(principal);
+    if (
+      routeScope?.legalEntityId === legalEntityId &&
+      routeScope.tenantId === principal.tenantId &&
+      routeScope.principalId === principal.principalId
+    ) {
+      // The exact signed route operations remain mandatory at the receiving gate. A direct
+      // integration credential still cannot select a company through the human selector.
+      return yield* Effect.void;
+    }
     const now = yield* DateTime.nowAsDate;
     // Selectable = access + administer in one scope (O28); the engine answers for the whole company
     // list, so a company this person may not select is refused exactly like a revoked one. The scope
@@ -571,7 +595,14 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
   const resolveOperationalScope = Effect.fn('OperationalScopeResolver.resolve')(function* resolveOperationalScopeEffect(
     input: ResolveOperationalScopeInput,
   ) {
-    const { principal } = input;
+    const workload = readVerifiedGatewayWorkload(input.principal);
+    const principal =
+      workload?.legalEntityId === undefined
+        ? input.principal
+        : preserveSystemPrincipalContextTrust(input.principal, {
+            ...input.principal,
+            legalEntityId: workload.legalEntityId,
+          });
     const requestFailure = validateRequestedScope(input, input.legalEntityScope, principal);
     if (requestFailure !== undefined) {
       return yield* requestFailure;

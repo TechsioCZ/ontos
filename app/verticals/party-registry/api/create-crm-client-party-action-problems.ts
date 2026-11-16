@@ -61,10 +61,12 @@ export const createCrmClientPartyActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateCrmClientPartyActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateCrmClientPartyActionForbiddenProblem'> =>
     CreateCrmClientPartyActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateCrmClientPartyActionProbl
       ActionInvocationStateError: (failure) => createCrmClientPartyActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createCrmClientPartyActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createCrmClientPartyActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createCrmClientPartyActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createCrmClientPartyActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createCrmClientPartyActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createCrmClientPartyActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createCrmClientPartyActionProblem.conflict(failure.code),

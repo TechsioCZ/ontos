@@ -7,7 +7,7 @@ import type {
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect, Result, Schema } from 'effect';
 
-import type { ResolvedModuleTarget } from '../../shared/api.ts';
+import type { ResolvedModuleTarget } from '../../shared/browser-api.ts';
 
 import { ModuleEntrypointNamespaceSchema, settleModuleEntrypointLoads } from './module-entrypoint-load-scheduler.ts';
 import type { ModuleEntrypointLoadIdentity, SettledModuleEntrypointLoad } from './module-entrypoint-load-scheduler.ts';

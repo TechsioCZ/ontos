@@ -34,6 +34,7 @@ export const ExecutePrivacyMeasureActionForbiddenProblemSchema = makeProblemDeta
       'operation_context_invalid',
       'PRIVACY_MEASURE_SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ExecutePrivacyMeasureActionNotFoundProblemSchema = makeProblemDetailsSchema(

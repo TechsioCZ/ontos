@@ -9,8 +9,8 @@ import {
 } from '@app/core-runtime';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { NodeServices } from '@effect/platform-node';
-import { and, eq } from 'drizzle-orm';
-import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
+import { and, eq, inArray } from 'drizzle-orm';
+import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Result, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { tenantModuleStates } from '../../packages/core-runtime/src/db/schema.ts';
@@ -20,27 +20,24 @@ import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/c
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
-import { demoTenantId } from './fixture-ids.mts';
-import { N1_TENANT_ID } from './n1-stage-grants.mts';
+import {
+  activationSellingEvidence,
+  sellingModuleKeys,
+  stageActivationScopes,
+  stageActivationTenantIds,
+  stageMarketModuleKeys,
+} from './stage-tenant-modules.mts';
+import type { StageMarketModuleKey } from './stage-tenant-modules.mts';
 
-export const stageMarketModuleKeys = [
-  'commerce.market-catalog',
-  'commerce.storefront-registry',
-  'projects.core',
-  'work.tasks',
-] as const;
-export type StageMarketModuleKey = (typeof stageMarketModuleKeys)[number];
-
-/** The modules this operator may activate tenant-wide, per Tenant; nothing else. */
-const stageActivationScopes: readonly {
-  readonly moduleKeys: readonly StageMarketModuleKey[];
-  readonly tenantId: string;
-}[] = [
-  // The e-shop market modules and Projekty.
-  { moduleKeys: ['commerce.market-catalog', 'commerce.storefront-registry', 'projects.core'], tenantId: demoTenantId },
-  // The N1 storefront files every contact and product inquiry as a Task.
-  { moduleKeys: ['work.tasks'], tenantId: N1_TENANT_ID },
-];
+export {
+  activationSellingEvidence,
+  AKROS_PLAYGROUND_TENANT_ID,
+  sellingModuleKeys,
+  stageActivationScopes,
+  stageActivationTenantIds,
+  stageMarketModuleKeys,
+} from './stage-tenant-modules.mts';
+export type { StageMarketModuleKey } from './stage-tenant-modules.mts';
 const activationReason = 'Operator-approved tenant-wide module activation for the sales demo';
 const modes = ['dry-run', 'apply', 'verify'] as const;
 const sameContracts = Schema.toEquivalence(Schema.Array(OntosModuleDeploymentContractSchema));
@@ -69,7 +66,9 @@ export const ReviewedMarketActivationPlanSchema = Schema.Struct({
     Schema.brand('MarketActivationOperatorPrincipalId'),
     Schema.decodeTo(Schema.String.check(Schema.isUUID())),
   ),
-  tenantId: Schema.Literals([demoTenantId, N1_TENANT_ID]),
+  /** The active selling modules that justify a module needing a selling Tenant; empty for every other module. */
+  sellingModules: Schema.Array(Schema.Literals(sellingModuleKeys)),
+  tenantId: Schema.Literals(stageActivationTenantIds),
 });
 export const marketActivationPlanFingerprint = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -110,17 +109,35 @@ const main = (
     if (catalog.getByModuleId(stageMarketModuleKey) === undefined) {
       return yield* fail('The active composition does not publish the requested module');
     }
+    const { executor } = yield* AgentProfileReadDatabase;
+    const activeSellingModules = yield* executor
+      .select({ moduleKey: tenantModuleStates.moduleKey })
+      .from(tenantModuleStates)
+      .where(
+        and(
+          eq(tenantModuleStates.tenantId, tenantId),
+          eq(tenantModuleStates.state, 'active'),
+          inArray(tenantModuleStates.moduleKey, [...sellingModuleKeys]),
+        ),
+      );
+    const sellingModules = activationSellingEvidence(
+      stageMarketModuleKey,
+      activeSellingModules.map(({ moduleKey }) => moduleKey),
+    );
+    if (Result.isFailure(sellingModules)) {
+      return yield* fail(sellingModules.failure);
+    }
     const plan = yield* Schema.decodeUnknownEffect(ReviewedMarketActivationPlanSchema)({
       actionKey: changeTenantModuleStateAction.descriptor.actionKey,
       compositionRevision: snapshot.composition.revision,
       moduleKey: stageMarketModuleKey,
       operatorPrincipalId: operator.principal.principalId,
+      sellingModules: sellingModules.success,
       tenantId,
     });
     const text = yield* Schema.encodeEffect(Schema.fromJsonString(ReviewedMarketActivationPlanSchema))(plan);
     const fingerprint = marketActivationPlanFingerprint(text);
     const filesystem = yield* FileSystem.FileSystem;
-    const { executor } = yield* AgentProfileReadDatabase;
     const readState = executor
       .select({ state: tenantModuleStates.state })
       .from(tenantModuleStates)
@@ -133,7 +150,14 @@ const main = (
     }
     if (mode === 'dry-run') {
       yield* filesystem.writeFileString(planPath, text, { flag: 'wx', mode: 0o600 });
-      return yield* Console.log({ fingerprint, mode, moduleKey: stageMarketModuleKey, state, tenantId });
+      return yield* Console.log({
+        fingerprint,
+        mode,
+        moduleKey: stageMarketModuleKey,
+        sellingModules: sellingModules.success,
+        state,
+        tenantId,
+      });
     }
     const stat = yield* filesystem.stat(planPath);
     const saved = yield* filesystem.readFileString(planPath);
@@ -220,7 +244,11 @@ const command = Command.make(
   ({ mode, module, plan, reviewed }) =>
     main(mode, module, plan, reviewed).pipe(
       Effect.tapError((failure) =>
-        Console.error(`Market activation stopped (${failure._tag}); credentials and provider details withheld`),
+        Console.error(
+          Schema.is(StageMarketActivationFailure)(failure)
+            ? `Market activation stopped: ${failure.reason}`
+            : `Market activation stopped (${failure._tag}); credentials and provider details withheld`,
+        ),
       ),
     ),
 ).pipe(Command.provide(StageMarketOperatorLive));

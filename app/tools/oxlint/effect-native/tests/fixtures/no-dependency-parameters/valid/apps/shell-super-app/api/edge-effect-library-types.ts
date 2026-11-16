@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect";
-import { HttpClient } from "effect/http";
+import { HttpClient } from "effect/unstable/http";
 
 interface ContactsGateway {
   readonly list: () => Effect.Effect<string>;

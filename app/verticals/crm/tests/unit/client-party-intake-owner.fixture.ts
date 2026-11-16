@@ -4,11 +4,12 @@ import { GatewayAssertionReplayError } from '@app/core-runtime/auth/gateway-asse
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { GATEWAY_ASSERTION_VERSION, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { expect } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { PartyIntakeLive } from '../../src/services/party-intake.ts';
 import { crmRegistration } from '../../vertical.registration.ts';
 
@@ -69,10 +70,9 @@ export const clientIntakeOwnerFixture = Effect.fn('ClientIntakeTest.ownerFixture
       expect(wire.headers.get('x-api-key')).toBe('intake-unit-module-credential');
       const request = Schema.decodeUnknownSync(GatewayDelegatedContextRequestSchema)(await wire.json());
       expect(request.compositionRevision).toBe(revision);
-      expect(Schema.encodeSync(GatewayDelegatedContextRequestSchema)(request).subject).toEqual({
-        _tag: 'Assertion',
-        sourceAssertion: token,
-      });
+      const { subject } = Schema.encodeSync(GatewayDelegatedContextRequestSchema)(request);
+      expect(Predicate.isTagged(subject, 'Assertion')).toBe(true);
+      expect(subject).toMatchObject({ sourceAssertion: token });
       expect(request.audience).toBe('party-registry');
       return Response.json({
         apiBaseUrl: '/party-registry-api',
@@ -121,13 +121,8 @@ export const clientIntakeOwnerFixture = Effect.fn('ClientIntakeTest.ownerFixture
     PartyIntakeLive,
     FetchHttpClient.layer,
     Layer.succeed(FetchHttpClient.Fetch, fetch),
-    Layer.succeed(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromUnknown({
-        ONTOS_GATEWAY_MODULE_API_KEY: 'intake-unit-module-credential',
-        ONTOS_SHELL_GATEWAY_BASE_URL: issuer,
-      }),
-    ),
+    Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: issuer })),
+    Layer.effectDiscard(holdTestModuleCredentials({ crm: 'intake-unit-module-credential' })),
   );
   return { calls, owner, principal: verifiedPrincipal, transport };
 });

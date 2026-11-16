@@ -10,20 +10,29 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 
 // <generated-governed-http-api-imports>
 import { AcceptPaymentObservationActionApi } from './apis/accept-payment-observation-action.ts';
+import { CaptureProviderNotificationActionApi } from './apis/capture-provider-notification-action.ts';
+import { ConfigureGatewayEnablementActionApi } from './apis/configure-gateway-enablement-action.ts';
 import { ConfigurePaymentMethodEnablementActionApi } from './apis/configure-payment-method-enablement-action.ts';
 import { ConfigurePaymentSourceAuthorityActionApi } from './apis/configure-payment-source-authority-action.ts';
+import { ConfigureProviderAccountBindingActionApi } from './apis/configure-provider-account-binding-action.ts';
 import { CreatePaymentActionApi } from './apis/create-payment-action.ts';
 import { CurrentPaymentApi } from './apis/current-payment.ts';
+import { GatewayConfigurationApi } from './apis/gateway-configuration.ts';
+import { GatewayCustomerActionApi } from './apis/gateway-customer-action.ts';
+import { GatewayReconciliationDebtApi } from './apis/gateway-reconciliation-debt.ts';
+import { GatewayReturnStatusApi } from './apis/gateway-return-status.ts';
 import { IssuePaymentAuthorizationActionApi } from './apis/issue-payment-authorization-action.ts';
 import { PaymentAuthorizationValidationApi } from './apis/payment-authorization-validation.ts';
 import { PaymentHistoryApi } from './apis/payment-history.ts';
 import { PaymentMethodApplicabilityApi } from './apis/payment-method-applicability.ts';
 import { PaymentReconciliationDebtApi } from './apis/payment-reconciliation-debt.ts';
+import { ProviderBindingRouteApi } from './apis/provider-binding-route.ts';
 import { RecordPaymentLocalEvidenceActionApi } from './apis/record-payment-local-evidence-action.ts';
 import { RecordPaymentReconciliationDecisionActionApi } from './apis/record-payment-reconciliation-decision-action.ts';
 import { RequestPaymentCancellationActionApi } from './apis/request-payment-cancellation-action.ts';
 import { RequestPaymentOperationRecoveryActionApi } from './apis/request-payment-operation-recovery-action.ts';
 import { RequestPaymentRefundActionApi } from './apis/request-payment-refund-action.ts';
+import { RotateProviderCredentialActionApi } from './apis/rotate-provider-credential-action.ts';
 import { StartPaymentCollectionActionApi } from './apis/start-payment-collection-action.ts';
 // </generated-governed-http-api-imports>
 
@@ -53,20 +62,29 @@ export const paymentApi = HttpApi.make('PaymentApi')
   .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(AcceptPaymentObservationActionApi)
+  .addHttpApi(CaptureProviderNotificationActionApi)
+  .addHttpApi(ConfigureGatewayEnablementActionApi)
   .addHttpApi(ConfigurePaymentMethodEnablementActionApi)
   .addHttpApi(ConfigurePaymentSourceAuthorityActionApi)
+  .addHttpApi(ConfigureProviderAccountBindingActionApi)
   .addHttpApi(CreatePaymentActionApi)
   .addHttpApi(CurrentPaymentApi)
+  .addHttpApi(GatewayConfigurationApi)
+  .addHttpApi(GatewayCustomerActionApi)
+  .addHttpApi(GatewayReconciliationDebtApi)
+  .addHttpApi(GatewayReturnStatusApi)
   .addHttpApi(IssuePaymentAuthorizationActionApi)
   .addHttpApi(PaymentAuthorizationValidationApi)
   .addHttpApi(PaymentHistoryApi)
   .addHttpApi(PaymentMethodApplicabilityApi)
   .addHttpApi(PaymentReconciliationDebtApi)
+  .addHttpApi(ProviderBindingRouteApi)
   .addHttpApi(RecordPaymentLocalEvidenceActionApi)
   .addHttpApi(RecordPaymentReconciliationDecisionActionApi)
   .addHttpApi(RequestPaymentCancellationActionApi)
   .addHttpApi(RequestPaymentOperationRecoveryActionApi)
   .addHttpApi(RequestPaymentRefundActionApi)
+  .addHttpApi(RotateProviderCredentialActionApi)
   .addHttpApi(StartPaymentCollectionActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })

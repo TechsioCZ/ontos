@@ -212,6 +212,7 @@ it.layer(services, { excludeTestServices: true })((suite) =>
             context: {
               compositionRevision: ready.compositionRevision,
               legalEntityId: ready.legalEntityId,
+              operationRequirementKey: 'commerce.pricing.requirement.define-price-catalog',
               requestCorrelation,
               scope: verifiedTestScope({
                 correlationId: requestCorrelation,

@@ -9,7 +9,10 @@ import {
   CreateCustomerGroupResultSchema,
 } from '../../shared/actions/create-customer-group.ts';
 import type { CreateCustomerGroupPayload } from '../../shared/actions/create-customer-group.ts';
-import { CustomerGroupActionAuditEvidenceSchema } from '../../shared/domain/group-contract.ts';
+import {
+  CustomerGroupActionAuditEvidenceSchema,
+  CustomerGroupDefinitionSourceRejected,
+} from '../../shared/domain/group-contract.ts';
 import {
   CustomerGroupBusinessCodeConflict,
   CustomerGroupPersistenceUnavailable,
@@ -36,6 +39,7 @@ export { CreateCustomerGroupPayloadSchema } from '../../shared/actions/create-cu
 export type { CreateCustomerGroupPayload } from '../../shared/actions/create-customer-group.ts';
 
 const CreateCustomerGroupErrorSchema = Schema.Union([
+  CustomerGroupDefinitionSourceRejected,
   CustomerGroupBusinessCodeConflict,
   CustomerGroupPersistenceUnavailable,
   CustomerGroupScopeMismatch,
@@ -46,6 +50,12 @@ const handleCreateCustomerGroup = Effect.fn('CreateCustomerGroupAction.handle')(
   payload: CreateCustomerGroupPayload,
   context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
 ) {
+  if (context.scope.authMethod === 'system' && payload.source === undefined) {
+    return yield* new CustomerGroupDefinitionSourceRejected({
+      code: 'customer_group_source_authority_denied',
+      reason: 'A source workload must supply its exact qualified source definition context',
+    });
+  }
   const recordedAt = yield* customerGroupRecordedAt;
   const legalEntityId = yield* requireCustomerGroupLegalEntityId(context.scope.legalEntityId);
   const result = yield* context.services.create({
@@ -60,9 +70,18 @@ const handleCreateCustomerGroup = Effect.fn('CreateCustomerGroupAction.handle')(
     purpose: payload.purpose,
     reason: payload.reason,
     recordedAt,
+    source: payload.source,
     tenantId: context.scope.tenantId,
   });
   const resolved = yield* Match.value(result).pipe(
+    Match.tag('definition_source_rejected', ({ code }) =>
+      Effect.fail(
+        new CustomerGroupDefinitionSourceRejected({
+          code,
+          reason: 'The current source authority, identity or order does not admit this Group definition effect',
+        }),
+      ),
+    ),
     Match.tag('business_code_conflict', () =>
       Effect.fail(
         new CustomerGroupBusinessCodeConflict({
@@ -136,6 +155,10 @@ export const createCustomerGroupAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-customer-group.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Registered Commerce source writers may create qualified source-managed Group definitions',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.create-customer-group',
     auditEvidenceSchema: CustomerGroupActionAuditEvidenceSchema,

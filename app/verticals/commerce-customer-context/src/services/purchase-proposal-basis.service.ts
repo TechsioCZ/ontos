@@ -7,7 +7,12 @@ import {
   readVerifiedGatewayActor,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type {
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart/api/preapproval-cart-observation/client';
 import type { PreapprovalCartObservationResponseSchema } from '@app/commerce-cart/api/preapproval-cart-observation';
 import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/quantity-preparation-client';
@@ -46,6 +51,7 @@ import {
   PurchaseLimitEvaluationCurrentnessPort,
 } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
 import type {
+  PreparedPurchaseLimitCurrentness,
   PurchaseLimitEvaluationCurrentFacts,
   PurchaseLimitEvaluationCurrentnessPortService,
 } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
@@ -1156,12 +1162,27 @@ export const preparePurchaseProposalBasisCurrentness = Effect.fn('PurchasePropos
       Effect.void,
     );
     const dependencies = yield* Effect.context<BasisServices>();
-    return (transaction: ScopedTransactionExecutor, scope: OperationalScope, revision: string) =>
+    const factory: ActionServiceFactory<PreparedPurchaseLimitCurrentness> = (transaction, scope, revision) =>
       preparedBasisCurrentnessForTransaction(transaction, scope, revision, context, loaded, observation).pipe(
         Effect.provideContext(dependencies),
       );
+    return factory;
   },
 );
+
+type BasisOwnerServices = Effect.Success<ReturnType<typeof purchaseProposalBasisService>>;
+type PrepareBasisActionServices = Omit<BasisOwnerServices, 'prepare'> & {
+  prepare: (
+    input: typeof PreparePurchaseProposalBasisPayloadSchema.Type,
+    invocation: string,
+  ) => ReturnType<BasisOwnerServices['prepare']>;
+};
+type CompleteBasisActionServices = Omit<BasisOwnerServices, 'complete'> & {
+  complete: (
+    input: typeof CompletePurchaseProposalBasisPayloadSchema.Type,
+    invocation: string,
+  ) => ReturnType<BasisOwnerServices['complete']>;
+};
 
 export const preparePurchaseProposalBasisActionServices = Effect.fn('PurchaseProposalBasis.prepareActionServices')(
   function* prepareActionServices(
@@ -1170,7 +1191,7 @@ export const preparePurchaseProposalBasisActionServices = Effect.fn('PurchasePro
   ) {
     const prepared = yield* observeBasisPreparation(payload, context);
     const dependencies = yield* Effect.context<Effect.Services<ReturnType<typeof purchaseProposalBasisService>>>();
-    return (transaction: ScopedTransactionExecutor, scope: OperationalScope, compositionRevision: string) =>
+    const factory: ActionServiceFactory<PrepareBasisActionServices> = (transaction, scope, compositionRevision) =>
       validatePreparedBasisScope(context, scope, compositionRevision).pipe(
         Effect.flatMap(() => purchaseProposalBasisService(transaction, scope, compositionRevision)),
         Effect.map((owner) => ({
@@ -1180,6 +1201,7 @@ export const preparePurchaseProposalBasisActionServices = Effect.fn('PurchasePro
         })),
         Effect.provideContext(dependencies),
       );
+    return factory;
   },
 );
 export const completePurchaseProposalBasisActionServices = Effect.fn('PurchaseProposalBasis.completeActionServices')(
@@ -1189,7 +1211,7 @@ export const completePurchaseProposalBasisActionServices = Effect.fn('PurchasePr
   ) {
     const prepared = yield* observeBasisCompletion(payload, context);
     const dependencies = yield* Effect.context<Effect.Services<ReturnType<typeof purchaseProposalBasisService>>>();
-    return (transaction: ScopedTransactionExecutor, scope: OperationalScope, compositionRevision: string) =>
+    const factory: ActionServiceFactory<CompleteBasisActionServices> = (transaction, scope, compositionRevision) =>
       validatePreparedBasisScope(context, scope, compositionRevision).pipe(
         Effect.flatMap(() => purchaseProposalBasisService(transaction, scope, compositionRevision)),
         Effect.map((owner) => ({
@@ -1199,6 +1221,7 @@ export const completePurchaseProposalBasisActionServices = Effect.fn('PurchasePr
         })),
         Effect.provideContext(dependencies),
       );
+    return factory;
   },
 );
 

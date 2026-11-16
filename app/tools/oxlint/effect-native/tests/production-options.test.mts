@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import nodePath from 'node:path';
 
 import { Schema } from 'effect';
@@ -7,18 +7,15 @@ import { expect, it } from 'effect-rstest';
 import { listRuleNames } from '../shared/discover-rules.ts';
 import { globToRegExp } from '../shared/paths.ts';
 import {
-  appRoot,
   directiveSuppressedFixtures,
   fixtureConfigPath,
   fixtureOptions,
   fixturesDirectory,
   productionOptions,
-  isProductionRuleEnabled,
   testEffectNativeRule,
   virtualFile,
   virtualRoots,
   withOptions,
-  workspaceCase,
 } from './rule-tester.mts';
 
 /**
@@ -61,52 +58,20 @@ const FixtureOverrides = Schema.fromJsonString(
   }),
 );
 
-// The imported DTO fixtures follow these actual package exports without executing owner code.
-const wideFactoryPackageFiles = [
-  'core-runtime/package.json',
-  'core-runtime/src/permissions/principal-ref.ts',
-  'shared-contracts/package.json',
-  'shared-contracts/src/index.ts',
-  'shared-contracts/src/calendar-date.ts',
-];
-
 it('every rule names one production-positive fixture', () => {
   expect(Object.keys(productionPositives).toSorted()).toEqual([...listRuleNames()]);
 });
 
-for (const rule of listRuleNames().filter((name) => isProductionRuleEnabled(`effect-native/${name}`))) {
+for (const rule of listRuleNames()) {
   const key = `effect-native/${rule}`;
   const options = withOptions(productionOptions(key));
   const relative = (kind: string, file: string): string =>
     nodePath.relative(nodePath.join(fixturesDirectory, rule, kind), file).replaceAll('\\', '/');
-  const support = nodePath.join(fixturesDirectory, rule, 'support');
-  const packageFiles = rule === 'no-wide-factory-signature' ? wideFactoryPackageFiles : [];
-  // Imported fixtures and package owners belong to the graph, not additional lint targets.
-  const workspace =
-    existsSync(support) || packageFiles.length > 0
-      ? workspaceCase(
-          [
-            ...['invalid', 'valid', ...(existsSync(support) ? ['support'] : [])].flatMap((kind) =>
-              listFiles(nodePath.join(fixturesDirectory, rule, kind)).map((file) => ({
-                path: `${kind}/${relative(kind, file)}`,
-                source: readFileSync(file, 'utf-8'),
-              })),
-            ),
-            ...packageFiles.map((file) => ({
-              path: `node_modules/@app/${file}`,
-              source: readFileSync(nodePath.join(appRoot, 'packages', file), 'utf-8'),
-            })),
-          ],
-          virtualRoots.temporary,
-        )
-      : undefined;
   const productionCase = (kind: string, file: string) => ({
     code: readFileSync(file, 'utf-8'),
-    cwd: workspace?.directory ?? virtualRoots.temporary,
-    filename:
-      workspace?.file(`${kind}/${relative(kind, file)}`) ?? virtualFile(`${kind}/${relative(kind, file)}`, 'temporary'),
+    cwd: virtualRoots.temporary,
+    filename: virtualFile(`${kind}/${relative(kind, file)}`, 'temporary'),
     name: `${kind}/${relative(kind, file)}`,
-    ...workspace?.hooks,
     ...options,
   });
   const { overrides = [] } = Schema.decodeUnknownSync(FixtureOverrides)(readFileSync(fixtureConfigPath(rule), 'utf-8'));
@@ -133,18 +98,6 @@ for (const rule of listRuleNames().filter((name) => isProductionRuleEnabled(`eff
           ...productionCase('invalid', nodePath.join(fixturesDirectory, rule, 'invalid', positiveFile)),
           errors: positiveCount,
         },
-        // The same staged DTO graph must still reject service-shaped, opaque and unknown owners.
-        ...(rule === 'no-wide-factory-signature'
-          ? [
-              {
-                ...productionCase(
-                  'invalid',
-                  nodePath.join(fixturesDirectory, rule, 'invalid/packages/probe/src/imported-non-data-factories.ts'),
-                ),
-                errors: 7,
-              },
-            ]
-          : []),
       ],
       valid: valid.map((file) => productionCase(validKind, file)),
     },

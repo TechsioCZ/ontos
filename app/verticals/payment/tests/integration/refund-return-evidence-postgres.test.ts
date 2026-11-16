@@ -15,7 +15,8 @@ import {
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { observations, reconciliationCases } from '../../src/database/schema.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { failureCodeOf, paymentTestRelations } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import { failureCodeOf, paymentTestRelations, COMPOSITION_REVISION } from './database-fixture.ts';
 import {
   acceptObservation,
   decideReconciliation,
@@ -39,8 +40,14 @@ import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
  * assigns a return to its operation. Each probe refund asks the real funds guard what is refundable.
  */
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 const nativeRuntime = Effect.gen(function* acquireRefundReturnEvidenceRuntime() {
   const { admin, runtime } = yield* testDatabaseClients;
@@ -57,6 +64,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundReturnEvidenceRuntime() 
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;

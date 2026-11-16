@@ -4,7 +4,7 @@ import type { ReadFinishContext, ReadLoadContext, ReadServiceFactory } from '@ap
 import type { UnitsProviderRequest } from '../../shared/apis/units-search.ts';
 import { Effect, Schema } from 'effect';
 import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { loadOwnerSearch, prepareOwnerSearch } from './search-read.ts';
+import { loadOwnerSearch, prepareOwnerSearch } from '../services/search-read.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';

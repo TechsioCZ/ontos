@@ -9,6 +9,7 @@ import { Effect, Match, Schema } from 'effect';
 import type { CustomerLink, ImportedOrder, ImportsSlice, PairingChange } from '../domain/imports.ts';
 import type { CrmState } from '../domain/state.ts';
 import { parseOrdersCsv } from '../imports/csv.ts';
+import { czechCsvProblemMessage } from '../imports/csv-problem.ts';
 import { importOrders } from '../imports/engine.ts';
 import { conflict, invalid, newId, notFound, requireWriteAll } from './context.ts';
 import type { CommandContext, Reducer } from './context.ts';
@@ -159,7 +160,7 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         yield* requireWriteAll(context);
         const parsed = parseOrdersCsv(value.csv);
         if (parsed.fileError !== undefined) {
-          return yield* invalid(parsed.fileError);
+          return yield* invalid(czechCsvProblemMessage(parsed.fileError));
         }
         if (parsed.rows.length === 0) {
           return yield* invalid('Soubor neobsahuje žádné řádky s daty');

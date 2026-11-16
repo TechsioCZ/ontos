@@ -1,10 +1,11 @@
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { ConfigProvider, Crypto, DateTime, Effect, Schema } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { EnrollmentCommandRecoveryInputSchema } from '../../shared/enrollment-command-recovery-api.ts';
 import type { EnrollmentCommandRecoveryResultSchema } from '../../shared/enrollment-command-recovery-api.ts';
 import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/ensure-retail-customer-profile.ts';
@@ -223,11 +224,9 @@ const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'R
   });
 
 const configured = (baseUrl: URL) =>
-  ConfigProvider.layer(
-    ConfigProvider.fromUnknown({
-      ONTOS_GATEWAY_MODULE_API_KEY: 'reviewed-ccc-module-key',
-      ONTOS_SHELL_GATEWAY_BASE_URL: baseUrl.href,
-    }),
+  Layer.merge(
+    ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: baseUrl.href })),
+    Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-customer-context': 'reviewed-ccc-module-key' })),
   );
 
 it.effect('dispatches scheduled profile and portal owners over native HTTP without a browser Document', () =>

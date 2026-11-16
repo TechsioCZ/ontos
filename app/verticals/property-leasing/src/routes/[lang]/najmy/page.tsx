@@ -16,13 +16,13 @@ import {
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
+import type { RevisionedSaveResult } from '@app/admin-ui';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
-import { createCustomer, listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
+import { findCustomers, listCustomers } from './party-customers.ts';
 import { PartyDocuments, PropertyEquipment } from '@app/facility-operations/ui/record-discussion';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -56,7 +56,7 @@ import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
 import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
-import type { DossierSave, DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
+import type { DossierSave, DossierChanges } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';
 import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
 import type { NoticeContext } from './notice-templates.ts';
@@ -213,7 +213,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const feedback: Feedback = actionFeedback ?? (cleared ? 'forbidden' : loadFeedbackOf(records));
   const [kindFilter, setKindFilter] = useState<'ALL' | 'LONG_TERM_LEASE' | 'SHORT_STAY'>('ALL');
   const [collision, setCollision] = useState<{ readonly href: string; readonly text: string }>();
-  const [createError, setCreateError] = useState<string>();
   /** The person's last change that was parked for approval instead of being applied. */
   const [proposal, setProposal] = useState<ActionProposalAccepted>();
   const selected = snapshot?.occupancies.find((record) => record.occupancyRef.resourceId === linkedResourceId);
@@ -420,97 +419,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             setProposal,
           );
     };
-  /** The counterparty the create form saved; the page opens its dossier once the form is gone. */
-  const [createdCounterparty, setCreatedCounterparty] = useState<string>();
-  /** S01-01: a firm or person becomes a counterparty of this company with its first timeline note. */
-  const createCounterparty = (input: NewCounterpartyInput): Effect.Effect<SaveOutcome> => {
-    if (snapshot === undefined) {
-      return Effect.succeed('failed');
-    }
-    setCreateError(undefined);
-    setProposal(undefined);
-    setActionFeedback('saving');
-    type CustomerRequest = Parameters<typeof createCustomer>[0];
-    const request: { -readonly [Key in keyof CustomerRequest]: CustomerRequest[Key] } = {
-      displayName: input.displayName.trim(),
-      email: input.email.trim(),
-      evidenceReference: 'Nájempark – evidence nájemců a zájemců',
-      partyType: input.partyType,
-      phone: input.phone.trim(),
-    };
-    if (input.partyType === 'ORGANIZATION' && input.companyId.trim() !== '') {
-      request.companyId = input.companyId.trim();
-    }
-    return createCustomer(request).pipe(
-      Effect.flatMap((created) =>
-        Effect.all(
-          {
-            idempotencyKey: newUuid,
-            referenceCredentials: makeReferenceGatewayCredentials(['party-registry']),
-          },
-          { concurrency: 2 },
-        ).pipe(
-          Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
-            executeApplyCommand(
-              {
-                command: {
-                  _tag: 'UpdateCounterpartyDossier',
-                  activity: {
-                    kind: 'NOTE',
-                    summary:
-                      input.note.trim() === ''
-                        ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Nájempark.`
-                        : input.note.trim(),
-                  },
-                  counterpartyRef: created.counterpartyRef,
-                },
-                expectedRevision: snapshot.revision,
-              },
-              'property-leasing.counterparty-create',
-              { idempotencyKey, referenceCredentials },
-            ),
-          ),
-          Effect.map((result) => ({
-            created,
-            parked: Schema.is(ActionProposalAcceptedSchema)(result) ? result : undefined,
-          })),
-        ),
-      ),
-      Effect.match({
-        onFailure: (failure) => {
-          const status = 'status' in failure && Predicate.isNumber(failure.status) ? failure.status : undefined;
-          let message = 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.';
-          if (status === 403) {
-            message = 'Pro zakládání protistran nemáte oprávnění.';
-          } else if (Predicate.isTagged(failure, 'CustomerCreateAmbiguous')) {
-            message = 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.';
-          }
-          setCreateError(message);
-          setActionFeedback(status === 403 ? 'forbidden' : undefined);
-          return 'failed';
-        },
-        onSuccess: ({ created, parked }): SaveOutcome => {
-          setActionFeedback(undefined);
-          if (parked !== undefined) {
-            // The leasing counterparty and its first note exist only once the proposal is approved.
-            setProposal(parked);
-            return 'proposed';
-          }
-          setCreatedCounterparty(created.counterpartyRef.resourceId);
-          return 'saved';
-        },
-      }),
-    );
-  };
-  useEffect(() => {
-    if (createdCounterparty !== undefined) {
-      const url = new URL(window.location.href);
-      url.search = '';
-      url.searchParams.set('counterpartyId', createdCounterparty);
-      url.hash = 'tenant';
-      window.location.assign(url);
-    }
-  }, [createdCounterparty]);
   const openRentEditor = () => {
     dispatchEditor(occupancyEditorActions.OPEN_RENT({ terms: Option.fromUndefinedOr(selected?.rentTerms) }));
   };
@@ -550,7 +458,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             kind: editor === 'stay' ? 'stay' : 'lease',
             references: {
               customers,
-              guests: guests.map((item) => ({ ref: item.ref })),
+              guests: guests.map((item) => ({ ref: item.partyRef })),
               units: properties?.units ?? [],
             },
           })
@@ -639,7 +547,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       return;
     }
     run(
-      loadPartiesClient({ includeArchived: false, query: guestQuery }, 'property-leasing.guest-picker').pipe(
+      findCustomers(guestQuery).pipe(
         Effect.match({
           onFailure: reportFailure,
           onSuccess: (values) => {
@@ -689,8 +597,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     cancelledCount,
     canWrite,
     collision,
-    createCounterparty,
-    createError,
     customerId,
     customerName,
     customerNameFeedback,
@@ -1375,7 +1281,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
   );
   const references = {
     customers: state.customers,
-    guests: state.guests.map((item) => ({ ref: item.ref })),
+    guests: state.guests.map((item) => ({ ref: item.partyRef })),
     units: properties?.units ?? [],
   };
   const editing = Option.fromUndefinedOr(
@@ -1420,8 +1326,8 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
       guests={{
         busy: state.busy,
         items: state.guests.map((record) => ({
-          label: record.title ?? t('property-leasing.demo.unnamedGuest'),
-          value: record.ref.resourceId,
+          label: record.displayName ?? t('property-leasing.demo.unnamedGuest'),
+          value: record.partyRef.resourceId,
         })),
         onQueryChange: handleQueryChange,
         onSearch: handleSearch,
@@ -1714,12 +1620,8 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
             </div>
             {snapshot !== undefined && (
               <TenantDirectory
-                busy={busy}
-                canCreate={state.canWrite}
-                createError={state.createError}
                 directory={state.tenantDirectory}
                 language={state.language}
-                onCreate={(input) => state.createCounterparty(input)}
                 snapshot={snapshot}
                 unitName={unitName}
               />

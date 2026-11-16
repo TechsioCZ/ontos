@@ -41,6 +41,9 @@ import { acceptedPriceSourceProvenanceMatches } from '../services/price-source-p
 import type { ExternalPriceInputBoundaryService } from '../services/external-price-input-boundary.service.ts';
 import { ExternalPriceInputBoundaryFactory } from '../services/external-price-input-boundary.service.ts';
 
+const DEFINE_PRICE_CATALOG_REQUIREMENT = 'commerce.pricing.requirement.define-price-catalog';
+const DEFINE_PRICE_MARKET_REQUIREMENT = 'commerce.pricing.requirement.define-price-market';
+
 export { DefinePriceRejected } from './define-price-rejected.ts';
 
 export { DefinePricePayloadSchema, DefinePriceResultSchema } from '../../shared/actions/define-price.ts';
@@ -370,8 +373,14 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
     };
     const [catalog, market] = yield* Effect.all(
       [
-        catalogSelectionAssessmentPortFromEnvironment(environment),
-        commercialContextAssessmentPortFromEnvironment(environment),
+        catalogSelectionAssessmentPortFromEnvironment({
+          ...environment,
+          operationRequirementKey: DEFINE_PRICE_CATALOG_REQUIREMENT,
+        }),
+        commercialContextAssessmentPortFromEnvironment({
+          ...environment,
+          operationRequirementKey: DEFINE_PRICE_MARKET_REQUIREMENT,
+        }),
       ],
       { concurrency: 2 },
     );
@@ -476,12 +485,14 @@ const definePriceServicesForScope: ActionServiceFactory<
         catalog: catalogSelectionAssessmentPortFromEnvironment({
           compositionRevision,
           legalEntityId,
+          operationRequirementKey: DEFINE_PRICE_CATALOG_REQUIREMENT,
           requestCorrelation: scope.correlationId,
           scope,
         }),
         commercialContext: commercialContextAssessmentPortFromEnvironment({
           compositionRevision,
           legalEntityId,
+          operationRequirementKey: DEFINE_PRICE_MARKET_REQUIREMENT,
           requestCorrelation: scope.correlationId,
           scope,
         }),
@@ -526,8 +537,8 @@ const prepareDefinePriceServices = Effect.fn('DefinePriceAction.prepareServices'
   context: ActionServicePreparationContext,
 ) {
   const owners = yield* prepareDefinePriceOwnerPorts([payload], context, {
-    catalog: 'commerce.pricing.requirement.define-price-catalog',
-    market: 'commerce.pricing.requirement.define-price-market',
+    catalog: DEFINE_PRICE_CATALOG_REQUIREMENT,
+    market: DEFINE_PRICE_MARKET_REQUIREMENT,
   });
   const factory: ActionServiceFactory<DefinePriceActionServices, Crypto.Crypto | ExternalPriceInputBoundaryFactory> = (
     transaction,
@@ -566,6 +577,7 @@ export const definePriceAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.define-price.access.v1',
     },
+    accessWorkload: { reason: 'Native Price source writes', workloads: ['commerce.pricing.source-write'] },
     actionKey: 'commerce.pricing.define-price',
     auditEvidenceSchema,
     auditProfile: 'standard',

@@ -642,8 +642,8 @@ it.live(
         cwd: workspaceRoot,
       }),
     );
-    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.21.0-ts7.1.0-beta');
-    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.67.0');
+    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.25.0-ts7.1.0-beta');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.69.0');
   }),
 );
 
@@ -3526,9 +3526,13 @@ describe('consumer migration preserves native tooling and governed safety', () =
           'run',
           '--project',
           'scripts',
-          'scripts/tests/module-entrypoint-boundaries.test.mts',
+          // Every split part of the boundary suite (module-entrypoint-boundaries-<group>.test.mts); over several
+          // files only the verbose reporter names every passing test.
+          'scripts/tests/module-entrypoint-boundaries-',
           '--testNamePattern',
           'governed',
+          '--reporter',
+          'verbose',
         ],
         {
           cwd: workspaceRoot,

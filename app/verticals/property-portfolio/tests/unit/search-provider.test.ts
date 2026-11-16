@@ -341,7 +341,7 @@ it.layer(NodeCrypto.layer)('native Property search phases', (suite) => {
           let poolProbes = 0;
           const ownerSearch = yield* Effect.tryPromise({
             catch: poolProbeUnavailable,
-            try: () => import('../../src/search/search-read.ts'),
+            try: () => import('../../src/services/search-read.ts'),
           });
           const original = ownerSearch.loadOwnerSearch;
           const observer = rs.spyOn(ownerSearch, 'loadOwnerSearch').mockImplementation((...args) =>

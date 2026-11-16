@@ -57,9 +57,9 @@ const productState = (product: CatalogProduct): EncodedMerchandiseState['product
       ...(repriced ? [{ effectiveFrom: daysAgo(priceChangeDaysAgo), priceMinor: product.currentPriceMinor }] : []),
     ],
     sku: product.sku,
+    taxClassificationCode: product.taxClassificationCode,
     unit: product.unit,
     updatedAt: repriced ? daysAgo(priceChangeDaysAgo) : createdAt,
-    vatRate: product.vatRate,
   };
   if (product.key !== 'p01') {
     return base;
@@ -102,6 +102,7 @@ const buildOrder = Effect.fn('Merchandise.buildOrder')(function* buildOrder(plan
           productName: product.name,
           quantity: line.quantity,
           sku: product.sku,
+          taxClassificationCode: product.taxClassificationCode,
           unitPriceMinor: snapshotPriceMinor(product, planned.createdDaysAgo),
           vatRate: product.vatRate,
         };

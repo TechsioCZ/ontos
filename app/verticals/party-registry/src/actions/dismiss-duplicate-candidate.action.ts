@@ -48,7 +48,14 @@ export const dismissDuplicateCandidateAction = defineAction(
     schemaVersion: '1',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'DISMISSED_AS_NON_SUBJECT'),
+  (transaction, scope) =>
+    duplicateCaseResolutionService(
+      transaction,
+      scope.tenantId,
+      'DISMISSED_AS_NON_SUBJECT',
+      'party.registry.dismiss-duplicate-candidate',
+      scope,
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

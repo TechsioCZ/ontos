@@ -108,7 +108,7 @@
           "noMatch": "Žádný produkt neodpovídá.",
           "priceNote": "Ceny se při vytvoření objednávky zafixují.",
           "product": "Produkt",
-          "productMeta": "Cena {{price}}, skladem {{stock}} ks",
+          "productMeta": "Cena {{price}}, skladem {{stock}} ks, DPH {{vat}}",
           "quantity": "Množství (ks)",
           "removeLine": "Odebrat položku",
           "submitting": "Vytvářím…",
@@ -119,6 +119,8 @@
           "productsFailed": "Produkty se nepodařilo načíst.",
           "variant": "Varianta",
           "variantPlaceholder": "Vyberte variantu",
+          "noPriceForQuantity": "Pro toto množství produkt nemá cenu s DPH. Zadejte množství, od kterého platí jeho množstevní cena.",
+          "noPriceAtMinimum": "Produkt nemá cenu s DPH pro nejmenší prodejní množství, proto ho do objednávky s cenami s DPH nelze přidat.",
           "errorVariant": "Vyberte variantu produktu.",
           "productLoading": "Načítám produkt…",
           "productFailed": "Produkt se nepodařilo načíst. Vyberte ho znovu."
@@ -174,11 +176,19 @@
             "keep": "Zachovat objednávku",
             "confirm": "Potvrdit odstranění DEMO",
             "busy": "Odstraňuji…",
-            "description": "Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit.",
+            "description": "Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečnou objednávku lze odstranit až po stornu.",
             "title": "Odstranit DEMO objednávku {{number}}?",
             "reasonDefault": "Úklid prezentační DEMO objednávky",
             "failed": "Objednávku se nepodařilo odstranit. Obnovte data a zkuste to znovu.",
-            "removed": "DEMO objednávka odstraněna; audit zůstal zachován"
+            "removed": "DEMO objednávka odstraněna; audit zůstal zachován",
+            "cancelled": {
+              "open": "Odstranit stornovanou objednávku",
+              "confirm": "Potvrdit odstranění",
+              "description": "Pouze pro správce. Objednávka zmizí ze seznamu. Historie i identita původního podání zůstanou v auditu.",
+              "title": "Odstranit stornovanou objednávku {{number}}?",
+              "reasonDefault": "Úklid stornované objednávky",
+              "removed": "Objednávka odstraněna; audit zůstal zachován"
+            }
           },
           "conversion": {
             "converted": "Kontakt byl převeden na zákazníka"
@@ -269,10 +279,14 @@
           "deactivateConfirm": "Deaktivovat ({{total}})"
         },
         "category": {
+          "missing": "Vybraná kategorie už neexistuje. Vyberte jinou kategorii.",
           "field": "Nová kategorie",
           "title": "Změnit kategorii"
         },
         "columns": {
+          "priceFrom": "od",
+          "priceWithVat": "s DPH",
+          "priceWithoutVat": "bez DPH",
           "category": "Kategorie",
           "name": "Název",
           "onHand": "Skladem",
@@ -299,7 +313,10 @@
           "active": "Aktivní produkt",
           "tab": "Detail",
           "back": "Zpět na produkty",
-          "priceExplanation": "Upravujete cenu bez DPH. Cena s DPH se vypočítá podle zvolené sazby DPH.",
+          "priceExplanation": "Upravujete cenu bez DPH. Uložená cena s DPH se změnou sazby DPH nemění; nová cena bez DPH uloží novou cenu s DPH podle sazby platné při uložení.",
+          "heldRate": "Cenu teď určuje sazba {{rate}} % (ponechaná z doby před změnou sazby DPH).",
+          "heldRateExplanation": "Tak produkt prodává i e-shop. Nová cena bez DPH se uloží s cenou s DPH podle této sazby. Jakmile firma potvrdí sazby v modulu Daně, nebo když produktu vyberete jinou sazbu, platí sazba podle výběru výše; uložená cena s DPH se tím nemění.",
+          "vatShareOnly": "Cena s DPH zůstává stejná, změní se jen podíl DPH v ní.",
           "variantsExplanation": "Evidenční varianty sdílejí SKU, cenu a sklad produktu.",
           "addVariant": "Přidat variantu",
           "removeVariant": "Odebrat variantu",
@@ -367,9 +384,11 @@
           "quantity": "Množství",
           "sku": "SKU",
           "unit": "Jednotka",
-          "vat": "DPH (%)",
+          "vat": "Sazba DPH",
           "priceNet": "Cena bez DPH (Kč)",
           "priceGross": "Cena s DPH (Kč)",
+          "priceGrossPreview": "Cena s DPH po uložení (náhled, Kč)",
+          "priceGrossFromVariants": "Cena s DPH od (nejnižší cena varianty, Kč)",
           "shortDescription": "Krátký popis",
           "description": "Popis",
           "weightGrams": "Hmotnost (g)",
@@ -399,6 +418,11 @@
           "movementRecorded": "Pohyb zaznamenán",
           "priceChanged": "Cena změněna",
           "receiptRecorded": "Příjem zaznamenán",
+          "tierBasePriceRequired": "Množstevní ceny nelze přepočítat: chybí původní cena nebo platná sazba DPH. Zkontrolujte klasifikaci DPH produktu a uložte cenu znovu.",
+          "categorySlugTaken": "Tuto adresu v e-shopu už používá jiná kategorie. Zvolte jinou adresu.",
+          "variantSkuRequired": "Automatické SKU varianty je příliš dlouhé. Zadejte vlastní SKU varianty o délce nejvýše 64 znaků.",
+          "variantBulkPriceUnsupported": "Hromadnou cenu nelze změnit u produktů s prodejními variantami. Vyberte pouze produkty bez variant, nebo změňte cenu každé varianty v detailu produktu.",
+          "stockReconciliationRequired": "Před přidáním první prodejní varianty vyrovnejte zásobu produktu. Před odebráním varianty vyrovnejte její zásobu skladovým pohybem.",
           "rejected": "Akci nelze provést v aktuálním stavu, například kvůli nedostatečné zásobě. Zkontrolujte zadané hodnoty.",
           "saving": "Ukládám změny…",
           "updated": "Produkt uložen",
@@ -423,6 +447,7 @@
           "tab": "Historie cen"
         },
         "priceDialog": {
+          "variantProducts": "Hromadnou změnu ceny nelze použít pro produkty s prodejními variantami: {{names}}. Zrušte jejich výběr, nebo změňte ceny variant v detailu produktu.",
           "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
@@ -431,6 +456,7 @@
         },
         "receipt": {
           "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
+          "productFailed": "Produkt se nepodařilo načíst. Zkuste to znovu.",
           "submit": "Zaznamenat příjem",
           "title": "Příjem zboží"
         },
@@ -486,11 +512,11 @@
         },
         "title": "Produkty a sklad",
         "validation": {
-          "delta": "Zadejte celé číslo různé od nuly.",
+          "delta": "Zadejte nenulové množství od −1 000 000 do 1 000 000, nejvýše se 6 desetinnými místy.",
           "lowStock": "Zadejte celé číslo 0 nebo větší.",
           "percent": "Zadejte nenulové celé číslo od −90 do 1000.",
           "positive": "Zadejte částku větší než 0 Kč.",
-          "quantity": "Zadejte celé číslo větší než 0.",
+          "quantity": "Zadejte množství větší než 0 a nejvýše 1 000 000, nejvýše se 6 desetinnými místy.",
           "required": "Vyplňte toto pole.",
           "skuTaken": "Produkt s tímto SKU už existuje.",
           "stock": "Množství převyšuje zásobu na skladě.",
@@ -550,7 +576,31 @@
     "sidePanel": {
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
     },
+    "tax": {
+      "classification": {
+        "reduced": "Snížená",
+        "standard": "Základní"
+      },
+      "nonPayer": "firma není plátce DPH",
+      "nonPayerHint": "Firma není plátce DPH: nové ceny se ukládají bez DPH (cena s DPH je rovna ceně bez DPH). Ceny uložené dříve, kdy firma plátcem byla, zůstávají, jak byly uloženy.",
+      "unconfirmed": "Sazby DPH zatím nepotvrdil modul Daně; platí sazby převzaté z dosud uložených cen.",
+      "confirmedAt": "Sazby DPH naposledy potvrdil modul Daně {{at}}; modul Daně teď neodpovídá.",
+      "noRateToCreate": "Firma zatím nemá v modulu Daně platnou sazbu DPH, produkt proto nelze založit.",
+      "rateNotInForce": "Sazba DPH „{{name}}“ pro firmu zatím neplatí; vyberte jinou, nebo ji nejdřív nastavte v modulu Daně.",
+      "rateConflict": "Pro sazbu DPH „{{name}}“ platí v modulu Daně více pravidel zároveň, produkt nelze přidat.",
+      "rateNotWhole": "Sazba DPH „{{name}}“ není v modulu Daně celé procento, produkt nelze přidat.",
+      "noClassification": "Produkt nemá zařazení do sazby DPH, proto ho nelze přidat. Nastavte sazbu DPH v detailu produktu.",
+      "dateLocale": "cs-CZ",
+      "noRates": "Pro tuto firmu není nastavená žádná sazba DPH.",
+      "notSet": "není nastaveno",
+      "option": "{{name}} ({{rate}})",
+      "rateMissing": "Sazba DPH „{{name}}“ není pro tuto firmu nastavená, produkt nelze přidat.",
+      "scheduled": "Od {{date}} {{rate}}"
+    },
     "ui": {
+      "variantTiersRescaled": "Po uložení nové ceny se množstevní ceny přepočítají ve stejném poměru.",
+      "offeredPriceChanged": "Cena přidaného zboží se mezitím změnila, nic se neuložilo. Řádky teď nesou aktuální cenu — {{lines}}. Zkontrolujte ji a uložte znovu.",
+      "offeredPriceUnreadable": "Cena přidaného zboží se mezitím změnila a novou cenu se nepodařilo načíst. Řádek odeberte a přidejte znovu. Týká se: {{lines}}.",
       "storefrontBadge": "E-shop",
       "demoBadge": "DEMO",
       "variantStockMovement": "Skladový pohyb varianty",
@@ -562,6 +612,7 @@
       "variantPriceHistory": "Historie cen variant",
       "searchVariants": "Hledat variantu",
       "variantSearchPlaceholder": "SKU nebo název varianty",
+      "variantsIntro": "Varianta má vlastní SKU, cenu, sklad a stav. Cenu zadáváte bez DPH; cena s DPH, kterou zákazník vidí v e-shopu, se uloží při uložení ceny podle sazby {{vat}}.",
       "variantsScrollLabel": "Varianty — posuňte vodorovně pro cenu, sklad a aktivitu",
       "customerProductView": "Jak produkt vidí zákazník",
       "archiveDemoProduct": "Archivace DEMO produktu",

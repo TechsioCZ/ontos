@@ -5,7 +5,7 @@ import type { Types } from 'effect';
 import { Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/http';
 import type { HttpServerResponse } from 'effect/http';
 
-import { IdentityRequestHeadersSchema } from '../../shared/api.ts';
+import { IdentityRequestHeadersSchema } from '../../shared/browser-api.ts';
 import { AgentActionRequestIdentity } from '../auth/agent-action-request-identity.ts';
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 

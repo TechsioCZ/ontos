@@ -20,6 +20,7 @@ export * from './add-product-category-assignment-action-client.ts';
 export * from './assert-size-equivalence-action-client.ts';
 export * from './assign-catalog-media-action-client.ts';
 export * from './assign-sku-action-client.ts';
+export * from './bind-initial-variant-source-action-client.ts';
 export * from './change-local-override-action-client.ts';
 export * from './change-product-manufacturer-action-client.ts';
 export * from './change-product-relationship-action-client.ts';

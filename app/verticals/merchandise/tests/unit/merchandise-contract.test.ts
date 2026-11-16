@@ -52,7 +52,8 @@ it('rejects a VAT rate outside 0, 10, 12, 21', () => {
         priceMinor: 19_900,
         sku: 'KAB-1',
         unit: 'ks',
-        vatRate: 15,
+        // A rate instead of a classification: Tax holds rates, products only name their classification.
+        vatRate: 21,
       },
       expectedRevision: 0,
     }),
@@ -157,6 +158,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
                 bootstrapCheckpoint: null,
                 homepageFeaturedProductIds: ['private-product-id'],
                 revision: 7,
+                taxRates: null,
               },
             ]);
           }
@@ -205,7 +207,8 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
             return Effect.succeed([
               [
                 { homepageFeaturedProductIds: ['featured-id'], revision: 7 },
-                // Twelve nullable product columns, then the total, in native SQL row order.
+                // Twelve nullable product columns, the company's tax rates, then the total, in native SQL row order.
+                null,
                 null,
                 null,
                 null,

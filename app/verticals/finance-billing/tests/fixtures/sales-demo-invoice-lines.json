@@ -1,0 +1,332 @@
+{
+  "i01": [
+    {
+      "description": "Servisní podpora – měsíc",
+      "quantity": 30,
+      "unitPriceMinor": 490000,
+      "vatRate": 21
+    }
+  ],
+  "i02": [
+    {
+      "description": "Kancelářský balík – roční licence",
+      "quantity": 25,
+      "unitPriceMinor": 289000,
+      "vatRate": 21
+    }
+  ],
+  "i03": [
+    {
+      "description": "Monitor 34\" ultrawide",
+      "quantity": 4,
+      "unitPriceMinor": 1499000,
+      "vatRate": 21
+    }
+  ],
+  "i04": [
+    {
+      "description": "Laserová tiskárna A4",
+      "quantity": 3,
+      "unitPriceMinor": 649000,
+      "vatRate": 21
+    },
+    {
+      "description": "Papír A4 80 g (5 balíků)",
+      "quantity": 7,
+      "unitPriceMinor": 59000,
+      "vatRate": 21
+    }
+  ],
+  "i05": [
+    {
+      "description": "Server rack 1U",
+      "quantity": 1,
+      "unitPriceMinor": 8990000,
+      "vatRate": 21
+    },
+    {
+      "description": "Toner černý",
+      "quantity": 9,
+      "unitPriceMinor": 189000,
+      "vatRate": 21
+    }
+  ],
+  "i06": [
+    {
+      "description": "Příručka IT bezpečnosti",
+      "quantity": 12,
+      "unitPriceMinor": 49000,
+      "vatRate": 10
+    },
+    {
+      "description": "Toner černý",
+      "quantity": 11,
+      "unitPriceMinor": 189000,
+      "vatRate": 21
+    }
+  ],
+  "i07": [
+    {
+      "description": "Antivirus Business – roční licence",
+      "quantity": 44,
+      "unitPriceMinor": 79000,
+      "vatRate": 21
+    },
+    {
+      "description": "Laserová tiskárna A4",
+      "quantity": 2,
+      "unitPriceMinor": 649000,
+      "vatRate": 21
+    }
+  ],
+  "i08": [
+    {
+      "description": "Dokovací stanice USB-C",
+      "quantity": 9,
+      "unitPriceMinor": 429000,
+      "vatRate": 21
+    },
+    {
+      "description": "Tablet 10\"",
+      "quantity": 4,
+      "unitPriceMinor": 899000,
+      "vatRate": 21
+    },
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 5,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i09": [
+    {
+      "description": "Toner černý",
+      "quantity": 8,
+      "unitPriceMinor": 189000,
+      "vatRate": 21
+    },
+    {
+      "description": "Instalace a konfigurace",
+      "quantity": 25,
+      "unitPriceMinor": 149000,
+      "vatRate": 21
+    },
+    {
+      "description": "Zálohování do cloudu – roční licence",
+      "quantity": 33,
+      "unitPriceMinor": 499000,
+      "vatRate": 21
+    }
+  ],
+  "i10": [
+    {
+      "description": "NAS úložiště 4 disky",
+      "quantity": 7,
+      "unitPriceMinor": 1899000,
+      "vatRate": 21
+    },
+    {
+      "description": "Zálohování do cloudu – roční licence",
+      "quantity": 33,
+      "unitPriceMinor": 499000,
+      "vatRate": 21
+    },
+    {
+      "description": "Monitor 34\" ultrawide",
+      "quantity": 14,
+      "unitPriceMinor": 1499000,
+      "vatRate": 21
+    }
+  ],
+  "i11": [
+    {
+      "description": "Příručka IT bezpečnosti",
+      "quantity": 6,
+      "unitPriceMinor": 49000,
+      "vatRate": 10
+    },
+    {
+      "description": "Zálohování do cloudu – roční licence",
+      "quantity": 41,
+      "unitPriceMinor": 499000,
+      "vatRate": 21
+    },
+    {
+      "description": "Instalace a konfigurace",
+      "quantity": 25,
+      "unitPriceMinor": 149000,
+      "vatRate": 21
+    }
+  ],
+  "i12": [
+    {
+      "description": "Antivirus Business – roční licence",
+      "quantity": 22,
+      "unitPriceMinor": 79000,
+      "vatRate": 21
+    }
+  ],
+  "i13": [
+    {
+      "description": "Dokovací stanice USB-C",
+      "quantity": 3,
+      "unitPriceMinor": 429000,
+      "vatRate": 21
+    }
+  ],
+  "i14": [
+    {
+      "description": "Toner černý",
+      "quantity": 2,
+      "unitPriceMinor": 189000,
+      "vatRate": 21
+    }
+  ],
+  "i15": [
+    {
+      "description": "NAS úložiště 4 disky",
+      "quantity": 12,
+      "unitPriceMinor": 1899000,
+      "vatRate": 21
+    }
+  ],
+  "i16": [
+    {
+      "description": "Příručka IT bezpečnosti",
+      "quantity": 11,
+      "unitPriceMinor": 49000,
+      "vatRate": 10
+    },
+    {
+      "description": "Access point Wi-Fi 7",
+      "quantity": 10,
+      "unitPriceMinor": 599000,
+      "vatRate": 21
+    }
+  ],
+  "i17": [
+    {
+      "description": "Antivirus Business – roční licence",
+      "quantity": 40,
+      "unitPriceMinor": 79000,
+      "vatRate": 21
+    },
+    {
+      "description": "Switch 24 portů PoE",
+      "quantity": 12,
+      "unitPriceMinor": 1249000,
+      "vatRate": 21
+    }
+  ],
+  "i18": [
+    {
+      "description": "Dokovací stanice USB-C",
+      "quantity": 8,
+      "unitPriceMinor": 429000,
+      "vatRate": 21
+    },
+    {
+      "description": "NAS úložiště 4 disky",
+      "quantity": 3,
+      "unitPriceMinor": 1899000,
+      "vatRate": 21
+    }
+  ],
+  "i19": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 2,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i20": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 2,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i21": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 3,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i22": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 4,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i23": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 4,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i24": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 5,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i25": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 5,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i26": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 6,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i27": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 6,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i28": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 1,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i29": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 1,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ],
+  "i30": [
+    {
+      "description": "Monitor 27\" 4K",
+      "quantity": 2,
+      "unitPriceMinor": 949000,
+      "vatRate": 21
+    }
+  ]
+}

@@ -86,6 +86,7 @@
       "resizePanel": "Resize panel. Use the left and right arrow keys.",
       "customersLoading": "Loading customers…",
       "customersEmpty": "No matching active customers.",
+      "newCustomerInRegistry": "New customer in the customer register →",
       "customerPlaceholder": "Select or search for a customer"
     },
     "detail": {
@@ -254,11 +255,6 @@
       "communicationSummary": "Communication summary",
       "communicationPlaceholder": "For example, arranging a unit handover date",
       "title": "Contacts and relationship history",
-      "optionalCompanyId": "Company ID (optional)",
-      "optionalEmail": "Email (optional)",
-      "optionalPhone": "Phone (optional)",
-      "optionalTimelineNote": "Timeline note (optional)",
-      "timelinePlaceholder": "For example, first contact at a trade fair, interested in an office from spring",
       "directoryTitle": "Tenants, prospects and contacts",
       "search": "Search for a counterparty or contact",
       "detailsTitle": "Counterparty details",

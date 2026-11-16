@@ -58,6 +58,10 @@ const serviceEnvironments = (): ReadonlyMap<string, Readonly<Record<string, stri
 const databaseUrlKeys = (environment: Readonly<Record<string, string>>) =>
   DATABASE_URL_KEYS.filter((key) => environment[key] !== undefined);
 
+/** The app's start-time release step and the runtime tools it needs (scripts/zerops/unpack-app-release.sh). */
+const APP_RELEASE_UNPACK = 'sh .zerops-release/unpack.sh';
+const APP_RELEASE_TOOLS = 'sudo apk add --no-cache tar zstd';
+
 const serviceNode = (zeropsYaml: string, setup: string) => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(parseDocument(zeropsYaml).get('zerops', true));
   const matches = services.items.filter((item) => isMap(item) && item.get('setup') === setup);
@@ -88,6 +92,81 @@ it('has exactly the spicedb, storefront, n1 and app setups, in that order', () =
   expect(setups).toStrictEqual(SETUPS);
 });
 
+/** The checked-in zerops.yaml and every setup file materialized from it for stage and production. */
+const everyDeploymentYaml = Effect.gen(function* everyDeploymentYaml() {
+  const source = readZeropsDeploymentYaml();
+  const stage = yield* materializeZeropsSetupFiles(source, { environment: 'stage' });
+  const production = yield* materializeZeropsSetupFiles(source, {
+    environment: 'production',
+    spiceDbEndpoint: 'spicedb.production.example:443',
+  });
+  return [source, ...stage.map(({ file }) => file), ...production.map(({ file }) => file)];
+});
+
+/** Zerops's duration syntax (`10s`, `3m`, `1h0m0s`) in seconds; anything else is not a duration. */
+const DURATION = /^(?:(?<hours>\d+)h)?(?:(?<minutes>\d+)m)?(?:(?<seconds>\d+)s)?$/u;
+const durationSeconds = (value: string): number | undefined => {
+  const groups = value === '' ? undefined : DURATION.exec(value)?.groups;
+  return groups === undefined
+    ? undefined
+    : Number(groups.hours ?? 0) * 3600 + Number(groups.minutes ?? 0) * 60 + Number(groups.seconds ?? 0);
+};
+/** Zerops refuses a probe `retryPeriod` outside 10 s to 1 h: the whole build-and-deploy request answers 400. */
+const RETRY_PERIOD_SECONDS = { max: 3600, min: 10 } as const;
+const retryPeriodAccepted = (value: string) => {
+  const seconds = durationSeconds(value);
+  return seconds !== undefined && seconds >= RETRY_PERIOD_SECONDS.min && seconds <= RETRY_PERIOD_SECONDS.max;
+};
+
+it('accepts only probe retry periods Zerops accepts', () => {
+  expect(['10s', '1m', '1h', '1h0m0s'].every(retryPeriodAccepted)).toBe(true);
+  expect(['2s', '9s', '1h0m1s', '2h', '10', ''].some(retryPeriodAccepted)).toBe(false);
+});
+
+it.effect('keeps every readiness and health check retry period within the 10 s to 1 h Zerops accepts', () =>
+  Effect.gen(function* probeRetryPeriods() {
+    const yamls = yield* everyDeploymentYaml;
+    let checked = 0;
+    for (const yaml of yamls) {
+      const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(yaml));
+      for (const { setup } of zerops) {
+        const service = serviceNode(yaml, setup);
+        for (const probe of [
+          ['deploy', 'readinessCheck'],
+          ['run', 'readinessCheck'],
+          ['run', 'healthCheck'],
+        ]) {
+          const period = service.getIn([...probe, 'retryPeriod']);
+          if (period !== undefined) {
+            checked += 1;
+            const value = Schema.decodeUnknownSync(Schema.String)(period);
+            expect(retryPeriodAccepted(value), `${setup} ${probe.join('.')}.retryPeriod ${value}`).toBe(true);
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  }),
+);
+
+it.effect('repairs checkout ownership before any build command in every setup with a restored build cache', () =>
+  Effect.gen(function* cachedBuildOwnership() {
+    const yamls = yield* everyDeploymentYaml;
+    for (const yaml of yamls) {
+      const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(yaml));
+      for (const { setup } of zerops) {
+        const service = serviceNode(yaml, setup);
+        if (serviceStrings(service, ['build', 'cache']).length > 0) {
+          const [firstCommand] = serviceStrings(service, ['build', 'buildCommands']);
+          expect(firstCommand?.split(' && ')[0], `${setup}: restored build cache must belong to the build user`).toBe(
+            'sudo chown -R "$(id -u):$(id -g)" .',
+          );
+        }
+      }
+    }
+  }),
+);
+
 it('binds generated PostgreSQL credentials into the application container', () => {
   expect(serviceBlock(readZeropsDeploymentYaml(), 'app')).toContain(runtimeDatabaseUrl);
 });
@@ -110,7 +189,38 @@ it('runs the whole application in the app container through native Node, from th
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 
   expect(app.getIn(['run', 'start'])).toBe(`sh -c 'cd app && exec node scripts/zerops/app-host.mts'`);
-  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['app/']);
+  // The runtime tree travels as one release archive (scripts/zerops/pack-app-release.sh) and is unpacked into app/
+  // before that unchanged start command, on every container start (scripts/zerops/unpack-app-release.sh).
+  expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['.zerops-release']);
+  const buildCommands = serviceStrings(app, ['build', 'buildCommands']);
+  // The Outbox Worker host builds beside the pack (build-app.sh --outbox-host); app-release.test.mts runs both.
+  expect(buildCommands.at(-1)).toBe(
+    "sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'",
+  );
+  // The tree without its left-out packages is proven before the pack (prove-app-runtime.test.mts runs the proof).
+  expect(buildCommands.at(-2)).toBe('cd app && node scripts/zerops/prove-app-runtime.mts');
+  expect(buildCommands.indexOf('cd app && sh scripts/zerops/build-app.sh')).toBeLessThan(buildCommands.length - 2);
+  expect(serviceStrings(app, ['build', 'prepareCommands'])[0]).toBe('sudo apk add --no-cache curl tar unzip zstd');
+  expect(serviceStrings(app, ['run', 'prepareCommands'])).toStrictEqual([APP_RELEASE_TOOLS]);
+  expect(serviceStrings(app, ['run', 'initCommands'])).toStrictEqual([APP_RELEASE_UNPACK]);
+  const pack = readFileSync(new URL('../zerops/pack-app-release.sh', import.meta.url), 'utf-8');
+  expect(pack).toContain("list='app/scripts/zerops/app-runtime-paths.txt'");
+  expect(pack).toContain('pack app "$@" $main_paths');
+  expect(pack).toContain('pack outbox-worker-host "$host"');
+  // Packed beside and renamed in; tar's status and the digest are checked (app-release.test.mts runs the failures).
+  expect(pack).toContain(String.raw`printf '%s\n' "$digest" >"$staging/$name.tar.zst.sha256"`);
+  expect(pack).toContain('mv "$staging" "$release"');
+  expect(pack).toContain('cp app/scripts/zerops/unpack-app-release.sh "$staging/unpack.sh"');
+  const unpack = readFileSync(new URL('../zerops/unpack-app-release.sh', import.meta.url), 'utf-8');
+  // Digest first, then a scratch unpack renamed into place, then the archive removed.
+  const order = [
+    'if ! actual="$(sha256sum "$archive")"; then',
+    'if ! { zstd -q -dc "$archive"; echo "$?" >"$status"; } | tar --extract --file - -C "$scratch" ||',
+    'mv "$scratch/app" app',
+    'rm -rf app.previous "$scratch"\nremove_archives',
+  ].map((line) => unpack.lastIndexOf(line));
+  expect(order.every((index) => index > -1)).toBe(true);
+  expect(order.toSorted((left, right) => left - right)).toStrictEqual(order);
   for (const branch of [
     ['deploy', 'readinessCheck'],
     ['run', 'healthCheck'],
@@ -120,6 +230,7 @@ it('runs the whole application in the app container through native Node, from th
   }
   expect(app.getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe('/_host/live');
   expect(app.getIn(['deploy', 'readinessCheck', 'httpGet', 'path'])).toBe('/_host/ready');
+  expect(app.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('10s');
 });
 
 it('starts the storefront from its standalone bundle and keeps the Shell URL in-project', () => {
@@ -127,6 +238,33 @@ it('starts the storefront from its standalone bundle and keeps the Shell URL in-
 
   expect(storefront).toContain('exec node akros-storefront/server.js');
   expect(storefront).toContain('ONTOS_SHELL_URL: http://app:3000');
+});
+
+it('deploys each storefront from the runner-built archive, checked against its setup, never building on Zerops', () => {
+  const zeropsYaml = readZeropsDeploymentYaml();
+  for (const [setup, pkg] of [
+    ['storefront', 'akros-storefront'],
+    ['n1', 'n1-storefront'],
+  ] as const) {
+    const service = serviceNode(zeropsYaml, setup);
+    const commands = serviceStrings(service, ['build', 'buildCommands']);
+    expect(commands.join('\n')).not.toMatch(/pnpm|next build|npm install/u);
+    expect(commands[0]).toContain('test -f app/.zerops-storefront.tar.gz && test -f app/.zerops-storefront.json');
+    expect(commands[1]).toContain(`m.setup !== "${setup}" || m.package !== "${pkg}" || m.archiveSha256 !== digest`);
+    expect(commands[1]).toContain('m.arch !== process.arch || m.nativeAddons !== 0');
+    expect(commands[2]).toBe(
+      'mkdir -p app/.zerops/runtime && tar -xzf app/.zerops-storefront.tar.gz -C app/.zerops/runtime',
+    );
+    expect(commands[3]).toBe(`test -f 'app/.zerops/runtime/${pkg}/${pkg}/server.js'`);
+    expect(serviceStrings(service, ['build', 'deployFiles'])).toStrictEqual([`app/.zerops/runtime/${pkg}`]);
+    expect(service.getIn(['build', 'cache'])).toBeUndefined();
+    expect(service.getIn(['run', 'start'])).toContain(
+      `cd app/.zerops/runtime/${pkg} && HOSTNAME=0.0.0.0 exec node ${pkg}/server.js`,
+    );
+    // The old release keeps serving until the new one answers its readiness probe.
+    expect(service.getIn(['deploy', 'temporaryShutdown'])).toBe(false);
+    expect(service.getIn(['deploy', 'readinessCheck', 'retryPeriod'])).toBe('10s');
+  }
 });
 
 it('ships checksum-pinned Bun with the native Node Shell default and no runtime download', () => {
@@ -137,12 +275,19 @@ it('ships checksum-pinned Bun with the native Node Shell default and no runtime 
   expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
     `mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'`,
   );
+  // The boot record's directory ships with an empty record; the running container never creates it.
+  expect(serviceStrings(app, ['build', 'buildCommands'])).toContain(
+    `mkdir -p 'app/.zerops/state' && printf '[]' >'app/.zerops/state/module-credential-boots.json'`,
+  );
   expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME_DEFAULT'])).toBe('node');
   expect(app.getIn(['run', 'envVariables', 'ONTOS_SHELL_RUNTIME'])).toBeUndefined();
-  expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([]);
+  // The only start-time step unpacks the release; nothing downloads a runtime.
+  expect(serviceStrings(app, ['run', 'initCommands'])).toEqual([APP_RELEASE_UNPACK]);
   const installer = readFileSync(new URL('../install-zerops-bun.sh', import.meta.url), 'utf-8');
   expect(installer).toContain('bun-linux-x64-musl-baseline');
   expect(installer).toContain('6e9c37098b293920aed28bfb51ab240e26d23bfdd9bbfecb3ad428ac166549bc');
+  // Zerops builds on Alpine and names no C library, so the installer's default stays the musl build.
+  expect(installer).toContain(':-musl}');
   expect(installer).toContain('sha256sum -c -');
   expect(installer.indexOf('sha256sum -c -')).toBeLessThan(installer.indexOf('unzip -q'));
 });
@@ -155,11 +300,15 @@ it('fails the application build whose Zephyr upload fails', () => {
 
 it('excludes compressed asset copies from both CI archives and the final Zerops package', () => {
   const deployIgnore = readFileSync(new URL('../../../.deployignore', import.meta.url), 'utf-8');
+  // Every shard archive, built or reused, is packed by the one pack step (scripts/zerops/reuse-shard-units.sh).
   const workflow = readFileSync(stageWorkflowPath, 'utf-8');
+  const shardPack = readFileSync(new URL('../zerops/reuse-shard-units.sh', import.meta.url), 'utf-8');
+  expect(workflow).toContain('bash scripts/zerops/reuse-shard-units.sh pack "$RUNNER_TEMP/units.tar.zst" $units');
+  expect(workflow).toContain('bash scripts/zerops/reuse-shard-units.sh reuse "$RUNNER_TEMP/zerops-unit-identities"');
   for (const extension of ['br', 'gz']) {
     expect(deployIgnore).toContain(`app/apps/*/dist/**/*.${extension}`);
     expect(deployIgnore).toContain(`app/verticals/*/dist/**/*.${extension}`);
-    expect(workflow).toContain(`--exclude='*.${extension}'`);
+    expect(shardPack).toContain(`--exclude='*.${extension}'`);
   }
 });
 
@@ -186,9 +335,14 @@ it('uses native Alpine Node 26 for every Node build and runtime without a custom
     const block = serviceBlock(zeropsYaml, setup);
     expect(service.getIn(['build', 'base'])).toBe('alpine/nodejs@26');
     expect(service.getIn(['run', 'base'])).toBe('alpine/nodejs@26');
-    expect(serviceStrings(service, ['build', 'prepareCommands'])).toContain(`sudo npm install --global pnpm@${pnpm}`);
-    expect(serviceStrings(service, ['run', 'prepareCommands'])).toEqual([]);
-    expect(serviceStrings(service, ['run', 'initCommands'])).toEqual([]);
+    // Only the app installs on Zerops; the storefronts arrive built from the runner (build_storefronts).
+    const installsPnpm = serviceStrings(service, ['build', 'prepareCommands']).includes(
+      `sudo npm install --global pnpm@${pnpm}`,
+    );
+    expect(installsPnpm).toBe(setup === 'app');
+    // The app's runtime image adds only the tools that unpack its release archive.
+    expect(serviceStrings(service, ['run', 'prepareCommands'])).toEqual(setup === 'app' ? [APP_RELEASE_TOOLS] : []);
+    expect(serviceStrings(service, ['run', 'initCommands'])).toEqual(setup === 'app' ? [APP_RELEASE_UNPACK] : []);
     expect(block).not.toMatch(/install-zerops-node|\.local\/node-|\.zerops\/node|\/node\/bin|libatomic/u);
     expect(block).toMatch(/start: sh -c '.*exec node /u);
     expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);
@@ -337,7 +491,7 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   }
 });
 
-it('fixes the application at 4 GiB and one dedicated CPU while preserving free-memory and replica limits', () => {
+it('keeps the application at 4 to 8 GiB and four to eight dedicated CPUs in exactly one container', () => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
     parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
   );
@@ -346,11 +500,11 @@ it('fixes the application at 4 GiB and one dedicated CPU while preserving free-m
   );
 
   expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(4);
-  expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
+  expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(8);
   expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
   expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('DEDICATED');
-  expect(app.getIn(['verticalAutoscaling', 'minCpu'])).toBe(1);
-  expect(app.getIn(['verticalAutoscaling', 'maxCpu'])).toBe(1);
+  expect(app.getIn(['verticalAutoscaling', 'minCpu'])).toBe(4);
+  expect(app.getIn(['verticalAutoscaling', 'maxCpu'])).toBe(8);
   expect(app.get('minContainers')).toBe(1);
   expect(app.get('maxContainers')).toBe(1);
 });
@@ -423,7 +577,10 @@ it('installs Chromium for the warm-up client before running its bounded browser 
     }),
   )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
   const { steps } = workflow.jobs.verify;
-  const install = steps.findIndex(({ run }) => run?.includes('pnpm exec playwright-core install chromium') === true);
+  const install = steps.findIndex(
+    ({ run }) =>
+      run?.includes('pnpm --config.verify-deps-before-run=false exec playwright-core install chromium') === true,
+  );
   const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);
   expect(install).toBeGreaterThanOrEqual(0);
   expect(warmup).toBeGreaterThan(install);
@@ -492,7 +649,7 @@ it('binds the attempted delivery to the current run and persists it before any r
     expect(ledger?.run).toContain('.runAttempt=$runAttempt');
     for (const proof of [
       'scripts/ops/stage-warmup.mts',
-      'scripts/ops/stage-demo-verify.mjs',
+      'scripts/zerops/verify-service.mjs app',
       'scripts/demo/prove-mcp-oauth.mts',
     ]) {
       const step = workflow.jobs.verify.steps.find(({ run }) => run?.includes(proof) === true);
@@ -501,4 +658,94 @@ it('binds the attempted delivery to the current run and persists it before any r
     }
   };
   assertRequiredLiveProofs();
+});
+
+it('keeps the worker only with its closure, all hosted identities, materializer inputs and flags proved', () => {
+  const script = readFileSync(new URL('../zerops/build-app.sh', import.meta.url), 'utf-8');
+  const digest = readFileSync(new URL('../zerops/outbox-build-digest.mjs', import.meta.url), 'utf-8');
+  expect(script).toContain("echo 'kept outbox-worker-host (inputs unchanged)'");
+  expect(script).toContain('worker_cache/node_modules');
+  expect(digest).toContain('artifact.sourceInputs');
+  expect(digest).toContain('artifact.ownerBuildIdentities');
+  expect(digest).toContain('Missing owner digest');
+  expect(digest).toContain('Worker owner build identity changed');
+  expect(digest).toContain('--app outbox-worker-host --package app --package-dir . --worker');
+  expect(digest).toContain('scripts/materialize-outbox-worker.mjs');
+  expect(digest).toContain('pnpm-lock.yaml');
+});
+
+it('plans with only the root dependencies and complete HEAD ancestry, not every ref', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        plan: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              run: Schema.optional(Schema.String),
+              uses: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8')));
+  const { steps } = workflow.jobs.plan;
+  expect(steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true)?.with?.['fetch-depth']).toBe(1);
+  // The install command lives in its own script, which the planner cache key hashes (zerops-plan-setup.test.mts).
+  expect(steps.some(({ run }) => run === 'bash scripts/zerops/install-planner-dependencies.sh')).toBe(true);
+  expect(readFileSync(new URL('../zerops/install-planner-dependencies.sh', import.meta.url), 'utf-8')).toContain(
+    'exec mise exec -- pnpm --config.verify-deps-before-run=false install --frozen-lockfile --trust-lockfile --filter app',
+  );
+  const history = steps.findIndex(({ run }) => run === 'git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
+  const plan = steps.findIndex(({ run }) => run?.includes('delivery-plan-cli.mts plan') === true);
+  expect(history).toBeGreaterThanOrEqual(0);
+  expect(plan).toBeGreaterThan(history);
+});
+
+const verificationSteps = () =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        verify: Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({
+              id: Schema.optional(Schema.String),
+              if: Schema.optional(Schema.String),
+              run: Schema.optional(Schema.String),
+              uses: Schema.optional(Schema.String),
+              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            }),
+          ),
+        }),
+      }),
+    }),
+  )(parse(readFileSync(stageWorkflowPath, 'utf-8'))).jobs.verify.steps;
+
+it('installs the full verification workspace and caches the frozen browser graph plus image-specific apt archives', () => {
+  const steps = verificationSteps();
+  expect(steps.find(({ uses }) => uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
+    '--trust-lockfile',
+  );
+  const versions = steps.find(({ id }) => id === 'verification-browser-versions');
+  expect(versions?.run).toContain(
+    'pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version',
+  );
+  expect(versions?.run).toContain('pnpm --config.verify-deps-before-run=false exec playwright-core --version');
+  const restore = steps.findIndex(({ id }) => id === 'verification-browsers');
+  expect(steps[restore]?.with?.key).toContain("hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml')");
+  expect(steps.find(({ id }) => id === 'chromium-debs')?.run).toContain('$ImageOS-$ImageVersion-');
+  const aptRestore = steps.findIndex(({ id }) => id === 'chromium-debs-cache');
+  const aptInstall = steps.findIndex(({ run }) => run?.includes('playwright install --with-deps chromium') === true);
+  const aptSeed = steps.findIndex(({ run }) => run?.includes('sudo find ~/.cache/playwright-apt-debs') === true);
+  expect(aptRestore).toBeGreaterThanOrEqual(0);
+  expect(aptSeed).toBeGreaterThan(aptRestore);
+  expect(aptInstall).toBeGreaterThan(aptSeed);
+  expect(steps[aptInstall]?.if).toBeUndefined();
+  expect(steps[aptSeed]?.run).toContain('/var/cache/apt/archives/');
+  for (const command of ['playwright install --with-deps chromium', 'playwright-core install chromium']) {
+    const download = steps.findIndex(({ run }) => run?.includes(command) === true);
+    expect(download).toBeGreaterThan(restore);
+    expect(steps[download]?.if).toBeUndefined();
+  }
 });

@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug manage-catalog
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { manageCatalogDeclaration } from '../../shared/access-declarations.ts';
 import {
   ManageCatalogPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const manageCatalogAction = defineAction(
   {
-    accessDeclaration: manageCatalogDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.catalog.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'catalog', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'demo.merchandise.manage-catalog.access.v1' },
     actionKey: 'demo.merchandise.manage-catalog',
     auditProfile: 'standard',

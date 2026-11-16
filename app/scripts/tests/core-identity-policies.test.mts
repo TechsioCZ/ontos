@@ -12,7 +12,7 @@ import { makeCoreMigrationSchema } from '../../database/core-schema.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { defineDatabaseIdentityEnrollment } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import type { DatabaseOwnerIdentityDescriptor } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
-import { makeCoreIdentityPolicies } from '../../packages/core-runtime/src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../../packages/core-runtime/src/db/identity-policies.ts';
 import { coreDatabaseSchema } from '../../packages/core-runtime/src/db/schema.ts';
 
 const fixtureOwner = (prefix: string): DatabaseOwnerIdentityDescriptor => ({
@@ -60,7 +60,7 @@ for (const { enrollment, name, policyCount } of enrollments) {
     const migrationSchema = makeCoreMigrationSchema(enrollment);
     const policies = Object.values(migrationSchema).filter((value) => is(value, PgPolicy));
     const tables = Object.values(migrationSchema).filter((value) => is(value, PgTable));
-    const descriptors = makeCoreIdentityPolicies(enrollment);
+    const descriptors = coreIdentityPolicyDescriptors(enrollment);
 
     expect(Object.isFrozen(migrationSchema)).toBe(true);
     expect(policies).toHaveLength(policyCount);
@@ -151,11 +151,11 @@ for (const { enrollment, name } of enrollments) {
       const exportedPolicyNames = dump.statements.flatMap((statement) =>
         Object.values(/^CREATE POLICY "(?<policyName>[^"]+)"/u.exec(statement)?.groups ?? {}),
       );
-      for (const { policy } of makeCoreIdentityPolicies(enrollment)) {
+      for (const { policy } of coreIdentityPolicyDescriptors(enrollment)) {
         expect(exportedPolicyNames.filter((candidate) => candidate === policy.name)).toEqual([policy.name]);
       }
       const expectedPolicies = [
-        ...makeCoreIdentityPolicies(enrollment).map(({ policy }) => policy.name),
+        ...coreIdentityPolicyDescriptors(enrollment).map(({ policy }) => policy.name),
         ...Object.values(makeCoreMigrationSchema(enrollment))
           .filter((value) => is(value, PgTable))
           .flatMap((table) => getTableConfig(table).policies.map((policy) => policy.name)),

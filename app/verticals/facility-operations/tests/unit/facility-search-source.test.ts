@@ -17,7 +17,7 @@ import { DeviceRefSchema } from '../../shared/resources/device.ts';
 import { DocumentRefSchema } from '../../shared/resources/document.ts';
 import { MeterRefSchema } from '../../shared/resources/meter.ts';
 import { facilityOperationsRelations } from '../../src/database/schema.ts';
-import { loadFacilitySearch } from '../../src/search/search-read.ts';
+import { loadFacilitySearch } from '../../src/services/facility-search-read.ts';
 import { loadFacilitySearchSnapshot } from '../../src/services/facility-search-source.ts';
 import { buildFacilitySearchDocuments, publishFacilitySearch } from '../../src/services/facility-search-projection.ts';
 import { company, otherCompany, scope, snapshot, tenantId, workerContext } from './facility-search-fixtures.ts';

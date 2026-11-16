@@ -237,7 +237,7 @@ it.effect(
       const command = yield* firstCommand;
       expect(command.sourceProductId).toBe('n1-export:product:38SA073510-BLK');
       expect(command.priceMinor).toBe(878_025);
-      expect(command.vatRate).toBe(21);
+      expect(command.taxClassificationCode).toBe('cz.vat.standard');
       expect(command.unit).toBe('ks');
       expect(command.stockTracked).toBe(false);
       expect(command.category).toBe('Pánské › Bundy');

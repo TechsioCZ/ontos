@@ -14,7 +14,11 @@ import {
   ImportSellerVatRegimeDeclarationsPayloadSchema,
   ImportSellerVatRegimeDeclarationsResultSchema,
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
-import { TaxGovernanceAuditEvidenceSchema, TaxGovernanceConflict } from '../../shared/domain/tax-governance-errors.ts';
+import {
+  TaxGovernanceAuditEvidenceSchema,
+  TaxGovernanceConflict,
+  TaxSymmyFixtureAccessDenied,
+} from '../../shared/domain/tax-governance-errors.ts';
 import { handleCorrectTaxRuleRevision } from '../../src/actions/correct-tax-rule-revision.action.ts';
 import { handleCreateTaxRuleRevision } from '../../src/actions/create-tax-rule-revision.action.ts';
 import { handleCreateTaxRule } from '../../src/actions/create-tax-rule.action.ts';
@@ -67,11 +71,15 @@ const ruleServices = (overrides: Partial<TaxRuleGovernancePersistence>): TaxRule
   endTaxRuleRevision: unused,
   ...overrides,
 });
-const declarationServices = (overrides: Partial<SellerVatRegimeDeclarations>): SellerVatRegimeDeclarations => ({
+type DeclarationTestServices = SellerVatRegimeDeclarations & {
+  readonly readFixtureWorkload: () => Effect.Effect<boolean>;
+};
+const declarationServices = (overrides: Partial<DeclarationTestServices>): DeclarationTestServices => ({
   atInstant: unused,
   declare: unused,
   history: Effect.die('unused tax governance service method'),
   importDeclarations: unused,
+  readFixtureWorkload: () => Effect.succeed(false),
   ...overrides,
 });
 
@@ -400,5 +408,16 @@ it.effect('907-Q08 #960 a rejected import is a typed result audited as unchanged
     expect(yield* decodeAudit(prepared.audit)).toEqual([
       expect.objectContaining({ action: 'IMPORT_SELLER_VAT_REGIME_DECLARATIONS', changed: false }),
     ]);
+  }),
+);
+
+it.effect('a selected machine workload needs verified worker provenance before Tax persistence', () =>
+  Effect.gen(function* fixtureWithoutWorkerProof() {
+    const prepared = context(declarationServices({ readFixtureWorkload: () => Effect.succeed(true) }));
+    const denial = yield* handleImportSellerVatRegimeDeclarations(yield* importPayload, prepared.value).pipe(
+      Effect.flip,
+    );
+    expect(Schema.is(TaxSymmyFixtureAccessDenied)(denial)).toBe(true);
+    expect(prepared.audit).toEqual([]);
   }),
 );

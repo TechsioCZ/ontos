@@ -46,6 +46,7 @@ import {
   MarketRetirementPostAttempt,
   settleMarketRetirementAttempt,
 } from '../../src/services/market-retirement-post-attempt.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { MarketRetirementImpactAssessmentUnavailable } from '../../src/actions/market-retirement-impact-assessment-unavailable.ts';
 import { MarketRetirementImpactAssessmentStale } from '../../src/actions/market-retirement-impact-assessment-stale.ts';
 import { MarketCommandRejected, RetireMarketPayloadSchema } from '../../shared/action-contracts.ts';
@@ -107,9 +108,13 @@ const crypto = Crypto.make({
   },
 });
 const configuration = ConfigProvider.fromUnknown({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'module-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
+/** The gateway settings plus this module's key, handed over the way the host does. */
+const ownerConfiguration = Layer.merge(
+  ConfigProvider.layer(configuration),
+  Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-market-catalog': 'module-key' })),
+);
 const assessment = {
   assessedMarketRef: payload.marketRef,
   assessedMarketRevision: 3,
@@ -511,10 +516,7 @@ const makeWorkflowFixture = Effect.fn('MarketRetirementTest.makeWorkflowFixture'
     reserveBodies,
     reserveKeys,
     run: () =>
-      run().pipe(
-        Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
-        Effect.provide(ConfigProvider.layer(configuration)),
-      ),
+      run().pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch), Effect.provide(ownerConfiguration)),
     status: () => ownerStatus,
   };
 });
@@ -533,10 +535,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
           legalEntityId,
           reason: payload.reason,
         })
-        .pipe(
-          Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch), Effect.provide(ownerConfiguration));
       expect(transport.requests).toHaveLength(2);
       const issuer = yield* Effect.fromNullishOr(transport.requests[0]);
       expect(yield* Effect.promise(() => issuer.json())).toMatchObject({
@@ -557,7 +556,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
         .cleanupOriginal(releaseProof)
         .pipe(
           Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
+          Effect.provide(ownerConfiguration),
           Effect.flip,
         );
       expect(Predicate.isTagged(failure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
@@ -592,7 +591,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
           .cleanupOriginal(releaseProof)
           .pipe(
             Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
-            Effect.provide(ConfigProvider.layer(configuration)),
+            Effect.provide(ownerConfiguration),
             Effect.flip,
           );
         expect(Predicate.isTagged(first, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
@@ -602,10 +601,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
         late = true;
         yield* authority()
           .cleanupOriginal(releaseProof)
-          .pipe(
-            Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
-            Effect.provide(ConfigProvider.layer(configuration)),
-          );
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fetch), Effect.provide(ownerConfiguration));
         expect(released).toBe(true);
       }),
   );
@@ -620,7 +616,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
         .cleanupOriginal(releaseProof)
         .pipe(
           Effect.provideService(FetchHttpClient.Fetch, transport.fetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
+          Effect.provide(ownerConfiguration),
           Effect.flip,
         );
       expect(Predicate.isTagged(failure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);

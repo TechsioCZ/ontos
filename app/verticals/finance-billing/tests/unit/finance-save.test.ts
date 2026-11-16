@@ -28,6 +28,7 @@ const item = Schema.decodeUnknownSync(PriceListItemSchema)({
   unit: 'měsíc',
   unitPriceMinor: 1_850_050,
   updatedAt: '2026-10-05T08:00:00.000Z',
+  vatClassification: 'cz.vat.standard',
   vatRate: 21,
 });
 const saved = itemDraftOf(item);
@@ -36,14 +37,14 @@ describe('price list item draft', () => {
   it('shows the price in crowns and ignores surrounding spaces', () => {
     expect(saved.price).toBe('18500,50');
     expect(sameItemDraft(saved, { ...saved, name: ' Nájem kanceláře ' })).toBe(true);
-    expect(sameItemDraft(saved, { ...saved, vatRate: 12 })).toBe(false);
+    expect(sameItemDraft(saved, { ...saved, vat: { code: 'cz.vat.reduced', kind: 'classification' } })).toBe(false);
   });
 
   it('keeps the id and offer state of an edited item and never saves without a name or price', () => {
-    const command = Option.getOrThrow(itemCommandOf({ ...saved, price: '19 000' }, item, 'Jana Nováková'));
+    const command = Option.getOrThrow(itemCommandOf({ ...saved, price: '19 000' }, undefined, item, 'Jana Nováková'));
     expect(command).toMatchObject({ active: true, id: item.id, unitPriceMinor: 1_900_000 });
-    expect(Option.isNone(itemCommandOf({ ...saved, name: ' ' }, item))).toBe(true);
-    expect(Option.isNone(itemCommandOf({ ...saved, price: 'zdarma' }, item))).toBe(true);
+    expect(Option.isNone(itemCommandOf({ ...saved, name: ' ' }, undefined, item))).toBe(true);
+    expect(Option.isNone(itemCommandOf({ ...saved, price: 'zdarma' }, undefined, item))).toBe(true);
   });
 
   it('saves only while the price list still holds the version the draft builds on', () => {
@@ -65,7 +66,7 @@ const itemPanel = Effect.fnUntraced(function* itemPanel(outcome: SaveOutcome) {
   const sent: ItemDraft[] = [];
   const controller = yield* startDraftSave(saved, {
     equals: sameItemDraft,
-    isValid: (value: ItemDraft) => Option.isSome(itemCommandOf(value, item)),
+    isValid: (value: ItemDraft) => Option.isSome(itemCommandOf(value, undefined, item)),
     save: (value: ItemDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
   });
   return { controller, sent };

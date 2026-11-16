@@ -75,6 +75,14 @@ const handleRemoveCustomerGroup = Effect.fn('RemoveCustomerGroupAction.handle')(
     tenantId: context.scope.tenantId,
   });
   const resolved = yield* Match.value(result).pipe(
+    Match.tag('source_authority_denied', () =>
+      Effect.fail(
+        new CustomerGroupScopeMismatch({
+          code: 'customer_group_scope_mismatch',
+          reason: 'A source-bound actor must use its authorized source Membership operation',
+        }),
+      ),
+    ),
     Match.tag('not_found', () =>
       Effect.fail(
         new CustomerGroupMembershipNotFound({

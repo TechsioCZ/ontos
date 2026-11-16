@@ -44,6 +44,7 @@ export const currentMarketCatalogRead = defineRead(
       callers: ['pricing'],
       reason: "Pricing reads the current Market catalog while it evaluates a verified requester's prices.",
       subject: 'identity',
+      subjectWorkloads: ['commerce.market-catalog.source-read'],
     },
     accessDeclaration: {
       key: 'commerce.market-catalog.market-catalog.read',
@@ -56,8 +57,8 @@ export const currentMarketCatalogRead = defineRead(
     accessKind: 'detail',
     accessWorkload: {
       reason:
-        'The registered Storefront BFF reads the current Market catalog for its own storefronts before any human session exists',
-      workloads: ['commerce.storefront-client'],
+        'The registered Storefront BFF reads the current Market catalog for its own storefronts before any human session exists; explicitly enrolled source integrations read it for their registered route',
+      workloads: ['commerce.storefront-client', 'commerce.market-catalog.source-read'],
     },
     entrypoint: currentMarketCatalogEntrypoint,
     evidencePolicy: {

@@ -1,8 +1,12 @@
-import { Duration, Effect, Option, Ref } from 'effect';
+import { readFileSync } from 'node:fs';
+
+import { ConfigProvider, Duration, Effect, Option, Ref } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  BOOT_COMPILE_CACHE,
+  containerCompileCache,
   awaitSupersedingRevision,
   CONTROL_PORT,
   derivedEnvironment,
@@ -15,8 +19,12 @@ import {
   routeRequest,
 } from '../zerops/app-host.mts';
 import { hostedUnits } from '../zerops/hosted-units.mts';
+import { makeHostRefusalLog } from '../zerops/host-refusal-log.mts';
+import { makeSupersedeDrain } from '../zerops/supersede-drain.mts';
 import type { ReleaseIntent, Topology } from '../zerops/hosted-units.mts';
 import { ownerEntrySource } from '../zerops/owner-entry.mts';
+
+const CONTAINER_COMPILE_CACHE = '/var/cache/container';
 
 const PARTY_REGISTRY = 'party-registry';
 const SHELL_ID = 'shell-super-app';
@@ -34,7 +42,13 @@ it.effect('rejects credential URLs and native login POSTs at the public host bef
       ['GET', '/_m/crm/private?api_key=y'],
       ['POST', '/en/login'],
     ] as const) {
-      const response = yield* hostApplication(new Map(), published, Effect.succeed(Option.none())).pipe(
+      const response = yield* hostApplication(
+        new Map(),
+        published,
+        Effect.succeed(Option.none()),
+        makeHostRefusalLog(),
+        makeSupersedeDrain(),
+      ).pipe(
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(new Request(`https://stage.test${path}`, { method })),
@@ -56,7 +70,7 @@ const requestAt = (path: string) =>
 it.effect('the control port answers probes from the start and never serves application traffic', () =>
   Effect.gen(function* controlPort() {
     const published = yield* Ref.make(false);
-    const control = hostControlApplication(published, Effect.succeed(Option.none()));
+    const control = hostControlApplication(published, Effect.succeed(Option.none()), makeHostRefusalLog());
     expect((yield* control.pipe(requestAt('/_host/live'))).status).toBe(200);
     expect((yield* control.pipe(requestAt('/_host/ready'))).status).toBe(503);
     for (const path of ['/shell-super-app-api/auth/api-key/gateway-read', '/cs', '/_m/crm/mf-manifest.json']) {
@@ -86,6 +100,18 @@ it.live('a host notices the release that replaced it, ignoring failed reads and 
 );
 
 describe('relayResponseHeaders', () => {
+  it('keeps a Shell document private: no-store stays no-store, and an HTML answer is never kept for good', () => {
+    const html = 'text/html; charset=utf-8';
+    const document = { 'cache-control': 'no-store', 'content-type': html };
+    for (const url of ['/cs/prodej/objednavky', '/static/js/main.0123abcd.js', '/static/main.0123abcd.html']) {
+      expect(relayResponseHeaders(200, document, url)).toStrictEqual(document);
+    }
+    // Even an HTML answer that names no caching of its own at a hashed path is not made cacheable by the host.
+    expect(relayResponseHeaders(200, { 'content-type': html }, '/static/main.0123abcd.html')).toStrictEqual({
+      'content-type': html,
+    });
+  });
+
   it('closes the caller connection on an unavailable owner answer so its retry can reach another container', () => {
     const upstream = { connection: 'keep-alive', 'content-type': 'application/json', 'keep-alive': 'timeout=5' };
     expect(relayResponseHeaders(503, upstream)).toStrictEqual({
@@ -94,10 +120,66 @@ describe('relayResponseHeaders', () => {
     });
   });
 
+  it('never passes on the drain headers only a host sets', () => {
+    expect(
+      relayResponseHeaders(200, { etag: '"a"', 'x-ontos-drain-forwarded': '1', 'x-ontos-drain-refused': 'draining' }),
+    ).toStrictEqual({ etag: '"a"' });
+  });
+
+  it('never relays server-timing to a public caller, from a module owner or from the Shell', () => {
+    expect(
+      relayResponseHeaders(200, {
+        'content-type': 'application/json',
+        'server-timing': 'owner-total;dur=40, owner-gate;dur=12, owner-sql-count;dur=7',
+      }),
+    ).toStrictEqual({ 'content-type': 'application/json' });
+    expect(relayResponseHeaders(503, { 'server-timing': 'key-verify;dur=3' })).toStrictEqual({ connection: 'close' });
+  });
+
   it('keeps the caller connection reusable for every other answer and drops hop-by-hop headers', () => {
     expect(relayResponseHeaders(200, { connection: 'keep-alive', etag: '"a"' })).toStrictEqual({
       etag: '"a"',
     });
+  });
+
+  const hashedShellFile = '/static/js/async/gn.5d3189321f.js';
+  const script = { 'content-type': 'text/javascript' };
+
+  it('lets a browser keep build output named by its content hash, of the Shell and of a module', () => {
+    const kept = { 'cache-control': 'public, max-age=31536000, immutable', ...script };
+    expect(relayResponseHeaders(200, script, hashedShellFile)).toStrictEqual(kept);
+    expect(
+      relayResponseHeaders(200, script, '/_m/merchandise/static/js/async/(lang)/prodej/page.c887205b16.js?v=1'),
+    ).toStrictEqual(kept);
+  });
+
+  it('adds no caching to anything whose name does not change with its bytes, or that did not answer 200', () => {
+    for (const url of [
+      '/_m/merchandise/remoteEntry.js',
+      '/_m/merchandise/mf-manifest.json',
+      '/static/js/index.js',
+      '/cs/prodej/objednavky',
+      '/shell-super-app-api/static/report.5d3189321f.js',
+      '/static/report.5d3189321f.js',
+    ]) {
+      expect(relayResponseHeaders(200, script, url)).toStrictEqual(script);
+    }
+    expect(relayResponseHeaders(404, script, hashedShellFile)).toStrictEqual(script);
+    expect(relayResponseHeaders(200, script)).toStrictEqual(script);
+  });
+
+  it('never lets a browser keep a page, even at an address that looks like a build file', () => {
+    // The Shell does not redirect `/static/…`, so this address reaches a signed-in page route with `static` as language.
+    const page = { 'content-type': 'text/html; charset=UTF-8' };
+    expect(relayResponseHeaders(200, page, '/static/resources/a/b/c.abcdef1234.js')).toStrictEqual(page);
+    expect(relayResponseHeaders(200, script, '/static/resources/a/b/c.abcdef1234.js')).toStrictEqual(script);
+    expect(relayResponseHeaders(200, page, hashedShellFile)).toStrictEqual(page);
+    expect(relayResponseHeaders(200, {}, hashedShellFile)).toStrictEqual({});
+  });
+
+  it('keeps the caching a unit chose itself', () => {
+    const upstream = { 'cache-control': 'no-store' };
+    expect(relayResponseHeaders(200, upstream, hashedShellFile)).toStrictEqual(upstream);
   });
 });
 
@@ -202,8 +284,42 @@ describe('finiteProcessEnvironment', () => {
   it('overrides inherited sharing without changing other operator settings', () => {
     expect(finiteProcessEnvironment({ MIGRATOR_ONCE: 'true' })).toEqual({
       MIGRATOR_ONCE: 'true',
+      NODE_COMPILE_CACHE: BOOT_COMPILE_CACHE,
       ONTOS_DATABASE_POOL_SHARED: 'false',
     });
+  });
+
+  it("shares the boot's compile cache unless the child or the container names one", () => {
+    expect(finiteProcessEnvironment({}).NODE_COMPILE_CACHE).toBe(BOOT_COMPILE_CACHE);
+    expect(finiteProcessEnvironment({}, Option.some(CONTAINER_COMPILE_CACHE)).NODE_COMPILE_CACHE).toBe(
+      CONTAINER_COMPILE_CACHE,
+    );
+    expect(
+      finiteProcessEnvironment({ NODE_COMPILE_CACHE: '/var/cache/child' }, Option.some(CONTAINER_COMPILE_CACHE))
+        .NODE_COMPILE_CACHE,
+    ).toBe('/var/cache/child');
+  });
+
+  it.effect("reads the container's compile cache setting, and none when it is absent", () =>
+    Effect.gen(function* readsContainerSetting() {
+      const withSetting = yield* containerCompileCache.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({ NODE_COMPILE_CACHE: CONTAINER_COMPILE_CACHE }),
+        ),
+      );
+      expect(withSetting).toEqual(Option.some(CONTAINER_COMPILE_CACHE));
+      const without = yield* containerCompileCache.pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+      );
+      expect(without).toEqual(Option.none());
+    }),
+  );
+
+  it('gives every finite child the container setting', () => {
+    const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
+    expect(host.split('finiteProcessEnvironment(env, yield* containerCompileCache)').length).toBe(3);
+    expect(host).not.toContain('finiteProcessEnvironment(env)');
   });
 });
 
@@ -375,6 +491,8 @@ describe('derivedEnvironment', () => {
       'http://127.0.0.1:4103/commerce-customer-context-api',
     );
     expect(derivedValues.ONTOS_SHELL_GATEWAY_BASE_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
+    // Server rendering reads its own API over this host's loopback port only.
+    expect(derivedValues.ONTOS_SHELL_RENDER_API_URL).toBe('http://127.0.0.1:3020/shell-super-app-api');
     // An owner this environment does not serve gets no base, so a stored owner secret cannot point elsewhere.
     expect(new Map(Object.entries(derivedValues)).has('ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBe(true);
     expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBeUndefined();
@@ -393,10 +511,11 @@ describe('derivedEnvironment', () => {
 
 describe('ownerEntrySource', () => {
   const createUnitServer = '  const app = await createProdServer(prodServerOptions);';
+  const nodeModuleImport = "import { createRequire } from 'node:module';";
   const generated = [
     "import app from '/abs/app/node_modules/x/y.js';",
     "import { thing } from 'pkg/sub';",
-    "import { createRequire } from 'node:module';",
+    nodeModuleImport,
     'async function main() {',
     createUnitServer,
     '  const port = process.env.PORT || 8080;',
@@ -424,7 +543,7 @@ describe('ownerEntrySource', () => {
     const source = ownerEntrySource(generated, DIST, resolvePackage);
     expect(source).toContain("import app from '../node_modules/x/y.js';");
     expect(source).toContain("import { thing } from '../node_modules/pkg/sub/index.js';");
-    expect(source).toContain("import { createRequire } from 'node:module';");
+    expect(source).toContain(nodeModuleImport);
   });
 
   it('hands the unit server to configureServer before it listens', () => {
@@ -434,10 +553,36 @@ describe('ownerEntrySource', () => {
     expect(configured).toBeLessThan(source.indexOf('app.listen('));
   });
 
+  it('resolves start only once the server listens, and fails it when listening fails', () => {
+    const source = ownerEntrySource(generated, DIST, resolvePackage) ?? '';
+    const listen = source.indexOf('app.listen(');
+    // Both outcomes are observed before listen is called, and start awaits them after it.
+    expect(source.indexOf('app.once("listening", onListening);')).toBeGreaterThan(
+      source.indexOf('configureServer(app);'),
+    );
+    expect(source.indexOf('app.once("error", onError);')).toBeLessThan(listen);
+    expect(source.indexOf('await listening;')).toBeGreaterThan(listen);
+    expect(source.trimEnd().endsWith('await listening;\n}')).toBe(true);
+    // A server that listened keeps its later errors: the start-time error listener leaves on listening.
+    expect(source).toContain('app.off("error", onError);');
+  });
+
+  it('keeps the CommonJS export after the awaited listen', () => {
+    const commonJs = generated.replace(
+      nodeModuleImport,
+      "const { createProdServer } = require('@modern-js/prod-server');",
+    );
+    const source = ownerEntrySource(commonJs, DIST, resolvePackage) ?? '';
+    expect(source).toContain('async function start(port, configureServer) {');
+    expect(source.trimEnd().endsWith('await listening;\n}\nmodule.exports = { start };')).toBe(true);
+  });
+
   it('returns undefined for an unexpected entry shape', () => {
     expect(ownerEntrySource('export const unrelated = 1;\n', DIST, resolvePackage)).toBeUndefined();
     // Without the server construction the host could not configure its keep-alive.
     expect(ownerEntrySource(generated.replace(`${createUnitServer}\n`, ''), DIST, resolvePackage)).toBeUndefined();
+    // Without main's closing brace right before its call, start could not wait for the listen.
+    expect(ownerEntrySource(generated.replace('}\nmain();', '}\n\nmain();'), DIST, resolvePackage)).toBeUndefined();
   });
 });
 

@@ -7,7 +7,10 @@ import { Context, Crypto, Effect, Redacted, Schema } from 'effect';
 
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
-import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
+import type {
+  CatalogSelectionOperationRequirement,
+  OwnerGatewayConnectionAcquire,
+} from './owner-gateway-connection.ts';
 
 type SelectionEvidenceRequest = Parameters<typeof executeSelectionEvidenceWithAuthorization>[0];
 type SelectionEvidenceEffect = ReturnType<typeof executeSelectionEvidenceWithAuthorization>;
@@ -69,6 +72,7 @@ const assessmentMatchesRequest = (
 interface CatalogSelectionAssessmentContext {
   readonly compositionRevision: string;
   readonly legalEntityId: string;
+  readonly operationRequirementKey: CatalogSelectionOperationRequirement;
   readonly requestCorrelation: string;
   readonly scope: OperationalScope;
 }
@@ -84,6 +88,11 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
         .acquire({
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
+          conditionalRead: {
+            input: { purpose: 'PRICING', selection },
+            kind: 'CATALOG_SELECTION',
+            operationRequirementKey: dependencies.context.operationRequirementKey,
+          },
           legalEntityScope: 'tenant',
           requestCorrelation: dependencies.context.requestCorrelation,
           scope: dependencies.context.scope,

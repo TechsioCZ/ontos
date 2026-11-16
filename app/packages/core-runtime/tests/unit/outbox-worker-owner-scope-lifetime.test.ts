@@ -1,4 +1,4 @@
-import { DateTime, Effect, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineScopedRoutine, ScopedRoutineInvocationError } from '../../src/db/scoped-routine.ts';
@@ -30,6 +30,8 @@ it.effect('checks routine and completion lifetimes when deferred Effects execute
   Effect.gen(function* rejectLeakedCapabilities() {
     let completionCalls = 0;
     let routineCalls = 0;
+    let eligibilityCalls = 0;
+    let originalLookupCalls = 0;
     const routineInvoker: ScopedRoutineInvoker = {
       invoke: () =>
         Effect.sync(() => {
@@ -44,7 +46,36 @@ it.effect('checks routine and completion lifetimes when deferred Effects execute
           return { domainEventId: input.completionId, outcome: 'PUBLISHED' as const };
         }),
     };
-    const capabilities = lifetimeBoundOutboxWorkerOwnerCapabilities(routineInvoker, completionPublisher);
+    const capabilities = lifetimeBoundOutboxWorkerOwnerCapabilities(
+      routineInvoker,
+      completionPublisher,
+      () =>
+        Effect.sync(() => {
+          eligibilityCalls += 1;
+          return true;
+        }),
+      () =>
+        Effect.sync(() => {
+          originalLookupCalls += 1;
+          return Option.some({ actionInvocationId: 'historical-invocation', status: 'succeeded' as const });
+        }),
+    );
+    const originalQuery = {
+      actionKey: 'owner.source.apply',
+      authContextRef: 'job:source-worker:run:delivery-one',
+      idempotencyKey: 'permanent-command',
+      originalPrincipalId: '10000000-0000-4000-8000-000000000001',
+      requestHash: 'a'.repeat(64),
+    };
+    expect(Option.isSome(yield* capabilities.readOriginalActionInvocation(originalQuery))).toBe(true);
+    const deferredOriginalLookup = capabilities.readOriginalActionInvocation(originalQuery);
+    const query = {
+      kind: 'integration' as const,
+      principalId: '10000000-0000-4000-8000-000000000001',
+      workloadKey: 'integration.symmy-admit',
+    };
+    expect(yield* capabilities.readWorkloadPrincipalEligibility(query)).toBe(true);
+    const deferredEligibility = capabilities.readWorkloadPrincipalEligibility(query);
     const deferredRoutine = capabilities.routineInvoker.invoke(routine, []);
     const deferredCompletion = capabilities.completionPublisher.publish(completion, {
       completionId: '10000000-0000-4000-8000-000000000001',
@@ -59,9 +90,15 @@ it.effect('checks routine and completion lifetimes when deferred Effects execute
     capabilities.close();
     const routineFailure = yield* Effect.flip(deferredRoutine);
     const completionFailure = yield* Effect.flip(deferredCompletion);
+    const eligibilityFailure = yield* Effect.flip(deferredEligibility);
+    const originalLookupFailure = yield* Effect.flip(deferredOriginalLookup);
+    expect(Predicate.isTagged(originalLookupFailure, 'AccessDecisionUnavailable')).toBe(true);
+    expect(originalLookupCalls).toBe(1);
     expect(Schema.is(ScopedRoutineInvocationError)(routineFailure)).toBe(true);
     expect(Predicate.isTagged(completionFailure, 'OutboxWorkerCompletionPublicationError')).toBe(true);
     expect(routineCalls).toBe(0);
     expect(completionCalls).toBe(0);
+    expect(Predicate.isTagged(eligibilityFailure, 'OutboxWorkerTenantScopeError')).toBe(true);
+    expect(eligibilityCalls).toBe(1);
   }),
 );

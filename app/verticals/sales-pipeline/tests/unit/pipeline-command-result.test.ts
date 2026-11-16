@@ -10,7 +10,7 @@ import { opportunitySaveResult } from '../../src/routes/[lang]/prodej/prilezitos
 
 const mocks = rstest.hoisted(() => ({ command: rstest.fn(), invalidate: rstest.fn(), records: rstest.fn() }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.command }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/routes/[lang]/prodej/prilezitosti/pipeline-related.ts', () => ({
   opportunityRelatedData: { invalidate: mocks.invalidate },
 }));

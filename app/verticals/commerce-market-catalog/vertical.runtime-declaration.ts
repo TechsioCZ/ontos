@@ -44,6 +44,8 @@ import { RetireMarketActionApi } from './shared/apis/retire-market-action.ts';
 import { ReviseMarketDefinitionActionApi } from './shared/apis/revise-market-definition-action.ts';
 import { ReviseStorefrontAssociationActionApi } from './shared/apis/revise-storefront-association-action.ts';
 import { SuspendMarketActionApi } from './shared/apis/suspend-market-action.ts';
+import { AssortmentFixtureMarketAssociationApi } from './shared/apis/assortment-fixture-market-association.ts';
+import { assortmentFixtureMarketAssociationRead } from './src/api/assortment-fixture-market-association.read.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 import { projectMarketActivatedToSearchWorker } from './src/workers/project-market-activated-to-search.worker.ts';
@@ -108,6 +110,7 @@ export const commerceMarketCatalogRuntimeManifest: VerticalRuntimeRegistrationIn
       // <generated-module-manifest-apis>
       'activate-market-action': ActivateMarketActionApi,
       'associate-storefront-action': AssociateStorefrontActionApi,
+      'assortment-fixture-market-association': AssortmentFixtureMarketAssociationApi,
       'create-market-action': CreateMarketActionApi,
       'current-market-catalog': CurrentMarketCatalogApi,
       'eligible-market-tuples': EligibleMarketTuplesApi,
@@ -128,6 +131,11 @@ export const commerceMarketCatalogRuntimeManifest: VerticalRuntimeRegistrationIn
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'assortment-fixture-market-association',
+        operationKey: 'assortmentFixtureMarketAssociation.execute',
+        registration: assortmentFixtureMarketAssociationRead,
+      },
       {
         apiKey: 'current-market-catalog',
         operationKey: 'currentMarketCatalog.execute',
@@ -446,6 +454,7 @@ export const commerceMarketCatalogRuntimeDeclaration: VerticalRuntimeRegistratio
   ],
   reads: [
     // <generated-module-registration-reads>
+    assortmentFixtureMarketAssociationRead,
     currentMarketCatalogRead,
     eligibleMarketTuplesRead,
     resolveCommerceMarketRead,

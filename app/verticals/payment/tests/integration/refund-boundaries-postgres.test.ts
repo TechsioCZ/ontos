@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Array as Arr, Crypto, Effect, Order, Schema } from 'effect';
+import { Array as Arr, Crypto, Effect, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -16,9 +16,17 @@ import { paymentRegistration } from '../../vertical.registration.ts';
 
 import { PaymentRefundableItemsBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
 import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/coverage.ts';
+import { cancellationMaterialRequest } from '../../src/domain/refund-admission.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
-import { failureCodeOf, paymentTestRelations } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import {
+  failureCodeOf,
+  paymentTestRelations,
+  provenanceFor,
+  withPersistence,
+  COMPOSITION_REVISION,
+} from './database-fixture.ts';
 import {
   acceptObservation,
   decideReconciliation,
@@ -52,8 +60,14 @@ const B = refundItem('B', 30_000);
 const C = refundItem('C', 40_000);
 const threeItems = [A, B, C] as const;
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 /** The real Core Action runtime over the worktree database with the registered Payment owner. */
 const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
@@ -71,6 +85,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -540,6 +555,13 @@ it.live('#1150 pickup refunds use the POS route, else only an explicitly authori
         method: 'PAY_ON_PICKUP_OR_ON_SITE',
       } as const;
       const manualOnly = yield* newRefundCase(pickup);
+      yield* seedSourceAuthority(manualOnly.native.database, manualOnly.scope, {
+        accountRef: 'pos-brno-terminal',
+        method: 'PAY_ON_PICKUP_OR_ON_SITE',
+        pickupCapabilityRef: 'store-brno-1',
+        sourceKind: 'LOCAL_POS_OPERATOR',
+        sourceSystem: 'store-pos',
+      });
       // A method-neutral manual route is not an explicit authorization for pickup refunds.
       yield* seedSourceAuthority(manualOnly.native.database, manualOnly.scope, {
         accountRef: 'manual-refunds',
@@ -565,15 +587,68 @@ it.live('#1150 pickup refunds use the POS route, else only an explicitly authori
         sourceKind: 'MANUAL_EXTERNAL_REFUND',
         sourceSystem: 'finance-desk',
       });
-      yield* seedSourceAuthority(withPos.native.database, withPos.scope, {
+      const exactPos = yield* seedSourceAuthority(withPos.native.database, withPos.scope, {
         accountRef: 'pos-terminal-1',
+        pickupCapabilityRef: pickup.binding.pickupCapabilityRef,
         sourceKind: 'LOCAL_POS_OPERATOR',
         sourceSystem: 'store-pos',
       });
       const viaPos = yield* requestRefund(withPos, itemsRefund(withPos, 'pos', [B]), { items: threeItems });
-      expect(viaPos.executionRoute?.routeKind).toBe('LOCAL_POS');
+      expect(viaPos.executionRoute).toMatchObject({ routeKind: 'LOCAL_POS', sourceAuthorityId: exactPos });
     }),
   ),
+);
+
+it.live(
+  '#1150 an offline collection cannot start an unsupported cancellation but can replay one already admitted',
+  () =>
+    native(
+      Effect.gen(function* offlineCancellation() {
+        const refundCase = yield* newRefundCase({
+          amountMinor: 100_000,
+          binding: { _tag: 'BANK_ACCOUNTING_RECEIPT' },
+          collected: false,
+          method: 'BANK_TRANSFER_ADVANCE',
+        });
+        const { collectOperationId, paymentId } = refundCase.payment;
+        const { native: runtime, scope } = refundCase;
+        const initial = yield* loadPaymentAggregate(runtime.database, scope, paymentId);
+        const request = {
+          operationKey: 'offline-cancel',
+          paymentId,
+          reason: 'Customer abandoned the checkout',
+          targetOperationId: collectOperationId,
+        };
+        const refused = yield* Effect.result(requestCancellation(refundCase, request));
+        expect(Result.isFailure(refused) ? refused.failure.code : undefined).toBe(
+          'payment_cancellation_target_invalid',
+        );
+        expect(yield* loadPaymentAggregate(runtime.database, scope, paymentId)).toEqual(initial);
+
+        // Seed the row an older Action could admit, then replay the same material via the current Action.
+        const provenance = yield* provenanceFor(scope);
+        const admitted = yield* withPersistence(runtime.database, scope, (persistence) =>
+          persistence.insertOperation({
+            amount: initial.payment.amount,
+            binding: initial.payment.executionBinding,
+            initialOutcome: 'PENDING',
+            kind: 'CANCEL_OR_VOID',
+            materialRequest: cancellationMaterialRequest(request),
+            operationKey: request.operationKey,
+            paymentId,
+            provenance,
+            targetOperationId: collectOperationId,
+          }),
+        );
+        const beforeReplay = yield* loadPaymentAggregate(runtime.database, scope, paymentId);
+        expect(yield* requestCancellation(refundCase, request)).toMatchObject({
+          operation: { operationId: admitted.record.operationId },
+          replayed: true,
+        });
+        expect(yield* loadPaymentAggregate(runtime.database, scope, paymentId)).toEqual(beforeReplay);
+        expect(yield* operationRequestedMessages(runtime, scope, admitted.record.operationId)).toHaveLength(0);
+      }),
+    ),
 );
 
 it.live('#1150 cancellation stops only a live collection of the same Payment and counts once', () =>

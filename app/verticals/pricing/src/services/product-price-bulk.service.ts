@@ -527,12 +527,14 @@ const productPriceBulkServicesWithOwners = Effect.fn('ProductPriceBulkService.wi
       catalog: catalogSelectionAssessmentPortFromEnvironment({
         compositionRevision,
         legalEntityId,
+        operationRequirementKey: 'commerce.pricing.requirement.manage-product-prices-bulk-catalog',
         requestCorrelation: scope.correlationId,
         scope,
       }),
       commercialContext: commercialContextAssessmentPortFromEnvironment({
         compositionRevision,
         legalEntityId,
+        operationRequirementKey: 'commerce.pricing.requirement.manage-product-prices-bulk-market',
         requestCorrelation: scope.correlationId,
         scope,
       }),

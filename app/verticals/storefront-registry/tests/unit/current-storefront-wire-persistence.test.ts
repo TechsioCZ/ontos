@@ -24,13 +24,13 @@ const current = {
 interface RegistryWireRow {
   readonly payload: object;
 }
-const loadRows = (rows: readonly RegistryWireRow[], trustedTenantId = tenantId) =>
+const loadRows = (rows: readonly RegistryWireRow[], trustedTenantId = tenantId, input = request) =>
   currentStorefrontApplicationPersistence(
     scopedRoutineInvokerFromTransaction(() => Effect.succeed(rows), {
       tenantId: trustedTenantId,
     }),
     trustedTenantId,
-  ).load(request);
+  ).load(input);
 
 it.effect('decodes native found rows with null and finite ends after Core Type validation', () =>
   Effect.gen(function* foundRawRows() {
@@ -41,6 +41,41 @@ it.effect('decodes native found rows with null and finite ends after Core Type v
     ]);
     expect(Option.getOrThrow(finite.snapshot).effectiveTo).toBe('2026-10-01T00:00:00.000Z');
     expect(finite.generation).toBe(7);
+  }),
+);
+it.effect('requires an exact owner UUID witness for pinned Storefront application reads', () =>
+  Effect.gen(function* exactNativeIdentity() {
+    const expectedStorefrontApplicationId = 'aaaaaaaa-2222-4222-8222-222222222222';
+    const pinned = { ...request, expectedStorefrontApplicationId };
+    const verified = yield* loadRows(
+      [
+        {
+          payload: { _tag: 'found', current: { ...current, storefrontApplicationId: expectedStorefrontApplicationId } },
+        },
+      ],
+      tenantId,
+      pinned,
+    );
+    expect(Option.isSome(verified.snapshot)).toBe(true);
+    for (const stale of [current, { ...current, storefrontApplicationId: '33333333-3333-4333-8333-333333333333' }]) {
+      expect(
+        yield* loadRows([{ payload: { _tag: 'found', current: stale } }], tenantId, pinned).pipe(Effect.flip),
+      ).toBeInstanceOf(PersistenceFailure);
+    }
+    expect(
+      yield* loadRows(
+        [
+          {
+            payload: {
+              _tag: 'found',
+              current: { ...current, storefrontApplicationId: expectedStorefrontApplicationId },
+            },
+          },
+        ],
+        tenantId,
+        { ...pinned, expectedStorefrontApplicationId: expectedStorefrontApplicationId.toUpperCase() },
+      ).pipe(Effect.flip),
+    ).toBeInstanceOf(PersistenceFailure);
   }),
 );
 it.effect('preserves native not-found authority without inventing a registration', () =>

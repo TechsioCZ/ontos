@@ -1,3 +1,8 @@
+import type { CurrentOrganizationCustomerRecordFactsSchema } from '@app/party-registry/apis/organization-record-facts';
+import type {
+  CustomerProfilePartySourceReference,
+  CustomerProfileSourceAssertion,
+} from '../../shared/domain/customer-profile-source.ts';
 /* oxlint-disable effect-native/no-dependency-parameters effect-native/no-nullable-schema-field effect-native/no-string-timestamp-schema effect-native/no-unbranded-identifier-schema effect-native/no-duplicate-literal-vocabulary anti-slop/no-known-value-widening sonarjs/no-duplicate-string -- This adapter decodes nullable database wire rows and accepts optional owner-port composition inputs without exporting database capability; expires: 2027-03-31. */
 import { ReadHandlerNotFound, ReadHandlerUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type {
@@ -458,6 +463,14 @@ const ensureCounterpartyProfileRoutine = routine('ensure_counterparty_profile', 
   { source: 'input', type: 'uuid' },
   { source: 'input', type: 'uuid' },
 ] as const);
+const ensureSourceProfileRoutine = routine('ensure_source_customer_profile', 'profile.ensure-source', [
+  ...scopeParameters,
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'uuid' },
+  { source: 'input', type: 'timestamptz' },
+  { source: 'input', type: 'jsonb' },
+] as const);
+
 const transitionProfileRoutine = routine('transition_profile', 'profile.transition', [
   ...scopeParameters,
   { source: 'input', type: 'uuid' },
@@ -866,7 +879,7 @@ const deniedRetailAccess = (
   requiredPermission: input.requiredPermission,
 });
 
-const profileKind = (ref: { readonly kind: 'COUNTERPARTY' | 'RETAIL' }) => ref.kind;
+const profileRefKind = (ref: { readonly kind: 'COUNTERPARTY' | 'RETAIL' }) => ref.kind;
 const targetState = (operation: ProfileLifecycleOperation): 'ACTIVE' | 'ARCHIVED' | 'SUSPENDED' => {
   if (operation === 'REACTIVATE') {
     return 'ACTIVE';
@@ -1157,9 +1170,13 @@ export const retailEnrollmentBindingIsCurrentForPrincipal = Effect.fn('ProfilePe
 
 export type CounterpartyRoleEligibility =
   | {
+      readonly counterpartyResourceRevision?: string;
       readonly managedLegalEntityId: string;
       readonly observedAt?: string;
+      readonly organizationProof?: typeof CurrentOrganizationCustomerRecordFactsSchema.Type;
       readonly outcome: 'ELIGIBLE';
+      readonly partyResourceId?: string;
+      readonly partyResourceRevision?: string;
       readonly roleResourceId: string;
       readonly roleResourceRevision: string;
       readonly validUntil?: string | null;
@@ -1173,6 +1190,20 @@ export class ProfilePersistenceDependencyFailure extends Schema.TaggedError<Prof
 ) {}
 
 export interface ProfilePersistenceDependencies {
+  readonly checkOrganizationSourceProfile?: (
+    payload: CreateCounterpartyPurchasingProfilePayload,
+    result: CreateCounterpartyPurchasingProfileResult,
+    proof: typeof CurrentOrganizationCustomerRecordFactsSchema.Type,
+  ) => Effect.Effect<void, ProfilePersistenceDependencyFailure>;
+  readonly checkSourceProfile?: (
+    source: CustomerProfileSourceAssertion,
+    target: Readonly<{
+      kind: 'PARTY' | 'RETAIL_CUSTOMER_PROFILE' | 'COUNTERPARTY_PURCHASING_PROFILE';
+      resourceId: string;
+    }>,
+    profileKind: 'RETAIL' | 'COUNTERPARTY',
+    partySourceReference?: CustomerProfilePartySourceReference,
+  ) => Effect.Effect<void, ProfilePersistenceDependencyFailure>;
   readonly evaluateReactivation?: (payload: ProfileLifecyclePayload) => Effect.Effect<
     {
       readonly dependenciesSatisfied: boolean;
@@ -1216,7 +1247,37 @@ export interface ProfilePersistenceDependencies {
     | { readonly outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' },
     ProfilePersistenceDependencyFailure
   >;
+  readonly resolveSourceCounterpartyRole?: (
+    input: Readonly<{ counterpartyResourceId: string; tenantId: string }>,
+    source: CustomerProfileSourceAssertion,
+    partySourceReference: CustomerProfilePartySourceReference,
+    payload: CreateCounterpartyPurchasingProfilePayload,
+  ) => Effect.Effect<CounterpartyRoleEligibility, ProfilePersistenceDependencyFailure>;
+  readonly resolveSourceRetailParty?: (
+    input: Readonly<{ partyResourceId: string; tenantId: string }>,
+    source: CustomerProfileSourceAssertion,
+    partySourceReference: CustomerProfilePartySourceReference,
+  ) => ReturnType<NonNullable<ProfilePersistenceDependencies['resolveRetailParty']>>;
 }
+
+const retailSourcePrivacyFailure = (cause: unknown) =>
+  preserveFailureCause(
+    new EnsureRetailCustomerProfileRejected({
+      code: 'PRIVACY_DENIED',
+      reason: 'Current Privacy does not permit this source Profile effect',
+      retryable: false,
+    }),
+    cause,
+  );
+const counterpartySourcePrivacyFailure = (cause: unknown) =>
+  preserveFailureCause(
+    new CreateCounterpartyPurchasingProfileRejected({
+      code: 'PRIVACY_DENIED',
+      reason: 'Current Privacy does not permit this source Profile effect',
+      retryable: false,
+    }),
+    cause,
+  );
 
 const ensureServices = (
   transaction: ProfileScopedRoutineInvoker,
@@ -1238,7 +1299,15 @@ const ensureServices = (
         }),
       );
     }
-    const resolveParty = dependencies.resolveRetailParty;
+    const { partySourceReference, source } = payload;
+    let resolveParty = dependencies.resolveRetailParty;
+    if (source !== undefined) {
+      const resolveSource = dependencies.resolveSourceRetailParty;
+      resolveParty =
+        resolveSource === undefined || partySourceReference === undefined
+          ? undefined
+          : (input) => resolveSource(input, source, partySourceReference);
+    }
     if (resolveParty === undefined) {
       return Effect.fail(
         new EnsureRetailCustomerProfileRejected({
@@ -1274,56 +1343,114 @@ const ensureServices = (
             }),
           );
         }
-        return transaction
-          .invoke(ensureRetailProfileRoutine, [
-            payload.subject.partyRef.resourceId,
-            partyResolution.partyResourceRevision,
-            payload.trigger === 'GUEST_RETAIL_ATTRIBUTION' ? 'GUEST_ACCEPTANCE' : 'AUTHENTICATED',
-            payload.effectiveAt,
-            payload.trigger,
-            context.actionInvocationId,
-            scope.principalId,
-          ])
-          .pipe(
-            Effect.mapError(
-              (failure) =>
-                new EnsureRetailCustomerProfileRejected({
+        const invocation =
+          payload.source === undefined
+            ? transaction.invoke(ensureRetailProfileRoutine, [
+                payload.subject.partyRef.resourceId,
+                partyResolution.partyResourceRevision,
+                payload.trigger === 'GUEST_RETAIL_ATTRIBUTION' ? 'GUEST_ACCEPTANCE' : 'AUTHENTICATED',
+                payload.effectiveAt,
+                payload.trigger,
+                context.actionInvocationId,
+                scope.principalId,
+              ])
+            : Effect.gen(function* ensureSourceRetailProfile() {
+                if (dependencies.checkSourceProfile === undefined) {
+                  return yield* new EnsureRetailCustomerProfileRejected({
+                    code: 'DEPENDENCY_UNAVAILABLE',
+                    reason: 'Current source processing authority is unavailable',
+                    retryable: true,
+                  });
+                }
+                if (source === undefined) {
+                  return yield* new EnsureRetailCustomerProfileRejected({
+                    code: 'SOURCE_CONFLICT',
+                    reason: 'Source assertion is unavailable',
+                    retryable: false,
+                  });
+                }
+                yield* dependencies
+                  .checkSourceProfile(
+                    source,
+                    { kind: 'PARTY', resourceId: payload.subject.partyRef.resourceId },
+                    'RETAIL',
+                    partySourceReference,
+                  )
+                  .pipe(Effect.mapError(retailSourcePrivacyFailure));
+                const rows = yield* transaction.invoke(ensureSourceProfileRoutine, [
+                  scope.principalId,
+                  context.actionInvocationId,
+                  DateTime.formatIso(yield* DateTime.now),
+                  {
+                    payload,
+                    profileKind: 'RETAIL',
+                    proof: {
+                      partyResourceId: partyResolution.partyResourceId,
+                      partyResourceRevision: partyResolution.partyResourceRevision,
+                    },
+                  },
+                ]);
+                const result = rows[0]?.payload;
+                if (
+                  result !== null &&
+                  result !== undefined &&
+                  Schema.is(EnsureRetailCustomerProfileResultSchema)(result) &&
+                  result.outcome !== 'PROFILE_CREATED'
+                ) {
+                  yield* dependencies
+                    .checkSourceProfile(
+                      source,
+                      { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: result.profileRef.resourceId },
+                      'RETAIL',
+                    )
+                    .pipe(Effect.mapError(retailSourcePrivacyFailure));
+                }
+                return rows;
+              });
+        return invocation.pipe(
+          Effect.mapError((failure) =>
+            Schema.is(EnsureRetailCustomerProfileRejected)(failure)
+              ? failure
+              : new EnsureRetailCustomerProfileRejected({
                   code: 'PERSISTENCE_UNAVAILABLE',
                   reason: routineFailureReason(failure),
                   retryable: true,
                 }),
-            ),
-            Effect.flatMap(
-              ([row]): Effect.Effect<EnsureRetailCustomerProfileResult, EnsureRetailCustomerProfileRejected> => {
-                if (row === undefined) {
-                  return Effect.fail(
-                    new EnsureRetailCustomerProfileRejected({
-                      code: 'OUTCOME_INDETERMINATE',
-                      reason: 'The Retail profile routine returned no durable outcome',
-                      retryable: true,
-                    }),
-                  );
-                }
-                if (row.payload !== null && Schema.is(EnsureRetailCustomerProfileResultSchema)(row.payload)) {
-                  return Effect.succeed(row.payload);
-                }
-                const code = row.outcome;
+          ),
+          Effect.flatMap(
+            ([row]): Effect.Effect<EnsureRetailCustomerProfileResult, EnsureRetailCustomerProfileRejected> => {
+              if (row === undefined) {
                 return Effect.fail(
                   new EnsureRetailCustomerProfileRejected({
-                    code:
-                      code === 'SUBJECT_NOT_RESOLVED_OR_INVALID' ||
-                      code === 'PROFILE_KIND_OR_SUBJECT_CONFLICT' ||
-                      code === 'PROFILE_RECONCILIATION_REQUIRED' ||
-                      code === 'CURRENT_STATE_CONFLICT'
-                        ? code
-                        : 'OUTCOME_INDETERMINATE',
-                    reason: 'The Retail profile could not be ensured from current scoped state',
-                    retryable: false,
+                    code: 'OUTCOME_INDETERMINATE',
+                    reason: 'The Retail profile routine returned no durable outcome',
+                    retryable: true,
                   }),
                 );
-              },
-            ),
-          );
+              }
+              if (row.payload !== null && Schema.is(EnsureRetailCustomerProfileResultSchema)(row.payload)) {
+                return Effect.succeed(row.payload);
+              }
+              const code = row.outcome;
+              return Effect.fail(
+                new EnsureRetailCustomerProfileRejected({
+                  code:
+                    code === 'SUBJECT_NOT_RESOLVED_OR_INVALID' ||
+                    code === 'PROFILE_KIND_OR_SUBJECT_CONFLICT' ||
+                    code === 'PROFILE_RECONCILIATION_REQUIRED' ||
+                    code === 'CURRENT_STATE_CONFLICT' ||
+                    code === 'SOURCE_AUTHORITY_DENIED' ||
+                    code === 'SOURCE_CONFLICT' ||
+                    code === 'SOURCE_STALE'
+                      ? code
+                      : 'OUTCOME_INDETERMINATE',
+                  reason: 'The Retail profile could not be ensured from current scoped state',
+                  retryable: false,
+                }),
+              );
+            },
+          ),
+        );
       }),
     );
   },
@@ -1348,7 +1475,15 @@ const counterpartyServices = (
         }),
       );
     }
-    const resolveRole = dependencies.resolveCounterpartyRole;
+    const { partySourceReference, source } = payload;
+    let resolveRole = dependencies.resolveCounterpartyRole;
+    if (source !== undefined) {
+      const resolveSource = dependencies.resolveSourceCounterpartyRole;
+      resolveRole =
+        resolveSource === undefined || partySourceReference === undefined
+          ? undefined
+          : (input) => resolveSource(input, source, partySourceReference, payload);
+    }
     if (resolveRole === undefined) {
       return Effect.fail(
         new CreateCounterpartyPurchasingProfileRejected({
@@ -1386,59 +1521,136 @@ const counterpartyServices = (
             }),
           );
         }
-        return transaction
-          .invoke(ensureCounterpartyProfileRoutine, [
-            payload.subject.counterpartyRef.resourceId,
-            null,
-            eligibility.roleResourceId,
-            eligibility.roleResourceRevision,
-            payload.effectiveAt,
-            payload.trigger,
-            context.actionInvocationId,
-            scope.principalId,
-          ])
-          .pipe(
-            Effect.mapError(
-              (failure) =>
-                new CreateCounterpartyPurchasingProfileRejected({
+        const invocation =
+          payload.source === undefined
+            ? transaction.invoke(ensureCounterpartyProfileRoutine, [
+                payload.subject.counterpartyRef.resourceId,
+                null,
+                eligibility.roleResourceId,
+                eligibility.roleResourceRevision,
+                payload.effectiveAt,
+                payload.trigger,
+                context.actionInvocationId,
+                scope.principalId,
+              ])
+            : Effect.gen(function* ensureSourceCounterpartyProfile() {
+                if (dependencies.checkSourceProfile === undefined || eligibility.partyResourceId === undefined) {
+                  return yield* new CreateCounterpartyPurchasingProfileRejected({
+                    code: 'DEPENDENCY_UNAVAILABLE',
+                    reason: 'Current source Party and Privacy authority is unavailable',
+                    retryable: true,
+                  });
+                }
+                if (source === undefined) {
+                  return yield* new CreateCounterpartyPurchasingProfileRejected({
+                    code: 'SOURCE_CONFLICT',
+                    reason: 'Source assertion is unavailable',
+                    retryable: false,
+                  });
+                }
+                if (eligibility.organizationProof === undefined) {
+                  yield* dependencies
+                    .checkSourceProfile(
+                      source,
+                      { kind: 'PARTY', resourceId: eligibility.partyResourceId },
+                      'COUNTERPARTY',
+                    )
+                    .pipe(Effect.mapError(counterpartySourcePrivacyFailure));
+                }
+                const rows = yield* transaction.invoke(ensureSourceProfileRoutine, [
+                  scope.principalId,
+                  context.actionInvocationId,
+                  DateTime.formatIso(yield* DateTime.now),
+                  {
+                    payload,
+                    profileKind: 'COUNTERPARTY',
+                    proof: {
+                      counterpartyResourceRevision: eligibility.counterpartyResourceRevision ?? null,
+                      partyResourceId: eligibility.partyResourceId,
+                      partyResourceRevision: eligibility.partyResourceRevision ?? null,
+                      roleResourceId: eligibility.roleResourceId,
+                      roleResourceRevision: eligibility.roleResourceRevision,
+                    },
+                  },
+                ]);
+                const result = rows[0]?.payload;
+                if (
+                  result !== null &&
+                  result !== undefined &&
+                  Schema.is(CreateCounterpartyPurchasingProfileResultSchema)(result)
+                ) {
+                  if (eligibility.organizationProof === undefined) {
+                    yield* dependencies
+                      .checkSourceProfile(
+                        source,
+                        { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: result.profileRef.resourceId },
+                        'COUNTERPARTY',
+                      )
+                      .pipe(Effect.mapError(counterpartySourcePrivacyFailure));
+                  } else if (result.outcome !== 'PROFILE_CREATED' || result.sourceEffect?.replayed === true) {
+                    if (dependencies.checkOrganizationSourceProfile === undefined) {
+                      return yield* counterpartySourcePrivacyFailure(
+                        new ProfilePersistenceDependencyFailure({
+                          reason: 'Current Organization Profile authority is unavailable',
+                        }),
+                      );
+                    }
+                    yield* dependencies
+                      .checkOrganizationSourceProfile(payload, result, eligibility.organizationProof)
+                      .pipe(Effect.mapError(counterpartySourcePrivacyFailure));
+                  }
+                }
+                return rows;
+              });
+        return invocation.pipe(
+          Effect.mapError((failure) =>
+            Schema.is(CreateCounterpartyPurchasingProfileRejected)(failure)
+              ? failure
+              : new CreateCounterpartyPurchasingProfileRejected({
                   code: 'PERSISTENCE_UNAVAILABLE',
                   reason: routineFailureReason(failure),
                   retryable: true,
                 }),
-            ),
-            Effect.flatMap(
-              ([row]): Effect.Effect<
-                CreateCounterpartyPurchasingProfileResult,
-                CreateCounterpartyPurchasingProfileRejected
-              > => {
-                if (
-                  row?.payload !== null &&
-                  row?.payload !== undefined &&
-                  Schema.is(CreateCounterpartyPurchasingProfileResultSchema)(row.payload)
-                ) {
-                  return Effect.succeed({
-                    outcome: row.payload.outcome,
-                    profileRef: row.payload.profileRef,
-                    revision: row.payload.revision,
-                    state: row.payload.state,
-                  });
-                }
-                const code = row?.outcome;
-                return Effect.fail(
-                  new CreateCounterpartyPurchasingProfileRejected({
-                    code:
-                      code === 'COUNTERPARTY_ROLE_NOT_ELIGIBLE' ||
-                      code === 'PROFILE_RECONCILIATION_REQUIRED' ||
-                      code === 'CURRENT_STATE_CONFLICT'
-                        ? code
-                        : 'OUTCOME_INDETERMINATE',
-                    reason: 'The Counterparty profile could not be created from current scoped state',
-                    retryable: row === undefined,
-                  }),
-                );
-              },
-            ),
-          );
+          ),
+          Effect.flatMap(
+            ([row]): Effect.Effect<
+              CreateCounterpartyPurchasingProfileResult,
+              CreateCounterpartyPurchasingProfileRejected
+            > => {
+              if (
+                row?.payload !== null &&
+                row?.payload !== undefined &&
+                Schema.is(CreateCounterpartyPurchasingProfileResultSchema)(row.payload)
+              ) {
+                const result: CreateCounterpartyPurchasingProfileResult = {
+                  outcome: row.payload.outcome,
+                  profileRef: row.payload.profileRef,
+                  revision: row.payload.revision,
+                  state: row.payload.state,
+                };
+                return row.payload.sourceEffect === undefined
+                  ? Effect.succeed(result)
+                  : Effect.succeed({ ...result, sourceEffect: row.payload.sourceEffect });
+              }
+              const code = row?.outcome;
+              return Effect.fail(
+                new CreateCounterpartyPurchasingProfileRejected({
+                  code:
+                    code === 'COUNTERPARTY_ROLE_NOT_ELIGIBLE' ||
+                    code === 'PROFILE_RECONCILIATION_REQUIRED' ||
+                    code === 'CURRENT_STATE_CONFLICT' ||
+                    code === 'SOURCE_AUTHORITY_DENIED' ||
+                    code === 'SOURCE_CONFLICT' ||
+                    code === 'SOURCE_STALE'
+                      ? code
+                      : 'OUTCOME_INDETERMINATE',
+                  reason: 'The Counterparty profile could not be created from current scoped state',
+                  retryable: row === undefined,
+                }),
+              );
+            },
+          ),
+        );
       }),
     );
   },
@@ -1501,7 +1713,7 @@ const lifecycleServices = (
         transaction
           .invoke(transitionProfileRoutine, [
             payload.profileRef.resourceId,
-            profileKind(payload.profileRef),
+            profileRefKind(payload.profileRef),
             payload.expectedState,
             payload.expectedRevision,
             targetState(operation),
@@ -2183,7 +2395,7 @@ const readServices = (
   const readProfile = (
     input: Parameters<CustomerProfileReadServices['readProfile']>[0],
   ): Effect.Effect<CustomerProfileReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable> =>
-    transaction.invoke(readProfileRoutine, [input.profileRef.resourceId, profileKind(input.profileRef)]).pipe(
+    transaction.invoke(readProfileRoutine, [input.profileRef.resourceId, profileRefKind(input.profileRef)]).pipe(
       Effect.mapError(readUnavailableFromRoutineFailure),
       Effect.flatMap(
         ([row]): Effect.Effect<CustomerProfileReadResponse, ReadHandlerNotFound | ReadHandlerUnavailable> => {
@@ -2310,131 +2522,135 @@ const readServices = (
       evaluateGate: (
         input,
       ): Effect.Effect<CustomerProfileTradingGateResponse, ReadHandlerNotFound | ReadHandlerUnavailable> =>
-        transaction.invoke(readTradingGateRoutine, [input.profileRef.resourceId, profileKind(input.profileRef)]).pipe(
-          Effect.mapError(readUnavailableFromRoutineFailure),
-          Effect.flatMap(
-            ([row]): Effect.Effect<
-              CustomerProfileTradingGateResponse,
-              ReadHandlerNotFound | ReadHandlerUnavailable
-            > => {
-              if (row === undefined || row.outcome === 'PROFILE_NOT_FOUND') {
-                return Effect.fail(readNotFound('The Customer Profile does not exist in the verified scope'));
-              }
-              if (
-                row.payload === null ||
-                !Schema.is(ProfilePayloadSchema)(row.payload) ||
-                (row.payload.scopeLegalEntityId !== undefined && row.payload.scopeLegalEntityId !== scope.legalEntityId)
-              ) {
-                return Effect.fail(readUnavailable('The Customer Profile trading projection is invalid'));
-              }
-              const raw = row.payload;
-              const profile = profileFromPayload(raw, scope);
-              const profileReference = profileRef(scope.tenantId, raw.profileId, raw.profileKind);
-              if (row.outcome === 'PROFILE_RECONCILIATION_REQUIRED') {
-                return succeedCustomerProfileTradingGate({
-                  evaluatedAt: raw.updatedAt,
-                  gate: { canAcceptNewOrder: false, outcome: 'RECONCILIATION_REQUIRED' as const },
-                  profileRef: profileReference,
-                  provenance: profileProvenance(raw.updatedAt, raw.revision),
-                  revision: raw.revision,
-                  state: raw.state,
-                  subject: profile.subject,
-                });
-              }
+        transaction
+          .invoke(readTradingGateRoutine, [input.profileRef.resourceId, profileRefKind(input.profileRef)])
+          .pipe(
+            Effect.mapError(readUnavailableFromRoutineFailure),
+            Effect.flatMap(
+              ([row]): Effect.Effect<
+                CustomerProfileTradingGateResponse,
+                ReadHandlerNotFound | ReadHandlerUnavailable
+              > => {
+                if (row === undefined || row.outcome === 'PROFILE_NOT_FOUND') {
+                  return Effect.fail(readNotFound('The Customer Profile does not exist in the verified scope'));
+                }
+                if (
+                  row.payload === null ||
+                  !Schema.is(ProfilePayloadSchema)(row.payload) ||
+                  (row.payload.scopeLegalEntityId !== undefined &&
+                    row.payload.scopeLegalEntityId !== scope.legalEntityId)
+                ) {
+                  return Effect.fail(readUnavailable('The Customer Profile trading projection is invalid'));
+                }
+                const raw = row.payload;
+                const profile = profileFromPayload(raw, scope);
+                const profileReference = profileRef(scope.tenantId, raw.profileId, raw.profileKind);
+                if (row.outcome === 'PROFILE_RECONCILIATION_REQUIRED') {
+                  return succeedCustomerProfileTradingGate({
+                    evaluatedAt: raw.updatedAt,
+                    gate: { canAcceptNewOrder: false, outcome: 'RECONCILIATION_REQUIRED' as const },
+                    profileRef: profileReference,
+                    provenance: profileProvenance(raw.updatedAt, raw.revision),
+                    revision: raw.revision,
+                    state: raw.state,
+                    subject: profile.subject,
+                  });
+                }
 
-              if (profile.kind !== 'COUNTERPARTY') {
-                return succeedCustomerProfileTradingGate({
-                  evaluatedAt: raw.updatedAt,
-                  gate: { canAcceptNewOrder: profile.state === 'ACTIVE', outcome: profile.state },
-                  profileRef: profileReference,
-                  provenance: profileProvenance(raw.updatedAt, raw.revision),
-                  revision: raw.revision,
-                  state: raw.state,
-                  subject: profile.subject,
-                });
-              }
+                if (profile.kind !== 'COUNTERPARTY') {
+                  return succeedCustomerProfileTradingGate({
+                    evaluatedAt: raw.updatedAt,
+                    gate: { canAcceptNewOrder: profile.state === 'ACTIVE', outcome: profile.state },
+                    profileRef: profileReference,
+                    provenance: profileProvenance(raw.updatedAt, raw.revision),
+                    revision: raw.revision,
+                    state: raw.state,
+                    subject: profile.subject,
+                  });
+                }
 
-              const resolveRole = dependencies.resolveCounterpartyRole;
-              if (resolveRole === undefined) {
-                return Effect.fail(readUnavailable('Current Counterparty Role evidence is unavailable'));
-              }
-              return resolveRole({
-                counterpartyResourceId: profile.subject.counterpartyRef.resourceId,
-                tenantId: scope.tenantId,
-              }).pipe(
-                Effect.mapError((cause) =>
-                  readUnavailable(`Current Counterparty Role evidence is unavailable (${String(cause)})`),
-                ),
-                Effect.flatMap((eligibility) =>
-                  DateTime.now.pipe(
-                    // oxlint-disable-next-line sonarjs/no-nested-functions -- The timestamp mapper intentionally captures the resolved eligibility and scoped profile evidence inside this read transaction.
-                    Effect.map((now) => {
-                      const evaluatedAt = DateTime.formatIso(now);
-                      const eligibleForScope =
-                        eligibility.outcome === 'ELIGIBLE' && eligibility.managedLegalEntityId === scope.legalEntityId;
-                      const roleProvenance =
-                        eligibility.outcome === 'ELIGIBLE' && eligibility.roleResourceId !== undefined
-                          ? [
-                              {
-                                freshness: {
-                                  observedAt: evaluatedAt,
-                                  revision: eligibility.roleResourceRevision,
-                                  sourceModuleId: 'party.registry',
-                                  status: eligibleForScope ? ('CURRENT' as const) : ('INDETERMINATE' as const),
-                                },
-                                projection: 'PARTY_REGISTRY' as const,
-                                sourceResourceRef: eligibility.roleResourceId,
-                              },
-                            ]
-                          : [
-                              {
-                                freshness: {
-                                  observedAt: evaluatedAt,
-                                  sourceModuleId: 'party.registry',
-                                  status:
-                                    eligibility.outcome === 'INELIGIBLE'
-                                      ? ('CURRENT' as const)
-                                      : ('UNAVAILABLE' as const),
-                                },
-                                projection: 'PARTY_REGISTRY' as const,
-                              },
-                            ];
-                      let gate: CustomerProfileTradingGateResponse['gate'];
-                      if (eligibleForScope) {
-                        gate = {
-                          canAcceptNewOrder: profile.state === 'ACTIVE',
-                          outcome: profile.state,
-                        };
-                      } else if (
-                        eligibility.outcome === 'INELIGIBLE' ||
-                        (eligibility.outcome === 'ELIGIBLE' && !eligibleForScope)
-                      ) {
-                        gate = {
-                          canAcceptNewOrder: false,
-                          outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
-                        };
-                      } else {
-                        gate = {
-                          canAcceptNewOrder: false,
-                          outcome: 'DEPENDENCY_UNAVAILABLE',
-                        };
-                      }
-                      return {
-                        evaluatedAt,
-                        gate,
-                        profileRef: profileReference,
-                        provenance: [...profileProvenance(raw.updatedAt, raw.revision), ...roleProvenance],
-                        revision: raw.revision,
-                        state: raw.state,
-                        subject: profile.subject,
-                      };
-                    }),
+                const resolveRole = dependencies.resolveCounterpartyRole;
+                if (resolveRole === undefined) {
+                  return Effect.fail(readUnavailable('Current Counterparty Role evidence is unavailable'));
+                }
+                return resolveRole({
+                  counterpartyResourceId: profile.subject.counterpartyRef.resourceId,
+                  tenantId: scope.tenantId,
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    readUnavailable(`Current Counterparty Role evidence is unavailable (${String(cause)})`),
                   ),
-                ),
-              );
-            },
+                  Effect.flatMap((eligibility) =>
+                    DateTime.now.pipe(
+                      // oxlint-disable-next-line sonarjs/no-nested-functions -- The timestamp mapper intentionally captures the resolved eligibility and scoped profile evidence inside this read transaction.
+                      Effect.map((now) => {
+                        const evaluatedAt = DateTime.formatIso(now);
+                        const eligibleForScope =
+                          eligibility.outcome === 'ELIGIBLE' &&
+                          eligibility.managedLegalEntityId === scope.legalEntityId;
+                        const roleProvenance =
+                          eligibility.outcome === 'ELIGIBLE' && eligibility.roleResourceId !== undefined
+                            ? [
+                                {
+                                  freshness: {
+                                    observedAt: evaluatedAt,
+                                    revision: eligibility.roleResourceRevision,
+                                    sourceModuleId: 'party.registry',
+                                    status: eligibleForScope ? ('CURRENT' as const) : ('INDETERMINATE' as const),
+                                  },
+                                  projection: 'PARTY_REGISTRY' as const,
+                                  sourceResourceRef: eligibility.roleResourceId,
+                                },
+                              ]
+                            : [
+                                {
+                                  freshness: {
+                                    observedAt: evaluatedAt,
+                                    sourceModuleId: 'party.registry',
+                                    status:
+                                      eligibility.outcome === 'INELIGIBLE'
+                                        ? ('CURRENT' as const)
+                                        : ('UNAVAILABLE' as const),
+                                  },
+                                  projection: 'PARTY_REGISTRY' as const,
+                                },
+                              ];
+                        let gate: CustomerProfileTradingGateResponse['gate'];
+                        if (eligibleForScope) {
+                          gate = {
+                            canAcceptNewOrder: profile.state === 'ACTIVE',
+                            outcome: profile.state,
+                          };
+                        } else if (
+                          eligibility.outcome === 'INELIGIBLE' ||
+                          (eligibility.outcome === 'ELIGIBLE' && !eligibleForScope)
+                        ) {
+                          gate = {
+                            canAcceptNewOrder: false,
+                            outcome: 'COUNTERPARTY_ROLE_NOT_ELIGIBLE',
+                          };
+                        } else {
+                          gate = {
+                            canAcceptNewOrder: false,
+                            outcome: 'DEPENDENCY_UNAVAILABLE',
+                          };
+                        }
+                        return {
+                          evaluatedAt,
+                          gate,
+                          profileRef: profileReference,
+                          provenance: [...profileProvenance(raw.updatedAt, raw.revision), ...roleProvenance],
+                          revision: raw.revision,
+                          state: raw.state,
+                          subject: profile.subject,
+                        };
+                      }),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
-        ),
     },
     guestAttributionStatus: {
       readStatus: (

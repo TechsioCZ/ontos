@@ -15,6 +15,7 @@ import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { leaseInvoicesRead } from '../../src/api/lease-invoices.read.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
+import { vatChoicesRead } from '../../src/api/vat-choices.read.ts';
 import { documentResourceDescriptor } from '../../shared/resources/document.ts';
 import { financialPlanEntryResourceDescriptor } from '../../shared/resources/financial-plan-entry.ts';
 import { invoiceResourceDescriptor } from '../../shared/resources/invoice.ts';
@@ -32,7 +33,7 @@ describe('finance.billing backend and full publication boundary', () => {
       expect(action).toBe(getVerticalRuntimeActions(registration)[index]);
       expect(action).toBe(manifest.publicSurface.actions[index]);
     }
-    const expectedReads = [leaseInvoicesRead, recordsRead];
+    const expectedReads = [leaseInvoicesRead, recordsRead, vatChoicesRead];
     expect(declaration.reads).toEqual(expectedReads);
     for (const [index, read] of expectedReads.entries()) {
       expect(declaration.reads?.[index]).toBe(read);
@@ -82,10 +83,12 @@ describe('finance.billing backend and full publication boundary', () => {
       invoiceResourceDescriptor,
     ]);
     expect(manifest.publicSurface.mcp).toEqual(financeBillingMcpContribution);
-    expect(Object.keys(manifest.publicSurface.components)).toEqual(['page-records']);
+    expect(Object.keys(manifest.publicSurface.components)).toEqual(['page-records', 'page-vat']);
     expect(manifest.publicSurface.components['page-records']).toBeTypeOf('function');
+    expect(manifest.publicSurface.components['page-vat']).toBeTypeOf('function');
     const fullEntrypoints = getVerticalRuntimeEntrypoints(registration);
     expect(fullEntrypoints.pages['page-records']).toBeTypeOf('function');
+    expect(fullEntrypoints.pages['page-vat']).toBeTypeOf('function');
     for (const key of Object.keys(manifest.publicSurface.api)) {
       expect(fullEntrypoints.api[key]).toBeTypeOf('function');
     }

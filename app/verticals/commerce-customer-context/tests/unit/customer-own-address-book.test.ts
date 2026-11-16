@@ -248,7 +248,7 @@ it.effect('fails closed before any read if the admitted workload tenant differs 
         Effect.provideService(ReadRuntime, runtime),
       ),
     );
-    expect(result._tag).toBe('Failure');
+    expect(Result.isFailure(result)).toBe(true);
     expect(calls).toEqual([]);
   }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

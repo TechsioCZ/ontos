@@ -17,8 +17,8 @@ import {
   makePartyRegistryRetailPartyResolver,
   PartyRegistryRetailPartyResolverFactory,
   partyRegistryRetailPartyResolverFactoryLive,
-  preparedRetailPartyResolution,
 } from '../../src/integrations/party-registry-retail-party-resolver.ts';
+import { preparedRetailPartyResolution } from '../../src/integrations/prepared-retail-party-resolution.ts';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
@@ -221,6 +221,7 @@ const prepareResolution = (
   preparedRetailPartyResolution.pipe(
     Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
     Effect.provideService(RetailPartyDetailExecutor, executor),
+    Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
   );
 
 const nativePreflight = {
@@ -352,11 +353,65 @@ it.effect('does no owner I/O for unrelated, malformed or forged preflight input'
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
+it.effect(
+  'prepares no actor-bound Party read for a source Ensure, which proves its Party in the owner transaction',
+  () =>
+    Effect.gen(function* sourceEnsureSkipsRetailRead() {
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+      const server = yield* serveNativePartyContract(snapshot.composition.revision);
+      const execution = yield* prepareResolution(snapshot, server.executor);
+      const sourcePreflight = {
+        ...nativePreflight,
+        payload: {
+          ...nativePreflight.payload,
+          partySourceReference: {
+            occurrenceId: 'person-001-r1',
+            recordId: 'person-001',
+            source: { issuer: 'internal-party-source', namespace: 'identity', recordType: 'person', routeRef: 'party' },
+          },
+          source: {
+            effectId: 'profile-effect-1',
+            issuer: 'internal-ebs',
+            mappingRevision: 'mapping-1',
+            namespace: 'customers',
+            occurrenceId: 'customer-001-r1',
+            order: 1,
+            recordId: 'customer-001',
+            recordType: 'customer',
+            revision: 'r1',
+            route: { id: 'source-profiles', revision: 'route-1' },
+          },
+        },
+      };
+      expect(yield* execution.preflight.prepare(sourcePreflight).pipe(Effect.provide(server.layer))).toEqual({
+        outcome: 'not_applicable',
+      });
+      // The same scope fences still deny a forged source invocation before any owner I/O.
+      expect(
+        yield* execution.preflight.prepare({
+          ...sourcePreflight,
+          scope: { ...sourcePreflight.scope, tenantId: otherTenantId },
+        }),
+      ).toEqual({ outcome: 'denied' });
+      expect(server.delegations).toHaveLength(0);
+      expect(server.requests).toHaveLength(0);
+      // Nothing was prepared, so the in-transaction persistence path still fails closed for a Retail read.
+      expect(
+        Schema.is(ProfilePersistenceDependencyFailure)(
+          yield* Effect.flip(
+            execution.factory.make(scope)({ ...request, compositionRevision: snapshot.composition.revision }),
+          ),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
 it.effect('fails closed without an actor-bound Party transport instead of reading as a workload', () =>
   Effect.gen(function* failClosedWithoutTransport() {
     const snapshot = yield* makeApplicationCompositionSnapshotFixture();
     const execution = yield* preparedRetailPartyResolution.pipe(
       Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
     );
     const failure = yield* Effect.flip(execution.preflight.prepare(nativePreflight));
     expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
@@ -455,6 +510,7 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     };
     yield* prepareRetailProfileServices(payload, context).pipe(
       Effect.provideService(RetailPartyDetailExecutor, executor),
+      Effect.provide(partyRegistryRetailPartyResolverFactoryLive),
     );
     expect(reads).toBe(1);
     // With prepared evidence and a transport it still reads nothing more.
@@ -464,7 +520,9 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     );
     expect(reads).toBe(1);
     // Neither prepared evidence nor a transport: it fails closed.
-    const unprepared = yield* Effect.flip(prepareRetailProfileServices(payload, context));
+    const unprepared = yield* Effect.flip(
+      prepareRetailProfileServices(payload, context).pipe(Effect.provide(partyRegistryRetailPartyResolverFactoryLive)),
+    );
     expect(unprepared.code).toBe('DEPENDENCY_UNAVAILABLE');
     expect(calls).toBe(2);
     expect(transactions).toBe(0);

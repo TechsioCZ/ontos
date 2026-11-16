@@ -6,6 +6,7 @@ import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../sh
 import { OrderStatusSchema, VariantIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 /** A missing fixture value fails the test before its fields are read. */
 const requireFixture = <T>(value: T | null | undefined): T => {
@@ -16,7 +17,7 @@ const requireFixture = <T>(value: T | null | undefined): T => {
 };
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
-  toProductRecord(product, stockLevelsOf(movements, product.id));
+  toProductRecord(product, stockLevelsOf(movements, product.id), TEST_RATES, {});
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -34,6 +35,7 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       name: 'Nerezový šroub',
       priceHistory: [],
       sku: 'DIN933',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       updatedAt: at,
       variants: [
@@ -54,7 +56,6 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
           sourceUnit: 'ks',
         },
       ],
-      vatRate: 21,
     },
   ],
 });
@@ -64,6 +65,7 @@ const run = (current: MerchandiseState, command: typeof MerchandiseCommandSchema
     actor,
     now: DateTime.makeUnsafe(at),
     resourceId,
+    tax: TEST_TAX,
   });
 const order = (
   quantity: number,
@@ -207,6 +209,80 @@ for (const status of ['SHIPPED', 'DELIVERED'] as const) {
   }
 }
 
+it.effect('removing a cancelled storefront order without the DEMO marker does not return stock twice', () =>
+  Effect.gen(function* merchandiseScenario14() {
+    const placed = yield* run(state, order(100, 'cancelled-real-order'), 'real-order');
+    const orderId = requireFixture(requireFixture(placed.storefrontOrder).orderId);
+    const cancelled = yield* run(
+      placed.state,
+      { _tag: 'ChangeOrderStatus', id: orderId, status: 'CANCELLED' },
+      'cancel',
+    );
+    const removed = yield* run(
+      cancelled.state,
+      { _tag: 'RemoveDemoOrder', id: orderId, reason: 'Úklid stornované objednávky' },
+      'remove-cancelled',
+    );
+    expect(stockOf(removed.state)).toBe(500);
+    expect(removed.state.orders[0]?.demoCleanup?.actor).toEqual(actor);
+    expect(removed.state.orders[0]?.demo).toBeUndefined();
+    expect(removed.state.movements.filter((m) => m.reason === 'ORDER').reduce((sum, m) => sum + m.delta, 0)).toBe(0);
+  }),
+);
+
+it.effect('a cancelled staff order can be removed, with neutral non-DEMO audit wording', () =>
+  Effect.gen(function* merchandiseScenario15() {
+    const created = yield* run(
+      state,
+      {
+        _tag: 'CreateOrder',
+        id: 'staff-order-1',
+        lines: [{ productId: 'product-1', quantity: 100, variantId: 'item-1' }],
+        partyId: 'test-customer-party',
+      },
+      'staff-order',
+    );
+    expect(stockOf(created.state)).toBe(400);
+    const cancelled = yield* run(
+      created.state,
+      { _tag: 'ChangeOrderStatus', id: 'staff-order-1', status: 'CANCELLED' },
+      'cancel-staff',
+    );
+    const removed = yield* run(
+      cancelled.state,
+      { _tag: 'RemoveDemoOrder', id: 'staff-order-1', reason: 'Úklid stornované objednávky' },
+      'remove-staff',
+    );
+    expect(stockOf(removed.state)).toBe(500);
+    expect(removed.state.orders[0]?.demoCleanup?.actor).toEqual(actor);
+    expect(removed.state.orders[0]?.status).toBe('CANCELLED');
+    const notes = JSON.stringify(removed.state.orders[0]?.history ?? []);
+    expect(notes).not.toContain('DEMO');
+  }),
+);
+
+it.effect('a non-cancelled, non-DEMO order is still refused with a conflict', () =>
+  Effect.gen(function* merchandiseScenario16() {
+    const created = yield* run(
+      state,
+      {
+        _tag: 'CreateOrder',
+        id: 'staff-open-order',
+        lines: [{ productId: 'product-1', quantity: 100, variantId: 'item-1' }],
+        partyId: 'test-customer-party',
+      },
+      'staff-open',
+    );
+    const failure = yield* run(
+      created.state,
+      { _tag: 'RemoveDemoOrder', id: 'staff-open-order', reason: 'Úklid stornované objednávky' },
+      'remove-open',
+    ).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);
+    expect(stockOf(created.state)).toBe(400);
+  }),
+);
+
 it.effect('staff image changes synchronize imageSrc, including empty galleries', () =>
   Effect.gen(function* merchandiseScenario8() {
     const changed = yield* run(
@@ -326,12 +402,18 @@ it.effect('dry-run validates actual cart without fake contact or address and sav
 it('replenishment uses the product minimum, independently of variant availability', () => {
   const [product] = state.products;
   const { variants: _variants, ...base } = requireFixture(product);
-  expect(toProductRecord({ ...base, lowStockThreshold: 0 }, { total: 0, variants: new Map() })).toMatchObject({
+  expect(
+    toProductRecord({ ...base, lowStockThreshold: 0 }, { total: 0, variants: new Map() }, TEST_RATES, {}),
+  ).toMatchObject({
     availability: 'OUT_OF_STOCK',
     lowStock: false,
   });
-  expect(toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 5, variants: new Map() }).lowStock).toBe(false);
-  expect(toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 4, variants: new Map() }).lowStock).toBe(true);
+  expect(
+    toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 5, variants: new Map() }, TEST_RATES, {}).lowStock,
+  ).toBe(false);
+  expect(
+    toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 4, variants: new Map() }, TEST_RATES, {}).lowStock,
+  ).toBe(true);
   const mixed = {
     ...product,
     variants: [
@@ -339,7 +421,7 @@ it('replenishment uses the product minimum, independently of variant availabilit
       { ...requireFixture(product.variants)[0], id: Schema.decodeUnknownSync(VariantIdSchema)('empty-variant') },
     ],
   };
-  const record = toProductRecord(mixed, { total: 500, variants: new Map([['item-1', 500]]) });
+  const record = toProductRecord(mixed, { total: 500, variants: new Map([['item-1', 500]]) }, TEST_RATES, {});
   expect(record.lowStock).toBe(false);
   expect(record.variantRecords?.find((variant) => variant.id === 'empty-variant')?.availability).toBe('OUT_OF_STOCK');
 });

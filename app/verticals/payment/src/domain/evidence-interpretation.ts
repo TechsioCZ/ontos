@@ -207,6 +207,7 @@ const FACT_MEANINGS: Readonly<Partial<Record<PaymentObservationFactKind, FactMea
   COLLECTION_NOT_EFFECTED: { kind: 'COLLECT', outcome: 'NOT_EFFECTED_CONFIRMED' },
   COLLECTION_PENDING: { kind: 'COLLECT', outcome: 'PENDING' },
   REFUND_CONFIRMED: { kind: 'REFUND', outcome: 'EFFECT_CONFIRMED' },
+  REFUND_INDETERMINATE: { kind: 'REFUND', outcome: 'INDETERMINATE' },
   REFUND_NOT_EFFECTED: { kind: 'REFUND', outcome: 'NOT_EFFECTED_CONFIRMED' },
   REFUND_PENDING: { kind: 'REFUND', outcome: 'PENDING' },
 });
@@ -309,9 +310,8 @@ export interface PaymentEffectIdentity {
 /**
  * Whether a confirmation is proven to restate the money its operation's standing confirmations already
  * state. Effect keys are source-scoped: a keyed statement needs a standing statement of the same source
- * binding with the same key, and a keyless one corroborates only keyless ones (#1151 "a matching amount
- * or reference alone is insufficient deduplication"). With no standing confirmation there is nothing to
- * contradict.
+ * binding with the same key. A separate keyless occurrence proves no identity (#1151). With no
+ * standing confirmation there is nothing to contradict.
  */
 export const restatesEstablishedEffect = (
   candidate: PaymentEffectIdentity,
@@ -321,11 +321,12 @@ export const restatesEstablishedEffect = (
     return true;
   }
   const { economicEffectKey } = candidate;
-  return economicEffectKey === undefined
-    ? standing.every((prior) => prior.economicEffectKey === undefined)
-    : standing.some(
-        (prior) => prior.economicEffectKey === economicEffectKey && sameSourceBinding(prior.source, candidate.source),
-      );
+  return (
+    economicEffectKey !== undefined &&
+    standing.some(
+      (prior) => prior.economicEffectKey === economicEffectKey && sameSourceBinding(prior.source, candidate.source),
+    )
+  );
 };
 
 /**
@@ -356,7 +357,7 @@ const establishedAnotherOperation = (
 };
 
 /**
- * Same established outcome: corroboration unless both sides prove different economic effects. The
+ * A confirmed effect corroborates an existing confirmation only when the evidence proves identity. The
  * outcome may rest on accepted statements or on held statements a governed ATTACH_EVIDENCE counted.
  */
 const decideRestatement = (
@@ -438,12 +439,11 @@ const decideOutcomeFact = (
     // One economic effect counts once: it never confirms a second operation.
     return hold('ECONOMIC_EFFECT_ESTABLISHED_ANOTHER_OPERATION', operation.operationId);
   }
-  if (
-    isDefinitiveOutcome(meaning.outcome) &&
-    observation.amount !== undefined &&
-    !sameAmount(observation.amount, operation.amount)
-  ) {
-    // Not-effected about other money than the operation's proves nothing about this operation either.
+  const mustMatchAmount =
+    isDefinitiveOutcome(meaning.outcome) ||
+    (meaning.outcome === 'INDETERMINATE' && !isDefinitiveOutcome(operation.outcome));
+  if (mustMatchAmount && observation.amount !== undefined && !sameAmount(observation.amount, operation.amount)) {
+    // A qualified outcome for a different amount cannot establish this operation's outcome.
     return conflictTo(operation, 'AMOUNT_MISMATCH');
   }
   if (operation.outcome === 'CONFLICT') {

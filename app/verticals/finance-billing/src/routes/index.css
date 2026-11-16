@@ -137,7 +137,8 @@
     grid-column: auto;
   }
 
+  /* Quantity, price and the VAT select, whose labels name the classification and its rate. */
   .finance-invoice-line-values {
-    grid-template-columns: 6rem 9rem 7rem;
+    grid-template-columns: 6rem 9rem minmax(12rem, 1fr);
   }
 }

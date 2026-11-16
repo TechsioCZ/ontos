@@ -5,6 +5,7 @@ import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { shippingMethodFor } from '../../shared/domain/merchandise-model.ts';
 import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const demoShopCompany = '71000000-0000-4000-8000-000000000024';
 const akrosPlaygroundCompany = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
@@ -33,7 +34,7 @@ const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 type CommandInput = typeof MerchandiseCommandSchema.Encoded;
 
 const apply = (state: MerchandiseState, command: CommandInput, resourceId: string) =>
-  evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId });
+  evolveMerchandiseState(state, decodeCommand(command), { actor, now, resourceId, tax: TEST_TAX });
 
 /** One stocked product of an imported source catalog. */
 const sourceCatalogState = Effect.gen(function* seedSourceCatalog() {
@@ -48,8 +49,8 @@ const sourceCatalogState = Effect.gen(function* seedSourceCatalog() {
       name: 'Šroub DIN 912',
       priceMinor: 1000,
       sku: 'DIN912',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     },
     'p1',
   );
@@ -80,10 +81,16 @@ it.effect('stores the pickup point of a storefront order under the company brand
       now,
       resourceId: 'inv-1',
       storefrontBrand: 'ŠroubShop',
+      tax: TEST_TAX,
     });
     expect(branded.state.orders.at(-1)?.shipping?.label).toBe('Osobní odběr – ŠroubShop');
 
-    const unbranded = yield* evolveMerchandiseState(state, pickupOrder, { actor, now, resourceId: 'inv-2' });
+    const unbranded = yield* evolveMerchandiseState(state, pickupOrder, {
+      actor,
+      now,
+      resourceId: 'inv-2',
+      tax: TEST_TAX,
+    });
     expect(unbranded.state.orders.at(-1)?.shipping?.label).toBe('Osobní odběr');
   }),
 );

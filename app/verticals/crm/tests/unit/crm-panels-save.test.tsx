@@ -2,7 +2,7 @@
 // The visit and plan panels send their one command only from the shared Save button ("Uložit"), last in the footer:
 // typing and Enter change only the draft. Only the i18n runtime and the router blocker are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -163,7 +163,8 @@ describe('CRM panels save from Uložit only', () => {
 
       await clickSave();
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({ _tag: 'RecordVisit', clientId: client.id, result: 'Objednají v pondělí' });
+      expect(Predicate.isTagged(sent[0], 'RecordVisit')).toBe(true);
+      expect(sent[0]).toMatchObject({ clientId: client.id, result: 'Objednají v pondělí' });
       expect(closed).toEqual([false]);
     }),
   );

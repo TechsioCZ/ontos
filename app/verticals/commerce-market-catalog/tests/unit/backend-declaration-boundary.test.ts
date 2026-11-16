@@ -20,6 +20,7 @@ import {
 } from '../../vertical.runtime-declaration.ts';
 import { EshopsPage } from '../../src/routes/[lang]/prodej/eshopy/page.tsx';
 import { MarketDetailPage } from '../../src/routes/[lang]/prodej/eshopy/trhy/[marketId]/page.tsx';
+import { assortmentFixtureMarketAssociationRead } from '../../src/api/assortment-fixture-market-association.read.ts';
 import { currentMarketCatalogRead } from '../../src/api/current-market-catalog.read.ts';
 import { eligibleMarketTuplesRead } from '../../src/api/eligible-market-tuples.read.ts';
 import { resolveCommerceMarketRead } from '../../src/api/resolve-commerce-market.read.ts';
@@ -48,6 +49,7 @@ describe('Market backend declaration and full publication', () => {
       expect(worker).toBe(fullWorkers[index]);
     }
     const reads = [
+      assortmentFixtureMarketAssociationRead,
       currentMarketCatalogRead,
       eligibleMarketTuplesRead,
       resolveCommerceMarketRead,

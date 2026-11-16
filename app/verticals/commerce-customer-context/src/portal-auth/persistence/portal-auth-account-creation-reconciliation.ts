@@ -5,7 +5,7 @@ import { CommercePortalAuthAccountCreationUnavailable } from '../../../api/porta
 import { CommercePortalAuthAccountCreationProviderService } from '../../../api/portal-auth/provider/account-creation-provider-service.ts';
 import { CommercePortalAuthAccountCreationReconciliationService } from '../../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
 import type { CommercePortalAuthAccountCreationReconciliation } from '../../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { user } from './portal-auth-tables.ts';
 import { storefrontVerificationCallback } from '../../../api/portal-auth/provider/storefront-verification-link.ts';

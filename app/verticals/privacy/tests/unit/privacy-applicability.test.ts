@@ -5,6 +5,9 @@ import {
   PrivacyApplicabilityPolicySchema,
   PrivacyApplicabilityAuthoritySchema,
   PrivacyApplicabilityScopeSchema,
+  OrganizationBusinessNonPersonalApplicabilitySchema,
+  OrganizationBusinessSourceFieldSchema,
+  OrganizationBusinessSourceProjectionVersion,
   resolvePrivacyApplicability,
 } from '../../shared/domain/privacy-applicability.ts';
 import { RecordPrivacyApplicabilityPayloadSchema } from '../../shared/actions/record-privacy-applicability.ts';
@@ -71,6 +74,33 @@ const authority = Schema.decodeUnknownSync(PrivacyApplicabilityAuthoritySchema)(
 });
 const input = { evaluatedAt, policies: [decodedPolicy], proposedActivity: true, scope: decodedScope };
 const trustedInput = { ...input, authority };
+const sourceBusinessFacts = [
+  ['OWNER_RESOURCE', 'privacy.core.privacy-subject:explicit-source-anchor'],
+  ['OWNER_RESOURCE_REVISION', '1'],
+  ['SOURCE_CLASSIFICATION', 'SOURCE_ASSERTED_ORGANIZATION'],
+  ['SOURCE_OCCURRENCE', 'explicit-source-occurrence'],
+  ['SOURCE_PROJECTION_DIGEST', 'a'.repeat(64)],
+  ['CATEGORY', OrganizationBusinessSourceProjectionVersion],
+  ['INTENDED_USE', 'CREATE'],
+] as const;
+const sourceBusinessMarker = {
+  allowedFields: OrganizationBusinessSourceFieldSchema.literals,
+  classification: 'SOURCE_ASSERTED_ORGANIZATION',
+  consumerModuleId: 'party.registry',
+  holdBehavior: 'NO_ACTIVE_SCOPE_HOLD',
+  kind: 'ORGANIZATION_BUSINESS_ONLY',
+  operation: 'CREATE',
+  projectionVersion: OrganizationBusinessSourceProjectionVersion,
+} as const;
+const sourceBusinessPolicy = {
+  ...policy,
+  factPredicates: [
+    ...policy.factPredicates,
+    ...sourceBusinessFacts.map(([dimension, value]) => ({ dimension, operator: 'EQUALS', values: [value] })),
+  ],
+  mandatoryDimensions: [...policy.mandatoryDimensions, ...sourceBusinessFacts.map(([dimension]) => dimension)],
+  nonPersonalApplicability: sourceBusinessMarker,
+};
 
 describe('privacy applicability contracts', () => {
   it('does not expose caller-declared business facts in the public applicability request', () => {
@@ -224,5 +254,49 @@ describe('privacy applicability contracts', () => {
       profileKey: 'privacy.profile.eu-eea-gdpr-baseline',
       profileVersion: '1',
     });
+  });
+
+  it('requires the accepted source occurrence and projection identity without inventing a canonical organization', () => {
+    expect(Schema.is(PrivacyApplicabilityPolicySchema)(sourceBusinessPolicy)).toBe(true);
+    for (const required of ['SOURCE_CLASSIFICATION', 'SOURCE_OCCURRENCE', 'SOURCE_PROJECTION_DIGEST']) {
+      expect(
+        Schema.is(PrivacyApplicabilityPolicySchema)({
+          ...sourceBusinessPolicy,
+          mandatoryDimensions: sourceBusinessPolicy.mandatoryDimensions.filter((dimension) => dimension !== required),
+        }),
+      ).toBe(false);
+    }
+    expect(
+      Schema.is(PrivacyApplicabilityPolicySchema)({
+        ...sourceBusinessPolicy,
+        nonPersonalApplicability: { ...sourceBusinessMarker, classification: 'CANONICAL_ORGANIZATION' },
+      }),
+    ).toBe(false);
+  });
+
+  it('refuses personal fields and another consumer or operation in a source business classification', () => {
+    expect(
+      Schema.is(OrganizationBusinessNonPersonalApplicabilitySchema)({
+        ...sourceBusinessMarker,
+        allowedFields: [...sourceBusinessMarker.allowedFields, 'candidate.firstName'],
+      }),
+    ).toBe(false);
+    expect(
+      Schema.is(OrganizationBusinessNonPersonalApplicabilitySchema)({
+        ...sourceBusinessMarker,
+        consumerModuleId: 'commerce.customer-context',
+      }),
+    ).toBe(false);
+    expect(
+      Schema.is(OrganizationBusinessNonPersonalApplicabilitySchema)({ ...sourceBusinessMarker, operation: 'UPDATE' }),
+    ).toBe(false);
+    expect(
+      Schema.is(PrivacyApplicabilityPolicySchema)({
+        ...sourceBusinessPolicy,
+        factPredicates: sourceBusinessPolicy.factPredicates.map((predicate) =>
+          predicate.dimension === 'INTENDED_USE' ? { ...predicate, values: ['EVIDENCE_READ'] } : predicate,
+        ),
+      }),
+    ).toBe(false);
   });
 });

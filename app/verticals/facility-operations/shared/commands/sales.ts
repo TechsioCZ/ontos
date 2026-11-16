@@ -359,6 +359,11 @@ const linkInvoice = Effect.fn('FacilityOperations.Sales.linkInvoice')(function* 
   if (order.invoices.some((invoice) => invoice.invoiceId === value.invoiceId)) {
     return yield* result(order.id, state);
   }
+  if (order.invoices.length > 0) {
+    return yield* opsConflict(
+      'This order already has an invoice. Open the linked invoice instead of invoicing it again.',
+    );
+  }
   const next: SalesOrder = auditUpdated(
     {
       ...order,
@@ -378,6 +383,9 @@ const linkInvoice = Effect.fn('FacilityOperations.Sales.linkInvoice')(function* 
   );
   return yield* result(order.id, replaceOrder(state, next));
 });
+
+export const canInvoiceSalesOrder = (order: SalesOrder): boolean =>
+  order.status !== 'draft' && order.status !== 'cancelled' && order.invoices.length === 0;
 
 export const evolveSales = (state: PurchasingState, command: SalesCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(

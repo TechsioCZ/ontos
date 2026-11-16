@@ -1,3 +1,4 @@
+import type { PrivacyDispatchLiveness } from './privacy-dispatch-liveness.ts';
 import { Context } from 'effect';
 import type { Effect } from 'effect';
 
@@ -60,6 +61,8 @@ export interface GateCarrier {
   readonly accessActor?: DeclaredAccessCarrier['accessActor'];
   readonly accessDeclaration?: DeclaredAccessCarrier['accessDeclaration'];
   readonly accessWorkload?: DeclaredAccessCarrier['accessWorkload'];
+  readonly entrypoint?: { readonly entrypointKey: string };
+  readonly schemaVersion?: string;
 }
 
 /** One enforcement question about one protected entrypoint. */
@@ -120,6 +123,7 @@ export interface AccessDecisionPorts {
   readonly legalEntities: AccessLegalEntityCandidates;
   /** The acting principal's `core.principals.kind`. */
   readonly principalKinds: AccessPrincipalKinds;
+  readonly privacyDispatchLiveness?: PrivacyDispatchLiveness;
   /**
    * The registered workload identities of the acting principal (O73). A composition that omits the
    * registry admits no workload at all: the seam answers UNAVAILABLE rather than guessing a binding.
@@ -137,6 +141,8 @@ export interface AccessDecisionService {
   readonly decide: (input: GateInput) => Effect.Effect<AccessDecision>;
   readonly decideMany: (input: readonly GateInput[]) => Effect.Effect<readonly AccessDecision[]>;
   readonly list: (input: ListGateInput) => Effect.Effect<ListAccessResolution>;
+  /** Many LISTs, one answer each, each exactly as `list` answers it alone, from one engine snapshot per scope. */
+  readonly listMany: (input: readonly ListGateInput[]) => Effect.Effect<readonly ListAccessResolution[]>;
   /**
    * The same seam over other ports (O75): a transaction-aware binding rebinds the gate to ports that
    * join the caller's transaction instead of opening a second connection. A gate that carries no ports

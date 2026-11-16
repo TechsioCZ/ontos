@@ -1,11 +1,18 @@
 import { ReadRuntime } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { auditTrail } from '../../api/auth/demo-accounts.ts';
+
+/** The read's own question: the caller administers the company's agents. */
+const asAgentAdministrator = Effect.provideService(
+  AccessDecisionGate,
+  makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+);
 
 const company = '00000000-0000-4000-8000-000000000002';
 const actorId = '00000000-0000-4000-8000-000000000003';
@@ -89,8 +96,9 @@ const fixture = (
 const project = (evidence: AuditFixtureEvidence, eventType = 'action.executed', principalId = actorId) =>
   Effect.gen(function* projectNativeAudit() {
     const harness = yield* fixture(evidence, eventType, principalId);
-    const entries = yield* auditTrail(caller, transport, 'agents').pipe(
+    const entries = yield* auditTrail(caller, transport).pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
     );
     expect(entries).toHaveLength(1);
     expect(entries[0]?.occurredAt).toBe('2026-10-25T12:00:00.000Z');
@@ -103,7 +111,10 @@ it.effect('native scoped audit includes profile, status and operator history wit
   Effect.gen(function* nativeAgentAuditPredicate() {
     const harness = yield* fixture();
     expect(
-      yield* auditTrail(caller, transport, 'agents').pipe(Effect.provideService(ReadRuntime, harness.runtime)),
+      yield* auditTrail(caller, transport).pipe(
+        Effect.provideService(ReadRuntime, harness.runtime),
+        asAgentAdministrator,
+      ),
     ).toEqual([]);
     const [query] = harness.snapshot().ownerQueries;
     expect(query?.sql).toContain(
@@ -114,20 +125,6 @@ it.effect('native scoped audit includes profile, status and operator history wit
     expect(query?.params).toContain('action.executed');
     expect(query?.params).toContain('action.rejected');
     expect(query?.params).toContain('identity.agent_operators_changed');
-  }),
-);
-
-it.effect('native people audit excludes agent configurations and derives retained company members internally', () =>
-  Effect.gen(function* nativePeopleAuditPredicate() {
-    const harness = yield* fixture();
-    yield* auditTrail(caller, transport, 'people').pipe(Effect.provideService(ReadRuntime, harness.runtime));
-    const [query] = harness.snapshot().ownerQueries;
-    expect(query?.sql).not.toContain('core.identity.configure-agent');
-    expect(query?.sql).toContain("->>'principalKind', 'human') <> 'agent'");
-    expect(query?.sql).toContain('"core"."principal_company_memberships"');
-    expect(query?.params).toContain(company);
-    expect(query?.params).toContain('principal_inactive');
-    expect(query?.sql).toContain('"legal_entity_id" is null');
   }),
 );
 
@@ -229,21 +226,12 @@ it.effect('preserves persisted operator counts and explicit target precedence', 
   }),
 );
 
-it.effect('uses the inactive principal as the target of persisted authentication rejections', () =>
-  Effect.gen(function* projectAuthenticationRejection() {
-    expect(yield* project({ reason: 'principal_disabled', subjectType: 'user' }, 'authn.rejected', targetId)).toEqual({
-      reason: 'principal_disabled',
-      subjectType: 'user',
-      targetPrincipalId: targetId,
-    });
-  }),
-);
-
 it.effect('fails malformed native display evidence rather than releasing a partial or unsafe audit', () =>
   Effect.gen(function* rejectMalformedDisplayEvidence() {
     const harness = yield* fixture({ displayName: { untrusted: 'not a display name' } });
-    const error = yield* auditTrail(caller, transport, 'agents').pipe(
+    const error = yield* auditTrail(caller, transport).pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
       Effect.flip,
     );
     expect(Predicate.isTagged(error, 'DemoAccountUnavailable')).toBe(true);
@@ -254,8 +242,9 @@ it.effect('fails malformed native display evidence rather than releasing a parti
 it.effect('native company admission denial stays forbidden and runs no audit/name/member SQL', () =>
   Effect.gen(function* deniedAudit() {
     const harness = yield* fixture(undefined, 'action.executed', actorId, false);
-    const error = yield* auditTrail(caller, transport, 'agents').pipe(
+    const error = yield* auditTrail(caller, transport).pipe(
       Effect.provideService(ReadRuntime, harness.runtime),
+      asAgentAdministrator,
       Effect.flip,
     );
     expect(Predicate.isTagged(error, 'DemoAccountForbidden')).toBe(true);

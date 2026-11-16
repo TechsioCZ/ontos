@@ -7,6 +7,7 @@ import { Console, Crypto, DateTime, Duration, Effect, Stream, FileSystem, Layer,
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
+import { CatalogReleaseOrderingSchema } from '../../src/access/catalog/release-ordering.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
 import { compileFullAccessRole } from '../../src/access/bootstrap/full-access-role.ts';
@@ -58,6 +59,7 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
  * real activation of the whole catalog with the real SpiceDB reconcile per tenant. It proves the plan numbers and
  * that the projection equals intent afterwards, and it bounds the wall time far inside the migrator's budget.
  */
+const [PublishOrdering] = CatalogReleaseOrderingSchema.members;
 const STAGE_INITIAL_CAPABILITIES = 487;
 /** Far inside the migrator's five-minute activation budget (`scripts/run-zerops-migrator.mjs`). */
 const WALL_TIME_CEILING_MILLIS = 60_000;
@@ -298,7 +300,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
             const [elapsed, report] = yield* activateCatalogRelease({ modules: full }).pipe(Effect.orDie, Effect.timed);
             const elapsedMillis = Duration.toMillis(elapsed);
 
-            expect(report.ordering).toEqual({ _tag: 'Publish' });
+            expect(report.ordering).toEqual(PublishOrdering.make({}));
             expect(report.entries).toBe(fullRelease.entries.length);
             expect(report.previousEntries).toBe(STAGE_INITIAL_CAPABILITIES);
             const byTenant = new Map(report.tenants.map((entry) => [entry.tenantId, entry] as const));

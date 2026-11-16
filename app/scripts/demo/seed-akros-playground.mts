@@ -138,8 +138,8 @@ const catalogDifferences = (snapshot: CopySnapshot, destination: readonly CopyPr
             name: product.name,
             price: product.currentPriceMinor,
             sku: product.sku,
+            taxClassificationCode: product.taxClassificationCode,
             unit: product.unit,
-            vatRate: product.vatRate,
           },
           {
             active: actual.active,
@@ -148,8 +148,8 @@ const catalogDifferences = (snapshot: CopySnapshot, destination: readonly CopyPr
             name: actual.name,
             price: actual.currentPriceMinor,
             sku: actual.sku,
+            taxClassificationCode: actual.taxClassificationCode,
             unit: actual.unit,
-            vatRate: actual.vatRate,
           },
         )
       ) {

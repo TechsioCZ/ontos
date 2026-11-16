@@ -13,6 +13,7 @@ import { declareSellerVatRegimeAction } from './src/actions/declare-seller-vat-r
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
 import { finalizeOrderTaxAction } from './src/actions/finalize-order-tax.action.ts';
 import { FinalOrderTaxApi } from './shared/apis/final-order-tax.ts';
+import { ImportSellerVatRegimeDeclarationsActionApi } from './shared/apis/import-seller-vat-regime-declarations-action.ts';
 import { importSellerVatRegimeDeclarationsAction } from './src/actions/import-seller-vat-regime-declarations.action.ts';
 import { orderTaxFinalizationResourceDescriptor } from './shared/resources/order-tax-finalization.ts';
 import { SellerVatRegimeAtInstantApi } from './shared/apis/seller-vat-regime-at-instant.ts';
@@ -28,6 +29,7 @@ import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
 import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
 import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
 import { taxRuleRevisionResourceDescriptor } from './shared/resources/tax-rule-revision.ts';
+import { VatChangeRightsApi } from './shared/apis/vat-change-rights.ts';
 // </generated-module-manifest-imports>
 import { taxMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -61,6 +63,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       // <generated-module-manifest-apis>
       'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
       'final-order-tax': FinalOrderTaxApi,
+      'import-seller-vat-regime-declarations-action': ImportSellerVatRegimeDeclarationsActionApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'seller-vat-regime-at-instant': SellerVatRegimeAtInstantApi,
       'seller-vat-regime-history': SellerVatRegimeHistoryApi,
@@ -69,6 +72,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       'tax-materiality-comparison': TaxMaterialityComparisonApi,
       'tax-privacy-owner-coverage': TaxPrivacyOwnerCoverageApi,
       'tax-rule-history': TaxRuleHistoryApi,
+      'vat-change-rights': VatChangeRightsApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
@@ -84,6 +88,15 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
     },
     events: [],
     mcp: taxMcpContribution,
+    operationContracts: [
+      // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'import-seller-vat-regime-declarations-action',
+        operationKey: 'importSellerVatRegimeDeclarationsAction.execute',
+        registration: importSellerVatRegimeDeclarationsAction,
+      },
+      // </generated-module-manifest-operation-contracts>
+    ],
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

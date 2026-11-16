@@ -5,6 +5,7 @@
 // transaction as the change itself, so history can never disagree with the stored data.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Array as Arr, DateTime, Option, Schema, SchemaTransformation } from 'effect';
+import type { Types } from 'effect';
 import { AgendaIdSchema } from './common.ts';
 
 /** Row key of the change log in facility_operations.agenda_states (not an agenda; never decoded as one). */
@@ -140,7 +141,7 @@ export const diffRecords = (
       (Arr.isArray<Schema.Json>(previousValue) || Arr.isArray<Schema.Json>(nextValue)) &&
       !sameJsonValue(previousValue, nextValue);
     if (previous !== next || arraysDiffer) {
-      const change: { -readonly [K in keyof FieldChange]: FieldChange[K] } = { field };
+      const change: Types.Mutable<FieldChange> = { field };
       if (previous !== undefined) {
         change.before = previous;
       }

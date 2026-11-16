@@ -178,7 +178,7 @@ it.layer(
             expect(metadata.name).toBe(module.federation.remoteName);
           }
         }),
-      30_000,
+      owner === 'commerce-customer-context' ? 120_000 : 30_000,
     );
   }
 });

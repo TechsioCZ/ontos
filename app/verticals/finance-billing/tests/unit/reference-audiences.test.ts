@@ -99,17 +99,31 @@ describe('Finance reference credentials', () => {
   });
 });
 
+/** The instant a role check runs at. */
+const at = (instant: string) => DateTime.makeUnsafe(instant);
+
 describe('Counterparty role validity', () => {
   const role = { roleType: 'CUSTOMER', state: 'ACTIVE', validFrom: '2026-10-13T08:00:00.000Z', validTo: null };
 
-  it('accepts a customer whose role started today', () => {
-    expect(hasUsableRole([role], 'CUSTOMER', '2026-10-13')).toBe(true);
+  it('accepts a customer whose role started earlier today', () => {
+    expect(hasUsableRole([role], 'CUSTOMER', at('2026-10-13T08:00:00.000Z'))).toBe(true);
+    expect(hasUsableRole([role], 'CUSTOMER', at('2026-10-13T09:30:00.000Z'))).toBe(true);
   });
 
-  it('rejects a role that starts later, has ended, or has the wrong type', () => {
-    expect(hasUsableRole([role], 'CUSTOMER', '2026-10-05')).toBe(false);
-    expect(hasUsableRole([{ ...role, validTo: '2026-10-13T00:00:00.000Z' }], 'CUSTOMER', '2026-10-13')).toBe(false);
-    expect(hasUsableRole([role], 'SUPPLIER', '2026-10-13')).toBe(false);
+  it('compares the whole instant: a role ending this morning is not usable this afternoon', () => {
+    const endsAtTen = { ...role, validTo: '2026-10-13T10:00:00.000Z' };
+    expect(hasUsableRole([endsAtTen], 'CUSTOMER', at('2026-10-13T09:59:59.000Z'))).toBe(true);
+    expect(hasUsableRole([endsAtTen], 'CUSTOMER', at('2026-10-13T11:00:00.000Z'))).toBe(false);
+    // A role that starts later the same day is not usable yet.
+    expect(hasUsableRole([role], 'CUSTOMER', at('2026-10-13T07:00:00.000Z'))).toBe(false);
+  });
+
+  it('rejects a role that starts later, has ended, has an unreadable validity, or has the wrong type', () => {
+    expect(hasUsableRole([role], 'CUSTOMER', at('2026-10-05T12:00:00.000Z'))).toBe(false);
+    expect(hasUsableRole([{ ...role, validFrom: 'not a date' }], 'CUSTOMER', at('2026-10-14T12:00:00.000Z'))).toBe(
+      false,
+    );
+    expect(hasUsableRole([role], 'SUPPLIER', at('2026-10-13T12:00:00.000Z'))).toBe(false);
   });
 });
 

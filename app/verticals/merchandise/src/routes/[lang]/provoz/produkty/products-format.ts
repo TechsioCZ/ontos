@@ -2,7 +2,9 @@ import { dataTableRowLabels } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 
-const signed = new Intl.NumberFormat('cs-CZ', { signDisplay: 'exceptZero' });
+import { QUANTITY_FORMAT } from '../../../../form-number.ts';
+
+const signed = new Intl.NumberFormat('cs-CZ', { ...QUANTITY_FORMAT, signDisplay: 'exceptZero' });
 
 /** Stock movement quantity with an explicit sign: `+5`, `-2`. Money, counts and dates use `@app/admin-ui`. */
 export const formatDelta = (value: number): string => signed.format(value);

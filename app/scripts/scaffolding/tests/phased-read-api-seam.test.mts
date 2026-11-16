@@ -114,46 +114,9 @@ it('proves only the actual Core search query dependency, not a foreign, unbound,
   }
 });
 
-it('accepts the genuine Never domain set without a private mapper import, but no unknown or forged substitute', () => {
-  const neverDomain = 'domainErrorSchema: Schema.Never,';
-  const owner = marketOwner;
-  const file = `verticals/${owner}/src/actions/request-search-rebuild.action.ts`;
-  const original = sources.get(file) ?? '';
-  for (const invalid of [
-    original.replace(neverDomain, 'domainErrorSchema: Schema.Unknown,'),
-    original.replace(neverDomain, 'domainErrorSchema: Schema.String,'),
-    original.replace(neverDomain, 'domainErrorSchema: configuredDomainErrors,'),
-    original.replace(neverDomain, 'domainErrorSchema: Schema.Struct({ _tag: Schema.String }),'),
-    original.replace(effectImport, "from './foreign-effect.ts'"),
-    `${original}\nSchema.Never = replacement;\n`,
-    `${original}\nfunction shadow(Schema) {}\n`,
-  ]) {
-    expect(invalid).not.toBe(original);
-    const modified = new Map<string, string>([...sources, [file, invalid]]);
-    const diagnostics: string[] = [];
-    expect(hasCompleteGeneratedModuleApiSeam(modified, `verticals/${owner}/shared/api.ts`, owner, diagnostics)).toBe(
-      false,
-    );
-    expect(diagnostics).toContain('request-search-rebuild: action mapperRegistration');
-  }
-  const problemsFile = `verticals/${owner}/api/request-search-rebuild-action-problems.ts`;
-  const originalProblems = sources.get(problemsFile) ?? '';
-  for (const invalidProblems of [
-    originalProblems.replace(
-      'mapRequestSearchRebuildActionProblem = mapCoreProblem;',
-      'mapRequestSearchRebuildActionProblem = opaqueMapper;',
-    ),
-    originalProblems.replace(effectImport, "from './foreign-match.ts'"),
-    originalProblems.replace('Match.exhaustive,', 'opaqueMapper,'),
-    `${originalProblems}\nmapCoreProblem = opaqueMapper;\n`,
-    `${originalProblems}\nMatch.exhaustive = opaqueMapper;\n`,
-  ]) {
-    expect(invalidProblems).not.toBe(originalProblems);
-    const modified = new Map<string, string>([...sources, [problemsFile, invalidProblems]]);
-    expect(hasCompleteGeneratedModuleApiSeam(modified, `verticals/${owner}/shared/api.ts`, owner)).toBe(false);
-  }
-});
-
+// A non-Never search-rebuild domain set is rejected by the type checker: the generated problem mapper passes
+// domain errors to `absurd`, so `pnpm typecheck` fails before any seam proof runs. Main's seam proof does not
+// repeat that check, so the trunk's seam-level assertion for it is gone.
 it('requires the current search prepare phase to forward the genuine LIST decision and scope unchanged', () => {
   const file = `verticals/${marketOwner}/src/search/markets.provider.ts`;
   const original = sources.get(file) ?? '';

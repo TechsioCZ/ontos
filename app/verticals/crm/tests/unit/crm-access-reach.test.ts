@@ -21,6 +21,8 @@ import { PrincipalIdSchema as AccessPrincipalIdSchema, RecordKeySchema } from '@
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { Effect, Option, Schema } from 'effect';
 import { crmRecordsGrants, finishCrmRecords } from '../../src/services/persistence.service.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+import { recordsRead } from '../../src/api/records.read.ts';
 import { CrmStateSchema } from '../../shared/domain/state.ts';
 import { scope, state } from './search-fixtures.ts';
 
@@ -42,6 +44,13 @@ it('declares one record-scoped read whose selectors are the reviewed CRM reaches
     key: 'demo.crm.client-owner.assign',
     kind: 'field_write',
   });
+});
+
+it('asks the gate exactly what the registered descriptors declare', () => {
+  // The descriptors carry closed inline literals for the catalog; these owner copies must not drift.
+  expect(recordsRead.descriptor.accessDeclaration).toMatchObject(crmRecordsReadDeclaration);
+  expect(applyCommandAction.descriptor.accessDeclaration).toMatchObject(crmApplyCommandDeclaration);
+  expect(applyCommandAction.descriptor.accessFieldGroups).toMatchObject([crmClientOwnerAssignGroup]);
 });
 
 for (const tag of ['AssignedTo', 'EntrustedTo'] as const) {

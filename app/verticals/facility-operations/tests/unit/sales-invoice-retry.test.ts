@@ -1,0 +1,246 @@
+// @rstest-environment happy-dom
+import { DateTime, Effect, Predicate, Schema } from 'effect';
+import { beforeEach, expect, it, rstest } from 'effect-rstest';
+import type { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
+import { SalesOrderSchema } from '../../shared/domain/purchasing.ts';
+import { issueSalesInvoice } from '../../src/routes/[lang]/provoz/nakupy/sales-tab.tsx';
+import type { FinanceInvoiceView } from '../../src/ui/finance-reads.ts';
+import { recordingRunner } from './form-save-fixture.ts';
+
+const { create, credentials, failed, read, vat } = rstest.hoisted(() => ({
+  create: rstest.fn(),
+  credentials: rstest.fn(),
+  failed: rstest.fn(),
+  read: rstest.fn(),
+  vat: rstest.fn(),
+}));
+rstest.mock('@app/finance-billing/clients/apply-command', () => ({ executeApplyCommand: create }));
+rstest.mock('../../src/ui/finance-reads.ts', () => ({ readFinance: read, readFinanceVatChoices: vat }));
+rstest.mock('@app/shared-contracts', () => ({
+  ...rstest.requireActual<{
+    readonly makeReferenceGatewayCredentials: typeof makeReferenceGatewayCredentials;
+  }>('@app/shared-contracts'),
+  makeReferenceGatewayCredentials: credentials,
+}));
+
+const tenantId = '70000000-0000-4000-8000-000000000020';
+const actor = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
+const timestamp = '2026-11-14T09:00:00Z';
+const issueDate = '2026-11-14';
+const order = Schema.decodeUnknownSync(SalesOrderSchema)({
+  createdAt: timestamp,
+  createdBy: actor,
+  currency: 'CZK',
+  customer: { counterpartyId: 'customer-1', name: 'Customer', tenantId },
+  deliveries: [],
+  history: [],
+  id: 'order-1',
+  invoices: [],
+  lines: [
+    { deliveredQuantity: 0, description: 'Service', id: 'line-1', quantity: 1, unitPriceMinor: 10_000, vatRate: 21 },
+  ],
+  number: 'PRO-2026-001',
+  status: 'approved',
+  updatedAt: timestamp,
+  updatedBy: actor,
+});
+const invoice: FinanceInvoiceView = {
+  businessState: 'DRAFT',
+  counterpartyRef: { resourceId: 'customer-1' },
+  direction: 'OUTGOING',
+  documentNumber: 'PRO-2026-001-F1',
+  dueDate: issueDate,
+  issueDate,
+  number: 'FV-2026-001',
+  paidMinor: 0,
+  paymentState: 'UNPAID',
+  ref: { resourceId: 'invoice-1' },
+  sourceOrder: { id: 'order-1', number: 'PRO-2026-001' },
+  totalMinor: 12_100,
+};
+const snapshot = (invoices: readonly FinanceInvoiceView[]) => ({
+  canWrite: true,
+  revision: 1,
+  state: { invoices },
+});
+
+beforeEach(() => {
+  create.mockReset();
+  read.mockReset();
+  vat.mockReset();
+  credentials.mockReset();
+  failed.mockReset();
+  create.mockReturnValue(Effect.succeed({ invoice }));
+  read.mockReturnValue(Effect.succeed(snapshot([])));
+  credentials.mockReturnValue(Effect.succeed([]));
+  vat.mockReturnValue(
+    Effect.succeed({
+      on: issueDate,
+      rates: [
+        {
+          code: CZ_VAT_STANDARD,
+          effectiveFrom: DateTime.makeUnsafe(timestamp),
+          ratePercent: 21,
+          taxRuleRevisionRef: {
+            moduleId: 'commerce.tax',
+            resourceId: 'revision-1',
+            resourceType: 'commerce.tax.tax-rule-revision',
+            tenantId,
+          },
+        },
+      ],
+      regime: 'VAT_PAYER',
+    }),
+  );
+});
+
+const attempt = (runner: ReturnType<typeof recordingRunner>, current = order) =>
+  // Every attempt starts with nothing kept in the browser: a new panel, tab, device or person.
+  issueSalesInvoice({
+    busy: { current: false },
+    dueDate: issueDate,
+    issueDate,
+    onFailed: () => {
+      failed();
+    },
+    order: current,
+    run: runner.run,
+  });
+
+it.effect('Finance drafts the invoice under the identity of the order, never under a guessed number', () =>
+  Effect.gen(function* draftUnderOrderIdentity() {
+    const runner = recordingRunner();
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ number: invoice.number, ok: true });
+    const [[payload]] = create.mock.calls;
+    expect(payload).toMatchObject({ command: { sourceOrder: { id: order.id, number: order.number } } });
+    expect(payload).not.toHaveProperty('command.documentNumber');
+    expect(runner.sent).toEqual([
+      {
+        _tag: 'SalesOrderLinkInvoice',
+        invoiceId: invoice.ref.resourceId,
+        number: invoice.number,
+        orderId: order.id,
+        totalMinor: invoice.totalMinor,
+      },
+    ]);
+  }),
+);
+
+it.effect('after a failed link a fresh attempt links the invoice Finance holds for the order and creates none', () =>
+  Effect.gen(function* retryOnlyLink() {
+    const runner = recordingRunner(['unavailable']);
+    const failedLink = yield* attempt(runner);
+    expect(failedLink).toMatchObject({ number: invoice.number, ok: false, reason: 'link' });
+    read.mockReturnValue(Effect.succeed(snapshot([invoice])));
+    const linked = yield* attempt(runner);
+    expect(linked).toMatchObject({ number: invoice.number, ok: true });
+    expect(create.mock.calls).toHaveLength(1);
+    expect(vat.mock.calls).toHaveLength(1);
+    expect(runner.sent).toHaveLength(2);
+    expect(runner.sent[1]).toEqual(runner.sent[0]);
+    expect(Predicate.isTagged(runner.sent[1], 'SalesOrderLinkInvoice')).toBe(true);
+  }),
+);
+
+it.effect('when Finance stored the invoice but its answer was lost, the retry links that invoice', () =>
+  Effect.gen(function* lostAnswer() {
+    const runner = recordingRunner();
+    create.mockReturnValueOnce(Effect.fail(new Error('connection reset')));
+    const lost = yield* attempt(runner);
+    expect(lost.ok).toBe(false);
+    expect(runner.sent).toEqual([]);
+    // Finance is read again, so the panel shows the invoice that now waits for its link.
+    expect(failed).toHaveBeenCalledOnce();
+    read.mockReturnValue(Effect.succeed(snapshot([invoice])));
+    const linked = yield* attempt(runner);
+    expect(linked).toMatchObject({ number: invoice.number, ok: true });
+    expect(create.mock.calls).toHaveLength(1);
+    expect(runner.sent).toHaveLength(1);
+  }),
+);
+
+it.effect('an invoice of another order, an advance or a voided one is not the order invoice and is never linked', () =>
+  Effect.gen(function* foreignInvoices() {
+    const runner = recordingRunner();
+    read.mockReturnValue(
+      Effect.succeed(
+        snapshot([
+          { ...invoice, businessState: 'VOIDED', ref: { resourceId: 'voided' } },
+          { ...invoice, ref: { resourceId: 'other-order' }, sourceOrder: { id: 'order-2', number: 'PRO-2026-002' } },
+          { ...invoice, documentKind: 'ADVANCE', ref: { resourceId: 'advance' } },
+        ]),
+      ),
+    );
+    // Finance answering with an invoice that is not this order's is refused, not linked.
+    create.mockReturnValue(Effect.succeed({ invoice: { ...invoice, sourceOrder: { id: 'order-2', number: 'X' } } }));
+    const outcome = yield* attempt(runner);
+    expect(outcome.ok).toBe(false);
+    expect(create.mock.calls).toHaveLength(1);
+    expect(runner.sent).toEqual([]);
+  }),
+);
+
+it.effect('the order invoice issued to another customer in Finance is refused, never created again or linked', () =>
+  Effect.gen(function* otherCustomerInFinance() {
+    const runner = recordingRunner();
+    read.mockReturnValue(Effect.succeed(snapshot([{ ...invoice, counterpartyRef: { resourceId: 'customer-2' } }])));
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ ok: false, reason: 'customer' });
+    expect(create.mock.calls).toHaveLength(0);
+    expect(runner.sent).toEqual([]);
+    expect(failed).toHaveBeenCalledOnce();
+  }),
+);
+
+it.effect("Finance's refusal for another customer reads as that, not as a generic failure", () =>
+  Effect.gen(function* otherCustomerRefusal() {
+    const runner = recordingRunner();
+    create.mockReturnValue(
+      Effect.fail({
+        _tag: 'FinanceConflictProblem',
+        code: 'finance_conflict',
+        detail: 'source_order_invoice_other_counterparty',
+        status: 409,
+      }),
+    );
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ ok: false, reason: 'customer' });
+    expect(runner.sent).toEqual([]);
+  }),
+);
+
+it.effect('amounts edited in Finance are still the order invoice; the link takes number and amount from Finance', () =>
+  Effect.gen(function* editedInFinance() {
+    const runner = recordingRunner();
+    read.mockReturnValue(Effect.succeed(snapshot([{ ...invoice, number: 'FV-2026-002', totalMinor: 36_300 }])));
+    const outcome = yield* attempt(runner);
+    expect(outcome).toMatchObject({ number: 'FV-2026-002', ok: true });
+    expect(create.mock.calls).toHaveLength(0);
+    expect(runner.sent).toEqual([
+      {
+        _tag: 'SalesOrderLinkInvoice',
+        invoiceId: invoice.ref.resourceId,
+        number: 'FV-2026-002',
+        orderId: order.id,
+        totalMinor: 36_300,
+      },
+    ]);
+  }),
+);
+
+it.effect('already linked orders refuse Finance creation before any read or write', () =>
+  Effect.gen(function* refuseDuplicate() {
+    const runner = recordingRunner();
+    const linkedOrder = Schema.decodeUnknownSync(SalesOrderSchema)({
+      ...Schema.encodeSync(SalesOrderSchema)(order),
+      invoices: [{ invoiceId: invoice.ref.resourceId, linkedAt: timestamp, linkedBy: actor, number: invoice.number }],
+    });
+    const outcome = yield* attempt(runner, linkedOrder);
+    expect(outcome.ok).toBe(false);
+    expect(create.mock.calls).toHaveLength(0);
+    expect(read.mock.calls).toHaveLength(0);
+    expect(runner.sent).toEqual([]);
+  }),
+);

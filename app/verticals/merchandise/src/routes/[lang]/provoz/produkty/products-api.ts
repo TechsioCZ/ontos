@@ -1,6 +1,13 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import {
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  rowIntentProps,
+  useHeldSnapshot,
+  whenBrowserIdle,
+} from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -45,6 +52,11 @@ const FailureReasonSchema = Schema.Literals([
   'invalid',
   'not-found',
   'rejected',
+  'stock-reconciliation-required',
+  'variant-bulk-price-unsupported',
+  'variant-sku-required',
+  'category-slug-taken',
+  'tier-base-price-required',
   RELOAD_REQUIRED,
   'unavailable',
 ]);
@@ -105,7 +117,24 @@ const commandReason = (error: CommandFailure): FailureReason =>
       'CleanupDemoActionConflictProblem',
       'ChangeProductImagesActionConflictProblem',
       'RecordStockMovementActionConflictProblem',
-      (problem): FailureReason => (problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict'),
+      (problem): FailureReason => {
+        if (problem.code === 'merchandise_tier_base_price_required') {
+          return 'tier-base-price-required';
+        }
+        if (problem.code === 'merchandise_category_slug_taken') {
+          return 'category-slug-taken';
+        }
+        if (problem.code === 'merchandise_variant_sku_required') {
+          return 'variant-sku-required';
+        }
+        if (problem.code === 'merchandise_variant_bulk_price_unsupported') {
+          return 'variant-bulk-price-unsupported';
+        }
+        if (problem.code === 'merchandise_stock_reconciliation_required') {
+          return 'stock-reconciliation-required';
+        }
+        return problem.code === 'merchandise_lifecycle_conflict' ? 'rejected' : 'conflict';
+      },
     ),
     Match.tag(
       'ApplyCommandActionIneligibleProblem',
@@ -438,17 +467,9 @@ export const detailInput = (
     return Option.none();
   }
   const scope = productScope(context);
-  const input: { -readonly [Key in keyof ProductDetailInput]: ProductDetailInput[Key] } = {
-    legalEntityId,
-    productId: routeId,
-  };
-  if (scope !== undefined) {
-    input.scope = scope;
-  }
-  if (revision !== undefined) {
-    input.revision = revision;
-  }
-  return Option.some(input);
+  const detail = { legalEntityId, productId: routeId } satisfies ProductDetailInput;
+  const scoped = scope === undefined ? detail : { ...detail, scope };
+  return Option.some<ProductDetailInput>(revision === undefined ? scoped : { ...scoped, revision });
 };
 
 const ProductRouteSearch = Schema.toCodecJson(
@@ -572,9 +593,12 @@ export const useProductDetailsPrefetch = (
   // revision and warms the rows again; opening a row always reads its detail fresh.
   const batch = cacheKey([request, selection]);
   const warmed = useRef<string>(undefined);
+  // The warm-up waits for an idle browser so it does not compete with the list's first paint and the next click.
+  // Row intent does not wait: it reads through `prefetchProductDetail`.
   const preload = useEffectEvent((key: string) =>
     key === request
-      ? preloadProductDetails(context, revision, rows).pipe(
+      ? whenBrowserIdle.pipe(
+          Effect.andThen(preloadProductDetails(context, revision, rows)),
           Effect.andThen(
             Effect.sync(() => {
               warmed.current = batch;

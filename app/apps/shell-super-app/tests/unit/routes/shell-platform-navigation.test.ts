@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 
-import type { ShellNavigationItem } from '../../../shared/api.ts';
-import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from '../../../shared/api.ts';
+import type { ShellNavigationItem } from '../../../shared/browser-api.ts';
+import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from '../../../shared/browser-api.ts';
 import {
   hasModuleAiApprovals,
   moduleAgentApprovalsGroupKey,
@@ -78,6 +78,8 @@ it('shows Shell people navigation from the scoped capability even with no workfo
 
 it('does not condition the document capability on an installed module navigation marker', () => {
   const ingress = readFileSync(new URL('../../../api/index.ts', import.meta.url), 'utf-8');
-  expect(ingress).toContain('const canManagePeople = yield* Fiber.join(capability);');
+  // The document's people hint is the people-administration decision itself, joined beside the composition.
+  expect(ingress).toContain('peopleAdministrationDecision(principal)');
+  expect(ingress).toContain('const capabilityAnswer = yield* Fiber.join(capability);');
   expect(ingress).not.toContain("const PEOPLE_ADMINISTRATION = 'people_administration'");
 });

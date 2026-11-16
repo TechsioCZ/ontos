@@ -3,7 +3,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { tagColorValue } from '../../../../components/tag-controls.tsx';
+import { tagColorValue } from '../../../../tags/tag-colors.ts';
 import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectKind } from '../../../../../shared/apis/records.ts';
 import { tagNameProblem } from './tag-draft.ts';

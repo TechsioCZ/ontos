@@ -22,14 +22,24 @@ import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentSourceRejected } from '../../shared/domain/source-statement.ts';
 import { acceptPaymentObservationAction } from '../../src/actions/accept-payment-observation.action.ts';
 import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
+import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { collectInput, makeTestScope, newPaymentInput, withPersistence } from './database-fixture.ts';
+import { seedSourceAuthority } from '../support/refund-native-runtime.ts';
+import {
+  collectInput,
+  expectSqlFailure,
+  failureCodeOf,
+  makeTestScope,
+  newPaymentInput,
+  withPersistence,
+} from './database-fixture.ts';
 import type { PaymentTestScope } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
@@ -144,23 +154,24 @@ it.live('#1152 #1151 Late bank evidence through the real Core runtime: ERP recei
       });
       expect([configured.changed, configured.revision, configured.status]).toEqual([true, 1, 'ACTIVE']);
 
-      // The Payment and its COLLECT were admitted under R1 (their creating Actions belong to other lanes).
+      // The scoped Payment is seeded under R1. Its COLLECT goes through the public Action.
       const paymentInput = yield* newPaymentInput(scope);
       const payment = yield* withPersistence(database.database, scope, (persistence) =>
         persistence.insertPayment({ ...paymentInput, executionBinding: bankBinding, method: 'BANK_TRANSFER_ADVANCE' }),
       );
-      const collectRequest = yield* collectInput(
-        scope,
-        { amountMinor: 100_000, paymentId: payment.record.paymentId },
-        'collect-1',
-      );
-      const collect = yield* withPersistence(database.database, scope, (persistence) =>
-        persistence.insertOperation({
-          ...collectRequest,
-          binding: bankBinding,
-          provenance: { ...collectRequest.provenance, compositionRevision: COMPOSITION_R1 },
-        }),
-      );
+      const collect = yield* atR1
+        .runAction({
+          payload: {
+            amount: { amountMinor: 100_000, currency: 'CZK' },
+            method: 'BANK_TRANSFER_ADVANCE',
+            operationKey: 'collect-1',
+            paymentId: payment.record.paymentId,
+          },
+          principal,
+          registration: startPaymentCollectionAction,
+          transport: { correlationId: 'payment-bank-collect', idempotencyKey: randomUUID() },
+        })
+        .pipe(Effect.provide(paymentUnavailableOwnerPortsLive));
 
       const receipt = {
         amount: { amountMinor: 100_000, currency: 'CZK' },
@@ -185,8 +196,8 @@ it.live('#1152 #1151 Late bank evidence through the real Core runtime: ERP recei
       expect(accepted).toMatchObject({
         acceptanceOutcome: 'ACCEPTED_OBSERVATION',
         interpretation: 'TRANSITION',
-        operationId: collect.record.operationId,
-        outcomeChange: { from: 'PENDING', operationId: collect.record.operationId, to: 'EFFECT_CONFIRMED' },
+        operationId: collect.operation.operationId,
+        outcomeChange: { from: 'PENDING', operationId: collect.operation.operationId, to: 'EFFECT_CONFIRMED' },
       });
       // A retry of the committed invocation is answered by Core (refresh governed reads), never re-executed.
       const replayed = yield* atR2.runAction(request).pipe(Effect.flip);
@@ -299,6 +310,240 @@ const isSourceRejected = Schema.is(PaymentSourceRejected);
 const expectForbiddenSource = (failure: { readonly _tag: string }) =>
   expect(isSourceRejected(failure) ? failure.code : undefined).toBe('payment_source_authority_forbidden');
 
+it.live('#1152 an occurrence replay requires the exact original authority, even on the same source account', () =>
+  native(
+    Effect.gen(function* occurrenceAuthority() {
+      const { admin, runtime } = yield* testDatabaseClients;
+      const database: EvidenceNativeDatabase = {
+        coreAdmin: yield* makeTestDatabaseFromClient(admin, coreRelations),
+        database: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+        runtimeClient: runtime,
+      };
+      const scope = yield* makeTestScope;
+      yield* seedCoreScope(database, scope);
+      const originalPrincipal = principalOf(scope);
+      const alternate = yield* seedPrincipal(database, scope, 'Deferred-only source submitter');
+      const actions = yield* runtimesFor(database, COMPOSITION_R1);
+      const factFamily = 'SETTLEMENT_REMITTANCE';
+      const configure = (
+        method: 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE',
+        submitter: string,
+        status: 'ACTIVE' | 'REVOKED',
+      ) =>
+        actions.runAction({
+          payload: {
+            factFamily,
+            method,
+            reason: 'Settlement reporting authority',
+            refundRoute: false,
+            source: erpBank,
+            status,
+            submitterPrincipalIds: [submitter],
+          },
+          principal: originalPrincipal,
+          registration: configurePaymentSourceAuthorityAction,
+          transport: { correlationId: 'settlement-authority', idempotencyKey: randomUUID() },
+        });
+      const original = yield* configure('BANK_TRANSFER_ADVANCE', scope.principalId, 'ACTIVE');
+      yield* configure('DEFERRED_INVOICE', alternate.principalId, 'ACTIVE');
+
+      const input = yield* newPaymentInput(scope);
+      const { record: payment } = yield* withPersistence(database.database, scope, (persistence) =>
+        persistence.insertPayment({ ...input, executionBinding: bankBinding, method: 'BANK_TRANSFER_ADVANCE' }),
+      );
+      const collect = yield* collectInput(scope, { amountMinor: 100_000, paymentId: payment.paymentId }, 'collect-1');
+      const { record: operation } = yield* withPersistence(database.database, scope, (persistence) =>
+        persistence.insertOperation({ ...collect, binding: bankBinding }),
+      );
+      const statement = {
+        factFamily,
+        factKind: 'SETTLEMENT_OBSERVED',
+        operationId: operation.operationId,
+        paymentId: payment.paymentId,
+        source: erpBank,
+        sourceOccurrenceId: 'bank-settlement-occurrence',
+        sourceRevision: 1,
+      } as const;
+      const changed = { ...statement, evidenceRef: 'different-document' };
+      const submit = (
+        principal: ReturnType<typeof principalOf>,
+        payload: typeof AcceptPaymentObservationPayloadSchema.Encoded,
+      ) =>
+        actions.runAction({
+          payload,
+          principal,
+          registration: acceptPaymentObservationAction,
+          transport: { correlationId: 'settlement-observation', idempotencyKey: randomUUID() },
+        });
+
+      const first = yield* submit(originalPrincipal, statement);
+      expect(first).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        sourceAuthorityId: original.sourceAuthorityId,
+      });
+      const originalReplay = yield* submit(originalPrincipal, statement);
+      expect(originalReplay).toMatchObject({
+        acceptanceOutcome: 'DUPLICATE',
+        observationId: first.observationId,
+        operationId: operation.operationId,
+        paymentId: payment.paymentId,
+        sourceAuthorityId: original.sourceAuthorityId,
+      });
+      expect(yield* failureCodeOf(submit(originalPrincipal, changed))).toBe('payment_source_occurrence_conflict');
+      expectForbiddenSource(yield* submit(alternate.principal, statement).pipe(Effect.flip));
+      expectForbiddenSource(yield* submit(alternate.principal, changed).pipe(Effect.flip));
+
+      yield* configure('BANK_TRANSFER_ADVANCE', scope.principalId, 'REVOKED');
+      expectForbiddenSource(yield* submit(originalPrincipal, statement).pipe(Effect.flip));
+      expectForbiddenSource(yield* submit(alternate.principal, statement).pipe(Effect.flip));
+      const [recorded] = yield* admin.unsafe<{ observations: number }>(
+        'select count(*)::integer as observations from payment.observations where tenant_id = $1',
+        [scope.tenantId],
+      );
+      expect(recorded?.observations).toBe(1);
+    }),
+  ),
+);
+
+const bankReceiptCases = [
+  { factFamily: 'BANK_ACCOUNTING_RECEIPT', method: 'BANK_TRANSFER_ADVANCE' },
+  { factFamily: 'DEFERRED_INVOICE_RECEIPT', method: 'DEFERRED_INVOICE' },
+] as const;
+
+for (const { factFamily, method } of bankReceiptCases) {
+  it.live(`#1152 ${method} pins the original bank receipt authority without rebinding legacy collections`, () =>
+    native(
+      Effect.gen(function* originalBankReceiptAuthority() {
+        const { admin, runtime } = yield* testDatabaseClients;
+        const database: EvidenceNativeDatabase = {
+          coreAdmin: yield* makeTestDatabaseFromClient(admin, coreRelations),
+          database: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+          runtimeClient: runtime,
+        };
+        const scope = yield* makeTestScope;
+        yield* seedCoreScope(database, scope);
+        const principal = principalOf(scope);
+        const actions = yield* runtimesFor(database, COMPOSITION_R1);
+        type Receipt = typeof AcceptPaymentObservationPayloadSchema.Encoded;
+        const alternate = { ...erpBank, accountRef: 'alternate-bank-account' };
+
+        const configure = (source: Receipt['source'], status: 'ACTIVE' | 'REVOKED') =>
+          actions.runAction({
+            payload: {
+              factFamily,
+              method,
+              reason: 'Configure bank receipt authority',
+              refundRoute: false,
+              source,
+              status,
+              submitterPrincipalIds: [scope.principalId],
+            },
+            principal,
+            registration: configurePaymentSourceAuthorityAction,
+            transport: { correlationId: 'payment-receipt-authority', idempotencyKey: randomUUID() },
+          });
+        const seedIntent = Effect.gen(function* seedIntent() {
+          const input = yield* newPaymentInput(scope);
+          const { record } = yield* withPersistence(database.database, scope, (persistence) =>
+            persistence.insertPayment({ ...input, executionBinding: bankBinding, method }),
+          );
+          return record;
+        });
+        const start = (paymentId: string) =>
+          actions
+            .runAction({
+              payload: {
+                amount: { amountMinor: 100_000, currency: 'CZK' },
+                method,
+                operationKey: 'collect-1',
+                paymentId,
+              },
+              principal,
+              registration: startPaymentCollectionAction,
+              transport: { correlationId: 'payment-bank-collect', idempotencyKey: randomUUID() },
+            })
+            .pipe(Effect.provide(paymentUnavailableOwnerPortsLive));
+        const submit = (paymentId: string, operationId: string, source: Receipt['source']) =>
+          actions.runAction({
+            payload: {
+              amount: { amountMinor: 100_000, currency: 'CZK' },
+              economicEffectKey: 'bank-transaction-1',
+              factFamily,
+              factKind: 'COLLECTION_CONFIRMED',
+              operationId,
+              paymentId,
+              source,
+              sourceOccurrenceId: randomUUID(),
+              sourceRevision: 1,
+            },
+            principal,
+            registration: acceptPaymentObservationAction,
+            transport: { correlationId: 'payment-bank-receipt', idempotencyKey: randomUUID() },
+          });
+
+        const original = yield* configure(erpBank, 'ACTIVE');
+        yield* configure(alternate, 'ACTIVE');
+        const payment = yield* seedIntent;
+        expect(yield* failureCodeOf(start(payment.paymentId))).toBe('payment_unavailable');
+
+        yield* configure(alternate, 'REVOKED');
+        const { operation } = yield* start(payment.paymentId);
+        const persisted = yield* withPersistence(database.database, scope, (persistence) =>
+          persistence.loadAggregate(payment.paymentId),
+        );
+        expect(persisted.operations[0]?.binding).toMatchObject({
+          receiptAuthority: {
+            accountRef: erpBank.accountRef,
+            environment: erpBank.environment,
+            sourceAuthorityId: original.sourceAuthorityId,
+            sourceSystem: erpBank.sourceSystem,
+          },
+        });
+
+        yield* configure(alternate, 'ACTIVE');
+        expectForbiddenSource(yield* submit(payment.paymentId, operation.operationId, alternate).pipe(Effect.flip));
+        yield* configure(erpBank, 'REVOKED');
+        expectForbiddenSource(yield* submit(payment.paymentId, operation.operationId, erpBank).pipe(Effect.flip));
+        expectForbiddenSource(yield* submit(payment.paymentId, operation.operationId, alternate).pipe(Effect.flip));
+        expect(yield* start(payment.paymentId)).toMatchObject({ operation, replayed: true });
+
+        const legacy = yield* seedIntent;
+        const input = yield* collectInput(scope, { amountMinor: 100_000, paymentId: legacy.paymentId }, 'collect-1');
+        const { record: legacyCollect } = yield* withPersistence(database.database, scope, (persistence) =>
+          persistence.insertOperation({
+            ...input,
+            binding: bankBinding,
+            materialRequest: {
+              amountMinor: 100_000,
+              binding: ['BANK_ACCOUNTING_RECEIPT'],
+              currency: 'CZK',
+              kind: 'COLLECT',
+              method,
+              paymentId: legacy.paymentId,
+            },
+          }),
+        );
+        expect(yield* start(legacy.paymentId)).toMatchObject({
+          operation: { operationId: legacyCollect.operationId },
+          replayed: true,
+        });
+        expectForbiddenSource(yield* submit(legacy.paymentId, legacyCollect.operationId, alternate).pipe(Effect.flip));
+
+        yield* configure(erpBank, 'ACTIVE');
+        expect(yield* submit(payment.paymentId, operation.operationId, erpBank)).toMatchObject({
+          outcomeChange: { from: 'PENDING', to: 'EFFECT_CONFIRMED' },
+          sourceAuthorityId: original.sourceAuthorityId,
+        });
+        const [recorded] = yield* admin.unsafe<{ observations: number }>(
+          'select count(*)::integer as observations from payment.observations where tenant_id = $1',
+          [scope.tenantId],
+        );
+        expect(recorded?.observations).toBe(1);
+      }),
+    ),
+  );
+}
+
 it.live(
   '#1153 #1152 Only principals bound to a source authority speak as it: bound accepted, another permitted principal and a revoked binding refused',
   () =>
@@ -351,7 +596,18 @@ it.live(
           'collect-1',
         );
         const collect = yield* withPersistence(database.database, scope, (persistence) =>
-          persistence.insertOperation({ ...collectRequest, binding: bankBinding }),
+          persistence.insertOperation({
+            ...collectRequest,
+            binding: {
+              _tag: 'BANK_ACCOUNTING_RECEIPT',
+              receiptAuthority: {
+                accountRef: erpBank.accountRef,
+                environment: erpBank.environment,
+                sourceAuthorityId: bound.sourceAuthorityId,
+                sourceSystem: erpBank.sourceSystem,
+              },
+            },
+          }),
         );
         const receipt = (sourceOccurrenceId: string) =>
           ({
@@ -448,20 +704,22 @@ it.live('#1153 #1152 Local POS evidence is accepted only from an operator bound 
         sourceKind: 'LOCAL_POS_OPERATOR',
         sourceSystem: 'store-pos',
       } as const;
-      yield* actions.runAction({
-        payload: {
-          factFamily: 'LOCAL_POS_COLLECTION',
-          method: 'PAY_ON_PICKUP_OR_ON_SITE',
-          reason: 'The Prague store POS records pickup payments',
-          refundRoute: false,
-          source: posSource,
-          status: 'ACTIVE',
-          submitterPrincipalIds: [cashier.principalId],
-        },
-        principal: staff,
-        registration: configurePaymentSourceAuthorityAction,
-        transport: { correlationId: 'payment-source-pos', idempotencyKey: randomUUID() },
-      });
+      const configurePos = (pickupCapabilityRef: string) =>
+        actions.runAction({
+          payload: {
+            factFamily: 'LOCAL_POS_COLLECTION',
+            method: 'PAY_ON_PICKUP_OR_ON_SITE',
+            pickupCapabilityRef,
+            reason: 'This store POS records pickup payments at its configured site',
+            refundRoute: false,
+            source: posSource,
+            status: 'ACTIVE',
+            submitterPrincipalIds: [cashier.principalId],
+          },
+          principal: staff,
+          registration: configurePaymentSourceAuthorityAction,
+          transport: { correlationId: 'payment-source-pos', idempotencyKey: randomUUID() },
+        });
       const paymentInput = yield* newPaymentInput(scope);
       const payment = yield* withPersistence(database.database, scope, (persistence) =>
         persistence.insertPayment({
@@ -497,6 +755,27 @@ it.live('#1153 #1152 Local POS evidence is accepted only from an operator bound 
           transport: { correlationId: 'payment-source-pos-record', idempotencyKey: randomUUID() },
         });
 
+      yield* seedSourceAuthority(database.database, scope, {
+        ...posSource,
+        factFamily: 'LOCAL_POS_COLLECTION',
+        method: 'PAY_ON_PICKUP_OR_ON_SITE',
+        refundRoute: false,
+      });
+      expectForbiddenSource(yield* record(staff, 'pos-receipt-legacy-site').pipe(Effect.flip));
+      const wrongSite = yield* configurePos('pickup-brno-1');
+      expectForbiddenSource(yield* record(cashier.principal, 'pos-receipt-wrong-site').pipe(Effect.flip));
+      const exactSite = yield* configurePos(pickupBinding.pickupCapabilityRef);
+      expect(exactSite).toMatchObject({ pickupCapabilityRef: pickupBinding.pickupCapabilityRef });
+      expect(exactSite.sourceAuthorityId).not.toBe(wrongSite.sourceAuthorityId);
+      yield* expectSqlFailure(
+        admin.unsafe(
+          'update payment.source_authorities set pickup_capability_ref = $1, revision = revision + 1 where source_authority_id = $2',
+          ['pickup-ostrava-1', exactSite.sourceAuthorityId],
+        ),
+        '23514',
+        'payment_source_authority_transition_ck',
+      );
+
       // Holding the local-evidence permission is not being the configured POS operator.
       expectForbiddenSource(yield* record(staff, 'pos-receipt-staff').pipe(Effect.flip));
       const [before] = yield* admin.unsafe<{ observations: number }>(
@@ -509,6 +788,7 @@ it.live('#1153 #1152 Local POS evidence is accepted only from an operator bound 
       expect(accepted).toMatchObject({
         acceptanceOutcome: 'ACCEPTED_OBSERVATION',
         outcomeChange: { from: 'PENDING', to: 'EFFECT_CONFIRMED' },
+        sourceAuthorityId: exactSite.sourceAuthorityId,
       });
     }),
   ),

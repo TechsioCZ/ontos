@@ -1,5 +1,6 @@
 import type { Order } from '../../../../../shared/apis/records.ts';
-import type { OrderStatus, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
+import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { OrdersSnapshot } from './orders-records.ts';
 
 export const orderStatuses = [
@@ -82,10 +83,14 @@ export interface LineAmounts {
   readonly vat: number;
 }
 
-/** Minor-unit amounts for one line. VAT is rounded per line; the server remains the authority on totals. */
-export const lineAmounts = (unitPriceMinor: number, quantity: number, vatRate: VatRate): LineAmounts => {
+/**
+ * Minor-unit amounts for one line, with the server's own per-line VAT rounding (`orderLineVatMinor`), so the preview
+ * and the stored order agree. `vatRate` is the percentage Tax gives the line's classification; the server remains the
+ * authority on totals.
+ */
+export const lineAmounts = (unitPriceMinor: number, quantity: number, vatRate: number): LineAmounts => {
   const net = unitPriceMinor * quantity;
-  const vat = Math.round((net * vatRate) / 100);
+  const vat = orderLineVatMinor({ quantity, unitPriceMinor, vatRate });
   return { gross: net + vat, net, vat };
 };
 

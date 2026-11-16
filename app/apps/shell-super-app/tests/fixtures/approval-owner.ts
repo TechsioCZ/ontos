@@ -28,7 +28,7 @@ const declaration = {
 };
 
 /**
- * Immutable routing data derived with Core's real makeActionCommandV2/actionFor and
+ * Immutable routing data derived with Core's real resolveActionCommandV2/actionFor and
  * freezeActionCommandV2. It is never an authority proof or an executable owner registration.
  */
 const document: Schema.Json = {

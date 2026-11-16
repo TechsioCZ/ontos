@@ -41,6 +41,8 @@ import { proposeOrderChangesActionApiLive } from '../../api/propose-order-change
 import { ReviewOrderChangesActionApi } from '../../shared/apis/review-order-changes-action.ts';
 import { reviewOrderChangesAction } from '../../src/actions/review-order-changes.action.ts';
 import { reviewOrderChangesActionApiLive } from '../../api/review-order-changes-action-server.ts';
+import { TaxRateSource } from '../../src/services/tax-rates.ts';
+import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 // Authentication is an external port here. The real HTTP endpoint, payload decoder, owner binding,
 // canonical gate, handler, invocation repository and commit evidence all remain in the test.
 rstest.mock('../../api/auth/action-principal.ts', () => ({
@@ -137,6 +139,7 @@ export const makeFixture = (options: Pick<ActionTestHarnessOptions, 'access' | '
         Layer.succeed(ActiveApplicationCompositionService, owner.applicationComposition),
         Layer.mock(GatewayAssertionRedemptionService, {}),
         Layer.mock(GatewayPrincipalVerifierConfiguration, {}),
+        Layer.succeed(TaxRateSource, { read: () => Effect.succeed(TEST_TAX_BOOK) }),
       ),
     );
     const router = yield* Effect.acquireRelease(
@@ -193,8 +196,8 @@ export const cases = [
       name: 'HTTP product',
       priceMinor: 100,
       sku: 'HTTP',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     },
     slug: 'apply-command',
   },

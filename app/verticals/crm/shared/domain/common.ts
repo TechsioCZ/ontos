@@ -9,8 +9,6 @@ export const EntityIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.
   Schema.brand('CrmEntityId'),
 );
 export type EntityId = typeof EntityIdSchema.Type;
-/** Trusted generated identifiers use the same owner invariant as decoded command and state identifiers. */
-export const makeEntityId = (value: string): EntityId => EntityIdSchema.make(value);
 const isCalendarDate = Schema.is(CalendarDateSchema);
 
 /** Validate the source day before the native parser can roll an impossible date into another month. */

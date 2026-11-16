@@ -32,7 +32,7 @@ interface EffectivePeriodSnapshot {
 type MutationInput<Payload> = MutationEvidence & { readonly payload: Payload };
 type TargetResolver = typeof manufacturerTargetResolver;
 
-const ManufacturerMutationOutcomeSchema = Schema.Union([
+export const ManufacturerMutationOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('applied', {
     relationId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CatalogManufacturerRelationId')),
     revision: Schema.Int,

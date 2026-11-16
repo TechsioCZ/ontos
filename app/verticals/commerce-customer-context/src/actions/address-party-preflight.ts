@@ -1,5 +1,10 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type {
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { Crypto, Effect, Schema } from 'effect';
 
 import { AddSavedAddressPayloadSchema, UpdateSavedAddressPayloadSchema } from '../../shared/domain/address-actions.ts';
@@ -17,6 +22,7 @@ import {
   addressActionPersistenceForTransaction,
   addressPreparationSnapshot,
 } from '../persistence/address-persistence.ts';
+import { savedAddressSourceService } from '../services/saved-address-source.service.ts';
 
 type Payload = AddSavedAddressPayload | UpdateSavedAddressPayload;
 const sameAdd = Schema.toEquivalence(Schema.toType(AddSavedAddressPayloadSchema));
@@ -100,11 +106,9 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
       matches(candidate) && evidence !== null
         ? assertPreparedPartyAddressCurrent(evidence)
         : Effect.fail(unavailableSource());
-    return Effect.fn('AddressAction.bindPreparedServices')(function* bindPreparedAddressServices(
-      transaction: ScopedTransactionExecutor,
-      verifiedScope: OperationalScope,
-      revision: string,
-    ) {
+    const factory: ActionServiceFactory<ReturnType<typeof savedAddressSourceService>> = Effect.fn(
+      'AddressAction.bindPreparedServices',
+    )(function* bindPreparedAddressServices(transaction, verifiedScope, revision) {
       if (!sameScope(scope, verifiedScope) || revision !== context.compositionRevision) {
         return yield* unavailable();
       }
@@ -114,7 +118,12 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
           return yield* unavailable();
         }
       }
-      const services = addressActionPersistenceForTransaction(transaction, verifiedScope, validatePartySource);
+      // Source authorization and receipts wrap the prepared persistence exactly as in the ordinary factory.
+      const services = savedAddressSourceService(
+        transaction,
+        verifiedScope,
+        addressActionPersistenceForTransaction(transaction, verifiedScope, validatePartySource),
+      );
       return {
         ...services,
         add: (candidate: AddSavedAddressPayload, attribution: Parameters<typeof services.add>[1]) =>
@@ -131,5 +140,6 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
             : Effect.fail(unavailableSource()),
       };
     });
+    return factory;
   },
 );

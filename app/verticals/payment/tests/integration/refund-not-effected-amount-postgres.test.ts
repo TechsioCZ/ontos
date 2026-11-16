@@ -13,7 +13,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { paymentTestRelations } from './database-fixture.ts';
+import { paymentTestRelations, COMPOSITION_REVISION } from './database-fixture.ts';
 import {
   acceptObservation,
   itemsRefund,
@@ -22,11 +22,23 @@ import {
   requestRefund,
 } from '../support/refund-action-driver.ts';
 import type { RefundCase } from '../support/refund-action-driver.ts';
-import { refundRuntimeContextAccess, refundRuntimePermission } from '../support/refund-native-runtime.ts';
+import {
+  loadPaymentAggregate,
+  refundRuntimeContextAccess,
+  refundRuntimePermission,
+  seedSourceAuthority,
+} from '../support/refund-native-runtime.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 const nativeRuntime = Effect.gen(function* acquireRefundEvidenceRuntime() {
   const { admin, runtime } = yield* testDatabaseClients;
@@ -43,6 +55,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundEvidenceRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -115,4 +128,87 @@ it.live(
         );
       }),
     ),
+);
+
+it.live('#1152 a qualified bank refund reports unknown outcome without releasing its reservation', () =>
+  native(
+    Effect.gen(function* refundOutcomeUnknown() {
+      const refundCase = yield* refundCaseFor(yield* nativeRuntime, {
+        amountMinor: 100_000,
+        collected: true,
+        method: 'BANK_TRANSFER_ADVANCE',
+      });
+      const bank = {
+        accountRef: 'original-refund-bank',
+        environment: 'production',
+        sourceKind: 'BANK_ACCOUNTING',
+        sourceSystem: 'accounting',
+      } as const;
+      yield* seedSourceAuthority(refundCase.native.database, refundCase.scope, {
+        ...bank,
+        method: 'BANK_TRANSFER_ADVANCE',
+      });
+      const refund = yield* requestRefund(refundCase, itemsRefund(refundCase, 'unknown-refund', [A]), owners);
+      const statement = {
+        amount: CZK(10_000),
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'REFUND_INDETERMINATE',
+        operationId: refund.operation.operationId,
+        paymentId: refundCase.payment.paymentId,
+        source: bank,
+        sourceOccurrenceId: 'refund-bank-unknown-1',
+        sourceRevision: 1,
+      } as const;
+      const alternateBank = { ...bank, accountRef: 'different-refund-bank' };
+      yield* seedSourceAuthority(refundCase.native.database, refundCase.scope, {
+        ...alternateBank,
+        method: 'BANK_TRANSFER_ADVANCE',
+      });
+      expect(yield* outcomeOf(acceptObservation(refundCase, { ...statement, source: alternateBank }))).toBe(
+        'payment_source_authority_forbidden',
+      );
+      const accepted = yield* acceptObservation(refundCase, statement);
+      expect(accepted.outcomeChange).toEqual({
+        from: 'PENDING',
+        operationId: refund.operation.operationId,
+        to: 'INDETERMINATE',
+      });
+      const [stored] = yield* refundCase.native.admin.unsafe<{
+        fact_kind: string;
+        operation_id: string;
+        source_occurrence_id: string;
+      }>('select fact_kind, operation_id, source_occurrence_id from payment.observations where observation_id = $1', [
+        accepted.observationId,
+      ]);
+      expect(stored).toMatchObject({
+        fact_kind: 'REFUND_INDETERMINATE',
+        operation_id: refund.operation.operationId,
+        source_occurrence_id: statement.sourceOccurrenceId,
+      });
+      expect(
+        yield* outcomeOf(requestRefund(refundCase, itemsRefund(refundCase, 'retry-unknown', [A]), owners)),
+      ).not.toBe('committed');
+      const notEffected = yield* acceptObservation(refundCase, {
+        ...statement,
+        factKind: 'REFUND_NOT_EFFECTED',
+        sourceOccurrenceId: 'refund-bank-not-effected',
+      });
+      expect(notEffected.outcomeChange?.to).toBe('NOT_EFFECTED_CONFIRMED');
+      const staleUnknown = yield* acceptObservation(refundCase, {
+        ...statement,
+        amount: CZK(4000),
+        sourceOccurrenceId: 'refund-bank-unknown-after-not-effected',
+      });
+      expect(staleUnknown.interpretation).toBe('NO_CHANGE');
+      expect(staleUnknown.outcomeChange).toBeUndefined();
+      const aggregate = yield* loadPaymentAggregate(
+        refundCase.native.database,
+        refundCase.scope,
+        refundCase.payment.paymentId,
+      );
+      expect(
+        aggregate.operations.find((operation) => operation.operationId === refund.operation.operationId)?.outcome,
+      ).toBe('NOT_EFFECTED_CONFIRMED');
+    }),
+  ),
 );

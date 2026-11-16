@@ -1,6 +1,6 @@
 // The draft of the contract form: a new contract, or the period of a draft contract. Pure, so the form and its
 // tests share one definition of what is sent.
-import { Option, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import type { AgreementsCommand } from '../../../../shared/actions/apply-command.ts';
 import { ContractSchema } from '../../../../shared/apis/records.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
@@ -27,6 +27,36 @@ export const createDraftOf = (kind: Contract['kind']): CreateDraft => ({
   occupancyId: '',
   startDate: DEFAULT_START_DATE,
 });
+
+/** The first day a successor of `record` can start: when the previous contract ends, or the day after it starts. */
+export const renewalEarliestStart = (record: Contract): DateInput =>
+  record.endDate ?? DateTime.makeUnsafe(record.startDate).pipe(DateTime.add({ days: 1 }), DateTime.formatIsoDateUtc);
+
+/** A successor gets its own period, never the new-contract form's fixed demonstration dates. */
+export const renewalDraftOf = (record: Contract, today: string): CreateDraft => {
+  const earliest = renewalEarliestStart(record);
+  const startDate = record.endDate === null && today > earliest ? today : earliest;
+  return {
+    customerId: '',
+    endDate: DateTime.makeUnsafe(startDate).pipe(DateTime.add({ years: 1 }), DateTime.formatIsoDateUtc),
+    kind: record.kind,
+    occupancyId: '',
+    startDate,
+  };
+};
+
+/** The renewal form of one contract: the period it opens with is fixed when the person chooses Renew. */
+export interface RenewalDraft {
+  readonly opening: CreateDraft;
+  readonly previous: Contract;
+}
+
+/** The successor starts no earlier than `renewalEarliestStart`. */
+export const renewalStartValid = (draft: CreateDraft, previous: Contract): boolean =>
+  draft.startDate > previous.startDate && (previous.endDate === null || draft.startDate >= previous.endDate);
+
+export const renewalPeriodValid = (draft: CreateDraft, previous: Contract): boolean =>
+  renewalStartValid(draft, previous) && draft.endDate > draft.startDate;
 
 /**
  * The period form of a draft contract. `record` is the contract as read when the draft was taken: the command is
@@ -72,6 +102,30 @@ export const contractTerms = (record: Contract): CommercialTerms => {
   }
   return terms;
 };
+
+export const renewalCommandOf = (
+  draft: CreateDraft,
+  input: { readonly previous: Contract; readonly resourceId: string },
+): AgreementsCommand => ({
+  _tag: 'RenewContract',
+  contractRef: input.previous.contractRef,
+  successor: {
+    ...contractTerms(input.previous),
+    contractRef: { ...input.previous.contractRef, resourceId: input.resourceId },
+    counterpartyRef: input.previous.counterpartyRef,
+    endDate: draft.endDate,
+    kind: input.previous.kind,
+    lifecycleState: 'DRAFT',
+    note: input.previous.note,
+    occupancyRef: input.previous.occupancyRef,
+    propertyRef: input.previous.propertyRef,
+    renewalNoticeDate: null,
+    signatureState: 'NOT_SENT',
+    startDate: draft.startDate,
+    supersedesContractRef: input.previous.contractRef,
+    unitRef: input.previous.unitRef,
+  },
+});
 
 export const periodDraftOf = (record: Contract): PeriodDraft => ({
   endDate: record.endDate ?? '',

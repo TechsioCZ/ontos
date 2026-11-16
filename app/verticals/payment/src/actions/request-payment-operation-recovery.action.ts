@@ -3,7 +3,10 @@
 // @ontos-action-slug request-payment-operation-recovery
 import type { ActionHandlerContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   RequestPaymentOperationRecoveryPayloadSchema,
@@ -13,23 +16,51 @@ import type {
   RequestPaymentOperationRecoveryPayload,
   RequestPaymentOperationRecoveryResult,
 } from '../../shared/actions/request-payment-operation-recovery.ts';
-import { PaymentEvidenceRejected, paymentEvidenceRejected } from '../../shared/domain/evidence-contract.ts';
+import {
+  PaymentEvidenceRejected,
+  paymentEvidenceRejected,
+  PaymentProviderReplayGuaranteeSchema,
+} from '../../shared/domain/evidence-contract.ts';
+import { PaymentGatewayAccountBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected, paymentRejected } from '../../shared/domain/payment-rejected.ts';
-import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
+import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationRecoveryRequestedSchema } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
 import { planPaymentRecovery, PaymentRecoveryPlan } from '../domain/evidence-recovery.ts';
 import type { PaymentRecoveryPlanCase } from '../domain/evidence-recovery.ts';
+import { isDefinitiveOutcome } from '../domain/operation-lifecycle.ts';
 import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidenceActionServices } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
+import {
+  pspBindingRouteReaderForTransaction,
+  routeScopeNamesBindingRoute,
+} from '../persistence/psp-binding-route-persistence.ts';
+import type { PspBindingRouteReader } from '../persistence/psp-binding-route-persistence.ts';
+import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
+import { PaymentProviderReplayEvidencePort } from '../ports/provider-replay-evidence-port.ts';
+import type { PaymentProviderReplayEvidenceReader } from '../ports/provider-replay-evidence-port.ts';
 import { recordPaymentAggregateReads } from './payment-data-access.ts';
 import { createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage } from './request-payment-operation-recovery-payment-core-operation-recovery-requested-v1.outbox-message.ts';
 
 const MODULE_KEY = 'payment.core' as const;
 const RECOVERY_REQUESTED = 'payment.core.operation-recovery-requested.v1' as const;
+const RECONCILIATION_WORKLOAD = 'payment.provider-reconciliation' as const;
+
+/**
+ * A route-scoped recovery request whose route does not authorize it (#1153, AUTHORIZATION.md:127): the caller
+ * is not the admitted reconciliation workload, or the operation was not dispatched through the signed route's
+ * binding. Nothing was written. A request without a route scope never meets this refusal.
+ */
+export class PaymentRouteScopeRefused extends Schema.TaggedError<PaymentRouteScopeRefused>()(
+  'PaymentRouteScopeRefused',
+  { code: Schema.Literal('payment_route_scope_refused'), reason: Schema.String },
+) {}
+
+const routeScopeRefused = (reason: string) =>
+  new PaymentRouteScopeRefused({ code: 'payment_route_scope_refused', reason });
 
 const domainEvents = { [RECOVERY_REQUESTED]: OperationRecoveryRequestedSchema } as const;
 
@@ -38,9 +69,18 @@ const RequestPaymentOperationRecoveryErrorSchema = Schema.Union([
   PaymentConflict,
   PaymentUnavailable,
   PaymentEvidenceRejected,
+  PaymentRouteScopeRefused,
 ]);
 
-type RecoveryContext = ActionHandlerContext<typeof domainEvents, PaymentEvidenceActionServices>;
+interface RecoveryServices extends PaymentEvidenceActionServices {
+  /** Whether Core admitted this invocation through the reconciliation workload carrier (read only when routed). */
+  readonly readReconciliationAdmission: () => Effect.Effect<boolean, PaymentUnavailable>;
+  readonly replayEvidence: PaymentProviderReplayEvidenceReader;
+  readonly routes: PspBindingRouteReader;
+  readonly scope: PaymentOwnerScope;
+}
+
+type RecoveryContext = ActionHandlerContext<typeof domainEvents, RecoveryServices>;
 type ExecutablePlan = Extract<PaymentRecoveryPlanCase, { readonly _tag: 'Plan' }>;
 
 const provenanceOf = (context: RecoveryContext): PaymentExecutionProvenance => ({
@@ -50,21 +90,104 @@ const provenanceOf = (context: RecoveryContext): PaymentExecutionProvenance => (
 });
 
 /** Private owner service factory: Core's scoped executor never becomes a handler service itself. */
-const paymentEvidenceServices = (
+const paymentEvidenceServices = Effect.fn('RequestPaymentOperationRecoveryAction.services')(function* makeServices(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
-): Effect.Effect<PaymentEvidenceActionServices, OperationContextUnavailable> =>
-  scope.legalEntityId === undefined
-    ? Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Payment evidence operations require a trusted Selling Legal Entity',
-        }),
-      )
-    : Effect.succeed({
-        aggregate: paymentAggregatePersistenceForTransaction(transaction),
-        evidence: paymentEvidencePersistenceForTransaction(transaction),
-      });
+) {
+  if (scope.legalEntityId === undefined) {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Payment evidence operations require a trusted Selling Legal Entity',
+    });
+  }
+  return {
+    aggregate: paymentAggregatePersistenceForTransaction(transaction),
+    evidence: paymentEvidencePersistenceForTransaction(transaction),
+    readReconciliationAdmission: () =>
+      readScopedAdmittedWorkload(transaction, scope, RECONCILIATION_WORKLOAD).pipe(
+        Effect.mapError((cause) =>
+          paymentUnavailable('The admitted workload of this invocation cannot be read', cause),
+        ),
+      ),
+    replayEvidence: (yield* PaymentProviderReplayEvidencePort)(transaction, scope),
+    routes: pspBindingRouteReaderForTransaction(transaction),
+    scope: { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+  } satisfies RecoveryServices;
+});
+
+const decodeReplayGuarantee = Schema.decodeUnknownOption(PaymentProviderReplayGuaranteeSchema);
+
+const readProviderGuarantee = (
+  operation: PaymentOperationRecord,
+  payload: RequestPaymentOperationRecoveryPayload,
+  services: RecoveryServices,
+) => {
+  if (
+    !Schema.is(PaymentGatewayAccountBindingSchema)(operation.binding) ||
+    isDefinitiveOutcome(operation.outcome) ||
+    operation.outcome === 'CONFLICT' ||
+    payload.trigger === 'LOOKUP_AUTHORITY_UNAVAILABLE' ||
+    (payload.requestedMode !== undefined && payload.requestedMode !== 'PROVIDER_IDEMPOTENT_REPLAY')
+  ) {
+    return Effect.succeedNone;
+  }
+  return services.replayEvidence
+    .readGuarantee({
+      binding: operation.binding,
+      materialHash: operation.materialHash,
+      operationId: operation.operationId,
+      operationKind: operation.kind,
+      paymentId: operation.paymentId,
+      scope: services.scope,
+    })
+    .pipe(
+      Effect.map(Option.flatMap(decodeReplayGuarantee)),
+      Effect.catchTag('PaymentUnavailable', () => Effect.succeedNone),
+    );
+};
+
+/** A route-scoped caller must be the admitted reconciliation workload; checked before the Payment is read. */
+const requireRoutedReconciliationWorkload = (services: RecoveryServices) =>
+  services
+    .readReconciliationAdmission()
+    .pipe(
+      Effect.flatMap((admitted) =>
+        admitted
+          ? Effect.void
+          : Effect.fail(routeScopeRefused('A routed recovery request must come from the reconciliation workload')),
+      ),
+    );
+
+/**
+ * The operation must have been dispatched through exactly the binding the signed route names, in this Tenant
+ * and Selling Legal Entity: a route of one binding never recovers another merchant's operation.
+ */
+const requireOperationOfRoute = (
+  proof: RegisteredGatewayRouteScope,
+  operation: PaymentOperationRecord,
+  services: RecoveryServices,
+) => {
+  const { binding } = operation;
+  if (!Schema.is(PaymentGatewayAccountBindingSchema)(binding)) {
+    return Effect.fail(routeScopeRefused('The operation was not dispatched through a gateway binding route'));
+  }
+  return services.routes
+    .readRouteOfBinding(proof.sourceRouteId)
+    .pipe(
+      Effect.flatMap((route) =>
+        Option.exists(
+          route,
+          (candidate) =>
+            routeScopeNamesBindingRoute(proof, candidate, services.scope) &&
+            candidate.providerFamily === binding.providerFamily &&
+            candidate.environment === binding.environment &&
+            candidate.providerAccountRef === binding.providerAccountRef,
+        )
+          ? Effect.void
+          : Effect.fail(routeScopeRefused('The operation was not dispatched through the binding of this route')),
+      ),
+    );
+};
 
 const requireOperation = (operations: readonly PaymentOperationRecord[], operationId: string) => {
   const operation = operations.find((candidate) => candidate.operationId === operationId);
@@ -96,14 +219,30 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
     payload: RequestPaymentOperationRecoveryPayload,
     context: RecoveryContext,
   ) {
-    const { aggregate, evidence } = context.services;
+    const { aggregate, evidence, scope } = context.services;
     const provenance = provenanceOf(context);
+    // #1153 / AUTHORIZATION.md:127: a route-scoped invocation is rechecked against its route; a person's
+    // request carries no route scope and is unchanged.
+    const proof = readVerifiedGatewayRouteScope(context.scope);
+    if (proof !== undefined) {
+      yield* requireRoutedReconciliationWorkload(context.services);
+    }
     const current = yield* aggregate.loadAggregate(payload.paymentId, { lock: true });
     yield* recordPaymentAggregateReads(context, [current.payment.paymentId]);
     const operation = yield* requireOperation(current.operations, payload.operationId);
+    if (proof !== undefined) {
+      yield* requireOperationOfRoute(proof, operation, context.services);
+    }
+    const guarantee = Option.getOrUndefined(yield* readProviderGuarantee(operation, payload, context.services));
     const now = yield* DateTime.now;
     const plan = yield* requireExecutablePlan(
-      planPaymentRecovery(operation, { now, requestedMode: payload.requestedMode, trigger: payload.trigger }),
+      planPaymentRecovery(operation, {
+        guarantee,
+        now,
+        requestedMode: payload.requestedMode,
+        scope,
+        trigger: payload.trigger,
+      }),
     );
     const recovery = yield* evidence.insertRecoveryRequest({
       binding: operation.binding,
@@ -133,8 +272,10 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
         provenance,
       });
     }
+    const replayGuarantee = plan.mode === 'PROVIDER_IDEMPOTENT_REPLAY' ? guarantee : undefined;
     const result: RequestPaymentOperationRecoveryResult = {
       executorWorkAdmitted: plan.executorWork,
+      executorWorkTracked: plan.executorWork,
       heldForReconciliation: plan.hold,
       modeDowngraded: plan.modeDowngraded,
       operationId: operation.operationId,
@@ -149,7 +290,7 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       recoveryMode: plan.mode,
       requestedAt: recovery.requestedAt,
     };
-    const eventPayload = {
+    const recoveryPayload = {
       amount: operation.amount,
       binding: operation.binding,
       materialHash: operation.materialHash,
@@ -164,6 +305,10 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       provenance,
       recoveryId: recovery.recoveryId,
     };
+    const eventPayload =
+      replayGuarantee === undefined
+        ? recoveryPayload
+        : { ...recoveryPayload, providerReplayGuarantee: replayGuarantee };
     const event = yield* context.addDomainEvent({
       eventType: RECOVERY_REQUESTED,
       payloadJson: eventPayload,
@@ -173,10 +318,12 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       subjectResourceType: 'payment.core.payment',
     });
     // Only replay/lookup is concrete executor work; waiting for evidence is not a fabricated task (TECH-01).
+    // Both are Core durable work of this invocation's revision until the executor completes them (#1158).
     if (plan.executorWork) {
       yield* context.addOutboxMessage(
         event,
         createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage(eventPayload),
+        { consumerModuleKey: MODULE_KEY },
       );
     }
     return result;
@@ -196,6 +343,11 @@ export const requestPaymentOperationRecoveryAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.core.request-payment-operation-recovery.access.v1',
+    },
+    accessWorkload: {
+      reason:
+        'The provider reconciliation driver requests recovery of gateway operations listed as reconciliation debt without a human session',
+      workloads: ['payment.provider-reconciliation'],
     },
     actionKey: 'payment.core.request-payment-operation-recovery',
     auditProfile: 'standard',

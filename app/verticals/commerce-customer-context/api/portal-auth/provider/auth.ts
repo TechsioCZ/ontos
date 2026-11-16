@@ -14,7 +14,7 @@ import { Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema, f
 
 import type { CommercePortalAuthConfigValue } from './config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, CommercePortalAuthConfig } from './config.ts';
-import { CommercePortalAuthDatabase } from '../../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from '../../../src/portal-auth/persistence/portal-auth-database-service.ts';
 import { COMMERCE_PORTAL_AUTH_MFA_POLICY, createCommercePortalAuthTwoFactorPlugin } from './mfa/plugin.ts';
 import type { CommercePortalAuthTwoFactorPlugin } from './mfa/plugin.ts';
 import type { CommercePortalAuthDatabaseAdapter } from '../../../src/portal-auth/persistence/portal-auth-database-types.ts';

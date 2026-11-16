@@ -1,0 +1,1 @@
+ALTER TABLE "core"."principals" DROP CONSTRAINT "core_principals_platform_role_ck", ADD CONSTRAINT "core_principals_platform_role_ck" CHECK ("platform_role" is null or ("platform_role" = 'access_release_actor' and "kind" = 'system') or ("platform_role" = 'internal_workload' and "kind" = 'service'));

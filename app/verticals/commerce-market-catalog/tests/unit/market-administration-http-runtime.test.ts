@@ -29,12 +29,12 @@ import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
+import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { assert, expect, it, rstest } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
-import { commerceMarketCatalogApiRuntimeFromContext } from '../fixtures/market-http-runtime-from-context.ts';
+import { commerceMarketCatalogApiRuntimeFromContext, MarketRetirementRuntimeBindings } from '../../api/index.ts';
 import { commerceMarketCatalogApiContract } from '../../shared/api.ts';
 import { MarketAdministrationResponseSchema } from '../../shared/apis/market-administration.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -232,7 +232,13 @@ for (const scenario of scenarios) {
       );
       const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
         Effect.provideService(ReadRuntime, harness.runtime),
-        Effect.provideService(ActionRuntime, unusedActionRuntime),
+        Effect.provideService(MarketRetirementRuntimeBindings, {
+          base: unusedActionRuntime,
+          coreFactory: Layer.succeed(ActionRuntime, unusedActionRuntime),
+          crypto: yield* Crypto.Crypto,
+          readRuntime: harness.runtime,
+          scopeResolver: { resolve: () => Effect.die('An administration Read must not resolve an Action scope') },
+        }),
         Effect.provideService(OwnerActionApprovals, Context.get(ownerContext, OwnerActionApprovals)),
         Effect.provideService(AccessDecisionGate, gate.accessDecision),
         Effect.provideService(CoreSearchQueryRuntime, searchRuntime),

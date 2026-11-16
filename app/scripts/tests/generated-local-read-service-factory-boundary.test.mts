@@ -124,6 +124,8 @@ it('accepts a required parameter after a default only when its position is suppl
   expect(accepts(source.replace(`${makerName}(loadOwner)`, `${makerName}(loadOwner, ownerFence)`))).toBe(true);
 });
 
+// Demo-only exception 3 (staged reads): Pricing's current decision is a prepare/load/finish Read with an empty
+// service factory, so main's `currentPricingDecisionReadServiceFactory` no longer exists to prove.
 it('proves the real Pricing phased lifecycle and empty service factory without inventing a removed factory', () => {
   const pricingOwner = 'verticals/pricing';
   const pricingRead = `${pricingOwner}/src/api/current-pricing-decision.read.ts`;

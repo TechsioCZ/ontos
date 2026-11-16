@@ -1,6 +1,8 @@
 import { Effect } from 'effect';
 
 import {
+  PartyDeclaredSubjectEligibilityVersion,
+  PartyDeclaredTypeRuleVersion,
   PartySubjectEligibilityVersion,
   PartyEvidenceInsufficient,
   PartyTypeRuleVersion,
@@ -23,8 +25,11 @@ const subjectEvidenceReason = (evidence: NonNullable<PartyCandidate['subjectEvid
   if (kinds.has('TECHNICAL_RECORD')) {
     return 'technical_record_forbidden';
   }
-  if (subjects.size !== 1) {
+  if (subjects.size !== 1 || (subjects.has(undefined) && evidence.length > 1)) {
     return 'one_concrete_subject_required';
+  }
+  if (evidence.some((item) => item.kind === 'CLIENT_SOURCE_ASSERTION') && evidence.length !== 1) {
+    return 'one_client_source_assertion_required';
   }
   if (kinds.has('PERSON') && kinds.has('ORGANIZATION')) {
     return 'conflicting_type_evidence';
@@ -32,33 +37,49 @@ const subjectEvidenceReason = (evidence: NonNullable<PartyCandidate['subjectEvid
   return 'proven_concrete_subject';
 };
 
-/** Evaluates explicit actor attestations. The owner Action, not a reference prefix or provider
- * label, records who accepted them. A review decision never bypasses subject/type evidence. */
-export const evaluatePartySubjectEvidence = (
-  candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>,
-): PartyEvidenceEvaluation => {
+type SubjectCandidate = Pick<PartyCandidate, 'partyType' | 'subjectEvidence'> &
+  Partial<Pick<PartyCandidate, 'officialIdentifiers'>> & {
+    readonly firstName?: string | null;
+    readonly lastName?: string | null;
+    readonly businessName?: string | null;
+  };
+
+const hasSupportedFact = (candidate: SubjectCandidate): boolean =>
+  [candidate.firstName, candidate.lastName, candidate.businessName].some(
+    (name) => name !== undefined && name !== null && name.trim().length > 0,
+  ) || (candidate.officialIdentifiers?.length ?? 0) > 0;
+
+/** Evidence of a concrete subject is eligibility to enter matching, never a matching result.
+ * Keep the historical actor-only evaluation stable for existing decision fingerprints. */
+export const evaluatePartySubjectEvidence = (candidate: SubjectCandidate): PartyEvidenceEvaluation => {
   const evidence = candidate.subjectEvidence ?? [];
+  const declared = evidence.some((item) => item.kind !== 'ACTOR_ATTESTATION');
   let reasonCode: string = subjectEvidenceReason(evidence);
-  const subjectEligible = reasonCode === 'proven_concrete_subject';
+  if (reasonCode === 'proven_concrete_subject' && declared) {
+    reasonCode = hasSupportedFact(candidate) ? 'declared_concrete_subject' : 'declared_identity_fact_required';
+  }
+  const subjectEligible = reasonCode === 'proven_concrete_subject' || reasonCode === 'declared_concrete_subject';
+  const source = evidence.find((item) => item.kind === 'CLIENT_SOURCE_ASSERTION');
+  const unresolvedSupported =
+    candidate.partyType === 'UNRESOLVED' && (source === undefined || source.observedSubject === 'CONCRETE_SUBJECT');
   const typeSupported =
     subjectEligible &&
-    (candidate.partyType === 'UNRESOLVED' ||
-      evidence.some(({ observedSubject }) => observedSubject === candidate.partyType));
+    (unresolvedSupported || evidence.some(({ observedSubject }) => observedSubject === candidate.partyType));
   if (subjectEligible && !typeSupported) {
     reasonCode = 'party_type_evidence_required';
   }
   return {
     evidence,
     reasonCode,
-    subjectEligibilityVersion: PartySubjectEligibilityVersion,
+    subjectEligibilityVersion: declared ? PartyDeclaredSubjectEligibilityVersion : PartySubjectEligibilityVersion,
     subjectEligible,
-    typeRuleVersion: PartyTypeRuleVersion,
+    typeRuleVersion: declared ? PartyDeclaredTypeRuleVersion : PartyTypeRuleVersion,
     typeSupported,
   };
 };
 
 export const requirePartySubjectEvidence = (
-  candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>,
+  candidate: SubjectCandidate,
 ): Effect.Effect<PartyEvidenceEvaluation, PartyEvidenceInsufficientError> => {
   const evaluation = evaluatePartySubjectEvidence(candidate);
   return evaluation.subjectEligible && evaluation.typeSupported

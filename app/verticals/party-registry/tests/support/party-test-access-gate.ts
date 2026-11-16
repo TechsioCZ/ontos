@@ -11,6 +11,7 @@ import { inertAccessEnforcementPorts, withScriptedRebind } from '@app/core-runti
 import { Effect, Layer } from 'effect';
 
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
+import type { ListAccessResolution } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
 import type { AccessDecision } from '../../../../packages/core-runtime/src/access/decision/contract.ts';
 
 const REASON_OF = {
@@ -61,14 +62,16 @@ export const partyTestAccessGate = (): PartyTestAccessGate => {
     const revoked = key !== undefined && [...revokedPrefixes].some((prefix) => key.startsWith(prefix));
     return decisionOf(revoked ? 'DENIED' : 'ALLOWED');
   };
+  const listOf = (input: Pick<GateInput, 'carrier'>): ListAccessResolution => {
+    const decision = answerOf(input);
+    const visible = decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL';
+    return visible ? { decision, predicate: { groups: [] } } : { decision };
+  };
   const service: AccessDecisionService = withScriptedRebind({
     decide: (input) => Effect.succeed(answerOf(input)),
     decideMany: (input) => Effect.succeed(input.map((one) => answerOf(one))),
-    list: (input) => {
-      const decision = answerOf(input);
-      const visible = decision.outcome === 'ALLOWED' || decision.outcome === 'NEEDS_APPROVAL';
-      return Effect.succeed(visible ? { decision, predicate: { groups: [] } } : { decision });
-    },
+    list: (input) => Effect.succeed(listOf(input)),
+    listMany: (input) => Effect.succeed(input.map(listOf)),
     // The trusted scope resolver asks the same seam which companies this actor may select (O28). The
     // fixture creates its companies at runtime, so the answer echoes the company the request named.
     selectableLegalEntities: ({ scope }) =>

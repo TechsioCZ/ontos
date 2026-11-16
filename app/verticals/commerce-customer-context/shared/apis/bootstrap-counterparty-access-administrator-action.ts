@@ -32,6 +32,7 @@ export const BootstrapCounterpartyAccessAdministratorActionForbiddenProblemSchem
       'counterparty_scope_mismatch',
       'principal_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const BootstrapCounterpartyAccessAdministratorActionNotFoundProblemSchema = makeProblemDetailsSchema(

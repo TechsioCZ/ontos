@@ -28,6 +28,7 @@ export const ReviseCartDraftActionForbiddenProblemSchema = makeProblemDetailsSch
       'operation_context_invalid',
       'cart_permission_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ReviseCartDraftActionNotFoundProblemSchema = makeProblemDetailsSchema(

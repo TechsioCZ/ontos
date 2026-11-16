@@ -7,7 +7,7 @@ import {
   CommercePortalAuthSessionMfaMethodSchema,
   CommercePortalAuthSignInInputSchema,
 } from '../../api/portal-auth/session/contracts.ts';
-import { EnrollmentResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
+import { EnrollmentPartyResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } from '../portal-auth-contracts.ts';
 import { ActiveSavedAddressSchema, SavedAddressDefaultsSchema } from '../domain/address-book.ts';
 
@@ -192,7 +192,7 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
             email: Schema.String,
             id: CommercePortalAuthProviderSubjectIdSchema,
             name: Schema.String,
-            partyId: EnrollmentResourceIdSchema.check(Schema.isUUID()),
+            partyId: EnrollmentPartyResourceIdSchema,
             tenantId: EnrollmentTenantIdSchema,
           }),
           state: Schema.Literal('authenticated'),

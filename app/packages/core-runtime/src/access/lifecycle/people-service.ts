@@ -34,7 +34,7 @@ import type {
   Delegation,
   Holder,
 } from '../model.ts';
-import { AmountCeilingSchema } from '../model.ts';
+import { AmountCeilingSchema, holderKey, sameHolder } from '../model.ts';
 import type { ManagerAuthority } from './delegation.ts';
 import type {
   GrantorAlternative,
@@ -436,8 +436,9 @@ const firstAcceptedPlan = (
 };
 
 export interface AssignRoleCommand {
+  /** A person, or an agent of the company: rights come only from roles, for everyone (no other grant path). */
+  readonly holder: Holder;
   readonly incarnationId: AssignmentIncarnationId;
-  readonly principalId: PrincipalId;
   readonly roleId: RoleId;
   readonly roleRevisionId: RoleRevisionId;
   readonly scopeId: AccessScopeId;
@@ -485,8 +486,9 @@ export interface TransferOwnershipCommand {
  */
 export interface AdmitMemberCommand {
   readonly companyMembershipId: AccessMembershipId;
+  /** A person, or an agent with an active directory membership of this company. */
+  readonly holder: Holder;
   readonly legalEntityId: LegalEntityId;
-  readonly principalId: PrincipalId;
   readonly tenantMembershipId: AccessMembershipId;
 }
 
@@ -495,14 +497,14 @@ export interface AdmitMemberCommand {
  * reason is required and recorded with who ended it and when.
  */
 export interface EndMembershipCommand {
-  readonly principalId: PrincipalId;
+  readonly holder: Holder;
   readonly reason: string;
   readonly scopeId: AccessScopeId;
 }
 
 /** The member row an admission or an ending changed, as a write answers it. */
 export interface PeopleMembershipReceipt {
-  readonly principalId: PrincipalId;
+  readonly holder: Holder;
   readonly scopeId: AccessScopeId;
   readonly status: AccessMembership['status'];
 }
@@ -725,7 +727,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       actor: actorOf(scope),
       at: view.at,
       catalog: catalog.value.entries,
-      holder: { _tag: 'Principal', principalId: command.principalId },
+      holder: command.holder,
       incarnationId: command.incarnationId,
       memberships: view.memberships,
       role: chosen.role,
@@ -974,7 +976,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       companyMembershipId: command.companyMembershipId,
       companyScopeId: company.scopeId,
       delegations: view.delegations,
-      holder: { _tag: 'Principal', principalId: command.principalId },
+      holder: command.holder,
       legalEntityId: command.legalEntityId,
       memberships: view.memberships,
       teamMembers: view.teams.flatMap((entry) => entry.members),
@@ -985,7 +987,7 @@ export const makeAccessPeopleCommands = (dependencies: {
     // The plan's first write is the directory precondition, checked inside the same transaction.
     yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, {
-      membership: { principalId: command.principalId, scopeId: company.scopeId, status: 'active' },
+      membership: { holder: command.holder, scopeId: company.scopeId, status: 'active' },
     });
   });
 
@@ -994,7 +996,9 @@ export const makeAccessPeopleCommands = (dependencies: {
     command: EndMembershipCommand,
   ): Effect.fn.Return<PeopleCommandReceipt, PeopleCommandFailure> {
     const view = yield* read(scope);
-    const leaver = command.principalId;
+    const { holder } = command;
+    const leaver = Option.getOrUndefined(principalOf(holder));
+    const name = leaver === undefined ? `Agent ${holderKey(holder)}` : `Person ${leaver}`;
     yield* requirePermanentBasis(scope, view, command.scopeId);
     // A suspended row still within its window is ended for good as well; an ended or expired one is not.
     const ending = view.memberships.find(
@@ -1002,14 +1006,14 @@ export const makeAccessPeopleCommands = (dependencies: {
         membership.scopeId === command.scopeId &&
         membership.kind === 'member' &&
         membership.status !== 'revoked' &&
-        Option.getOrUndefined(principalOf(membership.holder)) === leaver &&
+        sameHolder(membership.holder, holder) &&
         membership.validFrom <= view.at &&
         (membership.validUntil === undefined || view.at < membership.validUntil),
     );
     if (ending === undefined) {
       return yield* refuse(
         'people_membership_unknown',
-        `Person ${leaver} holds no current member row in scope ${command.scopeId}`,
+        `${name} holds no current member row in scope ${command.scopeId}`,
       );
     }
     // Leaving the tenant closes every company too; leaving a company closes that company only.
@@ -1023,14 +1027,14 @@ export const makeAccessPeopleCommands = (dependencies: {
       (membership) =>
         membership.status !== 'revoked' &&
         (membership.kind === 'owner' || (membership.kind === 'access_admin' && closed.has(membership.scopeId))) &&
-        Option.getOrUndefined(principalOf(membership.holder)) === leaver,
+        sameHolder(membership.holder, holder),
     );
     if (manages) {
       const bases = yield* configureBases(scope, view);
       if (!bases.some((basis) => Predicate.isTagged(basis, 'Owner'))) {
         return yield* refuse(
           'people_authority_missing',
-          `Person ${leaver} administers a scope this ends; only the tenant owner ends their membership`,
+          `${name} administers a scope this ends; only the tenant owner ends their membership`,
           [command.scopeId],
         );
       }
@@ -1039,12 +1043,15 @@ export const makeAccessPeopleCommands = (dependencies: {
     // owner revokes those delegations first; nothing cascades through somebody else's envelope (S3).
     const granted = view.delegations.filter(
       (delegation) =>
-        delegation.grantedBy === leaver && closed.has(delegation.scopeId) && delegationIsLive(delegation, view.at),
+        leaver !== undefined &&
+        delegation.grantedBy === leaver &&
+        closed.has(delegation.scopeId) &&
+        delegationIsLive(delegation, view.at),
     );
     if (granted.length > 0) {
       return yield* refuse(
         'people_granted_delegations_live',
-        `Person ${leaver} granted ${granted.length} live delegation(s) in the scopes this ends; revoke them first`,
+        `${name} granted ${granted.length} live delegation(s) in the scopes this ends; revoke them first`,
         [...new Set(granted.map((delegation) => delegation.scopeId))],
       );
     }
@@ -1065,7 +1072,7 @@ export const makeAccessPeopleCommands = (dependencies: {
     }).pipe(Effect.mapError(peopleErrorOf));
     yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, {
-      membership: { principalId: leaver, scopeId: command.scopeId, status: 'revoked' },
+      membership: { holder, scopeId: command.scopeId, status: 'revoked' },
     });
   });
 

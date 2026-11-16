@@ -22,8 +22,8 @@ import { PropertyStateSchema } from '../../shared/apis/records.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
 import { AssetsProviderResponseSchema } from '../../shared/apis/assets-search.ts';
 import { assetsRead } from '../../src/search/assets.provider.ts';
-import { buildSearchDocuments } from '../../src/search/projection.ts';
-import type { SearchSourceSnapshot } from '../../src/search/projection.ts';
+import { buildSearchDocuments } from '../../src/services/search-projection.ts';
+import type { SearchSourceSnapshot } from '../../src/services/search-projection.ts';
 import { projectSearchSnapshot } from '../../src/services/search-projector.ts';
 import { applyPropertyCommand } from '../../src/services/persistence.service.ts';
 

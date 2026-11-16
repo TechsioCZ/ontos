@@ -250,7 +250,6 @@ export const providerAccountCreationObservationFor = Effect.fn(
   );
   // Keep provider delivery behind the local Attempt decode: malformed durable evidence must fail
   // closed before reconciliation performs an externally visible email send.
-  // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Evidence validation intentionally gates verification delivery and fixes their failure ordering.
   const storefrontOrigin = yield* readStorefrontOrigin.pipe(
     Effect.mapError((failure) =>
       reconciliationUnavailable('The enrollment storefront could not be read for account reconciliation', failure),

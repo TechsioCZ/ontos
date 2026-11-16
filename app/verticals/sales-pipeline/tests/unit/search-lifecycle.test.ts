@@ -1,7 +1,7 @@
 import { ActionAlreadyCommitted } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
-import { Effect, Exit, Schema } from 'effect';
+import { Effect, Exit, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { company, scope } from './search-fixtures.ts';
@@ -64,9 +64,12 @@ it.effect(
           expect(harness.snapshot().transactionCount).toBe(1);
         } else if (Exit.isFailure(result)) {
           const failure = yield* Effect.failCause(result.cause).pipe(Effect.flip);
-          expect(failure._tag).toBe(
-            outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied',
-          );
+          expect(
+            Predicate.isTagged(
+              failure,
+              outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied',
+            ),
+          ).toBe(true);
           const denialCode = outcome === 'NEEDS_APPROVAL' ? 'action_approval_required' : 'action_permission_denied';
           expect(failure.code).toBe(outcome === 'UNAVAILABLE' ? 'action_permission_check_failed' : denialCode);
           expect(harness.snapshot().transactionCount).toBe(0);
@@ -92,7 +95,9 @@ it.effect('the rebuild capability never substitutes for a current authenticated 
           transport: { correlationId: 'rebuild-scope', idempotencyKey: `rebuild-scope-${status}` },
         })
         .pipe(Effect.flip);
-      expect(failure._tag).toBe(status === 'denied' ? 'OperationContextDenied' : 'OperationContextUnavailable');
+      expect(
+        Predicate.isTagged(failure, status === 'denied' ? 'OperationContextDenied' : 'OperationContextUnavailable'),
+      ).toBe(true);
       expect(harness.snapshot().committed).toEqual([]);
       expect(harness.snapshot().transactionCount).toBe(0);
       expect(harness.snapshot().stages).not.toContain('handler_executed');

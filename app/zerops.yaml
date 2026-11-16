@@ -36,17 +36,19 @@ zerops:
   - setup: storefront
     build:
       base: alpine/nodejs@26
-      envVariables:
-        NEXT_TELEMETRY_DISABLED: '1'
-        STOREFRONT_IMAGE_HOSTS: ''
-      prepareCommands:
-        - sudo npm install --global pnpm@12.16.1
+      # Built once on the GitHub runner (zerops-stage.yml, job `build_storefronts`): tsrs typecheck, then `next build`
+      # with NEXT_TELEMETRY_DISABLED=1 and STOREFRONT_IMAGE_HOSTS empty. `storefront` and `shop` deploy the same
+      # archive: brand, key and app id are runtime service variables read per request (src/brand/index.ts; the root
+      # layout renders dynamically).
+      # The push carries the finished standalone server with its static assets and public files as
+      # app/.zerops-storefront.tar.gz, and its manifest app/.zerops-storefront.json. Zerops only checks and unpacks it:
+      # this setup, the archive digest, the Node major and CPU architecture, and no native addons (the runner is glibc,
+      # this image musl). No archive, or one that does not fit, fails the build; nothing falls back to a stale bundle.
       buildCommands:
-        - cd app && pnpm install --frozen-lockfile --filter 'akros-storefront...'
-        - cd app && pnpm --filter akros-storefront run build
-        - mkdir -p 'app/.zerops/runtime' && mv 'app/akros-storefront/.next/standalone' 'app/.zerops/runtime/akros-storefront'
-        - cp -a 'app/akros-storefront/.next/static' 'app/.zerops/runtime/akros-storefront/akros-storefront/.next/static'
-        - cp -a 'app/akros-storefront/public' 'app/.zerops/runtime/akros-storefront/akros-storefront/public'
+        - test -f app/.zerops-storefront.tar.gz && test -f app/.zerops-storefront.json || { echo 'this push carries no prebuilt akros-storefront' >&2; exit 1; }
+        - node -e 'const m = require("./app/.zerops-storefront.json"); const digest = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync("app/.zerops-storefront.tar.gz")).digest("hex"); const major = (v) => v.split(".")[0]; if (m.setup !== "storefront" || m.package !== "akros-storefront" || m.archiveSha256 !== digest || major(m.node) !== major(process.versions.node) || m.arch !== process.arch || m.nativeAddons !== 0) { console.error("prebuilt archive does not fit this setup:", JSON.stringify(m)); process.exit(1); } console.log("prebuilt", m.package, "from", m.sourceRevision, "inputs", m.inputDigest);'
+        - mkdir -p app/.zerops/runtime && tar -xzf app/.zerops-storefront.tar.gz -C app/.zerops/runtime
+        - test -f 'app/.zerops/runtime/akros-storefront/akros-storefront/server.js'
       deployFiles:
         - app/.zerops/runtime/akros-storefront
     deploy:
@@ -56,6 +58,7 @@ zerops:
           port: 3070
           path: /robots.txt
         failureTimeout: 3m
+        # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
         retryPeriod: 10s
     run:
       base: alpine/nodejs@26
@@ -82,16 +85,17 @@ zerops:
   - setup: n1
     build:
       base: alpine/nodejs@26
-      envVariables:
-        NEXT_TELEMETRY_DISABLED: '1'
-      prepareCommands:
-        - sudo npm install --global pnpm@12.16.1
+      # Built once on the GitHub runner (zerops-stage.yml, job `build_storefronts`): tsrs typecheck, then `next build`
+      # with NEXT_TELEMETRY_DISABLED=1; every other N1 setting is a runtime variable read per request.
+      # The push carries the finished standalone server with its static assets and public files as
+      # app/.zerops-storefront.tar.gz, and its manifest app/.zerops-storefront.json. Zerops only checks and unpacks it:
+      # this setup, the archive digest, the Node major and CPU architecture, and no native addons (the runner is glibc,
+      # this image musl). No archive, or one that does not fit, fails the build; nothing falls back to a stale bundle.
       buildCommands:
-        - cd app && pnpm install --frozen-lockfile --filter 'n1-storefront...'
-        - cd app && pnpm --filter n1-storefront run build
-        - mkdir -p 'app/.zerops/runtime' && mv 'app/n1-storefront/.next/standalone' 'app/.zerops/runtime/n1-storefront'
-        - cp -a 'app/n1-storefront/.next/static' 'app/.zerops/runtime/n1-storefront/n1-storefront/.next/static'
-        - cp -a 'app/n1-storefront/public' 'app/.zerops/runtime/n1-storefront/n1-storefront/public'
+        - test -f app/.zerops-storefront.tar.gz && test -f app/.zerops-storefront.json || { echo 'this push carries no prebuilt n1-storefront' >&2; exit 1; }
+        - node -e 'const m = require("./app/.zerops-storefront.json"); const digest = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync("app/.zerops-storefront.tar.gz")).digest("hex"); const major = (v) => v.split(".")[0]; if (m.setup !== "n1" || m.package !== "n1-storefront" || m.archiveSha256 !== digest || major(m.node) !== major(process.versions.node) || m.arch !== process.arch || m.nativeAddons !== 0) { console.error("prebuilt archive does not fit this setup:", JSON.stringify(m)); process.exit(1); } console.log("prebuilt", m.package, "from", m.sourceRevision, "inputs", m.inputDigest);'
+        - mkdir -p app/.zerops/runtime && tar -xzf app/.zerops-storefront.tar.gz -C app/.zerops/runtime
+        - test -f 'app/.zerops/runtime/n1-storefront/n1-storefront/server.js'
       deployFiles:
         - app/.zerops/runtime/n1-storefront
     deploy:
@@ -101,6 +105,7 @@ zerops:
           port: 3071
           path: /robots.txt
         failureTimeout: 3m
+        # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
         retryPeriod: 10s
     run:
       base: alpine/nodejs@26
@@ -138,7 +143,7 @@ zerops:
         ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
-        - sudo apk add --no-cache curl unzip zstd
+        - sudo apk add --no-cache curl tar unzip zstd
         - sudo npm install --global pnpm@12.16.1
         - sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4
       buildCommands:
@@ -151,8 +156,19 @@ zerops:
         - cd app && node scripts/verify-zerops-workspace-install.mts
         - cd app && sh scripts/zerops/build-app.sh
         - mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'
+        # The app host records its boots in .zerops/state (scripts/zerops/app-host.mts, HOST_BOOT_RECORD). It ships with an
+        # empty record, so the running container never has to create the directory.
+        - mkdir -p 'app/.zerops/state' && printf '[]' >'app/.zerops/state/module-credential-boots.json'
+        # The pack leaves out the installed build, lint and test tools (scripts/zerops/app-runtime-excluded-packages.txt).
+        # This proves the runtime tree complete without them first; a finding fails the build, so nothing deploys.
+        - cd app && node scripts/zerops/prove-app-runtime.mts
+        # Compressed archives of the runtime tree, not the tree file by file (858.8 MiB moved in 176 s, 2026-11-15). The
+        # Outbox Worker host builds while the rest of the tree packs; its runtime is packed on its own once built.
+        - sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'
+      # The runtime tree (scripts/zerops/app-runtime-paths.txt) as two archives (the tree, the Outbox Worker host) with
+      # their digests and the unpack step; run.initCommands unpacks both to app/ before the start command.
       deployFiles:
-        - app/
+        - .zerops-release
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
       cache:
         - app/.zerops/unit-cache
@@ -168,9 +184,16 @@ zerops:
           port: 3001
           path: /_host/ready
         failureTimeout: 15m
+        # 10 s is the shortest probe period Zerops accepts (readinessCheck.retryPeriod: 10 s to 1 h).
         retryPeriod: 10s
     run:
       base: alpine/nodejs@26
+      # GNU tar and zstd for the release archive (scripts/zerops/unpack-app-release.sh).
+      prepareCommands:
+        - sudo apk add --no-cache tar zstd
+      # Every container start: unpack the release archive into app/ unless this release's tree is already complete.
+      initCommands:
+        - sh .zerops-release/unpack.sh
       ports:
         - port: 3000
           protocol: tcp
@@ -191,12 +214,18 @@ zerops:
         ONTOS_SHELL_RUNTIME_DEFAULT: node
         # Private, container-local directory where composition publication retains its legacy completion evidence.
         ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY: /tmp/ontos-legacy-completion-evidence
+        # Container-local: written at the container's first app-host start. A process restarted inside a container
+        # that a newer release superseded never publishes its old release again (scripts/zerops/supersede-drain.mts).
+        ONTOS_APP_HOST_BOOT_MARKER: /tmp/ontos-app-host-first-boot
         # Every owner in a process shares one pool per database configuration and role. Small pools
         # keep the old and new containers inside db18's 150 slots during deployment. A minute of idle
         # keeps connections warm between a demo user's searches; a 10 s idle reopened TLS connections
         # for every owner on the first search after a short pause (about +1 s on stage).
+        # The runtime-role pool keeps 2 connections open past the idle timeout: 4 processes x 2 = 8 per
+        # container, 16 during a deploy overlap. The minimum never raises the cap of 6 per pool.
         ONTOS_DATABASE_POOL_IDLE_TIMEOUT_MILLIS: '60000'
         ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6'
+        ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '2'
         ONTOS_DATABASE_POOL_SHARED: 'true'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         # The demo company's pseudonymous e-shop (ŠroubShop): its staff links, e-mail links and portal sign-in.

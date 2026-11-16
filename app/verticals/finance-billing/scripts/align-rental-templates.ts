@@ -1,8 +1,7 @@
 import { Match } from 'effect';
+import type { Types } from 'effect';
 import type { FinanceState, Invoice, RecurringTemplate } from '../shared/apis/records.ts';
 import { computeInvoiceTotals } from '../shared/domain/invoice-totals.ts';
-
-type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
 const rentalTerms = (unit: string | undefined) =>
   Match.value(unit).pipe(
@@ -27,7 +26,7 @@ const alignTemplate = (
       invoice.counterpartyName !== undefined,
   )?.counterpartyName;
   const counterpartyName = name ?? source.counterpartyName;
-  const aligned: Mutable<RecurringTemplate> = {
+  const aligned: Types.Mutable<RecurringTemplate> = {
     ...template,
     // A101 tenancy ends in October. Do not offer a November draft without a renewed lease.
     active: unit === 'A101' ? false : template.active,
@@ -68,7 +67,7 @@ const alignDraft = (templates: readonly RecurringTemplate[], invoice: Invoice): 
   if (template === undefined || invoice.businessState !== 'DRAFT') {
     return invoice;
   }
-  const aligned: Mutable<Invoice> = {
+  const aligned: Types.Mutable<Invoice> = {
     ...invoice,
     ...computeInvoiceTotals(template.lines),
     counterpartyRef: template.counterpartyRef,

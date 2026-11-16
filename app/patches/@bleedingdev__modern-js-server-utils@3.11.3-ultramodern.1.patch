@@ -1,0 +1,66 @@
+diff --git a/dist/cjs/compilers/rslib.js b/dist/cjs/compilers/rslib.js
+index 5b50e1c9edabd4c9c5741b75096bd03a17ee00df..aa4815d7b6d998a9352b9ce672540236f45ef2ae 100644
+--- a/dist/cjs/compilers/rslib.js
++++ b/dist/cjs/compilers/rslib.js
+@@ -147,7 +147,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         if (checked && !roots.has(external_path_default().resolve(file))) sources.delete(file);
+     }
+     const failOnTypeError = false !== compilerOptions.noEmitOnError;
+-    const declaration = true === compilerOptions.declaration;
++    const declaration = true === compilerOptions.declaration && !('1' === process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK);
+     const formats = {
+         '.js': 'module' === moduleType ? 'esm' : 'cjs',
+         '.mjs': 'esm',
+@@ -254,7 +254,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         }
+     };
+     const typeCheck = async ()=>{
+-        if (0 === roots.size) return;
++        if (0 === roots.size || '1' === process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK) return;
+         const result = await (0, external_tsgo_js_namespaceObject.runTsgo)(tsgoBinPath, [
+             '-p',
+             resolvedConfigPath,
+diff --git a/dist/esm-node/compilers/rslib.mjs b/dist/esm-node/compilers/rslib.mjs
+index 8fcbcc4c2265ff0a714e40bc180b40725f49927a..fe6743e00c7a8538734646b7fff3f99b88c04814 100644
+--- a/dist/esm-node/compilers/rslib.mjs
++++ b/dist/esm-node/compilers/rslib.mjs
+@@ -106,7 +106,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         if (checked && !roots.has(path.resolve(file))) sources.delete(file);
+     }
+     const failOnTypeError = false !== compilerOptions.noEmitOnError;
+-    const declaration = true === compilerOptions.declaration;
++    const declaration = true === compilerOptions.declaration && !('1' === process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK);
+     const formats = {
+         '.js': 'module' === moduleType ? 'esm' : 'cjs',
+         '.mjs': 'esm',
+@@ -213,7 +213,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         }
+     };
+     const typeCheck = async ()=>{
+-        if (0 === roots.size) return;
++        if (0 === roots.size || '1' === process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK) return;
+         const result = await runTsgo(tsgoBinPath, [
+             '-p',
+             resolvedConfigPath,
+diff --git a/dist/esm/compilers/rslib.mjs b/dist/esm/compilers/rslib.mjs
+index 6ff866f3d13fc60b554fbdc9d72338b29154f98f..f55fa8b4c4477a0525566aaca0bec5f1031ba56e 100644
+--- a/dist/esm/compilers/rslib.mjs
++++ b/dist/esm/compilers/rslib.mjs
+@@ -105,7 +105,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         if (checked && !roots.has(path.resolve(file))) sources.delete(file);
+     }
+     const failOnTypeError = false !== compilerOptions.noEmitOnError;
+-    const declaration = true === compilerOptions.declaration;
++    const declaration = true === compilerOptions.declaration && !('1' === process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK);
+     const formats = {
+         '.js': 'module' === moduleType ? 'esm' : 'cjs',
+         '.mjs': 'esm',
+@@ -212,7 +212,7 @@ const compileServerSources = async (appDirectory, config, options)=>{
+         }
+     };
+     const typeCheck = async ()=>{
+-        if (0 === roots.size) return;
++        if (0 === roots.size || '1' === process.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK) return;
+         const result = await runTsgo(tsgoBinPath, [
+             '-p',
+             resolvedConfigPath,

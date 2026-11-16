@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const privacyMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -133,8 +133,16 @@ export const privacyMcpContribution = defineOntosMcpContribution({
     'legal-basis-assignments': {
       title: { cs: 'Přiřazené právní základy zpracování', en: 'Processing legal basis assignments' },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'measure-execution-eligibility': OntosMcpHidden,
     'notice-presentation': 'hidden',
     'notice-versions': { title: { cs: 'Verze informačních oznámení', en: 'Privacy notice versions' } },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-business-applicability': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-ico-applicability': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-profile-ico-applicability': OntosMcpHidden,
     'owner-inventory': { title: { cs: 'Přehled vlastníků osobních údajů', en: 'Personal data owner inventory' } },
     'privacy-subjects': { title: { cs: 'Subjekty údajů', en: 'Data subjects' } },
     'processing-activities': { title: { cs: 'Činnosti zpracování', en: 'Processing activities' } },
@@ -144,5 +152,7 @@ export const privacyMcpContribution = defineOntosMcpContribution({
       title: { cs: 'Přiřazené odpovědnosti za ochranu údajů', en: 'Privacy responsibility assignments' },
     },
     'retention-rules': { title: { cs: 'Pravidla uchování údajů', en: 'Data retention rules' } },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'source-processing-eligibility': OntosMcpHidden,
   },
 });

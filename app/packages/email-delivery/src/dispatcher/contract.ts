@@ -69,7 +69,7 @@ export const DeliveryOutcomeSchema = Schema.Union([
 ]);
 export type DeliveryOutcome = typeof DeliveryOutcomeSchema.Encoded;
 
-/** Encoded message derived from persisted state. `dedupeKey` is the never-twice identity. */
+/** Encoded message derived from persisted state. `dedupeKey` is the never-twice identity within `tenantId` + `legalEntityId`. */
 export const PlannedEmailSchema = Schema.Struct({
   dedupeKey: Schema.String.pipe(Schema.brand('EmailDeliveryDedupeKey')),
   event: EmailDeliveryEventSchema,

@@ -1,5 +1,7 @@
 import { ModuleAppIdSchema } from '@app/core-runtime/auth/hosted-module-credentials';
-import { Cause, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { OntosRegisteredWorkloadCallSchema } from '@app/core-runtime';
+import type { RegisteredWorkloadCallReceiver } from '@app/core-runtime';
+import { Cause, ConfigProvider, Effect, Exit, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
 import {
@@ -147,6 +149,144 @@ it.effect('refuses two bindings under one credential', () =>
   }),
 );
 
+// Registered-workload calls (demo divergence exception 8): the shapes of origin/main 5608aae1d
+// symmy-c14-customer-rules.mts, declared by the calling module's manifest and kept only while the receiver takes them.
+const job = 'integration.symmy.execute-symmy-job';
+const createParty = {
+  audience: 'party-registry',
+  declarationKey: 'party.registry.party.create',
+  entrypointKey: 'party.registry.create-party',
+  jobKey: job,
+  legalEntityScope: 'optional',
+  schemaVersion: '1',
+  workerKey: job,
+  workloadKey: 'party.registry.source-write',
+} as const;
+const sourceProcessing = {
+  audience: 'privacy',
+  declarationKey: 'privacy.core.source-processing-eligibility.read',
+  entrypointKey: 'privacy.core.api.source-processing-eligibility',
+  jobKey: job,
+  legalEntityScope: 'required',
+  schemaVersion: '1',
+  workerKey: job,
+  workloadKey: 'privacy.core.source-processing-check',
+} as const;
+type ReceiverSurface = RegisteredWorkloadCallReceiver['manifest']['publicSurface'];
+type ReceiverAction = ReceiverSurface['actions'][number];
+type ReceiverCarrier = NonNullable<NonNullable<ReceiverSurface['operationContracts']>[number]['workloadCarrier']>;
+const surface = (
+  actions: ReceiverSurface['actions'] = [],
+  operationContracts: ReceiverSurface['operationContracts'] = [],
+) => ({
+  publicSurface: { actions, operationContracts },
+});
+const declaredAction: ReceiverAction = {
+  accessDeclaration: { key: createParty.declarationKey },
+  accessWorkload: { workloads: [createParty.workloadKey] },
+  entrypoint: { entrypointKey: createParty.entrypointKey },
+  schemaVersion: '1',
+};
+const partyReceiver = (action: ReceiverAction = declaredAction) => ({
+  deployment: { appId: 'party-registry', buildMarker: 'party-build' },
+  manifest: surface([action]),
+});
+const privacyReceiver = (workloadCarrier: ReceiverCarrier | null = null) => {
+  const operation = { entrypoint: { entrypointKey: sourceProcessing.entrypointKey }, schemaVersion: '1' };
+  return {
+    deployment: { appId: 'privacy', buildMarker: 'privacy-build' },
+    manifest: surface([], [workloadCarrier === null ? operation : { ...operation, workloadCarrier }]),
+  };
+};
+const decodeCalls = Schema.decodeUnknownSync(Schema.Array(OntosRegisteredWorkloadCallSchema));
+const symmyCaller = (registeredWorkloadCalls: readonly unknown[] | null) => {
+  const manifest = surface();
+  return {
+    deployment: { appId: 'symmy-integration', buildMarker: 'symmy-build' },
+    manifest:
+      registeredWorkloadCalls === null
+        ? manifest
+        : { ...manifest, registeredWorkloadCalls: decodeCalls(registeredWorkloadCalls) },
+  };
+};
+const symmyCredential = {
+  appId: 'symmy-integration',
+  attestation: attested('symmy-integration', 'symmy-build', revision),
+  providerKeyId: 'symmy-module-key',
+};
+const declaredPrivacy = { declarationKey: sourceProcessing.declarationKey, workloads: [sourceProcessing.workloadKey] };
+type InstalledFixture = ReturnType<typeof partyReceiver> | ReturnType<typeof privacyReceiver>;
+const callsOf = (
+  receivers: readonly InstalledFixture[],
+  calls: readonly unknown[] | 'none' = [createParty, sourceProcessing],
+  credential: Pick<typeof symmyCredential, 'appId' | 'providerKeyId'> & {
+    readonly attestation: (typeof symmyCredential)['attestation'] | Option.Option<never>;
+  } = symmyCredential,
+) =>
+  deriveGatewayModuleBindings([credential], {
+    composition: { revision },
+    contracts: [symmyCaller(calls === 'none' ? null : calls), ...receivers],
+  });
+const keptOf = (receivers: readonly InstalledFixture[]) =>
+  callsOf(receivers).pipe(Effect.map(([bound]) => bound?.registeredWorkloads?.map((call) => call.entrypointKey)));
+const { accessDeclaration: _withoutDeclaration, ...undeclaredAction } = declaredAction;
+const { accessWorkload: _withoutWorkload, ...subjectOnlyAction } = declaredAction;
+
+it.effect('copies the calls of the attested calling contract that its receivers declare', () =>
+  Effect.gen(function* attestedCalls() {
+    const [bound] = yield* callsOf([partyReceiver(), privacyReceiver(declaredPrivacy)]);
+    expect(bound?.registeredWorkloads).toEqual([createParty, sourceProcessing]);
+    // A subject workload of the receiving operation counts as declared too.
+    const [subject] = yield* callsOf([
+      partyReceiver({ ...subjectOnlyAction, accessActor: { subjectWorkloads: [createParty.workloadKey] } }),
+    ]);
+    expect(subject?.registeredWorkloads).toEqual([createParty]);
+    // A module that declares no calls binds without any.
+    const [none] = yield* callsOf([partyReceiver()], 'none');
+    expect(none === undefined ? 'unbound' : Object.hasOwn(none, 'registeredWorkloads')).toBe(false);
+  }),
+);
+
+it.effect('drops a call its receiver does not declare: workload, declaration, version, receiver', () =>
+  Effect.gen(function* droppedCalls() {
+    expect(yield* keptOf([privacyReceiver(declaredPrivacy)])).toEqual([sourceProcessing.entrypointKey]);
+    expect(
+      yield* keptOf([
+        partyReceiver({ ...declaredAction, accessWorkload: { workloads: ['party.registry.source-read'] } }),
+      ]),
+    ).toEqual([]);
+    expect(
+      yield* keptOf([partyReceiver({ ...declaredAction, accessDeclaration: { key: 'party.registry.party.update' } })]),
+    ).toEqual([]);
+    expect(yield* keptOf([partyReceiver({ ...declaredAction, schemaVersion: '2' })])).toEqual([]);
+    expect(yield* keptOf([partyReceiver(undeclaredAction)])).toEqual([]);
+    expect(yield* keptOf([privacyReceiver()])).toEqual([]);
+    expect(yield* keptOf([privacyReceiver({ ...declaredPrivacy, workloads: ['privacy.core.other-check'] })])).toEqual(
+      [],
+    );
+    expect(yield* keptOf([])).toEqual([]);
+  }),
+);
+
+it.effect('carries no call for a key whose attestation does not match the installed calling build', () =>
+  Effect.gen(function* attestationMismatch() {
+    for (const attestation of [
+      attested('symmy-integration', 'symmy-build-older', revision),
+      attested('symmy-integration', 'symmy-build', otherRevision),
+      attested('party-registry', 'symmy-build', revision),
+      Option.none(),
+    ]) {
+      expect(yield* callsOf([partyReceiver()], 'none', { ...symmyCredential, attestation })).toEqual([]);
+      expect(
+        yield* callsOf([partyReceiver(), privacyReceiver(declaredPrivacy)], [createParty, sourceProcessing], {
+          ...symmyCredential,
+          attestation,
+        }),
+      ).toEqual([]);
+    }
+  }),
+);
+
 const unreadable = Effect.fail(new GatewayDelegationPolicyUnavailable({ cause: 'unreadable' }));
 const unavailableEnrolment = Layer.succeed(ModuleCredentialEnrolmentSource, {
   load: unreadable,
@@ -227,5 +367,30 @@ it.effect('refuses any enrolled module key on the integration path and admits an
 it.effect('answers an unreadable enrolment as unavailable, never as an integration key', () =>
   Effect.gen(function* failsClosed() {
     expect(yield* guardCodeOf(unavailableEnrolment, 'integration-key')).toBe('unavailable');
+  }),
+);
+
+it.effect('takes no rule from configuration: the old bindings variable has no effect', () =>
+  Effect.gen(function* noConfiguration() {
+    const snapshot = yield* makeCompositionSnapshot([]);
+    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+    const configured = ConfigProvider.fromUnknown({
+      ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
+        {
+          compositionRevision: snapshot.composition.revision,
+          providerKeyId: 'order-module-key',
+          registeredWorkloads: [createParty],
+          sourceAppId: 'commerce-order',
+          sourceBuildMarker: 'order-build',
+        },
+      ]),
+    });
+    const bindings = yield* loadGatewayModuleBindings.pipe(
+      Effect.provide(
+        Layer.mergeAll(enrolledOrder, Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) })),
+      ),
+      Effect.provideService(ConfigProvider.ConfigProvider, configured),
+    );
+    expect(bindings).toEqual([]);
   }),
 );

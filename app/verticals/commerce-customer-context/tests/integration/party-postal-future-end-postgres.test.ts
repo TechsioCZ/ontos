@@ -511,9 +511,10 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
   const { authorization, child, client, context, coreEvidenceExecutor, fixture, options, principal, runtime } =
     yield* PostalFixture;
   const subjectKey = Brand.nominal<
-    NonNullable<
-      Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
-    >[number]['subjectKey']
+    Extract<
+      NonNullable<Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']>[number],
+      { readonly kind: 'ACTOR_ATTESTATION' }
+    >['subjectKey']
   >()(yield* nextId);
   const created = yield* createPartyWithAuthorization(
     {

@@ -7,6 +7,7 @@ import type { AccessDecisionRequest } from '../decision/contract.ts';
 import { decideAccessMany } from '../decision/engine.ts';
 import type { DecisionBatchGroup, DecisionCheckPort } from '../decision/engine.ts';
 import { capabilityPolicyOf, gateScopeOf } from '../enforcement/capability.ts';
+import { companyOwnershipRefusalOf } from '../enforcement/company-ownership.ts';
 import { seamUnavailable } from '../enforcement/decisions.ts';
 import { withOptional } from '../decision/optional.ts';
 import { sameHolder } from '../model.ts';
@@ -66,6 +67,7 @@ const boundAuthority = (
         {
           readCells: (query: AuthorityCellQuery) =>
             authority.readCells(query).pipe(Effect.map((cells) => witnessedCells(query, cells))),
+          readCompanyOwnership: authority.readCompanyOwnership,
           readConnection: authority.readConnection,
           readScope: (query: ScopeQuery) =>
             authority.readScope(query).pipe(
@@ -171,6 +173,20 @@ export const recheckActionAuthorityV2 = Effect.fn('ActionAuthority.recheckBoundV
       return yield* lost('A bound Action authority deadline has passed');
     }
     const actorScope = gateScopeOf(command.legalEntityScope, scope);
+    if (actorScope.refusal !== undefined) {
+      return yield* lost('A bound Action that needs a company is re-checked without one');
+    }
+    // The gate's one company-of-tenant rule holds on re-check too: a named company must be the tenant's (O66, O88).
+    const ownership = yield* companyOwnershipRefusalOf(authority, {
+      legalEntityId: actorScope.legalEntityId ?? actorScope.checkedCompany,
+      tenantId: scope.tenantId,
+    });
+    if (ownership?.outcome === 'UNAVAILABLE') {
+      return yield* unavailable('The company of a bound Action could not be checked');
+    }
+    if (ownership !== undefined) {
+      return yield* lost('A bound Action names a company its tenant does not own');
+    }
     const actor = withOptional(
       { actor: { _tag: 'Principal' as const, principalId: proof.principalId }, tenantId: command.scope.tenantId },
       'legalEntityId',

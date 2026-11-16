@@ -24,6 +24,7 @@ import { LegalEntityRefSchema } from '../../src/resources/legal-entity.ts';
 import {
   IsolatedNativeDatabaseError,
   makeIsolatedNativeDatabaseFixture,
+  requireOwnedNativeDatabaseFixture,
 } from '../../src/testing/isolated-native-database.ts';
 import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/module-contract.ts';
 import { coreRelations, tenants } from '../../src/db/schema.ts';
@@ -35,6 +36,11 @@ import {
 } from '../support/database-identities.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+
+interface MutableOwnershipPurposeInput {
+  mode: 'empty';
+  purpose: 'implementation-1118-symmy-job-admission' | 'stabilization-1287-core-operation-fence';
+}
 
 // Test the cloner here, not as a repeated precondition of unrelated business scenarios.
 // Structured metadata produces an object-level diff and never reads table data or trust keys.
@@ -81,6 +87,85 @@ select json_build_object(
 });
 
 it.layer(nativeServices, { excludeTestServices: true })('isolated native database', (suite) => {
+  suite.effect('accepts only the exact live owned clone and refuses forged, changed or expired ownership', () =>
+    Effect.gen(function* ownedFixtureLease() {
+      const closed = yield* Effect.scoped(
+        Effect.gen(function* verifyLiveOwnedFixture() {
+          const fixtureInput: MutableOwnershipPurposeInput = {
+            mode: 'empty',
+            purpose: 'implementation-1118-symmy-job-admission',
+          };
+          const fixture = yield* makeIsolatedNativeDatabaseFixture(fixtureInput);
+          const expected = {
+            adminConnectionString: Redacted.make(fixture.connections.admin.connectionString),
+            purpose: 'implementation-1118-symmy-job-admission' as const,
+            runtimeConnectionString: Redacted.make(fixture.connections.runtime.connectionString),
+          };
+          yield* requireOwnedNativeDatabaseFixture(fixture, expected);
+          fixtureInput.purpose = 'stabilization-1287-core-operation-fence';
+          expect(
+            Exit.isFailure(
+              yield* requireOwnedNativeDatabaseFixture(fixture, {
+                ...expected,
+                purpose: fixtureInput.purpose,
+              }).pipe(Effect.exit),
+            ),
+          ).toBe(true);
+          yield* requireOwnedNativeDatabaseFixture(fixture, expected);
+          fixtureInput.purpose = 'implementation-1118-symmy-job-admission';
+          const copiedLease = { connections: fixture.connections };
+          Object.defineProperties(copiedLease, Object.getOwnPropertyDescriptors(fixture));
+          const forgedLease = { connections: fixture.connections };
+          Object.defineProperty(forgedLease, 'ownedNativeDatabaseLease', { value: 'forged' });
+          const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+          const refusals = [
+            requireOwnedNativeDatabaseFixture({ connections: fixture.connections }, expected),
+            requireOwnedNativeDatabaseFixture({ ...fixture }, expected),
+            requireOwnedNativeDatabaseFixture(copiedLease, expected),
+            requireOwnedNativeDatabaseFixture(forgedLease, expected),
+            requireOwnedNativeDatabaseFixture(fixture, {
+              ...expected,
+              adminConnectionString: Redacted.make(source.admin.connectionString),
+            }),
+            requireOwnedNativeDatabaseFixture(fixture, {
+              ...expected,
+              runtimeConnectionString: expected.adminConnectionString,
+            }),
+            requireOwnedNativeDatabaseFixture(fixture, {
+              ...expected,
+              purpose: 'implementation-1126-group-definition',
+            }),
+          ];
+          for (const attempt of refusals) {
+            expect(Exit.isFailure(yield* Effect.exit(attempt))).toBe(true);
+          }
+          const admin = yield* makeTestPgClient(fixture.connections.admin.connectionString);
+          const database = sql.identifier(fixture.connections.admin.database);
+          const originalOwner = sql.identifier(fixture.connections.admin.user);
+          const changedOwner = sql.identifier(fixture.connections.runtime.user);
+          const databaseClient = yield* makeTestDatabaseFromClient(admin, coreRelations);
+          yield* databaseClient.execute(sql`alter database ${database} owner to ${changedOwner}`, 'objects');
+          yield* Effect.gen(function* rejectsChangedDatabaseOwner() {
+            expect(Exit.isFailure(yield* requireOwnedNativeDatabaseFixture(fixture, expected).pipe(Effect.exit))).toBe(
+              true,
+            );
+          }).pipe(
+            Effect.ensuring(
+              databaseClient
+                .execute(sql`alter database ${database} owner to ${originalOwner}`, 'objects')
+                .pipe(Effect.orDie),
+            ),
+          );
+          yield* requireOwnedNativeDatabaseFixture(fixture, expected);
+          return { expected, fixture };
+        }),
+      );
+      expect(
+        Exit.isFailure(yield* requireOwnedNativeDatabaseFixture(closed.fixture, closed.expected).pipe(Effect.exit)),
+      ).toBe(true);
+    }),
+  );
+
   suite.effect(
     'TEST-1258 retains original proof across real replacement and refuses controls or a closed scope',
     () =>

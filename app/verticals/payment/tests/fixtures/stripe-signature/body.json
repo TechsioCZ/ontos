@@ -1,0 +1,1 @@
+{"id":"evt_c17_fixture_0001","object":"event","type":"payment_intent.succeeded","data":{"object":{"id":"pi_c17_fixture_0001","amount":159950,"currency":"czk"}}}

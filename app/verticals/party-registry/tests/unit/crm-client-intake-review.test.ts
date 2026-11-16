@@ -1,8 +1,8 @@
-import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
+import { crmClientEvidenceReference } from '../../src/services/crm-client-evidence.ts';
 import { ActionAlreadyCommitted, ActionCommitIndeterminate, ActionRuntime } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Predicate } from 'effect';
 import type { ActionRuntimeService, ResolveActionCommitInput } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { crmClientIntakeReviewRead } from '../../src/api/crm-client-intake-review.read.ts';
@@ -53,6 +53,10 @@ it.layer(NodeCrypto.layer)('CRM intake owner review', (suite) => {
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-07T00:00:00Z')),
             executeOwnerQuery: ({ sql, params, scope }) => {
               expect(scope).toEqual({ tenantId, legalEntityId });
+              if (sql.includes('party_create_source_receipts')) {
+                // CRM intake creates no source-owned Party, so the case holds no source create receipt.
+                return Effect.succeed([]);
+              }
               if (sql.includes('party_match_decisions')) {
                 expect(params).toContain(decisionRef.resourceId);
                 expect(params).toContain(caseRef.resourceId);
@@ -163,17 +167,17 @@ it.layer(NodeCrypto.layer)('CRM intake owner review', (suite) => {
             ...input,
             sourceScope: { tenantId, legalEntityId: '20000000-0000-4000-8000-000000000099' },
           }).pipe(Effect.flip);
-          expect(foreign._tag).toBe('ReadHandlerNotFound');
+          expect(Predicate.isTagged(foreign, 'ReadHandlerNotFound')).toBe(true);
           expect(proofs).toBe(1);
           const unrelated = yield* run({ ...input, clientId: 'unrelated-client' }).pipe(Effect.flip);
-          expect(unrelated._tag).toBe('ReadHandlerNotFound');
+          expect(Predicate.isTagged(unrelated, 'ReadHandlerNotFound')).toBe(true);
           attested = false;
           const unattested = yield* run(input).pipe(Effect.flip);
-          expect(unattested._tag).toBe('ReadHandlerNotFound');
+          expect(Predicate.isTagged(unattested, 'ReadHandlerNotFound')).toBe(true);
           attested = true;
           committed = false;
           const uncommitted = yield* run(input).pipe(Effect.flip);
-          expect(uncommitted._tag).toBe('ReadHandlerUnavailable');
+          expect(Predicate.isTagged(uncommitted, 'ReadHandlerUnavailable')).toBe(true);
         }),
     );
   }

@@ -19,7 +19,7 @@ import {
   currentSession,
   shellComposition,
 } from '../../src/api/auth-client.ts' with { rstest: 'importActual' };
-import { SafeTenantIdentitySchema } from '../../shared/api.ts';
+import { SafeTenantIdentitySchema } from '../../shared/browser-api.ts';
 import { changeItemView, liveChangesClient } from '../../src/routes/access-admin/changes/changes-bff-adapter.ts';
 import { loadChangesPageModel } from '../../src/routes/[lang]/access/changes/changes-page-model.ts';
 import { routeMeta } from '../../src/routes/[lang]/access/changes/route.meta.ts';

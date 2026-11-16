@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Effect, Layer } from 'effect';
+import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { AuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
 import { AuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
+import { AgentProfileSetupError } from './agent-operator-session.mts';
 import type { AgentProfileOperatorLive } from './agent-profile-operator.mts';
 import { authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 
@@ -53,6 +54,7 @@ const configuration = Layer.mergeAll(
     decide: () => Effect.die('Unexpected access decision in the session transport fixture'),
     decideMany: () => Effect.die('Unexpected bulk access decision in the session transport fixture'),
     list: () => Effect.die('Unexpected list access in the session transport fixture'),
+    listMany: () => Effect.die('Unexpected bulk list access in the session transport fixture'),
     selectableLegalEntities: () => Effect.die('Unexpected company selection in the session transport fixture'),
   }),
 );
@@ -108,7 +110,7 @@ it.effect('closes an acquired login when tenant resolution refuses admission', (
       Effect.provide(configuration),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: 'AgentProfileSetupError' });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(signOutCookies).toEqual(['session=refused']);
   }),
 );

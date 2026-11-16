@@ -1,8 +1,8 @@
-// Owner and consumer calls over the generated governed records client. Callers pass the encoded request, which is
+// Owner calls over the generated governed records client. Callers pass the encoded request, which is
 // decoded here before the generated client sends it.
 import { Effect, Schema } from 'effect';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
-import type { RecordsRequestEncoded, RecordsViewEncoded } from '../../shared/apis/records.ts';
+import type { RecordsRequestEncoded } from '../../shared/apis/records.ts';
 import {
   executeRecords as executeDecodedRecords,
   executeRecordsWithAuthorization as executeDecodedRecordsWithAuthorization,
@@ -28,16 +28,3 @@ export const executeRecords = (
   Schema.decodeEffect(RecordsRequestSchema)(payload).pipe(
     Effect.flatMap((decoded) => executeDecodedRecords(decoded, ...invocation)),
   );
-
-const viewPayload = (view: RecordsViewEncoded | undefined): RecordsRequestEncoded =>
-  view === undefined ? {} : { view };
-
-/** Typed collection reads. Each runs the single records read and returns one collection of it. */
-export const listProducts = (requestCorrelation: string, view?: RecordsViewEncoded) =>
-  executeRecords(viewPayload(view), requestCorrelation).pipe(Effect.map((response) => response.products));
-
-export const listOrders = (requestCorrelation: string, view?: RecordsViewEncoded) =>
-  executeRecords(viewPayload(view), requestCorrelation).pipe(Effect.map((response) => response.orders));
-
-export const listMovements = (requestCorrelation: string, view?: RecordsViewEncoded) =>
-  executeRecords(viewPayload(view), requestCorrelation).pipe(Effect.map((response) => response.movements));

@@ -329,6 +329,7 @@ it('round-trips every Current question through the owner facts the descriptor de
     { kind: 'assortment_configuration', resource: ruleRef },
     { kind: 'assortment_decision' },
     { kind: 'assortment_rule', mode: 'create', selectorKind: 'PRODUCT' },
+    { kind: 'assortment_fixture', selectorKind: 'PRODUCT' },
     { kind: 'assortment_rule', mode: 'revision_create', selectorKind: 'ALL', stableRule: ruleRef },
     { kind: 'assortment_rule', mode: 'retire', stableRule: ruleRef },
     { kind: 'assortment_binding', mode: 'create', ruleRevision: revisionRef },
@@ -538,6 +539,7 @@ it.effect('keeps proposed creation, Catalog-dependent and decision questions una
   Effect.gen(function* unresolvedOwnerTargets() {
     const targets: readonly AssortmentCurrentnessTarget[] = [
       { kind: 'assortment_rule', mode: 'create', selectorKind: 'ALL' },
+      { kind: 'assortment_fixture', selectorKind: 'PRODUCT' },
       { ...revisionTarget, selectorKind: 'PRODUCT' },
       { kind: 'assortment_decision' },
       { kind: 'assortment_boundary', mode: 'create' },

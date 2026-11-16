@@ -1,6 +1,6 @@
 import { Hex } from 'effect/encoding';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-import { makeApiKeyGatewayNativeComposition } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { pricingRegistration } from '../../vertical.registration.ts';
 import { pricingManifest } from '../../vertical.manifest.ts';
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
@@ -8,7 +8,10 @@ import { Buffer } from 'node:buffer';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makePublishedApplicationCompositionSnapshotFixture,
+} from '@app/core-runtime/testing/module-contract';
 import {
   extractVerticalRuntimeSafeDescriptors,
   canonicalOntosPublicApiKey,
@@ -1161,6 +1164,12 @@ const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchem
   Match.value(subject).pipe(
     Match.tag('Assertion', () => true),
     Match.tag('Originator', () => false),
+    Match.tag('OrganizationGovernanceRead', () => false),
+    Match.tag('PrivacyDispatch', () => false),
+    Match.tag('RegisteredAssertion', () => false),
+    Match.tag('RegisteredAdmission', () => false),
+    Match.tag('RegisteredRecovery', () => false),
+    Match.tag('RegisteredWorkload', () => false),
     Match.exhaustive,
   );
 
@@ -1320,9 +1329,10 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
     }),
   );
   const shellAddress = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell.address);
+  // Pricing's own module key, handed over the way the host does.
+  yield* holdTestModuleCredentials({ pricing: 'pricing-module-api-key-1278' });
   const callerShell = ConfigProvider.layerAdd(
     ConfigProvider.fromUnknown({
-      ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1278',
       ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
         shellGatewayContextContract.apiPrefix,
         `http://127.0.0.1:${shellAddress.port}`,
@@ -1735,14 +1745,14 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
     const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
       shellRuntimeDocument,
     );
-    const composition = yield* makeApiKeyGatewayNativeComposition(
-      [
+    const composition = yield* makePublishedApplicationCompositionSnapshotFixture({
+      contractInputs: [
         description.contractDocument,
         yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(pricingContract),
       ],
-      3_600_000,
-      { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
-    ).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+      publishedShellRuntime: { document: shellRuntimeDocument, receiverDeployment: shellRuntime.deployment },
+      validityMs: 3_600_000,
+    }).pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: composition,
       mode: 'schema-only',

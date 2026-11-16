@@ -13,6 +13,7 @@ import {
   PaymentBankAccountingReceiptBindingSchema,
   PaymentCodDeliveryOfferBindingSchema,
 } from '../../shared/domain/payment-execution-binding.ts';
+import { PaymentIntentViewSchema } from '../../shared/domain/lifecycle-views.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { PAYMENT_METHODS } from '../../shared/domain/payment-vocabulary.ts';
 import { evaluatePaymentMethodApplicability } from '../../src/domain/applicability-evaluation.ts';
@@ -67,6 +68,7 @@ const evaluate = (
     amount: { amountMinor: 125_000, currency: 'CZK' },
     customerConfigurationId: 'customer-configuration-1',
     enablements,
+    gateways: fixture.gateway,
     paymentTermRef,
     purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext },
     scope,
@@ -356,18 +358,32 @@ describe('#1147 Payment method applicability — branch rules', () => {
     }),
   );
 
-  it.effect('#1147 retained v1 NET_DAYS meaning is preserved exactly, not relabelled as v2', () =>
-    Effect.gen(function* legacySemanticsPreserved() {
-      const legacy = legacyNetDaysSnapshot(termRef, 30);
-      const branch = only(
-        (yield* evaluate([{ method: 'DEFERRED_INVOICE' }], script({ termUse: () => usableTerm(legacy, 'ent-v1') })))
-          .branches,
+  it.effect('#1147 a retained v1 term remains readable without qualifying for new deferred payment', () =>
+    Effect.gen(function* legacySemanticsStayHistorical() {
+      const legacyRef = termRefFor(tenantId, '55555555-5555-4555-8555-555555555555');
+      const legacy = legacyNetDaysSnapshot(legacyRef, 30);
+      const retainedTerm = PaymentIntentViewSchema.fields.termSemanticEvidence;
+      const encoded = Schema.encodeSync(retainedTerm)(legacy);
+      const decoded = Schema.decodeUnknownSync(retainedTerm)(encoded);
+      expect(decoded).toEqual(legacy);
+      expect(decoded.semantics).toEqual({
+        calculationRuleVersion: 1,
+        calendarRule: 'CALENDAR_DAYS_UTC',
+        days: 30,
+        dueDateAnchor: 'INVOICE_ISSUED_AT',
+        kind: 'NET_DAYS',
+      });
+
+      // CCC fails its Current resolution when C15 returns unsupported semantics.
+      const { branches } = yield* evaluate(
+        [{ method: 'DEFERRED_INVOICE' }],
+        script({ termUse: () => OWNER_EVIDENCE_UNAVAILABLE }),
+        allEnabled,
+        legacyRef,
       );
-      expect(branch.outcome).toBe('AVAILABLE');
-      if (branch.outcome === 'AVAILABLE') {
-        expect(branch.term.semanticSnapshot).toEqual(legacy);
-        expect(branch.term.semanticSnapshot.semantics.calculationRuleVersion).toBe(1);
-      }
+      const branch = only(branches);
+      expect(branch.outcome).toBe('UNAVAILABLE_TO_VERIFY');
+      expect(findingsOf(branch)).toEqual(['PAYMENT_TERM:EVIDENCE_UNAVAILABLE']);
     }),
   );
 
@@ -520,6 +536,7 @@ describe('#1147 applicability term currentness and purchase scope', () => {
         amount: { amountMinor: 125_000, currency: 'CZK' },
         customerConfigurationId: 'customer-configuration-1',
         enablements: allEnabled,
+        gateways: fixture.gateway,
         paymentTermRef: termRef,
         purchase: {
           _tag: 'PURCHASING_CONTEXT',

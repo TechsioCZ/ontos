@@ -390,6 +390,55 @@ for (const [file, defect, before, after] of [
   });
 }
 
+// `context.transaction` types its callback's executor, so main's database-access checker forbids annotating it
+// on the nested function. The bare `transaction` parameter is proven by where the callback sits, not by a type.
+const pricingRecheck = 'function* recheckPricing(transaction)';
+const pricingRecheckCall = "yield* context.transaction(\n      Effect.fn('OrderApprovalFinalization.recheckPricing')";
+it('accepts the original Core annotation on a context.transaction callback', () => {
+  const original = sources.get(approvalServiceFile) ?? '';
+  const annotated = original.replace(
+    pricingRecheck,
+    'function* recheckPricing(transaction: ScopedTransactionExecutor)',
+  );
+  expect(annotated).not.toBe(original);
+  expect(accepts(approvalRead, new Map([...sources, [approvalServiceFile, annotated]]))).toBe(true);
+});
+for (const [defect, before, after] of [
+  ['a foreign executor annotation', pricingRecheck, 'function* recheckPricing(transaction: ForeignExecutor)'],
+  [
+    'a callback not passed to context.transaction',
+    pricingRecheckCall,
+    pricingRecheckCall.replace('context.transaction', 'foreign.run'),
+  ],
+  ['a callback passed by reference', pricingRecheckCall, pricingRecheckCall.replace('(\n', '(recheckPricing,\n')],
+  ['an outer executor behind a renamed parameter', pricingRecheck, 'function* recheckPricing(executor)'],
+  ['an outer executor behind an empty parameter list', pricingRecheck, 'function* recheckPricing()'],
+  [
+    'an outer executor declared in the phase',
+    '  const { loaded, prepared, scope } = context;',
+    '  const transaction = foreign;\n  const { loaded, prepared, scope } = context;',
+  ],
+  [
+    'the executor used outside its callback',
+    '  const candidate = yield* remote.loadCandidate(input, request);',
+    '  yield* orderApprovalFinalizationService(transaction, scope);\n  const candidate = yield* remote.loadCandidate(input, request);',
+  ],
+  [
+    'the executor leaked from its callback',
+    '        const current = yield* loadOrderFinalizationReadSnapshot(transaction, scope, input);',
+    '        leaked = transaction;\n        const current = yield* loadOrderFinalizationReadSnapshot(transaction, scope, input);',
+  ],
+  ['an extra callback parameter', pricingRecheck, 'function* recheckPricing(transaction, extra)'],
+  ['a destructured executor', pricingRecheck, 'function* recheckPricing({ invoke: transaction })'],
+] as const) {
+  it(`rejects ${defect} in the original approval Read transaction callbacks`, () => {
+    const original = sources.get(approvalServiceFile) ?? '';
+    const invalid = original.replace(before, after);
+    expect(invalid).not.toBe(original);
+    expect(accepts(approvalRead, new Map([...sources, [approvalServiceFile, invalid]]))).toBe(false);
+  });
+}
+
 const basisRead = 'purchase-proposal-basis';
 const basisFile = readFile(basisRead);
 const basisServiceFile = `${owner}/src/services/purchase-proposal-basis.service.ts`;
@@ -615,6 +664,12 @@ for (const [file, defect, before, after] of [
     'replaced failure wrapper',
     "Object.defineProperty(failure, 'cause', { configurable: true, value: cause });",
     "Object.defineProperty(failure, 'cause', { configurable: true, value: input });",
+  ],
+  [
+    policyFile,
+    'non-callable generic failure wrapper',
+    'const preserveFailureCause = <Failure extends object>(',
+    'const preserveFailureCause = foreign;\nconst unusedFailureCause = <Failure extends object>(',
   ],
   [
     policyDomainFile,
@@ -915,7 +970,11 @@ for (const [before, after] of [
 
 const selectedRead = 'guest-attribution-status';
 const selectedFactoryFile = `${owner}/src/profile-service-factory.ts`;
-const selectedServiceFile = `${owner}/src/integrations/party-registry-guest-resolver.ts`;
+// The profile Reads select their services from the read-only `profileReadServicesFor`, which captures only the
+// Counterparty role resolver factory (not the Action factory's guest/Party captures).
+const selectedServiceFile = `${owner}/src/profile-counterparty-role-eligibility.ts`;
+const selectedReadServices =
+  'function* profileReadServices() {\n    const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;';
 for (const [file, defect, before, after] of [
   [
     readFile(selectedRead),
@@ -939,20 +998,20 @@ for (const [file, defect, before, after] of [
   [
     selectedFactoryFile,
     'foreign captured factory',
-    'yield* PartyRegistryGuestResolverFactory;',
-    'yield* foreign.services;',
+    selectedReadServices,
+    'function* profileReadServices() {\n    const roleResolverFactory = yield* foreign.services;',
   ],
   [
     selectedFactoryFile,
     'duplicate captured factory binding',
-    'const crypto = yield* Crypto.Crypto;',
-    'const guestResolverFactory = yield* Crypto.Crypto;',
+    selectedReadServices,
+    `${selectedReadServices}\n    const roleResolverFactory = yield* Crypto.Crypto;`,
   ],
   [
     selectedFactoryFile,
     'foreign factory transaction',
-    'transaction,\n      verifiedScope,',
-    'foreign,\n      verifiedScope,',
+    'return profilePersistenceServicesForTransaction(transaction, verifiedScope, dependencies);',
+    'return profilePersistenceServicesForTransaction(foreign, verifiedScope, dependencies);',
   ],
   [
     selectedFactoryFile,
@@ -965,8 +1024,8 @@ for (const [file, defect, before, after] of [
   [
     selectedServiceFile,
     'foreign owner service key',
-    "'@app/commerce-customer-context/integrations/party-registry-guest-resolver/PartyRegistryGuestResolverFactory'",
-    "'@app/foreign/PartyRegistryGuestResolverFactory'",
+    "'@app/commerce-customer-context/profile-counterparty-role-eligibility/ProfileCounterpartyRoleEligibilityResolverFactory'",
+    "'@app/foreign/ProfileCounterpartyRoleEligibilityResolverFactory'",
   ],
 ] as const) {
   it(`rejects ${defect} in the original selected-service factory`, () => {

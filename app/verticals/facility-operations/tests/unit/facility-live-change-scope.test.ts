@@ -7,7 +7,7 @@ import { agendaRecordsData } from '../../src/ui/use-agenda.ts';
 
 const { records } = rstest.hoisted(() => ({ records: rstest.fn() }));
 
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
 
 // The store only works in a document; Node gets the few window members it uses.
 const events = new EventTarget();

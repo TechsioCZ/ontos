@@ -27,8 +27,10 @@ const mocks = rstest.hoisted(() => ({
 }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/party-registry/api/client', () => ({
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
   executeCounterpartyRead: mocks.customer,
+}));
+rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
   listCustomers: mocks.customers,
 }));
 rstest.mock('../../src/routes/[lang]/smlouvy/rental-reference-access.ts', () => ({

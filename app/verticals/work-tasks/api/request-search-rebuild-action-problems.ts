@@ -3,7 +3,8 @@
 // @ontos-action-http-slug request-search-rebuild
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
-import { Match } from 'effect';
+import { Match, Schema } from 'effect';
+import { absurd } from 'effect/Function';
 import {
   RequestSearchRebuildActionAlreadyCommittedProblemSchema,
   RequestSearchRebuildActionAuthenticationProblemSchema,
@@ -19,6 +20,7 @@ import {
   RequestSearchRebuildActionUnavailableProblemSchema,
 } from '../shared/apis/request-search-rebuild-action.ts';
 import type { RequestSearchRebuildActionProblem } from '../shared/apis/request-search-rebuild-action.ts';
+import { requestSearchRebuildAction } from '../src/actions/request-search-rebuild.action.ts';
 
 type ProblemOf<Tag extends RequestSearchRebuildActionProblem['_tag']> = Extract<
   RequestSearchRebuildActionProblem,
@@ -59,10 +61,12 @@ export const requestSearchRebuildActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RequestSearchRebuildActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RequestSearchRebuildActionForbiddenProblem'> =>
     RequestSearchRebuildActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -153,7 +157,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProbl
       ActionInvocationStateError: (failure) => requestSearchRebuildActionProblem.conflict(failure.code),
       ActionPayloadValidationError: requestSearchRebuildActionProblem.invalid,
       ActionPermissionCheckError: (failure) => requestSearchRebuildActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => requestSearchRebuildActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        requestSearchRebuildActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => requestSearchRebuildActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => requestSearchRebuildActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => requestSearchRebuildActionProblem.conflict(failure.code),
@@ -170,7 +175,10 @@ const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProbl
     Match.exhaustive,
   );
 
-export const mapRequestSearchRebuildActionProblem = mapCoreProblem;
+const isDomainError = Schema.is(requestSearchRebuildAction.descriptor.domainErrorSchema);
+/** The Action declares no domain errors (`Schema.Never`), so only Core problems reach the transport. */
+export const mapRequestSearchRebuildActionProblem = (error: ActionCoreError): RequestSearchRebuildActionProblem =>
+  isDomainError(error) ? absurd(error) : mapCoreProblem(error);
 
 export const requestSearchRebuildActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RequestSearchRebuildActionSchemaErrorMiddleware,

@@ -14,9 +14,10 @@ import {
   ShellReloadRequiredProblemSchema,
   ShellTargetForbiddenProblemSchema,
   shellAuthenticationApiContract,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import { createAuthenticationFixture } from './auth-fixture.ts';
 import type { AuthenticationFixture } from './auth-fixture.ts';
+import { onOwnConnection } from './own-connection.ts';
 
 const hydratedLoginForm = (page: Page) => page.locator('form[data-e2e-hydrated-login="true"]');
 
@@ -240,7 +241,7 @@ test('logs a user in without any server-error response', async ({ authentication
   expect(signInResponse.status(), 'The sign-in endpoint should accept valid credentials').toBe(200);
   await expect(page).toHaveURL(/\/en\/?$/u);
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible();
-  const sessionResponse = await page.request.get(sessionPath);
+  const sessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(sessionResponse.status()).toBe(200);
   expect(await sessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.first),
@@ -405,14 +406,14 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
     compositionRevision: revision,
   });
   const requestOptions = { data: payload, headers: { origin: new URL(page.url()).origin } };
-  const approvedResponse = await page.request.post(moduleTargetPath, requestOptions);
+  const approvedResponse = await page.request.post(moduleTargetPath, onOwnConnection(requestOptions));
   expect(approvedResponse.status()).toBe(200);
   const approved = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await approvedResponse.json());
   expect(approved.appId).toBe('party-registry');
   expect(approved.componentKey).toBe('party.registry.page-contacts');
   expect(approved.federation.expose).toBe('./PageContacts');
   const expectApprovedManifestBytes = async () => {
-    const manifest = await page.request.get(approved.federation.manifest.url);
+    const manifest = await page.request.get(approved.federation.manifest.url, onOwnConnection());
     expect(manifest.status()).toBe(200);
     expect(
       createHash('sha256')
@@ -468,7 +469,7 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
         );
         await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
         await expect(page.getByRole('alert')).toHaveCount(0);
-        const deniedResponse = await page.request.post(moduleTargetPath, requestOptions);
+        const deniedResponse = await page.request.post(moduleTargetPath, onOwnConnection(requestOptions));
         expect(deniedResponse.status()).toBe(403);
         const deniedBody = await deniedResponse.json();
         Schema.decodeUnknownSync(ShellTargetForbiddenProblemSchema)(deniedBody);
@@ -506,7 +507,7 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
         await expect(page.getByRole('alert')).toHaveCount(0);
         await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
         await expect(sidebar).toBeVisible();
-        const secondTargetResponse = await page.request.post(moduleTargetPath, requestOptions);
+        const secondTargetResponse = await page.request.post(moduleTargetPath, onOwnConnection(requestOptions));
         expect(secondTargetResponse.status()).toBe(200);
         const secondTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await secondTargetResponse.json());
         expect(secondTarget.federation).toEqual(approved.federation);
@@ -543,7 +544,7 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
     testInfo.config.metadata,
   );
   const observePublishedSnapshot = async () => {
-    const response = await page.request.get(activeApplicationCompositionUrl.href);
+    const response = await page.request.get(activeApplicationCompositionUrl.href, onOwnConnection());
     expect(response.status()).toBe(200);
     return await Effect.runPromise(decodeActiveApplicationCompositionSnapshot(await response.text()));
   };
@@ -559,7 +560,13 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
     canonicalPath: '/contacts',
     compositionRevision: originalRevision,
   });
-  const originalResponse = await page.request.post(moduleTargetPath, { data: originalPayload, headers: { origin } });
+  const originalResponse = await page.request.post(
+    moduleTargetPath,
+    onOwnConnection({
+      data: originalPayload,
+      headers: { origin },
+    }),
+  );
   expect(originalResponse.status()).toBe(200);
   const originalTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await originalResponse.json());
   expect(originalTarget.componentKey).toBe('party.registry.page-contacts');
@@ -589,9 +596,9 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
   // artifacts. It is not staging-wrapper evidence or permission to replace a live document.
   const promotionResponse = await page.request.post(
     new URL('/promote-retained-party', activeApplicationCompositionUrl).href,
-    {
+    onOwnConnection({
       headers: { origin },
-    },
+    }),
   );
   expect(promotionResponse.status()).toBe(200);
   const promotion = Schema.decodeUnknownSync(RetainedPartyPromotionSchema)(await promotionResponse.json());
@@ -612,7 +619,13 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
   await expect
     .poll(
       async () => {
-        const response = await page.request.post(moduleTargetPath, { data: promotedPayload, headers: { origin } });
+        const response = await page.request.post(
+          moduleTargetPath,
+          onOwnConnection({
+            data: promotedPayload,
+            headers: { origin },
+          }),
+        );
         admissionStatuses.push(response.status());
         if (response.status() !== 200) {
           Schema.decodeUnknownSync(
@@ -635,10 +648,13 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
   await expect(page.locator(compositionRevisionSelector)).toHaveAttribute('content', originalRevision);
   await expect(page.getByRole('alert')).toHaveText('This module could not be displayed. Reload the page to try again.');
   await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
-  const obsoleteTargetResponse = await page.request.post(moduleTargetPath, {
-    data: originalPayload,
-    headers: { origin },
-  });
+  const obsoleteTargetResponse = await page.request.post(
+    moduleTargetPath,
+    onOwnConnection({
+      data: originalPayload,
+      headers: { origin },
+    }),
+  );
   expect(obsoleteTargetResponse.status()).toBe(409);
   Schema.decodeUnknownSync(ShellReloadRequiredProblemSchema)(await obsoleteTargetResponse.json());
   await page.evaluate(() => {
@@ -657,16 +673,19 @@ test('reloads failed Contacts into a genuinely published R2 with exact retained 
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
-  const freshTargetResponse = await page.request.post(moduleTargetPath, {
-    data: promotedPayload,
-    headers: { origin },
-  });
+  const freshTargetResponse = await page.request.post(
+    moduleTargetPath,
+    onOwnConnection({
+      data: promotedPayload,
+      headers: { origin },
+    }),
+  );
   expect(freshTargetResponse.status()).toBe(200);
   const freshTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)(await freshTargetResponse.json());
   expect(freshTarget.compositionRevision).toBe(promotion.compositionRevision);
   expect(freshTarget.federation).toEqual(originalTarget.federation);
   expect(freshTarget.componentKey).toBe(originalTarget.componentKey);
-  const manifestResponse = await page.request.get(freshTarget.federation.manifest.url);
+  const manifestResponse = await page.request.get(freshTarget.federation.manifest.url, onOwnConnection());
   expect(manifestResponse.status()).toBe(200);
   expect(
     createHash('sha256')
@@ -711,7 +730,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
     .then(async () => await expect(page).toHaveURL(/\/en\/?$/u))
     .then(async () => {
-      const sessionResponse = await page.request.get(sessionPath);
+      const sessionResponse = await page.request.get(sessionPath, onOwnConnection());
       expect(sessionResponse.status()).toBe(200);
       expect(await sessionResponse.json()).toMatchObject(
         expectedAuthenticatedSession(authentication, authentication.tenants.first),
@@ -739,7 +758,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(async () => await page.reload())
     .then(async () => {
       await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible();
-      const response = await page.request.get(sessionPath);
+      const response = await page.request.get(sessionPath, onOwnConnection());
       expect(response.status()).toBe(200);
       expect(await response.json()).toEqual({ state: 'anonymous' });
       await page.goto('/en/');
@@ -776,7 +795,7 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
 
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  const firstSessionResponse = await page.request.get(sessionPath);
+  const firstSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(firstSessionResponse.status()).toBe(200);
   expect(await firstSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.first),
@@ -799,7 +818,7 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
     authentication.tenants.second.name,
   );
   await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
-  const secondSessionResponse = await page.request.get(sessionPath);
+  const secondSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(secondSessionResponse.status()).toBe(200);
   expect(await secondSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.second),
@@ -810,7 +829,7 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
     authentication.tenants.second.name,
   );
   await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
-  const reloadedSessionResponse = await page.request.get(sessionPath);
+  const reloadedSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(reloadedSessionResponse.status()).toBe(200);
   expect(await reloadedSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.second),
@@ -838,7 +857,7 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   await page.getByRole('option', { name: authentication.tenants.second.name }).click();
   await expect(page.getByText('Přepnutí tenantu selhalo. Zkuste to znovu.')).toBeVisible();
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  const retainedSessionResponse = await page.request.get(sessionPath);
+  const retainedSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(retainedSessionResponse.status()).toBe(200);
   expect(await retainedSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.first),
@@ -862,7 +881,7 @@ test('retains Czech tenant context after one failed switch and supports keyboard
     tenantListbox.press('Enter'),
   ]);
   await expect(page.getByRole('combobox', { name: 'Organizace' })).toContainText(authentication.tenants.second.name);
-  const switchedSessionResponse = await page.request.get(sessionPath);
+  const switchedSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(switchedSessionResponse.status()).toBe(200);
   expect(await switchedSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.second),
@@ -965,7 +984,7 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   const dashboardHeader = page.locator('header[aria-label="Dashboard header"]');
   await expect(dashboardHeader).toBeInViewport();
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
-  const initialSessionResponse = await page.request.get(sessionPath);
+  const initialSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(initialSessionResponse.status()).toBe(200);
   expect(await initialSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.first),
@@ -987,7 +1006,7 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  const retainedSessionResponse = await page.request.get(sessionPath);
+  const retainedSessionResponse = await page.request.get(sessionPath, onOwnConnection());
   expect(retainedSessionResponse.status()).toBe(200);
   expect(await retainedSessionResponse.json()).toMatchObject(
     expectedAuthenticatedSession(authentication, authentication.tenants.first),

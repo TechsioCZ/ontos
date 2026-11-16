@@ -63,9 +63,9 @@ const product = () =>
     sku: 'CABLE',
     stockOnHand: 0,
     stockValueMinor: 0,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: '2026-10-05T10:00:00Z',
-    vatRate: 21,
   });
 
 it('preserves an optional compact storefront preview without requiring it on old product records', () => {
@@ -245,9 +245,12 @@ it('preserves the encoded order snapshot and command patch, including replay ide
     id: 'product-1',
     patch: { categoryId: 'category-1', featuredPosition: null, sourceId: 'source-1' },
   } satisfies typeof MerchandiseCommandSchema.Encoded;
-  expect(Schema.encodeSync(MerchandiseCommandSchema)(Schema.decodeSync(MerchandiseCommandSchema)(command))).toEqual(
-    command,
-  );
+  expect(
+    Schema.toEquivalence(Schema.toEncoded(MerchandiseCommandSchema))(
+      Schema.encodeSync(MerchandiseCommandSchema)(Schema.decodeSync(MerchandiseCommandSchema)(command)),
+      command,
+    ),
+  ).toBe(true);
 });
 
 it('round-trips optional direct category memberships without initializing absent fields', () => {

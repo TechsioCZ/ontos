@@ -120,6 +120,58 @@ export const applicationCompositionAuthority = enableCoreGovernedRls(
   ),
 );
 
+export const DrainAbandonmentInitiatorSchema = Schema.Literals(['publisher', 'operator']);
+export type DrainAbandonmentInitiator = typeof DrainAbandonmentInitiatorSchema.Type;
+
+/**
+ * Append-only record of every return of a `draining` authority to `active` for the same revision: the failing
+ * publisher's automatic abort, or the operator command when no publisher is alive. Only the migration administrator
+ * writes it; its triggers stamp the session identity, transaction, time and the lease it found, and apply the
+ * transition in the same statement, refusing unless the row is exactly that revision, `draining` and unexpired. No
+ * other path may move a revision from `draining` back to `active`.
+ */
+export const applicationCompositionDrainAbandonments = enableCoreGovernedRls(
+  coreSchema.table(
+    'application_composition_drain_abandonments',
+    {
+      drainAbandonmentId: uuid('drain_abandonment_id').defaultRandom().primaryKey(),
+      revision: text('revision').notNull(),
+      initiatedBy: text('initiated_by').$type<DrainAbandonmentInitiator>().notNull(),
+      operatorName: text('operator_name').notNull(),
+      reason: text('reason').notNull(),
+      leaseValidUntil: timestamp('lease_valid_until', { withTimezone: true }).notNull(),
+      recordedBy: text('recorded_by')
+        .default(sql`session_user`)
+        .notNull(),
+      recordedTransactionId: text('recorded_transaction_id')
+        .default(sql`(pg_current_xact_id())::text`)
+        .notNull(),
+      recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+    },
+    (table) => [
+      index('core_application_composition_drain_abandonments_revision_idx').on(table.revision, table.recordedAt),
+      check('core_application_composition_drain_abandonments_revision_ck', sql`${table.revision} ~ '^[a-f0-9]{64}$'`),
+      check(
+        'core_application_composition_drain_abandonments_initiator_ck',
+        sql`${table.initiatedBy} in ('publisher', 'operator')`,
+      ),
+      check(
+        'core_application_composition_drain_abandonments_operator_ck',
+        sql`length(btrim(${table.operatorName})) between 1 and 200`,
+      ),
+      check(
+        'core_application_composition_drain_abandonments_reason_ck',
+        sql`length(btrim(${table.reason})) between 1 and 2000`,
+      ),
+      pgPolicy('core_application_composition_drain_abandonments_select', {
+        for: 'select',
+        to: SHARED_RUNTIME_ROLE,
+        using: sql`true`,
+      }),
+    ],
+  ),
+);
+
 /** Durable owner workflows participate until their trusted journal transition reaches a terminal state. */
 export const applicationCompositionDurableWork = enableCoreGovernedRls(
   coreSchema.table(
@@ -218,11 +270,13 @@ export const principals = enableCoreGovernedRls(
       createdAt: createdAt(),
       disabledAt: timestamp('disabled_at', { withTimezone: true }),
       /**
-       * The platform's own role of a `system` principal; set once, when Core creates it, and never changed. The one
-       * role today is the tenant's access release actor (`access/release/activation.ts`), which the role-revision
-       * guard recognises by this marker rather than by its kind or identifier.
+       * The platform's own role of a principal it made; set once, when Core creates it, and never changed. The tenant's
+       * access release actor (`access/release/activation.ts`, a `system` principal) is recognised by the role-revision
+       * guard by this marker rather than by its kind or identifier; a module's internal workload principal in one
+       * company (`internal_workload`, a `service` principal) is recognised by the release step by this marker and its
+       * derived id. No Action or API sets it.
        */
-      platformRole: text('platform_role').$type<'access_release_actor'>(),
+      platformRole: text('platform_role').$type<'access_release_actor' | 'internal_workload'>(),
     },
     (table) => [
       uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
@@ -235,7 +289,7 @@ export const principals = enableCoreGovernedRls(
       check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
       check(
         'core_principals_platform_role_ck',
-        sql`${table.platformRole} is null or (${table.platformRole} = 'access_release_actor' and ${table.kind} = 'system')`,
+        sql`${table.platformRole} is null or (${table.platformRole} = 'access_release_actor' and ${table.kind} = 'system') or (${table.platformRole} = 'internal_workload' and ${table.kind} = 'service')`,
       ),
       sharedRuntimeAllPolicy('principals'),
     ],
@@ -245,6 +299,69 @@ export const principals = enableCoreGovernedRls(
 const principalId = (columnName = 'principal_id') => uuid(columnName).notNull();
 
 const optionalPrincipalId = (columnName = 'principal_id') => uuid(columnName);
+
+/** Owner-published enrollment changes serialize with the receiving Action's write. */
+export const sourceExecutionGates = enableCoreGovernedRls(
+  coreSchema.table(
+    'source_execution_gates',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      gateId: uuid('gate_id').notNull(),
+      ownerKey: text('owner_key').notNull(),
+      principalId: uuid('principal_id').notNull(),
+      legalEntityId: uuid('legal_entity_id'),
+      revision: text('revision').notNull(),
+      mappingVersion: text('mapping_version').notNull(),
+      epoch: uuid('epoch').notNull(),
+      active: boolean('active').notNull(),
+    },
+    (table) => [
+      primaryKey({ name: 'source_execution_gates_pk', columns: [table.tenantId, table.gateId] }),
+      foreignKey({
+        name: 'source_execution_gates_principal_scope_fk',
+        columns: [table.tenantId, table.principalId],
+        foreignColumns: [principals.tenantId, principals.principalId],
+      }),
+      foreignKey({
+        name: 'source_execution_gates_legal_entity_scope_fk',
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      }),
+    ],
+  ),
+);
+
+/** Protected admission Actions fail closed until an enrollment is bound. */
+export const sourceExecutionGateActions = enableCoreGovernedRls(
+  coreSchema.table('source_execution_gate_actions', {
+    actionKey: text('action_key').primaryKey(),
+    ownerKey: text('owner_key').notNull(),
+  }),
+);
+
+/** Permanent admission tombstones serialize cancellation with remote owner effects. Only scoped trust routines mutate these. */
+export const sourceExecutionFences = enableCoreGovernedRls(
+  coreSchema.table(
+    'source_execution_fences',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      admissionInvocationId: uuid('admission_invocation_id').notNull(),
+      state: text('state').$type<'open' | 'cancelled'>().notNull(),
+      gateId: uuid('gate_id'),
+      gateEpoch: uuid('gate_epoch'),
+    },
+    (table) => [
+      primaryKey({ name: 'source_execution_fences_pk', columns: [table.tenantId, table.admissionInvocationId] }),
+      check('source_execution_fences_state_ck', sql`${table.state} in ('open', 'cancelled')`),
+      check('source_execution_fences_gate_pair_ck', sql`(${table.gateId} is null) = (${table.gateEpoch} is null)`),
+      foreignKey({
+        columns: [table.tenantId, table.gateId],
+        foreignColumns: [sourceExecutionGates.tenantId, sourceExecutionGates.gateId],
+        name: 'source_execution_fences_gate_fk',
+      }),
+    ],
+  ),
+);
 
 export const principalAuthBindings = enableCoreGovernedRls(
   coreSchema.table(
@@ -305,88 +422,92 @@ export const principalAuthBindings = enableCoreGovernedRls(
 );
 
 /** Core-owned directory membership. Departures retain identity and company history; rows are never deleted. */
-export const principalCompanyMemberships = coreSchema.table.withRLS(
-  'principal_company_memberships',
-  {
-    tenantId: tenantId(),
-    legalEntityId: uuid('legal_entity_id').notNull(),
-    principalId: principalId(),
-    affiliation: text('affiliation').$type<CompanyAffiliation>(),
-    status: text('status').$type<CompanyMembershipStatus>().notNull(),
-    revision: integer('revision').default(1).notNull(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => {
-    const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
-    return [
-      primaryKey({
-        name: 'core_principal_company_memberships_pk',
-        columns: [table.tenantId, table.legalEntityId, table.principalId],
-      }),
-      foreignKey({
-        name: 'core_company_memberships_principal_fk',
-        columns: [table.tenantId, table.principalId],
-        foreignColumns: [principals.tenantId, principals.principalId],
-      }).onDelete('restrict'),
-      foreignKey({
-        name: 'core_company_memberships_legal_entity_fk',
-        columns: [table.tenantId, table.legalEntityId],
-        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
-      }).onDelete('restrict'),
-      index('core_company_memberships_principal_idx').on(table.tenantId, table.principalId),
-      check('core_company_memberships_affiliation_ck', sql`${table.affiliation} in ('employee', 'external')`),
-      check(
-        'core_company_memberships_status_ck',
-        sql`${table.status} in ('invited', 'active', 'disabled', 'departed')`,
-      ),
-      check('core_company_memberships_revision_ck', sql`${table.revision} >= 1`),
-      pgPolicy('core_company_memberships_select', { for: 'select', to: 'ontos_runtime', using: scope }),
-      pgPolicy('core_company_memberships_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
-      pgPolicy('core_company_memberships_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: scope,
-        withCheck: scope,
-      }),
-    ];
-  },
+export const principalCompanyMemberships = enableCoreGovernedRls(
+  coreSchema.table(
+    'principal_company_memberships',
+    {
+      tenantId: tenantId(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      principalId: principalId(),
+      affiliation: text('affiliation').$type<CompanyAffiliation>(),
+      status: text('status').$type<CompanyMembershipStatus>().notNull(),
+      revision: integer('revision').default(1).notNull(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => {
+      const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+      return [
+        primaryKey({
+          name: 'core_principal_company_memberships_pk',
+          columns: [table.tenantId, table.legalEntityId, table.principalId],
+        }),
+        foreignKey({
+          name: 'core_company_memberships_principal_fk',
+          columns: [table.tenantId, table.principalId],
+          foreignColumns: [principals.tenantId, principals.principalId],
+        }).onDelete('restrict'),
+        foreignKey({
+          name: 'core_company_memberships_legal_entity_fk',
+          columns: [table.tenantId, table.legalEntityId],
+          foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        }).onDelete('restrict'),
+        index('core_company_memberships_principal_idx').on(table.tenantId, table.principalId),
+        check('core_company_memberships_affiliation_ck', sql`${table.affiliation} in ('employee', 'external')`),
+        check(
+          'core_company_memberships_status_ck',
+          sql`${table.status} in ('invited', 'active', 'disabled', 'departed')`,
+        ),
+        check('core_company_memberships_revision_ck', sql`${table.revision} >= 1`),
+        pgPolicy('core_company_memberships_select', { for: 'select', to: 'ontos_runtime', using: scope }),
+        pgPolicy('core_company_memberships_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
+        pgPolicy('core_company_memberships_update', {
+          for: 'update',
+          to: 'ontos_runtime',
+          using: scope,
+          withCheck: scope,
+        }),
+      ];
+    },
+  ),
 );
 
 /** Immutable invitation intent. The one-use secret belongs only to the authentication provider's verification row. */
-export const personInvitations = coreSchema.table.withRLS(
-  'person_invitations',
-  {
-    invitationId: uuid('invitation_id').primaryKey(),
-    tenantId: tenantId(),
-    legalEntityId: uuid('legal_entity_id').notNull(),
-    principalId: principalId(),
-    providerSubjectId: text('provider_subject_id').notNull(),
-    verificationId: text('verification_id').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    createdAt: createdAt(),
-  },
-  (table) => {
-    const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
-    return [
-      foreignKey({
-        name: 'core_person_invitations_membership_fk',
-        columns: [table.tenantId, table.legalEntityId, table.principalId],
-        foreignColumns: [
-          principalCompanyMemberships.tenantId,
-          principalCompanyMemberships.legalEntityId,
-          principalCompanyMemberships.principalId,
-        ],
-      }).onDelete('restrict'),
-      uniqueIndex('core_person_invitations_verification_uk').on(table.verificationId),
-      uniqueIndex('core_person_invitations_principal_uk').on(table.tenantId, table.principalId),
-      check('core_person_invitations_provider_subject_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
-      check('core_person_invitations_verification_ck', sql`length(${table.verificationId}) between 1 and 500`),
-      check('core_person_invitations_expiry_ck', sql`${table.expiresAt} > ${table.createdAt}`),
-      pgPolicy('core_person_invitations_select', { for: 'select', to: 'ontos_runtime', using: scope }),
-      pgPolicy('core_person_invitations_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
-    ];
-  },
+export const personInvitations = enableCoreGovernedRls(
+  coreSchema.table(
+    'person_invitations',
+    {
+      invitationId: uuid('invitation_id').primaryKey(),
+      tenantId: tenantId(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      principalId: principalId(),
+      providerSubjectId: text('provider_subject_id').notNull(),
+      verificationId: text('verification_id').notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      createdAt: createdAt(),
+    },
+    (table) => {
+      const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+      return [
+        foreignKey({
+          name: 'core_person_invitations_membership_fk',
+          columns: [table.tenantId, table.legalEntityId, table.principalId],
+          foreignColumns: [
+            principalCompanyMemberships.tenantId,
+            principalCompanyMemberships.legalEntityId,
+            principalCompanyMemberships.principalId,
+          ],
+        }).onDelete('restrict'),
+        uniqueIndex('core_person_invitations_verification_uk').on(table.verificationId),
+        uniqueIndex('core_person_invitations_principal_uk').on(table.tenantId, table.principalId),
+        check('core_person_invitations_provider_subject_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
+        check('core_person_invitations_verification_ck', sql`length(${table.verificationId}) between 1 and 500`),
+        check('core_person_invitations_expiry_ck', sql`${table.expiresAt} > ${table.createdAt}`),
+        pgPolicy('core_person_invitations_select', { for: 'select', to: 'ontos_runtime', using: scope }),
+        pgPolicy('core_person_invitations_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
+      ];
+    },
+  ),
 );
 
 const legalEntityId = () => uuid('legal_entity_id');
@@ -1514,6 +1635,7 @@ export const ACCESS_TABLES = accessTables.all;
 
 export const CORE_TABLE_INVENTORY = [
   'application_composition_authority',
+  'application_composition_drain_abandonments',
   'application_composition_durable_work',
   'tenants',
   'legal_entities',
@@ -1545,12 +1667,16 @@ export const CORE_TABLE_INVENTORY = [
   'agent_proposals',
   'legal_entity_navigation_exclusions',
   'oauth_connection_grants',
+  'source_execution_gates',
+  'source_execution_gate_actions',
+  'source_execution_fences',
   ...ACCESS_TABLE_INVENTORY,
 ] as const;
 
 export const coreDatabaseSchema = {
   ...accessDatabaseSchema,
   applicationCompositionAuthority,
+  applicationCompositionDrainAbandonments,
   applicationCompositionDurableWork,
   actionInvocations,
   agentProposals,
@@ -1582,10 +1708,14 @@ export const coreDatabaseSchema = {
   tenantModuleStates,
   tenants,
   workerCheckpoints,
+  sourceExecutionGates,
+  sourceExecutionGateActions,
+  sourceExecutionFences,
 } as const;
 
 export const CORE_TABLES = [
   applicationCompositionAuthority,
+  applicationCompositionDrainAbandonments,
   applicationCompositionDurableWork,
   tenants,
   legalEntities,
@@ -1614,6 +1744,9 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  sourceExecutionGates,
+  sourceExecutionGateActions,
+  sourceExecutionFences,
   ...ACCESS_TABLES,
   agentProposals,
   legalEntityNavigationExclusions,

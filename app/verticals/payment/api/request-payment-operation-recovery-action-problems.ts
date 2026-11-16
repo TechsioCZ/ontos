@@ -154,10 +154,12 @@ export const requestPaymentOperationRecoveryActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RequestPaymentOperationRecoveryActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RequestPaymentOperationRecoveryActionForbiddenProblem'> =>
     RequestPaymentOperationRecoveryActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -239,6 +241,9 @@ const mapDomainProblem = (error: DomainError): RequestPaymentOperationRecoveryAc
       PaymentConflict: (failure) => mapDomainIdentity(paymentConflictProblemByCode[failure.code]),
       PaymentEvidenceRejected: (failure) => mapDomainIdentity(paymentEvidenceRejectedProblemByCode[failure.code]),
       PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
+      // #1153: a route-scoped A10 that its route does not authorize is refused like any other denied context.
+      PaymentRouteScopeRefused: () =>
+        requestPaymentOperationRecoveryActionProblem.forbidden('operation_context_denied'),
       PaymentUnavailable: () => requestPaymentOperationRecoveryActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
@@ -277,7 +282,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestPaymentOperationRecovery
       ActionInvocationStateError: (failure) => requestPaymentOperationRecoveryActionProblem.conflict(failure.code),
       ActionPayloadValidationError: requestPaymentOperationRecoveryActionProblem.invalid,
       ActionPermissionCheckError: (failure) => requestPaymentOperationRecoveryActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => requestPaymentOperationRecoveryActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        requestPaymentOperationRecoveryActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => requestPaymentOperationRecoveryActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => requestPaymentOperationRecoveryActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => requestPaymentOperationRecoveryActionProblem.conflict(failure.code),

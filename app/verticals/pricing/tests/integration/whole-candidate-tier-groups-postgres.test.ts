@@ -1,3 +1,4 @@
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { PricingOwnerMaterialEvidenceFenceGatewayUnavailable } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import { makePricingCurrentDecisionCatalogOwnerFinalFenceGateway } from '../../src/integrations/current-pricing-decision-owner-final-fence.ts';
 import {
@@ -183,6 +184,12 @@ const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchem
   Match.value(subject).pipe(
     Match.tag('Assertion', () => true),
     Match.tag('Originator', () => false),
+    Match.tag('OrganizationGovernanceRead', () => false),
+    Match.tag('PrivacyDispatch', () => false),
+    Match.tag('RegisteredAssertion', () => false),
+    Match.tag('RegisteredAdmission', () => false),
+    Match.tag('RegisteredRecovery', () => false),
+    Match.tag('RegisteredWorkload', () => false),
     Match.exhaustive,
   );
 
@@ -1262,7 +1269,7 @@ const exerciseRealCatalogConsumer1262 = Effect.fn('CatalogConsumer1262.exercise'
     const observedFetch: typeof globalThis.fetch = (...args) =>
       baseFetch(...args)
         .then(observeResponse)
-        .then(undefined, failCatalog);
+        .catch(failCatalog);
     let credentialIndex = 0;
     const catalogAcquire: OwnerGatewayConnectionAcquire = (requested) =>
       Effect.sync(() => {
@@ -2327,10 +2334,11 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       }),
     );
     const shellAddress1225 = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell1225.address);
+    // Pricing's own module key, handed over the way the host does.
+    yield* holdTestModuleCredentials({ pricing: 'pricing-module-api-key-1225' });
     const callerShell1225 = yield* Layer.build(
       ConfigProvider.layerAdd(
         ConfigProvider.fromUnknown({
-          ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1225',
           ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
             shellGatewayContextContract.apiPrefix,
             `http://127.0.0.1:${shellAddress1225.port}`,

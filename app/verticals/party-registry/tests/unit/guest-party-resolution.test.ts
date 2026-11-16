@@ -149,7 +149,7 @@ const request = {
   legalEntityRef,
   requestedAt: DateTime.makeUnsafe('2026-10-19T12:00:00.000Z'),
 };
-const evaluation = Schema.decodeUnknownSync(PartyEvidenceEvaluationSchema)({
+const evaluation = Schema.decodeUnknownSync(Schema.toEncoded(PartyEvidenceEvaluationSchema))({
   evidence: [
     {
       basis: 'DIRECT_INTERACTION',

@@ -9,7 +9,7 @@ import { Context, DateTime, Effect, Redacted, Schema, Crypto } from 'effect';
 
 import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
-import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
+import type { CurrentMarketOperationRequirement, OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type CurrentMarketCatalogExecutor = (
   payload: CurrentMarketCatalogRequest,
@@ -119,6 +119,7 @@ export const makeCommercialContextAssessmentPort = (dependencies: {
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
+    readonly operationRequirementKey: CurrentMarketOperationRequirement;
     readonly requestCorrelation: string;
     readonly scope: OperationalScope;
   };
@@ -136,6 +137,11 @@ export const makeCommercialContextAssessmentPort = (dependencies: {
         .acquire({
           audience: 'commerce-market-catalog',
           compositionRevision: dependencies.context.compositionRevision,
+          conditionalRead: {
+            input: { at: request.assessedAt },
+            kind: 'CURRENT_MARKET',
+            operationRequirementKey: dependencies.context.operationRequirementKey,
+          },
           legalEntityScope: 'subject',
           requestCorrelation: dependencies.context.requestCorrelation,
           scope: dependencies.context.scope,
@@ -163,6 +169,7 @@ export const commercialContextAssessmentPortFromEnvironment = Effect.fn(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
+    readonly operationRequirementKey: CurrentMarketOperationRequirement;
     readonly requestCorrelation: string;
     readonly scope: OperationalScope;
   },

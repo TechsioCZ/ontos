@@ -41,8 +41,11 @@ import { paymentApplicabilityPersistenceForTransaction } from '../persistence/pa
 import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
 import { paymentAuthorizationPersistenceForTransaction } from '../persistence/payment-authorization-persistence.ts';
 import type { PaymentAuthorizationPersistence } from '../persistence/payment-authorization-persistence.ts';
+import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
+import type { PaymentLifecyclePersistence } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
 import type { PaymentRefundPersistence } from '../persistence/payment-refund-persistence.ts';
+import { findCurrentCommitmentAttempt, matchesCommitmentAttempt } from '../ports/commitment-attempt-evidence-port.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
 import { createIssuePaymentAuthorizationPaymentCoreAuthorizationIssuedV1OutboxMessage } from './issue-payment-authorization-payment-core-authorization-issued-v1.outbox-message.ts';
 import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
@@ -64,6 +67,7 @@ interface IssuePaymentAuthorizationServices {
   readonly aggregate: PaymentAggregatePersistence;
   readonly applicability: PaymentApplicabilityPersistence;
   readonly authorizations: PaymentAuthorizationPersistence;
+  readonly lifecycle: Pick<PaymentLifecyclePersistence, 'findSuccessorPaymentId'>;
   readonly refunds: PaymentRefundPersistence;
 }
 
@@ -116,7 +120,7 @@ const requireUnheldCoverage = (
  * Issues one immutable Payment Authorization for one exact Order Commitment Attempt (#1149):
  * 1. lock the Payment row (the owner boundary shared with refund start and Current validation);
  * 2. an existing proof under the issuance key is replayed exactly (original times, never refreshed);
- * 3. the Attempt binding must equal the Payment's immutable meaning;
+ * 3. the Attempt binding must equal the Payment's immutable meaning, with no explicit successor;
  * 4. prepaid methods need proven Current coverage at the current coverage revision that no other
  *    Attempt Currently holds; other methods must remain applicable (merchant enablement) and need
  *    their exact Current owner condition, and never claim collection;
@@ -127,7 +131,7 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
     payload: IssuePaymentAuthorizationPayload,
     context: IssuePaymentAuthorizationContext,
   ) {
-    const { aggregate, applicability, authorizations } = context.services;
+    const { aggregate, applicability, authorizations, lifecycle } = context.services;
     const { binding } = payload;
     const { legalEntityId, principalId, tenantId } = context.scope;
     if (legalEntityId === undefined) {
@@ -158,6 +162,18 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
         `The Attempt binding does not match the Payment: ${mismatches.join(', ')}`,
       );
     }
+    const successor = yield* lifecycle.findSuccessorPaymentId(payment.paymentId);
+    yield* recordPaymentLookup(context, {
+      paymentId: payment.paymentId,
+      query: 'successor',
+      resultCount: Option.isSome(successor) ? 1 : 0,
+    });
+    if (Option.isSome(successor)) {
+      return yield* paymentAuthorizationRefused(
+        'payment_authorization_issuance_conflict',
+        'A successor Payment superseded this intent for new Authorization issuance',
+      );
+    }
     const proofKind = proofKindForMethod(payment.method);
     const condition =
       proofKind === 'PREPAID_COVERAGE'
@@ -169,7 +185,9 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
             Effect.tap((enablements) =>
               recordPaymentLookup(context, { query: 'method-enablements', resultCount: enablements.length }),
             ),
-            Effect.flatMap((enablements) => verifyMethodCondition(payment, enablements, { legalEntityId, tenantId })),
+            Effect.flatMap((enablements) =>
+              verifyMethodCondition(payment, enablements, { legalEntityId, tenantId }, context.scope, 'ISSUE'),
+            ),
             Effect.flatMap((check) =>
               MethodConditionCheck.$match(check, {
                 Met: ({ condition: met }) => Effect.succeed(met),
@@ -178,9 +196,23 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
               }),
             ),
           );
-    const validity = proofValidity(yield* DateTime.now, Duration.seconds(payload.validitySeconds));
+    const scope = { legalEntityId, tenantId };
+    const attempt = yield* findCurrentCommitmentAttempt(binding.orderCommitmentAttemptId, scope, context.scope);
+    const issuedAt = yield* DateTime.now;
+    if (
+      Option.isNone(attempt) ||
+      !matchesCommitmentAttempt(attempt.value, binding, payment.purchasingContext, scope) ||
+      !DateTime.isLessThan(issuedAt, attempt.value.validUntil)
+    ) {
+      return yield* paymentAuthorizationRefused(
+        'payment_authorization_binding_mismatch',
+        'Current Order Commitment Attempt evidence does not match this Payment',
+      );
+    }
+    const validity = proofValidity(issuedAt, Duration.seconds(payload.validitySeconds));
     const proof = yield* authorizations.insert({
       binding,
+      commitmentAttemptEvidenceRef: attempt.value.evidenceRef,
       condition,
       coverageRevision: proofKind === 'PREPAID_COVERAGE' ? payment.coverageRevision : undefined,
       expiresAt: validity.expiresAt,
@@ -228,6 +260,7 @@ const issuePaymentAuthorizationServices = (transaction: ScopedTransactionExecuto
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         authorizations: paymentAuthorizationPersistenceForTransaction(transaction),
+        lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
         refunds: paymentRefundPersistenceForTransaction(transaction),
       });
 

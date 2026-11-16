@@ -52,6 +52,8 @@ type DomainProblemIdentity =
         | 'payment_method_binding_mismatch'
         | 'payment_no_established_collection'
         | 'payment_outcome_transition_illegal'
+        | 'payment_payer_contact_not_applicable'
+        | 'payment_payer_contact_required'
         | 'payment_refund_amount_mismatch'
         | 'payment_refund_basis_invalid'
         | 'payment_refund_item_fractioned';
@@ -103,6 +105,14 @@ const paymentLifecycleConflictProblemByCode = {
   DomainProblemIdentity
 >;
 
+const paymentPayerContactRefusedProblemByCode = {
+  payment_payer_contact_not_applicable: { code: 'payment_payer_contact_not_applicable', kind: 'ineligible' },
+  payment_payer_contact_required: { code: 'payment_payer_contact_required', kind: 'ineligible' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'PaymentPayerContactRefused' }>['code'],
+  DomainProblemIdentity
+>;
+
 const paymentRejectedProblemByCode = {
   payment_amount_invalid: { code: 'payment_amount_invalid', kind: 'ineligible' },
   payment_currency_mismatch: { code: 'payment_currency_mismatch', kind: 'ineligible' },
@@ -136,10 +146,12 @@ export const startPaymentCollectionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'StartPaymentCollectionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'StartPaymentCollectionActionForbiddenProblem'> =>
     StartPaymentCollectionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -219,6 +231,7 @@ const mapDomainProblem = (error: DomainError): StartPaymentCollectionActionProbl
       PaymentLifecycleConflict: (failure) => mapDomainIdentity(paymentLifecycleConflictProblemByCode[failure.code]),
       PaymentOwnerEvidenceUnavailable: () =>
         startPaymentCollectionActionProblem.unavailable('payment_owner_evidence_unavailable'),
+      PaymentPayerContactRefused: (failure) => mapDomainIdentity(paymentPayerContactRefusedProblemByCode[failure.code]),
       PaymentRejected: (failure) => mapDomainIdentity(paymentRejectedProblemByCode[failure.code]),
       PaymentUnavailable: () => startPaymentCollectionActionProblem.unavailable('payment_unavailable'),
     }),
@@ -257,7 +270,8 @@ const mapCoreProblem = (error: ActionCoreError): StartPaymentCollectionActionPro
       ActionInvocationStateError: (failure) => startPaymentCollectionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: startPaymentCollectionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => startPaymentCollectionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => startPaymentCollectionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        startPaymentCollectionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => startPaymentCollectionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => startPaymentCollectionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => startPaymentCollectionActionProblem.conflict(failure.code),

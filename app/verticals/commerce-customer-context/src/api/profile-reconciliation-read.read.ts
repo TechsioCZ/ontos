@@ -10,7 +10,7 @@ import type {
   ProfileReconciliationReadRequest,
   ProfileReconciliationReadResponse,
 } from '../../shared/apis/profile-reconciliation-read.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profileReadServicesForVerifiedScope } from '../profile-service-factory.ts';
 
 export interface ProfileReconciliationReadServices {
   readonly readCase: (
@@ -70,7 +70,7 @@ export const profileReconciliationReadRead = defineRead(
       ),
   },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    profileReadServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ profileReconciliationRead }): ProfileReconciliationReadServices => profileReconciliationRead),
     ),
 );

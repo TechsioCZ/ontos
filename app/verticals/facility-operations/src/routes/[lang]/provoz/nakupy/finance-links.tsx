@@ -1,12 +1,13 @@
 import { optionalField } from '../../../../../shared/domain/common.ts';
-// Finance remains the owner of incoming invoices; resolve references through its governed public read.
+// Finance remains the owner of invoices; resolve references through its governed public read.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
-import { readFinance } from '../../../../api/finance-reads.ts';
+import { readFinance } from '../../../../ui/finance-reads.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { usePurchasingT } from './purchasing-model.ts';
+import type { FinanceInvoiceView } from '../../../../ui/finance-reads.ts';
 
 import { matchingIncomingInvoice } from './purchase-invoice-match.ts';
 import type { IncomingInvoiceLink } from './purchase-invoice-match.ts';
@@ -18,6 +19,8 @@ type FinanceLinks =
       /** Finance decides whether this person may create invoice drafts; provoz only mirrors it. */
       readonly canWrite: boolean;
       readonly invoices: readonly IncomingInvoiceLink[];
+      /** Issued invoices Finance holds for sales orders; one whose order has no link yet is waiting for it. */
+      readonly salesInvoices: readonly FinanceInvoiceView[];
       readonly status: 'ready';
     };
 
@@ -44,6 +47,9 @@ export const useIncomingInvoiceLinks = (refresh = 0): FinanceLinks => {
                     },
                   ]
                 : [],
+            ),
+            salesInvoices: records.state.invoices.filter(
+              (invoice) => invoice.direction === 'OUTGOING' && invoice.sourceOrder !== undefined,
             ),
             status: 'ready',
           }),

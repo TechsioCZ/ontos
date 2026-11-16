@@ -3,11 +3,15 @@ import { Clock, Context, DateTime, Effect, Layer, Match, Schema } from 'effect';
 
 import { CoreDatabase } from '../db/client.ts';
 import type { ActionAuthMethod } from '../db/schema.ts';
-import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
+import { auditEvents, tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
-import { tenantModuleIntrinsicDependencyClosure } from './module-dependency-contracts.ts';
+import {
+  tenantModuleInstallsWithClosure,
+  tenantModuleIntrinsicDependencyClosure,
+} from './module-dependency-contracts.ts';
 
 import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './tenant-module-state-unsatisfied-dependency-error.ts';
 import type { OntosModuleId } from './manifest.ts';
@@ -243,8 +247,16 @@ export const TenantModuleStateServiceLive = Layer.effect(
 
 export interface PersistTenantModuleStateChangeInput {
   readonly actionInvocationId: string;
+  /** How the person was signed in, as the Action's own audit record names it; each module installed with it is
+   * audited for the same person, the same way. */
+  readonly actor: Pick<
+    OperationalScope,
+    'authBindingId' | 'authContextRef' | 'impersonatedByPrincipalId' | 'legalEntityId'
+  >;
   readonly authMethod: ActionAuthMethod;
   readonly catalog: InstalledModuleCatalog;
+  /** The composition revision the change ran against, named in the audit record of each module installed with it. */
+  readonly compositionRevision: string;
   readonly expectedState?: TenantModuleState;
   readonly moduleKey: string;
   readonly newState: TenantModuleState;
@@ -254,6 +266,8 @@ export interface PersistTenantModuleStateChangeInput {
 }
 
 export interface PersistTenantModuleStateChangeResult {
+  /** The modules installed `active` with this one in the same transaction (its `installsWith` the Tenant lacked). */
+  readonly installedWith: readonly string[];
   readonly moduleKey: string;
   readonly newState: TenantModuleState;
   readonly previousState: TenantModuleState | null;
@@ -269,6 +283,9 @@ const persistenceUnavailable = (cause?: unknown) => {
   }
   return error;
 };
+
+/** The audit event of a module a person's activation installed with another (its manifest's `installsWith`). */
+export const TENANT_MODULE_INSTALLED_WITH_EVENT = 'core.modules.tenant-module-installed-with';
 
 export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateService.persistTenantModuleStateChange')(
   function* persistTenantModuleStateChangeEffect(
@@ -302,8 +319,32 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
     // The tenant row lock serializes every state mutation, including provider deactivation.
     // Resolve the trusted revision's closure and read its states inside this same transaction.
     yield* validateTenantModuleStateTransition(input.catalog, input.moduleKey, input.newState);
+    // Activation installs the modules the manifest names in `installsWith` that the Tenant has no state for yet; a
+    // state somebody set is left exactly as set.
+    const companions =
+      input.newState === 'active' ? yield* tenantModuleInstallsWithClosure(input.catalog, input.moduleKey) : [];
+    const presentCompanions =
+      companions.length === 0
+        ? []
+        : yield* transaction
+            .select({ moduleKey: tenantModuleStates.moduleKey })
+            .from(tenantModuleStates)
+            .where(
+              and(eq(tenantModuleStates.tenantId, input.tenantId), inArray(tenantModuleStates.moduleKey, companions)),
+            )
+            .pipe(Effect.mapError(persistenceUnavailable));
+    const present = new Set(presentCompanions.map(({ moduleKey }) => moduleKey));
+    const installedWith = companions.filter((moduleKey) => !present.has(moduleKey));
     if (input.newState === 'active' || input.newState === 'read_only') {
-      const dependencies = yield* tenantModuleIntrinsicDependencyClosure(input.catalog, input.moduleKey);
+      const closures = yield* Effect.forEach(
+        [input.moduleKey, ...installedWith],
+        (moduleKey) => tenantModuleIntrinsicDependencyClosure(input.catalog, moduleKey),
+        { concurrency: 1 },
+      );
+      // A module installed in this same transaction satisfies a dependency on it.
+      const dependencies = [...new Set(closures.flat())]
+        .filter((moduleKey) => moduleKey !== input.moduleKey && !installedWith.includes(moduleKey))
+        .toSorted();
       if (dependencies.length > 0) {
         const dependencyRows = yield* transaction
           .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
@@ -408,7 +449,74 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
       }
     }
 
+    yield* Effect.forEach(
+      installedWith,
+      Effect.fnUntraced(function* installCompanion(moduleKey) {
+        const [companionHistory] = yield* transaction
+          .insert(tenantModuleStateChanges)
+          .values({
+            actionInvocationId: input.actionInvocationId,
+            changedByPrincipalId: input.principalId,
+            changeSource,
+            moduleKey,
+            newState: 'active',
+            occurredAt: changedAt,
+            previousState: null,
+            reason: `Installed with ${input.moduleKey}`,
+            tenantId: input.tenantId,
+          })
+          .returning({ moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId })
+          .pipe(Effect.mapError(persistenceUnavailable));
+        if (companionHistory === undefined) {
+          return yield* persistenceUnavailable();
+        }
+        yield* transaction
+          .insert(tenantModuleStates)
+          .values({
+            lastChangeId: companionHistory.moduleStateChangeId,
+            moduleKey,
+            state: 'active',
+            tenantId: input.tenantId,
+            updatedAt: changedAt,
+          })
+          .pipe(Effect.mapError(persistenceUnavailable));
+        // Audited as the release audits a module it installs with another: its own sensitive record, critical, in
+        // this transaction, by the person whose Action installed it. No secret is recorded.
+        return yield* transaction
+          .insert(auditEvents)
+          .values({
+            actionInvocationId: input.actionInvocationId,
+            auditProfile: 'sensitive',
+            authBindingId: input.actor.authBindingId,
+            authContextRef: input.actor.authContextRef,
+            authMethod: input.authMethod,
+            eventType: TENANT_MODULE_INSTALLED_WITH_EVENT,
+            evidenceJson: {
+              compositionRevision: input.compositionRevision,
+              installedWith: input.moduleKey,
+              moduleKey,
+              newState: 'active',
+              previousState: null,
+              risk: 'critical',
+            },
+            impersonatedByPrincipalId: input.actor.impersonatedByPrincipalId,
+            legalEntityId: input.actor.legalEntityId,
+            outcome: 'succeeded',
+            outcomeCode: 'module_installed',
+            outcomeStage: 'execution',
+            principalId: input.principalId,
+            targetModuleKey: moduleKey,
+            targetResourceId: moduleKey,
+            targetResourceType: 'tenant-module-state',
+            tenantId: input.tenantId,
+          })
+          .pipe(Effect.mapError(persistenceUnavailable), Effect.asVoid);
+      }),
+      { concurrency: 1, discard: true },
+    );
+
     return {
+      installedWith,
       moduleKey: input.moduleKey,
       newState: input.newState,
       previousState,

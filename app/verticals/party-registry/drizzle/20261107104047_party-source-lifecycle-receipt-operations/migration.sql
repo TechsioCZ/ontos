@@ -1,0 +1,1 @@
+ALTER TABLE "party"."party_source_effect_receipts" DROP CONSTRAINT "party_source_effect_receipts_operation_ck", ADD CONSTRAINT "party_source_effect_receipts_operation_ck" CHECK ("operation" in ('UPDATE', 'CORRECTION', 'ONBOARD_COUNTERPARTY_CUSTOMER', 'ADD_CONTACT_POINT', 'UPDATE_CONTACT_POINT', 'END_CONTACT_POINT'));

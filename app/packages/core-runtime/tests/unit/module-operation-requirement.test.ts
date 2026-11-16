@@ -1,3 +1,12 @@
+import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
+import {
+  readVerifiedGatewayWorkload,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../src/auth/system-principal-context-provenance.ts';
+import { defineRead } from '../../src/reads/definition.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { fixtureReadAccess, fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { Context, Deferred, Effect, Fiber, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -13,18 +22,19 @@ import { staffRoleTemplateBindingsRead } from '../../src/auth/staff-role-templat
 import { oauthConnectionRevocationNotesRead } from '../../src/auth/oauth-connection-revocation-notes-read.ts';
 import { companyManagedPrincipalsRead } from '../../src/auth/principal-administration-reads.ts';
 import { peopleSearchRead } from '../../src/people/people-search.ts';
-import { defineRead } from '../../src/reads/definition.ts';
 import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
 import { OntosModuleRequirementsSchema } from '../../src/modules/module-dependency-contracts.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { defineOntosModuleManifest, OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { isGenuineCoreOperation, withModuleOperationExecution } from '../../src/modules/module-operation-execution.ts';
-import { requireModuleOperation } from '../../src/modules/module-operation-requirement.ts';
+import {
+  requireModuleOperation,
+  readModuleOperationRequirement,
+} from '../../src/modules/module-operation-requirement.ts';
 import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
-import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const revision = 'a'.repeat(64);
 
@@ -347,5 +357,325 @@ it.effect('rejects a reflected genuine constructor without Core mint authority',
       ),
     );
     expect(rejected.code).toBe('module_operation_requirement_unavailable');
+  }),
+);
+
+const gatewayScope = (compositionRevision = revision) =>
+  trustVerifiedGatewayPrincipalContext(
+    Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authBindingId: '80000000-0000-4000-8000-000000000003',
+      authContextRef: 'better-auth-session:operation-contract-fact',
+      authMethod: 'session',
+      principalId: '80000000-0000-4000-8000-000000000002',
+      tenantId: '80000000-0000-4000-8000-000000000001',
+    }),
+    compositionRevision,
+  );
+
+it.effect('reads immutable exact conditional operation facts only from the original live gateway scope', () =>
+  Effect.gen(function* factualOperationContract() {
+    const scope = gatewayScope();
+    const source = { ...execution(), scope };
+    const fact = yield* withModuleOperationExecution(
+      source,
+      readModuleOperationRequirement(requirementKey('consumer.alpha'), scope),
+    );
+    expect(fact).toEqual({
+      compositionRevision: revision,
+      consumerEntrypointKey: 'consumer.alpha.change',
+      consumerSchemaVersion: '1',
+      providerAppId: 'required-provider',
+      providerEntrypointKey: 'provider.required.resolve',
+      providerModuleId: providerModule,
+      providerSchemaVersion: 'owner-v1',
+      requirementKey: requirementKey('consumer.alpha'),
+      tenantId: scope.tenantId,
+    });
+    expect(Object.isFrozen(fact)).toBe(true);
+    let loads = 0;
+    const original = {
+      ...source,
+      loadCatalog: Effect.sync(() => {
+        loads += 1;
+        return catalog();
+      }),
+    };
+    for (const supplied of [{ ...scope }, gatewayScope()]) {
+      const failure = yield* Effect.flip(
+        withModuleOperationExecution(
+          original,
+          readModuleOperationRequirement(requirementKey('consumer.alpha'), supplied),
+        ),
+      );
+      expect(failure.code).toBe('module_operation_requirement_unavailable');
+    }
+    expect(loads).toBe(0);
+    const missing = yield* Effect.flip(readModuleOperationRequirement(requirementKey('consumer.alpha'), scope));
+    expect(missing.code).toBe('module_operation_requirement_unavailable');
+    const wrongRevision = gatewayScope('b'.repeat(64));
+    const mismatched = yield* Effect.flip(
+      withModuleOperationExecution(
+        { ...original, scope: wrongRevision },
+        readModuleOperationRequirement(requirementKey('consumer.alpha'), wrongRevision),
+      ),
+    );
+    expect(mismatched.code).toBe('module_operation_requirement_unavailable');
+    expect(loads).toBe(0);
+    const closedContext = yield* withModuleOperationExecution(source, Effect.context());
+    const closed = yield* Effect.flip(
+      readModuleOperationRequirement(requirementKey('consumer.alpha'), scope).pipe(Effect.provide(closedContext)),
+    );
+    expect(closed.code).toBe('module_operation_requirement_unavailable');
+  }),
+);
+
+it.effect(
+  'refuses foreign entrypoints, recreated registrations and incompatible providers for factual requirements',
+  () =>
+    Effect.gen(function* factualRequirementRemainsExact() {
+      const scope = gatewayScope();
+      for (const row of [
+        {
+          code: 'module_operation_requirement_unsatisfied',
+          key: requirementKey('consumer.beta'),
+          source: { ...execution(), scope },
+        },
+        {
+          code: 'module_operation_requirement_unsatisfied',
+          key: requirementKey('consumer.alpha'),
+          source: { ...execution('consumer.alpha', catalog('owner-v2')), scope },
+        },
+        {
+          code: 'module_operation_requirement_unavailable',
+          key: requirementKey('consumer.alpha'),
+          source: { ...execution(), registration: registration('consumer.alpha'), scope },
+        },
+      ]) {
+        const failure = yield* Effect.flip(
+          withModuleOperationExecution(row.source, readModuleOperationRequirement(row.key, scope)),
+        );
+        expect(failure.code).toBe(row.code);
+      }
+    }),
+);
+
+it.effect(
+  'rechecks the execution lease after a delayed catalog load instead of reviving captured scope authority',
+  () =>
+    Effect.gen(function* factualLeaseExpiresDuringLoad() {
+      const scope = gatewayScope();
+      const loading = yield* Deferred.make<string>();
+      const release = yield* Deferred.make<InstalledModuleCatalog>();
+      const source = {
+        ...execution(),
+        loadCatalog: Deferred.succeed(loading, 'loading').pipe(Effect.andThen(Deferred.await(release))),
+        scope,
+      };
+      const pending = yield* withModuleOperationExecution(
+        source,
+        Effect.gen(function* startFactualLoad() {
+          const fiber = yield* Effect.forkChild(
+            Effect.exit(readModuleOperationRequirement(requirementKey('consumer.alpha'), scope)),
+          );
+          yield* Deferred.await(loading);
+          return fiber;
+        }),
+      );
+      yield* Deferred.succeed(release, catalog());
+      const failure = yield* Fiber.join(pending).pipe(Effect.flatMap((exit) => Effect.flip(exit)));
+      expect(failure.code).toBe('module_operation_requirement_unavailable');
+    }),
+);
+
+it.effect(
+  'reports the actual registered Read schema version and refuses worker facts without a receiving schema contract',
+  () =>
+    Effect.gen(function* factualReadAndWorkerContracts() {
+      const scope = gatewayScope();
+      const moduleId = 'consumer.alpha';
+      const read = defineRead(
+        {
+          accessDeclaration: fixtureReadAccess(moduleId),
+          accessKind: 'detail',
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
+            entrypointKey: `${moduleId}.change`,
+            moduleKey: moduleId,
+            role: 'api',
+          }),
+          evidencePolicy: { captureMode: 'metadata_only', policyKey: `${moduleId}.read.v1` },
+          inputSchema: Schema.Struct({}),
+          legalEntityScope: 'optional',
+          owningModuleKey: moduleId,
+          permissionTarget: 'module',
+          policies: [],
+          readKey: `${moduleId}.change`,
+          resultSchema: Schema.Struct({}),
+          schemaVersion: 'actual-read-v3',
+        },
+        () => Effect.succeed({ evidence: { resultCount: 0 }, result: {} }),
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId }),
+      );
+      const base = makeModuleContractFixture({ appId: 'consumer-alpha', moduleId }).manifest;
+      const { requirements } = consumer(moduleId).manifest;
+      if (requirements === undefined) {
+        throw new Error('Missing Read owner requirements');
+      }
+      const manifest = defineOntosModuleManifest({
+        ...base,
+        publicSurface: { ...base.publicSurface, actions: [], api: {}, components: {} },
+        requirements,
+      });
+      const owner = defineVerticalRuntimeRegistration({ actions: [], manifest, outboxWorkers: [], reads: [read] });
+      const fact = yield* withModuleOperationExecution(
+        { ...execution(), ownerRegistration: owner, registration: read, scope },
+        readModuleOperationRequirement(requirementKey(moduleId), scope),
+      );
+      expect(fact.consumerSchemaVersion).toBe('actual-read-v3');
+      const worker = defineOutboxWorker(
+        {
+          consumerModuleKey: moduleId,
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'background',
+            authorization: { kind: 'owner_local_background' },
+            entrypointKey: `${moduleId}.worker`,
+            moduleKey: moduleId,
+            role: 'worker',
+          }),
+          leaseDurationMs: 30_000,
+          legalEntityScope: 'forbidden',
+          payloadSchema: Schema.Struct({}),
+          producerModuleKey: 'provider.required',
+          retryPolicy: { initialBackoffMs: 1000, maxAttempts: 1, maxBackoffMs: 1000, multiplier: 1 },
+          topic: 'provider.required.event',
+          workerKey: `${moduleId}.worker`,
+        },
+        () => Effect.void,
+      );
+      const refused = yield* Effect.flip(
+        withModuleOperationExecution(
+          { ...execution(), registration: worker, scope },
+          readModuleOperationRequirement(requirementKey(moduleId), scope),
+        ),
+      );
+      expect(refused.code).toBe('module_operation_requirement_unavailable');
+    }),
+);
+
+it.effect('refuses an altered current consumer requirement projection even when its provider still matches', () =>
+  Effect.gen(function* factualConsumerProjectionCannotDrift() {
+    const scope = gatewayScope();
+    const source = consumer('consumer.alpha');
+    const { requirements } = source.manifest;
+    if (requirements === undefined) {
+      throw new Error('Missing owner requirements fixture');
+    }
+    const altered = decodeContract({
+      ...source,
+      manifest: {
+        ...source.manifest,
+        requirements: {
+          ...requirements,
+          operations: requirements.operations.map((operation) => ({
+            ...operation,
+            condition: 'consumer.alpha.other-branch',
+          })),
+        },
+      },
+    });
+    const installed = makeInstalledCatalogFixture(
+      ...catalog().contracts.map((contract) => (contract.manifest.module.id === 'consumer.alpha' ? altered : contract)),
+    );
+    const failure = yield* Effect.flip(
+      withModuleOperationExecution(
+        { ...execution('consumer.alpha', installed), scope },
+        readModuleOperationRequirement(requirementKey('consumer.alpha'), scope),
+      ),
+    );
+    expect(failure.code).toBe('module_operation_requirement_unavailable');
+  }),
+);
+
+it.effect('rejects signed workload and private-route operation mismatches before reading the catalog', () =>
+  Effect.gen(function* signedSourceOperationMatchesActualLease() {
+    const plain = gatewayScope();
+    let loads = 0;
+    const source = {
+      ...execution(),
+      loadCatalog: Effect.sync(() => {
+        loads += 1;
+        return catalog();
+      }),
+    };
+    const recovery = registeredGatewayRecoveryPrincipal({
+      declarationKey: 'consumer.alpha.write',
+      entrypointKey: 'consumer.alpha.change',
+      principalId: plain.principalId,
+      requestHash: 'a'.repeat(64),
+      tenantId: plain.tenantId,
+      workloadKey: 'consumer.alpha.source-read',
+    });
+    const metadata = readVerifiedGatewayWorkload(recovery);
+    if (metadata === undefined) {
+      throw new Error('Missing signed workload fixture');
+    }
+    const system = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      authContextRef: recovery.authContextRef,
+      authMethod: 'system',
+      principalId: plain.principalId,
+      tenantId: plain.tenantId,
+    });
+    for (const mismatch of [
+      { entrypointKey: 'consumer.alpha.other', schemaVersion: '1' },
+      { entrypointKey: 'consumer.alpha.change', schemaVersion: 'other-v2' },
+    ]) {
+      const signed = trustVerifiedGatewayPrincipalContext(system, revision, undefined, undefined, {
+        ...metadata,
+        ...mismatch,
+      });
+      const failure = yield* Effect.flip(
+        withModuleOperationExecution(
+          { ...source, scope: signed },
+          readModuleOperationRequirement(requirementKey('consumer.alpha'), signed),
+        ),
+      );
+      expect(failure.code).toBe('module_operation_requirement_unavailable');
+    }
+    const legalEntityId = '80000000-0000-4000-8000-000000000004';
+    const routedPrincipal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      authBindingId: '80000000-0000-4000-8000-000000000003',
+      authContextRef: 'better-auth-api-key:route-operation-fact',
+      authenticationNamespaceId: 'integration.source.realm',
+      authMethod: 'api_key',
+      legalEntityId,
+      principalId: plain.principalId,
+      tenantId: plain.tenantId,
+    });
+    for (const operation of [
+      { entrypointKey: 'consumer.alpha.other', schemaVersion: '1' },
+      { entrypointKey: 'consumer.alpha.change', schemaVersion: 'other-v2' },
+    ]) {
+      const routed = trustVerifiedGatewayPrincipalContext(routedPrincipal, revision, undefined, undefined, undefined, {
+        legalEntityId,
+        operations: [operation],
+        principalId: plain.principalId,
+        routeId: '80000000-0000-4000-8000-000000000005',
+        routeKey: 'source-import',
+        routeRevision: 'revision-1',
+        sourceRouteId: '80000000-0000-4000-8000-000000000006',
+        sourceRouteRevision: 'revision-1',
+        tenantId: plain.tenantId,
+      });
+      const failure = yield* Effect.flip(
+        withModuleOperationExecution(
+          { ...source, scope: routed },
+          readModuleOperationRequirement(requirementKey('consumer.alpha'), routed),
+        ),
+      );
+      expect(failure.code).toBe('module_operation_requirement_unavailable');
+    }
+    expect(loads).toBe(0);
   }),
 );

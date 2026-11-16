@@ -204,6 +204,7 @@ export const PartyCommandConflictProblemSchema = makeProblemDetailsSchema('Party
   code: Schema.Literals([
     'action_request_hash_conflict',
     'action_invocation_state_invalid',
+    'party_evidence_insufficient',
     'party_lifecycle_conflict',
     'party_unarchive_identity_conflict',
     'party_unarchive_identity_ambiguous',

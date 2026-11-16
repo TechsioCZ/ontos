@@ -10,7 +10,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind, GateInput } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Exit, Layer, Option, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { workRecordsCarrier } from '../../shared/access-declarations.ts';
@@ -42,6 +42,8 @@ const gateOf = (registry: Registry) =>
     authorityFor: () => ({
       readCells: () => Effect.succeed([]),
       readConnection: () => Effect.succeed(Option.none()),
+      // The company the workload names is the tenant's: its binding, not ownership, decides these cases.
+      readCompanyOwnership: () => Effect.succeed(true),
       readScope: () => Effect.succeed(Option.none()),
       readTeamIds: () => Effect.succeed([]),
     }),
@@ -50,11 +52,10 @@ const gateOf = (registry: Registry) =>
     legalEntities: { listCandidateIds: () => Effect.succeed([LegalEntityIdSchema.make(company)]) },
     principalKinds: { readKind: () => Effect.succeed(Option.some(registry.kind ?? 'service')) },
     workloadBindings: {
-      readActiveWorkloadKeys: () => Effect.succeed(new Set(registry.keys ?? ['work.storefront-client'])),
-      readCompanyDeclaration: () =>
+      readWorkloadAuthority: () =>
         Effect.succeed({
           activeCompanyIds: new Set((registry.companies ?? [company]).map((id) => LegalEntityIdSchema.make(id))),
-          pinned: true,
+          workloadKeys: new Set(registry.keys ?? ['work.storefront-client']),
         }),
     },
   });
@@ -154,12 +155,12 @@ it.effect('keeps apply-command and the records read closed to the bound storefro
 );
 
 it('accepts the inquiry text and the inquiry itself, nothing else', () => {
-  expect(decodePayload(payload)._tag).toBe('Success');
-  expect(decodePayload({ storefrontInquiry: inquiry, title: 'Dotaz' })._tag).toBe('Success');
-  expect(decodePayload({ description: 'bez dotazu', title: 'Dotaz' })._tag).toBe('Failure');
-  expect(decodePayload({ ...payload, storefrontInquiry: { ...inquiry, requestId: 'not-a-uuid' } })._tag).toBe(
-    'Failure',
-  );
+  expect(Exit.isSuccess(decodePayload(payload))).toBe(true);
+  expect(Exit.isSuccess(decodePayload({ storefrontInquiry: inquiry, title: 'Dotaz' }))).toBe(true);
+  expect(Exit.isFailure(decodePayload({ description: 'bez dotazu', title: 'Dotaz' }))).toBe(true);
+  expect(
+    Exit.isFailure(decodePayload({ ...payload, storefrontInquiry: { ...inquiry, requestId: 'not-a-uuid' } })),
+  ).toBe(true);
 });
 
 it('refuses every command tag and every field a storefront must not set', () => {

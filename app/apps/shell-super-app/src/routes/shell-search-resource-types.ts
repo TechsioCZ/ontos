@@ -10,8 +10,8 @@ import type {
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { Result } from 'effect';
 
-import type { ShellSearchPresentationInventory, ShellSearchResult } from '../../shared/api.ts';
-import { shellSearchMatchedVariantHasQualifiedRef } from '../../shared/api.ts';
+import type { ShellSearchPresentationInventory, ShellSearchResult } from '../../shared/browser-api.ts';
+import { shellSearchMatchedVariantHasQualifiedRef } from '../../shared/browser-api.ts';
 import { searchHitState } from './search-hit-state.ts';
 
 /**

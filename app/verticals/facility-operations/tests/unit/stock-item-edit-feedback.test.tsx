@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The stock item edit says how its save ended, as it did before the shared Save: a saved item shows the "saved"
 // toast, and a refused save names the agenda's reason instead of the general failure text.
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
 import { PurchasingStateSchema, emptyPurchasingState } from '../../shared/domain/purchasing.ts';
@@ -107,7 +107,8 @@ describe('stock item edit', () => {
     Effect.gen(function* saved() {
       const sent: OpsCommand[] = [];
       yield* editName(answering(sent, { ok: true, result: { entityIds: [], revision: 4 } }));
-      expect(sent.map((command) => command._tag)).toEqual(['StockItemUpdate']);
+      expect(sent).toHaveLength(1);
+      expect(Predicate.isTagged(sent[0], 'StockItemUpdate')).toBe(true);
       expect(toasts).toEqual([{ title: 'facility-operations.common.saved', type: 'success' }]);
     }),
   );

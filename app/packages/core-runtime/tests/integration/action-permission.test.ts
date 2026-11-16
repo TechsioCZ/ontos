@@ -618,7 +618,8 @@ const testProgram2 = () =>
         outcomeStage: audits[0]?.outcomeStage,
       }).toEqual({
         eventType: 'action.rejected',
-        evidenceJson: { actionKey: actionKeys.missing },
+        // The refusal keeps its own reportable gate code, so a same-key retry answers the same way.
+        evidenceJson: { actionKey: actionKeys.missing, reasonCodes: ['deny.insufficient_grant'] },
         outcome: 'denied',
         outcomeCode: 'spicedb_permission_denied',
         outcomeStage: 'authz',
@@ -652,7 +653,7 @@ const testProgram3 = () =>
             ),
           );
 
-          expect(failure._tag, kind).toBe('ActionPermissionDenied');
+          expect(Schema.is(ActionPermissionDenied)(failure), kind).toBe(true);
           expect(executions.value, kind).toBe(0);
         }),
         { concurrency: 1, discard: true },

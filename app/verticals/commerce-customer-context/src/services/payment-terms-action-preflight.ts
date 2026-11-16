@@ -1,5 +1,5 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { ActionServiceFactory, ActionServicePreparationContext } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { Effect, Schema } from 'effect';
 import type { Result } from 'effect';
@@ -8,6 +8,7 @@ import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-t
 import { stableRevision } from '../stable-revision.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
 import type {
+  CustomerPaymentTermsScopedRoutineInvoker,
   PaymentTermCatalogPort,
   PaymentTermDefinitionRequest,
   PaymentTermsPersistenceContext,
@@ -42,7 +43,7 @@ export const preparePaymentTermsChangeCatalog = Effect.fn('PaymentTermsActionPre
   function* prepareCatalog<Failure>(
     context: ActionServicePreparationContext,
     load: (
-      transaction: ScopedTransactionExecutor,
+      transaction: CustomerPaymentTermsScopedRoutineInvoker,
       scope: PaymentTermsPersistenceContext['scope'],
     ) => Effect.Effect<CustomerPaymentTermsState, Failure>,
     requestsFor: (state: CustomerPaymentTermsState) => readonly PaymentTermDefinitionRequest[],
@@ -72,7 +73,7 @@ export const preparePaymentTermsChangeCatalog = Effect.fn('PaymentTermsActionPre
             Effect.result,
           );
     const preparedCatalog = bindPreparedPaymentTermCatalog(requests, result);
-    return (transaction: ScopedTransactionExecutor, currentScope: OperationalScope, revision: string) => {
+    const factory: ActionServiceFactory<PaymentTermCatalogPort> = (transaction, currentScope, revision) => {
       if (
         !Schema.toEquivalence(TrustedPrincipalContextSchema)(currentScope, scope) ||
         currentScope.trustedStorefrontId !== scope.trustedStorefrontId ||
@@ -113,5 +114,6 @@ export const preparePaymentTermsChangeCatalog = Effect.fn('PaymentTermsActionPre
         ),
       );
     };
+    return factory;
   },
 );

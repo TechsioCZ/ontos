@@ -63,6 +63,17 @@ import { ProcessingPurposesApi } from './shared/apis/processing-purposes.ts';
 import { RecordOwnerExecutionOutcomeActionApi } from './shared/apis/record-owner-execution-outcome-action.ts';
 import { ResponsibilityAssignmentsApi } from './shared/apis/responsibility-assignments.ts';
 import { RetentionRulesApi } from './shared/apis/retention-rules.ts';
+import { MeasureExecutionEligibilityApi } from './shared/apis/measure-execution-eligibility.ts';
+import { measureExecutionEligibilityRead } from './src/api/measure-execution-eligibility.read.ts';
+import { OrganizationBusinessApplicabilityApi } from './shared/apis/organization-business-applicability.ts';
+import { organizationBusinessApplicabilityRead } from './src/api/organization-business-applicability.read.ts';
+import { OrganizationIcoApplicabilityApi } from './shared/apis/organization-ico-applicability.ts';
+import { organizationIcoApplicabilityRead } from './src/api/organization-ico-applicability.read.ts';
+import { OrganizationProfileIcoApplicabilityApi } from './shared/apis/organization-profile-ico-applicability.ts';
+import { organizationProfileIcoApplicabilityRead } from './src/api/organization-profile-ico-applicability.read.ts';
+import { privacySubjectsRead } from './src/api/privacy-subjects.read.ts';
+import { SourceProcessingEligibilityApi } from './shared/apis/source-processing-eligibility.ts';
+import { sourceProcessingEligibilityRead } from './src/api/source-processing-eligibility.read.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 import { privacyMeasureDispatchWorker } from './src/workers/privacy-measure-dispatch.worker.ts';
@@ -73,6 +84,24 @@ type PublicComponentContributionInput = typeof ShellPublicComponentContributionS
 type PublicComponentContribution = typeof ShellPublicComponentContributionSchema.Type;
 const publicComponentContribution = (value: PublicComponentContributionInput): PublicComponentContribution =>
   Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
+const currentPersonCondition = 'privacy.core.condition.current-person-owner-proof';
+const currentPersonEvidence = 'privacy.core.evidence.current-canonical-person-proof';
+const sourceProcessingConsumer = 'privacy.core.api.source-processing-eligibility';
+const partyOwnerModule = 'party.registry';
+const sourcePersonProvider = 'party.registry.api.source-person-admission';
+const profileIcoCondition = 'privacy.core.condition.native-organization-profile-ico-facts';
+const profileIcoEvidence = 'privacy.core.evidence.current-organization-profile-ico-facts';
+const profileIcoProvider = 'commerce.customer-context.api.customer-profile-organization-ico-facts';
+const partyIcoProvider = 'party.registry.api.organization-ico-facts';
+const commerceOwnerModule = 'commerce.customer-context';
+const symmyOwnerModule = 'integration.symmy';
+const recordApplicabilityConsumer = 'privacy.core.record-privacy-applicability';
+const organizationBusinessConsumer = 'privacy.core.api.organization-business-applicability';
+const organizationBusinessCondition = 'privacy.core.condition.native-organization-business-facts';
+const organizationBusinessEvidence = 'privacy.core.evidence.current-organization-business-facts';
+const organizationBusinessPartyProvider = 'party.registry.api.organization-record-facts';
+const organizationBusinessSourceProvider = 'integration.symmy.api.symmy-source-organization-facts';
+
 export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Privacy business capability.',
@@ -130,8 +159,12 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'current-consent': CurrentConsentApi,
       'dsr-cases': DsrCasesApi,
       'legal-basis-assignments': LegalBasisAssignmentsApi,
+      'measure-execution-eligibility': MeasureExecutionEligibilityApi,
       'notice-presentation': NoticePresentationApi,
       'notice-versions': NoticeVersionsApi,
+      'organization-business-applicability': OrganizationBusinessApplicabilityApi,
+      'organization-ico-applicability': OrganizationIcoApplicabilityApi,
+      'organization-profile-ico-applicability': OrganizationProfileIcoApplicabilityApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'owner-inventory': OwnerInventoryApi,
       'privacy-subjects': PrivacySubjectsApi,
@@ -141,14 +174,40 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'record-owner-execution-outcome-action': RecordOwnerExecutionOutcomeActionApi,
       'responsibility-assignments': ResponsibilityAssignmentsApi,
       'retention-rules': RetentionRulesApi,
+      'source-processing-eligibility': SourceProcessingEligibilityApi,
       // </generated-module-manifest-apis>
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       {
+        apiKey: 'measure-execution-eligibility',
+        operationKey: 'measureExecutionEligibility.execute',
+        registration: measureExecutionEligibilityRead,
+      },
+      {
+        apiKey: 'organization-business-applicability',
+        operationKey: 'organizationBusinessApplicability.execute',
+        registration: organizationBusinessApplicabilityRead,
+      },
+      {
+        apiKey: 'organization-ico-applicability',
+        operationKey: 'organizationIcoApplicability.execute',
+        registration: organizationIcoApplicabilityRead,
+      },
+      {
+        apiKey: 'organization-profile-ico-applicability',
+        operationKey: 'organizationProfileIcoApplicability.execute',
+        registration: organizationProfileIcoApplicabilityRead,
+      },
+      {
         apiKey: 'record-owner-execution-outcome-action',
         operationKey: 'recordOwnerExecutionOutcomeAction.execute',
         registration: recordOwnerExecutionOutcomeAction,
+      },
+      {
+        apiKey: 'source-processing-eligibility',
+        operationKey: 'sourceProcessingEligibility.execute',
+        registration: sourceProcessingEligibilityRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],
@@ -194,7 +253,201 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],
-    operations: [],
+    operations: [
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: organizationBusinessConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.organization-business-party-facts',
+        provider: {
+          entrypointKey: organizationBusinessPartyProvider,
+          moduleId: partyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: recordApplicabilityConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.record-organization-business-party-facts',
+        provider: {
+          entrypointKey: organizationBusinessPartyProvider,
+          moduleId: partyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: organizationBusinessConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.organization-business-profile-facts',
+        provider: {
+          entrypointKey: profileIcoProvider,
+          moduleId: commerceOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: recordApplicabilityConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.record-organization-business-profile-facts',
+        provider: {
+          entrypointKey: profileIcoProvider,
+          moduleId: commerceOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: organizationBusinessConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.organization-business-source-facts',
+        provider: {
+          entrypointKey: organizationBusinessSourceProvider,
+          moduleId: symmyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: recordApplicabilityConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.record-organization-business-source-facts',
+        provider: {
+          entrypointKey: organizationBusinessSourceProvider,
+          moduleId: symmyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: profileIcoCondition,
+        entrypointKey: 'privacy.core.api.organization-profile-ico-applicability',
+        evidence: [profileIcoEvidence],
+        key: 'privacy.core.requirement.organization-profile-ico-owner-facts',
+        provider: {
+          entrypointKey: profileIcoProvider,
+          moduleId: commerceOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: profileIcoCondition,
+        entrypointKey: 'privacy.core.api.organization-profile-ico-applicability',
+        evidence: [profileIcoEvidence],
+        key: 'privacy.core.requirement.organization-profile-ico-party-facts',
+        provider: {
+          entrypointKey: partyIcoProvider,
+          moduleId: partyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: profileIcoCondition,
+        entrypointKey: recordApplicabilityConsumer,
+        evidence: [profileIcoEvidence],
+        key: 'privacy.core.requirement.record-organization-profile-ico-owner-facts',
+        provider: {
+          entrypointKey: profileIcoProvider,
+          moduleId: commerceOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: profileIcoCondition,
+        entrypointKey: recordApplicabilityConsumer,
+        evidence: [profileIcoEvidence],
+        key: 'privacy.core.requirement.record-organization-profile-ico-party-facts',
+        provider: {
+          entrypointKey: partyIcoProvider,
+          moduleId: partyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: 'privacy.core.condition.symmy-owner-execution-outcome',
+        entrypointKey: 'privacy.core.record-owner-execution-outcome',
+        evidence: ['privacy.core.evidence.current-symmy-owner-execution-outcome'],
+        key: 'privacy.core.requirement.symmy-owner-execution-outcome',
+        provider: {
+          entrypointKey: 'integration.symmy.api.symmy-job-privacy-execution',
+          moduleId: symmyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: 'privacy.core.condition.native-organization-ico-facts',
+        entrypointKey: 'privacy.core.api.organization-ico-applicability',
+        evidence: ['privacy.core.evidence.current-organization-ico-facts'],
+        key: 'privacy.core.requirement.organization-ico-owner-facts',
+        provider: {
+          entrypointKey: partyIcoProvider,
+          moduleId: partyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: 'privacy.core.condition.native-organization-ico-facts',
+        entrypointKey: recordApplicabilityConsumer,
+        evidence: ['privacy.core.evidence.current-organization-ico-facts'],
+        key: 'privacy.core.requirement.record-organization-ico-owner-facts',
+        provider: {
+          entrypointKey: partyIcoProvider,
+          moduleId: partyOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+
+      {
+        condition: currentPersonCondition,
+        entrypointKey: 'privacy.core.create-privacy-subject',
+        evidence: [currentPersonEvidence],
+        key: 'privacy.core.requirement.create-subject-party-detail',
+        provider: { entrypointKey: 'party.registry.api.party-detail', moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: currentPersonCondition,
+        entrypointKey: 'privacy.core.create-privacy-subject',
+        evidence: [currentPersonEvidence],
+        key: 'privacy.core.requirement.create-subject-source-person',
+        provider: { entrypointKey: sourcePersonProvider, moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: currentPersonCondition,
+        entrypointKey: 'privacy.core.api.privacy-subjects',
+        evidence: [currentPersonEvidence],
+        key: 'privacy.core.requirement.read-subject-party-detail',
+        provider: { entrypointKey: 'party.registry.api.party-detail', moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: currentPersonCondition,
+        entrypointKey: 'privacy.core.api.privacy-subjects',
+        evidence: [currentPersonEvidence],
+        key: 'privacy.core.requirement.read-subject-source-person',
+        provider: { entrypointKey: sourcePersonProvider, moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: currentPersonCondition,
+        entrypointKey: sourceProcessingConsumer,
+        evidence: [currentPersonEvidence],
+        key: 'privacy.core.requirement.source-processing-source-person',
+        provider: { entrypointKey: sourcePersonProvider, moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: sourceProcessingConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.customer-intake-organization-party',
+        provider: { entrypointKey: organizationBusinessPartyProvider, moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: sourceProcessingConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.customer-intake-organization-profile',
+        provider: { entrypointKey: profileIcoProvider, moduleId: commerceOwnerModule, schemaVersion: '1' },
+      },
+    ],
     schemaVersion: '1',
   },
 };
@@ -209,6 +462,12 @@ export const privacyRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
   ],
   reads: [
     // <generated-module-registration-reads>
+    measureExecutionEligibilityRead,
+    organizationBusinessApplicabilityRead,
+    organizationIcoApplicabilityRead,
+    organizationProfileIcoApplicabilityRead,
+    privacySubjectsRead,
+    sourceProcessingEligibilityRead,
     // </generated-module-registration-reads>
   ],
 };

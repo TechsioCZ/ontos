@@ -3,6 +3,7 @@ import { comboboxTranslations } from '@app/admin-ui';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Combobox, FormInput } from '@app/admin-ui/form-controls';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { OccupancyDraft } from './editor-state.ts';
@@ -55,7 +56,10 @@ export const ChoiceSelect = ({
   );
 };
 
-/** The tenant picker of a new lease; the customers load after the form opens. */
+/**
+ * The tenant picker of a new lease; the customers load after the form opens. A missing tenant is created in Party
+ * Registry's own customer register, and the list shows it the next time the form opens.
+ */
 export interface CustomerPicker {
   readonly empty: boolean;
   readonly items: readonly Choice[];
@@ -73,10 +77,10 @@ export const CustomerField = ({
   readonly draft: OccupancyDraft;
   readonly onChange: Change;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const handleOpenChange = customers.onOpenChange;
   return (
-    <div onFocus={() => handleOpenChange(true)}>
+    <div className="propertyleasing:space-y-2" onFocus={() => handleOpenChange(true)}>
       <Combobox
         clearable
         footer={customers.empty ? t('property-leasing.demo.customersEmpty') : undefined}
@@ -93,6 +97,9 @@ export const CustomerField = ({
         translations={comboboxTranslations}
         value={draft.customerId.length > 0 ? [draft.customerId] : []}
       />
+      <LinkButton href={`/${language}/prodej/zakaznici`} size="sm" theme="borderless" variant="secondary">
+        {t('property-leasing.demo.newCustomerInRegistry')}
+      </LinkButton>
     </div>
   );
 };

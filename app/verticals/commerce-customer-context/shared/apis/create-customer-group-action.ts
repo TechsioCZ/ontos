@@ -3,11 +3,14 @@
 // @ontos-action-http-slug create-customer-group
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateCustomerGroupPayloadSchema, CreateCustomerGroupResultSchema } from '../actions/create-customer-group.ts';
 
 export { CreateCustomerGroupPayloadSchema } from '../actions/create-customer-group.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 export const CreateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateCustomerGroupActionInvalidProblem',
   400,
@@ -28,6 +31,7 @@ export const CreateCustomerGroupActionForbiddenProblemSchema = makeProblemDetail
       'operation_context_invalid',
       'customer_group_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const CreateCustomerGroupActionNotFoundProblemSchema = makeProblemDetailsSchema(
@@ -43,6 +47,8 @@ export const CreateCustomerGroupActionConflictProblemSchema = makeProblemDetails
       'action_request_hash_conflict',
       'action_invocation_state_invalid',
       'customer_group_business_code_conflict',
+      'customer_group_source_conflict',
+      'customer_group_source_stale',
       'customer_group_semantic_duplicate',
     ]),
   },
@@ -50,7 +56,7 @@ export const CreateCustomerGroupActionConflictProblemSchema = makeProblemDetails
 export const CreateCustomerGroupActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'CreateCustomerGroupActionIneligibleProblem',
   422,
-  { code: Schema.Literal('action_policy_denied') },
+  { code: Schema.Literals(['action_policy_denied', 'customer_group_source_authority_denied']) },
 );
 export const CreateCustomerGroupActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'CreateCustomerGroupActionPreconditionProblem',

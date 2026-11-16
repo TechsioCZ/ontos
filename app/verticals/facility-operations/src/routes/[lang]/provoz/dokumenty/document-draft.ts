@@ -1,5 +1,6 @@
 // The documents form's values: a new or amended document is submitted once, an edit is sent on Uložit.
 import { Option } from 'effect';
+import type { Types } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { documentLinks } from '../../../../../shared/domain/documents.ts';
 import type {
@@ -64,7 +65,7 @@ export const contractOf = (draft: ContractDraft): ContractTerms | undefined => {
   if (draft.contractType.trim() === '' || draft.owner.trim() === '' || parties.length === 0) {
     return undefined;
   }
-  const terms: { -readonly [Key in keyof ContractTerms]: ContractTerms[Key] } = {
+  const terms: Types.Mutable<ContractTerms> = {
     contractType: draft.contractType.trim(),
     owner: draft.owner.trim(),
     parties,
@@ -169,7 +170,7 @@ export const documentUpdateCommandOf = (
   if (problems.title || problems.contract) {
     return Option.none();
   }
-  const command: { -readonly [Key in keyof DocumentUpdateCommand]: DocumentUpdateCommand[Key] } = {
+  const command: Types.Mutable<DocumentUpdateCommand> = {
     _tag: 'DocumentUpdate',
     category: draft.category,
     documentId,

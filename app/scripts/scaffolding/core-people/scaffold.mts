@@ -7,7 +7,14 @@ import {
   updateMutation,
   toCamelCase,
 } from '../shared.mts';
-import type { GovernedContributionScaffoldConfig, OutboxWorkerScaffoldConfig } from '../shared.mts';
+import type {
+  GovernedContributionScaffoldConfig,
+  Mutation,
+  OutboxWorkerScaffoldConfig,
+  OutboxWorkerScaffoldResult,
+  ScaffoldFailure,
+  ScaffoldPlan,
+} from '../shared.mts';
 
 const root = (workspace: string, ...paths: string[]) =>
   resolveContainedPath(workspace, 'packages', 'core-runtime', 'src', ...paths);
@@ -109,7 +116,7 @@ const topics = {
 export const planCorePeopleSearchWorker = Effect.fn('CorePeopleScaffold.worker')(function* worker(
   workspace: string,
   config: OutboxWorkerScaffoldConfig,
-) {
+): Effect.fn.Return<ScaffoldPlan<OutboxWorkerScaffoldResult>, ScaffoldFailure, FileSystem.FileSystem> {
   const approvedTopic = Object.entries(topics).find(([workerName]) => workerName === config.worker)?.[1];
   if (
     config.vertical !== 'core' ||
@@ -150,7 +157,7 @@ export const worker = defineOutboxWorker({
   );
   const registryPath = root(workspace, 'people', 'people-search-workers.ts');
   const subscriptionPath = root(workspace, 'people', 'people-search-subscriptions.ts');
-  const plans = [mutation];
+  const plans: Mutation[] = [mutation];
   for (const [path, prefix, entry] of [
     [
       registryPath,
@@ -170,13 +177,20 @@ export const worker = defineOutboxWorker({
 });\n`,
     ],
   ] as const) {
-    const exists = yield* fileSystem.exists(path);
-    const previous = exists ? yield* fileSystem.readFileString(path) : prefix;
+    const exists = yield* fileSystem
+      .exists(path)
+      .pipe(Effect.mapError((cause) => scaffoldFailure(`Core people worker cannot inspect ${path}`, cause)));
+    const previous = exists
+      ? yield* fileSystem
+          .readFileString(path)
+          .pipe(Effect.mapError((cause) => scaffoldFailure(`Core people worker cannot read ${path}`, cause)))
+      : prefix;
     const next = `${previous}${entry}`;
     const planned = exists ? updateMutation(path, previous, next) : yield* createMutationEffect(path, next);
     if (planned !== undefined) {
       plans.push(planned);
     }
   }
-  return { mutations: plans, result: { registryPath, workerPath } };
+  const plan: ScaffoldPlan<OutboxWorkerScaffoldResult> = { mutations: plans, result: { registryPath, workerPath } };
+  return plan;
 });

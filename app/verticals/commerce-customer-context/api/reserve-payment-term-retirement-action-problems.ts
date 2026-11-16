@@ -82,10 +82,12 @@ export const reservePaymentTermRetirementActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReservePaymentTermRetirementActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReservePaymentTermRetirementActionForbiddenProblem'> =>
     ReservePaymentTermRetirementActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -206,7 +208,8 @@ const mapCoreProblem = (error: ActionCoreError): ReservePaymentTermRetirementAct
       ActionInvocationStateError: (failure) => reservePaymentTermRetirementActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reservePaymentTermRetirementActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reservePaymentTermRetirementActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reservePaymentTermRetirementActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reservePaymentTermRetirementActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reservePaymentTermRetirementActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reservePaymentTermRetirementActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reservePaymentTermRetirementActionProblem.conflict(failure.code),

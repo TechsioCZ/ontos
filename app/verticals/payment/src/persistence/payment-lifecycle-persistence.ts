@@ -1,10 +1,10 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, exists, inArray, ne, or } from 'drizzle-orm';
 import { Effect, Option } from 'effect';
 
 import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
-import { payments } from '../database/schema.ts';
+import { observations, paymentOperations, payments } from '../database/schema.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
 import type { PaymentApplicabilityPersistence } from './payment-applicability-persistence.ts';
 import type { PaymentRefundPersistence } from './payment-refund-persistence.ts';
@@ -20,6 +20,11 @@ export interface PaymentLifecyclePersistence {
   readonly findPurchaseCorrelationId: (paymentId: string) => Effect.Effect<Option.Option<string>, PaymentUnavailable>;
   /** The successor intent that replaced this Payment, if any (oldest first; at most one is admitted). */
   readonly findSuccessorPaymentId: (paymentId: string) => Effect.Effect<Option.Option<string>, PaymentUnavailable>;
+  /** Candidates for a read of funds inconsistency; only the shared funds calculator can establish the hold. */
+  readonly listFundsConsistencyCandidateIds: (
+    paymentId: string | undefined,
+    limit: number,
+  ) => Effect.Effect<readonly string[], PaymentUnavailable>;
   /**
    * Every Payment of one purchase correlation, row-locked in Payment id order. Creating an intent and
    * starting a COLLECT both take these locks first, so competing intents of one purchase serialize.
@@ -108,6 +113,55 @@ export const paymentLifecyclePersistenceForTransaction = (
     },
   );
 
+  const listFundsConsistencyCandidateIds = Effect.fn('PaymentLifecyclePersistence.listFundsConsistencyCandidateIds')(
+    function* listFundsConsistencyCandidateIds(paymentId: string | undefined, limit: number) {
+      const scope = yield* ownerScope;
+      // A standing return or a correction can invalidate the funds balance even without open rows.
+      const standingRefund = exists(
+        transaction
+          .select({ operationId: paymentOperations.operationId })
+          .from(paymentOperations)
+          .where(
+            and(
+              eq(paymentOperations.tenantId, scope.tenantId),
+              eq(paymentOperations.legalEntityId, scope.legalEntityId),
+              eq(paymentOperations.paymentId, payments.paymentId),
+              eq(paymentOperations.kind, 'REFUND'),
+              ne(paymentOperations.outcome, 'NOT_EFFECTED_CONFIRMED'),
+            ),
+          ),
+      );
+      const returnOrCorrection = exists(
+        transaction
+          .select({ observationId: observations.observationId })
+          .from(observations)
+          .where(
+            and(
+              eq(observations.tenantId, scope.tenantId),
+              eq(observations.legalEntityId, scope.legalEntityId),
+              eq(observations.paymentId, payments.paymentId),
+              inArray(observations.factKind, ['REFUND_CONFIRMED', 'SOURCE_CORRECTION']),
+            ),
+          ),
+      );
+      const rows = yield* transaction
+        .select({ paymentId: payments.paymentId })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.tenantId, scope.tenantId),
+            eq(payments.legalEntityId, scope.legalEntityId),
+            paymentId === undefined ? undefined : eq(payments.paymentId, paymentId),
+            or(standingRefund, returnOrCorrection),
+          ),
+        )
+        .orderBy(asc(payments.paymentId))
+        .limit(limit)
+        .pipe(Effect.mapError(readFailure));
+      return rows.map((row) => row.paymentId);
+    },
+  );
+
   const lockPurchasePaymentIds = Effect.fn('PaymentLifecyclePersistence.lockPurchasePaymentIds')(
     function* lockPurchasePaymentIds(purchaseCorrelationId: string) {
       const scope = yield* ownerScope;
@@ -132,6 +186,7 @@ export const paymentLifecyclePersistenceForTransaction = (
     findPaymentIdByIntentKey,
     findPurchaseCorrelationId,
     findSuccessorPaymentId,
+    listFundsConsistencyCandidateIds,
     lockPurchasePaymentIds,
   });
 };

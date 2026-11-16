@@ -36,7 +36,7 @@ import {
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
@@ -53,6 +53,7 @@ import {
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { AgreementsReferenceValidatorsLive } from '../src/services/persistence.service.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { contractsReadApiLive } from './contracts-search-server.ts';
 import { documentsReadApiLive } from './documents-search-server.ts';
@@ -70,7 +71,7 @@ const governedCompositionHttpClientLive = GovernedFetchHttpClient.layer.pipe(
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(governedCompositionHttpClientLive),
 );
-const governedActiveApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 
@@ -114,7 +115,7 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
       governedModuleStateGateLive,
       ActionRepositoryLive,
       ActionPermissionLive,
-      ActiveApplicationCompositionConfigLive,
+      GovernedApplicationCompositionConfigLive,
     ),
   ),
 );
@@ -130,7 +131,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(
       governedModuleStateGateLive,
       ActionRepositoryLive,
       ActionPermissionLive,
-      ActiveApplicationCompositionConfigLive,
+      GovernedApplicationCompositionConfigLive,
     ),
   ),
 );
@@ -161,6 +162,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
+  // apply-command builds its party, unit and property reference validators per request from that request's scope.
+  GovernedReadLayer.provide(AgreementsReferenceValidatorsLive),
   GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive),
   GovernedReadLayer.provide(GatewayAssertionPgClientLive),
   GovernedReadLayer.provide(Reactivity.layer),

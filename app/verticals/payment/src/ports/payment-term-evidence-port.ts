@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
@@ -6,6 +7,7 @@ import { Context, Effect, Schema } from 'effect';
 import { PaymentPurchasingContextSchema } from '../../shared/domain/applicability-purchasing-context.ts';
 import { PaymentEvidenceRefSchema } from '../../shared/domain/payment-identifiers.ts';
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import { ownerEvidenceUnavailable } from './owner-evidence-unavailable.ts';
 import type { PaymentOwnerEvidenceUnavailable, PaymentOwnerScope } from './owner-evidence-unavailable.ts';
 
@@ -47,10 +49,19 @@ export const PaymentTermPurchaseSchema = Schema.TaggedStruct('PURCHASING_CONTEXT
 });
 export type PaymentTermPurchase = typeof PaymentTermPurchaseSchema.Type;
 
+/** The registered operation requesting Current term evidence for a specific purchase. */
+export interface PaymentTermOwnerCall {
+  readonly consumer: 'APPLICABILITY' | 'CREATE' | 'ISSUE' | 'VALIDATE';
+  readonly operationScope: OperationalScope;
+  readonly payableAmount: PaymentMonetaryAmount;
+  readonly purchaseCorrelationId?: string | undefined;
+}
+
 export interface PaymentTermEvidenceService {
   readonly verifyTermUse: (input: {
     readonly customerConfigurationId: string;
     readonly method: PaymentMethod;
+    readonly ownerCall?: PaymentTermOwnerCall;
     readonly paymentTermRef: PaymentTermRef;
     readonly purchase: PaymentTermPurchase;
     readonly scope: PaymentOwnerScope;

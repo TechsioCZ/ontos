@@ -11,7 +11,7 @@ import type { Cause } from 'effect';
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { useEffect, useRef, useState } from 'react';
 
-import { SignInPayloadSchema } from '../../../../shared/api.ts';
+import { SignInPayloadSchema } from '../../../../shared/browser-api.ts';
 import { submitCredentialForm } from '../../../credential-form.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';

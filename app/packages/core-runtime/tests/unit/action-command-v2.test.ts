@@ -7,7 +7,7 @@ import {
   actionCommandQuestionsV2,
   decodeActionCommandV2,
   freezeActionCommandV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
   rebindActionCommandV2,
   rebindRegisteredActionCommandV2,
 } from '../../src/access/approvals/action-command-v2.ts';
@@ -38,7 +38,7 @@ it.effect(
       if (registration === undefined) {
         expect.unreachable('The actual owner retains its registered Action');
       }
-      const command = yield* makeActionCommandV2({ payload, registration: action, scope });
+      const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
       yield* rebindRegisteredActionCommandV2({ command, registration, scope });
       expect(getRegisteredActionCommandReader(registration)?.descriptor).toBe(action.descriptor);
       const copy = { ...registration };
@@ -69,7 +69,11 @@ it.effect('uses the genuine schema encoder and decoder for transformed payloads 
       },
       () => Effect.die('Command rebinding must never run the owner handler'),
     );
-    const command = yield* makeActionCommandV2({ payload: { ids: [first, second], salary: 25 }, registration, scope });
+    const command = yield* resolveActionCommandV2({
+      payload: { ids: [first, second], salary: 25 },
+      registration,
+      scope,
+    });
     expect(command.payload).toEqual({ ids: [first, second], salary: '25' });
     expect(command.fieldGroups.map(({ key }) => key)).toEqual([`${ownerKey}.record.write-salary`]);
     yield* rebindRegisteredActionCommandV2({ command, registration, scope });
@@ -121,7 +125,7 @@ it.effect(
   'binds the original payload, complete canonical target set and independent registered Read into one digest',
   () =>
     Effect.gen(function* frozenCompleteCommand() {
-      const command = yield* makeActionCommandV2({ payload, registration: action, scope });
+      const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
       expect(command.format).toBe('core.action/2');
       expect(command.payload).toEqual(payload);
       expect(command.targets.map(({ recordKey }) => recordKey)).toEqual([first, second]);
@@ -134,7 +138,11 @@ it.effect(
       const roundtrip = yield* Schema.decodeEffect(codec)(encoded);
       expect(freezeActionCommandV2(roundtrip)).toEqual(original);
       expect(Result.isSuccess(original)).toBe(true);
-      const changed = yield* makeActionCommandV2({ payload: { ...payload, salary: 26 }, registration: action, scope });
+      const changed = yield* resolveActionCommandV2({
+        payload: { ...payload, salary: 26 },
+        registration: action,
+        scope,
+      });
       expect(freezeActionCommandV2(changed)).not.toEqual(original);
       expect(yield* rebindActionCommandV2(action, command, scope)).toEqual(payload);
     }),
@@ -142,7 +150,7 @@ it.effect(
 
 it.effect('requester proofs ask PROPOSE for every changed field and its Action parent on every target', () =>
   Effect.gen(function* allRequesterQuestions() {
-    const command = yield* makeActionCommandV2({ payload, registration: action, scope });
+    const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
     const questions = actionCommandQuestionsV2(command).filter((question) => question.role === 'write');
     expect(questions).toHaveLength(4);
     const gate = canonicalGate({ cells: writeCells('propose') });
@@ -158,7 +166,7 @@ it.effect(
   'approver proofs need Action/field APPROVE and independent record/field-read RUN with no Action RUN grant',
   () =>
     Effect.gen(function* allApproverQuestions() {
-      const command = yield* makeActionCommandV2({ payload, registration: action, scope });
+      const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
       const questions = actionCommandQuestionsV2(command);
       expect(questions).toHaveLength(8);
       expect(new Set(questions.map(({ questionHash }) => questionHash)).size).toBe(8);
@@ -175,7 +183,7 @@ it.effect(
 for (const missing of ['middle-read', 'read-field', 'write-field', 'approve-parent'] as const) {
   it.effect(`does not substitute write APPROVE for missing ${missing} authority`, () =>
     Effect.gen(function* independentAuthorityRefusal() {
-      const command = yield* makeActionCommandV2({ payload, registration: action, scope });
+      const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
       let cells = [...writeCells('approve'), ...readCells];
       if (missing === 'middle-read') {
         cells = [
@@ -211,7 +219,7 @@ for (const missing of ['middle-read', 'read-field', 'write-field', 'approve-pare
 
 it.effect('retains every read-field restriction even when this command changes no protected write field', () =>
   Effect.gen(function* independentReadRestrictions() {
-    const command = yield* makeActionCommandV2({ payload: { ids: payload.ids }, registration: action, scope });
+    const command = yield* resolveActionCommandV2({ payload: { ids: payload.ids }, registration: action, scope });
     expect(command.fieldGroups).toEqual([]);
     expect(command.governingRead?.fieldGroups).toHaveLength(1);
     expect(actionCommandQuestionsV2(command)).toHaveLength(6);
@@ -220,7 +228,7 @@ it.effect('retains every read-field restriction even when this command changes n
 
 it.effect('has no scalar parser fallback and refuses incomplete, foreign or modified target facts', () =>
   Effect.gen(function* invalidForwardCommands() {
-    const command = yield* makeActionCommandV2({ payload, registration: action, scope });
+    const command = yield* resolveActionCommandV2({ payload, registration: action, scope });
     const { governingRead: _governingRead, ...withoutRead } = command;
     for (const invalid of [
       payload,

@@ -1,28 +1,45 @@
 import { describe, expect, it } from 'effect-rstest';
+import type { VatChoices } from '../../shared/apis/vat-choices.ts';
 import {
   addCalendarDays,
   czkToMinor,
-  draftTotals,
+  draftTotals as draftTotalsOn,
   isPlausibleIssueDate,
-  lineIssue,
+  lineIssue as lineIssueOn,
   lineValueIssue,
-  newDraftLine,
-  toInvoiceLine,
-  VAT_RATE_CHOICES,
+  newDraftLine as newDraftLineWith,
+  toInvoiceLine as toInvoiceLineOn,
   withProductSnapshot,
 } from '../../shared/domain/invoice-draft.ts';
+import type { DraftLine, DraftLineKind } from '../../shared/domain/invoice-draft.ts';
+import { baselineVatChoices, standardLineVat, testTaxRuleRevisionRef } from '../support/finance-tax-rates.ts';
+
+const TENANT = '00000000-0000-4000-8000-0000000000aa';
+const baseline = baselineVatChoices(TENANT, '2026-10-05');
+const standard = standardLineVat(TENANT);
+// The form's standard-rate line, priced from the company's baseline Tax rates on the issue date.
+const newDraftLine = (key: string, kind: DraftLineKind) =>
+  newDraftLineWith(key, kind, { code: 'cz.vat.standard', kind: 'classification' });
+const toInvoiceLine = (line: DraftLine) => toInvoiceLineOn(line, baseline);
+const lineIssue = (line: DraftLine) => lineIssueOn(line, baseline, 'OUTGOING');
+const draftTotals = (lines: readonly DraftLine[]) => draftTotalsOn(lines, baseline, 'OUTGOING');
 
 describe('Invoice create form lines', () => {
-  it('snapshots the product name, price and VAT rate when the product is picked', () => {
-    const product = { currentPriceMinor: 129_000, id: 'p-1', name: 'Konzultace', vatRate: 21 as const };
+  it('snapshots the product name, price and VAT classification when the product is picked', () => {
+    const product = {
+      currentPriceMinor: 129_000,
+      id: 'p-1',
+      name: 'Konzultace',
+      taxClassificationCode: 'cz.vat.standard' as const,
+    };
     const line = withProductSnapshot({ ...newDraftLine('line-1', 'product'), quantity: 2 }, product);
 
     expect(toInvoiceLine(line)).toEqual({
+      ...standard,
       description: 'Konzultace',
       productId: 'p-1',
       quantity: 2,
       unitPriceMinor: 129_000,
-      vatRate: 21,
     });
     expect(lineIssue(newDraftLine('line-2', 'product'))).toBe('product');
   });
@@ -40,7 +57,7 @@ describe('Invoice create form lines', () => {
         currentPriceMinor: 129_000,
         id: 'p-1',
         name: 'Konzultace',
-        vatRate: 21,
+        taxClassificationCode: 'cz.vat.standard',
       },
     );
 
@@ -51,10 +68,10 @@ describe('Invoice create form lines', () => {
     expect(lineIssue({ ...free, quantity: 999_999_999 })).toBe('quantity');
     expect(lineIssue({ ...free, unitPriceMinor: -1 })).toBe('price');
     expect(toInvoiceLine(free)).toEqual({
+      ...standard,
       description: 'Školení',
       quantity: 1,
       unitPriceMinor: 100_050,
-      vatRate: 21,
     });
     // Product 258 000 at 21 % → VAT 54 180; free 100 050 at 21 % → VAT 21 011; the incomplete line is skipped.
     expect(draftTotals([product, free, incomplete])).toEqual({
@@ -64,12 +81,12 @@ describe('Invoice create form lines', () => {
     });
   });
 
-  it('creates a descriptive rent line without a catalog identity and retains the chosen VAT rate', () => {
-    const rent = {
+  it('creates a descriptive rent line without a catalog identity and keeps an exempt supply at 0 %', () => {
+    const rent: DraftLine = {
       ...newDraftLine('rent-line', 'free'),
       description: '  Nájem budovy Parková, jednotka A101, říjen 2026  ',
       unitPriceMinor: 1_800_000,
-      vatRate: 0 as const,
+      vat: { kind: 'treatment', treatment: 'EXEMPT' },
     };
 
     expect(lineIssue(rent)).toBeUndefined();
@@ -78,9 +95,10 @@ describe('Invoice create form lines', () => {
       quantity: 1,
       unitPriceMinor: 1_800_000,
       vatRate: 0,
+      vatTreatment: 'EXEMPT',
     });
     expect(draftTotals([rent])).toEqual({ subtotalMinor: 1_800_000, totalMinor: 1_800_000, vatMinor: 0 });
-    expect(draftTotals([{ ...rent, vatRate: 21 }])).toEqual({
+    expect(draftTotals([{ ...rent, vat: { code: 'cz.vat.standard', kind: 'classification' } }])).toEqual({
       subtotalMinor: 1_800_000,
       totalMinor: 2_178_000,
       vatMinor: 378_000,
@@ -151,7 +169,60 @@ describe('Invoice create form lines', () => {
     expect(isPlausibleIssueDate('')).toBe(false);
   });
 
-  it('no longer offers the 10 % VAT rate, obsolete since 1. 1. 2024', () => {
-    expect(VAT_RATE_CHOICES).toEqual([0, 12, 21]);
+  it('takes the classification rate and revision from Tax and holds the line back while Tax has no rate', () => {
+    const reduced: DraftLine = {
+      ...newDraftLine('line-13', 'free'),
+      description: 'Ubytování',
+      unitPriceMinor: 100_000,
+      vat: { code: 'cz.vat.reduced', kind: 'classification' },
+    };
+    expect(toInvoiceLine(reduced)).toMatchObject({
+      taxRuleRevisionRef: testTaxRuleRevisionRef(TENANT, 'cz.vat.reduced'),
+      vatClassification: 'cz.vat.reduced',
+      vatRate: 12,
+    });
+    // A revision Tax scheduled for the issue date wins over the baseline.
+    const raised: VatChoices = {
+      ...baseline,
+      rates: baseline.rates.map((rate) => (rate.code === 'cz.vat.reduced' ? { ...rate, ratePercent: 15 } : rate)),
+    };
+    expect(toInvoiceLineOn(reduced, raised)?.vatRate).toBe(15);
+    expect(toInvoiceLineOn(reduced, { ...baseline, rates: [] })).toBeUndefined();
+    expect(lineIssueOn(reduced, undefined, 'OUTGOING')).toBe('vat');
+    expect(lineIssueOn(reduced, { ...baseline, rates: [] }, 'OUTGOING')).toBe('vat');
+  });
+
+  it('lets a company that is not a VAT payer issue only non-payer lines, and its suppliers anything', () => {
+    const nonPayer: VatChoices = { ...baseline, regime: 'NON_PAYER' };
+    const classified: DraftLine = { ...newDraftLine('line-14', 'free'), description: 'Služba', unitPriceMinor: 100 };
+    const withoutVat: DraftLine = { ...classified, vat: { kind: 'treatment', treatment: 'NON_PAYER' } };
+    expect(lineIssueOn(classified, nonPayer, 'OUTGOING')).toBe('vat');
+    expect(lineIssueOn(withoutVat, nonPayer, 'OUTGOING')).toBeUndefined();
+    expect(lineIssueOn(withoutVat, baseline, 'OUTGOING')).toBe('vat');
+    expect(lineIssueOn(withoutVat, baseline, 'INCOMING')).toBeUndefined();
+    expect(lineIssueOn(classified, nonPayer, 'INCOMING')).toBeUndefined();
+  });
+
+  it('takes the product classification, whose rate Tax gives at the issue date', () => {
+    // BOOK-IT was entered at 10 %; Merchandise classifies it reduced, so the invoice line takes Tax's reduced rate.
+    const reduced = withProductSnapshot(newDraftLine('line-15', 'product'), {
+      currentPriceMinor: 49_000,
+      id: 'book-it',
+      name: 'Příručka IT bezpečnosti',
+      taxClassificationCode: 'cz.vat.reduced',
+    });
+    expect(reduced.vat).toEqual({ code: 'cz.vat.reduced', kind: 'classification' });
+    expect(toInvoiceLine(reduced)).toMatchObject({
+      unitPriceMinor: 49_000,
+      vatClassification: 'cz.vat.reduced',
+      vatRate: 12,
+    });
+    // A product without a classification (never on a staff read) keeps the VAT the line already had.
+    const unclassified = withProductSnapshot(newDraftLine('line-16', 'product'), {
+      currentPriceMinor: 10_000,
+      id: 'p-3',
+      name: 'Kniha',
+    });
+    expect(unclassified.vat).toEqual({ code: 'cz.vat.standard', kind: 'classification' });
   });
 });

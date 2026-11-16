@@ -53,9 +53,21 @@ const rpcFailure = (cause: unknown): SpiceDbRpcError =>
       Predicate.hasProperty(cause, 'code') && Predicate.isNumber(cause.code) ? Option.some(cause.code) : Option.none(),
   });
 
+/**
+ * The client options that give every call a gRPC deadline of `timeoutMilliseconds`. The deadline travels with the
+ * call (`grpc-timeout`), so SpiceDB cancels the request server-side when it passes, and the client cancels the stream:
+ * a timed-out call is ended, not merely abandoned while the engine keeps it. This interceptor runs before
+ * authzed-node's own 60-second default, which only applies to a call that has no deadline yet.
+ */
+export const spiceDbGrpcCallOptions = (
+  timeoutMilliseconds: number,
+): NonNullable<Parameters<typeof v1.NewClientWithCustomCert>[4]> => ({
+  interceptors: [deadlineInterceptor(timeoutMilliseconds)],
+});
+
 /** SpiceDB over gRPC through the official authzed-node client (HTTP/2, Node only). */
 export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number): SpiceDbRpc => {
-  const client = newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(timeoutMilliseconds)] });
+  const client = newSpiceDbGrpcClient(configuration, spiceDbGrpcCallOptions(timeoutMilliseconds));
   const deadline = spiceDbDeadline(timeoutMilliseconds);
   const { promises } = client;
   return {

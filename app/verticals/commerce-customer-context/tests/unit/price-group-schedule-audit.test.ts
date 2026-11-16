@@ -81,7 +81,12 @@ const permissions = {
 
 it.effect('retains the finite request rather than a truncated replay row, and does not duplicate a committed key', () =>
   Effect.gen(function* retainOriginalRequest() {
+    const captured: string[] = [];
     const services = {
+      captureAssignmentReceipt: (invocationId: string) =>
+        Effect.sync(() => {
+          captured.push(invocationId);
+        }),
       catalog: {
         resolveCurrent: () => Effect.succeed({ _tag: 'USABLE' as const, compatibility, priceGroupRef: group }),
       },
@@ -100,6 +105,7 @@ it.effect('retains the finite request rather than a truncated replay row, and do
             replacedAssignmentRef: ref('predecessor'),
           }),
       },
+      validateAssignmentSource: () => Effect.void,
     };
     const harness = yield* makeActionTestHarness({
       ownerRegistration: commerceCustomerContextRegistration,
@@ -137,6 +143,7 @@ it.effect('retains the finite request rather than a truncated replay row, and do
     const replay = yield* Effect.flip(harness.runtime.runAction(request));
     expect(Schema.is(ActionAlreadyCommitted)(replay)).toBe(true);
     expect(harness.snapshot().committed).toHaveLength(1);
+    expect(captured).toHaveLength(1);
   }).pipe(Effect.provide(nodeCryptoLayer)),
 );
 
@@ -144,6 +151,7 @@ it.effect('collects worst escaped identifiers and open schedules below the actua
   Effect.gen(function* collectWorstValidIntent() {
     const id = '\u0000'.repeat(300);
     const services = {
+      captureAssignmentReceipt: () => Effect.void,
       catalog: {
         resolveCurrent: () => Effect.succeed({ _tag: 'USABLE' as const, compatibility, priceGroupRef: group }),
       },
@@ -162,6 +170,7 @@ it.effect('collects worst escaped identifiers and open schedules below the actua
             replacedAssignmentRef: ref(id),
           }),
       },
+      validateAssignmentSource: () => Effect.void,
     };
     const harness = yield* makeActionTestHarness({
       ownerRegistration: commerceCustomerContextRegistration,

@@ -14,6 +14,7 @@ import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable
 import { UNRESOLVED_PAYMENT_OPERATION_OUTCOMES } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import type {
+  PaymentCorrectionEffectKind,
   PaymentMethod,
   PaymentObservationAcceptanceOutcome,
   PaymentObservationFactKind,
@@ -43,7 +44,11 @@ import {
   recoveryRequests,
   sourceAuthorities,
 } from '../database/schema.ts';
-import { fullyDisprovenTargets } from './payment-full-disproof.ts';
+import {
+  disproofCorrectionColumns,
+  fullyDisprovenTargets,
+  selectFullyDisprovenTargets,
+} from './payment-full-disproof.ts';
 import type { DisproofCorrectionRow, DisproofTargetRow } from './payment-full-disproof.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
 import { paymentAuthorizationProofOfRow } from './payment-authorization-persistence.ts';
@@ -129,6 +134,7 @@ export interface PaymentObservationRecord {
   readonly amount: PaymentMonetaryAmount | undefined;
   /** Selected-capability sources of a Payment only: qualification proved the selected capability (#1152). */
   readonly capabilityCorrelated: boolean | undefined;
+  readonly correctionEffect: PaymentCorrectionEffectKind | undefined;
   readonly correctsObservationId: string | undefined;
   readonly economicEffectKey: string | undefined;
   readonly environment: string;
@@ -322,6 +328,7 @@ const observationRecordOf = Effect.fn('PaymentEvidencePersistence.observationRec
     accountRef: row.accountRef,
     amount: Option.getOrUndefined(amount),
     capabilityCorrelated: row.capabilityCorrelated ?? undefined,
+    correctionEffect: row.correctionEffect ?? undefined,
     correctsObservationId: row.correctsObservationId ?? undefined,
     economicEffectKey: row.economicEffectKey ?? undefined,
     environment: row.environment,
@@ -414,9 +421,6 @@ export interface PaymentEvidencePersistence {
   readonly findObservation: (
     observationId: string,
   ) => Effect.Effect<Option.Option<PaymentObservationRecord>, PaymentUnavailable>;
-  readonly findSourceAuthorityStatus: (
-    sourceAuthorityId: string,
-  ) => Effect.Effect<Option.Option<PaymentSourceAuthorityStatus>, PaymentUnavailable>;
   /** Whether the case already records a decision of this kind. */
   readonly hasCaseDecision: (
     caseId: string,
@@ -485,6 +489,13 @@ export interface PaymentEvidencePersistence {
   readonly lockCase: (
     caseId: string,
   ) => Effect.Effect<PaymentReconciliationCaseRecord, PaymentUnavailable | PaymentEvidenceRejected>;
+  /** Holds the evidence authority's current status against concurrent reconfiguration. */
+  readonly lockSourceAuthority: (
+    sourceAuthorityId: string,
+  ) => Effect.Effect<
+    Option.Option<{ readonly pickupCapabilityRef: string | null; readonly status: PaymentSourceAuthorityStatus }>,
+    PaymentUnavailable
+  >;
   /** Opens explicit reconciliation debt once per (operation, kind); an existing open case is reused. */
   readonly openCase: (
     input: OpenReconciliationCaseInput,
@@ -523,23 +534,24 @@ export const paymentEvidencePersistenceForTransaction = (
     return row === undefined ? Option.none() : Option.some(yield* observationRecordOf(row));
   });
 
-  const findSourceAuthorityStatus = Effect.fn('PaymentEvidencePersistence.findSourceAuthorityStatus')(
-    function* findSourceAuthorityStatus(sourceAuthorityId: string) {
-      const scope = yield* ownerScope;
-      const [row] = yield* transaction
-        .select({ status: sourceAuthorities.status })
-        .from(sourceAuthorities)
-        .where(
-          and(
-            eq(sourceAuthorities.tenantId, scope.tenantId),
-            eq(sourceAuthorities.legalEntityId, scope.legalEntityId),
-            eq(sourceAuthorities.sourceAuthorityId, sourceAuthorityId),
-          ),
-        )
-        .pipe(Effect.mapError(readFailure));
-      return Option.fromNullishOr(row?.status);
-    },
-  );
+  const lockSourceAuthority = Effect.fn('PaymentEvidencePersistence.lockSourceAuthority')(function* lockSourceAuthority(
+    sourceAuthorityId: string,
+  ) {
+    const scope = yield* ownerScope;
+    const [row] = yield* transaction
+      .select({ pickupCapabilityRef: sourceAuthorities.pickupCapabilityRef, status: sourceAuthorities.status })
+      .from(sourceAuthorities)
+      .where(
+        and(
+          eq(sourceAuthorities.tenantId, scope.tenantId),
+          eq(sourceAuthorities.legalEntityId, scope.legalEntityId),
+          eq(sourceAuthorities.sourceAuthorityId, sourceAuthorityId),
+        ),
+      )
+      .for('share')
+      .pipe(Effect.mapError(readFailure));
+    return Option.fromNullishOr(row);
+  });
 
   const hasCaseDecision = Effect.fn('PaymentEvidencePersistence.hasCaseDecision')(function* hasCaseDecision(
     caseId: string,
@@ -678,51 +690,12 @@ export const paymentEvidencePersistenceForTransaction = (
     },
   );
 
-  /** The statements among these ids that a correction fully disproves (the shared full-disproof rule). */
-  const fullyDisprovenAmong = Effect.fn('PaymentEvidencePersistence.fullyDisprovenAmong')(function* fullyDisprovenAmong(
-    observationIds: readonly string[],
-  ) {
-    if (observationIds.length === 0) {
-      return new Set<string>();
-    }
-    const scope = yield* ownerScope;
-    const ofScope = and(eq(observations.tenantId, scope.tenantId), eq(observations.legalEntityId, scope.legalEntityId));
-    const [targets, corrections] = yield* Effect.all(
-      [
-        transaction
-          .select({
-            amountMinor: observations.amountMinor,
-            observationId: observations.observationId,
-            paymentId: observations.paymentId,
-            sourceAuthorityId: observations.sourceAuthorityId,
-          })
-          .from(observations)
-          .where(and(ofScope, inArray(observations.observationId, [...observationIds])))
-          .pipe(Effect.mapError(readFailure)),
-        transaction
-          .select({
-            acceptanceOutcome: observations.acceptanceOutcome,
-            amountMinor: observations.amountMinor,
-            capabilityCorrelated: observations.capabilityCorrelated,
-            correctsObservationId: observations.correctsObservationId,
-            factKind: observations.factKind,
-            paymentId: observations.paymentId,
-            sourceAuthorityId: observations.sourceAuthorityId,
-          })
-          .from(observations)
-          .where(
-            and(
-              ofScope,
-              eq(observations.factKind, 'SOURCE_CORRECTION'),
-              inArray(observations.correctsObservationId, [...observationIds]),
-            ),
-          )
-          .pipe(Effect.mapError(readFailure)),
-      ],
-      { concurrency: 1 },
+  const fullyDisprovenAmong = (observationIds: readonly string[]) =>
+    ownerScope.pipe(
+      Effect.flatMap((scope) =>
+        selectFullyDisprovenTargets(transaction, scope, observationIds).pipe(Effect.mapError(readFailure)),
+      ),
     );
-    return fullyDisprovenTargets(targets, corrections);
-  });
 
   /**
    * Whether an APPLIED full correction already reopened the observation's outcome. Narrower than a full
@@ -819,22 +792,7 @@ export const paymentEvidencePersistenceForTransaction = (
     function* listEstablishedEffects(paymentId: string) {
       const scope = yield* ownerScope;
       const rows = yield* transaction
-        .select({
-          acceptanceOutcome: observations.acceptanceOutcome,
-          accountRef: observations.accountRef,
-          amountMinor: observations.amountMinor,
-          capabilityCorrelated: observations.capabilityCorrelated,
-          correctsObservationId: observations.correctsObservationId,
-          economicEffectKey: observations.economicEffectKey,
-          environment: observations.environment,
-          factKind: observations.factKind,
-          observationId: observations.observationId,
-          operationId: observations.operationId,
-          paymentId: observations.paymentId,
-          sourceAuthorityId: observations.sourceAuthorityId,
-          sourceKind: observations.sourceKind,
-          sourceSystem: observations.sourceSystem,
-        })
+        .select({ ...disproofCorrectionColumns, observationId: observations.observationId })
         .from(observations)
         .where(
           and(
@@ -1500,7 +1458,6 @@ export const paymentEvidencePersistenceForTransaction = (
     closeCase,
     findCase,
     findObservation,
-    findSourceAuthorityStatus,
     hasCaseDecision,
     insertDecision,
     insertRecoveryRequest,
@@ -1515,6 +1472,7 @@ export const paymentEvidencePersistenceForTransaction = (
     listSameEffectObservations,
     loadHistory,
     lockCase,
+    lockSourceAuthority,
     openCase,
   });
 };

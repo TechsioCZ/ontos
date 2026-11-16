@@ -1,9 +1,8 @@
 import { foldSearchText } from '@app/admin-ui';
-import { listCustomers } from '@app/party-registry/api/client';
-import type { CustomerListItem } from '@app/party-registry/api/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { Effect } from 'effect';
+import { Effect, Random } from 'effect';
 import { useEffect, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
@@ -26,6 +25,9 @@ export interface CustomerDirectory {
   readonly status: 'loading' | 'ready' | 'error';
 }
 
+/** One customer row of Party Registry's customer-list read. */
+type CustomerListItem = Effect.Success<ReturnType<typeof executeCustomerList>>['items'][number];
+
 const toEntry = (item: CustomerListItem): CustomerEntry => ({
   companyId: item.companyId ?? null,
   name: item.displayName ?? null,
@@ -37,7 +39,13 @@ const toEntry = (item: CustomerListItem): CustomerEntry => ({
 export const customerDirectoryData = definePageData({
   changesFrom: ['party-registry'],
   key: (legalEntityId: string) => legalEntityId,
-  load: () => listCustomers({ includeArchived: true, limit: 500 }).pipe(Effect.map((items) => items.map(toEntry))),
+  load: () =>
+    Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+      Effect.flatMap(([first, second]) =>
+        executeCustomerList({ includeArchived: true, limit: 500 }, `party-registry:customer-list:${first}:${second}`),
+      ),
+      Effect.map(({ items }) => items.map(toEntry)),
+    ),
   runtime: browserRuntime,
 });
 

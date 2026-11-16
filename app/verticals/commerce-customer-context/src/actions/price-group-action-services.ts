@@ -12,6 +12,8 @@ import {
 } from '../persistence/price-group-persistence.ts';
 import type { PriceGroupRoutineInvoker } from '../persistence/price-group-persistence.ts';
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
+import { customerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
+import type { CustomerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
 
 export interface PriceGroupActionServices {
   readonly catalog: PriceGroupCatalogPort;
@@ -19,6 +21,7 @@ export interface PriceGroupActionServices {
   readonly profileValidation: CustomerPriceGroupProfileValidationPort;
   readonly store: CustomerPriceGroupAssignmentStorePort;
 }
+export type PriceGroupAssignmentActionServices = PriceGroupActionServices & CustomerPriceGroupAssignmentReceiptCapture;
 
 /**
  * The Price Group Catalog is another owner reached over HTTP, so it is never called from inside the Action
@@ -57,3 +60,24 @@ export const priceGroupActionServicesForTransaction = (
     store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
   });
 };
+
+const assignmentServicesForTransaction =
+  (actionKey: Parameters<typeof customerPriceGroupAssignmentReceiptCapture>[2]) =>
+  (
+    invoker: PriceGroupRoutineInvoker,
+    scope: OperationalScope,
+  ): Effect.Effect<PriceGroupAssignmentActionServices, OperationContextUnavailable> =>
+    priceGroupActionServicesForTransaction(invoker, scope).pipe(
+      Effect.map((services) => ({
+        ...services,
+        ...customerPriceGroupAssignmentReceiptCapture(invoker, scope, actionKey),
+      })),
+    );
+
+/** Assignments also capture their exact original-command receipt in the same owner transaction. */
+export const assignCustomerPriceGroupServicesForTransaction = assignmentServicesForTransaction(
+  'commerce.customer-context.assign-customer-price-group',
+);
+export const assignCounterpartyPriceGroupServicesForTransaction = assignmentServicesForTransaction(
+  'commerce.customer-context.assign-counterparty-price-group',
+);

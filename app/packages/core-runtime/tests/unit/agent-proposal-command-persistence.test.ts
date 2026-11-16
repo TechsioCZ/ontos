@@ -43,13 +43,16 @@ const actorRows = (params: readonly unknown[], agentStatus = 'active') => {
     },
   ];
 };
+// A session-setting role installs its scope and reads back the connected role in one statement.
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scopeRows = [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }];
 
 for (const changed of ['tenantId', 'legalEntityId'] as const) {
   it.effect(`command recovery denies foreign ${changed} before reading native facts`, () =>
     Effect.gen(function* recoveryScope() {
       const database = yield* makeTestDatabase((sql) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed(scopeRows);
         }
         expect(sql).not.toContain('from "core"."action_invocations"');
@@ -75,7 +78,7 @@ for (const changed of ['tenantId', 'legalEntityId'] as const) {
 it.effect('a foreign caller cannot resolve another person’s retained result with the same idempotency key', () =>
   Effect.gen(function* foreignCaller() {
     const database = yield* makeTestDatabase((sql, params) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       if (sql.includes('from "core"."action_invocations"')) {
@@ -105,7 +108,7 @@ for (const operation of ['claim-approval', 'claim-batch-revert'] as const) {
   it.effect(`projects the exact current ${operation} rather than a superseded same-caller claim`, () =>
     Effect.gen(function* currentReservation() {
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed(scopeRows);
         }
         if (sql.includes('from "core"."audit_events"')) {
@@ -152,7 +155,7 @@ it.effect('locks the proposer, rereads the admitted snapshot and scopes every mu
     const queries: string[] = [];
     const database = yield* makeTestDatabase((sql, params) => {
       queries.push(sql);
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       if (sql.includes('for update')) {
@@ -221,7 +224,7 @@ for (const [name, patch] of [
       let raced = false;
       let updates = 0;
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed(scopeRows);
         }
         if (sql.includes('for update')) {
@@ -269,7 +272,7 @@ it.effect('uses canonical successful native audit evidence for exact approval re
     };
     let reservationQueries = 0;
     const database = yield* makeTestDatabase((sql, params) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       if (sql.includes('for update')) {
@@ -335,7 +338,7 @@ it.effect(
     Effect.gen(function* withdraw() {
       const payload = { batchId, note: 'Agent disabled', operation: 'withdraw-pending-of-agent' as const };
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed(scopeRows);
         }
         if (sql.includes('for update')) {
@@ -400,7 +403,7 @@ it.effect('deduplicates the complete ordered run and never replays a run with ch
     };
     let inserts = 0;
     const database = yield* makeTestDatabase((sql, params) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       if (sql.includes('for update')) {
@@ -464,7 +467,7 @@ it.effect('serializes batch identity across proposers and inserts only native sc
     };
     const queryOrder: string[] = [];
     const database = yield* makeTestDatabase((sql, params) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       if (sql.includes('for update')) {
@@ -531,7 +534,7 @@ it.effect('serializes batch identity across proposers and inserts only native sc
 it.effect('rejects a caller scope different from the installed Core transaction before reading owner rows', () =>
   Effect.gen(function* scopeMismatch() {
     const database = yield* makeTestDatabase((sql) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       expect(sql).not.toContain('from "core"."agent_proposals"');
@@ -577,7 +580,7 @@ it.effect('does not mistake a run-filtered subset for the complete stored batch'
       runId: 'run-one',
     };
     const database = yield* makeTestDatabase((sql, params) => {
-      if (sql.includes('current_setting')) {
+      if (sql === installAndReadScopeSql) {
         return Effect.succeed(scopeRows);
       }
       if (sql.includes('from "core"."principals"')) {
@@ -651,7 +654,7 @@ const humanInsert = {
 };
 const humanProposalDatabase = (stored: readonly ReturnType<typeof proposalRow>[]) =>
   makeTestDatabase((sql, params) => {
-    if (sql.includes('current_setting')) {
+    if (sql === installAndReadScopeSql) {
       return Effect.succeed(scopeRows);
     }
     if (sql.includes('from "core"."principals"')) {

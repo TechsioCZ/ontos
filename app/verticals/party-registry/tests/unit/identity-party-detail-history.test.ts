@@ -69,7 +69,7 @@ it('Party Detail is one governed record read: the same Party decision covers cur
   // A person's own rights decide it; the Storefront client, as the subject of a Retail self-enrollment,
   // is decided by its workload binding instead.
   expect(partyDetailRead.descriptor.accessActor).toEqual({
-    callers: ['commerce-customer-context', 'catalog'],
+    callers: ['commerce-customer-context', 'catalog', 'privacy'],
     reason: expect.any(String),
     subject: 'rights',
     subjectWorkloads: ['commerce.storefront-client'],

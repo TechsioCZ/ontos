@@ -8,6 +8,7 @@ import {
 import type { acceptRetailEnrollmentEvidence, createParty, recoverPartyCreate } from '@app/party-registry/api/client';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { shellGatewayBaseUrlConfig } from '@app/shared-contracts/shell-gateway-url';
 import { Config, Effect, Match, Redacted, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 
@@ -79,20 +80,7 @@ const PARTY_REGISTRY_UNAVAILABLE_CODE = 'party_registry_unavailable';
 const unavailable = (reason: string, cause?: unknown) =>
   ownerUnavailable(PARTY_REGISTRY_UNAVAILABLE_CODE, reason, cause);
 
-const httpUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Shell gateway URL must be HTTP(S) without credentials, query, or fragment',
-  ),
-);
-const partyGatewayConfiguration = Config.all({
-  baseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
+const partyGatewayConfiguration = Config.all({ baseUrl: shellGatewayBaseUrlConfig });
 
 /** Fresh, scoped owner credential for each Party command or authoritative recovery read. */
 export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwner.acquireRetailPartyGateway')(

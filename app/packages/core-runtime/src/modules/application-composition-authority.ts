@@ -4,17 +4,21 @@ import { DateTime, Effect, Schema } from 'effect';
 
 import {
   applicationCompositionAuthority,
+  applicationCompositionDrainAbandonments,
   applicationCompositionDurableWork,
   outboxDeliveries,
   outboxMessages,
 } from '../db/schema.ts';
+import type { DrainAbandonmentInitiator } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
+import { isCoreSystemOutboxSubscription, validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../outbox/core-system-subscriptions.ts';
+import { carriesOverToNextRelease } from '../outbox/carry-over.ts';
+import type { OutboxConsumerKey } from '../outbox/repository.ts';
 import type { ActiveApplicationCompositionSnapshot } from './active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
 import { OutboxSubscriptionAuthoritySchema } from './manifest.ts';
@@ -165,6 +169,133 @@ export const lockApplicationCompositionPublication = Effect.fn('ApplicationCompo
   },
 );
 
+const subscriptionAuthorityEquivalence = Schema.toEquivalence(OutboxSubscriptionAuthoritySchema);
+const decodeSubscriptionAuthority = Schema.decodeUnknownEffect(Schema.Array(OutboxSubscriptionAuthoritySchema), {
+  onExcessProperty: 'error',
+});
+
+/**
+ * This release's own core-system subscriptions, in the shape the authority stores them, by worker key. Decoding
+ * them through the same schema as the stored set is what makes the two comparable at all.
+ */
+const shippedCoreSystemSubscriptions = decodeSubscriptionAuthority(CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS).pipe(
+  Effect.map(
+    (subscriptions) => new Map(subscriptions.map((subscription) => [subscription.workerKey, subscription] as const)),
+  ),
+  Effect.orElseSucceed(() => new Map<string, typeof OutboxSubscriptionAuthoritySchema.Type>()),
+);
+
+/**
+ * The worker keys whose outstanding work may cross the release boundary instead of blocking the drain.
+ *
+ * Core's own system work is not old-release work in flight: its handler is a whole-tenant reconcile owned by Core,
+ * idempotent, and identical in both releases, so running it after the promotion reaches the same state. A key
+ * qualifies only when the subscription the OLD authority approved is byte-for-byte the subscription this release
+ * ships under that key — identity is proven here, never assumed, so a descriptor that changed between releases
+ * keeps blocking and is drained by the release that approved it.
+ *
+ * Everything else still blocks exactly as before: a tenant module's delivery, anything claimed or already
+ * attempted, an unmatched message, a dead row and tracked completion debt.
+ */
+export const carriedOverCoreSystemWorkerKeys = Effect.fn('ApplicationCompositionAuthority.carriedOverWorkerKeys')(
+  function* carriedOverCoreSystemWorkerKeysEffect(transaction: Pick<CoreTransaction, 'select'>) {
+    const [authority] = yield* transaction
+      .select({ subscriptionsJson: applicationCompositionAuthority.subscriptionsJson })
+      .from(applicationCompositionAuthority)
+      .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+    if (authority === undefined) {
+      const none: readonly string[] = [];
+      return {
+        approvedCoreSystemWorkerKeys: none,
+        approvedWorkerKeys: none,
+        carriedOverWorkerKeys: none,
+        // SAFETY: an empty literal has no element to widen; the annotation only names the element contract.
+        coreSystemConsumers: [] as readonly OutboxConsumerKey[],
+        // SAFETY: as above, an empty literal.
+        liveCoreSystemConsumers: [] as readonly OutboxConsumerKey[],
+      };
+    }
+    const [approved, shipped] = yield* Effect.all(
+      [
+        decodeSubscriptionAuthority(authority.subscriptionsJson).pipe(
+          Effect.orElseSucceed((): readonly (typeof OutboxSubscriptionAuthoritySchema.Type)[] => []),
+        ),
+        shippedCoreSystemSubscriptions,
+      ],
+      { concurrency: 1 },
+    );
+    const carriedOverWorkerKeys = approved.flatMap((subscription) => {
+      const own = shipped.get(subscription.workerKey);
+      return own !== undefined && subscriptionAuthorityEquivalence(subscription, own) ? [subscription.workerKey] : [];
+    });
+    // Every core-system key the retiring authority approved, identical or not.
+    const coreSystemConsumers: readonly OutboxConsumerKey[] = approved.flatMap((subscription) =>
+      isCoreSystemOutboxSubscription(subscription)
+        ? [{ consumerModuleKey: subscription.consumerModuleKey, workerKey: subscription.workerKey }]
+        : [],
+    );
+    const approvedCoreSystemWorkerKeys = coreSystemConsumers.map(({ workerKey }) => workerKey);
+    return {
+      approvedCoreSystemWorkerKeys,
+      /** Every worker key the retiring authority approved: a delivery under any other key has no consumer at all. */
+      approvedWorkerKeys: approved.map(({ workerKey }) => workerKey),
+      carriedOverWorkerKeys,
+      coreSystemConsumers,
+      /**
+       * The core-system subscriptions this release may count on a live consumer for, in the retiring release or
+       * the next. Only the carried-over keys qualify. An approved core key is not evidence that the retiring
+       * release can claim its work: a release without the claim-eligibility fix (any release before
+       * `3327256a0`) never claims core-system work at all, and nothing in the authority row says which release
+       * carries the fix. So a pending core-system row that does not carry over is treated as having no live
+       * consumer and refuses the drain instead of stalling it. On a retiring release that does carry the fix this
+       * is a transient false refusal — its host finishes the row and the next attempt proceeds — which is the
+       * price of never waiting on a consumer that may not exist.
+       */
+      liveCoreSystemConsumers: coreSystemConsumers.filter(({ workerKey }) => carriedOverWorkerKeys.includes(workerKey)),
+    };
+  },
+);
+
+/**
+ * The deliveries that block a drain, as a row condition: every unfinished delivery except those that carry over
+ * to the next release ({@link carriesOverToNextRelease}). The drain poll, every promote and seal, and the operator
+ * command's verdict for a migrated authority all ask exactly this.
+ */
+const blockingDelivery = (carriedOverWorkerKeys: readonly string[]) => {
+  const unfinished = sql`${outboxDeliveries.status} not in ('done', 'released')`;
+  const carriesOver = carriesOverToNextRelease(carriedOverWorkerKeys);
+  return carriesOver === undefined ? unfinished : sql`${unfinished} and not ${carriesOver}`;
+};
+
+const blockingOutboxWork = (carriedOverWorkerKeys: readonly string[]) =>
+  sql`exists (select 1 from ${outboxDeliveries} where ${blockingDelivery(carriedOverWorkerKeys)})`;
+
+/**
+ * What a promote or seal of the retiring revision would block on right now, counted with the very predicates
+ * `requireDrainedWork` asks: durable owner workflows, unmatched messages, and deliveries that do not carry over.
+ * Read-only and lock-free, for the operator command's verdict; the transitions themselves re-ask under the lock.
+ */
+export const countDrainBlockers = Effect.fn('ApplicationCompositionAuthority.countDrainBlockers')(
+  function* countDrainBlockersEffect(transaction: CoreTransaction) {
+    const { carriedOverWorkerKeys } = yield* carriedOverCoreSystemWorkerKeys(transaction);
+    const [counts] = yield* transaction.execute<{
+      readonly deliveries: number;
+      readonly durable: number;
+      readonly unmatched: number;
+    }>(
+      sql`select
+        (select count(*)::int from ${applicationCompositionDurableWork}) as durable,
+        (select count(*)::int from ${outboxMessages} where ${outboxMessages.matchedAt} is null) as unmatched,
+        (select count(*)::int from ${outboxDeliveries} where ${blockingDelivery(carriedOverWorkerKeys)}) as deliveries`,
+      'objects',
+    );
+    if (counts === undefined) {
+      return yield* unavailable('Application Composition drain blockers are unavailable');
+    }
+    return counts;
+  },
+);
+
 const requireNoPendingDurableWork = Effect.fn('ApplicationCompositionAuthority.requireNoPendingDurableWork')(
   function* requireNoPendingDurableWorkEffect(transaction: CoreTransaction) {
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
@@ -225,6 +356,79 @@ export const resumeApplicationCompositionDurableAdmission = Effect.fn(
   return yield* Effect.void;
 });
 
+/**
+ * Returns a `draining` revision to `active` with durable admission open, recording who, why and when in the drain
+ * abandonment ledger; the ledger's triggers apply and enforce the same rule as a backstop. Call it in an
+ * admin-owned transaction. It refuses unless the row is exactly `revision`, `draining` and unexpired:
+ * - a different revision means another release took the authority, and its state is not this caller's to change;
+ * - `sealed` and `migrated` come after a seal, which precedes every publisher-run schema migration, so a revision
+ *   that reached them is never returned to `active`;
+ * - an expired lease admits nothing at all, so it must be renewed first.
+ * `draining` admits only workers, a strict subset of what `active` admits, so the release that held `active` retakes
+ * exactly the reads and writes it had before its drain began.
+ */
+export const abandonApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuthority.abandonDrain')(
+  function* abandonApplicationCompositionDrainEffect(
+    transaction: CoreTransaction,
+    input: {
+      readonly initiatedBy: DrainAbandonmentInitiator;
+      readonly operatorName: string;
+      readonly reason: string;
+      readonly revision: string;
+    },
+  ) {
+    yield* lockApplicationCompositionPublication(transaction);
+    const [authority] = yield* transaction
+      .select({
+        phase: applicationCompositionAuthority.phase,
+        revision: applicationCompositionAuthority.revision,
+        unexpired: sql<boolean>`${applicationCompositionAuthority.validUntil} > clock_timestamp()`,
+      })
+      .from(applicationCompositionAuthority)
+      .where(eq(applicationCompositionAuthority.authorityKey, 'active'))
+      .for('update');
+    if (authority === undefined || authority.revision !== input.revision) {
+      return yield* unavailable(
+        'Only the revision that holds the Application Composition authority can have its drain abandoned',
+      );
+    }
+    if (authority.phase === 'active') {
+      return yield* unavailable('The Application Composition is not draining, so there is no drain to abandon');
+    }
+    if (authority.phase !== 'draining') {
+      return yield* unavailable(
+        `A ${authority.phase} Application Composition is never returned to active: its seal precedes the schema migration`,
+      );
+    }
+    if (!authority.unexpired) {
+      return yield* unavailable(
+        "The Application Composition lease has expired; renew it (restart the old release's container) before abandoning its drain",
+      );
+    }
+    const [recorded] = yield* transaction
+      .insert(applicationCompositionDrainAbandonments)
+      .values({
+        initiatedBy: input.initiatedBy,
+        // Stamped by the ledger's trigger from the authority row it locks.
+        leaseValidUntil: sql`clock_timestamp()`,
+        operatorName: input.operatorName,
+        reason: input.reason,
+        revision: input.revision,
+      })
+      .returning({
+        drainAbandonmentId: applicationCompositionDrainAbandonments.drainAbandonmentId,
+        leaseValidUntil: applicationCompositionDrainAbandonments.leaseValidUntil,
+        recordedAt: applicationCompositionDrainAbandonments.recordedAt,
+        recordedBy: applicationCompositionDrainAbandonments.recordedBy,
+      })
+      .pipe(Effect.mapError((cause) => unavailable('The drain abandonment could not be recorded', cause)));
+    if (recorded === undefined) {
+      return yield* unavailable('The drain abandonment could not be recorded');
+    }
+    return recorded;
+  },
+);
+
 /** Polls existing durable jobs after new durable admission has been closed. */
 export const isApplicationCompositionDurableWorkDrained = Effect.fn(
   'ApplicationCompositionAuthority.isDurableWorkDrained',
@@ -284,8 +488,9 @@ export const drainApplicationCompositionAuthority = Effect.fn('ApplicationCompos
 const requireDrainedWork = Effect.fn('ApplicationCompositionAuthority.requireDrainedWork')(
   function* requireDrainedWorkEffect(transaction: CoreTransaction) {
     yield* requireNoPendingDurableWork(transaction);
+    const { carriedOverWorkerKeys } = yield* carriedOverCoreSystemWorkerKeys(transaction);
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')) as blocked`,
+      sql`select exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or ${blockingOutboxWork(carriedOverWorkerKeys)} as blocked`,
       'objects',
     );
     if (work?.blocked !== false) {
@@ -306,8 +511,9 @@ export const isApplicationCompositionWorkDrained = Effect.fn('ApplicationComposi
     if (authority?.revision !== expectedRevision || (authority.phase !== 'draining' && authority.phase !== 'sealed')) {
       return yield* unavailable('Only the exact draining or sealed Application Composition can report drain progress');
     }
+    const { carriedOverWorkerKeys } = yield* carriedOverCoreSystemWorkerKeys(transaction);
     const [work] = yield* transaction.execute<{ readonly blocked: boolean }>(
-      sql`select exists(select 1 from ${applicationCompositionDurableWork}) or exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or exists(select 1 from ${outboxDeliveries} where ${outboxDeliveries.status} not in ('done', 'released')) as blocked`,
+      sql`select exists(select 1 from ${applicationCompositionDurableWork}) or exists(select 1 from ${outboxMessages} where ${outboxMessages.matchedAt} is null) or ${blockingOutboxWork(carriedOverWorkerKeys)} as blocked`,
       'objects',
     );
     if (work === undefined) {
@@ -393,9 +599,56 @@ export const markApplicationCompositionMigrationComplete = Effect.fn('Applicatio
 );
 
 /**
+ * The moment the row's revision took the authority, exactly: integer microseconds since the epoch, as decimal text.
+ * PostgreSQL keeps `revision_activated_at` in microseconds; a JS Date or an epoch double would not carry them all.
+ * The writer returns it and the app host reads it with this one expression, so both compare the same text.
+ */
+export const revisionActivatedAtMicros = sql<string>`(extract(epoch from ${applicationCompositionAuthority.revisionActivatedAt}) * 1000000)::bigint::text`;
+
+/** One hold of the authority by a revision, as the publication that committed it wrote it. */
+export interface ApplicationCompositionHold {
+  readonly activatedAtMicros: string;
+  readonly revision: string;
+}
+
+/**
+ * The row one publication writes: inserted when no authority exists, else the conflict update. A renewal (the row
+ * already names this revision) keeps the admission phase and never writes `revision_activated_at`, so PostgreSQL keeps
+ * the exact moment its revision took the row. Writing back the value read through the Date-valued schema would cut it
+ * to milliseconds, and every host that recorded the hold it serves in would see a new one. A different revision takes
+ * the row now, on the database clock.
+ */
+export const applicationCompositionAuthorityUpsert = (
+  current:
+    | Pick<typeof applicationCompositionAuthority.$inferSelect, 'durableWorkAdmission' | 'phase' | 'revision'>
+    | undefined,
+  snapshot: ActiveApplicationCompositionSnapshot,
+  subscriptionsJson: readonly OutboxWorkerSubscription[],
+) => {
+  const renewal = current?.revision === snapshot.composition.revision;
+  const admission = renewal
+    ? { durableWorkAdmission: current.durableWorkAdmission, phase: current.phase }
+    : { durableWorkAdmission: 'open' as const, phase: 'active' as const };
+  const row = {
+    ...admission,
+    revision: snapshot.composition.revision,
+    subscriptionsJson,
+    validUntil: DateTime.toDateUtc(snapshot.validUntil),
+  };
+  // The renewal's update names no activation column, so PostgreSQL leaves it exactly as it is.
+  const renewed = { ...row, updatedAt: sql`clock_timestamp()` };
+  const taken = { ...renewed, revisionActivatedAt: sql`clock_timestamp()` };
+  return {
+    set: renewal ? renewed : taken,
+    values: { ...row, authorityKey: 'active', revisionActivatedAt: sql`clock_timestamp()` },
+  };
+};
+
+/**
  * Call in an admin-owned transaction. Renewal preserves release identity and admission phase.
  * A different release can become active only after the old release is fully drained.
  * Database migrations additionally require a final seal before any schema changes.
+ * Returns the hold the row names after the write; it is the caller's only once the transaction commits.
  */
 export const publishApplicationCompositionAuthority = Effect.fn('ApplicationCompositionAuthority.publish')(
   function* publishApplicationCompositionAuthorityEffect(
@@ -435,33 +688,15 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
       ...catalog.outboxSubscriptions,
       ...CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
     ]);
-    yield* transaction
+    const upsert = applicationCompositionAuthorityUpsert(current, snapshot, subscriptionsJson);
+    const [written] = yield* transaction
       .insert(applicationCompositionAuthority)
-      .values({
-        authorityKey: 'active',
-        durableWorkAdmission:
-          current?.revision === snapshot.composition.revision ? current.durableWorkAdmission : 'open',
-        phase: current?.revision === snapshot.composition.revision ? current.phase : 'active',
-        revision: snapshot.composition.revision,
-        revisionActivatedAt: sql`clock_timestamp()`,
-        subscriptionsJson,
-        validUntil: DateTime.toDateUtc(snapshot.validUntil),
-      })
-      .onConflictDoUpdate({
-        set: {
-          durableWorkAdmission:
-            current?.revision === snapshot.composition.revision ? current.durableWorkAdmission : 'open',
-          phase: current?.revision === snapshot.composition.revision ? current.phase : 'active',
-          revision: snapshot.composition.revision,
-          // A renewal keeps the moment its revision took the authority; a different revision takes it now.
-          revisionActivatedAt:
-            current?.revision === snapshot.composition.revision ? current.revisionActivatedAt : sql`clock_timestamp()`,
-          subscriptionsJson,
-          updatedAt: sql`clock_timestamp()`,
-          validUntil: DateTime.toDateUtc(snapshot.validUntil),
-        },
-        target: applicationCompositionAuthority.authorityKey,
-      });
-    return yield* Effect.void;
+      .values(upsert.values)
+      .onConflictDoUpdate({ set: upsert.set, target: applicationCompositionAuthority.authorityKey })
+      .returning({ activatedAtMicros: revisionActivatedAtMicros, revision: applicationCompositionAuthority.revision });
+    if (written === undefined) {
+      return yield* unavailable('The Application Composition authority write returned no row');
+    }
+    return written satisfies ApplicationCompositionHold;
   },
 );

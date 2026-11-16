@@ -1,7 +1,7 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { committedResult, pendingProposalMessage } from '../../src/api/action-result.ts';
+import { committedResult, pendingProposalMessage } from '../../src/tags/action-result.ts';
 
 const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
   _tag: 'ActionProposalAccepted',

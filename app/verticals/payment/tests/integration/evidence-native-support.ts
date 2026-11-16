@@ -33,7 +33,9 @@ import type {
   PaymentOperationOutcome,
   PaymentReconciliationCaseKind,
   PaymentSourceAuthorityStatus,
+  PaymentSourceFactFamily,
 } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { ConfigurePaymentSourceAuthorityPayloadSchema } from '../../shared/actions/configure-payment-source-authority.ts';
 import type { RecordPaymentReconciliationDecisionPayloadSchema } from '../../shared/actions/record-payment-reconciliation-decision.ts';
@@ -245,7 +247,9 @@ export interface ObservationSpec {
   readonly occurrenceId?: string;
   readonly operationId?: string;
   readonly paymentId: string;
+  readonly source?: PaymentSourceBinding & { readonly factFamily: PaymentSourceFactFamily };
   readonly sourceAuthorityId: string | undefined;
+  readonly statementHash?: string;
 }
 
 /**
@@ -271,7 +275,7 @@ export interface EvidenceScenarioInput {
   readonly scope: PaymentTestScope;
 }
 
-/** Rows written directly by this helper never replay: they carry one fixed well-formed statement hash. */
+/** Direct ledger fixtures default to a well-formed hash that does not replay through ingress. */
 const DIRECT_ROW_STATEMENT_HASH = '0'.repeat(64);
 
 export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioInput) => {
@@ -434,11 +438,18 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
       Effect.gen(function* insertObservationRow() {
         const audit = provenance(compositionRevision);
         const now = DateTime.toDateUtc(yield* DateTime.now);
+        const source: NonNullable<ObservationSpec['source']> = spec.source ?? {
+          accountRef: PROVIDER_ACCOUNT,
+          environment: 'production',
+          factFamily: 'GATEWAY_OUTCOME',
+          sourceKind: 'PAYMENT_GATEWAY',
+          sourceSystem: 'gopay',
+        };
         const [row] = yield* transaction
           .insert(observations)
           .values({
+            ...source,
             acceptanceOutcome: spec.acceptanceOutcome ?? 'ACCEPTED_OBSERVATION',
-            accountRef: PROVIDER_ACCOUNT,
             actionInvocationId: audit.actionInvocationId,
             actorPrincipalId: audit.actorPrincipalId,
             amountMinor: spec.amountMinor ?? null,
@@ -447,8 +458,6 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             correctsObservationId: spec.correctsObservationId ?? null,
             currency: spec.amountMinor === undefined ? null : 'CZK',
             economicEffectKey: spec.economicEffectKey ?? null,
-            environment: 'production',
-            factFamily: 'GATEWAY_OUTCOME',
             factKind: spec.factKind,
             legalEntityId: scope.legalEntityId,
             operationId: spec.operationId ?? null,
@@ -456,11 +465,9 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             receivedAt: now,
             sourceAuthorityId: spec.sourceAuthorityId ?? null,
             sourceAuthorityRevision: spec.sourceAuthorityId === undefined ? null : 1,
-            sourceKind: 'PAYMENT_GATEWAY',
             sourceOccurrenceId: spec.occurrenceId ?? `occurrence-${randomUUID()}`,
             sourceRevision: 0,
-            sourceSystem: 'gopay',
-            statementHash: DIRECT_ROW_STATEMENT_HASH,
+            statementHash: spec.statementHash ?? DIRECT_ROW_STATEMENT_HASH,
             tenantId: scope.tenantId,
             verifiedAt: now,
           })
@@ -491,6 +498,7 @@ export const evidenceScenarioOf = ({ native, r1, r2, scope }: EvidenceScenarioIn
             paymentTermRef: payment.paymentTermRef,
             purchaseCorrelationId: payment.purchaseCorrelationId,
           },
+          commitmentAttemptEvidenceRef: 'order-attempt:native-seed',
           condition: {
             _tag: 'PREPAID_COLLECTION',
             collectOperationId: collect?.operationId ?? randomUUID(),

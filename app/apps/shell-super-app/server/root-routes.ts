@@ -104,18 +104,28 @@ export const serveRootRoute = <Failure, Requirements>(
     return Option.some(response);
   });
 
-export const oauthPageSecurityHeaders = Effect.fn('Shell.oauthPageSecurityHeaders')(function* pageSecurityHeaders<
+const isHtmlDocument = (response: Response): boolean =>
+  (response.headers.get('content-type') ?? '').trim().toLowerCase().startsWith('text/html');
+
+/**
+ * Every Shell document is rendered for one person (its loaders read that person's session, companies and Shell reads
+ * into the HTML), so no cache may keep it. OAuth pages also refuse to be framed.
+ */
+export const documentSecurityHeaders = Effect.fn('Shell.documentSecurityHeaders')(function* pageSecurityHeaders<
   Failure,
   Requirements,
 >(context: MiddlewareContext, next: Effect.Effect<void, Failure, Requirements>) {
   yield* next;
-  if (!isOAuthPagePath(context.req.path)) {
+  const oauthPage = isOAuthPagePath(context.req.path);
+  if (!oauthPage && !isHtmlDocument(context.res)) {
     return;
   }
   const headers = new Headers(context.res.headers);
   headers.set('cache-control', 'no-store');
-  headers.set('content-security-policy', "frame-ancestors 'none'");
-  headers.set('x-frame-options', 'DENY');
+  if (oauthPage) {
+    headers.set('content-security-policy', "frame-ancestors 'none'");
+    headers.set('x-frame-options', 'DENY');
+  }
   context.res = new Response(context.res.body, {
     headers,
     status: context.res.status,

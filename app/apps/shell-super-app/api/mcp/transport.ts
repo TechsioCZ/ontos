@@ -15,7 +15,8 @@ import { AgentActionRequestIdentity } from '../auth/agent-action-request-identit
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { CapturedShellCompositionCatalog } from '../modules/captured-shell-catalog.ts';
-import { connectionScopeOf, describeLiveGrant } from '../oauth-connections/connection-service.ts';
+import { connectionScopeOf } from '../oauth-connections/connection-scope.ts';
+import { describeLiveGrant } from '../oauth-connections/connection-service.ts';
 import type { LiveGrant } from '../oauth-connections/connection-service.ts';
 import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
 import { loadMcpCatalog } from './catalog.ts';
@@ -137,7 +138,8 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
       const caller: AgentPlatformCaller = {
         legalName: live.description.legalName,
         principal,
-        scope: connectionScopeOf(live.grant),
+        // An agent's scope carries its credential-bound connection, so every gate question decides the agent.
+        scope: connectionScopeOf(live.grant, live.agentConnection),
       };
       const services = Context.add(requestServices, CapturedShellCompositionCatalog, installed);
       const backend: McpBackend = {

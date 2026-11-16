@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // Every assets form sends its command once on the shared Uložit, last in the panel footer; leaving asks first.
 import { SidePanel } from '@app/admin-ui';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { constUndefined, constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -124,102 +124,103 @@ describe('assets forms save once on Uložit', () => {
         ],
         runner,
       );
-      expect(sent).toMatchObject({ _tag: 'AssetCreate', inventoryNumber: 'MJ-2026-001', name: 'Kotel' });
+      expect(Predicate.isTagged(sent, 'AssetCreate')).toBe(true);
+      expect(sent).toMatchObject({ inventoryNumber: 'MJ-2026-001', name: 'Kotel' });
     }),
   );
 
   it.live('a value change, an event, a disposal and a service visit', () =>
     Effect.gen(function* scenario() {
       const values = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(ValueChangeForm, { asset, onSubmit: submitThrough(values) }),
-          [
-            ['#value-new', '90 000'],
-            ['#value-reason', 'Znalecký posudek'],
-          ],
-          values,
-        ),
-      ).toMatchObject({ _tag: 'AssetValueChange', newValueMinor: 9_000_000, reason: 'Znalecký posudek' });
+      const assetValueChange = yield* typedAndSaved(
+        createElement(ValueChangeForm, { asset, onSubmit: submitThrough(values) }),
+        [
+          ['#value-new', '90 000'],
+          ['#value-reason', 'Znalecký posudek'],
+        ],
+        values,
+      );
+      expect(Predicate.isTagged(assetValueChange, 'AssetValueChange')).toBe(true);
+      expect(assetValueChange).toMatchObject({ newValueMinor: 9_000_000, reason: 'Znalecký posudek' });
       unmountPanels();
       saved.length = 0;
       const events = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(EventForm, { asset, onSubmit: submitThrough(events) }),
-          [['#event-note', 'Výměna kompresoru']],
-          events,
-        ),
-      ).toMatchObject({ _tag: 'AssetEventRecord', note: 'Výměna kompresoru' });
+      const assetEventRecord = yield* typedAndSaved(
+        createElement(EventForm, { asset, onSubmit: submitThrough(events) }),
+        [['#event-note', 'Výměna kompresoru']],
+        events,
+      );
+      expect(Predicate.isTagged(assetEventRecord, 'AssetEventRecord')).toBe(true);
+      expect(assetEventRecord).toMatchObject({ note: 'Výměna kompresoru' });
       unmountPanels();
       saved.length = 0;
       const disposals = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(DisposeForm, { asset, onSubmit: submitThrough(disposals) }),
-          [['#dispose-reason', 'Neopravitelná závada']],
-          disposals,
-        ),
-      ).toMatchObject({ _tag: 'AssetDispose', kind: 'retirement', reason: 'Neopravitelná závada' });
+      const assetDispose = yield* typedAndSaved(
+        createElement(DisposeForm, { asset, onSubmit: submitThrough(disposals) }),
+        [['#dispose-reason', 'Neopravitelná závada']],
+        disposals,
+      );
+      expect(Predicate.isTagged(assetDispose, 'AssetDispose')).toBe(true);
+      expect(assetDispose).toMatchObject({ kind: 'retirement', reason: 'Neopravitelná závada' });
       unmountPanels();
       saved.length = 0;
       const services = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(ServiceForm, { asset, onSubmit: submitThrough(services) }),
-          [['#service-title', 'Roční revize']],
-          services,
-        ),
-      ).toMatchObject({ _tag: 'AssetServiceRecord', kind: 'revision', title: 'Roční revize' });
+      const assetServiceRecord = yield* typedAndSaved(
+        createElement(ServiceForm, { asset, onSubmit: submitThrough(services) }),
+        [['#service-title', 'Roční revize']],
+        services,
+      );
+      expect(Predicate.isTagged(assetServiceRecord, 'AssetServiceRecord')).toBe(true);
+      expect(assetServiceRecord).toMatchObject({ kind: 'revision', title: 'Roční revize' });
     }),
   );
 
   it.live('a depreciation plan, a plan entry and a template', () =>
     Effect.gen(function* scenario() {
       const plans = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(PlanForm, { asset, onSubmit: submitThrough(plans), state, type: 'accounting' }),
-          [['#plan-years', '5']],
-          plans,
-        ),
-      ).toMatchObject({ _tag: 'AssetDepreciationPlanCreate', baseMinor: 12_000_000, years: 5 });
+      const assetDepreciationPlanCreate = yield* typedAndSaved(
+        createElement(PlanForm, { asset, onSubmit: submitThrough(plans), state, type: 'accounting' }),
+        [['#plan-years', '5']],
+        plans,
+      );
+      expect(Predicate.isTagged(assetDepreciationPlanCreate, 'AssetDepreciationPlanCreate')).toBe(true);
+      expect(assetDepreciationPlanCreate).toMatchObject({ baseMinor: 12_000_000, years: 5 });
       unmountPanels();
       saved.length = 0;
       const entries = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(EntryForm, { asset, onSubmit: submitThrough(entries), plan }),
-          [['#entry-amount', '24 000']],
-          entries,
-        ),
-      ).toMatchObject({ _tag: 'AssetDepreciationEntryRecord', amountMinor: 2_400_000, planId: plan.id });
+      const assetDepreciationEntryRecord = yield* typedAndSaved(
+        createElement(EntryForm, { asset, onSubmit: submitThrough(entries), plan }),
+        [['#entry-amount', '24 000']],
+        entries,
+      );
+      expect(Predicate.isTagged(assetDepreciationEntryRecord, 'AssetDepreciationEntryRecord')).toBe(true);
+      expect(assetDepreciationEntryRecord).toMatchObject({ amountMinor: 2_400_000, planId: plan.id });
       unmountPanels();
       saved.length = 0;
       const templates = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(TemplateForm, { onSubmit: submitThrough(templates) }),
-          [
-            ['#template-name', 'Klimatizace 5 let'],
-            ['#template-years', '5'],
-          ],
-          templates,
-        ),
-      ).toMatchObject({ _tag: 'AssetDepreciationTemplateCreate', name: 'Klimatizace 5 let', years: 5 });
+      const assetDepreciationTemplateCreate = yield* typedAndSaved(
+        createElement(TemplateForm, { onSubmit: submitThrough(templates) }),
+        [
+          ['#template-name', 'Klimatizace 5 let'],
+          ['#template-years', '5'],
+        ],
+        templates,
+      );
+      expect(Predicate.isTagged(assetDepreciationTemplateCreate, 'AssetDepreciationTemplateCreate')).toBe(true);
+      expect(assetDepreciationTemplateCreate).toMatchObject({ name: 'Klimatizace 5 let', years: 5 });
     }),
   );
 
   it.live('an inventory count and its follow-up', () =>
     Effect.gen(function* scenario() {
       const inventories = recordingRunner();
-      expect(
-        yield* typedAndSaved(
-          createElement(InventoryCreateForm, { onSubmit: submitThrough(inventories), state }),
-          [['#inventory-title', 'Inventura 2026']],
-          inventories,
-        ),
-      ).toMatchObject({ _tag: 'AssetInventoryCreate', assetIds: [asset.id], title: 'Inventura 2026' });
+      const assetInventoryCreate = yield* typedAndSaved(
+        createElement(InventoryCreateForm, { onSubmit: submitThrough(inventories), state }),
+        [['#inventory-title', 'Inventura 2026']],
+        inventories,
+      );
+      expect(Predicate.isTagged(assetInventoryCreate, 'AssetInventoryCreate')).toBe(true);
+      expect(assetInventoryCreate).toMatchObject({ assetIds: [asset.id], title: 'Inventura 2026' });
       unmountPanels();
       saved.length = 0;
       // The follow-up opens with a suggested title and date: Uložit sends it as it is.

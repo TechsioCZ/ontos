@@ -7,23 +7,21 @@ import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization
 
 import {
   IDENTITY_PROVIDER_WORKLOAD,
-  CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
   STOREFRONT_MERCHANDISE_WORKLOAD,
+  accountingCompanyIdentityRole,
+  accountingCompanyIdentityRoleKey,
   agentBotPrincipal,
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
   companyHumanAccounts,
-  crmPartyIntakePrincipal,
   demoHumanAccounts,
   demoLegalEntityIds,
   demoShellRoutingRoleKey,
   demoShellRoutingRole,
   demoTenantMemberships,
   demoPrincipalRoleKey,
-  kavarnaMarketAuthorityPrincipal,
-  marketRetirementPrincipal,
   privacyConsentPrincipal,
   reviewedDemoAssignments,
   reviewedMachinePrincipals,
@@ -77,13 +75,23 @@ it('names the reviewed company of every company-scoped assignment, and never a f
     }
   }
   const tenantAssignments = reviewedDemoAssignments().filter((entry) => entry.legalEntityId === undefined);
-  expect(tenantAssignments.map(({ principalId }) => principalId).toSorted()).toEqual(
+  const routing = tenantAssignments.filter(({ roleKey }) => roleKey === demoShellRoutingRoleKey);
+  expect(routing.map(({ principalId }) => principalId).toSorted()).toEqual(
     demoTenantMemberships.map(({ principalId }) => principalId).toSorted(),
   );
-  for (const assignment of tenantAssignments) {
-    expect(assignment.roleKey).toBe(demoShellRoutingRoleKey);
+  for (const assignment of routing) {
     expect(assignment.role).toBe(demoShellRoutingRole);
   }
+  // Besides routing, one tenant-scope role: the accountant's company identity, whose read Core decides in the tenant.
+  const accountant = demoHumanAccounts.at(2);
+  const others = tenantAssignments.filter(({ roleKey }) => roleKey !== demoShellRoutingRoleKey);
+  expect(others.map(({ principalId, roleKey }) => [principalId, roleKey])).toEqual([
+    [accountant?.principalId, accountingCompanyIdentityRoleKey],
+  ]);
+  expect(others[0]?.role).toBe(accountingCompanyIdentityRole);
+  expect(accountingCompanyIdentityRole.capabilityKeys).toEqual({
+    'core.identity': ['core.identity.legal-entity.read', 'core.identity.legal-entity.personal.read'],
+  });
 });
 
 it('binds only the declared workload keys, and only for principals whose caller runs them', () => {
@@ -95,7 +103,6 @@ it('binds only the declared workload keys, and only for principals whose caller 
       STOREFRONT_MERCHANDISE_WORKLOAD,
       STOREFRONT_INQUIRY_WORKLOAD,
       IDENTITY_PROVIDER_WORKLOAD,
-      CRM_PARTY_INTAKE_WORKLOAD,
     ]),
   );
   // Every key is one a carrier of this release declares, in that carrier module's own namespace.
@@ -111,9 +118,10 @@ it('binds only the declared workload keys, and only for principals whose caller 
       storefrontPrincipal.principalId,
       akrosStorefrontPrincipal.principalId,
       commercePortalPrincipal.principalId,
-      crmPartyIntakePrincipal.principalId,
     ]),
   );
+  // CRM's internal intake workload is the platform's, registered per company at release: no hand binding names it.
+  expect(keys.has('demo.crm.party-intake')).toBe(false);
   // The identity provider key belongs to the portal alone; the storefronts are clients only.
   expect(
     bindings.filter((binding) => binding.workloadKey === IDENTITY_PROVIDER_WORKLOAD).map((b) => b.principalId),
@@ -137,27 +145,20 @@ it('binds each storefront to what its BFF calls, registered for its own company 
   expect(new Set(of(storefrontPrincipal.principalId).map(({ workloadKey }) => workloadKey))).toEqual(
     new Set([STOREFRONT_CLIENT_WORKLOAD, STOREFRONT_MERCHANDISE_WORKLOAD]),
   );
-  for (const principal of [storefrontPrincipal, akrosStorefrontPrincipal]) {
+  // No workload is tenant-wide by omission (D6): the storefronts and the Commerce portal each act for the one
+  // company they serve. The portal's identity-provider Actions run in the tenant context, so its registration only
+  // fences its company-scoped storefront-client calls.
+  for (const principal of [storefrontPrincipal, akrosStorefrontPrincipal, commercePortalPrincipal]) {
     for (const { legalEntityId } of of(principal.principalId)) {
       expect(legalEntityId).toBe(principal.legalEntityId);
     }
-  }
-  // Non-storefront workloads keep acting across the tenant: no company is registered for them.
-  for (const principal of [commercePortalPrincipal, crmPartyIntakePrincipal]) {
-    expect(of(principal.principalId).every(({ legalEntityId }) => legalEntityId === undefined)).toBe(true);
   }
 });
 
 it('leaves every other service principal unbound and names its carrier gap', () => {
   const bound = new Set(reviewedWorkloadBindings().map((binding) => binding.principalId));
   const unmapped = unmappedServicePrincipals.map((entry) => entry.principalId);
-  expect(new Set(unmapped)).toEqual(
-    new Set([
-      privacyConsentPrincipal.principalId,
-      marketRetirementPrincipal.principalId,
-      kavarnaMarketAuthorityPrincipal.principalId,
-    ]),
-  );
+  expect(new Set(unmapped)).toEqual(new Set([privacyConsentPrincipal.principalId]));
   for (const principalId of unmapped) {
     expect(bound.has(principalId)).toBe(false);
   }

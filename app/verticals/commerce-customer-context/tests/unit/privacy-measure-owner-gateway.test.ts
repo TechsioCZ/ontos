@@ -70,6 +70,7 @@ it.effect('acknowledges only an executed or already committed customer outcome r
     // Workers act for the invocation that originated the delivery, never for a module credential.
     expect(acquiredRequests[0]).toMatchObject({
       audience: 'privacy',
+      callingAppId: 'commerce-customer-context',
       legalEntityScope: 'subject',
       requestCorrelation: 'customer-report:1',
       subject: {

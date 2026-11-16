@@ -5,7 +5,7 @@ import {
   ActionAlreadyCommitted,
   ActionRuntime,
   ActionTransportMetadataSchema,
-  ConfigureAgentPayloadSchema,
+  AgentProfileSchema,
   ContextAccess,
   LegalEntityContext,
   companyManagedPrincipalsRead,
@@ -34,12 +34,14 @@ import { AuthenticationService } from '../../apps/shell-super-app/api/auth/servi
 import { coreRelations } from '../../packages/core-runtime/src/db/schema.ts';
 import {
   AgentProfileReadDatabase,
+  AgentProfileSetupError,
   AgentProfileSetupInputSchema,
   explicitProfileInputs,
   reviewedProfileInputs,
   runAgentProfileSetup,
 } from '../demo/agent-profile-setup.mts';
 import { requireAgentSetupAuthority, selectAgentOperatorCompany } from '../demo/agent-operator-session.mts';
+import { AgentSeedIdentityWriter } from '../demo/agent-seed-identity.mts';
 import { runAgentOperatorSetup } from '../demo/setup-agent-operators.mts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -71,8 +73,14 @@ const input = Schema.decodeUnknownSync(AgentProfileSetupInputSchema)({
 });
 const configureAgentOperation = 'configure-agent' as const;
 const replaceAgentOperatorsKey = 'core.identity.replace-agent-operators';
+/** The configure member of the Action payload: the only one the seed sends, naming the agent it seeded. */
+const ConfiguredAgentPayloadSchema = Schema.Struct({
+  ...AgentProfileSchema.fields,
+  operation: Schema.Literal(configureAgentOperation),
+  principalId: Schema.String.pipe(Schema.brand('PrincipalId')),
+});
+
 const configureAgentKey = 'core.identity.configure-agent';
-const profileSetupError = 'AgentProfileSetupError';
 const principalMembershipTable = '"principal_company_memberships"';
 const persistedAgentName = 'Persisted agent name';
 const source = createHash('sha256').update('reviewed-fixture').digest('hex');
@@ -194,7 +202,15 @@ const fixture = (
   );
   const tenantScopeId = AccessScopeIdSchema.make('70000000-0000-4000-8000-000000000001');
   const companyScopeId = AccessScopeIdSchema.make('70000000-0000-4000-8000-000000000002');
+  const seeded: string[] = [];
   const layer = Layer.mergeAll(
+    // The operator's own connection seeds a reviewed agent's fixed id; the Action then writes its profile.
+    Layer.succeed(AgentSeedIdentityWriter, {
+      seed: (identity) =>
+        Effect.sync(() => {
+          seeded.push(identity.principalId);
+        }),
+    }),
     database,
     Layer.mock(AuthenticationService, {
       resolveShellContext: () =>
@@ -262,7 +278,7 @@ const fixture = (
         expect(request.principal).toBe(selectedPrincipal);
         let result: typeof ConfigureAgentResultSchema.Type | typeof ReplaceAgentOperatorsResultSchema.Type;
         if (actionKey === configureAgentKey) {
-          const payload = Schema.decodeUnknownSync(ConfigureAgentPayloadSchema)(request.payload);
+          const payload = Schema.decodeUnknownSync(ConfiguredAgentPayloadSchema)(request.payload);
           profiles.set(
             payload.principalId,
             evidence(
@@ -334,7 +350,7 @@ const fixture = (
       loadTenantContextScopeId: () => Effect.succeed(Option.some(tenantScopeId)),
     }),
   );
-  return { layer, profiles, queries, scopes, selections, writes };
+  return { layer, profiles, queries, scopes, seeded, selections, writes };
 };
 
 it.effect('creates only native profile metadata using selected-session provenance and exact scope', () =>
@@ -345,6 +361,9 @@ it.effect('creates only native profile metadata using selected-session provenanc
     expect(f.selections).toEqual([companyId, companyId]);
     expect(f.writes).toHaveLength(1);
     expect(f.writes[0]?.actionKey).toBe(configureAgentKey);
+    // The reviewed agent keeps its fixed id through the operator's seed; the Action names it, never creates it.
+    expect(f.seeded).toEqual([agentId]);
+    expect(f.writes[0]?.payload).toMatchObject({ operation: configureAgentOperation, principalId: agentId });
     expect(f.scopes).toHaveLength(1);
     expect(f.queries.every((query) => query.startsWith('select '))).toBe(true);
   }),
@@ -377,7 +396,7 @@ it.effect('refuses a later administrator profile instead of overwriting it', () 
       Effect.provide(f.layer),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toEqual([]);
   }),
 );
@@ -389,7 +408,7 @@ it.effect('rechecks current audit evidence after an idempotent commit', () =>
       Effect.provide(f.layer),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toHaveLength(1);
   }),
 );
@@ -403,7 +422,7 @@ it.effect('preflights every company before any write and never accepts propose-o
       'apply',
       source,
     ).pipe(Effect.provide(f.layer), Effect.flip);
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toEqual([]);
     expect(f.selections).toEqual([companyId, secondCompanyId]);
   }),
@@ -552,7 +571,7 @@ it.effect('requires the exact native Action authority rather than an unrelated a
       Effect.provide(f.layer),
       Effect.flip,
     );
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
   }),
 );
 
@@ -592,7 +611,7 @@ it.effect('does not accept an active directory label without live canonical comp
       ],
       'apply',
     ).pipe(Effect.provide(f.layer), Effect.flip);
-    expect(failure).toMatchObject({ _tag: profileSetupError });
+    expect(Schema.is(AgentProfileSetupError)(failure)).toBe(true);
     expect(f.writes).toEqual([]);
   }),
 );

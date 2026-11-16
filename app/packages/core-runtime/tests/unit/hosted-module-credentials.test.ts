@@ -1,49 +1,43 @@
-import { Config, ConfigProvider, Effect, Exit, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { HostedModuleCredentialsSchema, MODULE_CREDENTIAL_VARIABLE } from '../../src/auth/hosted-module-credentials.ts';
-import { ownerModuleCredentialConfigProvider } from '../../src/auth/owner-module-credential.ts';
+import { claimHostedModuleCredentials } from '../../src/auth/hosted-module-credential-store.ts';
+import { HostedModuleCredentialsSchema } from '../../src/auth/hosted-module-credentials.ts';
+import { ownModuleCredential } from '../../src/auth/owner-module-credential.ts';
 import { moduleAppIdOf, modulePrincipalDisplayName, PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
 
 const ORDER_KEY = 'order-module-credential-0001';
 const CART_KEY = 'cart-module-credential-00002';
-const hosted = new Map([
-  ['commerce-order', Redacted.make(ORDER_KEY)],
-  ['commerce-cart', Redacted.make(CART_KEY)],
-]);
+/** An environment that wrongly carries a module key: no owner ever reads it. */
 const sharedEnvironment = ConfigProvider.fromUnknown({
-  [MODULE_CREDENTIAL_VARIABLE]: 'shared-environment-credential',
+  ONTOS_GATEWAY_MODULE_API_KEY: 'shared-environment-credential',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'http://127.0.0.1:3000/shell-super-app-api',
 });
 
-const read = (provider: ConfigProvider.ConfigProvider, key: string) => Effect.exit(Config.String(key).parse(provider));
+const read = (appId: string) =>
+  ownModuleCredential(appId).pipe(
+    Effect.map((key) => (Option.isSome(key) ? Option.some(Redacted.value(key.value)) : Option.none<string>())),
+    Effect.provideService(ConfigProvider.ConfigProvider, sharedEnvironment),
+  );
+
+// Declared first: the file's copy stays unclaimed until the next test claims it.
+it.effect('gives a module in an unclaimed copy no credential, never the environment one', () =>
+  Effect.gen(function* unclaimedCopy() {
+    expect(yield* read('commerce-order')).toStrictEqual(Option.none());
+  }),
+);
 
 it.effect('gives a hosted owner its own module credential and nothing of the shared environment', () =>
   Effect.gen(function* ownCredentialOnly() {
-    const order = ownerModuleCredentialConfigProvider(sharedEnvironment, 'commerce-order', () => hosted);
-    expect(yield* read(order, MODULE_CREDENTIAL_VARIABLE)).toStrictEqual(Exit.succeed(ORDER_KEY));
-    // Every other setting still comes from the host.
-    expect(yield* read(order, 'ONTOS_SHELL_GATEWAY_BASE_URL')).toStrictEqual(
-      Exit.succeed('http://127.0.0.1:3000/shell-super-app-api'),
-    );
-    const cart = ownerModuleCredentialConfigProvider(sharedEnvironment, 'commerce-cart', () => hosted);
-    expect(yield* read(cart, MODULE_CREDENTIAL_VARIABLE)).toStrictEqual(Exit.succeed(CART_KEY));
-  }),
-);
-
-it.effect('leaves a hosted owner without a credential instead of reading the shared environment', () =>
-  Effect.gen(function* noCredentialFailsClosed() {
-    const pricing = ownerModuleCredentialConfigProvider(sharedEnvironment, 'pricing', () => hosted);
-    expect(Exit.isFailure(yield* read(pricing, MODULE_CREDENTIAL_VARIABLE))).toBe(true);
-  }),
-);
-
-it.effect('lets a dedicated module deployment read its own environment', () =>
-  Effect.gen(function* dedicatedDeployment() {
-    const dedicated = ownerModuleCredentialConfigProvider(sharedEnvironment, 'commerce-order', () => null);
-    expect(yield* read(dedicated, MODULE_CREDENTIAL_VARIABLE)).toStrictEqual(
-      Exit.succeed('shared-environment-credential'),
-    );
+    const receiver = yield* claimHostedModuleCredentials(['commerce-order', 'commerce-cart', 'pricing']);
+    yield* receiver.accept({
+      credentials: { 'commerce-cart': Redacted.make(CART_KEY), 'commerce-order': Redacted.make(ORDER_KEY) },
+      schemaVersion: 1,
+    });
+    expect(yield* read('commerce-order')).toStrictEqual(Option.some(ORDER_KEY));
+    expect(yield* read('commerce-cart')).toStrictEqual(Option.some(CART_KEY));
+    // A hosted owner without a handed-over key holds none instead of reading the shared environment.
+    expect(yield* read('pricing')).toStrictEqual(Option.none());
   }),
 );
 

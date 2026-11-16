@@ -29,6 +29,8 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 
+import { refuseRedirects, withoutFollowingRedirects } from './key-transport.ts';
+
 const ExternalIdentityRequestCorrelationSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 
 type ExternalIdentityApiGroups =
@@ -98,24 +100,26 @@ export const externalIdentityTransportLayer = (options: ExternalIdentityClientOp
 
 export type ExternalIdentityClientEffect<Success> = Effect.Effect<Success, ExternalIdentityClientError>;
 
-const externalIdentityHttpClient = makeEffectHttpApiClient(ExternalIdentityApi, {
-  transformClient: HttpClient.mapRequestEffect((request) =>
-    ExternalIdentityTransport.pipe(
-      Effect.map(
-        Option.match({
-          onNone: () => request,
-          onSome: (options) => {
-            let nextRequest = HttpClientRequest.prependUrl(request, options.baseUrl.toString());
-            nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-api-key', Redacted.value(options.apiKey));
-            nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-correlation-id', options.requestCorrelation);
-            return options.compositionRevision === null
-              ? nextRequest
-              : HttpClientRequest.setHeader(nextRequest, 'x-ontos-composition-revision', options.compositionRevision);
-          },
-        }),
-      ),
+const attachIdentityTransport = HttpClient.mapRequestEffect((request) =>
+  ExternalIdentityTransport.pipe(
+    Effect.map(
+      Option.match({
+        onNone: () => request,
+        onSome: (options) => {
+          let nextRequest = HttpClientRequest.prependUrl(request, options.baseUrl.toString());
+          nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-api-key', Redacted.value(options.apiKey));
+          nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-correlation-id', options.requestCorrelation);
+          return options.compositionRevision === null
+            ? nextRequest
+            : HttpClientRequest.setHeader(nextRequest, 'x-ontos-composition-revision', options.compositionRevision);
+        },
+      }),
     ),
   ),
+);
+
+const externalIdentityHttpClient = makeEffectHttpApiClient(ExternalIdentityApi, {
+  transformClient: (client) => client.pipe(attachIdentityTransport, refuseRedirects),
 });
 
 const invokeExternalIdentity = <Success>(
@@ -124,6 +128,7 @@ const invokeExternalIdentity = <Success>(
 ): ExternalIdentityClientEffect<Success> =>
   Schema.decodeEffect(ExternalIdentityRequestCorrelationSchema)(options.requestCorrelation).pipe(
     Effect.flatMap(() => externalIdentityHttpClient.pipe(Effect.flatMap(operation))),
+    withoutFollowingRedirects,
     Effect.updateService(ExternalIdentityTransport, () => Option.some(options)),
   );
 

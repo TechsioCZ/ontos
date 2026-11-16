@@ -74,6 +74,7 @@ const portFromEnvironment = (
       acquire,
       context: {
         ...context,
+        operationRequirementKey: 'commerce.pricing.requirement.define-price-catalog',
         scope: verifiedTestScope({
           correlationId: context.requestCorrelation,
           legalEntityId: context.legalEntityId,
@@ -89,6 +90,7 @@ describe('Pricing Catalog selection evidence integration', () => {
   it.effect('sends only the exact selection with PRICING purpose through the generated Catalog client seam', () =>
     Effect.gen(function* assessExactTarget() {
       const requests: unknown[] = [];
+      const acquisitions: Parameters<OwnerGatewayConnectionAcquire>[0][] = [];
       const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
         (payload, credential, requestCorrelation, options) =>
@@ -96,11 +98,20 @@ describe('Pricing Catalog selection evidence integration', () => {
             requests.push({ credential: Redacted.value(credential), options, payload, requestCorrelation });
             return { evidence, missingRoles: [] };
           }),
+        (input) => {
+          acquisitions.push(input);
+          return catalogOwner(input);
+        },
       );
 
       const result = yield* port.assess(selection);
 
       expect(result).toEqual(evidence);
+      expect(acquisitions[0]?.conditionalRead).toEqual({
+        input: { purpose: 'PRICING', selection },
+        kind: 'CATALOG_SELECTION',
+        operationRequirementKey: 'commerce.pricing.requirement.define-price-catalog',
+      });
       expect(requests).toEqual([
         {
           credential: 'Bearer catalog-owner-assertion',

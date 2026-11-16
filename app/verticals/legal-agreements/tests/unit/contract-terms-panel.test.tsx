@@ -14,8 +14,10 @@ const { apply, records } = rstest.hoisted(() => ({ apply: rstest.fn(), records: 
 
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: apply }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
-rstest.mock('@app/party-registry/api/client', () => ({
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
   executeCounterpartyRead: rstest.fn(),
+}));
+rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
   listCustomers: rstest.fn(),
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({

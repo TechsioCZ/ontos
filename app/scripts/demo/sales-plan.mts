@@ -10,7 +10,20 @@
 
 import { Effect, Schema } from 'effect';
 
-export type VatRate = 0 | 10 | 12 | 21;
+export type VatRate = 12 | 21;
+/** The products' VAT classifications; Tax (`commerce.tax`) holds their rates. */
+export const TaxClassificationCodeSchema = Schema.Literals(['cz.vat.reduced', 'cz.vat.standard']);
+export type TaxClassificationCode = typeof TaxClassificationCodeSchema.Type;
+const STANDARD: TaxClassificationCode = 'cz.vat.standard';
+const REDUCED: TaxClassificationCode = 'cz.vat.reduced';
+
+/**
+ * The rates the demo's prices include: the Tax baseline seeded for the demo companies (standard 21 %, reduced 12 %).
+ * Merchandise reprices from net on its next sync if a company's rules in Tax say otherwise.
+ */
+export const SEED_VAT_RATES = { 'cz.vat.reduced': 12, 'cz.vat.standard': 21 } as const satisfies Readonly<
+  Record<TaxClassificationCode, VatRate>
+>;
 const OpportunityStageSchema = Schema.Literals(['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST']);
 export type OpportunityStage = typeof OpportunityStageSchema.Type;
 
@@ -25,7 +38,9 @@ export interface CatalogProduct {
   /** Price before the demo's recent price change (used for all historical snapshots). */
   readonly originalPriceMinor: number;
   readonly sku: string;
+  readonly taxClassificationCode: TaxClassificationCode;
   readonly unit: 'ks' | 'bal' | 'hod' | 'lic';
+  /** The seed rate of its classification (see {@link SEED_VAT_RATES}); never set on its own. */
   readonly vatRate: VatRate;
 }
 
@@ -40,7 +55,7 @@ const PRINTING = 'Tisk';
 
 const czk = (amount: number): number => amount * 100;
 
-export const catalog: readonly CatalogProduct[] = [
+const plannedCatalog: readonly Omit<CatalogProduct, 'vatRate'>[] = [
   {
     category: NOTEBOOKS,
     currentPriceMinor: czk(34_990),
@@ -50,8 +65,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 40,
     originalPriceMinor: czk(32_990),
     sku: 'NB-PRO-14',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: NOTEBOOKS,
@@ -62,8 +77,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 55,
     originalPriceMinor: czk(24_990),
     sku: 'NB-AIR-13',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: MONITORS,
@@ -74,8 +89,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 70,
     originalPriceMinor: czk(9490),
     sku: 'MON-27-4K',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: MONITORS,
@@ -86,8 +101,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 25,
     originalPriceMinor: czk(14_990),
     sku: 'MON-34-UW',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: ACCESSORIES,
@@ -98,8 +113,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 120,
     originalPriceMinor: czk(4290),
     sku: 'DOCK-USB-C',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: ACCESSORIES,
@@ -110,8 +125,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 200,
     originalPriceMinor: czk(1290),
     sku: 'KB-WL-CZ',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: ACCESSORIES,
@@ -122,8 +137,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 220,
     originalPriceMinor: czk(990),
     sku: 'MS-ERGO',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: ACCESSORIES,
@@ -134,8 +149,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 90,
     originalPriceMinor: czk(3490),
     sku: 'HS-ANC',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: SERVERS,
@@ -146,8 +161,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 12,
     originalPriceMinor: czk(89_900),
     sku: 'SRV-RACK-1U',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: SERVERS,
@@ -158,8 +173,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 18,
     originalPriceMinor: czk(18_990),
     sku: 'NAS-4BAY',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: NETWORKING,
@@ -170,8 +185,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 30,
     originalPriceMinor: czk(12_490),
     sku: 'SW-24P-POE',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: NETWORKING,
@@ -182,8 +197,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 60,
     originalPriceMinor: czk(5990),
     sku: 'AP-WIFI7',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: NETWORKING,
@@ -194,8 +209,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 14,
     originalPriceMinor: czk(21_990),
     sku: 'FW-SMB',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: SOFTWARE,
@@ -206,8 +221,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 1000,
     originalPriceMinor: czk(2890),
     sku: 'LIC-OFFICE',
+    taxClassificationCode: STANDARD,
     unit: 'lic',
-    vatRate: 21,
   },
   {
     category: SOFTWARE,
@@ -218,8 +233,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 1000,
     originalPriceMinor: czk(790),
     sku: 'LIC-AV',
+    taxClassificationCode: STANDARD,
     unit: 'lic',
-    vatRate: 21,
   },
   {
     category: SOFTWARE,
@@ -230,8 +245,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 500,
     originalPriceMinor: czk(4990),
     sku: 'LIC-BACKUP',
+    taxClassificationCode: STANDARD,
     unit: 'lic',
-    vatRate: 21,
   },
   {
     category: SERVICES,
@@ -242,8 +257,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 2000,
     originalPriceMinor: czk(1490),
     sku: 'SVC-INSTALL',
+    taxClassificationCode: STANDARD,
     unit: 'hod',
-    vatRate: 21,
   },
   {
     category: 'Tablety',
@@ -254,8 +269,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 35,
     originalPriceMinor: czk(8990),
     sku: 'TAB-10',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: PRINTING,
@@ -266,8 +281,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 22,
     originalPriceMinor: czk(6490),
     sku: 'PRN-LASER',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: PRINTING,
@@ -278,8 +293,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 140,
     originalPriceMinor: czk(1890),
     sku: 'TONER-BK',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: PRINTING,
@@ -290,8 +305,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 300,
     originalPriceMinor: czk(590),
     sku: 'PAPER-A4',
+    taxClassificationCode: STANDARD,
     unit: 'bal',
-    vatRate: 21,
   },
   {
     category: SERVERS,
@@ -302,8 +317,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 4,
     originalPriceMinor: czk(7990),
     sku: 'UPS-1500',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: ACCESSORIES,
@@ -314,8 +329,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 16,
     originalPriceMinor: czk(11_990),
     sku: 'CAM-CONF',
+    taxClassificationCode: STANDARD,
     unit: 'ks',
-    vatRate: 21,
   },
   {
     category: SERVICES,
@@ -326,8 +341,8 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 2000,
     originalPriceMinor: czk(4900),
     sku: 'SVC-SUPPORT',
+    taxClassificationCode: STANDARD,
     unit: 'hod',
-    vatRate: 21,
   },
   {
     category: 'Literatura',
@@ -338,10 +353,15 @@ export const catalog: readonly CatalogProduct[] = [
     openingStock: 80,
     originalPriceMinor: czk(490),
     sku: 'BOOK-IT',
+    taxClassificationCode: REDUCED,
     unit: 'ks',
-    vatRate: 10,
   },
 ];
+
+export const catalog: readonly CatalogProduct[] = plannedCatalog.map((product) => ({
+  ...product,
+  vatRate: SEED_VAT_RATES[product.taxClassificationCode],
+}));
 
 /** Deterministic PRNG (Park–Miller) so every cold reset yields identical data. */
 const prng = (seed: number) => {

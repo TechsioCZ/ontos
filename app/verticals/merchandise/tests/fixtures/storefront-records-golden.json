@@ -1,0 +1,1974 @@
+{
+  "cart": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 1,
+    "totalProducts": 1,
+    "indicators": {
+      "lowStockCount": 0,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 1,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "parameters": [
+          {
+            "label": "Materiál",
+            "unit": "",
+            "value": "nerez A2"
+          }
+        ],
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "description": "První odstavec\n\nDruhý odstavec",
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantRecords": [
+          {
+            "active": true,
+            "attributes": "",
+            "availability": "IN_STOCK",
+            "grossPriceMinor": 121,
+            "id": "v1",
+            "name": "M8 × 20",
+            "priceHistory": [],
+            "priceMinor": 100,
+            "sku": "P1-M8",
+            "stockOnHand": 5,
+            "unit": "ks"
+          }
+        ],
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "descriptionParagraphs": [
+          "První odstavec",
+          "Druhý odstavec"
+        ],
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      }
+    ]
+  },
+  "oddVariantDetail": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 2,
+    "total": 1,
+    "totalProducts": 1,
+    "indicators": {
+      "lowStockCount": 1,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 1,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "odd-variant",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1878000,
+        "id": "p-odd-variant",
+        "lowStockThreshold": 1,
+        "name": "Varianta s uloženou cenou",
+        "priceHistory": [],
+        "sku": "ODD-VARIANT",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 12099,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantRecords": [
+          {
+            "priceTiers": [
+              {
+                "minimumQuantity": 1,
+                "priceExcludingVatMinor": 1878000,
+                "priceMinor": 1062380
+              }
+            ],
+            "active": true,
+            "attributes": "",
+            "availability": "OUT_OF_STOCK",
+            "grossPriceMinor": 1062380,
+            "id": "v-odd",
+            "name": "Černá",
+            "priceHistory": [],
+            "priceMinor": 1878000,
+            "sku": "ODD-BLK",
+            "stockOnHand": 0,
+            "unit": "ks"
+          },
+          {
+            "active": true,
+            "attributes": "",
+            "availability": "OUT_OF_STOCK",
+            "grossPriceMinor": 12099,
+            "id": "v-plain",
+            "name": "Bílá",
+            "priceHistory": [],
+            "priceMinor": 9999,
+            "sku": "ODD-WHT",
+            "stockOnHand": 0,
+            "unit": "ks"
+          }
+        ],
+        "variantSummary": {
+          "count": 2,
+          "minGrossPriceMinor": 12099,
+          "stockOnHand": 0,
+          "units": [
+            "ks"
+          ]
+        },
+        "descriptionParagraphs": [],
+        "gallery": []
+      }
+    ]
+  },
+  "cards": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 8,
+    "totalProducts": 8,
+    "indicators": {
+      "lowStockCount": 7,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 8,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 1,
+          "variants": [
+            {
+              "id": "v1",
+              "name": "M8 × 20"
+            }
+          ]
+        },
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 50,
+        "id": "p2",
+        "lowStockThreshold": 1,
+        "name": "Podložka",
+        "priceHistory": [],
+        "sku": "P2",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 61,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "r",
+        "categoryPathIds": [
+          "r"
+        ],
+        "featuredPosition": 1,
+        "active": true,
+        "category": "Matice",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 30,
+        "id": "p3",
+        "lowStockThreshold": 1,
+        "name": "Matice",
+        "priceHistory": [],
+        "sku": "P3",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 36,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 25804,
+            "priceMinor": 28900
+          },
+          {
+            "minimumQuantity": 10,
+            "priceExcludingVatMinor": 23224,
+            "priceMinor": 26011
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "kava-zrnkova",
+        "active": true,
+        "category": "Káva",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 25804,
+        "id": "p-reduced",
+        "lowStockThreshold": 1,
+        "name": "Káva zrnková",
+        "priceHistory": [],
+        "sku": "KAVA-1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 12,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 28900,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 1000,
+            "priceMinor": 1211
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-one",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1000,
+        "id": "p-off-one",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-one",
+        "priceHistory": [],
+        "sku": "P-OFF-ONE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 1211,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 446,
+            "priceMinor": 646
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-more",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 446,
+        "id": "p-off-more",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-more",
+        "priceHistory": [],
+        "sku": "P-OFF-MORE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 646,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 500,
+            "priceMinor": 0
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-zero-gross",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 500,
+        "id": "p-zero-gross",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-zero-gross",
+        "priceHistory": [],
+        "sku": "P-ZERO-GROSS",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 0,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "odd-variant",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1878000,
+        "id": "p-odd-variant",
+        "lowStockThreshold": 1,
+        "name": "Varianta s uloženou cenou",
+        "priceHistory": [],
+        "sku": "ODD-VARIANT",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 12099,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 2,
+          "minGrossPriceMinor": 12099,
+          "stockOnHand": 0,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 2,
+          "variants": [
+            {
+              "id": "v-odd",
+              "name": "Černá"
+            },
+            {
+              "id": "v-plain",
+              "name": "Bílá"
+            }
+          ]
+        },
+        "gallery": []
+      }
+    ]
+  },
+  "category": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "description": "",
+        "hasChildren": false,
+        "heading": "Metrické",
+        "id": "c",
+        "imageAlt": "Metrické",
+        "imageSrc": "",
+        "longDescription": "Dlouhý popis",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 1,
+    "totalProducts": 1,
+    "indicators": {
+      "lowStockCount": 0,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 1,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 1,
+          "variants": [
+            {
+              "id": "v1",
+              "name": "M8 × 20"
+            }
+          ]
+        },
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      }
+    ]
+  },
+  "detail": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 2,
+    "total": 1,
+    "totalProducts": 1,
+    "indicators": {
+      "lowStockCount": 1,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 1,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 25804,
+            "priceMinor": 28900
+          },
+          {
+            "minimumQuantity": 10,
+            "priceExcludingVatMinor": 23224,
+            "priceMinor": 26011
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "kava-zrnkova",
+        "active": true,
+        "category": "Káva",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 25804,
+        "id": "p-reduced",
+        "lowStockThreshold": 1,
+        "name": "Káva zrnková",
+        "priceHistory": [],
+        "sku": "KAVA-1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 12,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 28900,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "descriptionParagraphs": [],
+        "gallery": []
+      }
+    ]
+  },
+  "featured": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 2,
+    "totalProducts": 2,
+    "indicators": {
+      "lowStockCount": 1,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 2,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "categoryId": "r",
+        "categoryPathIds": [
+          "r"
+        ],
+        "featuredPosition": 1,
+        "active": true,
+        "category": "Matice",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 30,
+        "id": "p3",
+        "lowStockThreshold": 1,
+        "name": "Matice",
+        "priceHistory": [],
+        "sku": "P3",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 36,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 1,
+          "variants": [
+            {
+              "id": "v1",
+              "name": "M8 × 20"
+            }
+          ]
+        },
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      }
+    ]
+  },
+  "legacyList": {
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "totalProducts": 8,
+    "canResetDemo": false,
+    "indicators": {
+      "lowStockCount": 7,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 8,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "parameters": [
+          {
+            "label": "Materiál",
+            "unit": "",
+            "value": "nerez A2"
+          }
+        ],
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "description": "První odstavec\n\nDruhý odstavec",
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantCount": 1,
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        }
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 50,
+        "id": "p2",
+        "lowStockThreshold": 1,
+        "name": "Podložka",
+        "priceHistory": [],
+        "sku": "P2",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 61,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        }
+      },
+      {
+        "categoryId": "r",
+        "categoryPathIds": [
+          "r"
+        ],
+        "featuredPosition": 1,
+        "active": true,
+        "category": "Matice",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 30,
+        "id": "p3",
+        "lowStockThreshold": 1,
+        "name": "Matice",
+        "priceHistory": [],
+        "sku": "P3",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 36,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        }
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 25804,
+            "priceMinor": 28900
+          },
+          {
+            "minimumQuantity": 10,
+            "priceExcludingVatMinor": 23224,
+            "priceMinor": 26011
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "kava-zrnkova",
+        "active": true,
+        "category": "Káva",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 25804,
+        "id": "p-reduced",
+        "lowStockThreshold": 1,
+        "name": "Káva zrnková",
+        "priceHistory": [],
+        "sku": "KAVA-1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 12,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 28900,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        }
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 1000,
+            "priceMinor": 1211
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-one",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1000,
+        "id": "p-off-one",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-one",
+        "priceHistory": [],
+        "sku": "P-OFF-ONE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 1211,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        }
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 446,
+            "priceMinor": 646
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-more",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 446,
+        "id": "p-off-more",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-more",
+        "priceHistory": [],
+        "sku": "P-OFF-MORE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 646,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        }
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 500,
+            "priceMinor": 0
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-zero-gross",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 500,
+        "id": "p-zero-gross",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-zero-gross",
+        "priceHistory": [],
+        "sku": "P-ZERO-GROSS",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 0,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        }
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "odd-variant",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1878000,
+        "id": "p-odd-variant",
+        "lowStockThreshold": 1,
+        "name": "Varianta s uloženou cenou",
+        "priceHistory": [],
+        "sku": "ODD-VARIANT",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 12099,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantCount": 2,
+        "variantSummary": {
+          "count": 2,
+          "minGrossPriceMinor": 12099,
+          "stockOnHand": 0,
+          "units": [
+            "ks"
+          ]
+        }
+      }
+    ]
+  },
+  "priceAscending": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 8,
+    "totalProducts": 8,
+    "indicators": {
+      "lowStockCount": 7,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 8,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 500,
+            "priceMinor": 0
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-zero-gross",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 500,
+        "id": "p-zero-gross",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-zero-gross",
+        "priceHistory": [],
+        "sku": "P-ZERO-GROSS",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 0,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "r",
+        "categoryPathIds": [
+          "r"
+        ],
+        "featuredPosition": 1,
+        "active": true,
+        "category": "Matice",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 30,
+        "id": "p3",
+        "lowStockThreshold": 1,
+        "name": "Matice",
+        "priceHistory": [],
+        "sku": "P3",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 36,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 50,
+        "id": "p2",
+        "lowStockThreshold": 1,
+        "name": "Podložka",
+        "priceHistory": [],
+        "sku": "P2",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 61,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 1,
+          "variants": [
+            {
+              "id": "v1",
+              "name": "M8 × 20"
+            }
+          ]
+        },
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 446,
+            "priceMinor": 646
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-more",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 446,
+        "id": "p-off-more",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-more",
+        "priceHistory": [],
+        "sku": "P-OFF-MORE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 646,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 1000,
+            "priceMinor": 1211
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-one",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1000,
+        "id": "p-off-one",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-one",
+        "priceHistory": [],
+        "sku": "P-OFF-ONE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 1211,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "odd-variant",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1878000,
+        "id": "p-odd-variant",
+        "lowStockThreshold": 1,
+        "name": "Varianta s uloženou cenou",
+        "priceHistory": [],
+        "sku": "ODD-VARIANT",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 12099,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 2,
+          "minGrossPriceMinor": 12099,
+          "stockOnHand": 0,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 2,
+          "variants": [
+            {
+              "id": "v-odd",
+              "name": "Černá"
+            },
+            {
+              "id": "v-plain",
+              "name": "Bílá"
+            }
+          ]
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 25804,
+            "priceMinor": 28900
+          },
+          {
+            "minimumQuantity": 10,
+            "priceExcludingVatMinor": 23224,
+            "priceMinor": 26011
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "kava-zrnkova",
+        "active": true,
+        "category": "Káva",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 25804,
+        "id": "p-reduced",
+        "lowStockThreshold": 1,
+        "name": "Káva zrnková",
+        "priceHistory": [],
+        "sku": "KAVA-1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 12,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 28900,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      }
+    ]
+  },
+  "priceBounds": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 5,
+    "totalProducts": 5,
+    "indicators": {
+      "lowStockCount": 4,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 5,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 1,
+          "variants": [
+            {
+              "id": "v1",
+              "name": "M8 × 20"
+            }
+          ]
+        },
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 25804,
+            "priceMinor": 28900
+          },
+          {
+            "minimumQuantity": 10,
+            "priceExcludingVatMinor": 23224,
+            "priceMinor": 26011
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "kava-zrnkova",
+        "active": true,
+        "category": "Káva",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 25804,
+        "id": "p-reduced",
+        "lowStockThreshold": 1,
+        "name": "Káva zrnková",
+        "priceHistory": [],
+        "sku": "KAVA-1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 12,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 28900,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 1000,
+            "priceMinor": 1211
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-one",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1000,
+        "id": "p-off-one",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-one",
+        "priceHistory": [],
+        "sku": "P-OFF-ONE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 1211,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "priceTiers": [
+          {
+            "minimumQuantity": 1,
+            "priceExcludingVatMinor": 446,
+            "priceMinor": 646
+          }
+        ],
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "p-off-more",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 446,
+        "id": "p-off-more",
+        "lowStockThreshold": 1,
+        "name": "Uložená cena p-off-more",
+        "priceHistory": [],
+        "sku": "P-OFF-MORE",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 646,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 0,
+          "minGrossPriceMinor": null,
+          "stockOnHand": 0,
+          "units": []
+        },
+        "storefrontVariantPreview": {
+          "total": 0,
+          "variants": []
+        },
+        "gallery": []
+      },
+      {
+        "categoryId": "x",
+        "isSale": true,
+        "slug": "odd-variant",
+        "active": true,
+        "category": "Podložky",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 1878000,
+        "id": "p-odd-variant",
+        "lowStockThreshold": 1,
+        "name": "Varianta s uloženou cenou",
+        "priceHistory": [],
+        "sku": "ODD-VARIANT",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "OUT_OF_STOCK",
+        "grossPriceMinor": 12099,
+        "lowStock": true,
+        "stockOnHand": 0,
+        "stockValueMinor": 0,
+        "variantSummary": {
+          "count": 2,
+          "minGrossPriceMinor": 12099,
+          "stockOnHand": 0,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 2,
+          "variants": [
+            {
+              "id": "v-odd",
+              "name": "Černá"
+            },
+            {
+              "id": "v-plain",
+              "name": "Bílá"
+            }
+          ]
+        },
+        "gallery": []
+      }
+    ]
+  },
+  "search": {
+    "categories": [
+      {
+        "description": "Krátký popis",
+        "hasChildren": true,
+        "id": "r",
+        "imageAlt": "Šrouby",
+        "imageSrc": "",
+        "name": "Šrouby",
+        "parentId": null,
+        "position": 0,
+        "slug": "srouby"
+      },
+      {
+        "hasChildren": false,
+        "id": "c",
+        "name": "Metrické",
+        "parentId": "r",
+        "position": 1,
+        "slug": "metricke"
+      }
+    ],
+    "canCleanupDemo": false,
+    "canEditOrders": false,
+    "canManageCatalog": false,
+    "canManageMarkets": false,
+    "canWrite": false,
+    "homepageFeaturedProductIds": [
+      "p3"
+    ],
+    "page": 1,
+    "pageSize": 24,
+    "total": 1,
+    "totalProducts": 1,
+    "indicators": {
+      "lowStockCount": 0,
+      "openOrderValueMinor": 0,
+      "orderCount": 0,
+      "productCount": 1,
+      "stockValueMinor": 0
+    },
+    "movements": [],
+    "orders": [],
+    "products": [
+      {
+        "categoryId": "c",
+        "categoryPathIds": [
+          "c",
+          "r"
+        ],
+        "images": [
+          "/a.jpg",
+          "/b.jpg"
+        ],
+        "isRecommended": true,
+        "active": true,
+        "category": "Šrouby",
+        "createdAt": "2026-10-19T08:00:00.000Z",
+        "currentPriceMinor": 100,
+        "id": "p1",
+        "lowStockThreshold": 0,
+        "name": "Šroub zinkovaný",
+        "priceHistory": [],
+        "sku": "P1",
+        "unit": "ks",
+        "updatedAt": "2026-10-19T08:00:00.000Z",
+        "vatRate": 21,
+        "availability": "IN_STOCK",
+        "grossPriceMinor": 121,
+        "lowStock": false,
+        "stockOnHand": 5,
+        "stockValueMinor": 500,
+        "searchMatch": {
+          "kind": "product",
+          "onlyVariant": {
+            "availability": "IN_STOCK",
+            "currency": "CZK",
+            "displayPriceExcludingVatMinor": 100,
+            "grossPriceMinor": 121,
+            "id": "v1",
+            "name": "M8 × 20",
+            "priceMinor": 100,
+            "sku": "P1-M8",
+            "stockOnHand": 5,
+            "unit": "ks"
+          }
+        },
+        "variantSummary": {
+          "count": 1,
+          "minGrossPriceMinor": 121,
+          "stockOnHand": 5,
+          "units": [
+            "ks"
+          ]
+        },
+        "storefrontVariantPreview": {
+          "total": 1,
+          "variants": [
+            {
+              "id": "v1",
+              "name": "M8 × 20"
+            }
+          ]
+        },
+        "gallery": [
+          "/a.jpg",
+          "/b.jpg"
+        ]
+      }
+    ]
+  }
+}

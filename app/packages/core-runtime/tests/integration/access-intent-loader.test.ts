@@ -344,6 +344,7 @@ const scopeOf = (tenantId: string, principalId: string, legalEntityId?: string):
 const onLiveClock = (loader: TenantIntentLoaderService): TenantIntentLoaderService => ({
   loadAuthorityCells: (scope, query) => TestClock.withLive(loader.loadAuthorityCells(scope, query)),
   loadAuthorityCellsMany: (scope, queries) => TestClock.withLive(loader.loadAuthorityCellsMany(scope, queries)),
+  loadCompanyOwnership: (scope, query) => TestClock.withLive(loader.loadCompanyOwnership(scope, query)),
   loadConfigureBases: (scope, query) => TestClock.withLive(loader.loadConfigureBases(scope, query)),
   loadConnection: (scope, query) => TestClock.withLive(loader.loadConnection(scope, query)),
   loadProjection: (scope) => TestClock.withLive(loader.loadProjection(scope)),

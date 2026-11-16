@@ -20,6 +20,8 @@
     "./access/decision/list-access": "./src/access/decision/list-access.ts",
     "./access/enforcement": "./src/access/enforcement/index.ts",
     "./access/ids": "./src/access/ids.ts",
+    "./access/intent/agent-connections": "./src/access/intent/agent-connections.ts",
+    "./access/lifecycle/agent-authority": "./src/access/lifecycle/agent-authority.ts",
     "./access/intent/catalog-snapshot-writer": "./src/access/intent/catalog-snapshot-writer.ts",
     "./access/intent/projection-compiler": "./src/access/intent/projection-compiler.ts",
     "./access/intent/projection-writer": "./src/access/intent/projection-writer.ts",
@@ -41,6 +43,8 @@
     "./db/client": "./src/db/client.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
     "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
+    "./auth/action-principal-ids": "./src/auth/action-principal-ids.ts",
+    "./auth/managed-api-key-eligibility": "./src/auth/managed-api-key-eligibility.ts",
     "./auth/external-identity-admission": "./src/auth/external-identity/verifier.ts",
     "./auth/external-identity-contracts": "./src/auth/external-identity-contracts.ts",
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
@@ -64,11 +68,13 @@
       "default": "./src/modules/active-application-composition-source.node.ts"
     },
     "./observability/runtime-jobs": "./src/observability/runtime-jobs.ts",
+    "./modules/manifest": "./src/modules/manifest.ts",
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
     "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",
     "./outbox/core-identity-principal-binding-reserved-v1": "./src/outbox/core-identity-principal-binding-reserved-v1.ts",
     "./outbox/core-identity-principal-binding-status-changed-v1": "./src/outbox/core-identity-principal-binding-status-changed-v1.ts",
+    "./outbox/message-company": "./src/outbox/message-company.ts",
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
     "./permissions/principal-ref": "./src/permissions/principal-ref.ts",
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
@@ -83,10 +89,11 @@
     "./testing/reads": "./src/testing/reads.ts",
     "./testing/native-reads": "./src/testing/native-reads.ts",
     "./testing/native-action-v2": {
-      "types": "./tests/support/action-live-v2.ts",
       "node": "./tests/support/action-live-v2.ts"
     },
     "./testing/isolated-native-database": "./src/testing/isolated-native-database.ts",
+    "./testing/source-execution-fence-native": "./src/testing/source-execution-fence-native.ts",
+    "./testing/workload-binding-native": "./src/testing/workload-binding-native.ts",
     "./testing/scripted-pg-client": "./src/testing/scripted-pg-client.ts",
     "./testing/tenant-access": "./src/testing/tenant-access.ts",
     "./testing/module-contract": "./src/testing/module-contract.ts",
@@ -107,6 +114,7 @@
     "./resources/scoped-resource-id": "./src/resources/scoped-resource-id.ts",
     "./outbox/core-identity-people-search-rebuild-requested-v1": "./src/outbox/core-identity-people-search-rebuild-requested-v1.ts",
     "./resources/person": "./src/resources/person.ts",
+    "./runtime/boot-warm-up-imports": "./src/runtime/boot-warm-up-imports.ts",
     "./people/search": "./src/people/system-search-provider.ts",
     "./people/search-rebuild": "./src/modules/actions/request-people-search-rebuild.action.ts",
     "./drizzle-config": "./src/environment/drizzle-config.ts"
@@ -117,7 +125,6 @@
       "default": "./src/db/database-runtime.node.ts"
     },
     "#unit-service-fetch": {
-      "types": "./src/http/unit-service-fetch.ts",
       "workerd": "./src/http/unit-service-fetch.workerd.ts",
       "node": "./src/http/unit-service-fetch.node.ts"
     },
@@ -150,10 +157,10 @@
     "effect": "4.0.7"
   },
   "devDependencies": {
-    "@rstest/core": "0.11.12",
+    "@rstest/core": "0.12.6",
     "@types/node": "^26.4.1",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "effect-rstest": "1.0.0",
     "pg": "8.22.0"
   }
 }

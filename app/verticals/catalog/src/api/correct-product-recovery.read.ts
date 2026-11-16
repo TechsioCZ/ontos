@@ -80,6 +80,10 @@ export const correctProductRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Original Product cosmetic correction recovery for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: correctProductRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

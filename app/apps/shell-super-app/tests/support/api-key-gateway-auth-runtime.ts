@@ -225,6 +225,14 @@ const makeOwnedAuthRuntimeContract = Effect.fn('ShellNativeAuthRuntime.make')(fu
       yield* assertIdentity();
       return yield* Effect.void;
     }),
+    needsMigration: Effect.fn('ShellNativeAuthRuntime.needsMigration')(function* needsMigration() {
+      yield* assertIdentity();
+      const [observed] = yield* admin`select to_regnamespace('auth') is null as safe`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([safeSchema]))),
+        Effect.mapError(unavailable),
+      );
+      return observed.safe;
+    }),
     runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
   });
 });

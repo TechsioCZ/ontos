@@ -1,5 +1,5 @@
 import { ReadPermissionDenied, ReadHandlerUnavailable } from '@app/core-runtime';
-import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { ListAccessConditionSchema } from '@app/core-runtime/access/decision/list-access';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
@@ -100,5 +100,3 @@ export interface PipelineSearchServices {
     predicate: ListAccessPredicate,
   ) => Effect.Effect<readonly PipelineSearchRecord[], ReturnType<typeof searchUnavailable>>;
 }
-export const makePipelineSearchServices: ReadServiceFactory<PipelineSearchServices> = (transaction, scope) =>
-  Effect.succeed({ load: (predicate) => loadPipelineSearchRecords(transaction, scope, predicate) });

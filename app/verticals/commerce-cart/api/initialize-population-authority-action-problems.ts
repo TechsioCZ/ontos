@@ -81,10 +81,12 @@ export const initializePopulationAuthorityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'InitializePopulationAuthorityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'InitializePopulationAuthorityActionForbiddenProblem'> =>
     InitializePopulationAuthorityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -204,7 +206,8 @@ const mapCoreProblem = (error: ActionCoreError): InitializePopulationAuthorityAc
       ActionInvocationStateError: (failure) => initializePopulationAuthorityActionProblem.conflict(failure.code),
       ActionPayloadValidationError: initializePopulationAuthorityActionProblem.invalid,
       ActionPermissionCheckError: (failure) => initializePopulationAuthorityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => initializePopulationAuthorityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        initializePopulationAuthorityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => initializePopulationAuthorityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => initializePopulationAuthorityActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => initializePopulationAuthorityActionProblem.conflict(failure.code),

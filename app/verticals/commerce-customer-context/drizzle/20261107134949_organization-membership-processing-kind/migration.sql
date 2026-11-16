@@ -1,0 +1,4 @@
+ALTER TABLE "commerce_customer_context"."customer_group_membership_snapshot_proofs" ADD COLUMN "processing_kind" text DEFAULT 'PERSON' NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."customer_group_membership_source_receipts" ADD COLUMN "processing_kind" text DEFAULT 'PERSON' NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."customer_group_membership_snapshot_proofs" ADD CONSTRAINT "ccc_membership_snapshot_proof_processing_kind_ck" CHECK ("processing_kind" in ('PERSON', 'ORG_BUSINESS_REFERENCE'));--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."customer_group_membership_source_receipts" ADD CONSTRAINT "ccc_membership_source_receipt_processing_kind_ck" CHECK ("processing_kind" in ('PERSON', 'ORG_BUSINESS_REFERENCE'));

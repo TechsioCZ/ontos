@@ -1,4 +1,4 @@
-import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy/api/client';
+import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy/api/record-owner-execution-outcome-action/client';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';

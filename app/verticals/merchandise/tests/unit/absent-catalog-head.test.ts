@@ -12,15 +12,18 @@ import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-comm
 import { MerchandiseRevisionConflict } from '../../shared/errors/merchandise-revision-conflict.ts';
 import { PLAYGROUND_COMPANY, PLAYGROUND_TENANT } from '../../shared/domain/playground-catalog-bootstrap.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
-import { assertMerchandiseSearchPublished } from '../../src/search/catalog-publication.ts';
+import { assertMerchandiseSearchPublished } from '../../src/services/catalog-publication.ts';
 import { EMPTY_CATALOG_HEAD, lockHeadForWrite } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
+import { TEST_FETCHED_TAX } from '../support/tax-fixtures.ts';
 
 /*
  * A company whose catalog head row was never written. Real Drizzle SQL runs against a scripted connection holding
  * the company's head in memory, so each case shows exactly which head statements a read and a first write issue.
  */
 
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const headTable = '"demo_merchandise"."catalog_heads"';
 
 interface StoredHead {
@@ -42,11 +45,13 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
             if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)\b/u.test(sql)) {
               return Effect.succeed([]);
             }
-            if (sql.includes('set_config(')) {
-              scope = { legalEntityId: String(params[1]), tenantId: String(params[0]) };
-              return Effect.succeed([{}]);
+            // Main's scope authority probes the connected role before it installs a scope.
+            if (sql === 'select current_user::text as role') {
+              return Effect.succeed([{ role: 'ontos_runtime' }]);
             }
-            if (sql.includes('current_user::text as role')) {
+            // A session-setting role installs its scope and reads back the connected role in one statement.
+            if (sql === installAndReadScopeSql) {
+              scope = { legalEntityId: String(params[1]), tenantId: String(params[0]) };
               return Effect.succeed([
                 { legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: scope.tenantId },
               ]);
@@ -59,7 +64,8 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
               return Effect.succeed([]);
             }
             if (sql.startsWith('select') && sql.includes(headTable)) {
-              // Values mode follows SELECT order: aiChanges, bootstrapCheckpoint, homepageFeaturedProductIds, revision.
+              // Values mode follows SELECT order: aiChanges, bootstrapCheckpoint, homepageFeaturedProductIds, revision,
+              // taxRates.
               return Effect.succeed(
                 head === undefined
                   ? []
@@ -69,6 +75,7 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
                         bootstrapCheckpoint: head.checkpoint,
                         homepageFeaturedProductIds: [],
                         revision: head.revision,
+                        taxRates: null,
                       },
                     ],
               );
@@ -177,7 +184,7 @@ const writeOnHead = (
       const resourceId = randomUUID();
       const payload = createCategoryAt(expectedRevision);
       const services = yield* persistenceService(scoped, {
-        prepared: { actionInvocationId: resourceId, payload },
+        prepared: { actionInvocationId: resourceId, payload, tax: { fetched: TEST_FETCHED_TAX, refused: false } },
         scope,
       });
       return yield* services.apply(payload.command, expectedRevision, resourceId);

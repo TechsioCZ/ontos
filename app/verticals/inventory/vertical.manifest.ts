@@ -11,6 +11,19 @@ import {
 } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
+import { inventoryAuditReadPermission } from './shared/permissions/inventory-audit-read.ts';
+import { inventoryCatalogToStockBindingManagePermission } from './shared/permissions/inventory-catalog-to-stock-binding-manage.ts';
+import { inventoryCommitmentProtectionEstablishPermission } from './shared/permissions/inventory-commitment-protection-establish.ts';
+import { inventoryExternalStockCorrelationManagePermission } from './shared/permissions/inventory-external-stock-correlation-manage.ts';
+import { inventoryMigrationManagePermission } from './shared/permissions/inventory-migration-manage.ts';
+import { inventoryRecoveryExecutePermission } from './shared/permissions/inventory-recovery-execute.ts';
+import { inventoryReservationEstablishPermission } from './shared/permissions/inventory-reservation-establish.ts';
+import { inventoryReservationReleasePermission } from './shared/permissions/inventory-reservation-release.ts';
+import { inventoryResourceReadPermission } from './shared/permissions/inventory-resource-read.ts';
+import { inventoryStockCorrectPermission } from './shared/permissions/inventory-stock-correct.ts';
+import { inventoryStockIssuePermission } from './shared/permissions/inventory-stock-issue.ts';
+import { inventoryStockReceiptPermission } from './shared/permissions/inventory-stock-receipt.ts';
+import { inventoryStockSharingEligibilityManagePermission } from './shared/permissions/inventory-stock-sharing-eligibility-manage.ts';
 // <generated-module-manifest-imports>
 import { CatalogToStockBindingResolutionApi } from './shared/apis/catalog-to-stock-binding-resolution.ts';
 import { catalogToStockBindingResourceDescriptor } from './shared/resources/catalog-to-stock-binding.ts';
@@ -33,28 +46,18 @@ import { establishExternalStockCorrelationAction } from './src/actions/establish
 import { establishStockSharingEligibilityAction } from './src/actions/establish-stock-sharing-eligibility.action.ts';
 import { externalStockCorrelationResourceDescriptor } from './shared/resources/external-stock-correlation.ts';
 import { importedCommittedObligationResourceDescriptor } from './shared/resources/imported-committed-obligation.ts';
+import { ImportSourceAssertionActionApi } from './shared/apis/import-source-assertion-action.ts';
 import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
-import { inventoryAuditReadPermission } from './shared/permissions/inventory-audit-read.ts';
 import { InventoryBackendConfigurationCurrentApi } from './shared/apis/inventory-backend-configuration-current.ts';
 import { inventoryBackendConfigurationResourceDescriptor } from './shared/resources/inventory-backend-configuration.ts';
-import { inventoryCatalogToStockBindingManagePermission } from './shared/permissions/inventory-catalog-to-stock-binding-manage.ts';
-import { inventoryCommitmentProtectionEstablishPermission } from './shared/permissions/inventory-commitment-protection-establish.ts';
 import { InventoryEffectOutcomeApi } from './shared/apis/inventory-effect-outcome.ts';
-import { inventoryExternalStockCorrelationManagePermission } from './shared/permissions/inventory-external-stock-correlation-manage.ts';
-import { inventoryMigrationManagePermission } from './shared/permissions/inventory-migration-manage.ts';
 import { InventoryReconciliationEvidenceApi } from './shared/apis/inventory-reconciliation-evidence.ts';
-import { inventoryRecoveryExecutePermission } from './shared/permissions/inventory-recovery-execute.ts';
 import { InventoryReservationDetailApi } from './shared/apis/inventory-reservation-detail.ts';
-import { inventoryReservationEstablishPermission } from './shared/permissions/inventory-reservation-establish.ts';
-import { inventoryReservationReleasePermission } from './shared/permissions/inventory-reservation-release.ts';
 import { inventoryReservationResourceDescriptor } from './shared/resources/inventory-reservation.ts';
-import { inventoryResourceReadPermission } from './shared/permissions/inventory-resource-read.ts';
 import { InventorySourceConflictDetailApi } from './shared/apis/inventory-source-conflict-detail.ts';
 import { inventorySourceConflictResourceDescriptor } from './shared/resources/inventory-source-conflict.ts';
-import { inventoryStockCorrectPermission } from './shared/permissions/inventory-stock-correct.ts';
-import { inventoryStockIssuePermission } from './shared/permissions/inventory-stock-issue.ts';
-import { inventoryStockReceiptPermission } from './shared/permissions/inventory-stock-receipt.ts';
-import { inventoryStockSharingEligibilityManagePermission } from './shared/permissions/inventory-stock-sharing-eligibility-manage.ts';
+import { InventorySourceImportReceiptApi } from './shared/apis/inventory-source-import-receipt.ts';
+import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
 import { reservationConfirmationResourceDescriptor } from './shared/resources/reservation-confirmation.ts';
@@ -130,11 +133,13 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       'commitment-protection-verification': CommitmentProtectionVerificationApi,
       'current-relevant-stock-position-set': CurrentRelevantStockPositionSetApi,
       'current-stock-evidence-for-availability': CurrentStockEvidenceForAvailabilityApi,
+      'import-source-assertion-action': ImportSourceAssertionActionApi,
       'inventory-backend-configuration-current': InventoryBackendConfigurationCurrentApi,
       'inventory-effect-outcome': InventoryEffectOutcomeApi,
       'inventory-reconciliation-evidence': InventoryReconciliationEvidenceApi,
       'inventory-reservation-detail': InventoryReservationDetailApi,
       'inventory-source-conflict-detail': InventorySourceConflictDetailApi,
+      'inventory-source-import-receipt': InventorySourceImportReceiptApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'reservation-confirmation-verification': ReservationConfirmationVerificationApi,
       'stock-sharing-eligibility-resolution': StockSharingEligibilityResolutionApi,
@@ -163,6 +168,20 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
     },
     events: [],
     mcp: inventoryMcpContribution,
+    operationContracts: [
+      // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'import-source-assertion-action',
+        operationKey: 'importSourceAssertionAction.execute',
+        registration: importSourceAssertionAction,
+      },
+      {
+        apiKey: 'inventory-source-import-receipt',
+        operationKey: 'inventorySourceImportReceipt.execute',
+        registration: inventorySourceImportReceiptRead,
+      },
+      // </generated-module-manifest-operation-contracts>
+    ],
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

@@ -13,8 +13,8 @@ const { merchandiseRecords, records } = rstest.hoisted(() => ({
   records: rstest.fn(),
 }));
 
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: records }));
-rstest.mock('@app/merchandise/clients/records', () => ({ executeRecords: merchandiseRecords }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
+rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: merchandiseRecords }));
 rstest.mock('@modern-js/runtime/head', () => ({ Helmet: () => null }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,

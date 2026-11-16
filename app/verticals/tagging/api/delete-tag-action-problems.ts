@@ -56,10 +56,12 @@ export const deleteTagActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'DeleteTagActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'DeleteTagActionForbiddenProblem'> =>
     DeleteTagActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -163,7 +165,7 @@ const mapCoreProblem = (error: ActionCoreError): DeleteTagActionProblem =>
       ActionInvocationStateError: (failure) => deleteTagActionProblem.conflict(failure.code),
       ActionPayloadValidationError: deleteTagActionProblem.invalid,
       ActionPermissionCheckError: (failure) => deleteTagActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => deleteTagActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => deleteTagActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => deleteTagActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => deleteTagActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => deleteTagActionProblem.conflict(failure.code),

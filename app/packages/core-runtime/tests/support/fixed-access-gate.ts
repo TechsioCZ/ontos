@@ -32,10 +32,9 @@ export const bindFixedAccessGate = (input: {
     executor: input.executor,
   });
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: ({ principalId }) => Effect.succeed(new Set(input.workloads?.[principalId])),
-    // This fixture declares no company for any binding, so a standalone workload selects none and
-    // keeps the tenant-wide rule of O73 (D6).
-    readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+    // This fixture registers no company for any binding, so a workload acts only in the tenant context (D6).
+    readWorkloadAuthority: ({ principalId }) =>
+      Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set(input.workloads?.[principalId]) }),
   };
   const ports = {
     candidates: { listCandidateIds: () => Effect.succeed([]) },

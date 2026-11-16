@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -11,15 +11,18 @@ import { runScaffoldEffect } from '../cli.mts';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const CORE_MODULE = 'core.identity';
 const CORE_NAME = 'fixture-read';
+const CORE_INDEX_PATH = 'packages/core-runtime/src/index.ts';
 const CORE_READ_PATH = 'packages/core-runtime/src/generated-reads/fixture-read.ts';
 const SHELL_CONTRACT_PATH = 'apps/shell-super-app/shared/core-reads/fixture-read.ts';
-const SHELL_SHARED_API_PATH = 'apps/shell-super-app/shared/api.ts';
+const SHELL_BROWSER_API_PATH = 'apps/shell-super-app/shared/browser-api.ts';
+const SHELL_SERVER_API_PATH = 'apps/shell-super-app/shared/api.ts';
 const SHELL_SERVER_PATH = 'apps/shell-super-app/api/index.ts';
 const SHELL_CLIENT_PATH = 'apps/shell-super-app/src/api/auth-client.ts';
 const AUTHORIZATION_FLAG = '--authorization';
 const roots = [
-  'packages/core-runtime/src/index.ts',
-  SHELL_SHARED_API_PATH,
+  CORE_INDEX_PATH,
+  SHELL_BROWSER_API_PATH,
+  SHELL_SERVER_API_PATH,
   SHELL_SERVER_PATH,
   SHELL_CLIENT_PATH,
 ] as const;
@@ -58,20 +61,30 @@ it.effect('Core READ mode creates a fail-closed Core read and typed Shell route/
       yield* run(root);
       const readSource = yield* read(root, CORE_READ_PATH);
       const contract = yield* read(root, SHELL_CONTRACT_PATH);
-      const sharedApi = yield* read(root, SHELL_SHARED_API_PATH);
+      const browserApi = yield* read(root, SHELL_BROWSER_API_PATH);
+      const serverApi = yield* read(root, SHELL_SERVER_API_PATH);
       const server = yield* read(root, SHELL_SERVER_PATH);
       const client = yield* read(root, SHELL_CLIENT_PATH);
       expect(readSource).toContain('defineRead(');
       expect(readSource).toContain('Core read requires owner implementation and target authorization');
       expect(contract).toContain('FixtureReadRequestSchema');
-      expect(sharedApi).toContain("HttpApiGroup.make('coreReadFixtureRead')");
+      expect(browserApi.match(/HttpApiGroup\.make\('coreReadFixtureRead'\)/gu)).toHaveLength(1);
+      expect(serverApi).toContain("import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';");
+      const serverComposition = /export const ShellAuthenticationApi\b[^=]*= HttpApi\.make\([^\n]+\)[^;]*/u.exec(
+        serverApi,
+      );
+      expect(serverComposition?.[0]).toContain('.add(ShellBrowserApi.groups.coreReadFixtureRead)');
+      expect(serverApi).not.toContain("HttpApiGroup.make('coreReadFixtureRead')");
+      expect(server).toContain("HttpApiBuilder.group(ShellAuthenticationApi, 'coreReadFixtureRead'");
       expect(server).toContain('registration: fixtureReadRead');
       expect(server.match(/^import \{[^;]*\} from '@app\/core-runtime';/gmu)).toHaveLength(1);
       expect(server).toContain('fixtureReadRead,');
+      expect(client).toMatch(/import \{ ShellAuthenticationApi[^}]*\} from '\.\.\/\.\.\/shared\/browser-api\.ts';/u);
       expect(client).toContain('client.coreReadFixtureRead.executeFixtureRead({ payload })');
-      const before = yield* Effect.all(roots.map((relative) => read(root, relative)));
+      const files = [...roots, CORE_READ_PATH, SHELL_CONTRACT_PATH];
+      const before = yield* Effect.all(files.map((relative) => read(root, relative)));
       yield* run(root);
-      expect(yield* Effect.all(roots.map((relative) => read(root, relative)))).toEqual(before);
+      expect(yield* Effect.all(files.map((relative) => read(root, relative)))).toEqual(before);
     }),
   ),
 );
@@ -124,10 +137,13 @@ it.effect('Core READ mode composes another read without disturbing the first', (
     Effect.gen(function* composeCoreReads() {
       yield* run(root);
       yield* run(root, ['--core', '--module', CORE_MODULE, '--name', 'another-read', AUTHORIZATION_FLAG, 'protected']);
-      const sharedApi = yield* read(root, SHELL_SHARED_API_PATH);
+      const browserApi = yield* read(root, SHELL_BROWSER_API_PATH);
+      const serverApi = yield* read(root, SHELL_SERVER_API_PATH);
       const server = yield* read(root, SHELL_SERVER_PATH);
-      expect(sharedApi).toContain("HttpApiGroup.make('coreReadFixtureRead')");
-      expect(sharedApi).toContain("HttpApiGroup.make('coreReadAnotherRead')");
+      expect(browserApi).toContain("HttpApiGroup.make('coreReadFixtureRead')");
+      expect(browserApi).toContain("HttpApiGroup.make('coreReadAnotherRead')");
+      expect(serverApi).toContain('.add(ShellBrowserApi.groups.coreReadFixtureRead)');
+      expect(serverApi).toContain('.add(ShellBrowserApi.groups.coreReadAnotherRead)');
       expect(server).toContain('coreReadFixtureReadGroupLive,');
       expect(server).toContain('coreReadAnotherReadGroupLive,');
       yield* run(root);
@@ -138,14 +154,23 @@ it.effect('Core READ mode composes another read without disturbing the first', (
 it.effect('Core READ mode rejects a missing Shell registration slot before any write', () =>
   fixture((root) =>
     Effect.gen(function* rejectMissingSlot() {
-      const serverPath = path.join(root, SHELL_SERVER_PATH);
-      const server = yield* read(root, SHELL_SERVER_PATH);
-      yield* Effect.promise(() =>
-        writeFile(serverPath, server.replace('// @ontos-codesmith-core-read-server-layers:start', '// slot removed')),
-      );
-      const before = yield* Effect.all(roots.map((relative) => read(root, relative)));
-      expect(Exit.isFailure(yield* Effect.exit(run(root)))).toBe(true);
-      expect(yield* Effect.all(roots.map((relative) => read(root, relative)))).toEqual(before);
+      const slots = [
+        [SHELL_SERVER_PATH, '// @ontos-codesmith-core-read-server-layers:start'],
+        [SHELL_SERVER_API_PATH, '// @ontos-codesmith-core-read-server-api-groups:start'],
+      ] as const;
+      for (const [relative, marker] of slots) {
+        const source = yield* read(root, relative);
+        expect(source).toContain(marker);
+        yield* Effect.promise(() => writeFile(path.join(root, relative), source.replace(marker, '// slot removed')));
+        const before = yield* Effect.all(roots.map((file) => read(root, file)));
+        expect(Exit.isFailure(yield* Effect.exit(run(root)))).toBe(true);
+        expect(yield* Effect.all(roots.map((file) => read(root, file)))).toEqual(before);
+        yield* Effect.promise(() => writeFile(path.join(root, relative), source));
+      }
+      const coreFiles = yield* Effect.promise(() => readdir(path.dirname(path.join(root, CORE_INDEX_PATH))));
+      const shellFiles = yield* Effect.promise(() => readdir(path.dirname(path.join(root, SHELL_SERVER_API_PATH))));
+      expect(coreFiles).not.toContain('generated-reads');
+      expect(shellFiles).not.toContain('core-reads');
     }),
   ),
 );

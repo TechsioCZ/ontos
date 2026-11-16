@@ -1,61 +1,11 @@
-import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer } from 'effect';
 
-import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
+import { AccessProjectionWriter, isFenceBusy } from '../access/intent/projection-writer.ts';
 import type { TenantProjectionWrite } from '../access/intent/projection-writer.ts';
 import type { AgentOperatorCommand } from '../modules/actions/agent-operator-command.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { ActionAuthorizationLifecycleError } from './action-authorization-lifecycle-error.ts';
-
-/**
- * The retired v1 credential edges of one principal, as a reviewed cutover artifact describes them. No
- * runtime path writes these: authorization v2 projects `principal`/`access_human` relations from
- * PostgreSQL intent, so only the one-time cutover tooling that reads a reviewed plan calls this.
- */
-export const buildPrincipalSelfCredentialUpdates = (input: {
-  readonly kind: string;
-  readonly principalId: string;
-  readonly status: string;
-  readonly tenantActive: boolean;
-  readonly tenantId: string;
-}): readonly v1.RelationshipUpdate[] => [
-  v1.RelationshipUpdate.create({
-    operation: v1.RelationshipUpdate_Operation.TOUCH,
-    relationship: {
-      relation: 'tenant',
-      resource: { objectId: input.principalId, objectType: 'principal' },
-      subject: { object: { objectId: input.tenantId, objectType: 'tenant' } },
-    },
-  }),
-  v1.RelationshipUpdate.create({
-    operation:
-      input.kind === 'human' && input.status === 'active' && input.tenantActive
-        ? v1.RelationshipUpdate_Operation.TOUCH
-        : v1.RelationshipUpdate_Operation.DELETE,
-    relationship: {
-      relation: 'self',
-      resource: { objectId: input.principalId, objectType: 'principal' },
-      subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-    },
-  }),
-];
-
-/** Separate provenance prevents company departure from deleting independent tenant admission. */
-export const buildCompanyTenantAdmissionUpdate = (input: {
-  readonly membershipUpdates: readonly v1.RelationshipUpdate[];
-  readonly principalId: string;
-  readonly tenantId: string;
-}): v1.RelationshipUpdate =>
-  v1.RelationshipUpdate.create({
-    operation: input.membershipUpdates.some((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH)
-      ? v1.RelationshipUpdate_Operation.TOUCH
-      : v1.RelationshipUpdate_Operation.DELETE,
-    relationship: {
-      relation: 'company_member',
-      resource: { objectId: input.tenantId, objectType: 'tenant' },
-      subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-    },
-  });
+import { TenantProjectionBusyError } from './tenant-projection-busy-error.ts';
 
 interface CurrentAgentOperatorState {
   readonly activeHumanIds: readonly string[];
@@ -104,7 +54,7 @@ export interface ActionAuthorizationLifecycleService {
    */
   readonly reconcileTenant: (
     scope: OperationalScope,
-  ) => Effect.Effect<TenantProjectionWrite, ActionAuthorizationLifecycleError>;
+  ) => Effect.Effect<TenantProjectionWrite, ActionAuthorizationLifecycleError | TenantProjectionBusyError>;
 }
 
 export class ActionAuthorizationLifecycle extends Context.Service<
@@ -129,7 +79,15 @@ export const ActionAuthorizationLifecycleLive: Layer.Layer<
     Effect.map((writer): ActionAuthorizationLifecycleService =>
       Object.freeze({
         reconcileTenant: (scope: OperationalScope) =>
-          writer.reconcileTenant({ scope }).pipe(Effect.mapError(reconcileFailed)),
+          writer.reconcileTenant({ scope }).pipe(
+            // A busy fence is translated once, here at the writer's edge, so a caller can wait for the other writer
+            // by its tag instead of inspecting the writer's failure.
+            Effect.mapError((refusal) =>
+              isFenceBusy(refusal)
+                ? new TenantProjectionBusyError({ reason: refusal.reason })
+                : reconcileFailed(refusal),
+            ),
+          ),
       }),
     ),
   ),

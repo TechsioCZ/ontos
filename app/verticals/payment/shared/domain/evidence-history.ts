@@ -25,6 +25,7 @@ import {
 import { PaymentMonetaryAmountSchema } from './payment-money.ts';
 import { PaymentExecutionProvenanceSchema } from './payment-provenance.ts';
 import {
+  PaymentFundsHoldReasonSchema,
   PaymentMethodSchema,
   PaymentObservationAcceptanceOutcomeSchema,
   PaymentObservationFactKindSchema,
@@ -51,6 +52,8 @@ export const PaymentReconciliationDebtRequestFieldsSchema = Schema.Struct({
 export const PaymentReconciliationDebtViewSchema = Schema.Struct({
   /** PENDING operations: legitimate business waiting for qualified evidence, not reconciliation debt. */
   awaitingEvidence: Schema.Array(PaymentOpenOperationViewSchema),
+  /** Inconsistent funds evidence, even when every operation has a definitive outcome. */
+  fundsHolds: Schema.Array(Schema.Struct({ paymentId: PaymentIdSchema, reason: PaymentFundsHoldReasonSchema })),
   observedAt: Schema.DateTimeUtcFromString,
   openCases: Schema.Array(PaymentReconciliationCaseViewSchema),
   /** True when a bounded list was cut; the caller must narrow the request, never assume absence. */

@@ -61,6 +61,8 @@ const bindingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const attemptId = 'attempt-checkout-1';
 const issuedAt = '2026-09-24T10:00:00.000Z';
 const expiresAt = '2026-09-24T10:15:00.000Z';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scope = {
   authBindingId: '44444444-4444-4444-8444-444444444444',
   authContextRef: 'better-auth-session:inventory-reservation-governed-reads',
@@ -271,9 +273,11 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
     const statements: string[] = [];
     const stages: string[] = [];
     const database = {
-      executor: yield* makeTestDatabase((statement) => {
+      executor: yield* makeTestDatabase((statement, params) => {
         statements.push(statement);
-        if (statement.includes('current_setting')) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScopeSql) {
+          expect(params).toEqual([tenantId, scope.legalEntityId]);
           return Effect.succeed([{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         return Effect.succeed([]);

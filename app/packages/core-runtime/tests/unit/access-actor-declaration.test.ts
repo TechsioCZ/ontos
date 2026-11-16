@@ -152,6 +152,22 @@ it('refuses a subjectWorkloads key that is not a workload key, and an empty or r
   }
 });
 
+it('narrows a workload subject to the callers it names, which must be callers and need subjectWorkloads', () => {
+  const decoded = decodeAccessActor({ ...workloadActor, subjectWorkloadCallers: ['commerce-order'] }, actionOwner);
+  expect(Result.isSuccess(decoded)).toBe(true);
+  if (Result.isSuccess(decoded)) {
+    expect(decoded.success.subjectWorkloadCallers).toEqual(['commerce-order']);
+    expect(Object.isFrozen(decoded.success.subjectWorkloadCallers)).toBe(true);
+  }
+  for (const actor of [
+    { ...workloadActor, subjectWorkloadCallers: ['party-registry'] },
+    { ...workloadActor, subjectWorkloadCallers: [] },
+    { ...validActor, subjectWorkloadCallers: ['commerce-order'] },
+  ]) {
+    expect(Result.isFailure(decodeAccessActor(actor, actionOwner))).toBe(true);
+  }
+});
+
 it('decodes an exclusive workload module actor without a human declaration', () => {
   const actor = { ...workloadActor, subject: 'workload' } as const;
   const carriers = declaredAccessCarrier({ accessActor: actor, entrypoint: actionOwner });

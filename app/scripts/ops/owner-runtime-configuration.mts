@@ -38,9 +38,13 @@ export interface OwnerRuntimeConfiguration {
 
 export const SHELL_GATEWAY_BASE_URL_VARIABLE = 'ONTOS_SHELL_GATEWAY_BASE_URL';
 
+const ASSORTMENT_UNIT = 'assortment';
 const CART_UNIT = 'commerce-cart';
 const CUSTOMER_CONTEXT_UNIT = 'commerce-customer-context';
 const ORDER_UNIT = 'commerce-order';
+const PAYMENT_UNIT = 'payment';
+const PRIVACY_UNIT = 'privacy';
+const SYMMY_INTEGRATION_UNIT = 'symmy-integration';
 
 /** An owner API the Cloudflare Worker calls by URL on the owner's custom domain. */
 const byUrl = (unitId: string, variable: string): OwnerApiDependency => ({ edge: 'custom-domain', unitId, variable });
@@ -53,6 +57,12 @@ const cartApi = byUrl(CART_UNIT, 'ONTOS_COMMERCE_CART_API_BASE_URL');
 const customerContextApi = byUrl(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL');
 
 export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] = [
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    operatorValues: [],
+    unitId: ASSORTMENT_UNIT,
+  },
   {
     apiDependencies: [byUrl('catalog', 'ONTOS_CATALOG_API_BASE_URL'), customerContextApi, shellGateway],
     credentialVariables: [],
@@ -91,6 +101,16 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
   },
   {
     apiDependencies: [shellGateway],
+    // ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS is the reconciliation driver's `[{ tenantId, apiKey }]` JSON
+    // array, read lazily per entry by the Payment Outbox Worker only.
+    credentialVariables: ['ONTOS_PAYMENT_PROVIDER_CREDENTIALS', 'ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS'],
+    // ONTOS_PAYMENT_NOTIFICATION_BASE_URL, the public Shell origin Payment composes provider notification URLs
+    // from, is derived by the app host from the public origin (scripts/zerops/app-host.mts), not recorded.
+    operatorValues: [],
+    unitId: PAYMENT_UNIT,
+  },
+  {
+    apiDependencies: [shellGateway],
     credentialVariables: ['ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET'],
     operatorValues: [
       reference('ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF'),
@@ -98,6 +118,18 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
       reference('ONTOS_PRICING_CONFIRMATION_KEY_VERSION'),
     ],
     unitId: 'pricing',
+  },
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    operatorValues: [],
+    unitId: PRIVACY_UNIT,
+  },
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    operatorValues: [],
+    unitId: SYMMY_INTEGRATION_UNIT,
   },
 ];
 

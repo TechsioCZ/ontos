@@ -69,7 +69,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
-import { makeCatalogScriptedAccess } from './catalog-scripted-access-seam.ts';
+import { CatalogScriptedAccess, catalogScriptedAccessLayer } from './catalog-scripted-access-seam.ts';
 import { createProductActionApiLive } from '../../api/create-product-action-server.ts';
 import { assignCatalogMediaActionApiLive } from '../../api/assign-catalog-media-action-server.ts';
 import { reorderCatalogMediaActionApiLive } from '../../api/reorder-catalog-media-action-server.ts';
@@ -394,10 +394,15 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
   // One scripted seam, bound once: the scope resolver reads it from context and the Action runner
   // receives that same gate already bound to the fixture's inert ports (see the seam's own note).
-  const { bound: boundAccessGate, services: accessServices } = yield* makeCatalogScriptedAccess({
-    deniedPrincipalIds: [bootstrap.deniedPrincipalId],
-    spec: { defaultAnswer: { outcome: 'ALLOWED' } },
-  });
+  const { bound: boundAccessGate, services: accessServices } = Context.get(
+    yield* Layer.build(
+      catalogScriptedAccessLayer({
+        deniedPrincipalIds: [bootstrap.deniedPrincipalId],
+        spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+      }),
+    ),
+    CatalogScriptedAccess,
+  );
   const access = Layer.succeedContext(accessServices);
   const resolver = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),

@@ -5,7 +5,8 @@ import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runne
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/http';
-import { Match, Option, Redacted, Schema } from 'effect';
+import { Match, Option, Redacted, Ref, Schema } from 'effect';
+import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { crmApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
 import { observeClientPartySync, PartyIntake } from '../src/services/party-intake.ts';
@@ -16,35 +17,15 @@ import {
   mapApplyCommandActionProblem,
 } from './apply-command-action-problems.ts';
 
-const runActionHttp = bindActionHttpRunner({
-  authentication: applyCommandActionProblem.authentication,
-  unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
-});
-
-const AssertionClaimsSchema = Schema.fromJsonString(
-  Schema.Struct({
-    principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LegalEntityId'))) }),
-  }),
-);
-/** Company of the (already verified and redeemed) gateway assertion of this request. */
-const legalEntityOfAssertion = (authorization: Redacted.Redacted<string | undefined>) => {
-  const payload = Redacted.value(authorization)?.split('.')[1];
-  const decoded = Option.fromUndefinedOr(payload).pipe(
-    Option.flatMap((value) =>
-      Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(value, 'base64url').toString('utf-8')),
-    ),
-  );
-  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
-};
-
 const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(function* reconcileClients(
   request: HttpServerRequest.HttpServerRequest,
+  verified: Option.Option<TrustedPrincipalContext>,
   revision: number,
   clientIds?: readonly string[],
 ) {
-  const legalEntityId = legalEntityOfAssertion(Redacted.make(request.headers['authorization']));
+  const scope = Option.getOrUndefined(verified);
   const compositionRevision = request.headers['x-ontos-composition-revision'];
-  if (legalEntityId === undefined || compositionRevision === undefined) {
+  if (scope?.legalEntityId === undefined || compositionRevision === undefined) {
     return yield* Effect.fail(applyCommandActionProblem.unavailable('operation_context_unavailable'));
   }
   const intake = yield* PartyIntake;
@@ -52,7 +33,8 @@ const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(
     .forRequest({
       compositionRevision,
       correlationId: request.headers['x-correlation-id'] ?? `crm-intake-${revision}`,
-      legalEntityId,
+      legalEntityId: scope.legalEntityId,
+      tenantId: scope.tenantId,
     })
     .reconcile(clientIds);
 });
@@ -70,6 +52,15 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   );
   const decoded = yield* Schema.decodeEffect(applyCommandAction.descriptor.payloadSchema)(payload).pipe(
     Effect.mapError(applyCommandActionProblem.invalid),
+  );
+  // The post-commit intake acts in exactly the scope this request's authentication verified (and redeemed).
+  const verified = yield* Ref.make(Option.none<TrustedPrincipalContext>());
+  const runActionHttp = bindActionHttpRunner(
+    {
+      authentication: applyCommandActionProblem.authentication,
+      unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
+    },
+    (principal) => Ref.set(verified, Option.some(principal)),
   );
   const result = yield* runActionHttp({
     endpointHeaders,
@@ -93,7 +84,9 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
     Match.tag('CreateClient', ({ partyRef }) =>
       partyRef === undefined ? Option.some(result.entityIds) : Option.none(),
     ),
-    Match.tag('AiDecideChanges', () => Option.some(result.entityIds)),
+    Match.tag('AiDecideChanges', ({ decision }) =>
+      decision === 'approve' && result.entityIds.length > 0 ? Option.some(result.entityIds) : Option.none(),
+    ),
     Match.tag('SyncClientParties', ({ clientIds }) => Option.some(clientIds)),
     Match.tag('RestoreClient', () => Option.some(result.entityIds)),
     Match.orElse(() => Option.none()),
@@ -102,7 +95,9 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
     return result;
   }
   const clientPartySync = yield* observeClientPartySync(
-    reconcileClients(request, result.revision, intakeEntityIds.value).pipe(Effect.uninterruptible),
+    reconcileClients(request, yield* Ref.get(verified), result.revision, intakeEntityIds.value).pipe(
+      Effect.uninterruptible,
+    ),
   );
   return { ...result, clientPartySync };
 });

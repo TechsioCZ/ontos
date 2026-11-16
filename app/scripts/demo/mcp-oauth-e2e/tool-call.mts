@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/client';
-import { Console, Effect, Option, Predicate, Schedule, Schema } from 'effect';
+import { Console, Effect, MutableRef, Option, Predicate, Schedule, Schema } from 'effect';
 import type { Cause } from 'effect';
 
 type ProofToolArguments = NonNullable<Parameters<Client['callTool']>[0]['arguments']>;
@@ -86,8 +86,18 @@ const transientTransportCode = (cause: unknown) => {
   }
   return Option.none();
 };
+/**
+ * The retries of the step being recorded. A step that passed only on a retry says so in its own line: the proof
+ * stays honest about a transport failure it recovered from.
+ */
+export const proofRetryLog = MutableRef.make<readonly string[]>([]);
+
 const logRetryBoundary = (failure: McpProofCallFailed) =>
-  failure.retryable ? Console.error(`${failure.message}; at most one same-key retry permitted`) : Effect.void;
+  failure.retryable
+    ? Console.error(`${failure.message}; at most one same-key retry permitted`).pipe(
+        Effect.andThen(Effect.sync(() => MutableRef.update(proofRetryLog, (earlier) => [...earlier, failure.message]))),
+      )
+    : Effect.void;
 
 /** Retry only an identified transport failure of a write carrying the same explicit idempotency key. */
 export const proofToolCall = <A, R>(

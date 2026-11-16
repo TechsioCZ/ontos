@@ -1,20 +1,22 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Option, Schema } from 'effect';
 import type { Array as Arr } from 'effect';
 
 import { recoverSqlTransactionError } from '../../actions/repository.ts';
+import { readVerifiedGatewayScopeAssertion } from '../../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
+import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { principals } from '../../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { DecisionReason } from '../model.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import type { AccessDecisionUnavailable } from '../decision/errors.ts';
-import type { PrincipalId, TenantId } from '../ids.ts';
-import { PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
+import type { AgentConnectionId, PrincipalId, TenantId } from '../ids.ts';
+import { AgentConnectionIdSchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
 
 /**
  * The principal kinds `core.principals` holds. v2 has exactly one acting subject kind — a verified
@@ -74,16 +76,44 @@ export interface AccessPrincipalKindDatabase {
  * One row, inside the request's own tenant scope. Row-level security decides which tenant the read
  * can see, so a principal id from another tenant answers nothing rather than someone else's kind.
  */
+const selectKind = (
+  transaction: Pick<CoreTransaction, 'select'>,
+  query: Pick<PrincipalKindQuery, 'principalId' | 'tenantId'>,
+) =>
+  transaction
+    .select({ kind: principals.kind })
+    .from(principals)
+    .where(and(eq(principals.tenantId, query.tenantId), eq(principals.principalId, query.principalId)))
+    .limit(1);
+
 const kindsIn = (transaction: CoreTransaction, query: PrincipalKindQuery, enrollment: DatabaseIdentityEnrollment) =>
   installOperationalScope(transaction, query.scope, enrollment).pipe(
-    Effect.andThen(() =>
-      transaction
-        .select({ kind: principals.kind })
-        .from(principals)
-        .where(eq(principals.principalId, query.principalId))
-        .limit(1),
-    ),
+    Effect.andThen((scoped) => selectKind(scoped, query)),
   );
+
+const principalKindUnavailable = (cause?: unknown) =>
+  accessDecisionUnavailable('The acting principal could not be read from Core identity', cause);
+
+/**
+ * An owner may restrict a gateway carrier to an exact Core principal kind. Only its verified
+ * gateway actor is observable here, through the already scoped owner transaction.
+ */
+export const readScopedGatewayPrincipalKind = Effect.fn('AccessPrincipalKinds.readScopedGatewayKind')(
+  function* readScopedGatewayPrincipalKind(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+    if (
+      transaction.scope.tenantId !== scope.tenantId ||
+      transaction.scope.legalEntityId !== scope.legalEntityId ||
+      readVerifiedGatewayScopeAssertion(scope) === undefined
+    ) {
+      return yield* principalKindUnavailable();
+    }
+    const [row] = yield* selectKind(transaction, {
+      principalId: PrincipalIdSchema.make(scope.principalId),
+      tenantId: TenantIdSchema.make(scope.tenantId),
+    }).pipe(Effect.mapError(principalKindUnavailable));
+    return row === undefined ? Option.none<AccessPrincipalKind>() : decodePrincipalKind(row.kind);
+  },
+);
 
 /** The same query, in the caller's own transaction when it has one and in a fresh one otherwise. */
 const readKindEffect = Effect.fn('AccessPrincipalKinds.readKind')(function* readKind(
@@ -102,9 +132,7 @@ export const makeDrizzleAccessPrincipalKinds = (database: AccessPrincipalKindDat
   readKind: (query, transaction) =>
     readKindEffect(database, query, transaction).pipe(
       recoverSqlTransactionError,
-      Effect.mapError((cause) =>
-        accessDecisionUnavailable('The acting principal could not be read from Core identity', cause),
-      ),
+      Effect.mapError(principalKindUnavailable),
     ),
 });
 
@@ -122,10 +150,40 @@ export const AccessPrincipalKindSourceLive: Layer.Layer<
 );
 
 /** The one actor a v2 decision can be asked for in this wave: a verified human (O46, O67-Q5). */
+/**
+ * The credential-bound connection an agent acts through: the connection row and consent revision its OAuth credential
+ * carries, and the person the connection names as its operator. The engine re-reads the row on every decision and
+ * refuses it unless it is active, names exactly this agent, this operator and this scope, and is at this revision.
+ */
+export interface GateAgentConnection {
+  readonly connectionId: AgentConnectionId;
+  readonly consentRevision: number;
+  readonly operatorPrincipalId: PrincipalId;
+}
+
 export interface GateActor {
+  /** Present exactly for an agent: the request is decided as this agent on this connection (O46). */
+  readonly agentConnection?: GateAgentConnection;
   readonly kind: AccessPrincipalKind;
   readonly principalId: PrincipalId;
 }
+
+/**
+ * The agent connection a trusted scope carries: only an OAuth connection that an operator consented for an agent
+ * (`delegatedByPrincipalId`) names one. Every other transport (a session, an agent API key, a system context) carries
+ * none, so an agent reached through it is refused.
+ */
+const agentConnectionOf = (scope: OperationalScope): GateAgentConnection | undefined => {
+  const carried = scope.connection?.agentConnection;
+  if (scope.authMethod !== 'oauth_connection' || carried === undefined || scope.delegatedByPrincipalId === undefined) {
+    return undefined;
+  }
+  return {
+    connectionId: AgentConnectionIdSchema.make(carried.connectionId),
+    consentRevision: carried.revision,
+    operatorPrincipalId: PrincipalIdSchema.make(scope.delegatedByPrincipalId),
+  };
+};
 
 /**
  * Either the actor, a refusal, or unavailable identity. Plain optional fields keep every outcome
@@ -155,8 +213,9 @@ export interface GateActorQuery {
 export const seamlessRefusal = (code: string): Arr.NonEmptyReadonlyArray<DecisionReason> => [{ code }];
 
 /**
- * The acting principal kind of a request. An agent is always refused because it needs a connection
- * id and consent revision that no transport carries yet (O46, O67-Q5). A workload has no v2
+ * The acting principal kind of a request. An agent is resolved only with the credential-bound connection
+ * and consent revision its OAuth connection carries; reached through any other transport it is refused
+ * (O46, O67-Q5). A workload has no v2
  * authority either; it is resolved as an actor only when the caller admits workloads, so the seam can
  * admit it through its owner's classification on an `accessWorkload` carrier or refuse it with the
  * code its carrier deserves (O29, O59, O67-Q4, O81).
@@ -187,7 +246,10 @@ export const resolveGateActor = (
           return { actor: { kind, principalId: PrincipalIdSchema.make(scope.principalId) } };
         }
         if (kind === 'agent') {
-          return { refusal: seamlessRefusal('deny.agent_forbidden') };
+          const agentConnection = agentConnectionOf(scope);
+          return agentConnection === undefined
+            ? { refusal: seamlessRefusal('deny.agent_forbidden') }
+            : { actor: { agentConnection, kind, principalId: PrincipalIdSchema.make(scope.principalId) } };
         }
         return query.admitWorkloads === true
           ? { actor: { kind, principalId: PrincipalIdSchema.make(scope.principalId) }, workload: true }

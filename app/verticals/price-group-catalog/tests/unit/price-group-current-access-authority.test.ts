@@ -12,7 +12,7 @@ import { makePersistedActionTestAccessGate } from '@app/core-runtime/testing/acc
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { PgClient } from '@effect/sql-pg';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -35,9 +35,8 @@ const principalId = PrincipalIdSchema.make('00000000-0000-4000-8000-0000000a0002
 const companyId = LegalEntityIdSchema.make('00000000-0000-4000-8000-0000000a0003');
 const scopeValues = Schema.Tuple([Schema.String, Schema.String]);
 const normalize = (sql: string) => sql.trim().replaceAll(/\s+/gu, ' ').toLowerCase();
-const setupScope = "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)";
-const readInstalledScope =
-  "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id";
+const installAndReadScope =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 type Fences = Effect.Success<ReturnType<typeof makeActionTestAccessFences>>;
 
@@ -52,13 +51,15 @@ const fenceDatabase = (fences: Fences) =>
         if (['begin', 'commit', 'rollback'].includes(statement)) {
           return [];
         }
-        if (statement === setupScope) {
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (statement === 'select current_user::text as role') {
+          return [{ role: SHARED_RUNTIME_IDENTITY.role }];
+        }
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScope) {
           [installedTenant, installedCompany] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(
             Effect.orDie,
           );
-          return [];
-        }
-        if (statement === readInstalledScope) {
           return [
             {
               legal_entity_id: installedCompany,
@@ -184,7 +185,7 @@ for (const fenceState of ['Changing', 'missing'] as const) {
       Effect.gen(function* unpreparedFenceRefuses() {
         const prepared = yield* preparedDecision({ fenceState });
         const failure = yield* Effect.flip(prepared.prepare(prepared.question));
-        expect(failure._tag).toBe('AccessDecisionUnavailable');
+        expect(Predicate.isTagged(failure, 'AccessDecisionUnavailable')).toBe(true);
       }),
     ),
   );
@@ -197,7 +198,7 @@ it.effect('the scripted authority names the persisted scope ids the native write
     const persisted = bootstrapScopesOf(tenantId, [companyId]);
     expect(scripted.tenantContextScopeId).toBe(persisted[0]?.scopeId);
     expect(scripted.legalEntityScopeIds).toEqual(
-      persisted.flatMap((scope) => (scope._tag === 'LegalEntity' ? [scope.scopeId] : [])),
+      persisted.flatMap((scope) => (Predicate.isTagged(scope, 'LegalEntity') ? [scope.scopeId] : [])),
     );
   }),
 );

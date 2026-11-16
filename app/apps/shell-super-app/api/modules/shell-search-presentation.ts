@@ -14,8 +14,8 @@ import type {
 import { corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import { Option, Result, Schema } from 'effect';
 
-import { ShellSearchPresentationInventorySchema } from '../../shared/api.ts';
-import type { ShellSearchPresentationInventory } from '../../shared/api.ts';
+import { ShellSearchPresentationInventorySchema } from '../../shared/browser-api.ts';
+import type { ShellSearchPresentationInventory } from '../../shared/browser-api.ts';
 import type { ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 type CapturedContract = ShellInstalledCatalog['contracts'][number];

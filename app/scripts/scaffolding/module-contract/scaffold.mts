@@ -3,7 +3,6 @@ import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect
 import { matchingDelimiter, topLevelSeparators } from '../../boundary-source-structure.mts';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { bindBackendRuntimeApi, bindBackendRuntimeWorker, splitRuntimeOwnerSources } from './runtime-split.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
@@ -49,6 +48,12 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
   PLATFORM_NODE_DEPENDENCY,
+  VERTICAL_PUBLIC_COMPONENT_SLOT_END,
+  VERTICAL_PUBLIC_COMPONENT_SLOT_START,
+  VERTICAL_REPORT_SLOT_END,
+  VERTICAL_REPORT_SLOT_START,
+  VERTICAL_SEARCH_SLOT_END,
+  VERTICAL_SEARCH_SLOT_START,
   MODULE_MANIFEST_REPORT_SLOT_END,
   MODULE_MANIFEST_REPORT_SLOT_START,
   MODULE_MANIFEST_RESOURCE_SLOT_END,
@@ -67,8 +72,6 @@ import {
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
   asJsonObject,
   createMutationEffect,
-  formatGeneratedMutationContent,
-  readModuleRuntimeDeclarationEffect,
   discoverVerticalEffect,
   ensureUniqueMutationPaths,
   maskNonCode,
@@ -88,7 +91,6 @@ import type {
   Mutation,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
-  OntosVerticalMetadata,
   ScaffoldPlan,
   ScaffoldFailure,
   VerticalMetadata,
@@ -96,8 +98,6 @@ import type {
 
 const moduleMarkerPattern = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu;
 const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
-const REGISTRATION_FILE_NAME = 'vertical.registration.ts';
-const RUNTIME_DECLARATION_FILE_NAME = 'vertical.runtime-declaration.ts';
 
 const renderGovernedHttpApiRoot = (vertical: VerticalMetadata): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
@@ -159,15 +159,7 @@ ${source.slice(declarationStart, statementEnd)}
 export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;
 };
 
-type GovernedHandlerOwner = VerticalMetadata & Pick<OntosVerticalMetadata, 'runtimeDeclaration'>;
-
-const renderGovernedOwnerImport = (vertical: GovernedHandlerOwner): string => {
-  const registrationName = `${toCamelCase(vertical.slug)}${vertical.runtimeDeclaration === undefined ? 'Registration' : 'BackendRegistration'}`;
-  const registrationFile = vertical.runtimeDeclaration === undefined ? 'registration' : 'runtime-declaration';
-  return `import { ${registrationName} as governedOwnerRegistration } from '../vertical.${registrationFile}.ts';`;
-};
-
-export const initializeGovernedHttpHandlerRoot = (source: string, vertical: GovernedHandlerOwner): string => {
+const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMetadata): string => {
   for (const reserved of [
     'GovernedReadRuntime',
     'GovernedMakeReadRuntimeLive',
@@ -220,14 +212,14 @@ export const initializeGovernedHttpHandlerRoot = (source: string, vertical: Gove
   if (!assemblerMode && runtimeLayerStart === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
-  const generatedRoot = `${renderGovernedOwnerImport(vertical)}
+  const generatedRoot = `import { ${toCamelCase(vertical.slug)}Registration as governedOwnerRegistration } from '../vertical.registration.ts';
 import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';
 import {
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
-  defineDatabaseIdentityEnrollment as defineGovernedDatabaseIdentityEnrollment,
-  makeDatabaseIdentityEnrollmentLive as makeGovernedDatabaseIdentityEnrollmentLive,
+  defineDatabaseIdentityEnrollment as governedDefineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive as GovernedMakeDatabaseIdentityEnrollmentLive,
   makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
@@ -250,9 +242,10 @@ ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END}
 
-// This generated owner uses the shared runtime identity and enrolls no owner-private database identity.
-const governedDatabaseIdentitiesLive = makeGovernedDatabaseIdentityEnrollmentLive(defineGovernedDatabaseIdentityEnrollment([]));
-
+// Core's database-backed access stores read the owner's database identity enrolment, as in the real owner roots.
+const governedDatabaseIdentitiesLive = GovernedMakeDatabaseIdentityEnrollmentLive(
+  governedDefineDatabaseIdentityEnrollment([]),
+);
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
 );
@@ -274,8 +267,8 @@ const governedAccessEnforcementLive = GovernedAccessDecisionLive.pipe(
   GovernedReadLayer.provide(GovernedTenantIntentLoaderLive),
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provide(NodeCrypto.layer),
   GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
+  GovernedReadLayer.provide(NodeCrypto.layer),
 );
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
@@ -293,6 +286,7 @@ const governedActiveApplicationCompositionLive = GovernedApplicationCompositionC
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
@@ -315,7 +309,6 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
       GovernedReadLayer.provide(governedAccessEnforcementLive),
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
       GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
-      GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
       GovernedReadLayer.orDie,
     )${source.slice(handlerProperty.end)}`;
   }
@@ -326,7 +319,6 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.provide(governedAccessEnforcementLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
-  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
   GovernedReadLayer.orDie,
 ${source.slice(runtimeLayerEnd)}`;
 };
@@ -558,25 +550,29 @@ export const ${prefix}Registration = defineVerticalRuntimeRegistration({
     ${MODULE_REGISTRATION_WORKER_SLOT_END}
   ],
 });
+
+${VERTICAL_PUBLIC_COMPONENT_SLOT_START}
+${VERTICAL_PUBLIC_COMPONENT_SLOT_END}
+${VERTICAL_SEARCH_SLOT_START}
+${VERTICAL_SEARCH_SLOT_END}
+${VERTICAL_REPORT_SLOT_START}
+${VERTICAL_REPORT_SLOT_END}
 `;
 };
 
 const addArtifactCommand = (
   current: JsonValue | undefined,
   vertical: VerticalMetadata,
-  target: 'cloudflare-dist' | 'dist',
-  label: string,
 ): Effect.Effect<string, ModuleContractScaffoldError> =>
   Effect.gen(function* addArtifactCommandEffect() {
-    const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} ${label} script`));
-    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
+    const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} build script`));
+    const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target dist`;
     if (script.includes('generate-ontos-module-contract.mts')) {
-      return yield* scaffoldError(`vertical ${vertical.slug} ${label} script already contains module emission`);
+      return yield* scaffoldError(`vertical ${vertical.slug} build script already contains module emission`);
     }
-    const buildToken =
-      target === 'dist' ? 'modern build --deploy-target node' : 'modern build --deploy-target cloudflare';
+    const buildToken = 'modern build --deploy-target node';
     if (!script.includes(buildToken)) {
-      return yield* scaffoldError(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
+      return yield* scaffoldError(`vertical ${vertical.slug} build script is not a generated Modern build`);
     }
     return script.replace(buildToken, `${buildToken} && ${command}`);
   });
@@ -603,16 +599,7 @@ const patchPackage = (
     const scripts = yield* trySync(() => ({
       ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
     }));
-    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
-    // Zerops-only owners have no Cloudflare build. Validate and patch an authored target only when it exists.
-    if (scripts['cloudflare:build'] !== undefined) {
-      scripts['cloudflare:build'] = yield* addArtifactCommand(
-        scripts['cloudflare:build'],
-        vertical,
-        'cloudflare-dist',
-        'cloudflare:build',
-      );
-    }
+    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical);
     return yield* trySync(() => {
       let content = patchJsonObjectProperty(vertical.packageContent, [], 'dependencies', sortedDependencies);
       content = patchJsonObjectProperty(content, [], 'scripts', scripts);
@@ -628,7 +615,6 @@ const patchPackage = (
 
 const patchTsconfig = (
   vertical: VerticalMetadata,
-  includeRuntimeDeclaration = false,
 ): Effect.Effect<Option.Option<Mutation>, ModuleContractScaffoldError | ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* patchTsconfigEffect() {
     const tsconfigPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'tsconfig.json'));
@@ -640,90 +626,13 @@ const patchTsconfig = (
     );
     const nextInclude = [
       ...include,
-      ...[
-        MANIFEST_FILE_NAME,
-        REGISTRATION_FILE_NAME,
-        ...(includeRuntimeDeclaration ? [RUNTIME_DECLARATION_FILE_NAME] : []),
-      ].filter((entry) => !include.includes(entry)),
+      ...[MANIFEST_FILE_NAME, 'vertical.registration.ts'].filter((entry) => !include.includes(entry)),
     ];
     return yield* trySync(() =>
       Option.fromNullishOr(
         updateMutation(tsconfigPath, content, patchJsonObjectProperty(content, [], 'include', nextInclude)),
       ),
     );
-  });
-
-const planRuntimeSplit = (vertical: VerticalMetadata, moduleId: string) =>
-  Effect.gen(function* planRuntimeSplitEffect() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const manifestPath = yield* trySync(() => resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME));
-    const registrationPath = yield* trySync(() => resolveContainedPath(vertical.directory, REGISTRATION_FILE_NAME));
-    const apiRootPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'));
-    const declarationPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, RUNTIME_DECLARATION_FILE_NAME),
-    );
-    const read = (path: string) =>
-      fileSystem
-        .readFileString(path)
-        .pipe(Effect.mapError((cause) => scaffoldError(`failed to read split runtime owner ${path}`, cause)));
-    const manifest = yield* read(manifestPath);
-    const registration = yield* read(registrationPath);
-    const apiRoot = yield* read(apiRootPath);
-    for (const source of [manifest, registration]) {
-      if (
-        !source.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`) ||
-        !source.includes(`// @ontos-deployment-app-id ${vertical.appId}\n`) ||
-        moduleMarkerPattern.exec(source)?.groups?.['moduleId'] !== moduleId
-      ) {
-        return yield* scaffoldError(`vertical ${vertical.slug} has inconsistent owner provenance`);
-      }
-    }
-    const existing = yield* readModuleRuntimeDeclarationEffect(
-      vertical.directory,
-      vertical.slug,
-      manifest,
-      registration,
-    );
-    const prefix = toCamelCase(vertical.slug);
-    const split = yield* trySync(() =>
-      existing === undefined
-        ? splitRuntimeOwnerSources({ apiRoot, appId: vertical.appId, manifest, moduleId, prefix, registration })
-        : { apiRoot: bindBackendRuntimeApi(apiRoot, prefix), declaration: existing.content, manifest, registration },
-    );
-    const outputs = [
-      { after: split.manifest, before: manifest, path: manifestPath },
-      { after: split.registration, before: registration, path: registrationPath },
-      { after: split.apiRoot, before: apiRoot, path: apiRootPath },
-    ];
-    const mutations: Mutation[] = [];
-    if (existing === undefined) {
-      mutations.push(yield* createMutationEffect(declarationPath, split.declaration));
-    }
-    const workerPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'src', 'worker-host', 'entry.ts'));
-    if (
-      yield* fileSystem
-        .exists(workerPath)
-        .pipe(Effect.mapError((cause) => scaffoldError('failed to inspect worker entry', cause)))
-    ) {
-      const worker = yield* read(workerPath);
-      const after = yield* trySync(() => bindBackendRuntimeWorker(worker, prefix));
-      if (after !== worker) {
-        outputs.push({ after, before: worker, path: workerPath });
-      }
-    }
-    for (const output of outputs) {
-      const formatted = yield* formatGeneratedMutationContent(output.path, output.after);
-      const mutation = yield* trySync(() => updateMutation(output.path, output.before, formatted));
-      if (mutation !== undefined) {
-        mutations.push(mutation);
-      }
-    }
-    const tsconfigMutation = yield* patchTsconfig(vertical, true);
-    if (Option.isSome(tsconfigMutation)) {
-      mutations.push(tsconfigMutation.value);
-    }
-    yield* trySync(() => ensureUniqueMutationPaths(mutations));
-    return { mutations, result: { appId: vertical.appId, manifestPath, moduleId, registrationPath } };
   });
 
 const planModuleContractScaffold = (
@@ -738,9 +647,6 @@ const planModuleContractScaffold = (
     const moduleId = yield* trySync(() => requireOntosModuleId(config.module));
     const vertical = yield* discoverVerticalEffect(workspaceRoot, config.vertical);
     yield* assertUniqueModuleId(workspaceRoot, vertical.slug, moduleId);
-    if (config.splitRuntime === true) {
-      return yield* planRuntimeSplit(vertical, moduleId);
-    }
     const manifestPath = yield* trySync(() => resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME));
     const registrationPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'vertical.registration.ts'));
     const sharedApiPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'shared', 'api.ts'));

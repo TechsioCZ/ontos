@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug change-product-images
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { changeProductImagesDeclaration } from '../../shared/access-declarations.ts';
 import {
   ChangeProductImagesPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const changeProductImagesAction = defineAction(
   {
-    accessDeclaration: changeProductImagesDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.product-images.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-images', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.change-product-images.access.v1',

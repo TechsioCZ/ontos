@@ -1,3 +1,14 @@
+import { organizationProcessingReadPrincipal } from '../support/organization-processing-read-principal.ts';
+import { organizationGovernanceReadPrincipal } from '../support/organization-governance-read-principal.ts';
+import { privacyDispatchPrincipal } from '../support/privacy-dispatch-principal.ts';
+import {
+  readScopedSourceExecutionFence,
+  requireScopedSourceExecutionFenceOpen,
+} from '../../src/access/workloads/source-execution-fence.ts';
+import { readScopedSourceAdmissionEnrollment } from '../../src/access/workloads/source-admission-enrollment.ts';
+import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
+import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
+import { computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import { historicalOwnerContract, historicalOwnerReadTarget } from '../support/historical-owner-targets.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
 import { fixtureOwnerContract, ownerPermissionTarget } from '../support/owner-permission-target.ts';
@@ -13,6 +24,8 @@ import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-reg
 import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import { agentProposalQueueReadKey } from '../../src/auth/agent-proposal-queue-contract.ts';
+import { LegalEntityIdSchema } from '../../src/access/ids.ts';
 import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
@@ -22,7 +35,20 @@ import {
   LegalEntityDetailRequestSchema,
 } from '../../src/generated-reads/legal-entity-detail.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Option,
+  Predicate,
+  Schema,
+} from 'effect';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { Reactivity } from 'effect/reactivity';
@@ -39,13 +65,17 @@ import {
 
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import {
+  trustVerifiedGatewayPrincipalContext,
+  preserveSystemPrincipalContextTrust,
+} from '../../src/auth/system-principal-context-provenance.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
 import type {
   OwnerAuthorizationInput,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationOverlayService,
 } from '../../src/access/enforcement/owner-overlay.ts';
 import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
@@ -95,6 +125,8 @@ const scope: OperationalScope = Object.freeze({
 });
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
 const approvedCompositionRevision = 'a'.repeat(64);
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 interface ReadAuthorityFixture {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -186,6 +218,15 @@ const makeHarness = Effect.fn(function* makeHarness(
       ReadRuntimeOptions,
       'applicationComposition' | 'expectedDeployment' | 'ownerRegistration' | 'shellSystemReads'
     >;
+    readonly sourceAdmissionBindingRows?: readonly { readonly bindingIncarnation: string }[];
+    readonly sourceExecutionFence?: {
+      readonly admissionInvocationId: string;
+      readonly admissionStatus?: 'running' | 'succeeded';
+      readonly legalEntityId?: string;
+      readonly originalPrincipalId?: string;
+      readonly state: 'open' | 'cancelled';
+      readonly tenantId: string;
+    };
     readonly sqlEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
@@ -219,6 +260,45 @@ const makeHarness = Effect.fn(function* makeHarness(
       unexpired: true,
     };
   const query = (text: string, values: readonly unknown[]) => {
+    if (text.includes('read_source_execution_fence')) {
+      const [tenantId, admissionInvocationId] = values;
+      const fence = options.sourceExecutionFence;
+      return Effect.succeed(
+        fence !== undefined &&
+          fence.tenantId === tenantId &&
+          fence.admissionInvocationId === admissionInvocationId &&
+          fence.admissionStatus !== 'running' &&
+          fence.legalEntityId === options.resolvedScope?.legalEntityId
+          ? [
+              {
+                action_key: 'integration.symmy.admit-symmy-job',
+                admission_invocation_id: fence.admissionInvocationId,
+                fence_state: fence.state,
+                legal_entity_id: fence.legalEntityId ?? null,
+                original_principal_id: fence.originalPrincipalId ?? scope.principalId,
+              },
+            ]
+          : [],
+      );
+    }
+    if (text.includes('"core"."access_workload_bindings"')) {
+      expect(values).toContain(options.sourceExecutionFence?.originalPrincipalId);
+      expect(values).toContain('integration.symmy-admit');
+      return Effect.succeed(options.sourceAdmissionBindingRows ?? []);
+    }
+    if (text.includes('lock_source_execution_fence')) {
+      const [tenantId, admissionInvocationId] = values;
+      const fence = options.sourceExecutionFence;
+      return Effect.succeed([
+        {
+          lock_source_execution_fence:
+            fence !== undefined &&
+            fence.tenantId === tenantId &&
+            fence.admissionInvocationId === admissionInvocationId &&
+            fence.state === 'open',
+        },
+      ]);
+    }
     if (text.includes('legal_entities')) {
       legalEntityReads += 1;
       return Effect.succeed(options.legalEntityRows ?? []);
@@ -258,6 +338,10 @@ const makeHarness = Effect.fn(function* makeHarness(
         scopeInstalls += 1;
         options.authorityEvents?.push('scope_installed');
       }
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        return [databaseScopeRow()];
+      }
       if (text.includes('transaction_timestamp')) {
         transactionTimestampReadCount += 1;
         if (options.failTransactionTimestamp === true) {
@@ -284,6 +368,10 @@ const makeHarness = Effect.fn(function* makeHarness(
     });
   };
   const executeSql = (text: string, values: readonly unknown[]) => {
+    // Main's scope authority probes the connected role first; this script connects as the row's role.
+    if (text === 'select current_user::text as role') {
+      return Effect.succeed([{ role: databaseScopeRow().role }]);
+    }
     if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
       options.sqlEvents?.push(text);
       return Effect.fail(options.transactionSettlementFailure);
@@ -1163,6 +1251,126 @@ it.effect('runs the owner authorization overlay inside the transaction before th
   }),
 );
 
+/**
+ * Answers outside the owner contract. Before this the Read path let an unknown answer through to the
+ * handler (pre-existing fail-open); each is now unavailable and the handler never runs.
+ */
+/** Untyped values the compiler cannot vet, as a type escape or a separately built owner unit could send. */
+const outOfContract = Schema.decodeUnknownEffect(Schema.Any);
+const OUT_OF_CONTRACT_OWNER_ANSWERS: readonly (readonly [string, () => Effect.Effect<OwnerAuthorizationOutcome>])[] = [
+  ['ALLOWED', () => outOfContract('ALLOWED').pipe(Effect.orDie)],
+  ['{}', () => outOfContract({}).pipe(Effect.orDie)],
+  ['{decision: allowed}', () => outOfContract({ decision: 'allowed' }).pipe(Effect.orDie)],
+  ['null', () => outOfContract(null).pipe(Effect.orDie)],
+  ['undefined', () => outOfContract(globalThis.undefined).pipe(Effect.orDie)],
+  ['a thrown defect', () => Effect.die(new Error('owner rule defect'))],
+];
+
+it.effect('a synchronous throw inside the owner overlay is unavailable on the Read path, never a 500', () =>
+  Effect.gen(function* synchronousOwnerThrowRead() {
+    let handlerCalls = 0;
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      ownerAuthorizationOverlay: {
+        authorize: () => {
+          throw new TypeError('owner rule private detail');
+        },
+      },
+      permissionDecision: 'allowed',
+    });
+    const testRegistration = defineRead(
+      registration().descriptor,
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: testRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+    expect(handlerCalls).toBe(0);
+  }),
+);
+
+it.effect('a Read refusal with unreportable owner codes still refuses and reports deny.owner_rule', () =>
+  Effect.gen(function* unreportableReadCodes() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.succeed({ decision: 'denied' as const, reasons: ['deny.owner.someone@example.test'] as const }),
+      },
+      permissionDecision: 'allowed',
+    });
+    const testRegistration = defineRead(
+      registration().descriptor,
+      () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: testRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(
+        Logger.layer([Logger.make((options) => entries.push(JSON.stringify(Logger.formatStructured.log(options))))]),
+      ),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+    const warning = entries.find((entry) => entry.includes('Read refused'));
+    expect(warning).toContain('"reasons":"deny.owner_rule"');
+    expect(warning).not.toContain('example.test');
+  }),
+);
+
+for (const [label, answer] of OUT_OF_CONTRACT_OWNER_ANSWERS) {
+  it.effect(`answers an owner overlay's ${label} as unavailable on the Read path`, () =>
+    Effect.gen(function* outOfContractOwnerRead() {
+      let handlerCalls = 0;
+      const harness = yield* makeHarness({
+        contextPermissionDecision: 'allowed',
+        ownerAuthorizationOverlay: {
+          authorize: answer,
+        },
+        permissionDecision: 'allowed',
+      });
+      const testRegistration = defineRead(
+        registration().descriptor,
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: testRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+      expect(handlerCalls).toBe(0);
+    }),
+  );
+}
+
 it.effect('fails closed before owner authorization when PostgreSQL cannot provide transaction time', () =>
   Effect.gen(function* transactionTimeUnavailable() {
     let overlayCalls = 0;
@@ -1788,7 +1996,10 @@ const principalKindsOf = (kind: AccessPrincipalKind | undefined): AccessPrincipa
   readKind: () => Effect.succeed(Option.fromUndefinedOr(kind)),
 });
 
-const selectedCompanyRead = (target: ResolvedReadPermissionTarget) => {
+const selectedCompanyRead = (
+  target: ResolvedReadPermissionTarget,
+  readKey = 'core.identity.api.selected-company-test',
+) => {
   const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
   expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
   return defineRead(
@@ -1804,7 +2015,7 @@ const selectedCompanyRead = (target: ResolvedReadPermissionTarget) => {
       legalEntityScope: 'required',
       owningModuleKey: 'core.identity',
       permissionTarget: 'legal_entity',
-      readKey: 'core.identity.api.selected-company-test',
+      readKey,
     },
     () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
     () => Effect.succeed({}),
@@ -1871,14 +2082,81 @@ it.effect(
 );
 
 it.effect(
-  'keeps the retired company relation for a workload, an agent or an unreadable kind in its own company',
+  'keeps the retired company relation for a workload or an unreadable kind, and refuses an agent outright',
   Effect.fn(function* nonPersonInSelectedCompany() {
     // A workload behind a verified module call may select every company of its tenant, so its scope proves nothing.
-    for (const kind of ['service', 'agent', undefined] as const) {
+    for (const kind of ['service', undefined] as const) {
       const run = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, kind);
       expect(deniedByLegacyRelation(run.outcome)).toBe(true);
       expect(run.asked).toEqual([selectedCompanyId]);
     }
+    // An agent holds nothing on the retired relation and v2 never writes one: it is refused without asking at all.
+    const agent = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, 'agent');
+    expect(deniedByLegacyRelation(agent.outcome)).toBe(true);
+    expect(agent.asked).toEqual([]);
+  }),
+);
+
+/** The agent on its credential-bound connection in its own company, as the MCP transport scopes it. */
+const agentConnectionScope = {
+  ...selectedCompanyScope,
+  authContextRef: 'oauth-grant:00000000-0000-4000-8000-000000000042',
+  authMethod: 'oauth_connection' as const,
+  connection: {
+    agentConnection: { connectionId: '00000000-0000-4000-8000-000000000041', revision: 1 },
+    clientId: 'https://client.example/oauth/metadata.json',
+    clientName: 'Client',
+    grantId: '00000000-0000-4000-8000-000000000042',
+    modules: 'all' as const,
+    writePolicy: 'direct' as const,
+  },
+  delegatedByPrincipalId: '00000000-0000-4000-8000-000000000043',
+};
+
+/** The v2 gate as the agent finds it: only the company list matters, every other question would be a bug here. */
+const agentSelectionGate = (selectable: readonly string[]): BoundAccessGate => ({
+  decide: () => Effect.die('a legacy read never asks the gate for a decision'),
+  list: () => Effect.die('a legacy read never asks the gate for a listing'),
+  selectableLegalEntities: () => Effect.succeed(selectable.map((id) => LegalEntityIdSchema.make(id))),
+});
+
+const runAgentLegacyRead = Effect.fn(function* runAgentLegacyRead(readKey: string, selectable: readonly string[]) {
+  const asked: string[] = [];
+  const harness = yield* makeHarness({
+    accessDecision: agentSelectionGate(selectable),
+    onLegalEntityTarget: (id) => asked.push(id),
+    permissionDecision: 'denied',
+    principalKinds: principalKindsOf('agent'),
+    resolvedScope: agentConnectionScope,
+  });
+  const outcome = yield* Effect.exit(
+    harness.runtime.runRead({
+      input: {},
+      principal: agentConnectionScope,
+      registration: selectedCompanyRead({ kind: 'legal_entity' }, readKey),
+      transport: { correlationId: scope.correlationId },
+    }),
+  );
+  return { asked, outcome };
+});
+
+it.effect(
+  'admits an agent on its live connection only to its own proposal queue, never to another legacy read',
+  Effect.fn(function* agentProposalQueueOnly() {
+    const queue = yield* runAgentLegacyRead(agentProposalQueueReadKey, [selectedCompanyId]);
+    expect(Exit.isSuccess(queue.outcome)).toBe(true);
+    expect(queue.asked).toEqual([]);
+    // The actors and profiles reads refuse the agent even in a company it may select, and never ask the retired
+    // relation: no agent ever holds a tuple of it on v2.
+    for (const readKey of ['core.identity.agent-activity-actors', 'core.identity.agent-profiles']) {
+      const refused = yield* runAgentLegacyRead(readKey, [selectedCompanyId]);
+      expect(deniedByLegacyRelation(refused.outcome)).toBe(true);
+      expect(refused.asked).toEqual([]);
+    }
+    // The gate re-reads the connection row: once it is revoked the agent selects nothing and reads nothing.
+    const revoked = yield* runAgentLegacyRead(agentProposalQueueReadKey, []);
+    expect(deniedByLegacyRelation(revoked.outcome)).toBe(true);
+    expect(revoked.asked).toEqual([]);
   }),
 );
 
@@ -4198,4 +4476,496 @@ it.effect('rejects a recreated Core external-subject resolution Read before its 
     expect(handlerCalls).toBe(0);
     expect(harness.evidence()).toBe(0);
   }),
+);
+
+it.effect('rejects receipt recovery input mismatch before private Read work even with metadata-only capture', () =>
+  Effect.gen(function* receiptRecoveryReadHash() {
+    const read = registration();
+    const recovered = registeredGatewayRecoveryPrincipal({
+      declarationKey: read.descriptor.accessDeclaration?.key ?? 'core.shell.read',
+      entrypointKey: read.descriptor.entrypoint.entrypointKey,
+      principalId: scope.principalId,
+      requestHash: computeCanonicalValueHash({ receipt: 'another-command' }),
+      tenantId: scope.tenantId,
+      workloadKey: 'core.shell.receipt-recovery',
+    });
+    expect(read.descriptor.evidencePolicy.captureMode).toBe('metadata_only');
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: recovered,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
+    expect(failure.reason).toBe('Receipt recovery authority does not match the exact Read request');
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
+    expect(harness.evidence()).toBe(0);
+    expect(harness.stages).not.toContain('handler');
+  }),
+);
+
+it.effect('binds receipt recovery hashes to decoded timestamp inputs rather than their encoded wire values', () =>
+  Effect.gen(function* transformedReceiptRecoveryReadHash() {
+    const inputSchema = Schema.Struct({ requestedAt: Schema.DateTimeUtcFromString });
+    const wireInput = { requestedAt: '2026-09-28T09:00:00.000Z' };
+    const decodedInput = yield* Schema.decodeUnknownEffect(inputSchema)(wireInput);
+    const encodedInput = yield* Schema.encodeEffect(inputSchema)(decodedInput);
+    let handlerCalls = 0;
+    const read = defineRead(
+      { ...registration().descriptor, inputSchema, resultSchema: Schema.String },
+      (input) => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 1 }, result: DateTime.formatIso(input.requestedAt) });
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const decodedHash = computeCanonicalValueHash(decodedInput);
+    const wireHash = computeCanonicalValueHash(encodedInput);
+    const sameInstant = yield* Schema.decodeUnknownEffect(inputSchema)({
+      requestedAt: '2026-09-28T10:00:00.000+01:00',
+    });
+    const laterInstant = yield* Schema.decodeUnknownEffect(inputSchema)({ requestedAt: '2026-09-28T09:00:00.001Z' });
+    expect(decodedHash).toBe(computeCanonicalValueHash(sameInstant));
+    expect(decodedHash).not.toBe(computeCanonicalValueHash(laterInstant));
+    expect(decodedHash).not.toBe(wireHash);
+    const recovered = (requestHash: string) =>
+      registeredGatewayRecoveryPrincipal({
+        declarationKey: read.descriptor.accessDeclaration?.key ?? 'core.shell.read',
+        entrypointKey: read.descriptor.entrypoint.entrypointKey,
+        principalId: scope.principalId,
+        requestHash,
+        tenantId: scope.tenantId,
+        workloadKey: 'core.shell.receipt-recovery',
+      });
+    const allowed = yield* makeHarness({ permissionDecision: 'allowed' });
+    expect(
+      yield* allowed.runtime.runRead({
+        input: wireInput,
+        principal: recovered(decodedHash),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toBe(wireInput.requestedAt);
+    expect(handlerCalls).toBe(1);
+    const denied = yield* makeHarness({ permissionDecision: 'allowed' });
+    const failure = yield* Effect.flip(
+      denied.runtime.runRead({
+        input: wireInput,
+        principal: recovered(wireHash),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
+    expect(failure.reason).toBe('Receipt recovery authority does not match the exact Read request');
+    expect(handlerCalls).toBe(1);
+    expect(denied.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
+    expect(denied.evidence()).toBe(0);
+    expect(denied.stages).not.toContain('handler');
+  }),
+);
+
+it.effect(
+  'requires the original admission fence in an exact live Read factory and refuses copies, foreign scope, cancellation and expired use',
+  () =>
+    Effect.gen(function* scopedAdmissionReadFence() {
+      const admissionInvocationId = '70000000-0000-4000-8000-000000000011';
+      let escaped: Effect.Effect<void, OperationContextUnavailable> | undefined;
+      let handlerCalls = 0;
+      const services: ReadServiceFactory<{ readonly items: readonly string[] }> = Effect.fn(
+        function* fencedReadFactory(transaction) {
+          const exactNarrowInvoker: ScopedRoutineInvoker = transaction;
+          expect(
+            Exit.isFailure(
+              yield* Effect.exit(requireScopedSourceExecutionFenceOpen({ ...transaction }, admissionInvocationId)),
+            ),
+          ).toBe(true);
+          expect(
+            Exit.isFailure(
+              yield* Effect.exit(
+                requireScopedSourceExecutionFenceOpen({ invoke: transaction.invoke }, admissionInvocationId),
+              ),
+            ),
+          ).toBe(true);
+          escaped = requireScopedSourceExecutionFenceOpen(exactNarrowInvoker, admissionInvocationId);
+          yield* requireScopedSourceExecutionFenceOpen(exactNarrowInvoker, admissionInvocationId);
+          return { items: ['saved-admission'] };
+        },
+      );
+      const read = defineRead(
+        registration().descriptor,
+        (_input, context) => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: context.services.items });
+        },
+        services,
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const fence = { admissionInvocationId, state: 'open' as const, tenantId: scope.tenantId };
+      const allowed = yield* makeHarness({ permissionDecision: 'allowed', sourceExecutionFence: fence });
+      expect(
+        yield* allowed.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: read,
+          transport: { correlationId: scope.correlationId },
+        }),
+      ).toEqual(['saved-admission']);
+      expect(handlerCalls).toBe(1);
+      if (escaped === undefined) {
+        throw new Error('Missing actual Read factory capability');
+      }
+      expect(Exit.isFailure(yield* Effect.exit(escaped))).toBe(true);
+      const foreignScope = { ...scope, tenantId: '00000000-0000-4000-8000-000000000099' };
+      for (const row of [
+        { principal: scope, resolvedScope: scope, sourceExecutionFence: { ...fence, state: 'cancelled' as const } },
+        { principal: foreignScope, resolvedScope: foreignScope, sourceExecutionFence: fence },
+        {
+          principal: scope,
+          resolvedScope: scope,
+          sourceExecutionFence: { ...fence, admissionInvocationId: '70000000-0000-4000-8000-000000000012' },
+        },
+      ]) {
+        const denied = yield* makeHarness({
+          permissionDecision: 'allowed',
+          resolvedScope: row.resolvedScope,
+          sourceExecutionFence: row.sourceExecutionFence,
+        });
+        const failure = yield* Effect.flip(
+          denied.runtime.runRead({
+            input: {},
+            principal: row.principal,
+            registration: read,
+            transport: { correlationId: scope.correlationId },
+          }),
+        );
+        expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
+        expect(handlerCalls).toBe(1);
+      }
+    }),
+);
+
+it.effect('reads a nonlocking admission snapshot only within its exact live Read transaction', () =>
+  Effect.gen(function* scopedAdmissionSnapshot() {
+    const admissionInvocationId = '70000000-0000-4000-8000-000000000011';
+    let escaped: ReturnType<typeof readScopedSourceExecutionFence> | undefined;
+    let snapshotState: string | undefined;
+    const services: ReadServiceFactory<{ readonly items: readonly string[] }> = Effect.fn(
+      function* snapshotFactory(transaction) {
+        expect(
+          Exit.isFailure(yield* Effect.exit(readScopedSourceExecutionFence({ ...transaction }, admissionInvocationId))),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(readScopedSourceExecutionFence({ invoke: transaction.invoke }, admissionInvocationId)),
+          ),
+        ).toBe(true);
+        escaped = readScopedSourceExecutionFence(transaction, admissionInvocationId);
+        const fact = yield* readScopedSourceExecutionFence(transaction, admissionInvocationId);
+        snapshotState = fact.pipe(
+          Option.map((value) => value.state),
+          Option.getOrUndefined,
+        );
+        if (Option.isSome(fact)) {
+          expect(Object.isFrozen(fact.value)).toBe(true);
+          expect(fact.value.originalPrincipalId).toBe(scope.principalId);
+          expect(fact.value.actionKey).toBe('integration.symmy.admit-symmy-job');
+        }
+        return { items: [] };
+      },
+    );
+    const read = defineRead(
+      registration().descriptor,
+      (_input, context) => Effect.succeed({ evidence: { resultCount: 0 }, result: context.services.items }),
+      services,
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const fence = { admissionInvocationId, state: 'open' as const, tenantId: scope.tenantId };
+    for (const [sourceExecutionFence, expected] of [
+      [fence, 'open'],
+      [{ ...fence, state: 'cancelled' as const }, 'cancelled'],
+      [{ ...fence, admissionStatus: 'running' as const }, undefined],
+      [{ ...fence, tenantId: '00000000-0000-4000-8000-000000000099' }, undefined],
+      [{ ...fence, legalEntityId: '00000000-0000-4000-8000-000000000099' }, undefined],
+      [{ ...fence, admissionInvocationId: '70000000-0000-4000-8000-000000000012' }, undefined],
+    ] as const) {
+      const harness = yield* makeHarness({ permissionDecision: 'allowed', sourceExecutionFence });
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+      expect(snapshotState).toBe(expected);
+      if (escaped === undefined) {
+        throw new Error('Missing actual scoped snapshot');
+      }
+      expect(Exit.isFailure(yield* Effect.exit(escaped))).toBe(true);
+    }
+  }),
+);
+
+it.effect('reads only current enrollment facts for the succeeded admission original integration in a live Read', () =>
+  Effect.gen(function* sourceAdmissionEnrollmentFact() {
+    const admissionInvocationId = '70000000-0000-4000-8000-000000000011';
+    const originalPrincipalId = '70000000-0000-4000-8000-000000000012';
+    const bindingIncarnation = '70000000-0000-4000-8000-000000000013';
+    let escaped: ReturnType<typeof readScopedSourceAdmissionEnrollment> | undefined;
+    let present = false;
+    const services: ReadServiceFactory<{ readonly items: readonly string[] }> = Effect.fn(
+      function* enrollmentFactory(transaction) {
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              readScopedSourceAdmissionEnrollment({ ...transaction }, admissionInvocationId, 'integration.symmy-admit'),
+            ),
+          ),
+        ).toBe(true);
+        escaped = readScopedSourceAdmissionEnrollment(transaction, admissionInvocationId, 'integration.symmy-admit');
+        const fact = yield* escaped;
+        present = Option.isSome(fact);
+        if (Option.isSome(fact)) {
+          expect(Object.isFrozen(fact.value)).toBe(true);
+          expect(fact.value.originalPrincipalId).toBe(originalPrincipalId);
+          expect(fact.value.bindingIncarnation).toBe(bindingIncarnation);
+          expect(fact.value.workloadKey).toBe('integration.symmy-admit');
+          expect(fact.value.originalPrincipalId).not.toBe(scope.principalId);
+        }
+        return { items: [] };
+      },
+    );
+    const read = defineRead(
+      registration().descriptor,
+      (_input, context) => Effect.succeed({ evidence: { resultCount: 0 }, result: context.services.items }),
+      services,
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const fence = { admissionInvocationId, originalPrincipalId, state: 'open' as const, tenantId: scope.tenantId };
+    for (const rows of [[], [{ bindingIncarnation }]]) {
+      const harness = yield* makeHarness({
+        permissionDecision: 'allowed',
+        sourceAdmissionBindingRows: rows,
+        sourceExecutionFence: fence,
+      });
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+      expect(present).toBe(rows.length === 1);
+      if (escaped === undefined) {
+        throw new Error('Missing current enrollment fact');
+      }
+      expect(Exit.isFailure(yield* Effect.exit(escaped))).toBe(true);
+    }
+    const ambiguous = yield* makeHarness({
+      permissionDecision: 'allowed',
+      sourceAdmissionBindingRows: [{ bindingIncarnation }, { bindingIncarnation }],
+      sourceExecutionFence: fence,
+    });
+    expect(
+      Exit.isFailure(
+        yield* Effect.exit(
+          ambiguous.runtime.runRead({
+            input: {},
+            principal: scope,
+            registration: read,
+            transport: { correlationId: scope.correlationId },
+          }),
+        ),
+      ),
+    ).toBe(true);
+  }),
+);
+
+it.effect('rejects finite Privacy dispatch request substitution before metadata-only Read handler work', () =>
+  Effect.gen(function* privacyDispatchReadHash() {
+    const governance = '00000000-0000-4000-8000-000000000002';
+    const human = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      ...scope,
+      legalEntityId: governance,
+    });
+    const original = registration();
+    const read = defineRead(
+      {
+        ...original.descriptor,
+        accessDeclaration: fixtureReadAccess('integration.symmy'),
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'protected' },
+          entrypointKey: 'integration.symmy.api.symmy-job-privacy-execution',
+          moduleKey: 'integration.symmy',
+          role: 'api',
+        }),
+        inputSchema: Schema.Struct({ attempt: Schema.Int }),
+        legalEntityScope: 'optional',
+        owningModuleKey: 'integration.symmy',
+        readKey: 'integration.symmy.api.symmy-job-privacy-execution',
+      },
+      () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'integration.symmy' }),
+    );
+    const admitted = privacyDispatchPrincipal(human, 'SymmyReceipt', computeCanonicalValueHash({ attempt: 1 }));
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: { attempt: 2 },
+        principal: admitted,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
+    expect(failure.reason).toBe('Privacy dispatch authority does not match the exact Read request');
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
+it.effect('binds Organization governance read authority to the exact decoded request before private work', () =>
+  Effect.gen(function* organizationGovernanceReadHash() {
+    const human = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      ...scope,
+      authenticationNamespaceId: 'core-identity',
+      legalEntityId: '00000000-0000-4000-8000-000000000002',
+    });
+    const admitted = organizationGovernanceReadPrincipal(
+      human,
+      computeCanonicalValueHash({ purpose: 'GOVERNANCE', source: 'original-source' }),
+    );
+    const original = registration();
+    const read = defineRead(
+      {
+        ...original.descriptor,
+        accessDeclaration: fixtureReadAccess('integration.symmy'),
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'protected' },
+          entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+          moduleKey: 'integration.symmy',
+          role: 'api',
+        }),
+        inputSchema: Schema.Struct({ purpose: Schema.Literal('GOVERNANCE'), source: Schema.String }),
+        legalEntityScope: 'required',
+        owningModuleKey: 'integration.symmy',
+        readKey: 'integration.symmy.api.symmy-source-organization-facts',
+      },
+      () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'integration.symmy' }),
+    );
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: { purpose: 'GOVERNANCE', source: 'another-source' },
+        principal: admitted,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
+    expect(failure.reason).toBe('Organization governance authority does not match the exact Read request');
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+
+it.effect(
+  'permits the exact registered PROCESSING version and refuses a wrong version, purpose, payload, or unrestricted scope',
+  () =>
+    Effect.gen(function* organizationProcessingReadHashAndMode() {
+      const processing = { effectId: 'effect-original', purpose: 'PROCESSING' };
+      const inputSchema = Schema.Struct({
+        effectId: Schema.String.pipe(Schema.brand('EffectId')),
+        purpose: Schema.Literals(['PROCESSING', 'GOVERNANCE']),
+      });
+      let handlerCalls = 0;
+      const read = defineRead(
+        {
+          accessDeclaration: {
+            ...fixtureReadAccess('integration.symmy'),
+            key: 'integration.symmy.symmy-source-organization-facts.read',
+          },
+          accessKind: 'detail',
+          accessWorkload: {
+            reason: 'Exact finite processing proof',
+            requestPurpose: 'PROCESSING',
+            workloads: ['integration.symmy.source-organization-facts.read'],
+          },
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+            moduleKey: 'integration.symmy',
+            role: 'api',
+          }),
+          evidencePolicy: { captureMode: 'metadata_only', policyKey: 'processing-read.unit' },
+          inputSchema,
+          legalEntityScope: 'required',
+          owningModuleKey: 'integration.symmy',
+          permissionTarget: 'module',
+          policies: [],
+          readKey: 'integration.symmy.api.symmy-source-organization-facts',
+          resultSchema: Schema.Array(Schema.String),
+          schemaVersion: '2',
+        },
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'integration.symmy' }),
+      );
+      const admitted = organizationProcessingReadPrincipal(computeCanonicalValueHash(processing), true, '2');
+      const resolvedScope = preserveSystemPrincipalContextTrust(admitted, {
+        ...admitted,
+        correlationId: scope.correlationId,
+        legalEntityId: '00000000-0000-4000-8000-000000000002',
+      });
+      const allowed = yield* makeHarness({
+        accessDecision: makeScriptedBoundAccessGate('allowed').bound,
+        permissionDecision: 'allowed',
+        resolvedScope,
+      });
+      yield* allowed.runtime.runRead({
+        input: processing,
+        principal: admitted,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+      expect(handlerCalls).toBe(1);
+      const governance = { effectId: 'effect-original', purpose: 'GOVERNANCE' };
+      for (const item of [
+        { input: processing, principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(processing)) },
+        { input: { ...processing, effectId: 'effect-other' }, principal: admitted },
+        {
+          input: governance,
+          principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(governance), true, '2'),
+        },
+        {
+          input: processing,
+          principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(processing), false, '2'),
+        },
+      ]) {
+        const denied = yield* makeHarness();
+        const failure = yield* Effect.flip(
+          denied.runtime.runRead({
+            input: item.input,
+            principal: item.principal,
+            registration: read,
+            transport: { correlationId: scope.correlationId },
+          }),
+        );
+        expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
+        expect(denied.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
+        expect(denied.evidence()).toBe(0);
+      }
+      expect(handlerCalls).toBe(1);
+    }),
 );

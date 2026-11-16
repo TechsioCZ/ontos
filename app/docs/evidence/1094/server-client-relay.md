@@ -174,7 +174,7 @@ The full affected files are
 [QuantityProfile admission](../../../verticals/commerce-customer-context/tests/integration/quantity-profile-admission-postgres.test.ts) (6),
 [customer policy persistence](../../../verticals/commerce-customer-context/tests/integration/customer-commerce-policy-persistence-postgres.test.ts) (1),
 [Guest evidence authority](../../../verticals/commerce-customer-context/tests/integration/guest-attribution-evidence-authority-postgres.test.ts) (6),
-[PriceGroup periods](../../../verticals/commerce-customer-context/tests/integration/price-group-effective-period-postgres.test.ts) (13: five database scenarios and eight controls),
+[PriceGroup periods](../../../verticals/commerce-customer-context/tests/integration/price-group-effective-period-postgres.fixture.ts) (13: five database scenarios and eight controls),
 and [privacy self-service HTTP](../../../verticals/privacy/tests/integration/privacy-retained-purpose-self-service-http-postgres.test.ts) (3).
 Existing deadlines were unchanged. Earlier concurrent attempts failed; no CPU cause was proven.
 Accepted serial runs passed with normal deadlines, restored the database catalog and left no owned

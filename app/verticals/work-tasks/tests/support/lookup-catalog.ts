@@ -13,6 +13,7 @@ const unused = () => Effect.die('Unexpected lookup intent query');
 export const lookupCatalog = (missing?: string): TenantIntentLoaderService => ({
   loadAuthorityCells: unused,
   loadAuthorityCellsMany: unused,
+  loadCompanyOwnership: unused,
   loadConfigureBases: unused,
   loadConnection: unused,
   loadProjection: (scope) =>

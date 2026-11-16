@@ -9,7 +9,12 @@ import type {
   ReadLoadContext,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  requireModuleOperation,
+  defineRead,
+  defineTenantModuleEntrypoint,
+} from '@app/core-runtime';
 import { DateTime, Effect, Option } from 'effect';
 import { PrivacySubjectsRequestSchema, PrivacySubjectsResponseSchema } from '../../shared/apis/privacy-subjects.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
@@ -33,14 +38,29 @@ const readPrivacySubjectsSnapshot = Effect.fn('PrivacySubjects.readSnapshot')(fu
   if (scope.legalEntityId === undefined) {
     return yield* unavailable('A trusted Legal Entity scope is required');
   }
+  const { legalEntityId, tenantId } = scope;
   const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-  return yield* Effect.all(
+  const { representations, subjects } = yield* Effect.all(
     {
-      representations: repository.listRepresentations(scope.tenantId, scope.legalEntityId),
-      subjects: repository.listSubjects(scope.tenantId, scope.legalEntityId),
+      representations: repository.listRepresentations(tenantId, legalEntityId),
+      subjects: repository.listSubjects(tenantId, legalEntityId),
     },
     { concurrency: 1 },
   );
+  // A source-admitted person's exact source reference is owner state: read it in this transaction.
+  const sourceReferences = new Map(
+    yield* Effect.forEach(
+      subjects,
+      (item) =>
+        item.subject.kind === 'DATA_SUBJECT' && item.subject.sourceAdmission !== undefined
+          ? repository
+              .resolveSourceSubjectReference(tenantId, legalEntityId, item.subject.sourceAdmission)
+              .pipe(Effect.map((reference) => [[item.subjectRef.resourceId, reference] as const]))
+          : Effect.succeed([]),
+      { concurrency: 1 },
+    ).pipe(Effect.map((entries) => entries.flat())),
+  );
+  return { representations, sourceReferences, subjects };
 });
 type PrivacySubjectsSnapshot = Effect.Success<ReturnType<typeof readPrivacySubjectsSnapshot>>;
 interface PrivacySubjectsSnapshotServices {
@@ -104,12 +124,23 @@ export const privacySubjectsRead = defineRead(
       // unrelated retained person rows cannot block an exact Anonymous context read.
       yield* Effect.forEach(
         items,
-        (item) =>
-          item.subject.kind === 'DATA_SUBJECT'
-            ? partyOwner
-                .resolve(item.subject.partyRef, scope, false, context.compositionRevision)
-                .pipe(Effect.mapError(unavailable))
-            : Effect.void,
+        Effect.fn('PrivacySubjectsRead.verifyOwner')(function* verifySelectedPerson(item) {
+          if (item.subject.kind !== 'DATA_SUBJECT') {
+            return yield* Effect.void;
+          }
+          const operationKey =
+            item.subject.sourceAdmission === undefined
+              ? 'privacy.core.requirement.read-subject-party-detail'
+              : 'privacy.core.requirement.read-subject-source-person';
+          yield* requireModuleOperation(operationKey);
+          const sourceReference = loaded.sourceReferences.get(item.subjectRef.resourceId);
+          if (item.subject.sourceAdmission !== undefined && sourceReference === undefined) {
+            return yield* unavailable('The committed source admission reference is missing');
+          }
+          return yield* partyOwner
+            .resolve(item.subject.partyRef, scope, false, sourceReference, operationKey, context.compositionRevision)
+            .pipe(Effect.asVoid);
+        }, Effect.mapError(unavailable)),
         { concurrency: 1, discard: true },
       );
       return {

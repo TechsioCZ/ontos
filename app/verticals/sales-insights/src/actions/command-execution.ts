@@ -1,10 +1,9 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
+  ActionServiceFactory,
   ActionServicePreflight,
-  ScopedTransactionExecutor,
-  OperationalScope,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import type { SalesInsightsCommandPayload } from '../../shared/actions/apply-command.ts';
@@ -21,31 +20,30 @@ export const prepareApplyCommandServices = Effect.fn('SalesInsights.prepareApply
   function* prepareServices(payload: SalesInsightsCommandPayload, context: ActionServicePreparationContext) {
     const preparedAt = yield* DateTime.now;
     yield* prepareSalesInsightsCommand(payload.command, context.scope);
-    return Effect.fn('SalesInsights.revalidatePreparedCommand')(function* revalidate(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
-      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-      if (
-        age < 0 ||
-        age >= 30_000 ||
-        !samePrincipal(scope, context.scope) ||
-        scope.tenantId !== context.scope.tenantId ||
-        scope.legalEntityId !== context.scope.legalEntityId ||
-        scope.correlationId !== context.scope.correlationId ||
-        compositionRevision !== context.compositionRevision
-      ) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Prepared SalesInsights permissions expired or belong to another operation',
+    const factory: ActionServiceFactory<Services> = Effect.fn('SalesInsights.revalidatePreparedCommand')(
+      function* revalidate(transaction, scope, compositionRevision) {
+        const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+        if (
+          age < 0 ||
+          age >= 30_000 ||
+          !samePrincipal(scope, context.scope) ||
+          scope.tenantId !== context.scope.tenantId ||
+          scope.legalEntityId !== context.scope.legalEntityId ||
+          scope.correlationId !== context.scope.correlationId ||
+          compositionRevision !== context.compositionRevision
+        ) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Prepared SalesInsights permissions expired or belong to another operation',
+          });
+        }
+        return yield* persistenceService(transaction, {
+          prepared: { actionInvocationId: context.actionInvocationId, payload },
+          scope,
         });
-      }
-      return yield* persistenceService(transaction, {
-        prepared: { actionInvocationId: context.actionInvocationId, payload },
-        scope,
-      });
-    });
+      },
+    );
+    return factory;
   },
 ) satisfies ActionServicePreflight<
   SalesInsightsCommandPayload,

@@ -10,6 +10,9 @@ import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 import { DeliveryPlanSchema } from './delivery-plan.mts';
 import type { DeliveryService } from './delivery-plan.mts';
 
+/** The Zerops setup a pushed service deploys from; both AKROS services share the storefront setup. */
+const setupOf = (service: string) => (service === 'app' || service === 'n1' ? service : 'storefront');
+
 const HEAD = 'b'.repeat(40);
 const fakePush = `#!/usr/bin/env bash
 printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "\${PUSH_EXCLUDE:-none}" >>"$RUNNER_TEMP/calls"
@@ -48,6 +51,7 @@ const fixture = (services: readonly DeliveryService[]) =>
       GITHUB_SHA: HEAD,
       RUNNER_TEMP: directory,
       ZEROPS_APP_SERVICE_ID: 'app-id',
+      ZEROPS_N1_STOREFRONT_SERVICE_ID: 'n1-id',
       ZEROPS_SHOP_STOREFRONT_SERVICE_ID: 'shop-id',
       ZEROPS_STOREFRONT_SERVICE_ID: 'storefront-id',
     };
@@ -57,6 +61,7 @@ for (const services of [
   ['app'],
   ['storefront', 'shop'],
   ['app', 'storefront', 'shop'],
+  ['app', 'storefront', 'shop', 'n1'],
 ] satisfies (readonly DeliveryService[])[]) {
   it.effect(`pushes only the selected services ${services.join(',')}`, () =>
     Effect.gen(function* selectivePush() {
@@ -68,10 +73,9 @@ for (const services of [
       expect(result.status).toBe(0);
       const calls = (yield* fs.readFileString(path.join(context.directory, 'calls'))).trim().split('\n');
       expect(calls).toEqual(
-        services.map(
-          (service) =>
-            `${service}-id|${service === 'app' ? 'app' : 'storefront'}|${HEAD}|${service === 'app' ? 'none' : 'app/.zerops-prebuilt.tar.zst'}`,
-        ),
+        ['n1', 'app', 'storefront', 'shop']
+          .filter((service) => services.some((selected) => selected === service))
+          .map((service) => `${service}-id|${setupOf(service)}|${HEAD}|none`),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -119,6 +123,8 @@ it.effect('reports a failed service and still waits for all already started depl
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+const KEEP_APP_CONDITION = "needs.plan.outputs.app == 'true'";
+
 const WorkflowSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
@@ -127,6 +133,7 @@ const WorkflowSchema = Schema.Struct({
       needs: Schema.optionalKey(Schema.Array(Schema.String)),
       steps: Schema.Array(
         Schema.Struct({
+          env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
           if: Schema.optionalKey(Schema.String),
           name: Schema.optionalKey(Schema.String),
           run: Schema.optionalKey(Schema.String),
@@ -136,6 +143,65 @@ const WorkflowSchema = Schema.Struct({
   ),
   permissions: Schema.Struct({ contents: Schema.Literal('read') }),
 });
+type StageWorkflow = typeof WorkflowSchema.Type;
+
+/** A storefront deploy job: kept storefronts only re-verify; selected ones push their own checked runner archive. */
+const expectStorefrontDeployJob = (workflow: StageWorkflow, service: string) => {
+  const job = workflow.jobs[`deploy_${service}`];
+  expect(job?.needs).toEqual(['plan', 'deploy', 'build_storefronts']);
+  // A kept storefront only re-verifies; a selected one deploys only after the runner build ran.
+  expect(job?.if).toContain(`needs.plan.outputs.${service} != 'true'`);
+  expect(job?.if).toContain("needs.build_storefronts.result == 'success'");
+  expect(workflow.jobs.record?.if).toContain(`needs.deploy_${service}.result == 'success'`);
+  // Its own archive, checked against this commit and setup, before the push mutates anything.
+  const steps = job?.steps ?? [];
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const setup = service === 'n1' ? 'n1' : 'storefront';
+  const refuse = steps[index('Refuse an archive from another revision or setup')];
+  expect(refuse?.if).toBe(`needs.plan.outputs.${service} == 'true'`);
+  expect(refuse?.run).toContain(`--arg setup '${setup}'`);
+  expect(refuse?.run).toContain('.sourceRevision == $sha and .setup == $setup');
+  expect(refuse?.run).toContain('sha256sum -c -');
+  expect(index(`Take the ${setup} archive built on the runner`)).toBeGreaterThan(-1);
+  expect(index(`Take the ${setup} archive built on the runner`)).toBeLessThan(index(refuse?.name ?? ''));
+  expect(index(refuse?.name ?? '')).toBeLessThan(index('Push only services whose inputs changed'));
+};
+
+/** The storefront runner build waits only for the plan and packs exactly what the deploy jobs check. */
+const expectStorefrontRunnerBuild = (workflow: StageWorkflow, source: string) => {
+  // The runner build depends only on the plan, never on the app shards, and builds only selected storefronts.
+  expect(workflow.jobs.build_storefronts?.needs).toEqual(['plan']);
+  expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.n1 == 'true'");
+  expect(workflow.jobs.build_storefronts?.if).toContain("needs.plan.outputs.shop == 'true'");
+  expect(workflow.jobs.deploy_app?.needs).not.toContain('build_storefronts');
+  expect(workflow.jobs.verify?.needs).not.toContain('build_storefronts');
+  const storefrontBuild = workflow.jobs.build_storefronts?.steps ?? [];
+  expect(storefrontBuild.map((step) => step.name)).toEqual([
+    'Checkout',
+    'Install the app workspace',
+    "Restore Next's compiler cache",
+    'Typecheck with tsrs',
+    'Build the standalone server',
+    "Save Next's compiler cache",
+    'Pack the standalone server with its manifest',
+    'Upload the storefront archive',
+  ]);
+  // Next's type check of the owner API types outgrows Node's default heap; the build never relies on that default.
+  const build = storefrontBuild.find((step) => step.name === 'Build the standalone server');
+  expect(build?.env?.NODE_OPTIONS).toBe('--max-old-space-size=4096');
+  const pack = storefrontBuild.find((step) => step.name === 'Pack the standalone server with its manifest');
+  expect(pack?.run).toContain("-name '*.node' -print");
+  expect(pack?.run).toContain("-type l -lname '/*' -print");
+  expect(pack?.run).toContain('sourceRevision: $sourceRevision');
+  expect(source).toContain(`name: zerops-storefront-\${{ matrix.setup }}`);
+  expect(source).toContain('zerops-verified-delivery');
+  expect(source).toContain('git fetch --no-tags --unshallow origin "$GITHUB_SHA"');
+  expect(source).toContain('STOREFRONT RUNNER PREBUILD (lane STOREFRONT)');
+  // A full release deploys every service but keeps unchanged units; only the explicit input rebuilds them all.
+  expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ inputs.rebuild_units == true }}`);
+  expect(source).not.toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
+};
+
 it.effect('keeps verification mandatory for changed services and records sources only after successful proof', () =>
   Effect.gen(function* workflowGates() {
     const fs = yield* FileSystem.FileSystem;
@@ -143,27 +209,39 @@ it.effect('keeps verification mandatory for changed services and records sources
       path.resolve(import.meta.dirname, '../../../.github/workflows/zerops-stage.yml'),
     );
     const workflow = yield* Schema.decodeUnknownEffect(WorkflowSchema)(parse(source));
-    expect(workflow.jobs.build?.if).toBe("needs.plan.outputs.app == 'true'");
-    expect(workflow.jobs.verify?.if).toBe("always() && needs.deploy.result == 'success'");
+    // A failed unit_identities job never blocks the shards; only its proven front path skips them
+    // (scripts/zerops/reuse-shard-units.test.mts).
+    expect(workflow.jobs.build?.if).toBe(
+      `\${{ !cancelled() && needs.plan.result == 'success' && ${KEEP_APP_CONDITION} && needs.unit_identities.outputs.all_reused != 'true' }}`,
+    );
+    // Verify is prepared beside the app deploy; its proofs wait for that deploy to succeed
+    // (scripts/tests/zerops-verification-setup.test.mts).
+    expect(workflow.jobs.verify?.needs).toEqual(['plan', 'deploy', 'unit_identities', 'build']);
+    expect(workflow.jobs.verify?.steps.find((step) => step.name === 'Wait for the app deployment')?.run).toBe(
+      "bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1",
+    );
     expect(workflow.jobs.record?.if).toContain("needs.verify.result == 'success'");
-    for (const name of [
-      'Download the unit builds',
-      'Pack the unit builds for the push',
-      'Sync the owner secret bundle to the app service',
-    ]) {
-      expect(workflow.jobs.deploy?.steps.find((step) => step.name === name)?.if).toBe(
-        "needs.plan.outputs.app == 'true'",
-      );
+    for (const name of ['Download the unit builds', 'Pack the unit builds for the push']) {
+      expect(workflow.jobs.deploy_app?.steps.find((step) => step.name === name)?.if).toBe(KEEP_APP_CONDITION);
     }
-    expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('stage-demo-verify.mjs') === true)).toBe(true);
+    expect(
+      workflow.jobs.deploy?.steps.find((step) => step.name === 'Sync the owner secret bundle to the app service')?.if,
+    ).toBe(KEEP_APP_CONDITION);
+    expect(workflow.jobs.deploy?.needs).toEqual(['plan']);
+    expect(workflow.jobs.deploy_app?.needs).toEqual(['plan', 'deploy', 'unit_identities', 'build']);
+    expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('verify-service.mjs app') === true)).toBe(
+      true,
+    );
     expect(workflow.jobs.verify?.steps.some((step) => step.run?.includes('prove-mcp-oauth.mts') === true)).toBe(true);
-    expect(source).toContain('zerops-verified-delivery');
-    expect(source).toContain('fetch-depth: 0');
-    expect(source).toContain(`ZEROPS_FORCE_BUILD: \${{ needs.plan.outputs.full }}`);
+    for (const service of ['storefront', 'shop', 'n1']) {
+      expectStorefrontDeployJob(workflow, service);
+    }
+    expectStorefrontRunnerBuild(workflow, source);
     const buildScript = yield* fs.readFileString(path.join(import.meta.dirname, 'build-app.sh'));
-    expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digest "$1"');
+    expect(buildScript).toContain('node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"');
+    expect(buildScript).toContain('export ZEROPS_UNIT_DIGESTS');
     expect(buildScript).toContain(`[ "\${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1`);
-    expect(source).toContain("needs.plan.outputs.app == 'false' || needs.build.result == 'success'");
+    expect(workflow.jobs.deploy_app?.if).toContain("needs.build.result == 'success'");
     expect(source).toContain(`AKROS_TEST_BASE_URL: \${{ env.STAGE_SHOP_URL }}`);
     expect(source).toContain(
       `NEWSLETTER_PURPOSE_READ_FILE: \${{ runner.temp }}/newsletter-native/processing-purposes.json`,

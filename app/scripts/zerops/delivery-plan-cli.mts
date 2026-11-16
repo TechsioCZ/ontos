@@ -6,14 +6,19 @@ import { Argument, Command } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
+  buildEnvironment,
   DeliveryPlanSchema,
   DeliveryAttemptSchema,
   DeliveryReceiptSchema,
+  isReferenceSource,
   planDelivery,
   previousVerifiedBase,
   SERVICES,
+  unitIdentity,
   unitInputDigest,
+  unitInputGraph,
 } from './delivery-plan.mts';
+import type { GitEntry } from './delivery-plan.mts';
 
 const Manifest = Schema.Struct({
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -59,12 +64,30 @@ const git = (args: readonly string[]) =>
     }
     return stdout;
   }).pipe(Effect.scoped);
-const readCommitted = <A,>(revision: string, filename: string, schema: Schema.Codec<A>) =>
-  git(['show', `${revision}:${filename}`]).pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))));
+// A function expression, not a generic arrow: tests compile this module with SWC, which refuses `<A,>(…) =>` in .mts.
+const readCommitted = function readCommitted<A>(
+  repository: string,
+  revision: string,
+  filename: string,
+  schema: Schema.Codec<A>,
+) {
+  return git(['-C', repository, 'show', `${revision}:${filename}`]).pipe(
+    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
+  );
+};
 
+const workspaceNames = (dependencies: Readonly<Record<string, string>>) =>
+  Object.entries(dependencies)
+    .filter(([, range]) => range.startsWith('workspace:'))
+    .map(([name]) => name);
 const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => ({
   directory,
   name: manifest.name,
+  runtimeDependencies: workspaceNames({
+    ...manifest.dependencies,
+    ...manifest.optionalDependencies,
+    ...manifest.peerDependencies,
+  }),
   workspaceDependencies: Object.entries({
     ...manifest.dependencies,
     ...manifest.devDependencies,
@@ -74,9 +97,10 @@ const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => 
     .filter(([, range]) => range.startsWith('workspace:'))
     .map(([name]) => name),
 });
-export const readWorkspace = (revision: string) =>
+/** The committed workspace of one revision; `repository` is any directory inside the repository (default: here). */
+export const readWorkspace = (revision: string, repository = '.') =>
   Effect.gen(function* readWorkspaceInputs() {
-    const listing = yield* git(['ls-tree', '-rz', '--full-tree', revision]);
+    const listing = yield* git(['-C', repository, 'ls-tree', '-rz', '--full-tree', revision]);
     const entries = listing
       .split('\0')
       .filter((value) => value.length > 0)
@@ -89,11 +113,11 @@ export const readWorkspace = (revision: string) =>
     );
     const packages = [];
     for (const entry of manifests) {
-      const manifest = yield* readCommitted(revision, entry.path, Manifest);
+      const manifest = yield* readCommitted(repository, revision, entry.path, Manifest);
       packages.push(workspacePackage(path.posix.dirname(entry.path), manifest));
     }
-    const intent = yield* readCommitted(revision, 'app/topology/application-release-intent.json', Intent);
-    const topology = yield* readCommitted(revision, 'app/topology/reference-topology.json', Topology);
+    const intent = yield* readCommitted(repository, revision, 'app/topology/application-release-intent.json', Intent);
+    const topology = yield* readCommitted(repository, revision, 'app/topology/reference-topology.json', Topology);
     const units = [{ directory: `app/${topology.shell.path}`, id: 'shell-super-app' }];
     for (const module of intent.modules) {
       const owner = topology.verticals.find((entry) => entry.id === module.appId);
@@ -103,6 +127,65 @@ export const readWorkspace = (revision: string) =>
       units.push({ directory: `app/${owner.path}`, id: module.appId });
     }
     return { entries, packages, units };
+  });
+
+/** The committed text of every reference source, read in one `git cat-file --batch`. */
+export const readSources = (entries: readonly GitEntry[], repository = '.') =>
+  Effect.gen(function* readReferenceSources() {
+    const wanted = entries.filter((entry) => isReferenceSource(entry.path) && entry.identity.includes(' blob '));
+    const request = new TextEncoder().encode(wanted.map((entry) => `${entry.identity.split(' ')[2] ?? ''}\n`).join(''));
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make('git', ['-C', repository, 'cat-file', '--batch'], { stdin: { stream: Stream.make(request) } }),
+    );
+    const [chunks, , code] = yield* Effect.all(
+      [Stream.runCollect(handle.stdout), Stream.runDrain(handle.stderr), handle.exitCode],
+      { concurrency: 'unbounded' },
+    );
+    if (Number(code) !== 0) {
+      return yield* new DeliveryInputInvalid({ reason: 'Git command failed: cat-file' });
+    }
+    const output = Buffer.concat([...chunks]);
+    const decoder = new TextDecoder();
+    const sources = new Map<string, string>();
+    let offset = 0;
+    for (const entry of wanted) {
+      const end = output.indexOf(0x0a, offset);
+      const size = Number(output.subarray(offset, end).toString('latin1').split(' ')[2]);
+      if (end === -1 || !Number.isSafeInteger(size)) {
+        return yield* new DeliveryInputInvalid({ reason: `Unreadable blob for ${entry.path}` });
+      }
+      sources.set(entry.path, decoder.decode(output.subarray(end + 1, end + 1 + size)));
+      offset = end + 1 + size + 1;
+    }
+    return sources;
+  }).pipe(Effect.scoped);
+
+/** The environment build children inherit, NUL-separated so values may hold newlines. */
+const inheritedEnvironment = Effect.gen(function* readEnvironment() {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const handle = yield* spawner.spawn(ChildProcess.make('env', ['-0']));
+  const [listing] = yield* Effect.all(
+    [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), Stream.runDrain(handle.stderr), handle.exitCode],
+    { concurrency: 'unbounded' },
+  );
+  return listing.split('\0').flatMap((pair): (readonly [string, string])[] => {
+    const separator = pair.indexOf('=');
+    return separator > 0 ? [[pair.slice(0, separator), pair.slice(separator + 1)]] : [];
+  });
+}).pipe(Effect.scoped);
+
+/** The unit identities of one commit, with the build variables of this process. */
+export const readUnitIdentities = (revision: string) =>
+  Effect.gen(function* readCommittedIdentities() {
+    const workspace = yield* readWorkspace(revision);
+    const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
+    const environment = buildEnvironment(yield* inheritedEnvironment);
+    const identities = [];
+    for (const unit of workspace.units) {
+      identities.push({ id: unit.id, ...(yield* unitIdentity(unit.directory, { environment, graph })) });
+    }
+    return { graph, identities, units: workspace.units };
   });
 
 const optionalReceipt = (filename: string) =>
@@ -183,20 +266,38 @@ const plan = Command.make('plan', { directory: Argument.String('directory') }, (
     yield* Console.log(encoded);
   }),
 );
+const requireOrigins = Effect.forEach(
+  ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
+  (name) => Config.String(name),
+);
 const digest = Command.make('digest', { directory: Argument.String('unit-directory') }, ({ directory }) =>
   Effect.gen(function* printDigest() {
+    yield* requireOrigins;
     const head = (yield* git(['rev-parse', 'HEAD'])).trim();
     const workspace = yield* readWorkspace(head);
-    const origins = yield* Effect.forEach(
-      ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_STOREFRONT_ORIGIN', 'ONTOS_SHOP_STOREFRONT_ORIGIN'],
-      (name) => Config.String(name),
-    );
+    const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
     yield* Console.log(
-      yield* unitInputDigest(`app/${directory}`, workspace.packages, workspace.units, workspace.entries, origins),
+      yield* unitInputDigest(`app/${directory}`, {
+        environment: buildEnvironment(yield* inheritedEnvironment),
+        graph,
+      }),
     );
   }),
 );
-const command = Command.make('delivery-plan').pipe(Command.withSubcommands([plan, digest]));
+const digests = Command.make(
+  'digests',
+  { revision: Argument.String('revision').pipe(Argument.withDefault('HEAD')) },
+  ({ revision }) =>
+    Effect.gen(function* printAllDigests() {
+      yield* requireOrigins;
+      const head = (yield* git(['rev-parse', revision])).trim();
+      // unit, identity, committed-inputs part, build variables as NAME=short-hash (read by build-app.sh).
+      for (const { digest: value, files, id, variables } of (yield* readUnitIdentities(head)).identities) {
+        yield* Console.log(`${id}\t${value}\t${files}\t${variables.join(' ')}`);
+      }
+    }),
+);
+const command = Command.make('delivery-plan').pipe(Command.withSubcommands([plan, digest, digests]));
 if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.build(

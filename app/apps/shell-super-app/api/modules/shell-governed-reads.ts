@@ -11,7 +11,7 @@ import {
 import { admitPeopleSystemSearch, corePeopleSystemSearchProvider } from '@app/core-runtime/people/search';
 import type { PeopleSystemSearchAccess, PeopleSystemSearchAdmission } from '@app/core-runtime/people/search';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
-import type { GateInput } from '@app/core-runtime/access/enforcement';
+import type { GateCarrier, GateInput } from '@app/core-runtime/access/enforcement';
 import type {
   OperationalScope,
   ReadCoreError,
@@ -31,7 +31,7 @@ import {
   ShellResourceResponseSchema,
   ShellSearchPayloadSchema,
   ShellSearchResponseSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import type {
   ResourceRef,
   ResolvedModuleTarget,
@@ -39,7 +39,7 @@ import type {
   ShellResourceResponse,
   ShellSearchPayload,
   ShellSearchResponse,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
 import type { ShellInstalledCatalog } from './installed-module-catalog.ts';
 import { ShellGovernedReadDefinitions } from './shell-governed-read-definitions.ts';
@@ -115,6 +115,12 @@ export interface ShellGovernedReadsService {
       readonly moduleId?: string;
     },
   ) => Effect.Effect<ShellTenantModuleTarget, ReadCoreError>;
+  /**
+   * The tenant-context page dispatch Read's own validated carrier (`core.shell.tenant-module-target.resolve`).
+   * The session document's release hint asks the gate exactly this question, so it reaches exactly the people
+   * dispatch admits (O28) and the declaration keeps one literal in the Read descriptor.
+   */
+  readonly tenantModuleTargetCarrier: GateCarrier;
 }
 
 /**
@@ -430,6 +436,8 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const composition = defineRead(
     {
       accessDeclaration: {
+        // The frame (membership, no Role cell): the installed composition; each contribution is decided on its own.
+        baseline: true,
         key: 'core.shell.composition.read',
         kind: 'read',
         modes: ['run'],
@@ -631,6 +639,8 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const moduleTarget = defineRead(
     {
       accessDeclaration: {
+        // The frame (membership, no Role cell): which module serves a page, never the page's data (its own right).
+        baseline: true,
         key: 'core.shell.module-target.resolve',
         kind: 'read',
         modes: ['run'],
@@ -669,6 +679,9 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   const tenantModuleTarget = defineRead(
     {
       accessDeclaration: {
+        // The frame (membership, no Role cell): a tenant-context page target, never its page's data (still its own
+        // right). The session document's release hint asks this very declaration (`tenantModuleTargetCarrier`).
+        baseline: true,
         key: 'core.shell.tenant-module-target.resolve',
         kind: 'read',
         modes: ['run'],
@@ -960,6 +973,7 @@ export const createShellGovernedReadsLayer = (registrations: ShellGovernedReadRe
             transport,
           });
         },
+        tenantModuleTargetCarrier: registrations.tenantModuleTarget.descriptor,
       })),
     ),
   );

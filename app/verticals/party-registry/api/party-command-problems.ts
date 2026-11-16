@@ -211,7 +211,20 @@ export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProb
       PartyContactPointRevisionConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyCorrectionConflict: (failure) =>
         partyCommandProblem.conflict(failure.code, failure.conflictingRelationshipRefs),
-      PartyEvidenceInsufficient: (failure) => partyCommandProblem.ineligible(failure.code),
+      PartyEvidenceInsufficient: (failure) => {
+        if (
+          failure.reason === 'client_source_not_authorized' ||
+          failure.reason === 'client_source_assertion_required' ||
+          failure.reason === 'manual_declaration_requires_authenticated_actor' ||
+          failure.reason === 'client_source_privacy_denied'
+        ) {
+          return partyCommandProblem.forbidden();
+        }
+        if (failure.reason === 'client_source_effect_identity_conflict') {
+          return partyCommandProblem.conflict(failure.code);
+        }
+        return partyCommandProblem.ineligible(failure.code);
+      },
       PartyLifecycleConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyNotFound: partyCommandProblem.notFound,
       PartyOfficialIdentifierNotFound: partyCommandProblem.notFound,

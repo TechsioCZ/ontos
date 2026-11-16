@@ -8,6 +8,7 @@ import { formatKc } from '../../../../list-format.ts';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
+import { listPriceOf } from './product-list-price.ts';
 
 /** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
 const ProductThumbnail = ({ image, productId }: { readonly image: string; readonly productId: ProductId }) => {
@@ -80,13 +81,14 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
   {
     accessorKey: 'currentPriceMinor',
     cell: (info) => {
-      const product = info.row.original;
-      // With variants the list price is the lowest variant price.
-      const fromVariants = (product.variantCount ?? 0) > 0;
+      const price = listPriceOf(info.row.original);
+      const amount = formatMoney(price.minor);
       return (
         <span className="flex flex-col items-end tabular-nums">
-          <span>{`${fromVariants ? 'od ' : ''}${formatMoney(product.grossPriceMinor ?? info.getValue<number>())}`}</span>
-          <span className="text-fg-secondary text-xs">s DPH</span>
+          <span>{price.fromVariants ? `${label('columns.priceFrom')} ${amount}` : amount}</span>
+          <span className="text-fg-secondary text-xs">
+            {label(price.withVat ? 'columns.priceWithVat' : 'columns.priceWithoutVat')}
+          </span>
         </span>
       );
     },

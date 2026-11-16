@@ -33,7 +33,13 @@ import {
   lockApplicationCompositionAuthority,
 } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
+import {
+  defineOutboxWorker,
+  extractOutboxWorkerSubscriptions,
+} from '../../../../packages/core-runtime/src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
+import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
+import { getVerticalRuntimeOutboxWorkers } from '../../../../packages/core-runtime/src/modules/runtime-registration.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import type { TenantModuleState } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
@@ -41,12 +47,13 @@ import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/run
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import { makeNativeOutboxWorkerFixture } from '../../../../packages/core-runtime/tests/support/outbox-worker-native-fixture.ts';
 import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { makePaymentApiRuntime } from '../../api/index.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import type { StartPaymentCollectionPayloadSchema } from '../../shared/actions/start-payment-collection.ts';
 import type { CurrentPaymentRequestSchema } from '../../shared/apis/current-payment.ts';
 import type { PaymentHistoryRequestSchema } from '../../shared/apis/payment-history.ts';
@@ -58,6 +65,7 @@ import {
   GatewayAssertionRedemptionLive,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { paymentOperations } from '../../src/database/schema.ts';
+import { executeGatewayOperationWorker } from '../../src/workers/execute-gateway-operation.worker.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeLifecycleOwnerContractFixture } from '../support/lifecycle-owner-contract.fixture.ts';
 import { failureCodeOf, makeTestScope } from './database-fixture.ts';
@@ -107,9 +115,26 @@ const native = <A, E>(
   effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope>,
 ) => Effect.scoped(effect).pipe(Effect.provide(nativeServices));
 
+/**
+ * Payment's real registered Outbox workers published as R1's subscriptions, so Core enrolls every
+ * completion-bound Payment delivery (gateway dispatch, lookup/replay recovery) as R1 durable work (#1158).
+ */
+const registeredWorkers = makeNativeOutboxWorkerFixture(getVerticalRuntimeOutboxWorkers(paymentRegistration));
+
+/** The C17 executor contract fixture: the gateway dispatch reached its safe checkpoint. */
+const executorCheckpoint = defineOutboxWorker(
+  {
+    ...executeGatewayOperationWorker.descriptor,
+    leaseDurationMs: 1000,
+    retryPolicy: { initialBackoffMs: 0, maxAttempts: 3, maxBackoffMs: 0, multiplier: 1 },
+  },
+  () => Effect.void,
+);
+
 /** A disposable clone with the approved Composition R1 published as its only authority. */
-const isolatedPayment = Effect.fn('AcceptanceCompositionFence.isolated')(function* isolatedPayment() {
-  const snapshot = yield* makeApplicationCompositionSnapshotFixture(['payment'], ultramodernApiMarker.buildMarker);
+const isolatedPayment = Effect.fn('AcceptanceCompositionFence.isolated')(function* isolatedPayment(
+  snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -304,8 +329,24 @@ it.live(
   () =>
     native(
       Effect.gen(function* compositionFence() {
-        const payment = yield* isolatedPayment();
+        const payment = yield* isolatedPayment(
+          yield* makeApplicationCompositionSnapshotFixture(['payment'], ultramodernApiMarker.buildMarker),
+        );
         const transport = yield* mountPaymentTransport(payment);
+        yield* payment.evidence.configureSource({
+          factFamily: 'BANK_ACCOUNTING_RECEIPT',
+          method: 'BANK_TRANSFER_ADVANCE',
+          reason: 'Accounting owns bank receipts',
+          refundRoute: false,
+          source: {
+            accountRef: 'composition-fence-bank-account',
+            environment: 'production',
+            sourceKind: 'BANK_ACCOUNTING',
+            sourceSystem: 'erp-bank',
+          },
+          status: 'ACTIVE',
+          submitterPrincipalIds: [payment.scope.principalId],
+        });
         const target = yield* payment.evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
         /** The three declared entrypoint classes, each against a fresh Payment for the write. */
         const matrix = Effect.gen(function* callMatrix() {
@@ -329,6 +370,28 @@ it.live(
         // Active, unexpired R1 and an active Tenant Module State: every class is admitted.
         expect(yield* matrix).toEqual({ history: 200, read: 200, write: 200 });
         expect(yield* operations).toBe(1);
+        // A non-gateway binding stays untracked: a bank COLLECT makes no provider call, so its request is
+        // admitted without any registered consumer and enrolls no Core durable work (#1158).
+        expect(
+          yield* payment.database.coreAdmin
+            .select({
+              completionConsumer: outboxMessages.completionConsumerModuleKey,
+              completionRevision: outboxMessages.completionOriginalRevision,
+            })
+            .from(outboxMessages)
+            .where(
+              and(
+                eq(outboxMessages.tenantId, payment.scope.tenantId),
+                eq(outboxMessages.topic, 'payment.core.operation-requested.v1'),
+              ),
+            ),
+        ).toEqual([{ completionConsumer: null, completionRevision: null }]);
+        expect(
+          yield* payment.database.coreAdmin
+            .select({ workId: applicationCompositionDurableWork.workId })
+            .from(applicationCompositionDurableWork)
+            .where(eq(applicationCompositionDurableWork.ownerModuleKey, 'payment.core')),
+        ).toEqual([]);
 
         // Tenant Module State alone: `inactive` denies read and write but keeps history while R1 admits all.
         yield* payment.setModuleState('inactive');
@@ -371,7 +434,7 @@ it.live(
   () =>
     native(
       Effect.gen(function* unresolvedTaskHoldsDrain() {
-        const payment = yield* isolatedPayment();
+        const payment = yield* isolatedPayment(yield* registeredWorkers.authority.load);
         const { evidence } = payment;
         const owners = yield* makeLifecycleOwnerContractFixture({
           enabledBindings: [GOPAY_ACCOUNT],
@@ -412,7 +475,11 @@ it.live(
           ['INDETERMINATE', payment.revision],
         ]);
         const paymentMessages = payment.database.coreAdmin
-          .select({ matchedAt: outboxMessages.matchedAt, topic: outboxMessages.topic })
+          .select({
+            matchedAt: outboxMessages.matchedAt,
+            outboxMessageId: outboxMessages.outboxMessageId,
+            topic: outboxMessages.topic,
+          })
           .from(outboxMessages)
           .where(
             and(
@@ -432,9 +499,14 @@ it.live(
               eq(applicationCompositionDurableWork.originalRevision, payment.revision),
             ),
           );
-        // The unknown effect is Core durable work of payment.core under the revision that admitted it.
-        const unknownCollectWork = [`payment-operation:${payment.scope.tenantId}:${collect.operationId}`];
-        expect((yield* trackedPaymentWork).map((work) => work.workId)).toEqual(unknownCollectWork);
+        // The unknown effect, the gateway dispatch and the lookup delivery are Core durable work of
+        // payment.core under the revision that admitted them (#1158).
+        const unknownCollectWork = new Set([
+          `payment-operation:${payment.scope.tenantId}:${collect.operationId}`,
+          ...(yield* paymentMessages).map(({ outboxMessageId }) => `outbox:${outboxMessageId}:payment.core`),
+        ]);
+        expect(unknownCollectWork.size).toBe(3);
+        expect(new Set((yield* trackedPaymentWork).map((work) => work.workId))).toEqual(unknownCollectWork);
 
         // Publication closes new durable admission and asks for drain completion through Core.
         yield* payment.isolated.composition.closeAdmission();
@@ -467,26 +539,119 @@ it.live(
         expect(closeCase).toBe('payment_reconciliation_obligation_unresolved');
         expect(yield* evidence.rows.cases(created.paymentId)).toEqual(debtBefore.cases);
 
-        // Core's real Outbox matcher keeps running while admission is closed. No consumer of Payment's
-        // topics is in this composition, so it records the rows as matched with zero deliveries: that is
-        // delivery bookkeeping, never completion of the Payment work.
+        // Core's real Outbox matcher keeps running while admission is closed. It hands both rows to
+        // Payment's registered executor and recovery workers: a delivery is never completion of the work.
         const matched = yield* makeOutboxRepository(payment.database.database, yield* Crypto.Crypto).matchUnmatched(
           payment.revision,
           yield* DateTime.nowAsDate,
         );
-        expect(matched).toEqual({ deliveriesCreated: 0, messagesMatched: 2 });
+        expect(matched).toEqual({ deliveriesCreated: 2, messagesMatched: 2 });
         expect((yield* paymentMessages).every((message) => message.matchedAt !== null)).toBe(true);
         // Matched Outbox rows do not release R1: the unknown COLLECT is still tracked, so it neither
         // drains nor seals.
         expect(yield* durableWorkDrained).toBe(false);
         expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.drain()))).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.seal()))).toBe(true);
-        expect((yield* trackedPaymentWork).map((work) => work.workId)).toEqual(unknownCollectWork);
+        expect(new Set((yield* trackedPaymentWork).map((work) => work.workId))).toEqual(unknownCollectWork);
         expect({
           cases: yield* evidence.rows.cases(created.paymentId),
           operations: yield* evidence.rows.operations(created.paymentId),
           transitions: yield* evidence.rows.transitions(collect.operationId),
         }).toEqual(debtBefore);
+      }),
+    ),
+  { timeout: 120_000 },
+);
+
+it.live(
+  '#1153 Drain is blocked while gateway dispatch is unfinished: the executor checkpoint releases R1',
+  () =>
+    native(
+      Effect.gen(function* gatewayDispatchHoldsDrain() {
+        const payment = yield* isolatedPayment(yield* registeredWorkers.authority.load);
+        const owners = yield* makeLifecycleOwnerContractFixture({
+          enabledBindings: [GOPAY_ACCOUNT],
+          gatewayAvailable: true,
+          metadataRevision: 1,
+          termUse: 'USABLE',
+        });
+        const created = yield* payment.evidence.createPayment();
+        const { operation: collect } = yield* payment.actions
+          .runAction({
+            payload: {
+              amount: { amountMinor: 100_000, currency: 'CZK' },
+              method: 'ONLINE_GATEWAY',
+              operationKey: 'collect-dispatch',
+              paymentId: created.paymentId,
+            },
+            principal: payment.principal,
+            registration: startPaymentCollectionAction,
+            transport: { correlationId: 'payment-composition-dispatch', idempotencyKey: randomUUID() },
+          })
+          .pipe(Effect.provide(owners.layer));
+        // Business waiting (PENDING) is no unknown effect; the admitted gateway dispatch is R1 durable work.
+        expect(collect.outcome).toBe('PENDING');
+        const [dispatch, ...others] = yield* payment.database.coreAdmin
+          .select({
+            completionConsumer: outboxMessages.completionConsumerModuleKey,
+            completionRevision: outboxMessages.completionOriginalRevision,
+            outboxMessageId: outboxMessages.outboxMessageId,
+          })
+          .from(outboxMessages)
+          .where(
+            and(
+              eq(outboxMessages.tenantId, payment.scope.tenantId),
+              eq(outboxMessages.topic, 'payment.core.operation-requested.v1'),
+            ),
+          );
+        expect(others).toHaveLength(0);
+        expect(dispatch).toMatchObject({ completionConsumer: 'payment.core', completionRevision: payment.revision });
+        const trackedPaymentWork = payment.database.coreAdmin
+          .select({ workId: applicationCompositionDurableWork.workId })
+          .from(applicationCompositionDurableWork)
+          .where(
+            and(
+              eq(applicationCompositionDurableWork.ownerModuleKey, 'payment.core'),
+              eq(applicationCompositionDurableWork.originalRevision, payment.revision),
+            ),
+          )
+          .pipe(Effect.map((rows) => rows.map((row) => row.workId)));
+        expect(yield* trackedPaymentWork).toEqual([`outbox:${dispatch?.outboxMessageId}:payment.core`]);
+
+        const durableWorkDrained = payment.database.coreAdmin.transaction((transaction) =>
+          isApplicationCompositionDurableWorkDrained(transaction, payment.revision),
+        );
+        yield* payment.isolated.composition.closeAdmission();
+        expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.drain()))).toBe(true);
+        expect(yield* durableWorkDrained).toBe(false);
+        expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.seal()))).toBe(true);
+
+        // Matching hands the row to the registered executor; it still holds R1 until the executor completes.
+        const crypto = yield* Crypto.Crypto;
+        const repository = makeOutboxRepository(payment.database.database, crypto);
+        const now = yield* DateTime.nowAsDate;
+        expect(yield* repository.matchUnmatched(payment.revision, now)).toEqual({
+          deliveriesCreated: 1,
+          messagesMatched: 1,
+        });
+        expect(yield* durableWorkDrained).toBe(false);
+        expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.drain()))).toBe(true);
+
+        const cycle = yield* registeredWorkers.bind(
+          [executorCheckpoint],
+          makeOutboxRuntime(repository).runCycle({
+            claimOwner: 'payment-executor-checkpoint',
+            compositionRevision: payment.revision,
+            maxDeliveries: 1,
+            now: DateTime.toDateUtc(DateTime.add(DateTime.makeUnsafe(now), { seconds: 1 })),
+            registrations: [executorCheckpoint],
+            subscriptions: extractOutboxWorkerSubscriptions([executorCheckpoint]),
+          }),
+        );
+        expect(cycle).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+        expect(yield* trackedPaymentWork).toEqual([]);
+        expect(yield* durableWorkDrained).toBe(true);
+        yield* payment.isolated.composition.drain();
       }),
     ),
   { timeout: 120_000 },

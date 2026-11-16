@@ -9,28 +9,24 @@ import type { ProductDetailModel } from "@/ontos/catalog-model";
 
 /** N1 composition of native navigation controls and a separate stock asset. */
 export const ProductVariants = ({
-  desktop,
   dictionary: d,
   pathname,
   selectedVariant,
   variants,
 }: {
-  desktop: boolean;
   dictionary: Dictionary;
   pathname: string;
   selectedVariant: ProductDetailModel["variants"][number] | undefined;
   variants: ProductDetailModel["variants"];
 }) => (
-  <fieldset
-    className={`${selectedVariant === undefined ? "order-4" : "order-1"} md:order-1 md:mb-5`}
-  >
-    <legend className="mb-6 font-semibold md:mb-2 md:font-bold">{d.selectVariant}</legend>
-    <div className="flex flex-wrap gap-2 md:n1-product-variants">
+  <fieldset className="order-1 md:mb-5">
+    <legend className="mb-2 font-bold">{d.selectVariant}</legend>
+    <div className="n1-product-variants flex flex-wrap gap-2">
       {variants.map((item) => {
         const selected = item.id === selectedVariant?.id;
         return (
           <div
-            className={selected ? "relative md:n1-product-variant-selected" : "relative"}
+            className={selected ? "n1-product-variant-selected relative" : "relative"}
             key={item.id}
           >
             <LinkButton
@@ -38,19 +34,16 @@ export const ProductVariants = ({
               as={NextLink}
               href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
               prefetch={false}
-              size={desktop ? "sm" : "md"}
-              theme={!desktop && selected ? "solid" : "outlined"}
-              variant={!desktop && selected ? "primary" : "secondary"}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
             >
-              <span>
-                {item.name}
-                {selected && <span className="md:hidden">{` · ${d.selectedOption}`}</span>}
-              </span>
+              {item.name}
             </LinkButton>
             {(item.stock === "available" || item.stock === "limited") && (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute right-0 top-0 hidden size-n1-variant-stock-corner md:block"
+                className="pointer-events-none absolute right-0 top-0 size-n1-variant-stock-corner"
               >
                 <Image
                   alt=""

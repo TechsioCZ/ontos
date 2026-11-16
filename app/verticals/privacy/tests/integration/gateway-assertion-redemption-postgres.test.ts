@@ -10,6 +10,8 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
+import { PgClient } from '@effect/sql-pg';
+import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import { testDatabaseClients } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -18,6 +20,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
+  gatewayAssertionRedemptionPgClient,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 
 const withRedemption = Effect.gen(function* acquirePrivacyRedemption() {
@@ -25,8 +28,13 @@ const withRedemption = Effect.gen(function* acquirePrivacyRedemption() {
   const connections = yield* loadDatabaseConnectionPair();
   const services = yield* Layer.build(
     GatewayAssertionRedemptionLive.pipe(
-      Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-      Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+      Layer.provide(
+        GatewayAssertionRedemptionDatabaseLive.pipe(
+          Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+          Layer.provide(Reactivity.layer),
+          Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+        ),
+      ),
     ),
   );
   const redemption = Context.get(services, GatewayAssertionRedemptionService);

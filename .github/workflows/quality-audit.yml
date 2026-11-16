@@ -12,6 +12,7 @@ on:
     branches:
       - main
       - stage
+      - demo/sales-crm
     paths-ignore:
       - "docs/**"
       - CONTEXT-MAP.md
@@ -63,7 +64,7 @@ jobs:
       - name: Verify audit runner and gate behavior
         run: mise exec -- pnpm quality:audit:test
 
-      - name: Hold lint suppressions at the committed baseline
+      - name: Report lint suppressions
         run: mise exec -- pnpm lint:suppressions
 
       # Findings succeed; invalid or incomplete analysis fails visibly.

@@ -61,10 +61,12 @@ export const configurePaymentTermSourceAuthorityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConfigurePaymentTermSourceAuthorityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConfigurePaymentTermSourceAuthorityActionForbiddenProblem'> =>
     ConfigurePaymentTermSourceAuthorityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -168,7 +170,8 @@ const mapCoreProblem = (error: ActionCoreError): ConfigurePaymentTermSourceAutho
       ActionPayloadValidationError: configurePaymentTermSourceAuthorityActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         configurePaymentTermSourceAuthorityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => configurePaymentTermSourceAuthorityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        configurePaymentTermSourceAuthorityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => configurePaymentTermSourceAuthorityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         configurePaymentTermSourceAuthorityActionProblem.unavailable(failure.code),

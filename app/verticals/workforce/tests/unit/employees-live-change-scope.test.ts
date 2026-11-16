@@ -6,7 +6,7 @@ import { employeesData } from '../../src/routes/[lang]/prodej/zamestnanci/employ
 
 const { records } = rstest.hoisted(() => ({ records: rstest.fn() }));
 
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: records }));
 
 const events = new EventTarget();
 const browserGlobals = {

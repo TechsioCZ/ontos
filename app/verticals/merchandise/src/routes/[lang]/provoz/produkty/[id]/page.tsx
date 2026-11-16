@@ -1,4 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { companyVatOf } from '../product-tax-classification.ts';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Match, Option, Result, Schema } from 'effect';
@@ -159,6 +160,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
           revision={state.response.revision}
           tab={tab}
           variantId={variantId}
+          vat={companyVatOf(state.response)}
         />
       ) : (
         <div className="flex flex-col gap-200">

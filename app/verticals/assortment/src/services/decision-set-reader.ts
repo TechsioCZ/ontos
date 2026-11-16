@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, isNull, lte, ne, or } from 'drizzle-orm';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import {
@@ -604,6 +604,24 @@ const queryOrdinaryCandidateRows = (
           isNull(applicabilityBindings.storefrontResourceId),
           eq(applicabilityBindings.storefrontResourceId, context.storefrontRef.resourceId),
         );
+  const { commerceMarketRef, sellingLegalEntityRef, storefrontRef } = context;
+  const usesCanonicalFixtureScope =
+    context.channelRef.moduleId === 'commerce.channel' &&
+    context.channelRef.resourceType === 'commerce.channel.channel' &&
+    commerceMarketRef?.moduleId === 'commerce.market-catalog' &&
+    commerceMarketRef.resourceType === 'commerce.market-catalog.market' &&
+    sellingLegalEntityRef.moduleId === 'core.identity' &&
+    sellingLegalEntityRef.resourceType === 'core.identity.legal-entity' &&
+    storefrontRef?.moduleId === 'commerce.storefront-registry' &&
+    storefrontRef.resourceType === 'commerce.storefront-registry.storefront-application';
+  // Only the atomic fixture creates a binding and its own rule revision in one invocation.
+  // Historical fixtures retain their original scope meaning even when a canonical context uses the same IDs.
+  const fixtureScopeMatches = usesCanonicalFixtureScope
+    ? or(
+        isNotNull(applicabilityBindings.fixtureScopeVersion),
+        ne(applicabilityBindings.actionInvocationId, ruleRevisions.actionInvocationId),
+      )
+    : isNull(applicabilityBindings.fixtureScopeVersion);
   const audienceMatches = audienceMatchesFor(query);
   return transaction
     .select({
@@ -664,6 +682,7 @@ const queryOrdinaryCandidateRows = (
         eq(applicabilityBindings.tenantId, query.tenantId),
         eq(applicabilityBindings.legalEntityId, query.legalEntityId),
         eq(applicabilityBindings.channelResourceId, context.channelRef.resourceId),
+        fixtureScopeMatches,
         marketMatches,
         storefrontMatches,
         audienceMatches,

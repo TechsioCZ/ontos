@@ -17,7 +17,6 @@ import {
   salesPipelineRecordsGrants,
   persistenceService,
 } from '../services/persistence.service.ts';
-import { salesPipelineRecordsReadDeclaration } from '../../shared/model/access-declarations.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -61,7 +60,14 @@ const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =
 
 export const recordsRead = defineRead(
   {
-    accessDeclaration: salesPipelineRecordsReadDeclaration,
+    accessDeclaration: {
+      key: 'demo.sales-pipeline.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'sales-pipeline', level: 'basic' },
+      risk: 'sensitive',
+      selectors: ['all', 'entrusted'],
+    },
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {

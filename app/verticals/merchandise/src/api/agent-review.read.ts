@@ -125,9 +125,13 @@ export const agentReviewRead = defineRead(
           const records: RecordsResponse | undefined =
             live && Option.isSome(grants)
               ? yield* context.services
-                  .records(reviewRecordsRequest(input, context.scope), grants.value, {
-                    detailLimit: productIds.length,
-                  })
+                  .records(
+                    reviewRecordsRequest(input, context.scope),
+                    { grants: grants.value },
+                    {
+                      detailLimit: productIds.length,
+                    },
+                  )
                   .pipe(
                     Effect.map(Option.some<RecordsResponse>),
                     Effect.orElseSucceed(Option.none<RecordsResponse>),

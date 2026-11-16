@@ -27,7 +27,8 @@ const write = (root: string, file: string, source: string) =>
     await writeFile(path.join(root, file), source);
   });
 
-// Only the four mounted gateway sources are needed beyond the import fixtures.
+// Only the mounted gateway sources are needed beyond the import fixtures: main's three
+// gateway issuers plus the demo capability issuers (demo exception 6) in their own groups.
 // Keeping those valid lets positive cases finish the actual checker, not merely
 // reach a later expected failure.
 const gatewaySources = {
@@ -36,17 +37,23 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Effect } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
-export const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
+const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
   .handle('issueGatewayContext', () => Effect.void)
   .handle('issueApiKeyGatewayContext', () => Effect.void)
-  .handle('readWithApiKeyGatewayContext', () => Effect.void)
   .handle('issueDelegatedGatewayContext', () => Effect.void));
-export const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) => handlers
+const apiKeyGatewayReadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'apiKeyGatewayRead', (handlers) => handlers
+  .handle('readWithApiKeyGatewayContext', () => Effect.void));
+const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) => handlers
   .handle('issueDocumentGatewayContexts', () => Effect.void));
-export const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) => handlers
+const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) => handlers
   .handle('documentContext', () => Effect.void));
 export const makeShellAuthenticationApiRuntime = () => {
-  const apiHandlersLive = Layer.mergeAll(gatewayContextGroupLive, documentGatewayGroupLive, documentContextGroupLive);
+  const apiHandlersLive = Layer.mergeAll(
+    gatewayContextGroupLive,
+    apiKeyGatewayReadGroupLive,
+    documentGatewayGroupLive,
+    documentContextGroupLive,
+  );
   return assembleEffectBffRuntime({ api: ShellAuthenticationApi, handlers: apiHandlersLive });
 };
 const apiRuntime = makeShellAuthenticationApiRuntime();
@@ -54,14 +61,20 @@ export default apiRuntime;
 `,
   'apps/shell-super-app/shared/api.ts': `
 import { GatewayContextApiGroup } from '@app/shared-contracts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+import { ApiKeyGatewayReadApiGroup } from '@app/shared-contracts';
+import { HttpApi } from '@modern-js/bff-effect/effect-client';
+import { ShellDocumentContextApiGroup } from './browser-api.ts';
 import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
-export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
-  .add(HttpApiEndpoint.post('documentContext', '/shell/document-context', {}));
 export const ShellAuthenticationApi = HttpApi.make('shell')
   .add(GatewayContextApiGroup)
+  .add(ApiKeyGatewayReadApiGroup)
   .add(DocumentGatewayApiGroup)
   .add(ShellDocumentContextApiGroup);
+`,
+  'apps/shell-super-app/shared/browser-api.ts': `
+import { HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
+  .add(HttpApiEndpoint.post('documentContext', '/shell/document-context', {}));
 `,
   'apps/shell-super-app/shared/document-gateway-api.ts': `
 import { HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
@@ -73,8 +86,14 @@ import { HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-clie
 export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
-  .add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}))
   .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
+export const ApiKeyGatewayReadApiGroup = HttpApiGroup.make('apiKeyGatewayRead')
+  .add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}));
+export const shellGatewayContextContract = {
+  issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
+  issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
+  issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context',
+};
 `,
 };
 
@@ -94,16 +113,22 @@ const fixture = Effect.fn(function* nativeCoreImportFixture(source: string, decl
     ...gatewaySources,
     [CONSUMER]: source,
     'packages/core-runtime/package.json': JSON.stringify({
-      exports: { './db/database-identity-manifest': './src/db/database-identity-manifest.ts' },
+      exports: {
+        './db/database-identity-manifest': './src/db/database-identity-manifest.ts',
+        './outbox/worker': './src/outbox/worker-entrypoint.ts',
+      },
       name: CORE_PACKAGE,
     }),
     'packages/core-runtime/src/db/database-identity-manifest.ts':
       'export interface DatabaseRoleGrants { readonly routines: readonly string[] }\n',
     'packages/core-runtime/src/db/unpublished.ts': 'export const secret = true;\n',
+    'packages/core-runtime/src/outbox/worker-entrypoint.ts':
+      'export interface WorkerEnrollment { readonly workload: string }\n',
     'packages/runtime-support/package.json': JSON.stringify({
-      exports: { './db/contract': './src/db/contract.ts' },
+      exports: { './contract': './src/contract.ts', './db/contract': './src/db/contract.ts' },
       name: SUPPORT_PACKAGE,
     }),
+    'packages/runtime-support/src/contract.ts': 'export interface Contract { readonly id: string }\n',
     'packages/runtime-support/src/db/contract.ts': 'export interface Contract { readonly id: string }\n',
     'pnpm-workspace.yaml': 'packages:\n  - packages/*\n  - verticals/*\n',
     [PRIVATE_OWNER_SOURCE]: 'export const executePrivate = () => true;\n',
@@ -150,14 +175,16 @@ const check = (root: string) =>
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ ULTRAMODERN_SOURCE_REVISION: 'working-tree' }))),
   );
 
+// Owners enrol worker hosts through the published `@app/core-runtime/outbox/worker` entry and never import a
+// `db/` subpath of a workspace library, published or not (main's cross-vertical private-import rule).
 for (const [name, source] of [
   [
-    'the published Core identity-manifest subpath',
-    "import type { DatabaseRoleGrants as Grants } from '@app/core-runtime/db/database-identity-manifest';\nexport type OwnerGrants = Grants;\n",
+    'the published Core Outbox worker enrolment subpath',
+    "import type { WorkerEnrollment as Enrollment } from '@app/core-runtime/outbox/worker';\nexport type OwnerEnrollment = Enrollment;\n",
   ],
   [
     'a published non-owner workspace subpath without a Core-name exemption',
-    "export type { Contract as DatabaseContract } from '@app/runtime-support/db/contract';\n",
+    "export type { Contract as RuntimeContract } from '@app/runtime-support/contract';\n",
   ],
 ] as const) {
   it.live(`accepts ${name}`, () =>
@@ -169,6 +196,16 @@ for (const [name, source] of [
 }
 
 for (const [name, source, declaredOwner] of [
+  [
+    'the published Core identity-manifest db subpath',
+    "import type { DatabaseRoleGrants as Grants } from '@app/core-runtime/db/database-identity-manifest';\nexport type OwnerGrants = Grants;\n",
+    true,
+  ],
+  [
+    'a published non-owner workspace db subpath',
+    "export type { Contract as DatabaseContract } from '@app/runtime-support/db/contract';\n",
+    true,
+  ],
   [
     'an unpublished Core subpath even when its file exists',
     "import { secret } from '@app/core-runtime/db/unpublished';\n",

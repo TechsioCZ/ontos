@@ -4,12 +4,16 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { inventoryManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { catalogToStockBindingResolutionRead } from './src/api/catalog-to-stock-binding-resolution.read.ts';
 import { changeStockSharingEligibilityAction } from './src/actions/change-stock-sharing-eligibility.action.ts';
+import { commitmentProtectionVerificationRead } from './src/api/commitment-protection-verification.read.ts';
 import { compensateInventoryPreCommitAction } from './src/actions/compensate-inventory-pre-commit.action.ts';
 import { correctCatalogToStockBindingAction } from './src/actions/correct-catalog-to-stock-binding.action.ts';
 import { correctExternalStockCorrelationAction } from './src/actions/correct-external-stock-correlation.action.ts';
 import { correctStockPositionAction } from './src/actions/correct-stock-position.action.ts';
 import { createInventoryReservationAction } from './src/actions/create-inventory-reservation.action.ts';
+import { currentRelevantStockPositionSetRead } from './src/api/current-relevant-stock-position-set.read.ts';
+import { currentStockEvidenceForAvailabilityRead } from './src/api/current-stock-evidence-for-availability.read.ts';
 import { endCatalogToStockBindingAction } from './src/actions/end-catalog-to-stock-binding.action.ts';
 import { endExternalStockCorrelationAction } from './src/actions/end-external-stock-correlation.action.ts';
 import { endStockSharingEligibilityAction } from './src/actions/end-stock-sharing-eligibility.action.ts';
@@ -24,20 +28,17 @@ import { executeReservationConfirmationIssuanceWorker } from './src/workers/exec
 import { executeStockIssueWorker } from './src/workers/execute-stock-issue.worker.ts';
 import { executeStockReceiptWorker } from './src/workers/execute-stock-receipt.worker.ts';
 import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
+import { inventoryEffectOutcomeRead } from './src/api/inventory-effect-outcome.read.ts';
+import { inventoryReconciliationEvidenceRead } from './src/api/inventory-reconciliation-evidence.read.ts';
+import { inventoryReservationDetailRead } from './src/api/inventory-reservation-detail.read.ts';
+import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
+import { reservationConfirmationVerificationRead } from './src/api/reservation-confirmation-verification.read.ts';
 import { resolveInventorySourceConflictAction } from './src/actions/resolve-inventory-source-conflict.action.ts';
 import { selectInventoryBackendAction } from './src/actions/select-inventory-backend.action.ts';
 import { stockIssueAction } from './src/actions/stock-issue.action.ts';
 import { stockReceiptAction } from './src/actions/stock-receipt.action.ts';
-import { catalogToStockBindingResolutionRead } from './src/api/catalog-to-stock-binding-resolution.read.ts';
-import { commitmentProtectionVerificationRead } from './src/api/commitment-protection-verification.read.ts';
-import { currentRelevantStockPositionSetRead } from './src/api/current-relevant-stock-position-set.read.ts';
-import { currentStockEvidenceForAvailabilityRead } from './src/api/current-stock-evidence-for-availability.read.ts';
-import { inventoryEffectOutcomeRead } from './src/api/inventory-effect-outcome.read.ts';
-import { inventoryReconciliationEvidenceRead } from './src/api/inventory-reconciliation-evidence.read.ts';
-import { inventoryReservationDetailRead } from './src/api/inventory-reservation-detail.read.ts';
-import { reservationConfirmationVerificationRead } from './src/api/reservation-confirmation-verification.read.ts';
 import { stockSharingEligibilityResolutionRead } from './src/api/stock-sharing-eligibility-resolution.read.ts';
 // </generated-module-registration-imports>
 
@@ -80,6 +81,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
       'inventory-reconciliation-evidence': () => import('./src/api/inventory-reconciliation-evidence-client.ts'),
       'inventory-reservation-detail': () => import('./src/api/inventory-reservation-detail-client.ts'),
       'inventory-source-conflict-detail': () => import('./src/api/inventory-source-conflict-detail-client.ts'),
+      'inventory-source-import-receipt': () => import('./src/api/inventory-source-import-receipt-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'reservation-confirmation-verification': () =>
         import('./src/api/reservation-confirmation-verification-client.ts'),
@@ -115,6 +117,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     // </generated-module-registration-workers>
   ],
   reads: [
+    // <generated-module-registration-reads>
     catalogToStockBindingResolutionRead,
     commitmentProtectionVerificationRead,
     currentRelevantStockPositionSetRead,
@@ -122,8 +125,10 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     inventoryEffectOutcomeRead,
     inventoryReconciliationEvidenceRead,
     inventoryReservationDetailRead,
+    inventorySourceImportReceiptRead,
     reservationConfirmationVerificationRead,
     stockSharingEligibilityResolutionRead,
+    // </generated-module-registration-reads>
   ],
 });
 

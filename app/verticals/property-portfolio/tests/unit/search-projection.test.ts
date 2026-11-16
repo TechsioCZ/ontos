@@ -19,9 +19,9 @@ import { expect, it } from 'effect-rstest';
 
 import { PropertyStateSchema } from '../../shared/apis/records.ts';
 import { PropertiesProviderResponseSchema } from '../../shared/apis/properties-search.ts';
-import { buildSearchDocuments } from '../../src/search/projection.ts';
-import type { SearchSourceSnapshot } from '../../src/search/projection.ts';
-import { loadOwnerSearch } from '../../src/search/search-read.ts';
+import { buildSearchDocuments } from '../../src/services/search-projection.ts';
+import type { SearchSourceSnapshot } from '../../src/services/search-projection.ts';
+import { loadOwnerSearch } from '../../src/services/search-read.ts';
 import { projectSearchSnapshot } from '../../src/services/search-projector.ts';
 import { applyPropertyCommand } from '../../src/services/persistence.service.ts';
 

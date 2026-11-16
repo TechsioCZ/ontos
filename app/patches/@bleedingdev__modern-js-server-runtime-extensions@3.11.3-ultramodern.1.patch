@@ -1,0 +1,52 @@
+diff --git a/dist/cjs/static-serving/responders.js b/dist/cjs/static-serving/responders.js
+index a1cfc8b462ed9cb8b97aed3f9ae0705edcbe82d0..85d129a91312ce16e06bf492e1020700fba6ff2a 100644
+--- a/dist/cjs/static-serving/responders.js
++++ b/dist/cjs/static-serving/responders.js
+@@ -75,7 +75,7 @@ function createStaticExtensionResponders() {
+         const current = cache;
+         const pending = (0, external_staticModuleFederation_js_namespaceObject.getModuleFederationAssetList)(root).then((assets)=>{
+             current.assets = assets;
+-            current.expires = Date.now() + 1000;
++            current.expires = 'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS ? Infinity : Date.now() + 1000;
+             return assets;
+         }).finally(()=>{
+             current.pending = null;
+diff --git a/dist/cjs/static-serving/staticPrecompressed.js b/dist/cjs/static-serving/staticPrecompressed.js
+index e6f189561ec87652510a96b3dad3f7d89c74e773..d82adece6781a2615f5d56549954c2768111478b 100644
+--- a/dist/cjs/static-serving/staticPrecompressed.js
++++ b/dist/cjs/static-serving/staticPrecompressed.js
+@@ -102,7 +102,7 @@ const appendVaryHeader = (c, value)=>{
+ const resolvePreCompressedAsset = async (c, filepath)=>{
+     const brPath = `${filepath}${PRE_COMPRESSED_ASSET_EXTENSIONS.br}`;
+     const gzipPath = `${filepath}${PRE_COMPRESSED_ASSET_EXTENSIONS.gzip}`;
+-    const [hasBr, hasGzip] = await Promise.all([
++    const [hasBr, hasGzip] = 'production' === process.env.NODE_ENV && 'false' === process.env.MODERN_SERVER_PRECOMPRESSED_ASSETS ? [false, false] : await Promise.all([
+         utils_namespaceObject.fs.pathExists(brPath),
+         utils_namespaceObject.fs.pathExists(gzipPath)
+     ]);
+diff --git a/dist/esm-node/static-serving/responders.mjs b/dist/esm-node/static-serving/responders.mjs
+index c5b60555a18d3ccbb29cb47c4f3560a63c3ae4a8..dfe012dce3bc97ea6a1c82f8d90dbc29a0c9ffa0 100644
+--- a/dist/esm-node/static-serving/responders.mjs
++++ b/dist/esm-node/static-serving/responders.mjs
+@@ -34,7 +34,7 @@ function createStaticExtensionResponders() {
+         const current = cache;
+         const pending = getModuleFederationAssetList(root).then((assets)=>{
+             current.assets = assets;
+-            current.expires = Date.now() + 1000;
++            current.expires = 'production' === process.env.NODE_ENV && 'true' === process.env.MODERN_SERVER_IMMUTABLE_ASSETS ? Infinity : Date.now() + 1000;
+             return assets;
+         }).finally(()=>{
+             current.pending = null;
+diff --git a/dist/esm-node/static-serving/staticPrecompressed.mjs b/dist/esm-node/static-serving/staticPrecompressed.mjs
+index 64ecce3fabcdddd05014d9b3e1737b3c70e5839b..6bcd847382fa372e42409d615c8769faa829cd3b 100644
+--- a/dist/esm-node/static-serving/staticPrecompressed.mjs
++++ b/dist/esm-node/static-serving/staticPrecompressed.mjs
+@@ -70,7 +70,7 @@ const appendVaryHeader = (c, value)=>{
+ const resolvePreCompressedAsset = async (c, filepath)=>{
+     const brPath = `${filepath}${PRE_COMPRESSED_ASSET_EXTENSIONS.br}`;
+     const gzipPath = `${filepath}${PRE_COMPRESSED_ASSET_EXTENSIONS.gzip}`;
+-    const [hasBr, hasGzip] = await Promise.all([
++    const [hasBr, hasGzip] = 'production' === process.env.NODE_ENV && 'false' === process.env.MODERN_SERVER_PRECOMPRESSED_ASSETS ? [false, false] : await Promise.all([
+         fs.pathExists(brPath),
+         fs.pathExists(gzipPath)
+     ]);

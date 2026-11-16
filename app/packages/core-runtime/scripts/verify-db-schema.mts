@@ -12,7 +12,7 @@ import { coreSearchDocumentConstraintMatches } from '../src/db/search-document-c
 import { loadDatabaseConnectionPair } from '../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../src/db/database-identity-manifest.ts';
 import type { DatabaseIdentityEnrollment } from '../src/db/database-identity-manifest.ts';
-import { makeCoreIdentityPolicies } from '../src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../src/db/identity-policies.ts';
 import type { CoreIdentityPolicyDescriptor } from '../src/db/identity-policies.ts';
 import {
   CORE_SCHEMA_NAME,
@@ -997,7 +997,7 @@ const verifyAuthBindingIndexes = Effect.gen(function* verifyAuthBindingIndexesEf
 
 /** Builds lazy Core verification from explicit enrollment; the application owns CLI execution. */
 export const verifyCoreDatabaseSchema = (enrollment: DatabaseIdentityEnrollment) => {
-  const expectedCorePolicies = corePolicyExpectations(makeCoreIdentityPolicies(enrollment));
+  const expectedCorePolicies = corePolicyExpectations(coreIdentityPolicyDescriptors(enrollment));
   const requestRoles = new Set(enrollment.owners.map(({ request }) => request.role));
   const compositionAuthorityRoles = [
     SHARED_ROLE,

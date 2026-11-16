@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { aiOrders } from '../../src/routes/[lang]/prodej/schvalovani-ai/page.tsx';
 
 const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('@app/merchandise/clients/records', () => ({ executeRecords: mocks.records }));
+rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: mocks.records }));
 rstest.mock('@modern-js/runtime/head', () => ({ Helmet: () => null }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,

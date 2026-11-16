@@ -788,8 +788,9 @@ const validateReadAccessBinding = (
 };
 
 /**
- * Owner facts serve the capability a descriptor declares (O70): a resolver without a declaration
- * would hand the overlay records for a surface no gate decided, so it is an authoring mistake.
+ * Owner facts serve the carrier a descriptor declares (O70): its capability, or its own workload. A resolver without
+ * either would hand the overlay records for a surface no gate decided, so it is an authoring mistake. The overlay they
+ * feed can only refuse, so a workload's owner rule (an end customer's session, say) narrows and never widens.
  */
 const validateReadOwnerFactsBinding = (
   descriptor: ReadDescriptorValidationInput,
@@ -802,8 +803,10 @@ const validateReadOwnerFactsBinding = (
   if (!Predicate.isFunction(accessOwnerFacts)) {
     return failReadDefinition('Read access owner facts must be a resolver function');
   }
-  if (declaration === undefined) {
-    return failReadDefinition('Read accessOwnerFacts requires the descriptor to declare its own accessDeclaration');
+  if (declaration === undefined && descriptor.accessWorkload === undefined) {
+    return failReadDefinition(
+      'Read accessOwnerFacts requires the descriptor to declare its own accessDeclaration or accessWorkload',
+    );
   }
 };
 

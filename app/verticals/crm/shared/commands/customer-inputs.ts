@@ -1,7 +1,7 @@
 // AREA: customer inputs (CRM.md §6). Správce / vedoucí keep the R01–R08 register: state, who asked, when, evidence,
 // and the version + approval date of a delivered sample. Every state change is kept in the entry history.
 import { DateTime, Effect, Match, Schema } from 'effect';
-import { makeEntityId, CalendarDateSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+import { CalendarDateSchema, EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
 import { CustomerInputIdSchema, CustomerInputStatusSchema, customerInputOf } from '../domain/customer-inputs.ts';
 import type { CustomerInput } from '../domain/customer-inputs.ts';
 
@@ -89,7 +89,7 @@ export const applyCustomerInputsCommand: Reducer<CustomerInputsCommand> = (state
         if (sampleVersion !== undefined) {
           Object.assign(next, { sampleVersion });
         }
-        return { entityIds: [makeEntityId(current.id)], state: withInput(state, next) };
+        return { entityIds: [EntityIdSchema.make(current.id)], state: withInput(state, next) };
       }),
     ),
     Match.exhaustive,

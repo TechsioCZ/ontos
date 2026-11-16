@@ -27,7 +27,7 @@ import type {
   ModuleEntrypointLoadFailure,
   ModuleEntrypointNamespace,
 } from '../../src/routes/module-entrypoint-loader.ts';
-import { ResolvedModuleTargetSchema } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../shared/browser-api.ts';
 
 const remoteDefault = () => null;
 

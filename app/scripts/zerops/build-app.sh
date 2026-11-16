@@ -5,17 +5,25 @@
 # host serves every unit in-process from dist/ inside the installed workspace (.output itself is never deployed).
 #
 #   ONTOS_PUBLIC_ORIGIN=https://… ONTOS_STOREFRONT_ORIGIN=https://… sh scripts/zerops/build-app.sh [unit ...]
+#   … sh scripts/zerops/build-app.sh --digests-only <file>      (the unit identity table only)
+#   … sh scripts/zerops/build-app.sh --outbox-host              (the Outbox Worker host only, from built units)
 #
 # Browser assets are served by the host under /_m/<appId>/, so every unit's public URL is that prefix on the one
 # public origin. The AKROS storefront origin is baked into the bundles that link to it or load its product images.
 # Logs: $BUILD_LOG_DIR/<unit>.log (default .zerops/build-logs, git-ignored). Run from app/.
 #
 # A unit whose inputs did not change keeps its previous build: dist/.zerops-build-digest records the digest of its
-# committed inputs (its own directory, every workspace vertical it depends on, packages/, the root build
-# configuration and the public origins). Each built dist/ is copied to $UNIT_CACHE_DIR (default .zerops/unit-cache),
-# which zerops.yaml keeps in the Zerops build cache together with the Rspack caches, and restored from there.
+# committed inputs (unitInputs in delivery-plan.mts: its runtime workspace closure, every file its build reaches,
+# the scripts its build runs, the root build configuration) and its build variables. Each built dist/ is copied to
+# $UNIT_CACHE_DIR (default .zerops/unit-cache), which zerops.yaml keeps in the Zerops build cache together with the
+# Rspack caches, and restored from there. A kept unit keeps the release identity (source revision, build marker) it
+# was built with. ZEROPS_FORCE_BUILD=true rebuilds every unit (the stage workflow's rebuild_units input).
+# dist/.zerops-build-inputs records the identity's two parts (committed inputs; build variable names with short
+# value hashes), so a rebuild caused only by build variables names them.
 set -eu
 root="$PWD"
+# Only declared build variables reach a build (scripts/zerops/build-environment.sh); --unit children inherit them.
+[ "${1:-}" = --unit ] || . "$root/scripts/zerops/build-environment.sh"
 
 : "${ONTOS_PUBLIC_ORIGIN:?ONTOS_PUBLIC_ORIGIN (the public HTTPS origin of the Shell) is required}"
 : "${ONTOS_STOREFRONT_ORIGIN:?ONTOS_STOREFRONT_ORIGIN (the public HTTPS origin of the AKROS storefront) is required}"
@@ -30,8 +38,19 @@ env_name() { printf 'ULTRAMODERN_PUBLIC_URL_%s' "$(printf '%s' "$1" | tr 'a-z-' 
 unit_dir() { [ "$1" = shell-super-app ] && printf 'apps/shell-super-app' || printf 'verticals/%s' "$1"; }
 
 all_units="shell-super-app $(node -e 'for (const m of require("./topology/application-release-intent.json").modules) console.log(m.appId)')"
+# --digests-only <file> writes the unit identity table below and builds nothing (zerops-stage.yml's unit_identities job:
+# the same environment and the same table as a build, so a build shard can prove its cached units still match).
+digests_out=''
+host_only=''
 if [ "${1:-}" = --unit ]; then
   units="$2"
+elif [ "${1:-}" = --outbox-host ]; then
+  # The Zerops build runs this beside the release pack (scripts/zerops/pack-app-release.sh), once every unit is built.
+  host_only=yes
+  units="$all_units"
+elif [ "${1:-}" = --digests-only ]; then
+  digests_out="${2:?usage: build-app.sh --digests-only <file>}"
+  units="$all_units"
 elif [ "$#" -gt 0 ]; then
   units="$*"
 else
@@ -50,17 +69,47 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
 
 # Use the same committed dependency closure as the delivery planner. Common/unknown inputs fail closed,
 # including root dependency policy, patches, installer and migration scripts, not just a short build-file list.
+# Children reuse the same immutable table; never put it in the checkout (release identities require a clean tree).
+if [ -z "${ZEROPS_UNIT_DIGESTS:-}" ]; then
+  ZEROPS_UNIT_DIGESTS="$(mktemp "${TMPDIR:-/tmp}/zerops-unit-digests.XXXXXX")"
+  trap 'rm -f "$ZEROPS_UNIT_DIGESTS"' EXIT HUP INT TERM
+  node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"
+  export ZEROPS_UNIT_DIGESTS
+fi
+if [ -n "$digests_out" ]; then
+  cp "$ZEROPS_UNIT_DIGESTS" "$digests_out"
+  echo "wrote the identities of $(wc -l <"$digests_out" | tr -d ' ') units to $digests_out"
+  exit 0
+fi
 unit_digest() {
-  node "$root/scripts/zerops/delivery-plan-cli.mts" digest "$1"
+  awk -F '\t' -v unit="$1" '$1 == unit { value=$2; count++ } END { if (count != 1 || value == "") exit 1; print value }' "$ZEROPS_UNIT_DIGESTS"
+}
+# Field 3 is the committed-inputs part of the identity, field 4 the build variables as NAME=short-hash.
+unit_field() {
+  awk -F '\t' -v unit="$1" -v field="$2" '$1 == unit { value=$field; count++ } END { if (count != 1) exit 1; print value }' "$ZEROPS_UNIT_DIGESTS"
+}
+# Names the build variables that alone make a cached unit rebuild (names only, never values); one line at most.
+explain_rebuild() {
+  recorded="$unit_cache/$1/.zerops-build-inputs"
+  [ -f "$recorded" ] && [ "$(sed -n 1p "$recorded")" = "$(unit_field "$1" 3)" ] || return 0
+  names="$(printf '%s\n%s\n' "$(sed -n 2p "$recorded")" "$(unit_field "$1" 4)" | awk '
+    NR == 1 { for (i = 1; i <= NF; i++) old[$i] = 1; next }
+    { for (i = 1; i <= NF; i++) new[$i] = 1 }
+    END {
+      for (k in old) if (!(k in new)) { split(k, p, "="); differ[p[1]] = 1 }
+      for (k in new) if (!(k in old)) { split(k, p, "="); differ[p[1]] = 1 }
+      for (n in differ) print n
+    }' | sort | tr '\n' ' ')"
+  [ -z "$names" ] || echo "rebuilding $1: committed inputs unchanged, build variables differ: $names"
 }
 
 # Restores a unit's cached build when its inputs are unchanged; succeeds only when the unit can be kept.
 keep_unit() {
   unit="$1"
   dir="$(unit_dir "$unit")"
-  digest="$(unit_digest "$dir")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
-  # CI full/unknown/manual delivery bypasses cached artifacts. The provider still keeps the NEW prebuilt
-  # archive CI supplies, so this flag is intentionally not part of zerops.yaml's provider environment.
+  digest="$(unit_digest "$unit")" || { echo "cannot compute the input digest of $unit" >&2; return 2; }
+  # Only an explicit rebuild request bypasses cached artifacts; a full delivery still keeps unchanged units. The
+  # provider keeps the prebuilt archive CI supplies, so this flag is intentionally not in zerops.yaml's environment.
   [ "${ZEROPS_FORCE_BUILD:-false}" != true ] || return 1
   if [ "$(cat "$unit_cache/$unit/.zerops-build-digest" 2>/dev/null || true)" = "$digest" ]; then
     rm -rf "$dir/dist" && cp -a "$unit_cache/$unit" "$dir/dist"
@@ -76,6 +125,7 @@ build_unit() {
   [ "$status" -eq 1 ] || return 1
   if (cd "$dir" && pnpm run build && node "$root/scripts/zerops/owner-entry.mts" "$dir") >"$log_dir/$unit.log" 2>&1; then
     printf '%s\n' "$digest" >"$dir/dist/.zerops-build-digest"
+    printf '%s\n%s\n' "$(unit_field "$unit" 3)" "$(unit_field "$unit" 4)" >"$dir/dist/.zerops-build-inputs"
     rm -rf "${unit_cache:?}/$unit" && cp -a "$dir/dist" "$unit_cache/$unit"
     echo "built $unit in $(($(date +%s) - started))s"
   else
@@ -92,12 +142,16 @@ fi
 
 started_all="$(date +%s)"
 pending=''
+[ -z "$host_only" ] || units=''
 for unit in $units; do
   status=0
   keep_unit "$unit" || status=$?
   case "$status" in
     0) echo "kept $unit (inputs unchanged)" ;;
-    1) pending="$pending $unit" ;;
+    1)
+      pending="$pending $unit"
+      [ "${ZEROPS_FORCE_BUILD:-false}" = true ] || explain_rebuild "$unit"
+      ;;
     *) exit 1 ;;
   esac
 done
@@ -114,11 +168,26 @@ if [ -n "$pending" ]; then
     exit 1
   fi
 fi
-echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(date +%s) - started_all))s"
+[ -n "$host_only" ] || echo "built$pending ($(echo "$units" | wc -w | tr -d ' ') units ready) in $(($(date +%s) - started_all))s"
 
 # The Outbox Worker host bundles every hosted owner's worker under the release identity that owner's dist was built
-# with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs).
-if [ "$units" = "$all_units" ]; then
+# with, so the composition admits each owner's outbox subscriptions (scripts/materialize-outbox-worker.mjs). Only
+# --outbox-host builds it, so the release pack can run beside it.
+if [ -n "$host_only" ]; then
+  worker_cache="$unit_cache/outbox-worker-host"
+  worker_runtime='.zerops/runtime/outbox-worker-host'
+  worker_digest=''
+  if worker_clean="$(git status --porcelain --untracked-files=all)" && [ -z "$worker_clean" ] &&
+     [ "${ZEROPS_FORCE_BUILD:-false}" != true ] &&
+     [ -f "$worker_cache/worker.mjs" ] && [ -f "$worker_cache/package.json" ] &&
+     [ -d "$worker_cache/node_modules" ] &&
+     worker_digest="$(node scripts/zerops/outbox-build-digest.mjs "$worker_cache" "$ZEROPS_UNIT_DIGESTS")" &&
+     [ "$worker_digest" = "$(cat "$worker_cache/.zerops-build-digest" 2>/dev/null || true)" ]; then
+    mkdir -p .zerops/runtime
+    rm -rf "$worker_runtime" && cp -a "$worker_cache" "$worker_runtime"
+    echo 'kept outbox-worker-host (inputs unchanged)'
+    exit 0
+  fi
   # The host runs only the workers of the units this deployment serves: the Application Composition it publishes admits
   # no other owner. Each served owner's build identity names the revision its dist was built with.
   # shellcheck disable=SC2086 # all_units is a list of unit ids.
@@ -139,5 +208,12 @@ if [ "$units" = "$all_units" ]; then
     ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" \
     pnpm run zerops:materialize --app outbox-worker-host --package app --package-dir . --worker >"$log_dir/outbox-worker-host.log" 2>&1 ||
     { tail -60 "$log_dir/outbox-worker-host.log" >&2; echo 'outbox worker host build failed' >&2; exit 1; }
+  # Cache only when the complete materialized input/identity proof can be reproduced.
+  if worker_digest="$(node scripts/zerops/outbox-build-digest.mjs "$worker_runtime" "$ZEROPS_UNIT_DIGESTS")"; then
+    printf '%s\n' "$worker_digest" >"$worker_runtime/.zerops-build-digest"
+    rm -rf "${unit_cache:?}/outbox-worker-host" && cp -a "$worker_runtime" "$worker_cache"
+  else
+    echo 'outbox worker cache disabled: incomplete input proof' >&2
+  fi
   echo "built outbox-worker-host in $(($(date +%s) - started))s"
 fi

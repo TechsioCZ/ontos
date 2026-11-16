@@ -131,9 +131,6 @@ const ApprovalCard = ({
             <p>{t('shell.accessAdmin.approvals.redactedCount', { count: item.command.redactedFieldCount })}</p>
           ) : null}
         </section>
-        {item.requesterKind === 'agent' ? (
-          <StatusText status="warning">{t('shell.accessAdmin.agents.unavailable')}</StatusText>
-        ) : null}
         <p className="shell:text-body-sm">{t('shell.accessAdmin.approvals.ownAuthority')}</p>
         <div className="shell:flex shell:flex-wrap shell:gap-2">
           {item.canApprove ? (

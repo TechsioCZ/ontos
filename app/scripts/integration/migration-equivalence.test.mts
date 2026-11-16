@@ -24,6 +24,7 @@ import {
   convergeMigrationHistories,
   loadConvergentMigrationSource,
   migrationDatabaseLayer,
+  topLevelCommands,
 } from '../migration-convergence.mts';
 import {
   MIGRATION_EQUIVALENCES,
@@ -111,11 +112,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServ
                               migration.name !== MIGRATION_MERGES[source.manifest.history] &&
                               (source.manifest.history !== 'core' || migration.name < '20261021'),
                           );
-                    yield* migrate(seeded, db._.session, {
-                      migrationsFolder: source.manifest.folder,
-                      migrationsSchema: 'drizzle',
-                      migrationsTable: `__drizzle_migrations_${source.manifest.history}`,
-                    });
+                    yield* migrate(
+                      seeded.map((migration) => ({
+                        ...migration,
+                        sql: migration.sql.flatMap(topLevelCommands),
+                      })),
+                      db._.session,
+                      {
+                        migrationsFolder: source.manifest.folder,
+                        migrationsSchema: 'drizzle',
+                        migrationsTable: `__drizzle_migrations_${source.manifest.history}`,
+                      },
+                    );
                     const table = `__drizzle_migrations_${source.manifest.history}`;
                     originals.set(table, yield* journalSnapshot(session, table));
                   }

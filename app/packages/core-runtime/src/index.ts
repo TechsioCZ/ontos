@@ -1,4 +1,6 @@
 export { withPostgresSessionAdvisoryLock } from './db/session-advisory-lock.ts';
+export { readScopedCurrentActionInvocation } from './actions/current-invocation.ts';
+export type { ScopedCurrentActionInvocationFact } from './actions/current-invocation.ts';
 export {
   ACTION_PROVISIONING_INTENTS,
   ActionExecutionAuthorizationSchema,
@@ -154,9 +156,12 @@ export type {
 export {
   SystemPrincipalContextDeniedError,
   SystemPrincipalContextInvalidError,
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
   SystemPrincipalContextUnavailableError,
   makeSystemPrincipalContextResolver,
   registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
 } from './auth/system-principal-context.ts';
 export {
   SupportRecoveryPrincipalContextDeniedError,
@@ -219,10 +224,13 @@ export type {
   AgentProposalCommandResult,
 } from './auth/agent-proposal-command-contract.ts';
 export { AgentProposalCommandError } from './auth/agent-proposal-command-error.ts';
+export { AgentLifecycleAuthority, AgentLifecycleAuthorityLive } from './auth/agent-lifecycle-authority.ts';
+export type { AgentLifecycleAuthorityService } from './auth/agent-lifecycle-authority.ts';
 export {
   AgentProposalCommandPreparation,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
+  proposalLifecycleAdministrator,
 } from './auth/agent-proposal-command-preparation.ts';
 export { agentProposalQueueRead } from './auth/agent-proposal-queue-read.ts';
 export {
@@ -261,6 +269,12 @@ export {
   OAuthConnectionRevocationNotesResultSchema,
   oauthConnectionRevocationNotesRead,
 } from './auth/oauth-connection-revocation-notes-read.ts';
+export {
+  OAuthConnectionAdministrationInputSchema,
+  OAuthConnectionAdministrationResultSchema,
+  administersOAuthConnections,
+  oauthConnectionAdministrationRead,
+} from './auth/oauth-connection-administration-read.ts';
 // @ontos-codesmith-core-read-exports:start
 
 // @ontos-core-read legal-entity-detail
@@ -287,6 +301,9 @@ export type {
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
 export { openDatabaseClient } from './db/database-client.ts';
+// Owner-local agent history pages are built through Core's public entry, never a Core `db/` subpath.
+export { agentHistoryPageSql } from './db/agent-history-page.ts';
+export type { AgentHistoryPageRequest } from './db/agent-history-page.ts';
 export { verifySessionRoleOnFirstUse } from './db/session-identity.ts';
 export { databaseRuntime } from '#database-runtime';
 export type { DatabaseConnectionPair } from './db/config.ts';
@@ -423,16 +440,23 @@ export type {
 } from './permissions/context-access.ts';
 export type { LegalEntityPermissionKey, TenantPermissionKey } from './permissions/context-permissions.ts';
 export {
+  OWNER_RULE_DENIED_REASON,
   OwnerAuthorizationDecisionSchema,
   OwnerAuthorizationOverlay,
   OwnerAuthorizationOverlayAllowLive,
   allowOwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationDecision,
   failClosedOwnerAuthorizationOverlay,
+  decodeOwnerAuthorizationOutcome,
+  ownerAuthorizationFromExit,
+  ownerAuthorizationDenial,
 } from './access/enforcement/owner-overlay.ts';
 export type {
   OwnerAccessFacts,
   OwnerAuthorizationDecision,
+  DecodedOwnerAuthorization,
+  OwnerAuthorizationDenial,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
   OwnerAuthorizationTarget,
@@ -583,6 +607,8 @@ export type {
   RunActionInput,
 } from './actions/runtime.ts';
 export { TrustedCompanyPrincipalContextSchema } from './actions/principal-context.ts';
+export { OAuthAgentConnectionSchema } from './actions/principal-context.ts';
+export type { OAuthAgentConnection } from './actions/principal-context.ts';
 export {
   ActionTransportMetadataSchema,
   TrustedPrincipalContextSchema,
@@ -690,8 +716,8 @@ export type {
   ReadOwnerTransaction,
   ReadPrepareContext,
 } from './reads/context.ts';
-export { IoInsideDatabaseTransaction } from './db/transaction-io-guard.ts';
-export type { TransactionIo } from './db/transaction-io-guard.ts';
+export { IoInsideDatabaseTransaction, declaredEvidenceCallInsideTransaction } from './db/transaction-io-guard.ts';
+export type { DeclaredEvidenceCall, TransactionIo } from './db/transaction-io-guard.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
@@ -957,8 +983,10 @@ export {
   markApplicationCompositionMigrationComplete,
   publishApplicationCompositionAuthority,
   resumeApplicationCompositionDurableAdmission,
+  revisionActivatedAtMicros,
   sealApplicationCompositionAuthority,
 } from './modules/application-composition-authority.ts';
+export type { ApplicationCompositionHold } from './modules/application-composition-authority.ts';
 export {
   ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING,
   ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY,
@@ -1042,6 +1070,16 @@ export {
   projectOntosModuleOperationContracts,
 } from './modules/manifest.ts';
 export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
+export {
+  OntosRegisteredWorkloadCallSchema,
+  OntosRegisteredWorkloadCallsSchema,
+  registeredWorkloadCallReceiverIssue,
+} from './modules/registered-workload-calls.ts';
+export type {
+  OntosRegisteredWorkloadCall,
+  OntosRegisteredWorkloadCallInput,
+  RegisteredWorkloadCallReceiver,
+} from './modules/registered-workload-calls.ts';
 export {
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosMcpCommandActionsSchema,
@@ -1181,8 +1219,6 @@ export type {
 export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
-export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
-export type { PrincipalOperators } from './permissions/principal-operators.ts';
 export {
   agentGrantRelationships,
   agentModuleAccessOf,
@@ -1310,6 +1346,7 @@ export type {
 
 export {
   configureAgentAction,
+  ConfigureAgentOperationSchema,
   ConfigureAgentPayloadSchema,
   ConfigureAgentResultSchema,
   ConfigureAgentAuditEvidenceSchema,
@@ -1361,6 +1398,35 @@ export { MediaStoreUnavailable } from './media/media-store-unavailable.ts';
 export { MediaUploadRejected } from './media/media-upload-rejected.ts';
 
 export { ModuleOperationRequirementError } from './modules/module-operation-requirement-error.ts';
-export { requireModuleOperation } from './modules/module-operation-requirement.ts';
+export { requireModuleOperation, readModuleOperationRequirement } from './modules/module-operation-requirement.ts';
+export type { ModuleOperationRequirementFact } from './modules/module-operation-requirement.ts';
 
 export type { ActionPostAttemptHook, ActionPostAttemptOutcome, ActionPostAttemptResult } from './actions/definition.ts';
+
+export { readWorkerModuleOperationRequirement } from './modules/module-operation-requirement.ts';
+export type { WorkerModuleOperationRequirementFact } from './modules/module-operation-requirement.ts';
+
+export {
+  RegisteredGatewayPrivacyDispatchSchema,
+  PrivacyDispatchOperationSchema,
+  readVerifiedGatewayPrivacyDispatch,
+} from './auth/system-principal-context-provenance.ts';
+export type {
+  RegisteredGatewayPrivacyDispatch,
+  PrivacyDispatchOperation,
+} from './auth/system-principal-context-provenance.ts';
+
+export { readWorkerExecutionContext } from './modules/module-operation-execution.ts';
+export type { WorkerExecutionContextFact } from './modules/module-operation-execution.ts';
+
+export {
+  RegisteredGatewayOrganizationGovernanceReadSchema,
+  readVerifiedGatewayOrganizationGovernanceRead,
+} from './auth/system-principal-context-provenance.ts';
+export type { RegisteredGatewayOrganizationGovernanceRead } from './auth/system-principal-context-provenance.ts';
+
+export {
+  RegisteredGatewayOrganizationProcessingReadSchema,
+  readVerifiedGatewayOrganizationProcessingRead,
+} from './auth/system-principal-context-provenance.ts';
+export type { RegisteredGatewayOrganizationProcessingRead } from './auth/system-principal-context-provenance.ts';

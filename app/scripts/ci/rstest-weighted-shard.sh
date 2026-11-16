@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Run one duration-weighted shard of an Rstest project from the current directory (app/ or a package directory).
+#
+# Usage: bash scripts/ci/rstest-weighted-shard.sh <index>/<count> <project> [rstest run options ...]
+#
+# Rstest's own --shard cuts the alphabetically sorted file list into contiguous slices, so the parts of one split
+# giant file (<name>-a.test.ts, <name>-b.test.ts, ...) land in the same shard and one heavy family decides that
+# shard's length. This lists the project's files with `rstest list --filesOnly`, weighs each file by the longest
+# matching file-name prefix of the "test-weights" map in scripts/ci-matrices.json (measured seconds of the whole
+# family, shared equally by the family's files) or CI_DEFAULT_TEST_SECONDS, and deals the files heaviest first to
+# the lightest shard. Every shard computes the same deal from the same list, so together the shards run every file
+# exactly once. An empty shard passes; a failed listing fails.
+#
+# FRESH_DATABASE_TESTS=skip leaves out, and FRESH_DATABASE_TESTS=only keeps just, the test files that must migrate or
+# recover their job's database from a fresh preparation ("fresh-database-tests" in scripts/ci-matrices.json and the
+# seed model's name rule), so a row that restores the integration seed never runs them.
+set -euo pipefail
+
+shard="${1:?the shard as <index>/<count> is required}"
+project="${2:?the Rstest project is required}"
+shift 2
+if ! [[ "$shard" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || ((BASH_REMATCH[1] > BASH_REMATCH[2])); then
+  echo "The shard must be <index>/<count> with 1 <= index <= count, not $shard." >&2
+  exit 2
+fi
+index="${BASH_REMATCH[1]}"
+count="${BASH_REMATCH[2]}"
+script_directory="$(cd "$(dirname "$0")" && pwd)"
+weights="$(jq -c '."test-weights" // {}' "$script_directory/../ci-matrices.json")"
+fresh_tests="$(jq -c '."fresh-database-tests" // []' "$script_directory/../ci-matrices.json")"
+fresh_mode="${FRESH_DATABASE_TESTS:-}"
+case "$fresh_mode" in
+  '' | skip | only) ;;
+  *)
+    echo "FRESH_DATABASE_TESTS must be skip, only or empty, not $fresh_mode." >&2
+    exit 2
+    ;;
+esac
+app_root="$(cd "$script_directory/../.." && pwd)"
+listing="$(mktemp)"
+trap 'rm -f "$listing"' EXIT
+
+# Rstest's own output goes to stderr, so the list-only mode below prints nothing but file paths.
+pnpm exec rstest list --project "$project" --filesOnly --json "$listing" >&2
+
+# A failed listing or deal fails here (set -e on the assignment), never as an empty, passing shard.
+total="$(jq -r '(if type == "array" then . else .items end) | length' "$listing")"
+deal="$(
+  jq -r --argjson weights "$weights" --argjson count "$count" --argjson index "$index" \
+    --argjson fallback "${CI_DEFAULT_TEST_SECONDS:-20}" --argjson fresh "$fresh_tests" --arg freshMode "$fresh_mode" \
+    --arg appRoot "$app_root/" -f "$script_directory/rstest-weighted-shard.jq" "$listing"
+)"
+if [ "$total" -eq 0 ]; then
+  echo "Rstest lists no files for project $project here." >&2
+  exit 1
+fi
+files=()
+while IFS= read -r file; do
+  [ -n "$file" ] && files+=("$file")
+done <<<"$deal"
+
+# RSTEST_WEIGHTED_SHARD_LIST_ONLY=1 prints the shard's files, one per line, and runs nothing (the seed check reads it).
+if [ "${RSTEST_WEIGHTED_SHARD_LIST_ONLY:-}" = 1 ]; then
+  if [ "${#files[@]}" -gt 0 ]; then
+    printf '%s\n' "${files[@]}"
+  fi
+  exit 0
+fi
+echo "Rstest project $project, weighted shard $index/$count: ${#files[@]} files"
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+printf '  %s\n' "${files[@]}"
+exec pnpm exec rstest --project "$project" "$@" "${files[@]}"

@@ -132,7 +132,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateApprovalHierarchyActionPr
       ActionInvocationStateError: (failure) => createApprovalHierarchyActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createApprovalHierarchyActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createApprovalHierarchyActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createApprovalHierarchyActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createApprovalHierarchyActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createApprovalHierarchyActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createApprovalHierarchyActionProblem.conflict(failure.code),

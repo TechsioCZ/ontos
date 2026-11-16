@@ -43,7 +43,7 @@ import { expect, it } from 'effect-rstest';
 
 import { AuthenticationService } from '../../api/auth/service.ts';
 import type { ShellContextResult } from '../../api/auth/service.ts';
-import { ShellAuthenticationApi, ShellSearchPayloadSchema } from '../../shared/api.ts';
+import { ShellAuthenticationApi, ShellSearchPayloadSchema } from '../../shared/browser-api.ts';
 import { issueShellSearchProviderAssertion, makeShellSearchNoStoreLayer, shellSearchHandler } from '../../api/index.ts';
 import { GatewayIssuer, makeGatewayIssuerLayer, ShellCryptoLive } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
@@ -67,6 +67,7 @@ import type { ShellGovernedReadsService } from '../../api/modules/shell-governed
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
+import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -122,7 +123,10 @@ const failedSearch = Effect.fn('test.failedSearch')(function* failedSearch(failu
         Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
         Layer.mock(LegalEntityContext, {}),
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        Layer.mock(ShellGovernedReads, { search: () => Effect.fail(failure) }),
+        Layer.mock(ShellGovernedReads, {
+          search: () => Effect.fail(failure),
+          tenantModuleTargetCarrier: tenantModuleTargetTestCarrier,
+        }),
         Layer.succeed(
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(new Request('https://shell.test/shell/search')),
@@ -163,7 +167,7 @@ const searchHttpResponse = Effect.fn('test.searchHttpResponse')(function* search
     Layer.succeed(ContextAccess, makeContextAccessDouble('allowed')),
     Layer.mock(LegalEntityContext, {}),
     Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-    Layer.mock(ShellGovernedReads, { search }),
+    Layer.mock(ShellGovernedReads, { search, tenantModuleTargetCarrier: tenantModuleTargetTestCarrier }),
   );
   const server = yield* Effect.acquireRelease(
     Effect.sync(() =>

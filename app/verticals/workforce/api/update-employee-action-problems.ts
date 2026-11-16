@@ -63,10 +63,12 @@ export const updateEmployeeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'UpdateEmployeeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'UpdateEmployeeActionForbiddenProblem'> =>
     UpdateEmployeeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -174,7 +176,7 @@ const mapCoreProblem = (error: ActionCoreError): UpdateEmployeeActionProblem =>
       ActionInvocationStateError: (failure) => updateEmployeeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: updateEmployeeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => updateEmployeeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => updateEmployeeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => updateEmployeeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => updateEmployeeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => updateEmployeeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => updateEmployeeActionProblem.conflict(failure.code),

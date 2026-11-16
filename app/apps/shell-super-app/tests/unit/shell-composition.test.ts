@@ -6,7 +6,7 @@ import type {
 } from '@app/core-runtime';
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, ONTOS_SHELL_CONTRIBUTION_ABI } from '@app/core-runtime';
 import { LegalEntityNavigationExclusionsUnavailableError } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
-import { Cause, Effect, Exit, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { contentDigest, makeCompositionSnapshot } from '../fixtures/application-composition.ts';
@@ -24,7 +24,7 @@ import type {
   ShellCompositionContext,
   ShellCompositionDataSources,
 } from '../../api/modules/shell-composition.ts';
-import { ShellCompositionSchema } from '../../shared/api.ts';
+import { ShellCompositionSchema } from '../../shared/browser-api.ts';
 import { moduleTargetLogAnnotations } from '../../api/modules/module-target-log.ts';
 import { makeShellTestAccessGate, shellTestScope } from '../support/access-decision-double.ts';
 import type { GateInput } from '@app/core-runtime/access/enforcement';
@@ -1372,12 +1372,7 @@ it.effect('pins published fixture bytes to its receiver and rejects a different 
     const mismatch = yield* makeCompositionSnapshot([], 60_000, {
       document,
       receiverDeployment: { appId: 'shell-super-app', buildMarker: 'different-compiled-fixture-shell-release' },
-    }).pipe(Effect.exit);
-    expect(Exit.isFailure(mismatch)).toBe(true);
-    if (Exit.isFailure(mismatch)) {
-      expect(Cause.pretty(mismatch.cause)).toContain(
-        'The actual Shell runtime document must match the compiled fixture receiver',
-      );
-    }
+    }).pipe(Effect.flip);
+    expect(mismatch.reason).toBe('The actual Shell runtime document must match the compiled fixture receiver');
   }),
 );

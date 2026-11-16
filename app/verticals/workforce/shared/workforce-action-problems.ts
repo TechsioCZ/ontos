@@ -12,7 +12,7 @@ export const mapWorkforceDuplicateEmailProblem = (
   WorkforceDuplicateEmailProblemSchema.make({
     code: 'workforce_duplicate_email',
     detail: 'Another employee already uses this email address.',
-    status: 422,
+    status: WorkforceDuplicateEmailProblemSchema.fields.status.literal,
     title: 'Employee email is already in use',
     type: 'urn:ontos:workforce:duplicate-email',
   });

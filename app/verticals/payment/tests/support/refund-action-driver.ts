@@ -13,8 +13,8 @@ import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/p
 import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports/refundable-items-port.ts';
 import { randomUuid } from '../integration/database-fixture.ts';
 import type { PaymentTestScope } from '../integration/database-fixture.ts';
-import { seedGatewayRefundRoute, seedPayment, seedRefundActor } from './refund-native-runtime.ts';
-import type { RefundNativeRuntime, SeedPaymentOptions } from './refund-native-runtime.ts';
+import { seedGatewayRefundRoute, seedPayment, seedRefundActor, seedSourceAuthority } from './refund-native-runtime.ts';
+import type { RefundNativeRuntime, SeedPaymentOptions, SourceAuthorityOptions } from './refund-native-runtime.ts';
 import {
   commitmentOutcomePublicContractFixture,
   refundableItemsPublicContractFixture,
@@ -35,6 +35,7 @@ export interface RefundCase {
 export interface RefundCaseOptions extends SeedPaymentOptions {
   /** Seed the exact original gateway account as its configured refund route (default true for gateway). */
   readonly gatewayRoute?: boolean;
+  readonly receiptSource?: SourceAuthorityOptions;
 }
 
 /** One fresh Tenant / Selling Legal Entity with its acting principal and one seeded Payment. */
@@ -47,6 +48,9 @@ export const refundCaseFor = Effect.fn('RefundActionDriver.refundCaseFor')(funct
   });
   const scope: PaymentTestScope = { legalEntityId, principalId, tenantId };
   const principal = yield* seedRefundActor(native, scope);
+  if (options.receiptSource !== undefined) {
+    yield* seedSourceAuthority(native.database, scope, options.receiptSource);
+  }
   const payment = yield* seedPayment(native.database, scope, options);
   if (options.gatewayRoute ?? options.method === undefined) {
     yield* seedGatewayRefundRoute(native.database, scope);

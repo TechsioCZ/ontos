@@ -2,14 +2,13 @@ import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect } from 'effect';
 import { afterAll, beforeAll, expect, it, rstest } from 'effect-rstest';
 
-import { tagCatalogData } from '../../src/components/tag-controls.tsx';
+import { tagCatalogData } from '../../src/tags/tag-catalog.ts';
 
 const { listTagsMock } = rstest.hoisted(() => ({ listTagsMock: rstest.fn() }));
 
 // `listTags` is an Effect value in the real client, so the mock re-runs the counted fake on every read.
-rstest.mock('../../src/api/records-consumer.ts', () => ({
+rstest.mock('../../src/tags/tag-records.ts', () => ({
   listTags: Effect.suspend(() => listTagsMock()),
-  recordsOfKind: rstest.fn(),
 }));
 
 const events = new EventTarget();

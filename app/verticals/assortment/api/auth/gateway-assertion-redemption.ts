@@ -3,4 +3,5 @@
 export {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
+  gatewayAssertionRedemptionPgClient,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';

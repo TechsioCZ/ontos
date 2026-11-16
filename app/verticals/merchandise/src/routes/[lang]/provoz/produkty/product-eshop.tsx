@@ -1,3 +1,4 @@
+import { isStockQuantity, MAX_QUANTITY, MIN_STOCK_QUANTITY } from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // E-shop product administration: real variants (SKU, price, stock, active), publication and availability.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -19,12 +20,17 @@ import type {
   VariantId,
 } from '../../../../../shared/domain/merchandise-model.ts';
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
+import { MONEY_FORMAT, QUANTITY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
+import { fieldError } from './product-form-validation.ts';
+import { formatDelta } from './products-format.ts';
 import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
+import { DEFAULT_TAX_CLASSIFICATION, classificationChoice, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
+import { priceHistoryRows } from './product-price-history.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -124,11 +130,14 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   const [quantityText, setQuantityText] = useState('10');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A refused quantity is marked on its field until it is typed again.
+  const [quantityRefused, setQuantityRefused] = useState(false);
   const firstVariant = variants[0]?.id ?? '';
   const clear = () => {
     setVariantId(firstVariant);
     setReason('RECEIPT');
     setQuantityText('10');
+    setQuantityRefused(false);
   };
   // The movement keeps its own button; leaving with a half-filled one asks before the input is lost.
   const typed = variantId !== firstVariant || reason !== 'RECEIPT' || quantityText !== '10';
@@ -138,12 +147,16 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   }
   const variant = variants.find((entry) => entry.id === variantId);
   const quantity = Number(quantityText.replaceAll(/\s/gu, '').replace(',', '.'));
-  const valid =
-    variant !== undefined && Number.isInteger(quantity) && quantity !== 0 && (reason === 'ADJUSTMENT' || quantity > 0);
+  const quantityValid = isStockQuantity(quantity) && (reason === 'ADJUSTMENT' || quantity > 0);
+  const quantityError = t(
+    reason === 'ADJUSTMENT'
+      ? 'merchandise.pages.products.validation.delta'
+      : 'merchandise.pages.products.validation.quantity',
+  );
 
   const submit = () => {
-    if (!valid || variant === undefined || busy) {
-      setError('Zadejte celé nenulové množství.');
+    if (!quantityValid || variant === undefined || busy) {
+      setQuantityRefused(!quantityValid);
       return;
     }
     const delta = variantMovementDelta(reason, quantity);
@@ -171,7 +184,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
         }
         onStockCommitted?.(revision, outcome.revision);
         clear();
-        onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
+        onCommitted(`Pohyb zapsán: ${variant.name} ${formatDelta(delta)} ks`);
       },
     );
   };
@@ -203,14 +216,22 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           value={[reason]}
         />
         <FormNumericInput
-          formatOptions={WHOLE_NUMBER_FORMAT}
+          clampValueOnBlur={false}
+          formatOptions={QUANTITY_FORMAT}
           id="variant-stock-quantity"
           label={t('merchandise.ui.quantityPieces')}
           locale="cs-CZ"
+          max={MAX_QUANTITY}
+          min={reason === 'ADJUSTMENT' ? -MAX_QUANTITY : MIN_STOCK_QUANTITY}
           name="variantStockQuantity"
-          onValueChange={(details) => setQuantityText(details.value)}
+          onValueChange={(details) => {
+            setQuantityText(details.value);
+            setQuantityRefused(false);
+          }}
           size="sm"
+          step={1}
           value={quantityText}
+          {...fieldError(quantityRefused && !quantityValid, quantityError)}
         >
           <NumericInput.Control>
             <NumericInput.Input aria-valuemax={undefined} />
@@ -239,28 +260,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
 
 export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const { t } = useModernI18n();
-  const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
-    variant.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
-      key: `${variant.id}-${index}`,
-      name: `${variant.name} · ${variant.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
-    })),
-  );
-  const rows = [
-    ...variantRows,
-    ...product.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossUnitPriceMinor(entry.priceMinor, product.vatRate),
-      key: `product-${index}`,
-      name: `Základní cena produktu · ${product.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? product.priceHistory[index - 1]?.priceMinor,
-    })),
-  ];
-  const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
+  const sorted = priceHistoryRows(product);
   return (
     <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
       <ScrollRegion label={t('merchandise.ui.variantPriceHistory')}>
@@ -286,7 +286,7 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
                   {formatMoney(row.net)}
                 </Table.Cell>
                 <Table.Cell align="end" className="tabular-nums">
-                  {formatMoney(row.gross)}
+                  {row.gross === undefined ? '—' : formatMoney(row.gross)}
                 </Table.Cell>
               </Table.Row>
             ))}
@@ -316,18 +316,19 @@ const variantsInvalid = (drafts: readonly VariantDraft[]) =>
 const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): ProductVariant[] => [
   ...drafts.map((draft): ProductVariant => {
     const original = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
-    const variant: { -readonly [Key in keyof ProductVariant]: ProductVariant[Key] } = {
-      ...original,
+    const priceMinor = parseCzk(draft.priceText) ?? 0;
+    const { priceTiers: inheritedTiers, ...originalFields } = original ?? {};
+    const kept = original?.priceMinor === priceMinor ? original : originalFields;
+    void inheritedTiers;
+    const variant = {
+      ...kept,
       active: draft.active,
       attributes: draft.attributes.trim(),
       name: draft.name.trim(),
-      priceMinor: parseCzk(draft.priceText) ?? 0,
+      priceMinor,
       sku: draft.sku.trim(),
-    };
-    if (draft.id !== undefined) {
-      variant.id = draft.id;
-    }
-    return variant;
+    } satisfies ProductVariant;
+    return draft.id === undefined ? variant : { ...variant, id: draft.id };
   }),
   ...(product.variants ?? []).filter((variant) => !isRealVariant(variant)),
 ];
@@ -422,15 +423,20 @@ const variantFieldError = (submitted: boolean, helpText: string, invalid = false
   return {};
 };
 
+/** The gross price a variant row shows: the server's for a saved price, else the preview at today's rate. */
 const variantGrossPrice = (
   price: number | null,
   record: VariantRecord | undefined,
-  vatRate: ProductRecord['vatRate'],
+  vatRate: number | undefined,
+  notSet: string,
 ) => {
   if (price === null) {
     return '—';
   }
-  return formatMoney(record?.priceMinor === price ? record.grossPriceMinor : grossUnitPriceMinor(price, vatRate));
+  if (record?.priceMinor === price) {
+    return record.grossPriceMinor === undefined ? notSet : formatMoney(record.grossPriceMinor);
+  }
+  return vatRate === undefined ? notSet : formatMoney(grossUnitPriceMinor(price, vatRate));
 };
 
 const variantPlaceholders = (product: ProductRecord) => {
@@ -447,7 +453,12 @@ const variantStockText = (record: VariantRecord | undefined, unit: ProductRecord
     `${record.stockOnHand} ${record.sourceUnit ?? unit}`
   );
 
-const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: ProductRecord['unit']) => {
+/** The variant's quantity tiers; a changed base price says the tiers follow it when it is saved. */
+const renderVariantPriceTiers = (
+  record: VariantRecord | undefined,
+  unit: ProductRecord['unit'],
+  rescaledNote: string | null,
+) => {
   if (record?.priceTiers === undefined) {
     return null;
   }
@@ -463,11 +474,12 @@ const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: Produc
           {formatMoney(tier.priceExcludingVatMinor)} bez DPH
         </p>
       ))}
+      {rescaledNote === null ? null : <p className="text-fg-primary">{rescaledNote}</p>}
     </div>
   );
 };
 
-export const VariantsPanel = (props: PanelProps) => {
+export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
   const { t } = useModernI18n();
   const {
     addDraft,
@@ -492,6 +504,14 @@ export const VariantsPanel = (props: PanelProps) => {
     visibleDrafts,
   } = useVariantsPanel(props);
   const placeholders = variantPlaceholders(product);
+  const taxLabels = useTaxLabels();
+  // The product's classification with the rate Tax gives it today; it names the gross preview of an edited price.
+  // Staff records always name the classification; only storefront records omit it.
+  const classification = classificationChoice(
+    props.vat,
+    product.taxClassificationCode ?? DEFAULT_TAX_CLASSIFICATION,
+    DateTime.nowUnsafe(),
+  );
   const variantDestination = props.variantDestination ?? { kind: 'none' };
   const selectedKey = variantDestination.kind === 'selected' ? variantDestination.draftKey : undefined;
   const [appliedTarget, setAppliedTarget] = useState<string | null>(null);
@@ -520,8 +540,7 @@ export const VariantsPanel = (props: PanelProps) => {
         </StatusText>
       ) : null}
       <p className="text-fg-secondary text-sm">
-        Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (
-        {product.vatRate} %), kterou spočítá server.
+        {t('merchandise.ui.variantsIntro', { vat: taxLabels.choice(classification) })}
       </p>
       <div className="flex flex-wrap items-center gap-150">
         <FormInput
@@ -618,7 +637,13 @@ export const VariantsPanel = (props: PanelProps) => {
                             size="sm"
                             value={draft.attributes}
                           />
-                          {renderVariantPriceTiers(record, product.unit)}
+                          {renderVariantPriceTiers(
+                            record,
+                            product.unit,
+                            record !== undefined && price !== null && price !== record.priceMinor
+                              ? t('merchandise.ui.variantTiersRescaled')
+                              : null,
+                          )}
                         </div>
                       </Table.Cell>
                       <Table.Cell>
@@ -657,7 +682,7 @@ export const VariantsPanel = (props: PanelProps) => {
                         </div>
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
-                        {variantGrossPrice(price, record, product.vatRate)}
+                        {variantGrossPrice(price, record, classification.current?.ratePercent, taxLabels.notSet)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
                         {variantStockText(record, product.unit)}

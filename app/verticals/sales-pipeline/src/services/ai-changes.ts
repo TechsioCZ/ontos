@@ -18,7 +18,7 @@ import type {
   AiSnapshot,
 } from '@app/shared-contracts/ai-approvals';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
-import type { DateTime } from 'effect';
+import type { DateTime, Types } from 'effect';
 import { AiResultEntityIdsSchema, salesPipelineAiCommandSchemas } from '../../shared/actions/apply-command.ts';
 import type {
   ApplyCommandResult,
@@ -89,7 +89,7 @@ const line = (field: string, before: string | undefined, after: string | undefin
   if (before === after) {
     return [];
   }
-  const change: { -readonly [Key in keyof AiDiffLine]: AiDiffLine[Key] } = {
+  const change: Types.Mutable<AiDiffLine> = {
     field,
     label: fieldLabelByName.get(field) ?? field,
   };

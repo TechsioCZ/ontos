@@ -1,4 +1,4 @@
-import { Result, Schema } from 'effect';
+import { Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CatalogSnapshotEntrySchema } from '../../packages/core-runtime/src/access/model.ts';
@@ -131,12 +131,10 @@ it('grants scope-wide where declared and the narrowest selector otherwise', () =
   const compiled = policyRoleCells({ label: 'Reader', modules: { 'demo.crm': 'read' } }, scoped);
   expect(Result.isSuccess(compiled)).toBe(true);
   if (Result.isSuccess(compiled)) {
-    expect(compiled.success.find((cell) => cell.capabilityKey === 'demo.crm.party.list')?.selector).toEqual({
-      _tag: 'assigned',
-    });
-    expect(compiled.success.find((cell) => cell.capabilityKey === 'demo.crm.party.get')?.selector).toEqual({
-      _tag: 'all',
-    });
+    const listSelector = compiled.success.find((cell) => cell.capabilityKey === 'demo.crm.party.list')?.selector;
+    const getSelector = compiled.success.find((cell) => cell.capabilityKey === 'demo.crm.party.get')?.selector;
+    expect(Predicate.isTagged(listSelector, 'assigned')).toBe(true);
+    expect(Predicate.isTagged(getSelector, 'all')).toBe(true);
   }
 });
 

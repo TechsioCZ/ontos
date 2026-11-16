@@ -1,6 +1,6 @@
 // expect-count: 4
 import { Effect } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/http';
+import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 const statusRequest = HttpClientRequest.get('https://example.test/status');
 

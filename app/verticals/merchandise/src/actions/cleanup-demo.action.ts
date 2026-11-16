@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug cleanup-demo
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { cleanupDemoDeclaration } from '../../shared/access-declarations.ts';
 import {
   CleanupDemoPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const cleanupDemoAction = defineAction(
   {
-    accessDeclaration: cleanupDemoDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.demo.cleanup',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'demo', level: 'extended' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'demo.merchandise.cleanup-demo.access.v1' },
     actionKey: 'demo.merchandise.cleanup-demo',
     auditProfile: 'standard',

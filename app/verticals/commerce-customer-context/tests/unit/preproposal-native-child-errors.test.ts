@@ -87,7 +87,7 @@ for (const channel of ['public', 'private'] as const) {
               const fs = require('node:fs');
               process.stdout.write(JSON.stringify(process.pid) + '\\n', () => {
                 process.stderr.write('DummyIdentityError: live-child-stage failed\\n');
-                ${channel === 'private' ? 'fs.closeSync(3);' : 'process.stdout.end();'}
+                ${channel === 'private' ? 'fs.closeSync(5);' : 'process.stdout.end();'}
               });
               setInterval(() => {}, 1000);
             `,
@@ -165,7 +165,7 @@ const stopSource = String.raw`
   import { NodeRuntime, NodeServices, NodeStream } from '@effect/platform-node';
   import { Effect, Stream } from 'effect';
   NodeRuntime.runMain(Effect.scoped(Effect.gen(function* stopPrivateProtocol() {
-    writeSync(3, JSON.stringify({ operation: 'STARTED', pid: process.pid }) + '\n');
+    writeSync(5, JSON.stringify({ operation: 'STARTED', pid: process.pid }) + '\n');
     yield* NodeStream.fromReadable({
       evaluate: () => createReadStream('', { autoClose: false, fd: 4 }),
       onError: error => error,
@@ -173,7 +173,7 @@ const stopSource = String.raw`
       Stream.decodeText(), Stream.splitLines, Stream.map(line => JSON.parse(line)),
       Stream.takeUntil(command => command.operation === 'STOP'),
       Stream.runForEach(command => Effect.sync(() => {
-        if (command.operation === 'STOP') writeSync(3, JSON.stringify({ operation: 'STOPPED' }) + '\n');
+        if (command.operation === 'STOP') writeSync(5, JSON.stringify({ operation: 'STOPPED' }) + '\n');
       })),
     );
   })).pipe(Effect.provide(NodeServices.layer)));

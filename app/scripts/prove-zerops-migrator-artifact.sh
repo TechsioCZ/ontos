@@ -18,16 +18,12 @@ if [ -n "$(ls -A "$artifact")" ]; then
 fi
 artifact="$(cd "$artifact" && pwd)"
 
-deploy_files="$(cd "$app_directory" && node --input-type=module --eval "
-import { readFileSync } from 'node:fs';
-import { parse } from 'yaml';
-const app = parse(readFileSync('zerops.yaml', 'utf-8')).zerops.find(({ setup }) => setup === 'app');
-process.stdout.write(app.build.deployFiles.join('\n'));
-")"
+# The app container's runtime tree: the paths the Zerops build packs into its release archive.
+deploy_files="$(grep -v -e '^#' -e '^$' "$app_directory/scripts/zerops/app-runtime-paths.txt")"
 
 printf '%s\n' "$deploy_files" | while IFS= read -r deploy_file; do
   if [ ! -e "$repository/$deploy_file" ]; then
-    echo "App deployFiles entry $deploy_file does not exist in the build" >&2
+    echo "App runtime path $deploy_file does not exist in the build" >&2
     exit 1
   fi
   mkdir -p "$artifact/$(dirname "$deploy_file")"
@@ -37,6 +33,14 @@ printf '%s\n' "$deploy_files" | while IFS= read -r deploy_file; do
     cp -Rp "$repository/$deploy_file" "$artifact/$deploy_file"
   fi
 done
+
+# The release pack leaves these installed packages out (scripts/zerops/pack-app-release.sh); so does this artifact, so
+# the migrator is proven on the tree that ships. The copies are links or copies: removing them touches no source.
+grep -v -e '^#' -e '^[[:space:]]*$' "$app_directory/scripts/zerops/app-runtime-excluded-packages.txt" |
+  while IFS= read -r excluded_package; do
+    find "$artifact/app/node_modules/.pnpm" -mindepth 1 -maxdepth 1 \
+      -name "$(printf '%s' "$excluded_package" | sed 's#/#+#')@*" -exec rm -rf {} +
+  done
 
 log="$artifact/migrator.log"
 (cd "$artifact/app" && exec node scripts/run-zerops-migrator.mjs) >"$log" 2>&1 &

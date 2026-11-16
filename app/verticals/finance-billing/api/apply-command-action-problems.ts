@@ -2,6 +2,7 @@
 // @ontos-action-http-owner finance.billing
 // @ontos-action-http-slug apply-command
 // @ontos-action-http-domain-problem FinanceConflict=shared/finance-action-problems.ts#FinanceConflictProblemSchema#mapFinanceConflictProblem
+// @ontos-action-http-domain-problem FinanceForbidden=shared/finance-action-problems.ts#FinanceForbiddenProblemSchema#mapFinanceForbiddenProblem
 // @ontos-action-http-domain-problem FinanceNotFound=shared/finance-action-problems.ts#FinanceNotFoundProblemSchema#mapFinanceNotFoundProblem
 // @ontos-action-http-domain-problem FinancePersistenceUnavailable=shared/finance-action-problems.ts#FinancePersistenceUnavailableProblemSchema#mapFinancePersistenceUnavailableProblem
 // @ontos-action-http-domain-problem FinanceReferenceUnavailable=shared/finance-action-problems.ts#FinanceReferenceUnavailableProblemSchema#mapFinanceReferenceUnavailableProblem
@@ -11,6 +12,7 @@ import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
 import {
   mapFinanceConflictProblem,
+  mapFinanceForbiddenProblem,
   mapFinanceNotFoundProblem,
   mapFinancePersistenceUnavailableProblem,
   mapFinanceReferenceUnavailableProblem,
@@ -73,10 +75,12 @@ export const applyCommandActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ApplyCommandActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ApplyCommandActionForbiddenProblem'> =>
     ApplyCommandActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -139,6 +143,7 @@ const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
   Match.value(error).pipe(
     Match.tags({
       FinanceConflict: (failure) => mapFinanceConflictProblem(failure),
+      FinanceForbidden: (failure) => mapFinanceForbiddenProblem(failure),
       FinanceNotFound: (failure) => mapFinanceNotFoundProblem(failure),
       FinancePersistenceUnavailable: (failure) => mapFinancePersistenceUnavailableProblem(failure),
       FinanceReferenceUnavailable: (failure) => mapFinanceReferenceUnavailableProblem(failure),
@@ -179,7 +184,7 @@ const mapCoreProblem = (error: ActionCoreError): ApplyCommandActionProblem =>
       ActionInvocationStateError: (failure) => applyCommandActionProblem.conflict(failure.code),
       ActionPayloadValidationError: applyCommandActionProblem.invalid,
       ActionPermissionCheckError: (failure) => applyCommandActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => applyCommandActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => applyCommandActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => applyCommandActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => applyCommandActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => applyCommandActionProblem.conflict(failure.code),

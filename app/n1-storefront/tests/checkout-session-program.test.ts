@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, rs } from "@rstest/core";
 import { it } from "effect-rstest";
-import { Deferred, Effect, Fiber, Schema } from "effect";
+import { Deferred, Effect, Fiber, Match, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import {
   recoverConfirmedCheckoutProgram,
+  recoverStoredCheckoutProgram,
   submitCheckoutProgram,
 } from "../src/features/use-checkout";
 import { CheckoutResultSchema } from "../src/ontos/checkout";
@@ -12,6 +13,7 @@ import {
   checkoutGuardKey,
   readCheckoutGuard,
   removeCheckoutGuard,
+  sameCheckoutLines,
   saveCheckoutGuard,
 } from "../src/features/checkout-guard" with { rstest: "importActual" };
 import type { CartScope } from "../src/ontos/cart-quote";
@@ -24,6 +26,7 @@ rs.mock("../src/features/checkout-guard", () => ({
   checkoutGuardKey,
   readCheckoutGuard,
   removeCheckoutGuard,
+  sameCheckoutLines,
   saveCheckoutGuard,
   withCheckoutLock: <A, E, R>(_scope: CartScope, program: Effect.Effect<A, E, R>) => program,
 }));
@@ -408,6 +411,116 @@ describe("one guarded receipt read after confirmed placement", () => {
           expect(accept).not.toHaveBeenCalled();
           expect(unavailable).toHaveBeenCalledTimes(1);
         }),
+    );
+  }
+});
+
+describe("restoring a persisted checkout without placing an order", () => {
+  for (const condition of [
+    "confirmed",
+    "http-failure",
+    "unconfirmed",
+    "wrong-scope",
+    "replaced-guard",
+    "removed-guard",
+    "changed-lines",
+    "storage-failure",
+    "stale-before",
+    "stale-after",
+  ]) {
+    it.effect(`reads only the saved receipt and fences ${condition}`, () =>
+      Effect.gen(function* restoreSavedIntent() {
+        const storage = new Map<string, string>();
+        let storageBroken = false;
+        let current = condition !== "stale-before";
+        rs.stubGlobal("window", {
+          localStorage: {
+            getItem: (key: string) => {
+              if (storageBroken) {
+                throw new Error("Private storage failure");
+              }
+              return storage.get(key) ?? null;
+            },
+            removeItem: (key: string) => storage.delete(key),
+            setItem: (key: string, value: string) => storage.set(key, value),
+          },
+        });
+        yield* saveCheckoutGuard(receiptGuard);
+        const key = checkoutGuardKey(scope);
+        let expectedStored = storage.get(key) ?? null;
+        const requests: string[] = [];
+        const accepted: CheckoutResult[] = [];
+        let unavailable = 0;
+        const client = HttpClient.make((request) => {
+          requests.push(request.url);
+          if (condition === "replaced-guard" || condition === "changed-lines") {
+            expectedStored = JSON.stringify({
+              ...receiptGuard,
+              ...(condition === "replaced-guard"
+                ? { clientRequestId: "71000000-0000-4000-8000-000000000002" }
+                : {
+                    lines: [{ expectedUnitPriceMinor: 1210, productId: "product-1", quantity: 3 }],
+                  }),
+            });
+            storage.set(key, expectedStored);
+          }
+          if (condition === "removed-guard") {
+            storage.delete(key);
+            expectedStored = null;
+          }
+          storageBroken = condition === "storage-failure";
+          if (condition === "stale-after") {
+            current = false;
+          }
+          const result = savedReceipt();
+          const payload = Match.value(condition).pipe(
+            Match.when("http-failure", () => ({
+              _tag: "CheckoutUnavailableProblem",
+              detail: "Receipt unavailable.",
+              state: "unavailable",
+              status: 503,
+              title: "Checkout",
+              type: "urn:n1:checkout",
+            })),
+            Match.when("unconfirmed", () => ({ state: "unconfirmed" })),
+            Match.orElse(() => ({
+              result: {
+                ...result,
+                scope:
+                  condition === "wrong-scope"
+                    ? { ...scope, marketId: "71000000-0000-4000-8000-000000000096" }
+                    : scope,
+              },
+              state: "confirmed",
+            })),
+          );
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(payload, { status: condition === "http-failure" ? 503 : 200 }),
+            ),
+          );
+        }).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://n1.example")));
+        yield* recoverStoredCheckoutProgram({
+          guard: receiptGuard,
+          isCurrent: () => current,
+          locale: "cs",
+          onConfirmed: (result) => {
+            accepted.push(result);
+          },
+          onUnavailable: () => {
+            unavailable += 1;
+          },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        expect(requests).toEqual(
+          condition === "stale-before" ? [] : ["https://n1.example/api/checkout/status"],
+        );
+        expect(accepted).toHaveLength(condition === "confirmed" ? 1 : 0);
+        expect(unavailable).toBe(
+          condition === "confirmed" || condition.startsWith("stale-") ? 0 : 1,
+        );
+        expect(storage.get(key) ?? null).toBe(expectedStored);
+      }),
     );
   }
 });

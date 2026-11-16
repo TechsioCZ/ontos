@@ -64,8 +64,10 @@ export const handleCreatePriceGroupDefinitionRevision = Effect.fn('CreatePriceGr
       semanticDecision: payload.semanticDecision,
       trustedEffectiveAt,
     };
+    const correlatedInput =
+      payload.sourceCorrelation === undefined ? input : { ...input, sourceCorrelation: payload.sourceCorrelation };
     const definition = yield* context.services.createDefinitionRevision(
-      payload.effectiveTo === null ? input : { ...input, effectiveTo: toDate(payload.effectiveTo) },
+      payload.effectiveTo === null ? correlatedInput : { ...correlatedInput, effectiveTo: toDate(payload.effectiveTo) },
     );
 
     yield* context.recordAuditEvidence({
@@ -84,6 +86,12 @@ export const handleCreatePriceGroupDefinitionRevision = Effect.fn('CreatePriceGr
       targetResourceId: payload.expectedCurrent.priceGroupRef.resourceId,
       targetResourceType: RESOURCE_TYPE,
     });
+    if (
+      definition.businessOriginalInvocationId !== undefined &&
+      definition.businessOriginalInvocationId !== context.actionInvocationId
+    ) {
+      return definition;
+    }
     const event = yield* context.addDomainEvent({
       eventType: REVISION_CREATED_EVENT_TYPE,
       payloadJson: definition,
@@ -113,6 +121,10 @@ export const createPriceGroupDefinitionRevisionAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'pricing.price-group-catalog.create-price-group-definition-revision.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Native Price Group source writes',
+      workloads: ['pricing.price-group-catalog.source-write'],
     },
     actionKey: 'pricing.price-group-catalog.create-price-group-definition-revision',
     auditEvidenceSchema: CreatePriceGroupDefinitionRevisionAuditEvidenceSchema,

@@ -1287,6 +1287,28 @@ const counterpartyAccessCheckInScope = (
  * any more — the claim consumed one, a resend revoked the earlier one, a revocation revoked them all — so every
  * such assignment ends here, in the owner's transaction, not only the one a claim consumed.
  */
+/** Grants visible within the caller's already-checked Counterparty or Storefront scope. */
+const listCounterpartyAccessGrants = (
+  dependencies: CounterpartyAccessPersistenceContext,
+  input: Parameters<CounterpartyAccessPortService['list']>[0],
+) =>
+  dependencies.transaction
+    .invoke(listAccessGrantsRoutine, [input.counterpartyRef.resourceId, input.recipient?.principalId ?? null])
+    .pipe(
+      Effect.mapError(accessUnavailable),
+      Effect.map((rows) =>
+        rows.flatMap((row) => {
+          const grant = grantFromRow(dependencies.scope.tenantId, row);
+          const included =
+            input.scope.kind === 'counterparty'
+              ? grant.scope.kind === 'counterparty'
+              : grant.scope.kind === 'counterparty' ||
+                (grant.scope.kind === 'storefront' && grant.scope.storefrontKey === input.scope.storefrontKey);
+          return included ? [grant] : [];
+        }),
+      ),
+    );
+
 const endInvitationRedemptions = (dependencies: CounterpartyAccessPersistenceContext, invitationId: string) =>
   dependencies.transaction.invoke(readInvitationRedemptionsRoutine, [invitationId]).pipe(
     Effect.mapError(accessUnavailable),
@@ -1450,22 +1472,7 @@ export const counterpartyAccessPortForTransaction = (
         legalEntityId: input.legalEntityId,
         principalRefs: [input.actor, ...(input.recipient === undefined ? [] : [input.recipient])],
       }) && isTrustedPermissionScope(dependencies, input.scope)
-        ? dependencies.transaction
-            .invoke(listAccessGrantsRoutine, [input.counterpartyRef.resourceId, input.recipient?.principalId ?? null])
-            .pipe(
-              Effect.mapError(accessUnavailable),
-              Effect.map((rows) =>
-                rows.flatMap((row) => {
-                  const grant = grantFromRow(dependencies.scope.tenantId, row);
-                  const included =
-                    input.scope.kind === 'counterparty'
-                      ? grant.scope.kind === 'counterparty'
-                      : grant.scope.kind === 'counterparty' ||
-                        (grant.scope.kind === 'storefront' && grant.scope.storefrontKey === input.scope.storefrontKey);
-                  return included ? [grant] : [];
-                }),
-              ),
-            )
+        ? listCounterpartyAccessGrants(dependencies, input)
         : Effect.fail(accessUnavailable()),
     resendInvitation: Effect.fn('CounterpartyAccessPort.resendInvitation')(function* resendInvitation(
       input: InvitationMutationInput,

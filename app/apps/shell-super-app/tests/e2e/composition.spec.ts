@@ -8,6 +8,7 @@ import {
   applicationCompositionRevision,
   decodeActiveApplicationCompositionSnapshot,
 } from '../../../../scripts/active-application-composition.mts';
+import { onOwnConnection } from './own-connection.ts';
 
 const metadataSchema = Schema.Struct({ activeApplicationCompositionUrl: Schema.URLFromString });
 
@@ -16,7 +17,7 @@ test('publishes the exact native browser owner contracts and federation bytes un
 }, testInfo) => {
   const compositionUrl = Schema.decodeUnknownSync(metadataSchema)(testInfo.config.metadata)
     .activeApplicationCompositionUrl.href;
-  const publication = await request.get(compositionUrl);
+  const publication = await request.get(compositionUrl, onOwnConnection());
   expect(publication.status()).toBe(200);
   const snapshot = await Effect.runPromise(
     decodeActiveApplicationCompositionSnapshot(await publication.text()).pipe(
@@ -37,7 +38,7 @@ test('publishes the exact native browser owner contracts and federation bytes un
   }
   await Promise.all(
     artifacts.map(async (artifact) => {
-      const response = await request.get(artifact.url);
+      const response = await request.get(artifact.url, onOwnConnection());
       expect(response.status(), artifact.url).toBe(200);
       expect(
         createHash('sha256')
@@ -52,7 +53,7 @@ test('publishes the exact native browser owner contracts and federation bytes un
 test('the native composition guard rejects altered owner contract bytes', async ({ request }, testInfo) => {
   const compositionUrl = Schema.decodeUnknownSync(metadataSchema)(testInfo.config.metadata)
     .activeApplicationCompositionUrl.href;
-  const publication = await request.get(compositionUrl);
+  const publication = await request.get(compositionUrl, onOwnConnection());
   expect(publication.status()).toBe(200);
   const snapshot = await Effect.runPromise(decodeActiveApplicationCompositionSnapshot(await publication.text()));
   const rejected = await Effect.runPromiseExit(

@@ -1,12 +1,18 @@
-import { Effect, Schema, Predicate } from 'effect';
+import { Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import {
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
   registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
   systemPrincipalContextResolverFromRepository,
 } from '../../src/auth/system-principal-context.ts';
+
+import { CoreDatabase } from '../../src/db/client.ts';
+import { makeTestDatabase } from '../support/database.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -182,3 +188,101 @@ it('enforces mode-specific trusted context cross-field invariants', () => {
     }),
   ).toThrow();
 });
+
+it.effect('provides the native resolver through the public Core capability', () =>
+  Effect.scoped(
+    Effect.gen(function* resolveThroughCoreCapability() {
+      let active = true;
+      const executor = yield* makeTestDatabase((_statement, parameters) => {
+        expect(parameters).toEqual([tenantId, principalId, 1]);
+        return Effect.succeed([
+          { kind: 'system', principalStatus: active ? 'active' : 'disabled', tenantStatus: 'active' },
+        ]);
+      });
+      const resolverLayer = SystemPrincipalContextResolverLive.pipe(
+        Layer.provide(Layer.succeed(CoreDatabase, { executor })),
+      );
+      const services = yield* Layer.build(resolverLayer);
+      const resolver = Context.get(services, SystemPrincipalContextResolver);
+      const resolve = resolver.resolve({
+        principalId,
+        registration: registerSystemWorkload({ jobKey: 'fixture-worker' }),
+        runReference: 'fixture-run',
+        tenantId,
+      });
+      const context = yield* resolve;
+      expect(yield* decodeTrustedPrincipalContext(context)).toEqual(context);
+      active = false;
+      const denied = yield* Effect.flip(resolve);
+      expect(Predicate.isTagged(denied, 'SystemPrincipalContextDeniedError')).toBe(true);
+    }),
+  ),
+);
+
+it.effect(
+  'selects exactly one enrolled principal for each tenant and refuses ambiguity without caller identity input',
+  () =>
+    Effect.gen(function* enrolledTenantPrincipal() {
+      const registration = registerSystemWorkload({ jobKey: 'integration.source-worker' });
+      const otherTenant = '10000000-0000-4000-8000-000000000002';
+      const otherPrincipal = '20000000-0000-4000-8000-000000000002';
+      const identities = new Map([
+        [tenantId, principalId],
+        [otherTenant, otherPrincipal],
+      ]);
+      const resolver = systemPrincipalContextResolverFromRepository({
+        load: () =>
+          Effect.succeedSome({
+            kind: 'system' as const,
+            principalStatus: 'active' as const,
+            tenantStatus: 'active' as const,
+          }),
+        loadEnrolled: (input) => Effect.succeed([{ principalId: identities.get(input.tenantId) ?? principalId }]),
+      });
+      expect((yield* resolver.resolveEnrolled({ registration, runReference: 'run-one', tenantId })).principalId).toBe(
+        principalId,
+      );
+      expect(
+        (yield* resolver.resolveEnrolled({ registration, runReference: 'run-two', tenantId: otherTenant })).principalId,
+      ).toBe(otherPrincipal);
+      const ambiguous = systemPrincipalContextResolverFromRepository({
+        load: () =>
+          Effect.succeedSome({
+            kind: 'system' as const,
+            principalStatus: 'active' as const,
+            tenantStatus: 'active' as const,
+          }),
+        loadEnrolled: () => Effect.succeed([{ principalId }, { principalId: otherPrincipal }]),
+      });
+      expect(
+        (yield* Effect.flip(ambiguous.resolveEnrolled({ registration, runReference: 'run-three', tenantId }))).code,
+      ).toBe('system_principal_context_denied');
+      expect(
+        (yield* Effect.flip(
+          resolver.resolveEnrolled({ registration: { ...registration }, runReference: 'run-four', tenantId }),
+        )).code,
+      ).toBe('system_principal_context_invalid');
+    }),
+);
+
+it.effect('derives admission auth references only from registered workload and immutable invocation facts', () =>
+  Effect.gen(function* registeredAdmissionReferenceFacts() {
+    const registration = registerSystemWorkload({ jobKey: 'integration.symmy.dispatch' });
+    const actionInvocationId = '30000000-0000-4000-8000-000000000001';
+    expect(yield* registeredAdmissionAuthContextRef(registration, actionInvocationId)).toBe(
+      `job:integration.symmy.dispatch:run:${actionInvocationId}`,
+    );
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(registeredAdmissionAuthContextRef({ ...registration }, actionInvocationId)),
+        'SystemPrincipalContextInvalidError',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(registeredAdmissionAuthContextRef(registration, 'caller-selected-ref')),
+        'SystemPrincipalContextInvalidError',
+      ),
+    ).toBe(true);
+  }),
+);

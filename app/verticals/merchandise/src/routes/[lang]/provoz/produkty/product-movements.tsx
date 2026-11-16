@@ -1,3 +1,9 @@
+import {
+  isStockQuantity,
+  MAX_QUANTITY,
+  MIN_STOCK_QUANTITY,
+  normalizeQuantity,
+} from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -12,7 +18,7 @@ import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
-import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { QUANTITY_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { formatDelta } from './products-format.ts';
 import { PRODUCT_LIMITS, fieldError, focusFirstInvalid, tooLongMessage } from './product-form-validation.ts';
@@ -34,14 +40,14 @@ const movementVariant = {
 
 /** Výdej is a negative delta, příjem a positive one, korekce keeps the signed value as typed. */
 const signedDelta = (reason: ManualReason, quantity: number): number => {
-  const magnitude = Math.abs(Math.round(quantity));
+  const magnitude = Math.abs(quantity);
   if (reason === 'ISSUE') {
     return -magnitude;
   }
   if (reason === 'RECEIPT') {
     return magnitude;
   }
-  return Math.round(quantity);
+  return quantity;
 };
 
 /** Stock ledger rows for one product, newest first. Products with variants show which variant moved. */
@@ -103,13 +109,13 @@ export const MovementsTable = ({
 
 /** Validation message key for a typed quantity, or undefined when the movement can be sent. */
 const quantityErrorKey = (reason: ManualReason, quantity: number, stockOnHand: number): string | undefined => {
-  if (!Number.isInteger(quantity) || quantity === 0) {
+  if (!isStockQuantity(quantity)) {
     return reason === 'ADJUSTMENT' ? 'validation.delta' : 'validation.quantity';
   }
   if (reason !== 'ADJUSTMENT' && quantity < 0) {
     return 'validation.quantity';
   }
-  return stockOnHand + signedDelta(reason, quantity) < 0 ? 'validation.stock' : undefined;
+  return normalizeQuantity(stockOnHand + signedDelta(reason, quantity)) < 0 ? 'validation.stock' : undefined;
 };
 
 /**
@@ -179,20 +185,13 @@ export const MovementForm = ({
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
-    const movement: {
-      -readonly [Key in keyof Extract<MerchandiseCommand, { readonly _tag: 'RecordStockMovement' }>]: Extract<
-        MerchandiseCommand,
-        { readonly _tag: 'RecordStockMovement' }
-      >[Key];
-    } = {
-      _tag: 'RecordStockMovement' as const,
+    const stockMovement = {
+      _tag: 'RecordStockMovement',
       delta: signedDelta(reason, quantity),
       productId,
       reason,
-    };
-    if (variant !== undefined) {
-      movement.variantId = variant.id;
-    }
+    } satisfies MerchandiseCommand;
+    const movement = variant === undefined ? stockMovement : { ...stockMovement, variantId: variant.id };
     const expected = Math.max(revision, savedRevision.current);
     runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
       setBusy(false);
@@ -267,11 +266,12 @@ export const MovementForm = ({
         {/* Real bounds for the ARIA range, without clamping on blur: an out-of-range quantity stays visible to validation. */}
         <FormNumericInput
           clampValueOnBlur={false}
-          formatOptions={WHOLE_NUMBER_FORMAT}
+          formatOptions={QUANTITY_FORMAT}
           id="movement-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
-          min={isAdjustment ? -available : 1}
+          max={MAX_QUANTITY}
+          min={isAdjustment ? -Math.min(available, MAX_QUANTITY) : MIN_STOCK_QUANTITY}
           name="movementQuantity"
           onValueChange={(details) => {
             onDraftChange({ quantity: details.valueAsNumber, quantityText: details.value });

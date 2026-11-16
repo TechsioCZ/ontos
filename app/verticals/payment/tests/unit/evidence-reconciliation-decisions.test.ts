@@ -118,6 +118,7 @@ const pos = {
   sourceKind: 'LOCAL_POS_OPERATOR',
   sourceSystem: 'store-pos',
 } as const;
+const praguePos = { ...pos, pickupCapabilityRef: 'pickup-prague-1' };
 /**
  * Attaches a collection statement of `source` recorded with `acceptanceOutcome` and the capability
  * correlation its qualification proved to the pending collection.
@@ -126,7 +127,25 @@ const attachHeldCapability = (
   source: PaymentReconciliationEvidenceFacts['source'],
   acceptanceOutcome: PaymentReconciliationEvidenceFacts['acceptanceOutcome'],
   capabilityCorrelated: boolean,
-) => rejectionCode(decide(attach, 'PENDING', Option.some(facts({ acceptanceOutcome, capabilityCorrelated, source }))));
+) =>
+  rejectionCode(
+    decidePaymentReconciliation({
+      body: attach,
+      caseEvidence: Option.none(),
+      evidence: Option.some(facts({ acceptanceOutcome, capabilityCorrelated, source })),
+      operations: [
+        {
+          ...collect('PENDING'),
+          binding: {
+            _tag: 'PICKUP_CAPABILITY',
+            capabilityEvidenceRef: 'pickup-evidence',
+            pickupCapabilityRef: 'pickup-prague-1',
+          },
+        },
+      ],
+      subject: openCase,
+    }),
+  );
 
 describe('#1151 governed reconciliation decisions', () => {
   it('#1151 attaching qualified configured evidence resolves a conflicting operation to the proven outcome', () => {
@@ -149,13 +168,17 @@ describe('#1151 governed reconciliation decisions', () => {
   it('#1152 a COD carrier or POS statement proves its effect through attachment only when it proved the selected capability', () => {
     expect([
       attachHeldCapability(carrier, 'HELD_UNRESOLVED', false),
-      attachHeldCapability(pos, 'HELD_UNRESOLVED', false),
+      attachHeldCapability(praguePos, 'HELD_UNRESOLVED', false),
+      attachHeldCapability(pos, 'HELD_UNRESOLVED', true),
+      attachHeldCapability({ ...pos, pickupCapabilityRef: 'pickup-brno-1' }, 'HELD_UNRESOLVED', true),
       rejectionCode(decide(attach, 'PENDING', Option.some(facts({ source: carrier })))),
       attachHeldCapability(carrier, 'HELD_UNRESOLVED', true),
-      attachHeldCapability(pos, 'HELD_UNRESOLVED', true),
+      attachHeldCapability(praguePos, 'HELD_UNRESOLVED', true),
       attachHeldCapability(carrier, 'CONFLICT', true),
-      attachHeldCapability(pos, 'CONFLICT', true),
+      attachHeldCapability(praguePos, 'CONFLICT', true),
     ]).toEqual([
+      'payment_reconciliation_evidence_not_qualified',
+      'payment_reconciliation_evidence_not_qualified',
       'payment_reconciliation_evidence_not_qualified',
       'payment_reconciliation_evidence_not_qualified',
       'payment_reconciliation_evidence_not_qualified',
@@ -219,14 +242,22 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(
       rejectionCode(decide(attach, 'NOT_EFFECTED_CONFIRMED', Option.some(facts({ factKind: 'COLLECTION_CONFIRMED' })))),
     ).toBe('payment_reconciliation_decision_not_applicable');
-    expect(decide(classify, 'NOT_EFFECTED_CONFIRMED')).toMatchObject({
+    expect(decide(classify, 'NOT_EFFECTED_CONFIRMED', Option.some(facts()))).toMatchObject({
       change: Option.some({ from: 'NOT_EFFECTED_CONFIRMED', to: 'CONFLICT' }),
       decisionKind: 'CLASSIFY_CONFLICT',
+      evidenceRef: Option.some('obs-1'),
     });
   });
 
   it('#1151 classifying an already conflicting operation changes nothing but is audited', () => {
-    expect(decide(classify, 'CONFLICT')).toMatchObject({ change: Option.none(), decisionKind: 'CLASSIFY_CONFLICT' });
+    expect(decide(classify, 'CONFLICT', Option.some(facts({ acceptanceOutcome: 'CONFLICT' })))).toMatchObject({
+      change: Option.none(),
+      decisionKind: 'CLASSIFY_CONFLICT',
+      evidenceRef: Option.some('obs-1'),
+    });
+    expect(rejectionCode(decide(classify, 'PENDING', Option.some(facts({ factKind: 'COLLECTION_PENDING' }))))).toBe(
+      'payment_reconciliation_evidence_not_qualified',
+    );
   });
 
   it('#1151 closing an administrative case never discards an unresolved monetary obligation', () => {
@@ -348,9 +379,10 @@ describe('#1151 governed reconciliation decisions', () => {
         { ...established('gopay:payment:1'), source: { ...facts().source, accountRef: 'gopay-account-2' } },
       ]),
     ).toBe('payment_reconciliation_evidence_not_qualified');
-    // The same effect, two keyless statements, its own earlier attachment or another operation's effect still attach.
+    // Separate keyless statements cannot prove identity.
+    expect(attachWith(absent, [established(absent)])).toBe('payment_reconciliation_evidence_not_qualified');
+    // The same effect, its own earlier attachment, or an effect on another operation passes this check.
     expect(attachWith('gopay:payment:1', [established('gopay:payment:1')])).toBe('applied');
-    expect(attachWith(absent, [established(absent)])).toBe('applied');
     expect(attachWith('gopay:payment:2', [established('gopay:payment:1', 'obs-1')])).toBe('applied');
     expect(attachWith('gopay:payment:2', [{ ...established('gopay:payment:1'), operationId: 'collect-2' }])).toBe(
       'applied',
@@ -371,13 +403,14 @@ describe('#1151 governed reconciliation decisions', () => {
       refundExecutionRoute: {
         accountRef: 'refund-account-a',
         environment: 'production',
+        sourceAuthorityId: 'refund-authority-original',
         sourceKind: 'BANK_ACCOUNTING',
         sourceSystem: 'erp-primary',
       },
       targetOperationId: COLLECT_ID,
     };
     const heldCase: PaymentReconciliationCaseSubject = { operationId: absent, paymentId: PAYMENT_ID, status: 'OPEN' };
-    const attachFrom = (sourceSystem: string, accountRef: string) =>
+    const attachFrom = (sourceSystem: string, accountRef: string, sourceAuthorityId = 'refund-authority-original') =>
       rejectionCode(
         decidePaymentReconciliation({
           body: { _tag: 'ATTACH_EVIDENCE', observationId: 'obs-1', operationId: 'refund-1' },
@@ -391,6 +424,7 @@ describe('#1151 governed reconciliation decisions', () => {
                 accountRef,
                 environment: 'production',
                 factFamily: 'REFUND_EXECUTION',
+                sourceAuthorityId,
                 sourceKind: 'BANK_ACCOUNTING',
                 sourceSystem,
               },
@@ -402,6 +436,9 @@ describe('#1151 governed reconciliation decisions', () => {
       );
     expect(attachFrom('erp-secondary', 'refund-account-b')).toBe('payment_reconciliation_evidence_not_qualified');
     expect(attachFrom('erp-primary', 'refund-account-b')).toBe('payment_reconciliation_evidence_not_qualified');
+    expect(attachFrom('erp-primary', 'refund-account-a', 'replacement-authority')).toBe(
+      'payment_reconciliation_evidence_not_qualified',
+    );
     expect(attachFrom('erp-primary', 'refund-account-a')).toBe('applied');
   });
 
@@ -415,6 +452,7 @@ describe('#1151 governed reconciliation decisions', () => {
       refundExecutionRoute: {
         accountRef: 'refund-account-a',
         environment: 'production',
+        sourceAuthorityId: 'refund-authority-original',
         sourceKind: 'BANK_ACCOUNTING',
         sourceSystem: 'erp-primary',
       },

@@ -2,7 +2,7 @@
 // @ontos-action-owner privacy.core
 // @ontos-action-slug create-privacy-subject
 import type { ActionHandlerContext, ActionServicePreparationContext, ActionServiceFactory } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, requireModuleOperation } from '@app/core-runtime';
 import { Effect, DateTime, Option } from 'effect';
 import type { Crypto } from 'effect';
 import type { PreparedPrivacySubject } from '../persistence/privacy-subject-preparation.ts';
@@ -23,6 +23,7 @@ import {
 } from '../persistence/privacy-subject-party-owner.ts';
 import { privacySubjectRefForParty } from '@app/consent-authority-contracts';
 
+import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-persistence-error.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
   PrivacyActionAuditEvidenceSchema,
@@ -53,6 +54,24 @@ const handleCreatePrivacySubject = Effect.fn('CreatePrivacySubjectAction.handle'
       code: 'privacy_action_rejected',
       reason: 'Privacy Subject identity must match its tenant-scoped external Party reference',
     });
+  }
+  if (payload.subject.kind === 'DATA_SUBJECT') {
+    yield* requireModuleOperation(
+      payload.subject.sourceAdmission === undefined
+        ? 'privacy.core.requirement.create-subject-party-detail'
+        : 'privacy.core.requirement.create-subject-source-person',
+    ).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new PrivacyOperationPersistenceError({
+            code: 'privacy_operation_persistence_unavailable',
+            reason: 'Current Party admission operation is unavailable',
+          }),
+          'cause',
+          { configurable: true, value: cause },
+        ),
+      ),
+    );
   }
   const now = DateTime.formatIso(yield* DateTime.now);
   const record = { createdAt: now, subject: payload.subject, subjectRef: payload.subjectRef, updatedAt: now };
@@ -95,10 +114,32 @@ const preparePrivacySubjectServices = Effect.fn('CreatePrivacySubjectAction.prep
   const canonicalWrite = before === undefined;
   // Preserve the typed owner failure as invocation-local data. The transaction still decides
   // retained identity conflicts before it consumes this observation, just as before preparation.
+  const { subject } = payload;
+  // A source-admitted person's exact source reference is owner state, read in its own short transaction.
+  const sourceAdmission = subject.kind === 'DATA_SUBJECT' ? subject.sourceAdmission : undefined;
+  const sourceReference =
+    sourceAdmission === undefined
+      ? undefined
+      : yield* context.transaction((transaction) =>
+          privacyOperationRepositoryForScope(transaction, context.scope).pipe(
+            Effect.flatMap((repository) =>
+              repository.resolveSourceSubjectReference(scope.tenantId, scope.legalEntityId, sourceAdmission),
+            ),
+          ),
+        );
   const observation =
-    payload.subject.kind === 'DATA_SUBJECT'
+    subject.kind === 'DATA_SUBJECT'
       ? yield* owner
-          .resolve(payload.subject.partyRef, context.scope, canonicalWrite, context.compositionRevision)
+          .resolve(
+            subject.partyRef,
+            context.scope,
+            canonicalWrite,
+            sourceReference,
+            sourceReference === undefined
+              ? 'privacy.core.requirement.create-subject-party-detail'
+              : 'privacy.core.requirement.create-subject-source-person',
+            context.compositionRevision,
+          )
           .pipe(Effect.result)
       : undefined;
   const prepared: PreparedPrivacySubject = {

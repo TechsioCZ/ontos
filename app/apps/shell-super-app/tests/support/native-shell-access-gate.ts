@@ -21,6 +21,7 @@ export const nativeShellAccessGateLive = Layer.effect(
       decide: scripted.decide,
       decideMany: scripted.decideMany,
       list: scripted.list,
+      listMany: scripted.listMany,
       rebind: () => gate,
       selectableLegalEntities: ({ scope }) =>
         legalEntityContext.listActiveForTenant(scope.tenantId).pipe(

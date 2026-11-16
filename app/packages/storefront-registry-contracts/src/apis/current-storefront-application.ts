@@ -5,6 +5,10 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
+const StorefrontRegistryResourceIdSchema = checkedUuid.pipe(
+  Schema.brand('StorefrontRegistryResourceId'),
+  Schema.decodeTo(checkedUuid),
+);
 
 export const StorefrontRegistryTenantIdSchema = checkedUuid.pipe(
   Schema.brand('StorefrontRegistryTenantId'),
@@ -37,6 +41,7 @@ export const StorefrontRegistryInstantSchema = Schema.String.check(
 
 export const CurrentStorefrontApplicationRequestSchema = Schema.Struct({
   effectiveAt: StorefrontRegistryInstantSchema,
+  expectedStorefrontApplicationId: Schema.optionalKey(StorefrontRegistryResourceIdSchema),
   requestedChannel: StorefrontChannelSchema,
   storefrontAppId: StorefrontApplicationIdSchema,
   tenantId: StorefrontRegistryTenantIdSchema,

@@ -81,10 +81,12 @@ export const acknowledgePrivacyNoticeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AcknowledgePrivacyNoticeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AcknowledgePrivacyNoticeActionForbiddenProblem'> =>
     AcknowledgePrivacyNoticeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -204,7 +206,8 @@ const mapCoreProblem = (error: ActionCoreError): AcknowledgePrivacyNoticeActionP
       ActionInvocationStateError: (failure) => acknowledgePrivacyNoticeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: acknowledgePrivacyNoticeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => acknowledgePrivacyNoticeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => acknowledgePrivacyNoticeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        acknowledgePrivacyNoticeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => acknowledgePrivacyNoticeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => acknowledgePrivacyNoticeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => acknowledgePrivacyNoticeActionProblem.conflict(failure.code),

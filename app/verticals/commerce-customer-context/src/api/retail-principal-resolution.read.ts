@@ -15,7 +15,7 @@ import type {
   RetailPrincipalResolutionRequest,
   RetailPrincipalResolutionResponse,
 } from '../../shared/apis/retail-principal-resolution.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profileReadServicesForVerifiedScope } from '../profile-service-factory.ts';
 import { retailProfileOwnerFacts } from './read-owner-facts.ts';
 
 export interface RetailPrincipalResolutionServices {
@@ -95,7 +95,7 @@ export const retailPrincipalResolutionRead = defineRead(
       ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    profileReadServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ retailPrincipalResolution }): RetailPrincipalResolutionServices => retailPrincipalResolution),
     ),
 );

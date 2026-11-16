@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug place-storefront-order
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { placeStorefrontOrderDeclaration, storefrontWorkload } from '../../shared/access-declarations.ts';
 import {
   PlaceStorefrontOrderPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,12 +14,22 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const placeStorefrontOrderAction = defineAction(
   {
-    accessDeclaration: placeStorefrontOrderDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.storefront-order.place',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'storefront-order', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.place-storefront-order.access.v1',
     },
-    accessWorkload: storefrontWorkload,
+    accessWorkload: {
+      reason: 'The registered Storefront BFF reads published catalog data and places its own guest orders',
+      workloads: ['demo.storefront-client'],
+    },
     actionKey: 'demo.merchandise.place-storefront-order',
     auditProfile: 'standard',
     domainErrorSchema: MerchandiseErrorSchema,

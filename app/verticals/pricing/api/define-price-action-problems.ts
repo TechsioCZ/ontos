@@ -88,10 +88,12 @@ export const definePriceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'DefinePriceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'DefinePriceActionForbiddenProblem'> =>
     DefinePriceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -205,7 +207,7 @@ const mapCoreProblem = (error: ActionCoreError): DefinePriceActionProblem =>
       ActionInvocationStateError: (failure) => definePriceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: definePriceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => definePriceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => definePriceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => definePriceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => definePriceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => definePriceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => definePriceActionProblem.conflict(failure.code),

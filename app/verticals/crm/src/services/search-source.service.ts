@@ -13,7 +13,7 @@ import { crmContactSearchTerms } from '../../shared/domain/search-contact-classi
 import { CrmStateSchema, withDefaultSlices } from '../../shared/domain/state.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { crmStates } from '../database/schema.ts';
-import { searchUnavailable } from '../search/search-unavailable.ts';
+import { searchUnavailable } from './search-unavailable.ts';
 
 /**
  * Explicit owner-local lookup policy. Broader client metadata is limited to organization business fields;

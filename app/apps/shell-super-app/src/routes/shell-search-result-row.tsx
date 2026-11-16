@@ -3,7 +3,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ComponentProps, ComponentType } from 'react';
 
-import type { ShellSearchResult } from '../../shared/api.ts';
+import type { ShellSearchResult } from '../../shared/browser-api.ts';
 import {
   shellSearchResourceFields,
   shellSearchResultBadges,

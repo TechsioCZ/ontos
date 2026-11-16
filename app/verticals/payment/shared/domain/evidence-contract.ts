@@ -5,20 +5,21 @@ import {
   PaymentCompositionRevisionSchema,
   PaymentEvidenceRefSchema,
   PaymentIdSchema,
+  PaymentLegalEntityIdSchema,
+  PaymentMaterialHashSchema,
   PaymentObservationIdSchema,
   PaymentOperationIdSchema,
   PaymentOperationKeySchema,
-  PaymentProviderAccountRefSchema,
   PaymentReasonSchema,
   PaymentReconciliationCaseIdSchema,
   PaymentReconciliationDecisionIdSchema,
   PaymentRecoveryIdSchema,
   PaymentRevisionSchema,
-  PaymentSourceEnvironmentSchema,
+  PaymentTenantIdSchema,
 } from './payment-identifiers.ts';
+import { PaymentGatewayAccountBindingSchema } from './payment-execution-binding.ts';
 import { PaymentMonetaryAmountSchema } from './payment-money.ts';
 import {
-  PaymentGatewayProviderFamilySchema,
   PaymentOperationKindSchema,
   PaymentOperationOutcomeSchema,
   PaymentReconciliationCaseKindSchema,
@@ -54,32 +55,30 @@ export class PaymentEvidenceRejected extends Schema.TaggedError<PaymentEvidenceR
 export const paymentEvidenceRejected = (code: PaymentEvidenceRejectionCode, reason: string): PaymentEvidenceRejected =>
   new PaymentEvidenceRejected({ code, reason });
 
-const PaymentProviderIdempotencyKeySchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[!-~]+$/u),
-).pipe(Schema.brand('PaymentProviderIdempotencyKey'));
+const replayInstantSchema = Schema.Finite.check(
+  Schema.isInt(),
+  Schema.isBetween({ maximum: 8_640_000_000_000_000, minimum: 0 }),
+);
 
 /**
- * C17-proven provider idempotency guarantee of one gateway operation (#1151 "Exact same-operation
- * replay only where C17 proves provider idempotency covers that operation in its current scope/window").
- * It is stored with the operation's immutable material request under `providerIdempotency`, bound to
- * the exact provider/account/environment of the original binding. The window starts no later than the
- * operation's admission time, so `createdAt + windowSeconds` is a conservative end of the guarantee.
+ * C17 evidence from the retained original dispatch (#1151/#1158). The absolute window is anchored
+ * to that dispatch. Hashes identify the provider's retained request and key without publishing them.
  */
-export const PaymentProviderIdempotencyGuaranteeSchema = Schema.Struct({
-  environment: PaymentSourceEnvironmentSchema,
-  providerAccountRef: PaymentProviderAccountRefSchema,
-  providerFamily: PaymentGatewayProviderFamilySchema,
-  providerIdempotencyKey: PaymentProviderIdempotencyKeySchema,
-  windowSeconds: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 31_536_000, minimum: 1 })),
+export const PaymentProviderReplayGuaranteeSchema = Schema.Struct({
+  binding: PaymentGatewayAccountBindingSchema,
+  endpointRef: PaymentEvidenceRefSchema,
+  expiresAtEpochMs: replayInstantSchema,
+  legalEntityId: PaymentLegalEntityIdSchema,
+  materialHash: PaymentMaterialHashSchema,
+  operationId: PaymentOperationIdSchema,
+  operationKind: PaymentOperationKindSchema,
+  paymentId: PaymentIdSchema,
+  providerIdempotencyKeyHash: PaymentMaterialHashSchema,
+  providerRequestHash: PaymentMaterialHashSchema,
+  startsAtEpochMs: replayInstantSchema,
+  tenantId: PaymentTenantIdSchema,
 });
-export type PaymentProviderIdempotencyGuarantee = typeof PaymentProviderIdempotencyGuaranteeSchema.Type;
-
-/** The operation material-request member that carries the guarantee. */
-export const PaymentOperationIdempotencyMaterialSchema = Schema.Struct({
-  providerIdempotency: PaymentProviderIdempotencyGuaranteeSchema,
-});
+export type PaymentProviderReplayGuarantee = typeof PaymentProviderReplayGuaranteeSchema.Type;
 
 /** Why recovery is requested; transport loss makes the original effect INDETERMINATE (#1151). */
 export const PAYMENT_RECOVERY_TRIGGERS = [
@@ -116,8 +115,10 @@ export const PaymentRecoveryRequestViewSchema = Schema.Struct({
   requestedAt: Schema.DateTimeUtcFromString,
   /** Mode actually recorded; only PROVIDER_IDEMPOTENT_REPLAY permits resending the original request. */
   recoveryMode: PaymentRecoveryModeSchema,
-  /** True when an executor task was admitted (Outbox); AWAIT/GOVERNED modes never fabricate one. */
+  /** True when an executor request was queued. Only a registered consumer can accept its delivery. */
   executorWorkAdmitted: Schema.Boolean,
+  /** Core enrolled the queued replay against its registered consumer and original Composition. */
+  executorWorkTracked: Schema.optionalKey(Schema.Boolean),
   /** True when the request opened explicit reconciliation debt (held). */
   heldForReconciliation: Schema.Boolean,
 });

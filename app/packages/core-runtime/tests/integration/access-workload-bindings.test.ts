@@ -31,10 +31,13 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
  * intent written into a shared test database could never be cleaned up afterwards.
  */
 const databasePrefix = 'ontos_test_access_workload_bindings_';
-const migrationPath = new URL(
+/** The access migration, then the access fence's lease (the column Core's fence writers set). */
+const migrationPaths = [
   '../../drizzle/20261103093547_authorization-v2-access-intent/migration.sql',
-  import.meta.url,
-).pathname;
+  // The registry read answers keys and registered companies together (D6), so the company registrations exist too.
+  '../../drizzle/20261109185619_workload-company-bindings/migration.sql',
+  '../../drizzle/20261112024527_scope-fence-lease/migration.sql',
+].map((path) => new URL(path, import.meta.url).pathname);
 
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 const tenantA = uid(1);
@@ -74,6 +77,7 @@ const REQUIRED_IDENTITY_TABLES = [
   `create table "core"."legal_entities" (
      tenant_id uuid not null,
      legal_entity_id uuid primary key,
+     status text not null default 'active',
      unique (tenant_id, legal_entity_id)
    )`,
   `create table "core"."principals" (
@@ -129,10 +133,12 @@ const makeAccessWorkloadSchema = Effect.gen(function* accessWorkloadSchema() {
   for (const statement of REQUIRED_IDENTITY_TABLES) {
     yield* admin.unsafe(statement);
   }
-  const migration = yield* fileSystem.readFileString(migrationPath);
-  for (const statement of migration.split('--> statement-breakpoint')) {
-    if (statement.trim().length > 0) {
-      yield* admin.unsafe(statement);
+  for (const migrationPath of migrationPaths) {
+    const migration = yield* fileSystem.readFileString(migrationPath);
+    for (const statement of migration.split('--> statement-breakpoint')) {
+      if (statement.trim().length > 0) {
+        yield* admin.unsafe(statement);
+      }
     }
   }
   // The runtime role's Core privileges, exactly what `db:bootstrap-runtime-role` grants after a migrate.
@@ -213,19 +219,19 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
       });
       yield* store.registerBindings(scopeA, { bindings: [binding] });
 
-      const keys = yield* reader.readActiveWorkloadKeys({
+      const keys = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(provisioner),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...keys]).toEqual([IDENTITY_PROVIDER]);
 
       // A person holds no registered workload: the kind alone admits nothing (O73).
-      const humanKeys = yield* reader.readActiveWorkloadKeys({
+      const humanKeys = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(human),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...humanKeys]).toEqual([]);
     }),
   );
@@ -250,20 +256,20 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
         revokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T10:00:00Z')),
       });
 
-      const afterRevoke = yield* reader.readActiveWorkloadKeys({
+      const afterRevoke = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(provisioner),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...afterRevoke]).toEqual([]);
 
       // Re-registering the same binding id is a no-op: a revoked binding is never reopened (D27).
       yield* store.registerBindings(scopeA, { bindings: [binding] });
-      const afterReregister = yield* reader.readActiveWorkloadKeys({
+      const afterReregister = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(provisioner),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...afterReregister]).toEqual([]);
 
       // A fresh registration with a new incarnation is a new, live binding for the same key.
@@ -275,11 +281,11 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
         tenantId: tenantA,
       });
       yield* store.registerBindings(scopeA, { bindings: [rebind] });
-      const afterRebind = yield* reader.readActiveWorkloadKeys({
+      const afterRebind = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(provisioner),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...afterRebind]).toEqual([STOREFRONT]);
     }),
   );
@@ -319,17 +325,17 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
       });
       yield* store.registerBindings(scopeB, { bindings: [inB] });
 
-      const seenInA = yield* reader.readActiveWorkloadKeys({
+      const seenInA = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(otherWorkload),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...seenInA]).toEqual([]);
-      const seenInB = yield* reader.readActiveWorkloadKeys({
+      const seenInB = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(otherWorkload),
         scope: scopeB,
         tenantId: TenantIdSchema.make(tenantB),
-      });
+      })).workloadKeys;
       expect([...seenInB]).toEqual([STOREFRONT]);
     }),
   );
@@ -359,11 +365,11 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
         tenantId: tenantA,
       });
       yield* store.registerBindings(scopeA, { bindings: [second] });
-      const keys = yield* reader.readActiveWorkloadKeys({
+      const keys = (yield* reader.readWorkloadAuthority({
         principalId: PrincipalIdSchema.make(provisioner),
         scope: scopeA,
         tenantId: TenantIdSchema.make(tenantA),
-      });
+      })).workloadKeys;
       expect([...keys]).toEqual([IDENTITY_PROVIDER]);
 
       // The invariant is the database's: a raw second live row for the same principal and key is

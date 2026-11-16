@@ -9,7 +9,7 @@ import { assetsRead } from '../../src/search/assets.provider.ts';
 import { devicesRead } from '../../src/search/devices.provider.ts';
 import { documentsRead } from '../../src/search/documents.provider.ts';
 import { metersRead } from '../../src/search/meters.provider.ts';
-import type { FacilitySearchResource } from '../../src/search/record-access.ts';
+import type { FacilitySearchResource } from '../../src/services/facility-search-access.ts';
 import { buildFacilitySearchDocuments } from '../../src/services/facility-search-projection.ts';
 import { facilityOperationsRegistration } from '../../vertical.registration.ts';
 import { company, otherCompany, scope, snapshot, tenantId } from './facility-search-fixtures.ts';

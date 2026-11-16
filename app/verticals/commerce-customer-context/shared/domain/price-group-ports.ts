@@ -55,10 +55,11 @@ export interface AssignCustomerPriceGroupStoreInput {
   readonly effectiveFrom: PriceGroupInstant;
   readonly effectiveTo: null | PriceGroupInstant;
   readonly expectedProfileRevision: number;
+  readonly organizationBusiness?: boolean;
   readonly priceGroupRef: PriceGroupRef;
   readonly principalId: string;
   readonly profile: CommerceCustomerProfileTarget;
-  readonly reason: string;
+  readonly reason: string | null;
   readonly recordedAt: PriceGroupInstant;
   readonly tenantId: string;
 }

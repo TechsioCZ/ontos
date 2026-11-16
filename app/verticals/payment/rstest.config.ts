@@ -15,6 +15,16 @@ export default defineConfig({
       tools: { swc },
     },
     {
+      // Opt-in provider sandbox conformance (#1159 level 4). Without ONTOS_C17_SANDBOX_* credentials
+      // every scenario is skipped as NOT RUN; the unit and integration globs never include these files.
+      include: ['tests/sandbox/**/*.test.ts'],
+      name: 'sandbox',
+      root: new URL('.', import.meta.url).pathname,
+      testEnvironment: 'node',
+      testTimeout: 120_000,
+      tools: { swc },
+    },
+    {
       include: ['tests/unit/**/*.test.ts'],
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,

@@ -105,6 +105,7 @@ const reasonCodes = new Set([
   'structural.access_admin',
   'structural.access_admin_any',
   'structural.delegation',
+  'structural.member_baseline',
 ]);
 
 export const whyReasonKey = (code: string): string =>

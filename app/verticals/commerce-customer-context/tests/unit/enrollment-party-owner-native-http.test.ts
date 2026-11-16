@@ -662,3 +662,39 @@ it.effect('treats a customer role that committed under the same key during dispa
     expect(transport.commands).toHaveLength(3);
   }),
 );
+
+it.effect('never presents the Tenant gateway key to a plain-HTTP Shell address off the machine', () =>
+  Effect.gen(function* plainHttpShell() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (target, init) => {
+      requests.push(new Request(target, init));
+      return Promise.resolve(Response.json(gatewayResponse()));
+    };
+    const offMachine = new URL('https://shell.internal.example/shell-super-app-api');
+    offMachine.protocol = 'http:';
+    const failure = yield* acquireRetailPartyGateway({
+      compositionRevision,
+      legalEntityId,
+      requestCorrelation,
+      tenantId,
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+              [tenantId]: {
+                coreIdentityApiKey: 'scheduled-core-identity-key',
+                gatewayApiKey: 'scheduled-service-api-key',
+              },
+            }),
+            ONTOS_SHELL_GATEWAY_BASE_URL: offMachine.toString(),
+          }),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(failure.reason).toBe('The Party Registry server gateway configuration is unavailable');
+    expect(requests).toHaveLength(0);
+  }),
+);

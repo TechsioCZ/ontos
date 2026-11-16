@@ -1,12 +1,13 @@
 // The meter master-data card's values: a new meter is submitted once, an edit is sent on Uložit.
 import { Option } from 'effect';
+import type { Types } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';
 import { defaultUnitOf } from './meters-view.ts';
 
 type MeterFields = Omit<Extract<OpsCommand, { readonly _tag: 'MeterCreate' }>, '_tag'>;
-type MutableMeterFields = { -readonly [Key in keyof MeterFields]: MeterFields[Key] };
+type MutableMeterFields = Types.Mutable<MeterFields>;
 type UpdateCommand = Extract<OpsCommand, { readonly _tag: 'MeterUpdate' }>;
 
 export interface MeterDraft {
@@ -94,7 +95,7 @@ export const meterUpdateCommandOf = (
   if (!valid(draft)) {
     return Option.none();
   }
-  const command: { -readonly [Key in keyof UpdateCommand]: UpdateCommand[Key] } = {
+  const command: Types.Mutable<UpdateCommand> = {
     _tag: 'MeterUpdate',
     ...meterFieldsOf(draft, location),
     meterId: meter.id,

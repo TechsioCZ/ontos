@@ -8,7 +8,7 @@ import type {
   MandatePrepared,
   MandateTransactionInput,
 } from '../../src/access/approvals/action-mandate-dispatch.ts';
-import { freezeActionCommandV2, makeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import type { DecisionReasonCode, GrantedAuthorityEvidence } from '../../src/access/decision/contract.ts';
 import {
   AccessScopeIdSchema,
@@ -354,7 +354,7 @@ const makeRecordingDispatch = (options: DispatchOptions = {}) => {
       return options.parkFailure === undefined ? Effect.succeed(parked) : Effect.fail(options.parkFailure);
     },
     prepare: (input) =>
-      makeActionCommandV2({ payload: { amount: 1 }, registration: action, scope: input.scope }).pipe(
+      resolveActionCommandV2({ payload: { amount: 1 }, registration: action, scope: input.scope }).pipe(
         Effect.map(
           (command) =>
             ({

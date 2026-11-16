@@ -101,10 +101,12 @@ export const createPromotionDraftActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreatePromotionDraftActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreatePromotionDraftActionForbiddenProblem'> =>
     CreatePromotionDraftActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -220,7 +222,8 @@ const mapCoreProblem = (error: ActionCoreError): CreatePromotionDraftActionProbl
       ActionInvocationStateError: (failure) => createPromotionDraftActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createPromotionDraftActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createPromotionDraftActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createPromotionDraftActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createPromotionDraftActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createPromotionDraftActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createPromotionDraftActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createPromotionDraftActionProblem.conflict(failure.code),

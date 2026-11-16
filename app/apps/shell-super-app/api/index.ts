@@ -11,24 +11,38 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistryEffect,
 } from '@app/core-runtime/auth/external-identity-admission';
-import { delegationUnavailable } from './auth/gateway-delegation-errors.ts';
+import { delegationUnavailable, logDelegationRefusal } from './auth/gateway-delegation-errors.ts';
+import { authenticationRequestId } from './auth/observability.ts';
+import { withShellGatewayReleaseDiagnostic } from './auth/gateway-release-diagnostic.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
+import { gatewayReleaseRefusal } from './auth/gateway-release-refusal.ts';
+import type { GatewayReleaseRefusalHeaders } from './auth/gateway-release-refusal.ts';
 import {
   staffAuthenticationNamespaceRegistration,
   STAFF_AUTHENTICATION_NAMESPACE_ID,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
-import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
+import { bindingsUnavailable, issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
 import {
   admitIntegrationCredential,
   loadGatewayModuleBindings,
   ModuleCredentialEnrolmentSourceLive,
 } from './auth/gateway-delegation-policy.ts';
+import {
+  acquireSymmyRouteScopeProof,
+  issueSymmyRouteScopeAssertion,
+  readSymmyRouteScope,
+} from './auth/gateway-symmy-route-scope.ts';
+import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
+import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
+import { PlatformWorkloadKeyAdmission } from './auth/platform-workload-key-admission.ts';
+import { PlatformWorkloadKeyAdmissionLive } from './auth/platform-workload-key-admission.service.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
   ActiveApplicationCompositionServiceContract,
+  ContextAccess,
   DatabaseConnectionPair,
   PrincipalManagementError,
   PrincipalResolutionError,
@@ -41,10 +55,10 @@ import type {
 
 import {
   makeActionRuntimeLive,
+  AgentLifecycleAuthorityLive,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
-  ContextAccess,
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
@@ -88,8 +102,12 @@ import {
   OperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { API_KEY_GATEWAY_CONTEXT_HEADER, GatewayContextResponseSchema } from '@app/shared-contracts';
-import type { ApiKeyGatewayContextRequest, GatewayContextProblem } from '@app/shared-contracts';
+import {
+  API_KEY_GATEWAY_CONTEXT_HEADER,
+  GATEWAY_MODULE_NOT_INSTALLED_TYPE,
+  GatewayContextResponseSchema,
+} from '@app/shared-contracts';
+import type { ApiKeyGatewayContextRequest, GatewayContextProblem, GatewayRefusalReason } from '@app/shared-contracts';
 import {
   AccessDecisionGate,
   SubjectAccessInspectionLive,
@@ -127,6 +145,7 @@ import { FetchHttpClient, HttpRouter, HttpServerRequest, UrlParams } from 'effec
 import { authenticationQueryRedactions } from '@app/shared-contracts/credential-url';
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
+import { flow } from 'effect/Function';
 
 import { AccessChangesCommandsLive } from '@app/core-runtime/access/changes/commands';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
@@ -136,6 +155,7 @@ import {
 } from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
+import { AgentConnectionStoreLive } from '@app/core-runtime/access/intent/agent-connections';
 import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
 import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
@@ -198,7 +218,43 @@ import { EmailRequestDatabaseLive } from './email/request-database.ts';
 import { EmailDeliveryRequests, ShellEmailReceiptHandlersLive } from './email/transport.ts';
 import type { EmailDeliveryQuery } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
+import {
+  SymmyHostMount,
+  SymmyHostMountLive,
+  SymmyIngress,
+  SymmyIngressHandlersLive,
+  SymmyIngressSchemaErrorLive,
+  SymmyIngressTransportLive,
+} from './symmy/transport.ts';
+import { symmyUnavailableProblem } from './symmy/contract.ts';
+import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
+import {
+  PaymentGatewayHostMountLive,
+  PaymentGatewayRelay,
+  PaymentGatewayRelayTransportLive,
+  PaymentNotificationHandlersLive,
+  PaymentReconciliationHandlersLive,
+} from './payment-gateway/transport.ts';
+import { paymentRouteRefused } from './payment-gateway/contract.ts';
+import type { PaymentRouteAuthorizationInput, PaymentRouteRefused } from './payment-gateway/contract.ts';
+import {
+  describePaymentGatewayDefect,
+  PaymentGatewayDefectSeam,
+  PaymentNotificationBoundaryLive,
+  PaymentReconciliationBoundaryLive,
+} from './payment-gateway/defect-boundary.ts';
+import {
+  forwardPaymentOwnerRelease,
+  resolvePaymentOwnerReleaseBase,
+} from './payment-gateway/owner-release-transport.ts';
+import { acquirePaymentRouteScopeProof, issuePaymentRouteScopeAssertion } from './auth/gateway-payment-route-scope.ts';
+import {
+  SymmyGovernedDispatch,
+  SymmyGovernedDispatchLive,
+  forwardSymmyOwnerRelease,
+} from './symmy/governed-dispatch.ts';
 
+import { ShellAuthenticationApi } from '../shared/api.ts';
 import {
   ApiKeyIssueResponseSchema,
   ApiKeyLifecycleResponseSchema,
@@ -213,7 +269,6 @@ import {
   ResolvedModuleTargetSchema,
   ResolvedModuleTargetsSchema,
   SelfApiKeyListResponseSchema,
-  ShellAuthenticationApi,
   ShellCompositionSchema,
   ShellDocumentContextSchema,
   ShellResourceResponseSchema,
@@ -222,8 +277,8 @@ import {
   SwitchLegalEntityResponseSchema,
   SwitchTenantResponseSchema,
   SwitchToTenantContextResponseSchema,
-} from '../shared/api.ts';
-import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../shared/module-target-diagnostics.ts';
+} from '../shared/browser-api.ts';
+import { moduleTargetSourceHints } from '../shared/module-target-diagnostics.ts';
 import { moduleTargetLogAnnotations } from './modules/module-target-log.ts';
 import type {
   AuthenticationInternalProblem,
@@ -236,6 +291,8 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
   ShellDocumentContextRequest,
+  ShellDocumentTarget,
+  ModuleTargetSelector,
   ResolveModuleTargetPayload,
   ResolveModuleTargetsPayload,
   ShellInvalidRequestProblem,
@@ -252,7 +309,7 @@ import type {
   TenantAuthenticationRequiredProblem,
   TenantCapabilityUnavailableProblem,
   TenantInternalProblem,
-} from '../shared/api.ts';
+} from '../shared/browser-api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 import { decodeApiKeyGatewayReadRequest } from './auth/api-key-gateway-read-transport.ts';
 import { invitePeoplePerson, listPeople, setPeopleCompanyMembership } from './auth/people-administration.ts';
@@ -280,7 +337,10 @@ import {
   GatewayIssuer,
   GatewayIssuerLive,
   ShellCryptoLive,
+  gatewayIssuerFailureClass,
+  gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
+  issueSymmyGatewayContextAssertion,
 } from './auth/gateway-issuer.ts';
 import {
   externalIdentityGroupLive,
@@ -289,11 +349,19 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
-import { demoAccountCapability } from './auth/demo-accounts.ts';
+import { GatewayTimings, observeGatewayPhase } from './auth/gateway-timing.ts';
+import { NoServerTimingLive } from './no-server-timing.ts';
+import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  connectedAppsAdministration,
+  peopleAdministrationDecision,
+  tenantReleaseHintAdmitted,
+} from './auth/administration-access.ts';
+import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
+import { ManagedApiKeyTargetEligibilityLive } from '@app/core-runtime/auth/managed-api-key-eligibility';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
   SupportImpersonationCorrelationId,
@@ -387,6 +455,10 @@ interface RequestWithHeaders {
 }
 type LogAnnotation = boolean | number | string;
 
+interface SanitizedCause {
+  readonly reasons: readonly Cause.Reason<unknown>['_tag'][];
+}
+
 const headerValue = (headers: RequestHeaders, name: string): string | undefined => headers[name];
 
 const correlationFromRequest = (request: RequestWithHeaders): string =>
@@ -402,6 +474,7 @@ const recoverUnexpectedDefect =
     request: RequestWithHeaders,
     message: string,
     fail: () => Effect.Effect<never, Failure, FailureRequirements>,
+    describeCause: (cause: Cause.Cause<unknown>) => Cause.Cause<unknown> | SanitizedCause = (cause) => cause,
   ) =>
   <Value, Error, Requirements>(
     effect: Effect.Effect<Value, Error, Requirements>,
@@ -412,9 +485,10 @@ const recoverUnexpectedDefect =
           return Effect.succeed(exit.value);
         }
         return exit.cause.reasons.some(Cause.isDieReason)
-          ? Effect.annotateLogs(Effect.logError(message, exit.cause), requestLogAnnotations(request)).pipe(
-              Effect.andThen(fail()),
-            )
+          ? Effect.annotateLogs(
+              Effect.logError(message, describeCause(exit.cause)),
+              requestLogAnnotations(request),
+            ).pipe(Effect.andThen(fail()))
           : Effect.failCause(exit.cause);
       }),
     );
@@ -555,6 +629,15 @@ const gatewayForbiddenProblem = (): GatewayProblem<'GatewayForbiddenProblem'> =>
     'Gateway context forbidden',
     'https://ontos.dev/problems/gateway-forbidden',
   );
+/** A refused module call whose module is not installed for the tenant: a 403 that says exactly that (`type`). */
+const gatewayModuleNotInstalledProblem = (): GatewayProblem<'GatewayForbiddenProblem'> =>
+  problemDetails(
+    'GatewayForbiddenProblem',
+    'The module the call is for is not installed for the tenant.',
+    403,
+    'Module not installed',
+    GATEWAY_MODULE_NOT_INSTALLED_TYPE,
+  );
 const gatewayRateLimitedProblem = (retryAfterSeconds: number): GatewayProblem<'GatewayRateLimitedProblem'> =>
   extendedProblemDetails(
     'GatewayRateLimitedProblem',
@@ -574,6 +657,12 @@ const gatewayAuthenticationUnavailableProblem = (): GatewayProblem<'GatewayUnava
     'https://ontos.dev/problems/gateway-unavailable',
     { retryable: true as const },
   );
+
+/** The same problem, naming the step that refused it; a delegated call's caller logs that code. */
+const withRefusalReason = <Problem extends GatewayContextProblem>(problem: Problem, reason: GatewayRefusalReason) => ({
+  ...problem,
+  reason,
+});
 
 const gatewayAuthorizationUnavailableProblem = (): GatewayProblem<'GatewayUnavailableProblem'> =>
   extendedProblemDetails(
@@ -657,13 +746,16 @@ const gatewayIssuerProblem = (
         'Invalid gateway audience',
         'https://ontos.dev/problems/gateway-audience-invalid',
       )
-    : extendedProblemDetails(
-        'GatewayUnavailableProblem',
-        'Gateway assertion issuance is temporarily unavailable. Please retry.',
-        503,
-        'Gateway unavailable',
-        'https://ontos.dev/problems/gateway-unavailable',
-        { retryable: true as const },
+    : withRefusalReason(
+        extendedProblemDetails(
+          'GatewayUnavailableProblem',
+          'Gateway assertion issuance is temporarily unavailable. Please retry.',
+          503,
+          'Gateway unavailable',
+          'https://ontos.dev/problems/gateway-unavailable',
+          { retryable: true as const },
+        ),
+        gatewayIssuerRefusalReason(error),
       );
 };
 
@@ -675,6 +767,7 @@ const logGatewayIssuerFailure = (
   Effect.annotateLogs(
     Effect.logError('Shell gateway assertion issuance failed'),
     requestLogAnnotations(request, {
+      failureCause: gatewayIssuerFailureClass(error),
       failureCode: error.code,
       failureStage: error.stage,
       operation,
@@ -1445,20 +1538,15 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
-const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
-  Value,
-  Failure,
-  Requirements,
->(effect: Effect.Effect<Value, Failure, Requirements>) {
-  const collector = yield* gatewayTimingCollector;
-  yield* collector.appendResponseHeader;
-  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
-});
+/** Measures this gateway request's phases: each one is logged when it ends. */
+const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(Effect.provideService(GatewayTimings, true));
 
 /**
- * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
- * (same audience binding and lifetime). An audience the release does not admit is left out instead of failing the
- * others; the browser asks for it alone and gets the single 400.
+ * One assertion per requested entry (an audience may be named up to eight times) for an authenticated session
+ * principal, from the same issuer as `issueGatewayContext`: each with its own id, audience binding, lifetime and scope
+ * grant. An audience the release does not admit is left out instead of failing the others; the browser asks for it
+ * alone and gets the single 400.
  */
 const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAssertions')(
   function* issueDocumentGatewayAssertionsEffect(
@@ -1500,9 +1588,8 @@ export const resolveModuleTargetHandler = Effect.fn('shell.composition.resolveMo
         request,
         error,
         moduleTargetLogAnnotations(catalog, {
-          reportedSource: request.headers[moduleTargetSourceHeader],
+          ...moduleTargetSourceHints(request.headers),
           selector: payload,
-          sourcePath: request.headers[moduleTargetSourcePathHeader],
         }),
       );
     if (session.state === 'tenant_authenticated') {
@@ -1560,9 +1647,8 @@ export const moduleTargetsHandler = Effect.fn('shell.composition.moduleTargets')
               request,
               error,
               moduleTargetLogAnnotations(catalog, {
-                reportedSource: request.headers[moduleTargetSourceHeader],
+                ...moduleTargetSourceHints(request.headers),
                 selector,
-                sourcePath: request.headers[moduleTargetSourcePathHeader],
               }),
             ),
           ),
@@ -1616,13 +1702,53 @@ const liveScopeOrRefusal = Option.match({
 });
 
 /**
+ * A module page document's target: the same governed read `resolveModuleTargetHandler` runs for the same principal
+ * (`tenantModuleTarget` for a tenant session), against the document's captured release. Its problem is its own
+ * outcome, never the document's, exactly as the separate request answered it.
+ */
+const documentTarget = Effect.fn('shell.composition.documentTarget')(function* documentTargetEffect(
+  request: RequestWithHeaders,
+  selector: ModuleTargetSelector,
+  principal: TrustedPrincipalContext,
+  catalog: ShellInstalledCatalog,
+  context: 'company' | 'tenant',
+) {
+  const governedReads = yield* ShellGovernedReads;
+  const input = {
+    ...selector,
+    compositionRevision: catalog.composition.revision,
+    correlationId: correlationFromRequest(request),
+    principal,
+  };
+  const read: Effect.Effect<ShellDocumentTarget, ReadCoreError> =
+    context === 'tenant'
+      ? governedReads.tenantModuleTarget(input)
+      : governedReads.moduleTarget(input).pipe(Effect.map((target) => ({ state: 'resolved' as const, target })));
+  return yield* read.pipe(
+    Effect.provideService(CapturedShellCompositionCatalog, catalog),
+    Effect.tapError((error) =>
+      logShellReadFailure(
+        'module_target',
+        request,
+        error,
+        moduleTargetLogAnnotations(catalog, {
+          ...moduleTargetSourceHints(request.headers),
+          selector,
+        }),
+      ),
+    ),
+    Effect.catch((error) => Effect.succeed({ problem: shellReadProblem(error), state: 'failed' as const })),
+    observeGatewayPhase('document-target'),
+  );
+});
+
+/**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
  * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
  * the document's isolate. Each part keeps its own outcome; the browser keeps the separate, cached endpoints.
- * It also signs the gateway assertions of the composition's audiences for the session principal (it is classified as
- * `shell.document-context.issue.session`): a separate batch call had to wait for this answer and then resolved the
- * session a second time. When signing fails the document goes without them and the browser asks the batch issuer.
+ * It issues no gateway assertions: the HTML waited for one signature and one scope-grant registration per audience
+ * here, while the browser obtains them in one batch (`auth/gateway-contexts`) as soon as the document renders.
  */
 export const documentContextHandler = Effect.fn('shell.composition.documentContext')(
   function* documentContextHandlerEffect(request: RequestWithHeaders, payload: ShellDocumentContextRequest) {
@@ -1679,14 +1805,13 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             return yield* Effect.fail(authenticationInternalProblem());
           }
           const capability = yield* Effect.forkChild(
-            demoAccountCapability({
-              legalName:
-                context.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
-                legalEntityId,
-              principal,
-            }).pipe(
-              Effect.map(({ canManage }) => canManage),
-              Effect.orElseSucceed(() => false),
+            // A check that could not answer is told apart from a refusal: the document shows no people
+            // administration either way, but says nothing the browser could keep as an answer.
+            peopleAdministrationDecision(principal).pipe(
+              Effect.map(({ outcome }) =>
+                outcome === 'UNAVAILABLE' ? Option.none<boolean>() : Option.some(outcome === 'ALLOWED'),
+              ),
+              Effect.orElseSucceed(() => Option.none<boolean>()),
             ),
             { startImmediately: true },
           );
@@ -1694,6 +1819,15 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             const catalog = yield* captureShellRelease(payload.compositionRevision).pipe(
               observeGatewayPhase('document-admission'),
             );
+            // The page target reads beside the composition, against the same captured release.
+            const target =
+              payload.target === undefined
+                ? Option.none<Fiber.Fiber<ShellDocumentTarget>>()
+                : Option.some(
+                    yield* Effect.forkChild(documentTarget(request, payload.target, principal, catalog, 'company'), {
+                      startImmediately: true,
+                    }),
+                  );
             const governedReads = yield* ShellGovernedReads;
             const response = yield* governedReads
               .composition({
@@ -1705,7 +1839,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                 Effect.tapError((error) => logShellReadFailure('composition', request, error)),
               );
             const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
-            return { catalog, composition: documentComposition };
+            return { catalog, composition: documentComposition, target };
           }).pipe(
             observeGatewayPhase('document-composition'),
             Effect.catch((error) =>
@@ -1716,6 +1850,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                     ? ('reload_required' as const)
                     : ('unavailable' as const),
                 },
+                target: Option.none<Fiber.Fiber<ShellDocumentTarget>>(),
               }),
             ),
           );
@@ -1729,21 +1864,9 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
           if (documentComposition.state !== 'available' || captured.catalog === null) {
             return base;
           }
-          const assertions = yield* Effect.forkChild(
-            Effect.option(
-              issueDocumentGatewayAssertions(
-                context.principal,
-                documentComposition.compositionRevision,
-                documentComposition.gatewayAudiences,
-              ).pipe(
-                observeGatewayPhase('document-assertions'),
-                Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
-              ),
-            ),
-            { startImmediately: true },
-          );
           // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
-          const canManagePeople = yield* Fiber.join(capability);
+          const capabilityAnswer = yield* Fiber.join(capability);
+          const canManagePeople = Option.getOrElse(capabilityAnswer, () => false);
           const home =
             payload.home === true
               ? yield* resolveDocumentHome({
@@ -1756,43 +1879,62 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
                   Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
                 )
               : undefined;
-          const result = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
-          return Option.match(yield* Fiber.join(assertions), {
-            onNone: () => result,
-            onSome: (gatewayAssertions) => ({ ...result, gatewayAssertions }),
-          });
+          const answered = Option.isSome(capabilityAnswer) ? { ...base, canManagePeople } : base;
+          const withHome = home === undefined ? answered : { ...answered, home };
+          return Option.isNone(captured.target)
+            ? withHome
+            : { ...withHome, target: yield* Fiber.join(captured.target.value) };
         }),
-        tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
+        tenantContextAvailable: Effect.option(canSelectTenantContext(context.principal)),
       },
       { concurrency: 2 },
     );
     let tenantRelease = Option.none<string>();
+    let tenantTarget = Option.none<ShellDocumentTarget>();
     if (context.state === 'tenant_authenticated') {
-      const access = yield* ContextAccess;
-      const decisions = yield* access.tenants({
-        permission: 'access',
-        principalId: context.principal.principalId,
-        tenantIds: [context.principal.tenantId],
-      });
-      const [decision] = decisions;
-      if (decisions.length === 1 && decision?.key === context.principal.tenantId && decision.decision === 'allowed') {
-        tenantRelease = yield* captureShellRelease(payload.compositionRevision).pipe(
-          Effect.map((catalog) => catalog.composition.revision),
-          Effect.option,
-        );
+      // The release hint serves only tenant-context page dispatch, so it goes to exactly the people that dispatch
+      // admits: the dispatch Read's own carrier, asked in the tenant context (O28).
+      const governedReads = yield* ShellGovernedReads;
+      const admitted = yield* tenantReleaseHintAdmitted(
+        governedReads.tenantModuleTargetCarrier,
+        preserveSystemPrincipalContextTrust(context.principal, {
+          ...context.principal,
+          correlationId: correlationFromRequest(request),
+        }),
+      );
+      if (admitted) {
+        const tenantCatalog = yield* Effect.option(captureShellRelease(payload.compositionRevision));
+        tenantRelease = tenantCatalog.pipe(Option.map((catalog) => catalog.composition.revision));
+        // A page target counts only beside the release hint; without it the page shows "select a company".
+        if (Option.isSome(tenantCatalog) && payload.target !== undefined) {
+          tenantTarget = Option.some(
+            yield* documentTarget(request, payload.target, context.principal, tenantCatalog.value, 'tenant'),
+          );
+        }
       }
     }
-    const result = {
+    const assembled = {
       ...document,
       legalEntities: withOptionalProperty(
-        { legalEntities: context.availableLegalEntities, tenantContextAvailable },
+        {
+          legalEntities: context.availableLegalEntities,
+          tenantContextAvailable: Option.getOrElse(tenantContextAvailable, () => false),
+        },
         context.state === 'authenticated',
         'selectedLegalEntityId',
         context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
         { state: context.state },
       ),
     };
-    return Option.isSome(tenantRelease) ? { ...result, compositionRevision: tenantRelease.value } : result;
+    // The switcher hint shows "no tenant context" when its check could not answer, and says so.
+    const result = Option.isNone(tenantContextAvailable)
+      ? { ...assembled, tenantContextUnavailable: true as const }
+      : assembled;
+    if (Option.isNone(tenantRelease)) {
+      return result;
+    }
+    const withRelease = { ...result, compositionRevision: tenantRelease.value };
+    return Option.isSome(tenantTarget) ? { ...withRelease, target: tenantTarget.value } : withRelease;
   },
 );
 
@@ -2071,7 +2213,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         request,
         Effect.gen(function* demoAccountCapabilityHandler() {
           const caller = yield* demoAccountCaller(request);
-          const response = yield* demoAccountCapability(caller);
+          const response = yield* peopleAdministrationCapability(caller);
           yield* noStore;
           return yield* decodeResponse(DemoAccountCapabilitySchema, response, shellInternalProblem);
         }),
@@ -2438,14 +2580,28 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
 });
 
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
-  compositionRevision: string | undefined,
+  compositionRevision?: string,
+  /** For a browser-session endpoint: what to log when its document's release is refused. */
+  caller?: { readonly endpoint: string; readonly headers: GatewayReleaseRefusalHeaders },
 ) {
   const authority = yield* ShellInstalledModuleCatalog;
   const catalog = yield* authority.load.pipe(
     observeGatewayPhase('gateway-release'),
     Effect.catchTags({
-      InstalledModuleCatalogInvalidError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
-      InstalledModuleCatalogUnavailableError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+      InstalledModuleCatalogInvalidError: () =>
+        withShellGatewayReleaseDiagnostic(
+          'catalog_invalid',
+          failGatewayProblem(
+            withRefusalReason(gatewayAuthenticationUnavailableProblem(), 'installed_release_unavailable'),
+          ),
+        ),
+      InstalledModuleCatalogUnavailableError: () =>
+        withShellGatewayReleaseDiagnostic(
+          'catalog_unavailable',
+          failGatewayProblem(
+            withRefusalReason(gatewayAuthenticationUnavailableProblem(), 'installed_release_unavailable'),
+          ),
+        ),
     }),
   );
   if (
@@ -2453,27 +2609,46 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
     catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
     catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
   ) {
-    return yield* failGatewayProblem(
-      extendedProblemDetails(
-        'GatewayReloadRequiredProblem',
-        'The document release is no longer admitted. Reload to continue.',
-        409,
-        'Reload required',
-        'https://ontos.dev/problems/gateway-reload-required',
-        { reloadRequired: true as const },
+    if (caller !== undefined) {
+      yield* Effect.logInfo('gateway release refused').pipe(
+        Effect.annotateLogs({
+          ...gatewayReleaseRefusal({
+            currentRevision: catalog.composition.revision,
+            endpoint: caller.endpoint,
+            headers: caller.headers,
+            sentRevision: compositionRevision ?? null,
+          }),
+          shellBuildCurrent: catalog.composition.shell.deployment.buildMarker === ultramodernDeliveryUnit.buildMarker,
+        }),
+      );
+    }
+    return yield* withShellGatewayReleaseDiagnostic(
+      compositionRevision !== undefined && compositionRevision !== catalog.composition.revision
+        ? 'composition_revision_mismatch'
+        : 'shell_marker_mismatch',
+      failGatewayProblem(
+        extendedProblemDetails(
+          'GatewayReloadRequiredProblem',
+          'The document release is no longer admitted. Reload to continue.',
+          409,
+          'Reload required',
+          'https://ontos.dev/problems/gateway-reload-required',
+          { reason: 'release_changed' as const, reloadRequired: true as const },
+        ),
       ),
     );
   }
   return catalog.composition.revision;
 });
 
-/** Mints a subject's gateway context for an integration API key; a module credential is never such a key. */
-export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function* issueApiKeyContextEffect(
-  payload: ApiKeyGatewayContextRequest,
+/**
+ * Verifies an integration API key and resolves its subject. The subject's operational scope is resolved by Core
+ * before a requested company is admitted, so a scoped key never selects a company outside its own scope.
+ */
+const resolveApiKeyGatewayPrincipal = Effect.fn('ShellGateway.resolveApiKeyPrincipal')(function* resolveApiKeyPrincipal(
   rawKey: string | undefined,
-  request: RequestWithHeaders,
+  requestedLegalEntityId?: string,
 ) {
-  const compositionRevision = yield* requireGatewayRelease(payload.compositionRevision);
   const keys = yield* ApiKeyService;
   const resolver = yield* PrincipalResolver;
   if (rawKey === undefined || rawKey.trim().length === 0) {
@@ -2495,6 +2670,23 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
     observeGatewayPhase('principal-resolve'),
     Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)),
   );
+  // An internal workload principal acts only with the key the platform issued it for this release.
+  yield* (yield* PlatformWorkloadKeyAdmission)
+    .admit({
+      legalEntityId: requestedLegalEntityId ?? null,
+      principalId: identity.principalId,
+      providerKeyId: verified.providerKeyId,
+      tenantId: identity.tenantId,
+    })
+    .pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        failApiKeyGatewayProblem(
+          error.code === 'forbidden'
+            ? withRefusalReason(gatewayForbiddenProblem(), error.reason)
+            : withRefusalReason(gatewayAuthenticationUnavailableProblem(), error.reason),
+        ),
+      ),
+    );
   const principal = withOptionalProperty(
     {
       authBindingId: identity.authBindingId,
@@ -2504,9 +2696,9 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
       principalId: identity.principalId,
       tenantId: identity.tenantId,
     },
-    payload.legalEntityId !== undefined,
+    requestedLegalEntityId !== undefined,
     'legalEntityId',
-    payload.legalEntityId,
+    requestedLegalEntityId,
     {},
   );
   const scopeResolver = yield* OperationalScopeResolver;
@@ -2534,9 +2726,9 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
         ),
       ),
     );
-  if (payload.legalEntityId !== undefined) {
+  if (requestedLegalEntityId !== undefined) {
     yield* validateAuthorizedLegalEntity({
-      legalEntityId: payload.legalEntityId,
+      legalEntityId: requestedLegalEntityId,
       scope,
     }).pipe(
       Effect.catch((error) =>
@@ -2548,6 +2740,17 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
       ),
     );
   }
+  return { principal, principalKind: identity.principalKind };
+});
+
+/** Mints a subject's gateway context for an integration API key; a module credential is never such a key. */
+export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function* issueApiKeyContextEffect(
+  payload: ApiKeyGatewayContextRequest,
+  rawKey: string | undefined,
+  request: RequestWithHeaders,
+) {
+  const compositionRevision = yield* requireGatewayRelease(payload.compositionRevision);
+  const { principal } = yield* resolveApiKeyGatewayPrincipal(rawKey, payload.legalEntityId);
   return yield* issueGatewayContextAssertion({
     audience: payload.audience,
     compositionRevision,
@@ -2558,22 +2761,263 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
     Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
   );
 });
-/** The staff namespace is registered for exactly the source apps the module credentials are enrolled for. */
+/**
+ * The staff namespace is registered for exactly the source apps the module credentials are enrolled for. With no
+ * bound module credential it is registered for none, and the issuer refuses the key as unbound.
+ */
 const delegationNamespaceRegistryEffect = loadGatewayModuleBindings.pipe(
+  Effect.mapError(bindingsUnavailable),
   Effect.flatMap((bindings) =>
-    staffAuthenticationNamespaceRegistration([...new Set(bindings.map((binding) => binding.sourceAppId))]).pipe(
-      Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
-    ),
+    (bindings.length === 0
+      ? makeAuthenticationNamespaceRegistryEffect([])
+      : staffAuthenticationNamespaceRegistration([...new Set(bindings.map((binding) => binding.sourceAppId))]).pipe(
+          Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
+        )
+    ).pipe(Effect.mapError(delegationUnavailable('module_enrolment_unavailable'))),
   ),
-  Effect.mapError(delegationUnavailable),
 );
+
+const acquireSymmyOwnerAssertion = Effect.fn('ShellGateway.acquireSymmyOwnerAssertion')(function* acquireSymmyOwner(
+  rawKey: string,
+  input: { readonly audience: string; readonly legalEntityId?: string },
+  compositionRevision?: string,
+  routeProof?: SymmyRouteScopeProof,
+) {
+  const identity = yield* resolveApiKeyGatewayPrincipal(
+    rawKey,
+    routeProof === undefined ? input.legalEntityId : undefined,
+  );
+  const { principalKind } = identity;
+  if (principalKind !== 'integration') {
+    return yield* Effect.fail(gatewayForbiddenProblem());
+  }
+  const revision = yield* requireGatewayRelease(compositionRevision).pipe(
+    Effect.catchTags({
+      GatewayReloadRequiredProblem: () => Effect.fail(symmyUnavailableProblem),
+      GatewayUnavailableProblem: () => Effect.fail(symmyUnavailableProblem),
+    }),
+  );
+  const assertion =
+    routeProof === undefined
+      ? yield* (
+          input.audience === 'symmy-integration'
+            ? issueSymmyGatewayContextAssertion({
+                compositionRevision: revision,
+                principal: identity.principal,
+                principalKind,
+              })
+            : issueGatewayContextAssertion({
+                audience: input.audience,
+                compositionRevision: revision,
+                principal: identity.principal,
+              })
+        ).pipe(Effect.catchTag('GatewayIssuerError', () => Effect.fail(symmyUnavailableProblem)))
+      : yield* issueSymmyRouteScopeAssertion(
+          routeProof,
+          withOptionalProperty(
+            { audience: input.audience, principal: identity.principal },
+            input.legalEntityId !== undefined,
+            'legalEntityId',
+            input.legalEntityId,
+            {},
+          ),
+        ).pipe(
+          Effect.catchTag('GatewayDelegationError', (error) =>
+            Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
+          ),
+        );
+  return {
+    apiBaseUrl: assertion.apiBaseUrl,
+    assertion: Redacted.make(assertion.token),
+    compositionRevision: assertion.compositionRevision,
+  };
+});
+
+const acquireSymmyIngressRouteProof = Effect.fn('ShellGateway.acquireSymmyIngressRouteProof')(function* routeProof(
+  rawKey: string,
+  request: HttpServerRequest.HttpServerRequest,
+  compositionRevision: string,
+  routeRequest: typeof SymmyRouteContextRequestSchema.Encoded,
+) {
+  const { principal, principalKind } = yield* resolveApiKeyGatewayPrincipal(rawKey);
+  if (principalKind !== 'integration') {
+    return yield* Effect.fail(gatewayForbiddenProblem());
+  }
+  yield* requireGatewayRelease(compositionRevision).pipe(
+    Effect.catchTags({
+      GatewayReloadRequiredProblem: () => Effect.fail(symmyUnavailableProblem),
+      GatewayUnavailableProblem: () => Effect.fail(symmyUnavailableProblem),
+    }),
+  );
+  return yield* acquireSymmyRouteScopeProof({
+    compositionRevision,
+    principal,
+    requestCorrelation: correlationFromRequest(request),
+    routeRequest,
+    sourcePurpose: ['adminCustomers', 'adminProducts', 'adminRegions', 'priceLists'].includes(routeRequest.routeKey)
+      ? 'read'
+      : 'admit',
+  }).pipe(
+    Effect.catchTag('GatewayDelegationError', (error) =>
+      Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
+    ),
+  );
+});
+
+const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* admitSymmyIngressEffect(
+  rawKey: string,
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const admission = yield* acquireSymmyOwnerAssertion(rawKey, { audience: 'symmy-integration' });
+  const context =
+    yield* Effect.context<
+      Effect.Services<ReturnType<typeof acquireSymmyOwnerAssertion> | ReturnType<typeof acquireSymmyIngressRouteProof>>
+    >();
+  let selectedRoute: typeof SymmyRouteContextRequestSchema.Encoded | undefined;
+  const acquireRoute = Effect.fn('ShellGateway.acquireSymmyRouteAssertion')(function* acquireRouteAssertion(
+    input: typeof SymmyRouteContextRequestSchema.Encoded,
+  ) {
+    const proof = yield* acquireSymmyIngressRouteProof(rawKey, request, admission.compositionRevision, input);
+    const route = yield* readSymmyRouteScope(proof).pipe(
+      Effect.catchTag('GatewayDelegationError', () => Effect.fail(symmyUnavailableProblem)),
+    );
+    const target = withOptionalProperty(
+      { audience: 'symmy-integration' },
+      route.legalEntityId !== undefined,
+      'legalEntityId',
+      route.legalEntityId,
+      {},
+    );
+    const assertion = yield* acquireSymmyOwnerAssertion(rawKey, target, admission.compositionRevision, proof);
+    selectedRoute = { ...input };
+    return { ...assertion, route };
+  });
+  const acquireOwner = Effect.fn('ShellGateway.acquireSymmyReadAssertion')(function* acquireOwnerAssertion(input: {
+    readonly audience: string;
+    readonly legalEntityId?: string;
+  }) {
+    if (input.legalEntityId === undefined) {
+      return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
+    }
+    if (selectedRoute === undefined) {
+      return yield* Effect.fail(gatewayForbiddenProblem());
+    }
+    const proof = yield* acquireSymmyIngressRouteProof(rawKey, request, admission.compositionRevision, selectedRoute);
+    return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision, proof);
+  });
+  return {
+    ...admission,
+    acquireOwnerAssertion: (input: { readonly audience: string; readonly legalEntityId?: string }) =>
+      acquireOwner(input).pipe(Effect.provide(context)),
+    acquireRouteAssertion: (input: typeof SymmyRouteContextRequestSchema.Encoded) =>
+      acquireRoute(input).pipe(Effect.provide(context)),
+  };
+});
+
+export const SymmyIngressDefectLive = Layer.succeed(
+  SymmyDefectBoundary,
+  Effect.fn('SymmyIngress.sanitizeDefect')(function* sanitizeSymmyIngressDefect(operation) {
+    if (!(yield* SymmyHostMount)) {
+      return yield* Effect.fail(symmyRouteNotFoundProblem);
+    }
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const requestId = authenticationRequestId(new Headers(request.headers));
+    const span = Option.getOrUndefined(yield* Effect.option(Effect.currentSpan));
+    const rawKey = request.headers['x-api-key']?.trim();
+    const containsKey = (value: string) => rawKey !== undefined && rawKey.length > 0 && value.includes(rawKey);
+    const traceId = span?.traceId;
+    const safeTraceId = traceId !== undefined && !containsKey(traceId) ? traceId : undefined;
+    const correlationId =
+      requestId === 'missing' || requestId === 'invalid' || containsKey(requestId) ? safeTraceId : requestId;
+    return yield* recoverUnexpectedDefect(
+      { headers: { 'x-correlation-id': correlationId } },
+      'Unexpected Symmy ingress defect',
+      () => Effect.fail(symmyInternalProblem),
+      // Defect values and annotations can contain credentials. Retain every reason's classification.
+      (cause) => ({ reasons: cause.reasons.map((reason) => reason._tag) }),
+    )(operation);
+  }),
+);
+
+/** The reason code of a key the provider could not verify, when the provider (not the key) is at fault. */
+const apiKeyProviderRefusalReason = (error: ApiKeyProviderError): GatewayRefusalReason | null =>
+  Match.value(error).pipe(
+    Match.tags({
+      ApiKeyCredentialInvalidError: () => null,
+      ApiKeyProviderUnavailableError: () => 'key_provider_unavailable' as const,
+      ApiKeyRateLimitedError: () => null,
+      ApiKeyStateInconsistentError: () => 'key_state_inconsistent' as const,
+    }),
+    Match.exhaustive,
+  );
+/** API key resolution answers 401, 403, 429 or 503; only the first two are a decision about the key. */
+const paymentRouteRefusalOfGatewayProblem = (gatewayProblem: {
+  readonly status: number;
+}): PaymentRouteRefused['reason'] => {
+  if (gatewayProblem.status === 401) {
+    return 'unauthenticated';
+  }
+  return gatewayProblem.status === 403 ? 'forbidden' : 'unavailable';
+};
+
+/**
+ * Payment gateway relay authority (#1157): the API key is verified fresh, the integration principal and its
+ * workloads are re-read natively, the binding route comes from Payment's protected Read, and the issued
+ * assertion is scoped to the one route operation of the requested workload. A fresh assertion (and JTI) is
+ * issued for every HTTP attempt.
+ */
+const authorizePaymentRoute = Effect.fn('ShellGateway.authorizePaymentRoute')(function* authorizePaymentRoute(
+  input: PaymentRouteAuthorizationInput,
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const { principal, principalKind } = yield* resolveApiKeyGatewayPrincipal(Redacted.value(input.apiKey)).pipe(
+    Effect.catch((error) => paymentRouteRefused(paymentRouteRefusalOfGatewayProblem(error))),
+  );
+  if (principalKind !== 'integration') {
+    return yield* paymentRouteRefused('forbidden');
+  }
+  const compositionRevision = yield* requireGatewayRelease().pipe(
+    Effect.catchTags({
+      GatewayReloadRequiredProblem: () => paymentRouteRefused('unavailable'),
+      GatewayUnavailableProblem: () => paymentRouteRefused('unavailable'),
+    }),
+  );
+  const scoped = yield* Effect.gen(function* routeScopedAssertion() {
+    const proof = yield* acquirePaymentRouteScopeProof({
+      compositionRevision,
+      notificationPath: input.notificationPath,
+      principal,
+      requestCorrelation: correlationFromRequest(request),
+      routeKey: input.routeKey,
+      workload: input.workload,
+    });
+    return yield* issuePaymentRouteScopeAssertion(proof, { principal });
+  }).pipe(Effect.catchTag('PaymentRouteScopeError', (error) => paymentRouteRefused(error.code)));
+  const baseUrl = yield* resolvePaymentOwnerReleaseBase(scoped.assertion.apiBaseUrl).pipe(
+    Effect.catchTag('PaymentOwnerReleaseRefused', () => paymentRouteRefused('unavailable')),
+  );
+  return {
+    assertion: Redacted.make(scoped.assertion.token),
+    baseUrl,
+    compositionRevision: scoped.assertion.compositionRevision,
+    route: scoped.route,
+  };
+});
+
+/** Shell's defect seam for the relay groups: only reason classes are logged, never values or annotations. */
+export const PaymentGatewayDefectSeamLive = Layer.succeed(PaymentGatewayDefectSeam, {
+  recover: (message, fail) => recoverUnexpectedDefect({ headers: {} }, message, fail, describePaymentGatewayDefect),
+});
 
 const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
   handlers
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
         yield* noStore;
-        yield* requireGatewayRelease(payload.compositionRevision);
+        yield* requireGatewayRelease(payload.compositionRevision, {
+          endpoint: 'auth/gateway-context',
+          headers: { referer: request.headers['referer'], 'user-agent': request.headers['user-agent'] },
+        });
         const authentication = yield* AuthenticationService;
         const sessionResult = yield* authentication
           .resolveShellContext(requestHeaders(request.headers))
@@ -2613,84 +3057,41 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         ),
       ),
     )
-    .handle('readWithApiKeyGatewayContext', ({ headers, payload: payloadBytes, request }) =>
-      Effect.gen(function* readWithApiKeyGatewayContextHandler() {
-        yield* noStore;
-        const payload = yield* decodeApiKeyGatewayReadRequest(payloadBytes);
-        const issuerMetadata =
-          payload.legalEntityId === undefined
-            ? { audience: payload.audience }
-            : { audience: payload.audience, legalEntityId: payload.legalEntityId };
-        const context = yield* issueApiKeyContext(issuerMetadata, headers['x-api-key'], request);
-        const prefix = '/shell-super-app-api/module-api/';
-        if (!context.apiBaseUrl.startsWith(prefix)) {
-          return yield* failGatewayProblem(
-            problemDetails(
-              'GatewayAudienceInvalidProblem',
-              'The requested audience is not an available MicroVertical.',
-              400,
-              'Invalid gateway audience',
-              'https://ontos.dev/problems/gateway-audience-invalid',
-            ),
-          );
-        }
-        // Dispatch in-process, through the very same composition/release admission and owner transport.
-        // Never forward the API key, cookies or arbitrary caller headers to the owner.
-        const body = yield* payload.ownerBody.pipe(Effect.orDie);
-        const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
-          context,
-        ).pipe(Effect.orDie);
-        const ownerRequest = new Request(
-          `https://shell.invalid${context.apiBaseUrl.slice('/shell-super-app-api'.length)}/reads/${encodeURIComponent(payload.readName)}`,
-          {
-            body,
-            headers: {
-              authorization: `Bearer ${context.token}`,
-              'content-type': 'application/json',
-              'x-correlation-id': correlationFromRequest(request),
-              'x-ontos-composition-revision': context.compositionRevision,
-            },
-            method: 'POST',
-          },
-        );
-        const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
-          observeGatewayPhase('owner-dispatch'),
-          Effect.catch((error) =>
-            HttpServerResponse.schemaJson(Schema.Struct({ code: Schema.Literal('gateway_dispatch_failed') }))(
-              { code: 'gateway_dispatch_failed' },
-              { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
-            ).pipe(Effect.map(HttpServerResponse.toWeb), Effect.orDie),
-          ),
-        );
-        // The receiving runtime still redeems the assertion and rechecks principal/binding status,
-        // tenant/legal-entity scope and operation authorization. No authorization result is cached here.
-        return HttpServerResponse.fromWeb(response).pipe(
-          HttpServerResponse.setHeader(API_KEY_GATEWAY_CONTEXT_HEADER, encodedContext),
-          noStoreResponse,
-        );
-      }).pipe(
-        withGatewayTimings,
-        recoverUnexpectedDefect(request, 'Unexpected API-key gateway read defect', () =>
-          failGatewayProblem(gatewayInternalProblem()),
-        ),
-      ),
-    )
     .handle('issueDelegatedGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueDelegatedGatewayContextHandler() {
-        yield* requireGatewayRelease(payload.compositionRevision);
+        // A refusal before the issuer runs: one warning, and its reason in the problem the caller receives. Nothing
+        // here is authenticated yet, so the warning names no calling module and no tenant from the request body.
+        const refuse = <Problem extends GatewayContextProblem>(refusedProblem: Problem, reason: GatewayRefusalReason) =>
+          logDelegationRefusal({
+            audience: payload.audience,
+            context: {},
+            reason,
+            status: refusedProblem._tag,
+          }).pipe(Effect.andThen(failApiKeyGatewayProblem(withRefusalReason(refusedProblem, reason))));
+        yield* requireGatewayRelease(payload.compositionRevision).pipe(
+          Effect.catch((releaseError) =>
+            releaseError.reason === undefined ? Effect.fail(releaseError) : refuse(releaseError, releaseError.reason),
+          ),
+        );
         const keys = yield* ApiKeyService;
         const rawKey = headers['x-api-key'];
         if (rawKey === undefined || rawKey.trim().length === 0) {
           return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
         }
-        const verified = yield* keys
-          .verify(rawKey)
-          .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
+        const verified = yield* keys.verify(rawKey).pipe(
+          Effect.catch((error) => {
+            const reason = apiKeyProviderRefusalReason(error);
+            return reason === null
+              ? failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))
+              : refuse(apiKeyProviderGatewayProblem(error), reason);
+          }),
+        );
         const delegationNamespaceRegistry = yield* delegationNamespaceRegistryEffect.pipe(
-          Effect.catchTag('GatewayDelegationError', () =>
-            failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+          Effect.catchTag('GatewayDelegationError', (error) =>
+            refuse(gatewayAuthenticationUnavailableProblem(), error.reason),
           ),
         );
+        // The issuer writes the warning of its own refusals: it knows the calling module and the subject's tenant.
         return yield* issueDelegatedGatewayContextAssertion({
           payload,
           requestCorrelation: correlationFromRequest(request),
@@ -2699,27 +3100,29 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           Effect.provideService(AuthenticationNamespaceRegistry, delegationNamespaceRegistry),
           Effect.catchTags({
             GatewayDelegationError: (error) =>
-              Match.value(error.code).pipe(
-                Match.when('authentication_required', () =>
-                  failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem()),
-                ),
-                Match.when('forbidden', () => failApiKeyGatewayProblem(gatewayForbiddenProblem())),
-                Match.when('unavailable', () => failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem())),
-                Match.when('reload_required', () =>
-                  failApiKeyGatewayProblem(
-                    extendedProblemDetails(
-                      'GatewayReloadRequiredProblem',
-                      'The document release is no longer admitted. Reload to continue.',
-                      409,
-                      'Reload required',
-                      'https://ontos.dev/problems/gateway-reload-required',
-                      { reloadRequired: true as const },
+              failApiKeyGatewayProblem(
+                withRefusalReason(
+                  Match.value(error.code).pipe(
+                    Match.when('authentication_required', () => gatewayAuthenticationRequiredProblem()),
+                    Match.when('forbidden', () => gatewayForbiddenProblem()),
+                    Match.when('module_not_installed', () => gatewayModuleNotInstalledProblem()),
+                    Match.when('unavailable', () => gatewayAuthenticationUnavailableProblem()),
+                    Match.when('reload_required', () =>
+                      extendedProblemDetails(
+                        'GatewayReloadRequiredProblem',
+                        'The document release is no longer admitted. Reload to continue.',
+                        409,
+                        'Reload required',
+                        'https://ontos.dev/problems/gateway-reload-required',
+                        { reloadRequired: true as const },
+                      ),
                     ),
+                    Match.exhaustive,
                   ),
+                  error.reason,
                 ),
-                Match.exhaustive,
               ),
-            GatewayIssuerError: (error) => pipe(error, gatewayIssuerProblem, failApiKeyGatewayProblem),
+            GatewayIssuerError: (error) => failApiKeyGatewayProblem(gatewayIssuerProblem(error)),
           }),
         );
       }).pipe(
@@ -2730,13 +3133,83 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     ),
 );
 
+// Demo divergence: the API-key read relay is its own handler group (ApiKeyGatewayReadApiGroup), so main's gatewayContext
+// group keeps exactly its three issuing endpoints. The handler below is moved verbatim from that group.
+const apiKeyGatewayReadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'apiKeyGatewayRead', (handlers) =>
+  handlers.handle('readWithApiKeyGatewayContext', ({ headers, payload: payloadBytes, request }) =>
+    Effect.gen(function* readWithApiKeyGatewayContextHandler() {
+      yield* noStore;
+      const payload = yield* decodeApiKeyGatewayReadRequest(payloadBytes);
+      const issuerMetadata =
+        payload.legalEntityId === undefined
+          ? { audience: payload.audience }
+          : { audience: payload.audience, legalEntityId: payload.legalEntityId };
+      const context = yield* issueApiKeyContext(issuerMetadata, headers['x-api-key'], request);
+      const prefix = '/shell-super-app-api/module-api/';
+      if (!context.apiBaseUrl.startsWith(prefix)) {
+        return yield* failGatewayProblem(
+          problemDetails(
+            'GatewayAudienceInvalidProblem',
+            'The requested audience is not an available MicroVertical.',
+            400,
+            'Invalid gateway audience',
+            'https://ontos.dev/problems/gateway-audience-invalid',
+          ),
+        );
+      }
+      // Dispatch in-process, through the very same composition/release admission and owner transport.
+      // Never forward the API key, cookies or arbitrary caller headers to the owner.
+      const body = yield* payload.ownerBody.pipe(Effect.orDie);
+      const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
+        context,
+      ).pipe(Effect.orDie);
+      const ownerRequest = new Request(
+        `https://shell.invalid${context.apiBaseUrl.slice('/shell-super-app-api'.length)}/reads/${encodeURIComponent(payload.readName)}`,
+        {
+          body,
+          headers: {
+            authorization: `Bearer ${context.token}`,
+            'content-type': 'application/json',
+            'x-correlation-id': correlationFromRequest(request),
+            'x-ontos-composition-revision': context.compositionRevision,
+          },
+          method: 'POST',
+        },
+      );
+      const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
+        observeGatewayPhase('owner-dispatch'),
+        Effect.catch((error) =>
+          HttpServerResponse.schemaJson(Schema.Struct({ code: Schema.Literal('gateway_dispatch_failed') }))(
+            { code: 'gateway_dispatch_failed' },
+            { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
+          ).pipe(Effect.map(HttpServerResponse.toWeb), Effect.orDie),
+        ),
+      );
+      // The receiving runtime still redeems the assertion and rechecks principal/binding status,
+      // tenant/legal-entity scope and operation authorization. No authorization result is cached here.
+      return HttpServerResponse.fromWeb(response).pipe(
+        HttpServerResponse.setHeader(API_KEY_GATEWAY_CONTEXT_HEADER, encodedContext),
+        noStoreResponse,
+      );
+    }).pipe(
+      withGatewayTimings,
+      recoverUnexpectedDefect(request, 'Unexpected API-key gateway read defect', () =>
+        failGatewayProblem(gatewayInternalProblem()),
+      ),
+    ),
+  ),
+);
+
 // One session issuance for every module audience of a Shell document a browser navigation needs: one release check and
 // one session read, then the document assertions of `issueDocumentGatewayAssertions`.
 const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) =>
   handlers.handle('issueDocumentGatewayContexts', ({ payload, request }) =>
     Effect.gen(function* issueDocumentGatewayContextsHandler() {
       yield* noStore;
-      yield* requireGatewayRelease(payload.compositionRevision);
+      yield* requireGatewayRelease(payload.compositionRevision, {
+        endpoint: 'auth/gateway-contexts',
+        headers: { referer: request.headers['referer'], 'user-agent': request.headers['user-agent'] },
+      });
       const authentication = yield* AuthenticationService;
       const sessionResult = yield* authentication
         .resolveShellContext(requestHeaders(request.headers))
@@ -2915,6 +3388,21 @@ export const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')
       TenantInactiveError: () => failIdentityProblem(shellAuthenticationRequiredProblem()),
     }),
   );
+  // An internal workload principal acts only with the key the platform issued it, never as an agent caller.
+  yield* (yield* PlatformWorkloadKeyAdmission)
+    .admit({
+      legalEntityId,
+      principalId: identity.principalId,
+      providerKeyId: verified.providerKeyId,
+      tenantId: identity.tenantId,
+    })
+    .pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        failIdentityProblem(
+          error.code === 'forbidden' ? shellTargetForbiddenProblem() : shellCapabilityUnavailableProblem(),
+        ),
+      ),
+    );
   const principal: AgentPlatformCaller['principal'] = {
     authBindingId: identity.authBindingId,
     authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
@@ -3031,7 +3519,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
           correlationId: correlationFromRequest(request),
           idempotencyKey: yield* requiredIdempotencyKey(headers),
         };
-        const response = yield* revertAgentBatch(caller, payload).pipe(
+        const response = yield* withRoundTripLog('revert', revertAgentBatch(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provideService(AgentActionRequestIdentity, transport),
           Effect.catch(agentPlatformFailure),
@@ -3045,7 +3533,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         const caller = yield* agentPlatformSessionCaller(request);
         const transport = { correlationId: correlationFromRequest(request) };
         const services = yield* Layer.build(CompanyDirectoryLive({ principal: caller.principal, transport }));
-        const response = yield* loadAgentActivity(caller, payload).pipe(
+        const response = yield* withRoundTripLog('activity', loadAgentActivity(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provide(services),
           Effect.catch(agentPlatformFailure),
@@ -3114,10 +3602,14 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
   withAdminRight: boolean,
 ) {
   const caller = yield* agentPlatformSessionCaller(request);
+  // The company's connected applications are administered through Core's own capability,
+  // `core.identity.oauth-connection.administer`, asked in the caller's selected company.
   const isCompanyAdmin = withAdminRight
-    ? yield* demoAccountCapability(caller).pipe(
-        Effect.map((capability) => capability.canManage),
-        Effect.orElseSucceed(() => false),
+    ? yield* connectedAppsAdministration(
+        preserveSystemPrincipalContextTrust(caller.principal, {
+          ...caller.principal,
+          correlationId: correlationFromRequest(request),
+        }),
       )
     : false;
   const result: ConnectionsCaller = {
@@ -3210,18 +3702,20 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
       .handle('listCompanyPeople', ({ payload, request }) =>
         Effect.gen(function* listCompanyPeopleHandler() {
           const principal = yield* principalFor(request, 'company');
-          const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
-            Effect.catch(peopleAdministrationFailure),
-          );
+          const result = yield* listPeople(
+            { principal, transport: { correlationId: correlationFromRequest(request) } },
+            payload,
+          ).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('listTenantPeople', ({ payload, request }) =>
         Effect.gen(function* listTenantPeopleHandler() {
           const principal = yield* principalFor(request, 'tenant');
-          const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
-            Effect.catch(peopleAdministrationFailure),
-          );
+          const result = yield* listPeople(
+            { principal, transport: { correlationId: correlationFromRequest(request) } },
+            payload,
+          ).pipe(Effect.catch(peopleAdministrationFailure));
           return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
@@ -3304,7 +3798,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           const caller = yield* agentPlatformSessionCaller(request);
           const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
-          const response = yield* listAgentEntities(caller, deps).pipe(
+          const response = yield* listAgentEntities(caller, new Headers(Object.entries(request.headers)), deps).pipe(
             Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
             Effect.catch(connectionsAdminFailure),
           );
@@ -3322,7 +3816,12 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           const caller = yield* agentPlatformSessionCaller(request);
           const transport = { correlationId: correlationFromRequest(request), idempotencyKey };
           const deps = yield* connectionsAdminDeps(caller, transport);
-          const response = yield* manageAgentEntity(caller, payload, deps).pipe(
+          const response = yield* manageAgentEntity(
+            caller,
+            payload,
+            new Headers(Object.entries(request.headers)),
+            deps,
+          ).pipe(
             Effect.provideService(AgentReadRequestIdentity, transport),
             Effect.provideService(AgentActionRequestIdentity, transport),
             Effect.catch(connectionsAdminFailure),
@@ -3352,7 +3851,7 @@ const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfi
 /**
  * The Shell's own database identity enrollment, owner-neutral for the API process: it declares only the
  * published identity contracts this process issues owner-scoped gateway grants for. Every Core access port
- * and store reads it beside `CoreDatabase`, so it is provided explicitly here and in the worker host.
+ * and store reads it beside Core persistence, so it is provided explicitly here and in the worker host.
  */
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT);
 /**
@@ -3385,7 +3884,13 @@ const oauthGrantRegistryLive = OAuthGrantRegistryLive.pipe(Layer.provide(corePer
 const oauthCredentialsLive = OAuthCredentialsLive.pipe(Layer.provide(authPersistenceLive));
 const oauthGrantOwnersLive = OAuthGrantOwnersLive.pipe(Layer.provide(oauthGrantRegistryLive));
 const oauthEndpointGuardDataLive = OAuthEndpointGuardDataLive.pipe(
-  Layer.provide(Layer.merge(oauthGrantRegistryLive, oauthCredentialsLive)),
+  Layer.provide(
+    Layer.mergeAll(
+      oauthGrantRegistryLive,
+      oauthCredentialsLive,
+      AgentConnectionStoreLive.pipe(Layer.provide(Layer.merge(corePersistenceLive, databaseIdentitiesLive))),
+    ),
+  ),
 );
 const principalResolverLive = PrincipalResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -3460,6 +3965,24 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.effect(Tracer.Tracer, Tracer.Tracer),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
   Layer.succeed(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
+);
+
+/** The scoped Fetch edge for generated Symmy clients uses the normal owner release transport. */
+const symmyOwnerReleaseFetchLive = Layer.effect(
+  FetchHttpClient.Fetch,
+  Effect.gen(function* symmyOwnerReleaseFetchLayer() {
+    // Generated clients call Fetch with Promises; each relay runs with the services this layer was built with.
+    const services = yield* Effect.context<ActiveApplicationCompositionService>();
+    return flow(forwardSymmyOwnerRelease, Effect.runPromiseWith(services));
+  }),
+);
+/** The scoped Fetch edge for the generated Payment route Read, capture and recovery clients. */
+const paymentOwnerReleaseFetchLive = Layer.effect(
+  FetchHttpClient.Fetch,
+  Effect.gen(function* paymentOwnerReleaseFetchLayer() {
+    const services = yield* Effect.context<ActiveApplicationCompositionService>();
+    return flow(forwardPaymentOwnerRelease, Effect.runPromiseWith(services));
+  }),
 );
 
 type ShellAuthenticationLayer = Layer.Layer<AuthenticationService, Layer.Error<typeof authenticationServiceLive>>;
@@ -3645,6 +4168,8 @@ export const makeShellAuthenticationApiRuntime = (
   );
   // Agent-platform proposal preparation runs through the same canonical gate as every other protected surface.
   const proposalPreparationLayer = AgentProposalCommandPreparationLive.pipe(
+    // The lifecycle question of a withdrawal is prepared by the bound Action gate and re-checked in its transaction.
+    Layer.provide(AgentLifecycleAuthorityLive),
     Layer.provide(
       Layer.mergeAll(
         runtimeCorePersistenceLive,
@@ -3700,7 +4225,14 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(databaseIdentitiesLive),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
-    Layer.provide(Layer.mergeAll(actionRuntimeLayer, runtimeApiKeyServiceLive, runtimePrincipalResolverLive)),
+    Layer.provide(
+      Layer.mergeAll(
+        actionRuntimeLayer,
+        runtimeApiKeyServiceLive,
+        runtimePrincipalResolverLive,
+        ManagedApiKeyTargetEligibilityLive.pipe(Layer.provide(runtimeCorePersistenceLive)),
+      ),
+    ),
   );
   const shellGovernedReadsLayer = Layer.unwrap(
     GatewayIssuer.pipe(
@@ -3762,7 +4294,7 @@ export const makeShellAuthenticationApiRuntime = (
           Layer.provide(
             Layer.mergeAll(
               readRuntimeLayer,
-              contextAccessLayer,
+              accessEnforcementLive,
               PeopleSearchReadLive.pipe(
                 Layer.provide(
                   CoreSearchProjectionStoreLive.pipe(
@@ -3857,7 +4389,6 @@ export const makeShellAuthenticationApiRuntime = (
     Effect.gen(function* approvalOwnerIdentityLayer() {
       const authentication = yield* AuthenticationService;
       const gate = yield* AccessDecisionGate;
-      const contextAccess = yield* ContextAccess;
       const legalEntityContext = yield* LegalEntityContext;
       return {
         resolve: Effect.fn('ShellApi.approvalOwnerIdentity')(function* resolveApprovalOwnerIdentity(
@@ -3871,7 +4402,6 @@ export const makeShellAuthenticationApiRuntime = (
               : yield* authentication.resolveShellContext(headers);
           }).pipe(
             Effect.provideService(AccessDecisionGate, gate),
-            Effect.provideService(ContextAccess, contextAccess),
             Effect.provideService(LegalEntityContext, legalEntityContext),
             Effect.mapError((error) =>
               Match.value(error).pipe(
@@ -3977,7 +4507,16 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  // The credential-bound agent connections: written at consent, read by every agent request, ended by revocation.
+  const agentConnectionStoreLive = AgentConnectionStoreLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive)),
+  );
+  const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
+    agentConnectionStoreLive,
+    platformWorkloadKeyAdmissionLayer,
     emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
@@ -3990,6 +4529,7 @@ export const makeShellAuthenticationApiRuntime = (
     proposalModuleReviewLayer,
     identityDeniedAuditLayer,
     staffAccountProviderLayer,
+    runtimeCorePersistenceLive,
     delegationScopeResolverLayer,
     delegationLedgerLayer,
     originatorEvidenceLayer,
@@ -4005,6 +4545,8 @@ export const makeShellAuthenticationApiRuntime = (
     runtimeLegalEntityContextLive,
     accessAdminBffsLive,
     accessAdminProjectionWriterLive,
+    // The Agents page offers the tenant's v2 roles from the People page's own source.
+    accessAdminPeopleCommandsLive,
     issuerLayer,
     selectedModuleStateLayer,
     moduleCatalogLayer,
@@ -4077,7 +4619,46 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(shellTransportServicesLive),
   );
   // The governed handler Layer provides the route middleware as an immutable Layer value, not a constructor call.
+  // NoServerTimingLive is global too: no response leaves the Shell with `server-timing`, whichever route or
+  // in-process Action added it.
   const shellSearchNoStoreLayer = makeShellSearchNoStoreLayer();
+  const symmyIngressLive = Layer.effect(
+    SymmyIngress,
+    Effect.gen(function* configureSymmyIngress() {
+      const context =
+        yield* Effect.context<
+          Exclude<Effect.Services<ReturnType<typeof admitSymmyIngress>>, HttpServerRequest.HttpServerRequest>
+        >();
+      return {
+        admit: (rawKey, request) => admitSymmyIngress(rawKey, request).pipe(Effect.provide(context)),
+        dispatch: yield* SymmyGovernedDispatch,
+      };
+    }),
+  ).pipe(
+    Layer.provide(SymmyGovernedDispatchLive),
+    Layer.provide(symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer))),
+  );
+  const paymentGatewayRelayLive = Layer.effect(
+    PaymentGatewayRelay,
+    Effect.gen(function* configurePaymentGatewayRelay() {
+      const context =
+        yield* Effect.context<
+          Exclude<Effect.Services<ReturnType<typeof authorizePaymentRoute>>, HttpServerRequest.HttpServerRequest>
+        >();
+      return {
+        authorize: (input) =>
+          HttpServerRequest.HttpServerRequest.pipe(
+            Effect.flatMap((request) => authorizePaymentRoute(input, request)),
+            Effect.provide(context),
+          ),
+      };
+    }),
+  ).pipe(Layer.provide(paymentOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer))));
+  const paymentGatewayBoundariesLive = Layer.mergeAll(
+    PaymentNotificationBoundaryLive,
+    PaymentReconciliationBoundaryLive,
+  );
+  const paymentGatewayHandlersLive = Layer.mergeAll(PaymentNotificationHandlersLive, PaymentReconciliationHandlersLive);
   const apiHandlersLive = Layer.mergeAll(
     ShellEmailReceiptHandlersLive,
     authenticationGroupLive,
@@ -4088,6 +4669,7 @@ export const makeShellAuthenticationApiRuntime = (
     documentContextGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
+    apiKeyGatewayReadGroupLive,
     documentGatewayGroupLive,
     oauthConnectGroupLive,
     // @ontos-codesmith-core-read-server-layers:start
@@ -4100,12 +4682,36 @@ export const makeShellAuthenticationApiRuntime = (
     oauthConnectionsAdminGroupLive,
     peopleAdministrationGroupLive,
     agentPlatformGroupLive,
-  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer));
+    SymmyIngressHandlersLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          symmyIngressLive,
+          SymmyIngressSchemaErrorLive,
+          SymmyIngressDefectLive,
+          symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer)),
+        ),
+      ),
+    ),
+    paymentGatewayHandlersLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          paymentGatewayRelayLive,
+          paymentGatewayBoundariesLive.pipe(Layer.provide(PaymentGatewayDefectSeamLive)),
+          paymentOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer)),
+        ),
+      ),
+    ),
+  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    transport: Layer.mergeAll(ShellTransportLive, LiveChangesRouteLive).pipe(
+    transport: Layer.mergeAll(
+      ShellTransportLive,
+      LiveChangesRouteLive,
+      SymmyIngressTransportLive.pipe(Layer.provide(SymmyHostMountLive)),
+      PaymentGatewayRelayTransportLive.pipe(Layer.provide(PaymentGatewayHostMountLive)),
+    ).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
       Layer.provide(mcpEndpointRoutesLive),
       Layer.provide(shellTransportServicesLive),

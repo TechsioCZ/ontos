@@ -2,7 +2,8 @@ import { Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it, rstest } from 'effect-rstest';
 
-import { executeFreshRecords, executeRecords } from '../../src/api/records-consumer.ts';
+import { executeRecords } from '../../src/api/records-client.ts';
+import { executeFreshRecords } from '../../src/routes/[lang]/prodej/zamestnanci/employee-records.ts';
 import { EmployeeIdSchema } from '../../shared/apis/records.ts';
 
 rstest.mock('../../src/api/action-gateway.ts', () => ({

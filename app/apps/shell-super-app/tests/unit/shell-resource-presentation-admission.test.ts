@@ -26,7 +26,7 @@ import {
   ShellGovernedReads,
 } from '../../api/modules/shell-governed-reads.ts';
 import { ShellResourceServicesFactoryLive } from '../../api/modules/shell-resources.ts';
-import { ResourceRefSchema } from '../../shared/api.ts';
+import { ResourceRefSchema } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const ownerModuleId = 'sample.records';

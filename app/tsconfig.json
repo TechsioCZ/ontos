@@ -141,6 +141,9 @@
     },
     {
       "path": "verticals/promotion"
+    },
+    {
+      "path": "verticals/symmy-integration"
     }
   ]
 }

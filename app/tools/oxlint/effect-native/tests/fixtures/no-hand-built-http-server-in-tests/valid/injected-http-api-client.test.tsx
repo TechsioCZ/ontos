@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { HttpApiClient } from "effect/http";
+import { HttpApiClient } from "effect/unstable/http";
 
 declare const ContactsApi: never;
 declare const InMemoryHttpClient: Layer.Layer<never>;

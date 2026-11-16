@@ -8,7 +8,9 @@ import {
   moduleChangeEvent,
 } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { executeCounterpartyRead, executePartyDetail, listCustomers } from '@app/party-registry/api/client';
+import { executeCounterpartyRead } from '@app/party-registry/apis/counterparty-read/client';
+import { executePartyDetail } from '@app/party-registry/apis/party-detail/client';
+import { listCustomers } from './party-customers.ts';
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { useHeldSnapshot } from '@app/admin-ui';

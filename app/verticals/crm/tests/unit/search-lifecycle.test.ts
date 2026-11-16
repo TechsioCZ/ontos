@@ -9,7 +9,7 @@ import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, CrmRevisionConflict } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
-import { makeEntityId } from '../../shared/domain/common.ts';
+import { EntityIdSchema } from '../../shared/domain/common.ts';
 import { companyId, scope } from './search-fixtures.ts';
 import {
   crmApplyCommandDeclaration,
@@ -56,7 +56,7 @@ it.layer(dependencies)('committed search intent', (suite) => {
     () =>
       Effect.gen(function* checkCommandLifecycle() {
         const services = {
-          apply: () => Effect.succeed({ entityIds: [makeEntityId('contact-1')], revision: 2 }),
+          apply: () => Effect.succeed({ entityIds: [EntityIdSchema.make('contact-1')], revision: 2 }),
           loadAssignmentDirectory: unused,
           loadRecords: unused,
         };

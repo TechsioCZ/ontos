@@ -9,8 +9,12 @@ import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Fiber, Option, Redacted, Schedule, Schema } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import { ApiKeyIssueResponseSchema, PrincipalIdSchema, ShellPolicyConflictProblemSchema } from '../../../shared/api.ts';
-import type { ManagedApiKeyListResponse, SetManagedApiKeyStatusPayload } from '../../../shared/api.ts';
+import {
+  ApiKeyIssueResponseSchema,
+  PrincipalIdSchema,
+  ShellPolicyConflictProblemSchema,
+} from '../../../shared/browser-api.ts';
+import type { ManagedApiKeyListResponse, SetManagedApiKeyStatusPayload } from '../../../shared/browser-api.ts';
 import {
   issueManagedApiKey,
   listManagedApiKeys,

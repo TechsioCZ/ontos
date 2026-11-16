@@ -9,7 +9,7 @@ import type { ActionAuthorityProofV2 } from '../../src/access/approvals/action-a
 import {
   actionCommandQuestionsV2,
   freezeActionCommandV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
 } from '../../src/access/approvals/action-command-v2.ts';
 import { freezeCommand } from '../../src/access/approvals/command.ts';
 import { CapabilityKeySchema, RecordKeySchema } from '../../src/access/ids.ts';
@@ -168,7 +168,7 @@ const grantFor = (key: string, mode: (typeof grants)[number]['mode']) =>
   grants.find((candidate) => candidate.key === key && candidate.mode === mode);
 
 const documents = Effect.gen(function* migrationDocuments() {
-  const command = yield* makeActionCommandV2({
+  const command = yield* resolveActionCommandV2({
     payload: { ids: [RecordKeySchema.make('record-2'), RecordKeySchema.make('record-1')], salary: 25 },
     registration: actionFor(),
     scope: { ...principal, correlationId: 'authority-migration-structural-proof' },

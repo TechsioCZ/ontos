@@ -62,8 +62,8 @@ it.layer(NodeFileSystem.layer)('Price Group Catalog migration security contract'
         (hardening.match(/ALTER TABLE "price_group_catalog"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length ?? 0) +
         (projectionRoutines.match(/ALTER TABLE "price_group_catalog"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length ??
           0);
-      expect(enabledTableCount).toBe(PRICE_GROUP_CATALOG_TABLE_INVENTORY.length - 1);
-      expect(forcedTableCount).toBe(PRICE_GROUP_CATALOG_TABLE_INVENTORY.length - 1);
+      expect(enabledTableCount).toBe(PRICE_GROUP_CATALOG_TABLE_INVENTORY.length - 3);
+      expect(forcedTableCount).toBe(PRICE_GROUP_CATALOG_TABLE_INVENTORY.length - 3);
       expect(foundation).not.toMatch(/REFERENCES "(?:core|auth|party|contacts|commerce_customer_context)"\./u);
       expect(hardening).toMatch(/CREATE EXTENSION IF NOT EXISTS btree_gist/iu);
       expect(hardening).toMatch(
@@ -258,3 +258,24 @@ it('exact catalog comparison rejects missing and unexpected tables', () => {
     unexpected: ['price_group_catalog.unowned'],
   });
 });
+
+it.effect('adds source associations behind atomic owner routines and keeps the binder private', () =>
+  Effect.gen(function* sourceCorrelationMigration() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const migrationsDirectory = fileURLToPath(new URL('../../drizzle', import.meta.url));
+    const folders = yield* filesystem.readDirectory(migrationsDirectory);
+    const folder = folders.find((entry) => entry.endsWith('_source_correlations'));
+    expect(folder).toBeDefined();
+    const migration = yield* filesystem.readFileString(`${migrationsDirectory}/${folder}/migration.sql`);
+    expect(migration).toContain('FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain(
+      'REVOKE ALL ON TABLE price_group_catalog.price_group_source_correlations FROM PUBLIC, ontos_runtime',
+    );
+    expect(migration).toContain("CONSTRAINT = 'price_group_source_identity_uk'");
+    expect(migration).toContain('create_price_group_with_complete_schedule(p_tenant_id,p_input)');
+    expect(migration).toContain('create_definition_revision_with_continuity(p_tenant_id,p_input)');
+    expect(migration).not.toContain(
+      'GRANT EXECUTE ON FUNCTION price_group_catalog.bind_price_group_source_correlation',
+    );
+  }).pipe(Effect.provide(NodeFileSystem.layer)),
+);

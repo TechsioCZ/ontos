@@ -174,6 +174,20 @@ describe('fault report', () => {
 });
 
 describe('inspection and resolution', () => {
+  it.live('refuses an inspection note that cannot be retained and keeps the full typed text for correction', () =>
+    Effect.gen(function* refuseLongInspectionNote() {
+      const runner = recordingRunner();
+      yield* mountInspection(runner);
+      const longNote = 'x'.repeat(500);
+      const selector = '#security-inspection-note';
+      yield* typeInto(selector, longNote);
+      yield* click(labels.save);
+      expect(runner.sent).toEqual([]);
+      expect(document.querySelector<HTMLTextAreaElement>(selector)?.value).toBe(longNote);
+      expect(document.body.textContent).toContain('facility-operations.security.inspection.noteTooLong');
+      expect(calls).toEqual([]);
+    }),
+  );
   it.live('the inspection opens filled in: Uložit records it at once, with the same command', () =>
     Effect.gen(function* scenario() {
       const runner = recordingRunner();

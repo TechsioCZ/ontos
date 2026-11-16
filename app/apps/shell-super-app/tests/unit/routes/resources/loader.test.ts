@@ -1,11 +1,11 @@
 import type { CoreSearchPresentationEntry } from '@app/core-runtime/search-contract';
 import { isRedirect } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { loader } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
-import { ModuleIdSchema, ShellResourceResponseSchema } from '../../../../shared/api.ts';
+import { ModuleIdSchema, ShellResourceResponseSchema } from '../../../../shared/browser-api.ts';
 
 const { loadHomePageModelMock, resourceDetailMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -197,11 +197,13 @@ it('the unsupported wire response carries no guessed name or private detail fiel
   const response = { outcome: 'detail_not_supported', ref: counterparty };
   expect(Schema.decodeUnknownSync(ShellResourceResponseSchema)(response)).toEqual(response);
   expect(
-    Schema.decodeUnknownOption(ShellResourceResponseSchema, { onExcessProperty: 'error' })({
-      ...response,
-      detail: { fields: [{ label: 'E-mail', value: 'private@example.test' }], title: 'Eva Bílá' },
-    })._tag,
-  ).toBe('None');
+    Option.isNone(
+      Schema.decodeUnknownOption(ShellResourceResponseSchema, { onExcessProperty: 'error' })({
+        ...response,
+        detail: { fields: [{ label: 'E-mail', value: 'private@example.test' }], title: 'Eva Bílá' },
+      }),
+    ),
+  ).toBe(true);
 });
 
 it.live.each([

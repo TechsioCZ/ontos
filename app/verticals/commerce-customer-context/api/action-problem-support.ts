@@ -149,12 +149,16 @@ export const buildConflictProblem =
       type: 'https://ontos.dev/problems/action-conflict',
     });
 
+/** A refusal carries the refusing check's stable reason codes (`reasons`), never values. */
 export const buildForbiddenProblem =
-  <Code extends string, Output>(make: (input: CodedProblemFields<Code, 403>) => Output): ((code: Code) => Output) =>
-  (code) =>
+  <Code extends string, Output>(
+    make: (input: CodedProblemFields<Code, 403> & { readonly reasons: readonly string[] }) => Output,
+  ): ((code: Code, reasons?: readonly string[]) => Output) =>
+  (code, reasons = []) =>
     make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: actionProblemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',

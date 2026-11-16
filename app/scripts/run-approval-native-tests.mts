@@ -87,7 +87,7 @@ const cli = Command.make(
           '--project',
           'integration',
           testCase === freshProof
-            ? 'tests/integration/purchase-approval-fresh-proof-postgres.test.ts'
+            ? 'tests/integration/purchase-approval-fresh-proof-postgres-'
             : 'tests/integration/preproposal-basis-postgres.test.ts',
           '--testTimeout',
           testCase === freshProof ? '180000' : '600000',

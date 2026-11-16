@@ -30,6 +30,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   exposes: {
     './PageRecords': './src/routes/[lang]/finance/page.tsx',
+    './PageVat': './src/routes/[lang]/finance/dph/page.tsx',
     './Route': './src/federation-entry.tsx',
   },
   filename: 'remoteEntry.js',

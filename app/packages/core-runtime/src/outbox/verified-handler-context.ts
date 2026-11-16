@@ -15,6 +15,7 @@ class VerifiedOutboxWorkerHandlerContextValue implements OutboxWorkerHandlerCont
   declare readonly legalEntityScope?: 'forbidden' | 'required';
   declare readonly messageId: string;
   declare readonly originatorInvocationId?: string;
+  declare readonly originatorLegalEntityId?: string;
   declare readonly producerModuleKey: string;
   declare readonly tenantId: string;
   declare readonly tenantSequenceNo: bigint;
@@ -33,5 +34,4 @@ const VerifiedOutboxWorkerHandlerContextSchema = Schema.instanceOf(VerifiedOutbo
 export const attestOutboxWorkerHandlerContext = (context: OutboxWorkerHandlerContext): OutboxWorkerHandlerContext =>
   new VerifiedOutboxWorkerHandlerContextValue(context);
 
-export const isVerifiedOutboxWorkerHandlerContext = (context: OutboxWorkerHandlerContext): boolean =>
-  Schema.is(VerifiedOutboxWorkerHandlerContextSchema)(context);
+export const isVerifiedOutboxWorkerHandlerContext = Schema.is(VerifiedOutboxWorkerHandlerContextSchema);

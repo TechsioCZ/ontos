@@ -1,6 +1,8 @@
 // Canonical schema-only contract extracted from the generated add-contact-point Action.
 import { Schema } from 'effect';
 
+import { PartyClientSourceReferenceSchema } from '../domain/identity-contracts.ts';
+
 import {
   ContactPointInputSchema,
   ContactPointPrivacyClassificationSchema,
@@ -11,6 +13,7 @@ import {
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const AddContactPointPayloadSchema = Schema.Struct({
+  sourceReference: Schema.optionalKey(PartyClientSourceReferenceSchema),
   contactPoint: ContactPointInputSchema,
   partyRef: PartyRefSchema,
   privacyClassification: ContactPointPrivacyClassificationSchema,

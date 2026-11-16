@@ -204,6 +204,22 @@ it.effect('declares the generated Core Action contract and bounded business payl
   }),
 );
 
+it.effect('names the modules installed with the changed one in the Action result', () =>
+  Effect.gen(function* resultNamesInstalledWith() {
+    const { resultSchema } = changeTenantModuleStateAction.descriptor;
+    const changed = { moduleKey: 'commerce.merchandise', newState: 'active', previousState: null };
+    expect(yield* Schema.decodeUnknownEffect(resultSchema)({ ...changed, installedWith: ['commerce.tax'] })).toEqual({
+      ...changed,
+      installedWith: ['commerce.tax'],
+    });
+    expect(yield* Schema.decodeUnknownEffect(resultSchema)({ ...changed, installedWith: [] })).toEqual({
+      ...changed,
+      installedWith: [],
+    });
+    expect(yield* Effect.flip(Schema.decodeUnknownEffect(resultSchema)(changed))).toBeDefined();
+  }),
+);
+
 it.effect('resolves the complete intrinsic activation closure and rejects missing providers or cycles', () =>
   Effect.gen(function* intrinsicActivationClosure() {
     const a = intrinsicContract('consumer.alpha', ['provider.beta']);

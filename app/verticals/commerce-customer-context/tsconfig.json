@@ -23,7 +23,8 @@
     "server",
     "api",
     "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "vertical.registration.ts",
+    "tests/support/customer-group-source-authority.fixture.ts"
   ],
   "references": [
     {
@@ -77,5 +78,14 @@
     {
       "path": "../privacy"
     }
+  ],
+  "files": [
+    "tests/support/customer-group-source-authority.fixture.ts",
+    "tests/support/organization-profile-ico-native.fixture.ts",
+    "tests/support/customer-context-owned-fixture.ts",
+    "tests/support/customer-profile-source-reader.fixture.ts",
+    "tests/support/customer-group-membership-source-authority.fixture.ts",
+    "tests/support/customer-group-source-observation.fixture.ts",
+    "tests/support/customer-profile-source-authority.fixture.ts"
   ]
 }

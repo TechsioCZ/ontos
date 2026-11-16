@@ -178,7 +178,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
     );
 
     suite.effect(
-      'holds native Read authority through policies and commits denial evidence under active authority',
+      'holds native Read authority through owner work, refuses a Read drained during its Policies, and commits denial evidence under active authority',
       () =>
         Effect.gen(function* readCompositionFence() {
           const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -213,33 +213,33 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
             principalId,
             tenantId,
           });
-          const policyStarted = yield* Deferred.make<null>();
-          const policyRelease = yield* Deferred.make<null>();
+          const ownerStarted = yield* Deferred.make<null>();
+          const ownerRelease = yield* Deferred.make<null>();
           const ownerBackend = yield* Deferred.make<number>();
           const drainStarted = yield* Deferred.make<null>();
+          const policyHeld = yield* Deferred.make<null>();
+          const policyRelease = yield* Deferred.make<null>();
           let factoryCalls = 0;
           let handlerCalls = 0;
           let policyCalls = 0;
-          let currentOwnerBackend: number | undefined;
+          let holdPolicy = false;
           let policyDenial = false;
           let ownerAuthorizationDecision: 'allowed' | 'denied' = 'allowed';
           const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
             evaluate: () =>
-              Effect.gen(function* heldReadPolicy() {
+              Effect.gen(function* readPolicy() {
                 policyCalls += 1;
-                const [backend] = yield* database
-                  .execute<{ readonly pid: number }>(sql`select pg_backend_pid() as pid`, 'objects')
-                  .pipe(Effect.orDie);
-                currentOwnerBackend = Option.getOrThrow(Option.fromNullishOr(backend)).pid;
-                yield* Deferred.succeed(ownerBackend, currentOwnerBackend);
-                yield* Deferred.succeed(policyStarted, null);
-                yield* Deferred.await(policyRelease);
+                // Policies run before the owner transaction opens (no fence is held across their remote work).
+                if (holdPolicy) {
+                  yield* Deferred.succeed(policyHeld, null);
+                  yield* Deferred.await(policyRelease);
+                }
                 if (policyDenial) {
                   return yield* denyPolicy('native-policy-denied', 'The owner Policy denies this admitted Read');
                 }
                 return yield* Effect.void;
               }),
-            policyKey: `${readKey}.authority-held-policy.v1`,
+            policyKey: `${readKey}.policy.v1`,
           });
           const registration = defineRead(
             {
@@ -274,7 +274,12 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
                   .select({ pid: sql<number>`pg_backend_pid()` })
                   .from(applicationCompositionAuthority)
                   .pipe(Effect.mapError(fixtureReadConnectionFailure));
-                expect(Option.getOrThrow(Option.fromNullishOr(backend)).pid).toBe(currentOwnerBackend);
+                // The first owner transaction stays open so the test can observe it fencing a drain.
+                if (factoryCalls === 1) {
+                  yield* Deferred.succeed(ownerBackend, Option.getOrThrow(Option.fromNullishOr(backend)).pid);
+                  yield* Deferred.succeed(ownerStarted, null);
+                  yield* Deferred.await(ownerRelease);
+                }
                 return {};
               }),
             () => ({ kind: 'module', moduleId: 'core.shell' }),
@@ -330,7 +335,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           yield* Effect.scoped(
             Effect.gen(function* verifyReadCompositionFence() {
               const read = yield* run(revision).pipe(Effect.forkScoped);
-              yield* Deferred.await(policyStarted);
+              yield* Deferred.await(ownerStarted);
               const ownerPid = yield* Deferred.await(ownerBackend);
               const drain = yield* publisher
                 .transaction(
@@ -354,12 +359,18 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
               }
               expect(blocked).toBe(true);
               expect(drain.pollUnsafe()).toBeUndefined();
-              expect(factoryCalls).toBe(0);
+              // Authorization and Policies ran before the owner transaction opened; only owner work holds the fence.
+              expect(policyCalls).toBe(1);
+              expect(factoryCalls).toBe(1);
               expect(handlerCalls).toBe(0);
-              yield* Deferred.succeed(policyRelease, null);
-              expect(yield* Fiber.join(read)).toEqual(['visible']);
+              yield* Deferred.succeed(ownerRelease, null);
+              // The drain waited only for owner work. Once that commits, the drain takes the composition before the
+              // Read's post-commit evidence can re-take its fence, so that phase finds the revision drained: a
+              // retired composition is never served, even to a Read whose owner work already ran.
               yield* Fiber.join(drain);
-            }).pipe(Effect.ensuring(Deferred.succeed(policyRelease, null))),
+              expect(Schema.is(ReadHandlerUnavailable)(yield* Effect.flip(Fiber.join(read)))).toBe(true);
+              expect(handlerCalls).toBe(1);
+            }).pipe(Effect.ensuring(Deferred.succeed(ownerRelease, null))),
           );
           expect(Schema.is(ReadHandlerUnavailable)(yield* Effect.flip(run(revision)))).toBe(true);
           const authorityCases = [
@@ -413,12 +424,31 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
             'select outcome, outcome_code from core.data_access_events where tenant_id = $1 order by occurred_at, data_access_event_id',
             [tenantId],
           );
+          // The fenced-out Read records nothing; the next revision's allowed Read and both refusals are recorded.
           expect(evidence).toEqual([
-            { outcome: 'allowed', outcome_code: 'read_allowed' },
             { outcome: 'allowed', outcome_code: 'read_allowed' },
             { outcome: 'denied', outcome_code: 'native-policy-denied' },
             { outcome: 'denied', outcome_code: 'read_permission_denied' },
           ]);
+          // A composition drained while a Read's Policies still run is never served to it: the owner transaction's
+          // fence refuses the drained revision, so the Read ends unavailable and no owner work runs.
+          ownerAuthorizationDecision = 'allowed';
+          holdPolicy = true;
+          yield* Effect.scoped(
+            Effect.gen(function* drainDuringPolicies() {
+              const read = yield* run(nextRevision).pipe(Effect.flip, Effect.forkScoped);
+              yield* Deferred.await(policyHeld);
+              yield* publisher.transaction(
+                Effect.fn(function* drainWhilePoliciesRun(transaction) {
+                  yield* drainApplicationCompositionAuthority(transaction, nextRevision);
+                }),
+              );
+              yield* Deferred.succeed(policyRelease, null);
+              expect(Schema.is(ReadHandlerUnavailable)(yield* Fiber.join(read))).toBe(true);
+              expect(factoryCalls).toBe(2);
+              expect(handlerCalls).toBe(2);
+            }).pipe(Effect.ensuring(Deferred.succeed(policyRelease, null))),
+          );
         }),
     );
   },

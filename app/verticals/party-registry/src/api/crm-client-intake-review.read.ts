@@ -13,7 +13,7 @@ import type {
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
+import { crmClientEvidenceReference } from '../services/crm-client-evidence.ts';
 import { and, eq } from 'drizzle-orm';
 import { partyMatchDecisions } from '../db/schema.ts';
 import { findDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';

@@ -316,7 +316,7 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
                   <span className="w-24 tabular-nums">{formatDate(event.date)}</span>
                   <span className="font-medium tabular-nums">{formatMoney(event.amountMinor)}</span>
                   <PaymentSourceBadge event={event} invoice={invoice} />
-                  {payment !== undefined && (
+                  {payment !== undefined && payment.source === undefined && (
                     <span className="text-fg-secondary text-xs">
                       {actorText(payment.actorLabel)} · {at(payment.recordedAt)}
                       {payment.note === undefined ? '' : ` · ${payment.note}`}

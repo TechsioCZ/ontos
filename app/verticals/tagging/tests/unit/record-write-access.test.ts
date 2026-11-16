@@ -1,7 +1,7 @@
 import type { ActionRegistration } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { TaggingErrorSchema } from '../../shared/actions/apply-command.ts';
 import { TaggingCommandPayloadSchema, ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -81,7 +81,7 @@ const recordWriteTests = <Payload extends Schema.ConstraintDecoder<unknown>, Own
         const other = {
           ...encoded,
           command:
-            command._tag === 'AssignTag' || command._tag === 'UnassignTag'
+            Predicate.isTagged(command, 'AssignTag') || Predicate.isTagged(command, 'UnassignTag')
               ? { ...command, tagId: otherId }
               : { ...command, id: otherId },
         };
@@ -92,7 +92,7 @@ const recordWriteTests = <Payload extends Schema.ConstraintDecoder<unknown>, Own
             transport: { correlationId: 'record-denied', idempotencyKey: `${registration.descriptor.actionKey}-other` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect(writes).toBe(1);
         expect(harness.snapshot().committed).toHaveLength(1);
       }),
@@ -113,7 +113,7 @@ const recordWriteTests = <Payload extends Schema.ConstraintDecoder<unknown>, Own
             transport: { correlationId: 'approval-only', idempotencyKey: registration.descriptor.actionKey },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect('code' in failure && failure.code).toBe('action_approval_required');
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
@@ -132,7 +132,7 @@ const recordWriteTests = <Payload extends Schema.ConstraintDecoder<unknown>, Own
             transport: { correlationId: 'no-dispatch-bypass', idempotencyKey: registration.descriptor.actionKey },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPayloadValidationError');
+        expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
       }),

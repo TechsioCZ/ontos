@@ -339,7 +339,9 @@ export const preloadPage = modulePagePreload(
 );
 
 /** Remount identity of the page content: the verified scope (or none) and the customer filter. */
-const PageContentKeySchema = Schema.fromJsonString(Schema.Tuple([Schema.NullOr(Schema.String), Schema.String]));
+const PageContentKeySchema = Schema.fromJsonString(
+  Schema.Tuple([Schema.OptionFromNullOr(Schema.String), Schema.String]),
+);
 
 export const RecordsPage = (props: Partial<ModulePageProps>) => {
   const rawSearch = useRouterState({
@@ -352,7 +354,9 @@ export const RecordsPage = (props: Partial<ModulePageProps>) => {
   // The Shell's verified scope keys the ledger cache; a tenant, company or principal switch also remounts the page,
   // so no local state of the previous scope carries over. Without a scope the page reads and writes nothing.
   const scope = financePageScope(props.context);
-  const contentKey = Result.getOrThrow(Schema.encodeResult(PageContentKeySchema)([scope ?? null, filterKey]));
+  const contentKey = Result.getOrThrow(
+    Schema.encodeResult(PageContentKeySchema)([Option.fromUndefinedOr(scope), filterKey]),
+  );
   return (
     <FederatedI18nBoundary
       defaultNamespace="finance-billing"

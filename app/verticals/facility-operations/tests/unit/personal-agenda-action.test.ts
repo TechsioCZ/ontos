@@ -1,6 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { DateTime, Effect, Schema, Layer } from 'effect';
+import { DateTime, Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { updatePersonalAgendaAction } from '../../src/actions/update-personal-agenda.action.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
@@ -121,13 +121,15 @@ it.layer(personalTestLayer)('Facility personal agenda', (suite) => {
         expect(harness.snapshot().committed[0]?.actionKey).toBe('facility.operations.update-personal-agenda');
         yield* harness.runtime.runAction(input).pipe(
           Effect.flip,
-          Effect.tap((failure) => Effect.sync(() => expect(failure._tag).toBe('ActionAlreadyCommitted'))),
+          Effect.tap((failure) =>
+            Effect.sync(() => expect(Predicate.isTagged(failure, 'ActionAlreadyCommitted')).toBe(true)),
+          ),
         );
         expect(calls).toBe(1);
         const broad = yield* harness.runtime
           .runAction({ ...input, registration: applyCommandAction })
           .pipe(Effect.flip);
-        expect(broad._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(broad, 'ActionPermissionDenied')).toBe(true);
         expect(calls).toBe(1);
       }),
   );
@@ -144,7 +146,7 @@ it.layer(personalTestLayer)('Facility personal agenda', (suite) => {
           now: operationTime,
           resourceId: 'personal',
         }).pipe(Effect.flip);
-        expect(error._tag).toBe('FacilityOperationsNotFound');
+        expect(Predicate.isTagged(error, 'FacilityOperationsNotFound')).toBe(true);
       }
       const command = yield* Schema.decodeUnknownEffect(PersonalAgendaCommandSchema)({
         _tag: 'AgendaNotificationsMarkAllRead',

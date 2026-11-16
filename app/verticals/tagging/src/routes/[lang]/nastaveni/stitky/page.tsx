@@ -1,4 +1,4 @@
-import { pendingProposalMessage } from '../../../../api/action-result.ts';
+import { pendingProposalMessage } from '../../../../tags/action-result.ts';
 import {
   EmptyState,
   PageHeader,
@@ -20,19 +20,19 @@ import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
-import { applyTaggingCommand } from '../../../../api/records-commands.ts';
-import { subjectsWithTag } from '../../../../api/records-consumer.ts';
+import { applyTaggingCommand } from '../../../../tags/records-commands.ts';
+import { subjectsWithTag } from '../../../../tags/tag-records.ts';
 import { loadSubjectNames } from '../../../../api/subject-names.ts';
 import type { SubjectNames } from '../../../../api/subject-names.ts';
+import { runTagEffect } from '../../../../tags/run-tag-effect.ts';
 import {
   preloadTagCatalog,
   refreshTagCatalog,
-  runTagEffect,
-  TagI18n,
   tagCatalogStatusOf,
-  tagColorValue,
   useTagCatalogSnapshot,
-} from '../../../../components/tag-controls.tsx';
+} from '../../../../tags/tag-catalog.ts';
+import { tagColorValue } from '../../../../tags/tag-colors.ts';
+import { TagI18n } from '../../../../tags/tag-i18n.tsx';
 import { subjectKindValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';

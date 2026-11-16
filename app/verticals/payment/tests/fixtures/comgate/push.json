@@ -1,0 +1,14 @@
+{
+  "merchant": "123456",
+  "test": "false",
+  "price": "10000",
+  "curr": "CZK",
+  "label": "Beatles - Help",
+  "refId": "2010102600",
+  "method": "CARD",
+  "email": "info@customer.com",
+  "phone": "+420123456789",
+  "transId": "AB12-EF34-IJ56",
+  "secret": "gx4q8OV3TJt6noJnfhjqJKyX3Z6Ych0y",
+  "status": "PAID"
+}

@@ -1,9 +1,19 @@
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Context, Crypto, Effect, Layer, Redacted } from 'effect';
+import { Hex } from 'effect/encoding';
 import { EmailDeliveryService } from '../server.ts';
+import { EmailDeliveryUnavailable } from '../unavailable.ts';
 import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
-import { claim, finish, readEnabledSince, recoverInterrupted, skipIneligibleRentReminder } from './ledger.ts';
+import {
+  claim,
+  finish,
+  holdInquiryWithoutInbox,
+  readEnabledSince,
+  recoverInterrupted,
+  skipIneligibleRentReminder,
+} from './ledger.ts';
+import type { DeliveryIdentity } from './ledger.ts';
 import {
   deliveryOutcomeOf,
   planAgendaEmails,
@@ -29,6 +39,27 @@ import {
 type OutgoingEmail = PlannedEmail & { readonly from: string };
 export const DISPATCH_BATCH_SIZE = 10;
 
+/**
+ * The provider-facing never-twice identity (Resend `Idempotency-Key`, SMTP `Message-ID` seed): a SHA-256 of the whole
+ * ledger identity, company included, so one person's same-keyed e-mails from two companies are never merged or dropped
+ * as duplicates downstream, and the key stays 82 characters for a dedupe key of any length. Tenant and legal entity are
+ * UUIDs, so the `/`-joined input is unambiguous.
+ */
+export const deliveryIdempotencyKey = Effect.fn('EmailDispatch.deliveryIdempotencyKey')(function* idempotencyKey(
+  planned: DeliveryIdentity,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const identity = `${planned.tenantId}/${planned.legalEntityId}/${planned.dedupeKey}`;
+  const digest = yield* crypto.digest('SHA-256', new TextEncoder().encode(identity)).pipe(
+    Effect.mapError((cause) =>
+      Object.defineProperty(new EmailDeliveryUnavailable({ reason: 'configuration' }), 'cause', {
+        value: Redacted.make(cause),
+      }),
+    ),
+  );
+  return `ontos-delivery-v1:${Hex.encode(digest)}`;
+});
+
 /** Called only after a ledger claim. Seeded fake recipients settle visibly as SKIPPED without touching the transport. */
 export const submitEmail = Effect.fn('EmailDispatch.submitEmail')(function* submitPlannedEmail(
   planned: OutgoingEmail,
@@ -41,20 +72,21 @@ export const submitEmail = Effect.fn('EmailDispatch.submitEmail')(function* subm
   }
   const context = yield* Layer.build(transport.deliveryLayer(planned.from, planned.recipient));
   const service = Context.get(context, EmailDeliveryService);
-  return yield* service
-    .send({
-      html: Redacted.make(planned.html),
-      idempotencyKey: planned.dedupeKey,
-      subject: planned.subject,
-      text: Redacted.make(planned.text),
-      to: planned.recipient,
-    })
-    .pipe(
-      Effect.match({
-        onFailure: deliveryOutcomeOf,
-        onSuccess: (receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' }),
+  return yield* deliveryIdempotencyKey(planned).pipe(
+    Effect.flatMap((idempotencyKey) =>
+      service.send({
+        html: Redacted.make(planned.html),
+        idempotencyKey,
+        subject: planned.subject,
+        text: Redacted.make(planned.text),
+        to: planned.recipient,
       }),
-    );
+    ),
+    Effect.match({
+      onFailure: deliveryOutcomeOf,
+      onSuccess: (receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' }),
+    }),
+  );
 }, Effect.scoped);
 
 /** Work of one tenant + legal entity this tick: due delivery ids grouped by source subject. */
@@ -177,19 +209,28 @@ const planScope = Effect.fn('EmailDispatch.planScope')(function* planScopeEmails
     { concurrency: 1 },
   );
   const tasks = yield* readStorefrontInquiryTasks(scope, work.subjects['storefront-inquiry']);
+  let held = 0;
   const inquiryEmails = yield* Effect.forEach(
     tasks,
-    (task) => {
-      const email = planStorefrontInquiryEmail(task, {
+    Effect.fn('EmailDispatch.planInquiry')(function* planInquiry(task) {
+      const plan = planStorefrontInquiryEmail(task, {
         ...scope,
         appUrl,
         enabledSince,
         recipient: environment.AKROS_INQUIRY_EMAIL_TO ?? '',
       });
-      return email === null
-        ? Effect.succeed([])
-        : senderFor(scope, 'AKROS', environment, transport.kind).pipe(Effect.map((from) => [{ ...email, from }]));
-    },
+      if (plan === null || !work.keys.has(plan.email.dedupeKey)) {
+        return [];
+      }
+      if (plan.kind === 'INBOX_MISSING') {
+        if (yield* holdInquiryWithoutInbox(plan.email)) {
+          held += 1;
+        }
+        return [];
+      }
+      const from = yield* senderFor(scope, 'AKROS', environment, transport.kind);
+      return [{ ...plan.email, from }];
+    }),
     { concurrency: 1 },
   );
   const invitations = yield* readPersonInvitations(scope, work.subjects['person-invitation']);
@@ -208,7 +249,7 @@ const planScope = Effect.fn('EmailDispatch.planScope')(function* planScopeEmails
     ...inquiryEmails.flat(),
     ...invitationEmails,
   ].filter((email) => work.keys.has(email.dedupeKey));
-  return { emails, skipped };
+  return { emails, held, skipped };
 });
 
 export interface DispatchResult {
@@ -247,7 +288,7 @@ const dispatchClaimedEmail = Effect.fn('EmailDispatch.dispatchClaimedEmail')(fun
     return { processed: 0, skipped: 0 };
   }
   const outcome = yield* submitEmail(email, transport, environment);
-  yield* inDeliveryScope(scope, finish(email.dedupeKey, outcome));
+  yield* inDeliveryScope(scope, finish(email, outcome));
   return { processed: 1, skipped: outcome.status === 'SKIPPED' ? 1 : 0 };
 });
 
@@ -266,7 +307,7 @@ const dispatchScope = Effect.fn('EmailDispatch.dispatchScope')(function* process
     (email) => dispatchClaimedEmail(work.scope, email, transport, environment),
     { concurrency: 1 },
   );
-  return sumCounts([{ processed: planned.skipped, skipped: planned.skipped }, ...counts]);
+  return sumCounts([{ processed: planned.skipped + planned.held, skipped: planned.skipped }, ...counts]);
 });
 
 export const dispatchEmailBatchWith = Effect.fn('EmailDispatch.dispatchEmailBatchWith')(function* dispatchBatch(

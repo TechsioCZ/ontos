@@ -2,10 +2,9 @@ import type { TaggingPermissionDenied, TaggingCommandPayload } from '../../share
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
+  ActionServiceFactory,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
@@ -27,31 +26,30 @@ export const prepareApplyCommandServices = withCommandGuard(
   ) {
     const preparedAt = yield* DateTime.now;
     yield* prepareTaggingCommand(payload.command, context.scope);
-    return Effect.fn('Tagging.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
-      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-      if (
-        age < 0 ||
-        age >= 30_000 ||
-        !samePrincipal(scope, context.scope) ||
-        scope.tenantId !== context.scope.tenantId ||
-        scope.legalEntityId !== context.scope.legalEntityId ||
-        scope.correlationId !== context.scope.correlationId ||
-        compositionRevision !== context.compositionRevision
-      ) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Prepared Tagging permissions expired or belong to another operation',
+    const factory: ActionServiceFactory<Services> = Effect.fn('Tagging.revalidatePreparedCommand')(
+      function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
+        const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+        if (
+          age < 0 ||
+          age >= 30_000 ||
+          !samePrincipal(scope, context.scope) ||
+          scope.tenantId !== context.scope.tenantId ||
+          scope.legalEntityId !== context.scope.legalEntityId ||
+          scope.correlationId !== context.scope.correlationId ||
+          compositionRevision !== context.compositionRevision
+        ) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Prepared Tagging permissions expired or belong to another operation',
+          });
+        }
+        return yield* persistenceService(transaction, {
+          prepared: { actionInvocationId: context.actionInvocationId, payload },
+          scope,
         });
-      }
-      return yield* persistenceService(transaction, {
-        prepared: { actionInvocationId: context.actionInvocationId, payload },
-        scope,
-      });
-    });
+      },
+    );
+    return factory;
   }),
 ) satisfies ActionServicePreflight<
   TaggingCommandPayload,

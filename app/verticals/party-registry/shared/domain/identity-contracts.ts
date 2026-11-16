@@ -46,7 +46,7 @@ const ProvenanceSchema = Schema.Struct({
 /** Evidence is an explicit attestation accepted by the authenticated owner Action. References
  * locate supporting material; their spelling and a claimed provider label confer no authority.
  * Provider-only and managed Legal Entity inputs are not supported attestation sources. */
-export const PartySubjectEvidenceSchema = Schema.Struct({
+export const PartyActorAttestationSchema = Schema.Struct({
   basis: Schema.Literals(['DIRECT_INTERACTION', 'REVIEWED_DOCUMENT']),
   evidenceRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   // This explicit owner-accepted attestation binds a Guest purchase to the same subject;
@@ -68,11 +68,69 @@ export const PartySubjectEvidenceSchema = Schema.Struct({
   statement: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   subjectKey: PartySubjectKeySchema,
 });
+const concreteSubject = Schema.Literals(['PERSON', 'ORGANIZATION', 'CONCRETE_SUBJECT']);
+const sourceIdentifier = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200));
+const declaredSubject = {
+  // Only the actor-attestation variant can carry Guest authority. Reject a forged
+  // binding at decoding instead of silently dropping it as an excess property.
+  guestBinding: Schema.optionalKey(Schema.Never),
+  observedSubject: concreteSubject,
+  statement: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  subjectKey: PartySubjectKeySchema,
+};
+
+const ManualDeclarationSchema = Schema.Struct({
+  ...declaredSubject,
+  basis: Schema.optionalKey(Schema.Never),
+  evidenceRef: Schema.optionalKey(Schema.Never),
+  kind: Schema.Literal('MANUAL_DECLARATION'),
+  subjectKey: Schema.optionalKey(PartySubjectKeySchema),
+});
+
+export const PartyClientSourceIdentitySchema = Schema.Struct({
+  issuer: sourceIdentifier,
+  namespace: sourceIdentifier,
+  recordType: sourceIdentifier,
+  routeRef: sourceIdentifier,
+});
+
+/** Qualified source locator only. Current source and Privacy authority are checked by the owner. */
+export const PartyClientSourceReferenceSchema = Schema.Struct({
+  source: PartyClientSourceIdentitySchema,
+  recordId: sourceIdentifier,
+  occurrenceId: sourceIdentifier,
+});
+export const PartyClientSourceReceiptReferenceSchema = Schema.Struct({
+  ...PartyClientSourceReferenceSchema.fields,
+  sourceObservedAt: Schema.optionalKey(IsoTimestampSchema),
+});
+
+const ClientSourceAssertionSchema = Schema.Struct({
+  ...declaredSubject,
+  basis: Schema.optionalKey(Schema.Never),
+  kind: Schema.Literal('CLIENT_SOURCE_ASSERTION'),
+  occurrenceId: sourceIdentifier,
+  recordId: sourceIdentifier,
+  source: PartyClientSourceIdentitySchema,
+  sourceObservedAt: IsoTimestampSchema,
+});
+export { ClientSourceAssertionSchema as PartyClientSourceAssertionSchema };
+export type PartyActorAttestation = typeof PartyActorAttestationSchema.Type;
+export type PartyClientSourceAssertion = typeof ClientSourceAssertionSchema.Type;
+
+export const PartySubjectEvidenceSchema = Schema.Union([
+  PartyActorAttestationSchema,
+  ManualDeclarationSchema,
+  ClientSourceAssertionSchema,
+]);
 export type PartySubjectEvidence = typeof PartySubjectEvidenceSchema.Type;
 export const PartySubjectEvidenceListSchema = Schema.Array(PartySubjectEvidenceSchema).check(Schema.isMaxLength(32));
 export const PartySubjectEligibilityVersion = 'party-concrete-subject.v1' as const;
 export const PartyTypeRuleVersion = 'party-subject-type.v1' as const;
+export const PartyDeclaredSubjectEligibilityVersion = 'party-concrete-subject.v2' as const;
+export const PartyDeclaredTypeRuleVersion = 'party-subject-type.v2' as const;
 export const PartyEvidenceEvaluationSchema = Schema.Struct({
+  sourceInputFingerprint: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))),
   evidence: PartySubjectEvidenceListSchema,
   reasonCode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   subjectEligibilityVersion: Schema.String,

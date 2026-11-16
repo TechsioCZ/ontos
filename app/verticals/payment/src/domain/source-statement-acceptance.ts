@@ -22,6 +22,7 @@ import {
   PaymentEvidenceDecision,
   paymentFactMeaning,
 } from './evidence-interpretation.ts';
+import { verifyManualRefundEvidence } from './manual-refund-evidence.ts';
 import {
   PaymentSourceQualification,
   qualifyPaymentSourceStatement,
@@ -535,9 +536,9 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
   input: PaymentSourceStatementInput,
 ) {
   const { statement } = input;
-  const verifiedAt = yield* DateTime.now;
-  const receivedAt = Option.getOrElse(input.receivedAt, () => verifiedAt);
-  if (DateTime.isGreaterThan(receivedAt, verifiedAt)) {
+  const startedAt = yield* DateTime.now;
+  const receivedAt = Option.getOrElse(input.receivedAt, () => startedAt);
+  if (DateTime.isGreaterThan(receivedAt, startedAt)) {
     return yield* paymentSourceRejected(
       'payment_source_received_time_invalid',
       'The transport receipt time must not lie after the verification time',
@@ -552,19 +553,21 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     statement.correctsObservationId === undefined
       ? Option.none()
       : yield* services.source.findObservation(statement.correctsObservationId);
-  // A correction that names no Payment is correlated through the accepted observation it corrects (#1152).
-  const [target, existingOccurrence] = yield* Effect.all(
-    [
-      loadTarget(services, statement.paymentId ?? Option.getOrUndefined(correctedObservation)?.paymentId),
-      services.source.findOccurrence({
-        source: statement.source,
-        sourceOccurrenceId: statement.sourceOccurrenceId,
-        sourceRevision: statement.sourceRevision,
-      }),
-    ],
+  const existingOccurrence = yield* services.source.findOccurrence({
+    source: statement.source,
+    sourceOccurrenceId: statement.sourceOccurrenceId,
+    sourceRevision: statement.sourceRevision,
+  });
+  // A replay is checked against the operation the original record named. For a new correction,
+  // the corrected observation identifies its Payment when the source omits it.
+  const paymentId = Option.match(existingOccurrence, {
+    onNone: () => statement.paymentId ?? Option.getOrUndefined(correctedObservation)?.paymentId,
+    onSome: (original) => original.paymentId,
+  });
+  const [target, statementHash] = yield* Effect.all(
+    [loadTarget(services, paymentId), computePaymentMaterialHash(paymentSourceStatementMaterial(statement))],
     { concurrency: 1 },
   );
-  const statementHash = yield* computePaymentMaterialHash(paymentSourceStatementMaterial(statement));
   const qualification = qualifyPaymentSourceStatement({
     authorities,
     correctedObservation: Option.getOrUndefined(correctedObservation),
@@ -574,6 +577,8 @@ export const acceptPaymentSourceStatement = Effect.fn('PaymentSource.acceptState
     statementHash,
     target: Option.getOrUndefined(target),
   });
+  yield* verifyManualRefundEvidence(statement, qualification, target, correctedObservation);
+  const verifiedAt = yield* DateTime.now;
   const run: StatementRun = {
     capabilityCorrelated: selectedCapabilityCorrelation(statement, qualification),
     input,

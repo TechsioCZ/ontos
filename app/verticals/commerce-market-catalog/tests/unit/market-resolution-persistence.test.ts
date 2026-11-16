@@ -57,7 +57,7 @@ const loadSnapshot = (nextApplicabilityBoundary: null | string) =>
     const transactionService: OperationalScopeTransactionService = {
       delete: unusedDatabaseOperation,
       insert: unusedDatabaseOperation,
-      install: () => Effect.void,
+      install: () => Effect.succeed('session_setting' as const),
       scopedRoutineInvoker: () => routineInvoker,
       select: unusedDatabaseOperation,
       update: unusedDatabaseOperation,

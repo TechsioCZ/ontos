@@ -33,6 +33,8 @@ import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/t
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const bindingId = '33333333-3333-4333-8333-333333333333';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const scope = {
   authBindingId: '44444444-4444-4444-8444-444444444444',
   authContextRef: 'better-auth-session:inventory-reconciliation-evidence-test',
@@ -103,13 +105,14 @@ it.effect('denies the exact owner Resource before resolving transaction-scoped e
     const stages: string[] = [];
     const gate = makeTestBoundAccessGate();
     const database = {
-      executor: yield* makeTestDatabase((text) =>
-        Effect.succeed(
-          text.includes('current_setting')
-            ? [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
-            : [],
-        ),
-      ),
+      executor: yield* makeTestDatabase((text, params) => {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (text === installAndReadScopeSql) {
+          expect(params).toEqual([tenantId, legalEntityId]);
+          return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
+        return Effect.succeed([]);
+      }),
     };
     const runtime = makeReadRuntime(
       database,

@@ -17,69 +17,199 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { constVoid } from 'effect/Function';
 import { createPortal } from 'react-dom';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { convertGrossMinor } from '../../../../../shared/domain/market-offers.ts';
+import { orderCurrency, shippingMethodFor, shippingMethods } from '../../../../../shared/domain/merchandise-model.ts';
 import {
-  grossUnitPriceMinor,
-  orderCurrency,
-  shippingMethodFor,
-  shippingMethods,
-} from '../../../../../shared/domain/merchandise-model.ts';
-import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/domain/order-quantity.ts';
+  firstOrderableQuantity,
+  isOrderQuantityValid,
+  orderQuantityRules,
+} from '../../../../../shared/domain/order-quantity.ts';
+import { recordGrossForQuantity } from '../../../../../shared/domain/unit-price.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
 import { addressIncomplete, contactIncomplete, parseAmount, parseQuantity } from './order-edit-draft.ts';
 import type { Draft, DraftLine } from './order-edit-draft.ts';
 import { useOrderEditDraft } from './order-edit-save.ts';
-import { activeVariants } from './order-line-draft.ts';
-import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
+import { activeVariants, lineClassification } from './order-line-draft.ts';
+import { loadProductRecord, readProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
-
-type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
+import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
+import type { CompanyVat, TaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
+import { DateTime, Effect, Option } from 'effect';
 
 /** A catalog CZK amount in the order's currency: market orders keep their own price list (as the server reprices). */
 const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number =>
   order.market === undefined ? czkMinor : convertGrossMinor(czkMinor, order.market);
 
 interface SellableUnit {
+  /** The record's price including VAT below its first quantity break (what the storefront shows), when it has one. */
+  readonly grossMinor?: number;
   readonly name: string;
   readonly netMinor: number;
   readonly productId: ProductId;
   readonly sku: string;
+  readonly taxClassificationCode: DraftLine['taxClassificationCode'];
+  /** Its quantity breaks: a gross-priced order charges the break a line's quantity reaches. */
+  readonly tiers?: ProductRecord['priceTiers'];
   readonly variantId?: VariantId;
   readonly variantName?: string;
   readonly vatRate: DraftLine['vatRate'];
 }
 
-/** The unit a pick adds: the product itself, or its chosen active variant. Undefined until that choice is complete. */
-const sellableUnit = (product: ProductRecord, variantId: VariantId | null): SellableUnit | undefined => {
+/** Products read again at once after a refused save (an order edit adds a handful of lines). */
+const OFFER_READS_AT_ONCE = 4;
+
+/**
+ * An added line at a newly offered price: the price staff left at the old offer follows the new one, a price they
+ * typed themselves stays.
+ */
+const withOffer = (line: DraftLine, offer: number): DraftLine => {
+  const text = moneyInputText(offer / 100);
+  const typed =
+    line.offeredPriceText !== undefined && parseAmount(line.priceText) !== parseAmount(line.offeredPriceText);
+  return { ...line, offeredPriceText: text, priceText: typed ? line.priceText : text };
+};
+
+/** A line's price field: no price typed, or (an added line) no price including VAT for its quantity. */
+const lineFieldError = (price: number | null, priceMissing: boolean, missingText: string) => {
+  if (priceMissing) {
+    return { helpText: missingText, validateStatus: 'error' as const };
+  }
+  return price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {};
+};
+
+/** The quantity a picked unit is added at: the smallest quantity it can be ordered in. */
+const firstQuantityOf = (picked: ProductRecord, offeredUnit: SellableUnit) =>
+  firstOrderableQuantity(
+    offeredUnit.variantId === undefined
+      ? picked
+      : (picked.variantRecords?.find((entry) => entry.id === offeredUnit.variantId) ?? picked),
+  );
+
+interface RepricedLine {
+  readonly name: string;
+  readonly price: number;
+}
+
+/** The current offer of every added line whose product can be read and sold now, by line key. */
+const currentOffers = (
+  lines: readonly DraftLine[],
+  offerOf: (product: ProductRecord, line: DraftLine) => number | undefined,
+): Effect.Effect<ReadonlyMap<string, number>> =>
+  Effect.forEach(
+    lines.filter((line) => line.offeredPriceText !== undefined),
+    (line) =>
+      readProductRecord(line.productId).pipe(
+        Effect.map((product) => Option.fromUndefinedOr(product === undefined ? product : offerOf(product, line))),
+        // A product that cannot be read keeps its line as it is; staff see the refusal and can pick it again.
+        Effect.orElseSucceed(() => Option.none<number>()),
+        Effect.map((offer) =>
+          Option.match(offer, { onNone: () => [], onSome: (price) => [[line.key, price] as const] }),
+        ),
+      ),
+    { concurrency: OFFER_READS_AT_ONCE },
+  ).pipe(Effect.map((offers) => new Map(offers.flat())));
+
+/** A line named as staff see it. */
+const lineName = (line: DraftLine): string =>
+  line.variantName === undefined ? line.name : `${line.name} (${line.variantName})`;
+
+/** The added lines a new offer changes the price of, named as staff see them. */
+const repricedLines = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): RepricedLine[] =>
+  lines.flatMap((line) => {
+    const price = offers.get(line.key);
+    return price === undefined || price === parseAmount(line.offeredPriceText ?? '')
+      ? []
+      : [{ name: lineName(line), price }];
+  });
+
+/**
+ * The added lines whose new price the form could not take after the server refused their old one: a product that can
+ * no longer be read, and, when no line got a new price at all, every added line (the product reads at the price the
+ * line already carries, e.g. one without a stored gross priced at a rate the server no longer uses). Saving again
+ * would be refused the same way, so staff remove those lines and add them again.
+ */
+const unrepricedLines = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): string[] => {
+  const added = lines.filter((line) => line.offeredPriceText !== undefined);
+  const noneRepriced = repricedLines(added, offers).length === 0;
+  return added.flatMap((line) => (noneRepriced || !offers.has(line.key) ? [lineName(line)] : []));
+};
+
+/** The lines with their new offers taken. */
+const withOffers = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): DraftLine[] =>
+  lines.map((line) => {
+    const offer = offers.get(line.key);
+    return offer === undefined ? line : withOffer(line, offer);
+  });
+
+/**
+ * Why the picked product cannot be added: it names no VAT classification, or its classification has no usable rate.
+ * Nothing while no product is picked or it can be added.
+ */
+const pickedRateMessage = (
+  product: ProductRecord | null,
+  classification: ReturnType<typeof lineClassification>,
+  labels: TaxLabels,
+): string | undefined => {
+  if (product === null) {
+    return undefined;
+  }
+  if (classification === null) {
+    return labels.noClassification;
+  }
+  return classification.current === undefined
+    ? labels.rateMissing(classification.code, classification.problem)
+    : undefined;
+};
+
+/**
+ * The unit a pick adds: the product itself, or its chosen active variant, with the rate Tax gives the product's
+ * classification today. Undefined until that choice is complete, and while the classification has no rate in force.
+ */
+const sellableUnit = (
+  product: ProductRecord,
+  variantId: VariantId | null,
+  vatRate: number | undefined,
+): SellableUnit | undefined => {
+  if (vatRate === undefined) {
+    return undefined;
+  }
   const variants = activeVariants(product);
   if (variants.length === 0) {
-    return {
+    const unit: SellableUnit = {
       name: product.name,
       netMinor: product.currentPriceMinor,
       productId: product.id,
       sku: product.sku,
-      vatRate: product.vatRate,
+      taxClassificationCode: product.taxClassificationCode,
+      tiers: product.priceTiers,
+      vatRate,
     };
+    return product.grossPriceMinor === undefined ? unit : { ...unit, grossMinor: product.grossPriceMinor };
   }
   const variant = variants.find((entry) => entry.id === variantId);
-  return variant === undefined
-    ? undefined
-    : {
-        name: product.name,
-        netMinor: variant.priceMinor,
-        productId: product.id,
-        sku: variant.sku,
-        variantId: variant.id,
-        variantName: variant.name,
-        vatRate: product.vatRate,
-      };
+  if (variant === undefined) {
+    return undefined;
+  }
+  const unit: SellableUnit = {
+    name: product.name,
+    netMinor: variant.priceMinor,
+    productId: product.id,
+    sku: variant.sku,
+    taxClassificationCode: product.taxClassificationCode,
+    tiers: variant.priceTiers,
+    variantId: variant.id,
+    variantName: variant.name,
+    vatRate,
+  };
+  return variant.grossPriceMinor === undefined ? unit : { ...unit, grossMinor: variant.grossPriceMinor };
 };
 
 interface ParsedLine {
@@ -94,7 +224,7 @@ const previewTotals = (
   shippingMethod: ShippingMethod | null,
   shippingPrice: number | null,
 ) => {
-  const input: Mutable<Parameters<typeof fullOrderTotals>[0]> = {
+  const totalsInput = {
     lines: parsedLines.flatMap(({ line, price, quantity }) =>
       price === null || quantity === null
         ? []
@@ -111,10 +241,11 @@ const previewTotals = (
     ),
     pricesIncludeVat: order.pricesIncludeVat,
   };
-  if (shippingMethod !== null && shippingPrice !== null) {
-    input.shipping = { label: '', method: shippingMethod, priceMinor: shippingPrice, vatRate: 21 };
-  }
-  return fullOrderTotals(input);
+  return fullOrderTotals(
+    shippingMethod !== null && shippingPrice !== null
+      ? { ...totalsInput, shipping: { label: '', method: shippingMethod, priceMinor: shippingPrice, vatRate: 21 } }
+      : totalsInput,
+  );
 };
 
 interface OrderEditFormProps {
@@ -133,6 +264,8 @@ interface OrderEditFormProps {
   /** Full records of the products on the order's lines. */
   readonly products: readonly ProductRecord[];
   readonly revision: number;
+  /** The company's VAT rates (current and scheduled); a new line's rate comes from its product's classification. */
+  readonly vat: CompanyVat;
 }
 
 /**
@@ -152,8 +285,10 @@ const useOrderEditForm = ({
   pickupBrand,
   products,
   revision,
+  vat,
 }: OrderEditFormProps) => {
   const { language, t } = useModernI18n();
+  const taxLabels = useTaxLabels();
   const sequence = useRef(0);
   // The product picked for a new line, with its full record (variants) read on pick.
   const [pick, setPick] = useState<{
@@ -175,7 +310,14 @@ const useOrderEditForm = ({
     }
   };
   const pickedVariants = activeVariants(pickedProduct);
-  const unit = pickedProduct === null ? undefined : sellableUnit(pickedProduct, pickedVariantId);
+  // A product whose classification has no rate in force cannot go on the order: the server snapshots that rate.
+  const pickedClassification = lineClassification(pickedProduct, vat, DateTime.nowUnsafe());
+  const ratesConfirmation = taxLabels.confirmation(vat, DateTime.nowUnsafe());
+  const pickedRateMissing = pickedRateMessage(pickedProduct, pickedClassification, taxLabels);
+  const unit =
+    pickedProduct === null
+      ? undefined
+      : sellableUnit(pickedProduct, pickedVariantId, pickedClassification?.current?.ratePercent);
   const gross = order.pricesIncludeVat === true;
   const currencyUnit = t(`merchandise.ui.currencyUnit.${orderCurrency(order)}`);
   const rulesFor = (line: Pick<DraftLine, 'productId' | 'variantId'>) => {
@@ -186,6 +328,41 @@ const useOrderEditForm = ({
       (entry) => entry.productId === line.productId && entry.variantId === line.variantId,
     );
     return orderQuantityRules(stockUnit ?? { stockOnHand: 1_000_000 }, movesStock ? (original?.quantity ?? 0) : 0);
+  };
+  /**
+   * The price an added line of `quantity` is offered at: what the server prices it at in this order. A gross-priced
+   * order takes the shared price function through the record (`recordGrossForQuantity`, the record's held-aware rate);
+   * undefined where the server and the storefront refuse the quantity for want of a price.
+   */
+  const offerOf = (offeredUnit: SellableUnit, quantity: number): number | undefined => {
+    if (!gross) {
+      return inOrderCurrency(order, offeredUnit.netMinor);
+    }
+    const czk = recordGrossForQuantity(
+      { grossPriceMinor: offeredUnit.grossMinor, priceTiers: offeredUnit.tiers },
+      quantity,
+    );
+    return czk === undefined ? undefined : inOrderCurrency(order, czk);
+  };
+  /** An added line's offer as its product prices it now; undefined when the product cannot go on the order now. */
+  const currentOfferOf = (product: ProductRecord, line: DraftLine) => {
+    const current = sellableUnit(
+      product,
+      line.variantId ?? null,
+      lineClassification(product, vat, DateTime.nowUnsafe())?.current?.ratePercent,
+    );
+    return current === undefined ? undefined : offerOf(current, parseQuantity(line.quantityText) ?? 1);
+  };
+  // A unit with no price including VAT at the quantity it would be added at cannot go on a gross-priced order.
+  const pickedPriceMissing =
+    unit !== undefined && pickedProduct !== null && offerOf(unit, firstQuantityOf(pickedProduct, unit)) === undefined;
+  /** An added line of a gross-priced order whose quantity has no price including VAT (the server would refuse it). */
+  const priceMissingFor = (line: DraftLine) => {
+    const product =
+      gross && line.offeredPriceText !== undefined
+        ? addedProducts.find((entry) => entry.id === line.productId)
+        : undefined;
+    return product !== undefined && currentOfferOf(product, line) === undefined;
   };
   /**
    * Everything one draft needs: its parsed lines, what is invalid, and whether it may be sent at all. `confirmed` is
@@ -199,10 +376,12 @@ const useOrderEditForm = ({
       );
       const rules = rulesFor(line);
       const valid = quantity !== null && (quantity === original?.quantity || isOrderQuantityValid(quantity, rules));
-      return { line, price: parseAmount(line.priceText), quantity: valid ? quantity : null, rules };
+      const priceMissing = valid && priceMissingFor(line);
+      return { line, price: parseAmount(line.priceText), priceMissing, quantity: valid ? quantity : null, rules };
     });
     const linesInvalid =
-      value.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
+      value.lines.length === 0 ||
+      parsedLines.some((entry) => entry.price === null || entry.quantity === null || entry.priceMissing);
     const shippingPrice = parseAmount(value.shippingPriceText);
     const shippingInvalid = value.shippingMethod !== null && shippingPrice === null;
     // An address or contact left as the server last confirmed it is not sent, so only an edited one has to be
@@ -220,15 +399,43 @@ const useOrderEditForm = ({
       valid: !linesInvalid && !shippingInvalid && !addressInvalid && !contactInvalid,
     };
   };
+  // The added lines whose price changed meanwhile, with the price they carry now; shown until the next save is sent.
+  const [repriced, setRepriced] = useState<readonly RepricedLine[]>([]);
+  // The added lines whose new price could not be read after a refusal; shown until a save succeeds.
+  const [unrepriced, setUnrepriced] = useState<readonly string[]>([]);
+  // Set once `record` exists: takes newly read offers into the draft.
+  const takeOffers = useRef<(offers: ReadonlyMap<string, number>) => void>(constVoid);
   const { record, savedOnce } = useOrderEditDraft({
     isValid: (value, confirmed) => draftValidation(value, confirmed).valid,
+    onSaveSucceeded: () => setUnrepriced([]),
+    onSend: () => setRepriced([]),
+    // The server refused an added line whose price changed after it was picked: read those products again.
+    onOfferedPriceChanged: (value) =>
+      currentOffers(value.lines, currentOfferOf).pipe(
+        Effect.flatMap((offers) => Effect.sync(() => takeOffers.current(offers))),
+      ),
     order,
     revision,
   });
   const { draft } = record;
+  useEffect(() => {
+    takeOffers.current = (offers) => {
+      setRepriced(repricedLines(draft.lines, offers));
+      setUnrepriced(unrepricedLines(draft.lines, offers));
+      record.setDraft((current) => ({ ...current, lines: withOffers(current.lines, offers) }));
+    };
+  }, [draft.lines, record]);
   const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
+  /** A changed quantity; an added line follows the price of the quantity break it now reaches. */
+  const handleQuantityChange = (line: DraftLine, quantityText: string) => {
+    const product =
+      line.offeredPriceText === undefined ? undefined : addedProducts.find((entry) => entry.id === line.productId);
+    const next = { ...line, quantityText };
+    const offer = product === undefined ? undefined : currentOfferOf(product, next);
+    patchLine(line.key, offer === undefined ? { quantityText } : withOffer(next, offer));
+  };
   const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } = draftValidation(
     draft,
     record.confirmed,
@@ -259,31 +466,37 @@ const useOrderEditForm = ({
     const existing = draft.lines.find((line) => line.productId === unit.productId && line.variantId === unit.variantId);
     if (existing !== undefined) {
       const quantity = parseQuantity(existing.quantityText) ?? 0;
-      patchLine(existing.key, { quantityText: String(quantity + rulesFor(existing).step) });
+      const more = { ...existing, quantityText: String(quantity + rulesFor(existing).step) };
+      const offer = offerOf(unit, quantity + rulesFor(existing).step);
+      // A line added in this edit takes the product's price as it is now; the order's own lines keep theirs.
+      patchLine(
+        existing.key,
+        existing.offeredPriceText === undefined || offer === undefined ? more : withOffer(more, offer),
+      );
       clearPick();
       return;
     }
-    const rules = orderQuantityRules(
-      unit.variantId === undefined
-        ? pickedProduct
-        : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
-    );
-    const unitPrice = inOrderCurrency(order, gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor);
-    const line: Mutable<DraftLine> = {
+    // A gross-priced order (storefront) takes the price including VAT for this quantity, exactly as the server does.
+    const quantity = firstQuantityOf(pickedProduct, unit);
+    const offer = offerOf(unit, quantity);
+    if (offer === undefined) {
+      return;
+    }
+    const offered = moneyInputText(offer / 100);
+    const added = {
       key: `new-${sequence.current}`,
       name: unit.name,
-      priceText: moneyInputText(unitPrice / 100),
+      offeredPriceText: offered,
+      priceText: offered,
       productId: unit.productId,
-      quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
+      quantityText: String(quantity),
       sku: unit.sku,
+      taxClassificationCode: unit.taxClassificationCode,
       vatRate: unit.vatRate,
-    };
-    if (unit.variantId !== undefined) {
-      line.variantId = unit.variantId;
-    }
-    if (unit.variantName !== undefined) {
-      line.variantName = unit.variantName;
-    }
+    } satisfies DraftLine;
+    const withVariant = unit.variantId === undefined ? added : { ...added, variantId: unit.variantId };
+    const line: DraftLine =
+      unit.variantName === undefined ? withVariant : { ...withVariant, variantName: unit.variantName };
     patch({ lines: [...draft.lines, line] });
     sequence.current += 1;
     clearPick();
@@ -304,6 +517,7 @@ const useOrderEditForm = ({
     draft,
     gross,
     guard,
+    handleQuantityChange,
     labels: saveLabelsFor(language),
     leave,
     linesInvalid,
@@ -314,15 +528,21 @@ const useOrderEditForm = ({
     patch,
     patchLine,
     pick,
+    pickedPriceMissing,
+    pickedRateMissing,
     pickedVariantId,
     pickedVariants,
     pickProduct,
     preview,
+    ratesConfirmation,
     record,
+    repriced,
     setPickedVariantId,
     shippingInvalid,
     t,
+    taxLabels,
     unit,
+    unrepriced,
   };
 };
 
@@ -459,6 +679,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     draft,
     gross,
     guard,
+    handleQuantityChange,
     labels,
     leave,
     linesInvalid,
@@ -468,14 +689,20 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     patch,
     patchLine,
     pick,
+    pickedPriceMissing,
+    pickedRateMissing,
     pickedVariantId,
     pickedVariants,
     pickProduct,
     preview,
+    ratesConfirmation,
     record,
+    repriced,
     setPickedVariantId,
     t,
+    taxLabels,
     unit,
+    unrepriced,
   } = model;
   const { actionsSlot } = props;
   const handleSave = record.save;
@@ -528,13 +755,16 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {parsedLines.map(({ line, price, quantity, rules }) => (
+                {parsedLines.map(({ line, price, priceMissing, quantity, rules }) => (
                   <Table.Row key={line.key}>
                     <Table.Cell>
                       <div className="flex min-w-32 flex-col">
                         <span className="font-medium">{line.name}</span>
                         <span className="text-fg-secondary text-xs">
                           {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
+                        </span>
+                        <span className="text-fg-secondary text-xs">
+                          {`${t('merchandise.pages.orders.detail.lineVat')} ${taxLabels.line(line.taxClassificationCode, line.vatRate)}`}
                         </span>
                       </div>
                     </Table.Cell>
@@ -548,7 +778,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                           locale="cs-CZ"
                           min={rules.minimum}
                           name={`qty-${line.key}`}
-                          onValueChange={(details) => patchLine(line.key, { quantityText: details.value })}
+                          onValueChange={(details) => handleQuantityChange(line, details.value)}
                           size="sm"
                           step={rules.step}
                           value={line.quantityText}
@@ -577,7 +807,11 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                           onValueChange={(details) => patchLine(line.key, { priceText: details.value })}
                           size="sm"
                           value={line.priceText}
-                          {...(price === null ? { helpText: 'Zadejte cenu', validateStatus: 'error' as const } : {})}
+                          {...lineFieldError(
+                            price,
+                            priceMissing,
+                            t('merchandise.pages.orders.create.noPriceForQuantity'),
+                          )}
                         >
                           <NumericInput.Control>
                             <NumericInput.Input />
@@ -628,7 +862,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 selected={pick?.product ?? null}
               />
               <Button
-                disabled={unit === undefined}
+                disabled={unit === undefined || pickedPriceMissing}
                 icon="icon-[mdi--plus]"
                 onClick={addLine}
                 theme="outlined"
@@ -652,9 +886,38 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 value={pickedVariantId === null ? [] : [pickedVariantId]}
               />
             )}
+            {pickedRateMissing !== undefined && (
+              <StatusText showIcon status="error">
+                {pickedRateMissing}
+              </StatusText>
+            )}
+            {pickedPriceMissing && (
+              <StatusText showIcon status="error">
+                {t('merchandise.pages.orders.create.noPriceAtMinimum')}
+              </StatusText>
+            )}
+            {ratesConfirmation !== undefined && (
+              <StatusText showIcon size="sm" status="warning">
+                {ratesConfirmation}
+              </StatusText>
+            )}
             {pick?.record.status === 'error' && (
               <StatusText showIcon status="error">
                 Produkt se nepodařilo načíst. Vyberte ho znovu.
+              </StatusText>
+            )}
+            {repriced.length > 0 && (
+              <StatusText showIcon status="warning">
+                {t('merchandise.ui.offeredPriceChanged', {
+                  lines: repriced
+                    .map((entry) => `${entry.name}: ${formatMoney(entry.price, orderCurrency(order))}`)
+                    .join(', '),
+                })}
+              </StatusText>
+            )}
+            {unrepriced.length > 0 && (
+              <StatusText showIcon status="error">
+                {t('merchandise.ui.offeredPriceUnreadable', { lines: unrepriced.join(', ') })}
               </StatusText>
             )}
           </div>

@@ -61,6 +61,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { marketSourceComponentContracts } from '../fixtures/market-source-components.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -465,13 +466,13 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
           ),
       };
     }
-    // Market's own module credential, provisioned by the platform as on every environment.
+    // Market's own module credential, provisioned by the platform and handed over by the host, as on every environment.
     const relayBinding = yield* shell.provisionRelaySource();
+    yield* holdTestModuleCredentials({ 'commerce-market-catalog': Redacted.value(relayBinding.secret) });
     const provider = ConfigProvider.orElse(
       ConfigProvider.fromEnvRecord({
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
         ONTOS_GATEWAY_ISSUER: shell.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
         ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
       }),

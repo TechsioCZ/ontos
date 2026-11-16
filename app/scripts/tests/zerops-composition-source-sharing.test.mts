@@ -41,7 +41,9 @@ const readFrom = (fetch: typeof globalThis.fetch, environment: Readonly<Record<s
     Effect.flatMap((source) => source.load),
     Effect.provide(
       ActiveApplicationCompositionSourceLive.pipe(
-        Layer.provide(FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))),
+        // The source pins its transport from its own context, as main's node source does.
+        Layer.provideMerge(FetchHttpClient.layer),
+        Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)),
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
       ),
     ),

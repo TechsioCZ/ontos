@@ -10,6 +10,7 @@ import {
 } from '@app/shared-contracts';
 
 import { GatewayScopeGrantUnavailableError, makeActiveApplicationCompositionLayer } from '@app/core-runtime';
+import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { capturingScopeGrantRegistrar, scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
@@ -26,10 +27,20 @@ import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-con
 import {
   GatewayIssuer,
   GatewayIssuerError,
+  gatewayIssuerFailureClass,
+  gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
+  issueRouteScopedGatewayContextAssertion,
+  issueSymmyGatewayContextAssertion,
   makeGatewayIssuerLayer,
+  SYMMY_INGRESS_AUDIENCE,
 } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
+import {
+  DOCUMENT_GATEWAY_ASSERTION_LIMIT,
+  DOCUMENT_GATEWAY_ASSERTIONS_PER_AUDIENCE,
+  DocumentGatewayContextsRequestSchema,
+} from '../../shared/document-gateway-api.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -283,6 +294,102 @@ it.effect('admits a document once and signs each available audience independentl
     }
   }),
 );
+
+it.effect(
+  'issues several assertions of one audience as separate single-use assertions, each checked and registered',
+  () =>
+    Effect.gen(function* repeatedAudiences() {
+      const { configuration, publicKey } = yield* makeConfiguration();
+      const { inputs, registrar } = capturingScopeGrantRegistrar();
+      let admissionLoads = 0;
+      let jtis = 0;
+      const layer = makeGatewayIssuerLayer(
+        dependencies(configuration, {
+          generateJti: Effect.sync(() => {
+            jtis += 1;
+            return `6${String(jtis).padStart(7, '0')}-0000-4000-8000-000000000001`;
+          }),
+          loadAdmission: Effect.sync(() => {
+            admissionLoads += 1;
+            return {
+              audiences: new Map([
+                ['property-registry', 'property-registry-build'],
+                ['tagging', 'tagging-build'],
+              ]),
+              revision: compositionRevision,
+            };
+          }),
+        }),
+      ).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar)));
+      const assertions = yield* GatewayIssuer.pipe(
+        Effect.flatMap((gateway) =>
+          gateway.issueDocument({
+            audiences: [
+              'property-registry',
+              'property-registry',
+              'unavailable-owner',
+              'property-registry',
+              'unavailable-owner',
+              'tagging',
+            ],
+            compositionRevision,
+            principal,
+          }),
+        ),
+        Effect.provide(layer),
+      );
+      // One admission for the whole batch; the refused audience is left out each time it is named and fails no other.
+      expect(admissionLoads).toBe(1);
+      expect(assertions.map(({ audience }) => audience)).toEqual([
+        'property-registry',
+        'property-registry',
+        'property-registry',
+        'tagging',
+      ]);
+      // Each one is its own assertion: its own id and token, its own scope grant for this person, tenant and company.
+      const ids = new Set<string>();
+      for (const assertion of assertions) {
+        const verified = yield* Effect.promise(() =>
+          jwtVerify(assertion.token, publicKey, {
+            algorithms: ['EdDSA'],
+            audience: assertion.audience,
+            currentDate: new Date(1_700_000_001_000),
+            issuer,
+          }),
+        );
+        expect(verified.payload['principal']).toEqual(principal);
+        expect(verified.payload.exp).toBe((verified.payload.iat ?? 0) + 300);
+        ids.add(verified.payload.jti ?? '');
+      }
+      expect(ids.size).toBe(4);
+      expect(new Set(assertions.map(({ token }) => token)).size).toBe(4);
+      expect(inputs.map(({ jti }) => jti).toSorted()).toEqual([...ids].toSorted());
+      expect(inputs.map((input) => Redacted.value(input.assertion)).toSorted()).toEqual(
+        assertions.map(({ token }) => token).toSorted(),
+      );
+      for (const input of inputs) {
+        expect(input).toMatchObject({
+          legalEntityId: principal.legalEntityId,
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+        });
+      }
+    }),
+);
+
+const documentRequest = (audiences: readonly string[]) => ({ audiences, compositionRevision });
+const namedTimes = (audience: string, times: number) => Array.from({ length: times }, () => audience);
+
+it('bounds a document batch at eight assertions of one audience and 64 in all', () => {
+  const decode = Schema.decodeUnknownExit(DocumentGatewayContextsRequestSchema);
+  const request = documentRequest;
+  const named = namedTimes;
+  expect(Exit.isSuccess(decode(request(named('property-registry', 8))))).toBe(true);
+  expect(Exit.isFailure(decode(request(named('property-registry', 9))))).toBe(true);
+  const sixtyFour = Array.from({ length: 8 }, (_, index) => named(`owner-${index}`, 8)).flat();
+  expect(Exit.isSuccess(decode(request(sixtyFour)))).toBe(true);
+  expect(Exit.isFailure(decode(request([...sixtyFour, 'owner-8'])))).toBe(true);
+});
 
 it.effect('rereads document admission after revocation and revision changes before issuing assertions', () =>
   Effect.gen(function* documentAdmissionChanges() {
@@ -727,6 +834,124 @@ it.effect('fails closed for unknown audiences and invalid Effect-managed time', 
   }),
 );
 
+it.effect('never admits raw processing metadata or a caller-named flag through generic issuance', () =>
+  Effect.gen(function* rejectRawProcessingAuthority() {
+    const { configuration } = yield* makeConfiguration();
+    const runReference = '70000000-0000-4000-8000-000000000001';
+    const workload = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)({
+      admissionInvocationId: runReference,
+      bindingIncarnation: '70000000-0000-4000-8000-000000000002',
+      claimId: 'native-claim',
+      declarationKey: 'integration.symmy.symmy-source-organization-facts.read',
+      entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+      jobKey: 'integration.symmy.execute-symmy-job',
+      legalEntityId: principal.legalEntityId,
+      legalEntityScope: 'required',
+      organizationProcessingRead: { requestHash: 'a'.repeat(64) },
+      originalOwnerBindingIncarnation: '70000000-0000-4000-8000-000000000003',
+      originalPrincipalId: principal.principalId,
+      originalWorkloadBindingIncarnation: '70000000-0000-4000-8000-000000000004',
+      originalWorkloadKey: 'integration.symmy-admit',
+      runReference,
+      schemaVersion: '1',
+      sourceAppId: 'privacy',
+      sourceBuildMarker: 'privacy-build',
+      sourceMode: 'worker',
+      workerKey: 'integration.symmy.execute-symmy-job',
+      workerModuleKey: 'integration.symmy',
+      workloadKey: 'integration.symmy.source-organization-facts.read',
+    });
+    const input = {
+      compositionRevision,
+      organizationProcessingReadIssuance: true,
+      principal: {
+        authContextRef: `job:${workload.jobKey}:run:${runReference}`,
+        authMethod: 'system' as const,
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      },
+      sourceValidity: { expiresAt: 1_700_000_301, issuedAt: 1_700_000_001 },
+      workload,
+    };
+    const errors = yield* Effect.forEach([SYMMY_INGRESS_AUDIENCE, 'property-registry'], (audience) =>
+      Effect.flip(issueGatewayContextAssertionWith({ ...input, audience }, dependencies(configuration))),
+    );
+    expect(errors[0]?.code).toBe('gateway_audience_invalid');
+    expect(errors[1]?.stage).toBe('principal');
+  }),
+);
+
+it.effect('reserves the Symmy audience for fresh verified Integration Principal issuance', () =>
+  Effect.gen(function* requiresExactSymmyAdmission() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    const apiKeyPrincipal = {
+      authBindingId: principal.authBindingId,
+      authContextRef: 'better-auth-api-key:safe-reference',
+      authMethod: 'api_key' as const,
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    };
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.succeed({
+          audiences: new Map([
+            [SYMMY_INGRESS_AUDIENCE, 'symmy-fixture-build'],
+            ['property-registry', 'property-registry-build'],
+          ]),
+          revision: compositionRevision,
+        }),
+      }),
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+    yield* Effect.gen(function* checkSymmyAndUnchangedAudiences() {
+      const generic = yield* Effect.flip(
+        issueGatewayContextAssertion({
+          audience: SYMMY_INGRESS_AUDIENCE,
+          compositionRevision,
+          principal: apiKeyPrincipal,
+        }),
+      );
+      expect(generic.code).toBe('gateway_audience_invalid');
+      const denied = yield* Effect.forEach(['human', 'service', 'system'], (principalKind) =>
+        Effect.flip(
+          issueSymmyGatewayContextAssertion({ compositionRevision, principal: apiKeyPrincipal, principalKind }),
+        ),
+      );
+      expect(denied.every(({ code }) => code === 'gateway_audience_invalid')).toBe(true);
+      const session = yield* Effect.flip(
+        issueSymmyGatewayContextAssertion({
+          compositionRevision,
+          principal: { ...apiKeyPrincipal, authMethod: 'session' },
+          principalKind: 'integration',
+        }),
+      );
+      expect(session.code).toBe('gateway_audience_invalid');
+
+      const result = yield* issueSymmyGatewayContextAssertion({
+        compositionRevision,
+        principal: apiKeyPrincipal,
+        principalKind: 'integration',
+      });
+      expect(result.apiBaseUrl).toBe(
+        '/shell-super-app-api/module-api/symmy-integration/symmy-fixture-build/symmy-integration-api',
+      );
+      yield* Effect.promise(() =>
+        jwtVerify(result.token, publicKey, {
+          algorithms: ['EdDSA'],
+          audience: SYMMY_INGRESS_AUDIENCE,
+          currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+          issuer,
+        }),
+      );
+      const regular = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        compositionRevision,
+        principal: apiKeyPrincipal,
+      });
+      expect(decodeJwt(regular.token).aud).toBe('property-registry');
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect('rejects transport correlation or any other excess principal claim', () =>
   Effect.gen(function* testProgram11() {
     const { configuration } = yield* makeConfiguration();
@@ -969,6 +1194,7 @@ it.effect('returns no token when the scope grant registration fails', () =>
                     return Effect.fail(
                       new GatewayScopeGrantUnavailableError({
                         reason: 'The gateway scope grant could not be registered',
+                        sqlState: '22023',
                       }),
                     );
                   }),
@@ -983,7 +1209,116 @@ it.effect('returns no token when the scope grant registration fails', () =>
     expect(error.code).toBe('gateway_issuer_unavailable');
     expect(error.stage).toBe('scope_grant');
     expect(error.reason).toBe('The gateway assertion issuer is unavailable');
+    // The refusal names the scope step, and the operator log names the database's answer, never its message.
+    expect(gatewayIssuerRefusalReason(error)).toBe('scope_unavailable');
+    expect(gatewayIssuerFailureClass(error)).toBe('GatewayScopeGrantUnavailableError[22023]');
     expect(JSON.stringify(error)).not.toMatch(/eyJ/u);
+  }),
+);
+
+it.effect('fails the whole document batch when one entry cannot register its scope grant', () =>
+  Effect.gen(function* batchFailsClosedOnScopeGrantFailure() {
+    const { configuration } = yield* makeConfiguration();
+    const registered: string[] = [];
+    let attempts = 0;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.succeed({
+          audiences: new Map([
+            ['property-registry', 'property-registry-build'],
+            ['tagging', 'tagging-build'],
+          ]),
+          revision: compositionRevision,
+        }),
+      }),
+    ).pipe(
+      Layer.provide(
+        scopeGrantRegistrarLayer({
+          register: (input: { readonly audience: string }) =>
+            Effect.suspend(() => {
+              attempts += 1;
+              // The third registration of the batch cannot be written.
+              if (attempts === 3) {
+                return Effect.fail(
+                  new GatewayScopeGrantUnavailableError({
+                    reason: 'The gateway scope grant could not be registered',
+                  }),
+                );
+              }
+              registered.push(input.audience);
+              return Effect.void;
+            }),
+        }),
+      ),
+    );
+    const error = yield* Effect.flip(
+      GatewayIssuer.pipe(
+        Effect.flatMap((gateway) =>
+          gateway.issueDocument({
+            audiences: [...namedTimes('property-registry', 4), 'tagging'],
+            compositionRevision,
+            principal,
+          }),
+        ),
+        Effect.provide(layer),
+      ),
+    );
+    // No assertion of the batch is handed out, and nothing leaks the tokens that were signed before the failure.
+    expect(error.code).toBe('gateway_issuer_unavailable');
+    expect(error.stage).toBe('scope_grant');
+    expect(JSON.stringify(error)).not.toMatch(/eyJ/u);
+    expect(registered.length).toBeLessThan(5);
+  }),
+);
+
+it.effect('registers one scope grant per entry of a full document batch', () =>
+  Effect.gen(function* registersEveryEntry() {
+    const { configuration } = yield* makeConfiguration();
+    const { inputs, registrar } = capturingScopeGrantRegistrar();
+    const audiences = [
+      'shell-super-app',
+      'party-registry',
+      'property-registry',
+      'catalog',
+      'tagging',
+      'work-tasks',
+      'pricing',
+      'inventory',
+    ];
+    let minted = 0;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        // A fresh id per assertion, as the production issuer mints them; the fixture default is one constant id.
+        generateJti: Effect.sync(() => {
+          minted += 1;
+          return `7${String(minted).padStart(7, '0')}-0000-4000-8000-000000000001`;
+        }),
+        loadAdmission: Effect.succeed({
+          audiences: new Map(audiences.map((audience) => [audience, `${audience}-build`] as const)),
+          revision: compositionRevision,
+        }),
+      }),
+    ).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar)));
+    // The ceiling of one request: eight audiences, eight assertions each.
+    const entries = audiences.flatMap((audience) => namedTimes(audience, DOCUMENT_GATEWAY_ASSERTIONS_PER_AUDIENCE));
+    expect(entries).toHaveLength(DOCUMENT_GATEWAY_ASSERTION_LIMIT);
+    const assertions = yield* GatewayIssuer.pipe(
+      Effect.flatMap((gateway) => gateway.issueDocument({ audiences: entries, compositionRevision, principal })),
+      Effect.provide(layer),
+    );
+    expect(assertions).toHaveLength(DOCUMENT_GATEWAY_ASSERTION_LIMIT);
+    // One registration per assertion, each with that assertion's own token, and no token registered twice.
+    expect(inputs).toHaveLength(DOCUMENT_GATEWAY_ASSERTION_LIMIT);
+    const registeredTokens = inputs.map(({ assertion }) => Redacted.value(assertion));
+    expect(new Set(registeredTokens).size).toBe(DOCUMENT_GATEWAY_ASSERTION_LIMIT);
+    expect(registeredTokens.toSorted()).toEqual(assertions.map(({ token }) => token).toSorted());
+    // Each assertion carries its own id, so no two entries are the same single-use token.
+    expect(minted).toBe(DOCUMENT_GATEWAY_ASSERTION_LIMIT);
+    for (const audience of audiences) {
+      expect(inputs.filter((input) => input.audience === audience)).toHaveLength(
+        DOCUMENT_GATEWAY_ASSERTIONS_PER_AUDIENCE,
+      );
+    }
   }),
 );
 
@@ -1136,5 +1471,63 @@ it.effect('refuses an actor for a subject without an authentication namespace', 
         expect(failure.stage).toBe('principal');
       }
     }
+  }),
+);
+
+it.effect('signs an exact route scope only through its private issuance wrapper', () =>
+  Effect.gen(function* signedRouteScope() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    const apiKeyPrincipal = {
+      authBindingId: principal.authBindingId,
+      authContextRef: 'better-auth-api-key:route-native-key',
+      authenticationNamespaceId: 'test.integration.better-auth.v1',
+      authMethod: 'api_key' as const,
+      legalEntityId: principal.legalEntityId,
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    };
+    const routeScope = {
+      legalEntityId: principal.legalEntityId,
+      operations: [{ entrypointKey: 'party.registry.api.definition', schemaVersion: '1' }],
+      principalId: principal.principalId,
+      routeId: '70000000-0000-4000-8000-000000000001',
+      routeKey: 'adminCustomers',
+      routeRevision: 'route-1',
+      sourceRouteId: '80000000-0000-4000-8000-000000000001',
+      sourceRouteRevision: 'source-1',
+      tenantId: principal.tenantId,
+    };
+    const input = { audience: 'property-registry', compositionRevision, principal: apiKeyPrincipal, routeScope };
+    const layer = makeGatewayIssuerLayer(dependencies(configuration)).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+    const result = yield* Effect.gen(function* enforcePrivateRouteSeal() {
+      const gateway = yield* GatewayIssuer;
+      const genericFailure = yield* Effect.flip(gateway.issue(input));
+      expect(genericFailure.stage).toBe('principal');
+      const wrongTenant = yield* Effect.flip(
+        issueRouteScopedGatewayContextAssertion({
+          ...input,
+          routeScope: { ...routeScope, tenantId: '90000000-0000-4000-8000-000000000001' },
+        }),
+      );
+      expect(wrongTenant.stage).toBe('principal');
+      const wrongCompany = yield* Effect.flip(
+        issueRouteScopedGatewayContextAssertion({
+          ...input,
+          routeScope: { ...routeScope, legalEntityId: '90000000-0000-4000-8000-000000000001' },
+        }),
+      );
+      expect(wrongCompany.stage).toBe('principal');
+      return yield* issueRouteScopedGatewayContextAssertion(input);
+    }).pipe(Effect.provide(layer));
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(result.token, publicKey, {
+        algorithms: ['EdDSA'],
+        audience: 'property-registry',
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+        issuer,
+      }),
+    );
+    expect(verified.payload['routeScope']).toEqual(routeScope);
+    expect(verified.payload['ver']).toBe(EXTERNAL_GATEWAY_ASSERTION_VERSION);
   }),
 );

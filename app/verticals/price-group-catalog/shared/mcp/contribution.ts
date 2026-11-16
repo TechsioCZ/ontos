@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const priceGroupCatalogMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -39,6 +39,10 @@ export const priceGroupCatalogMcpContribution = defineOntosMcpContribution({
         en: 'Price group definition',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'price-group-result-lookup': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'price-group-source-associations': OntosMcpHidden,
     'validate-price-group-compatibility': 'hidden',
   },
 });

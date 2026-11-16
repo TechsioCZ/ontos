@@ -141,6 +141,8 @@
   },
   "inspection": {
     "title": "Zaznamenat kontrolu",
+    "noteLimit": "Poznámka se ukládá celá, nejvýše {{limit}} znaků. Delší zápis připojte jako protokol.",
+    "noteTooLong": "Poznámku zkraťte na {{limit}} znaků a úplný zápis připojte jako protokol. Nic nebylo uloženo.",
     "submit": "Uložit kontrolu"
   },
   "resolveDialog": {

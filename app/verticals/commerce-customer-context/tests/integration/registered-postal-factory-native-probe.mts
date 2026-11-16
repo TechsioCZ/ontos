@@ -9,7 +9,8 @@ import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { NodeHttpClient, NodeRuntime, NodeServices, NodeSink, NodeStream } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Context, Effect, Layer, Logger, Result, Schema, Stream } from 'effect';
+import { Config, Context, Effect, Layer, Logger, Predicate, Result, Schema, Stream } from 'effect';
+import type { Redacted } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient } from 'effect/http';
 
@@ -30,17 +31,49 @@ const ProbeCorrelationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PostalFactoryProbeCorrelationId'),
 );
 
+const OWNER = 'commerce-customer-context';
+
 const InputSchema = Schema.Struct({
   authorization: Schema.RedactedFromValue(Schema.String),
   compositionRevision: Schema.String,
   correlationId: ProbeCorrelationIdSchema,
   deployment: Schema.Struct({
-    appId: Schema.Literal('commerce-customer-context'),
+    appId: Schema.Literal(OWNER),
     buildMarker: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   }),
   factory: Schema.Literals(['delivery', 'invoice']),
+  /** The module credential the host hands over on the owners process's channel; here it arrives with the command. */
+  moduleCredential: Schema.RedactedFromValue(Schema.String),
   savedAddress: SavedAddressSchema,
+  /** The workspace store file the owner code resolves at run time (its packages stay external to this bundle). */
+  storeModule: Schema.String,
 });
+
+type StoreClaim = (owners: readonly string[]) => Effect.Effect<HostedReceiver, unknown>;
+const isStoreClaim = (cause: unknown): cause is StoreClaim => Predicate.isFunction(cause);
+const StoreModuleSchema = Schema.Struct({ claimHostedModuleCredentials: Schema.declare(isStoreClaim) });
+interface HostedReceiver {
+  readonly accept: (handover: {
+    readonly credentials: Readonly<Record<string, Redacted.Redacted>>;
+    readonly schemaVersion: 1;
+  }) => Effect.Effect<unknown>;
+}
+
+/**
+ * Claims the store copy the owner code resolves, as the owners process claims each unit's copy, and hands it the
+ * module credential; there is no environment variable to read one from.
+ */
+const holdModuleCredential = (input: typeof InputSchema.Type) =>
+  Effect.tryPromise({
+    catch: () => new PostalFactoryProbeFailure({ stage: 'input' }),
+    // SAFETY: a dynamically imported module namespace is opaque until Schema decodes its claim export below.
+    try: async () => (await import(new URL(`file://${input.storeModule}`).href)) as unknown,
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(StoreModuleSchema)),
+    Effect.flatMap(({ claimHostedModuleCredentials }) => claimHostedModuleCredentials([OWNER])),
+    Effect.flatMap((copy) => copy.accept({ credentials: { [OWNER]: input.moduleCredential }, schemaVersion: 1 })),
+    Effect.mapError(() => new PostalFactoryProbeFailure({ stage: 'input' })),
+  );
 
 const readInput = NodeStream.fromReadable({
   evaluate: () => process.stdin,
@@ -193,7 +226,7 @@ const activeCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
 NodeRuntime.runMain(
   readInput.pipe(
     Effect.flatMap((input) =>
-      Effect.scoped(probe(input)).pipe(
+      Effect.scoped(holdModuleCredential(input).pipe(Effect.andThen(probe(input)))).pipe(
         Effect.provide(activeCompositionLive),
         Effect.provide(staffAuthenticationNamespaceRegistryLayer(['commerce-customer-context'])),
         Effect.provide(Reactivity.layer),

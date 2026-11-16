@@ -81,10 +81,12 @@ export const recordExternalObligationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordExternalObligationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordExternalObligationActionForbiddenProblem'> =>
     RecordExternalObligationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordExternalObligationActionP
       ActionInvocationStateError: (failure) => recordExternalObligationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordExternalObligationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordExternalObligationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordExternalObligationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordExternalObligationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordExternalObligationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordExternalObligationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordExternalObligationActionProblem.conflict(failure.code),

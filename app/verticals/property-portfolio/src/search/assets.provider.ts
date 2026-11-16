@@ -5,7 +5,7 @@ import type { ReadFinishContext, ReadLoadContext, ReadServiceFactory } from '@ap
 import { Effect, Schema } from 'effect';
 import { AssetsProviderRequestSchema, AssetsProviderResponseSchema } from '../../shared/apis/assets-search.ts';
 import type { AssetsProviderRequest } from '../../shared/apis/assets-search.ts';
-import { loadOwnerSearch, prepareOwnerSearch } from './search-read.ts';
+import { loadOwnerSearch, prepareOwnerSearch } from '../services/search-read.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';

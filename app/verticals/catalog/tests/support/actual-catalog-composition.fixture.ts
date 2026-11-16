@@ -116,8 +116,9 @@ export const catalogSourceObservationProcess = (
   program: string,
   appRoot: string,
   environment: Readonly<Record<string, string>>,
+  programArguments: readonly string[] = [],
 ) =>
-  ChildProcess.make(process.execPath, ['--experimental-strip-types', '--input-type=module', '-'], {
+  ChildProcess.make(process.execPath, ['--experimental-strip-types', '--input-type=module', '-', ...programArguments], {
     cwd: appRoot,
     env: environment,
     extendEnv: false,
@@ -249,6 +250,19 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
   );
   const address = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))(server.address);
   const origin = `http://127.0.0.1:${address.port}`;
+  const bridgeInputSchema = Schema.Struct({
+    catalogFederationDocument: Schema.String,
+    contractDocument: Schema.String,
+    shellFederationDocument: Schema.String,
+  });
+  // The real built documents can exceed the operating system's limit for a single argument.
+  const inputPath = yield* fs.makeTempFileScoped({ prefix: 'ontos-catalog-composition-', suffix: '.json' });
+  const inputDocument = yield* Schema.encodeEffect(Schema.fromJsonString(bridgeInputSchema))({
+    catalogFederationDocument,
+    contractDocument,
+    shellFederationDocument,
+  });
+  yield* fs.writeFileString(inputPath, inputDocument);
   // Reuse the existing media fixture's compiler-SDK Shell identity and canonical publisher observation path.
   const program = `import { DateTime, Duration, Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
     import { NodeServices } from '@effect/platform-node';
@@ -268,7 +282,11 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
         generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
         unitId: topology.shell.deliveryUnit.unitId, workspaceRoot: process.cwd()
       }));
-      const contractDocument = ${JSON.stringify(contractDocument)};
+      const { catalogFederationDocument, contractDocument, shellFederationDocument } = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Struct({
+          catalogFederationDocument: Schema.String, contractDocument: Schema.String, shellFederationDocument: Schema.String
+        })), {onExcessProperty: 'error'}
+      )(yield* fs.readFileString(process.argv.at(-1) ?? ''));
       const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(contractDocument);
       const shellRuntime = createShellRuntimeContract(shellIdentity.buildMarker);
       const initial = yield* makeApplicationCompositionSnapshotFixture(['catalog'], contract.deployment.buildMarker);
@@ -280,15 +298,15 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
         environment: 'development',
         modules: [{appId: contract.deployment.appId, backend: placement.backend,
           contract: artifact(placement.contract.url, contractDocument),
-          federationManifest: artifact(${JSON.stringify(`${origin}/catalog/source-native-mf-fixture.json`)}, ${JSON.stringify(catalogFederationDocument)})}],
+          federationManifest: artifact(${JSON.stringify(`${origin}/catalog/source-native-mf-fixture.json`)}, catalogFederationDocument)}],
         observedAt: initial.observedAt,
         shell: {runtimeContract: artifact(initial.composition.shell.runtimeContract.url, shellDocument),
-          federationManifest: artifact(${JSON.stringify(`${origin}/shell-super-app/source-native-mf-fixture.json`)}, ${JSON.stringify(shellFederationDocument)})},
+          federationManifest: artifact(${JSON.stringify(`${origin}/shell-super-app/source-native-mf-fixture.json`)}, shellFederationDocument)},
         validity: Duration.millis(DateTime.toEpochMillis(initial.validUntil) - DateTime.toEpochMillis(initial.observedAt))
       });
       return yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(composition);
     })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-  const child = yield* catalogSourceObservationProcess(program, appRoot, environment);
+  const child = yield* catalogSourceObservationProcess(program, appRoot, environment, [inputPath]);
   const [output, code] = yield* Effect.all(
     [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
     { concurrency: 3 },

@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -51,15 +52,15 @@ const baseState = {
       name: 'Šroub',
       priceHistory: [],
       sku: 'S1',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
       updatedAt: at,
-      vatRate: 21,
     },
   ],
 };
 const state = Schema.decodeUnknownSync(MerchandiseStateSchema)(baseState);
 const command = Schema.decodeUnknownSync(MerchandiseCommandSchema);
-const input = { actor, now, resourceId: 'resource-1' };
+const input = { actor, now, resourceId: 'resource-1', tax: TEST_TAX };
 
 it.effect('moves a product to a subcategory and records the content change', () =>
   Effect.gen(function* merchandiseScenario1() {
@@ -180,30 +181,35 @@ it.effect('same-primary secondary edits derive paths, preserve on a move, and re
   }),
 );
 
-it.effect('legacy CreateProduct retains its trusted category fields without adding memberships', () =>
-  Effect.gen(function* legacyCreateCategoryCompatibility() {
-    const created = yield* evolveMerchandiseState(
-      state,
-      command({
-        _tag: 'CreateProduct',
-        active: true,
-        category: 'Trusted display',
-        categoryId: 'trusted-id',
-        categoryPathIds: ['trusted-id', 'trusted-root'],
-        lowStockThreshold: 0,
-        name: 'Trusted',
-        priceMinor: 100,
-        sku: 'TRUSTED',
-        unit: 'ks',
-        vatRate: 21,
-      }),
-      input,
-    );
+it.effect('CreateProduct derives its category fields from the stored tree, never from the request', () =>
+  Effect.gen(function* createCategoryFromTree() {
+    const fields = {
+      _tag: 'CreateProduct',
+      active: true,
+      category: 'Client display',
+      categoryPathIds: ['forged-id', 'forged-root'],
+      lowStockThreshold: 0,
+      name: 'Derived',
+      priceMinor: 100,
+      sku: 'DERIVED',
+      taxClassificationCode: 'cz.vat.standard',
+      unit: 'ks',
+    };
+    const created = yield* evolveMerchandiseState(state, command({ ...fields, categoryId: 'c' }), input);
     const product = created.state.products.at(-1);
-    expect(product?.category).toBe('Trusted display');
-    expect(product?.categoryId).toBe('trusted-id');
-    expect(product?.categoryPathIds).toEqual(['trusted-id', 'trusted-root']);
-    expect(product?.additionalCategoryIds).toBeUndefined();
+    expect(product?.category).toBe('Metrické');
+    expect(product?.categoryId).toBe('c');
+    expect(product?.categoryPathIds).toEqual(['c', 'r']);
+    expect(product?.additionalCategoryIds).toEqual([]);
+    const unproved = yield* Effect.flip(
+      evolveMerchandiseState(state, command({ ...fields, categoryId: 'forged-id' }), input),
+    );
+    expect(Schema.is(MerchandiseLifecycleConflict)(unproved)).toBe(true);
+    const uncategorized = yield* evolveMerchandiseState(state, command(fields), input);
+    const plain = uncategorized.state.products.at(-1);
+    expect(plain?.category).toBe('Client display');
+    expect(plain?.categoryId).toBeUndefined();
+    expect(plain?.categoryPathIds).toBeUndefined();
   }),
 );
 
@@ -219,8 +225,8 @@ it.effect('opt-in CreateProduct derives paths and rejects an unproved primary', 
       name: 'New',
       priceMinor: 100,
       sku: 'NEW',
+      taxClassificationCode: 'cz.vat.standard',
       unit: 'ks',
-      vatRate: 21,
     };
     const created = yield* evolveMerchandiseState(membershipState, command({ ...fields, categoryId: 'c' }), input);
     const product = created.state.products.at(-1);

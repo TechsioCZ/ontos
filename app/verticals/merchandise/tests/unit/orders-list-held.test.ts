@@ -41,7 +41,16 @@ const orderOf = (number: string) =>
     createdAt: instant,
     id: `order-${number}`,
     lines: [
-      { productId: 'product-1', productName: 'Cable', quantity: 2, sku: 'CABLE', unitPriceMinor: 100, vatRate: 21 },
+      {
+        productId: 'product-1',
+        productName: 'Cable',
+        quantity: 2,
+        sku: 'CABLE',
+        taxClassificationCode: 'cz.vat.standard',
+        taxRuleRevisionId: 'tax-rule-revision-standard-21',
+        unitPriceMinor: 100,
+        vatRate: 21,
+      },
     ],
     number,
     partyId: 'party-1',
@@ -63,9 +72,9 @@ const product = Schema.decodeSync(ProductRecordSchema)({
   sku: 'CABLE',
   stockOnHand: 10,
   stockValueMinor: 1000,
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: instant,
-  vatRate: 21,
 });
 const recordsOf = (numbers: readonly string[], revision: number, totalOrders: number) =>
   Schema.decodeSync(RecordsResponseSchema)({
@@ -79,6 +88,7 @@ const recordsOf = (numbers: readonly string[], revision: number, totalOrders: nu
     orders: numbers.map((number) => Schema.encodeSync(OrderSchema)(orderOf(number))),
     products: [],
     revision,
+    taxRates: [],
     totalOrders,
   });
 const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({

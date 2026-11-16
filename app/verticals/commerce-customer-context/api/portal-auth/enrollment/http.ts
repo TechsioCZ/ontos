@@ -73,7 +73,7 @@ import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
-import { CommercePortalAuthService } from '../session/http.ts';
+import { CommercePortalAuthService } from '../session/auth-service.ts';
 import { CommercePortalAuthSessionLifecycle } from '../session/lifecycle-service.ts';
 import { commercePortalAuthEnrollmentClaimInvitation } from './claim-invitation.ts';
 import {

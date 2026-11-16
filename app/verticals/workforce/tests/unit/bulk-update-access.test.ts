@@ -23,7 +23,7 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/access/ids';
 import { PgClient } from '@effect/sql-pg';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, UpdateEmployeePayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -32,7 +32,7 @@ import { updateEmployeeAction } from '../../src/actions/update-employee.action.t
 import { recordsRead } from '../../src/api/records.read.ts';
 import { evolveEmployeeState } from '../../src/services/persistence.service.ts';
 import { workforceRegistration } from '../../vertical.registration.ts';
-import { recordsDeclaration } from '../../shared/access-declarations.ts';
+import { recordsCarrier } from '../../shared/access-declarations.ts';
 import { employee, employeeId, otherEmployeeId, scope } from './workforce-search-fixtures.ts';
 
 const thirdId = '50000000-0000-4000-8000-000000000003';
@@ -74,6 +74,8 @@ const engineAnswer = (item: Parameters<CanonicalPorts['check']['checkBulk']>[0][
     : ('none' as const),
 });
 const normalizeSql = (sql: string) => sql.trim().replaceAll(/\s+/gu, ' ').toLowerCase();
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 /** The public production currentness reader and the Action writer share these exact database rows. */
 const fenceDatabase = (fences: AccessFences) =>
@@ -86,18 +88,15 @@ const fenceDatabase = (fences: AccessFences) =>
         if (['begin', 'commit', 'rollback'].includes(statement)) {
           return [];
         }
-        if (
-          statement === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)"
-        ) {
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (statement === 'select current_user::text as role') {
+          return [{ role: SHARED_RUNTIME_IDENTITY.role }];
+        }
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (statement === installAndReadScopeSql) {
           [installedTenant, installedCompany] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(
             Effect.orDie,
           );
-          return [];
-        }
-        if (
-          statement ===
-          "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
-        ) {
           return [
             {
               legal_entity_id: installedCompany,
@@ -169,11 +168,12 @@ const bulkAuthority = (refuseMiddle: boolean): Authority => {
     readCells: (query) => {
       expect(query.tenantId).toBe(tenantId);
       expect(query.scopeId).toBe(companyScopeId);
-      expect(query.holder).toEqual(holder);
+      expect(Predicate.isTagged(query.holder, 'Principal') ? query.holder.principalId : undefined).toBe(principalId);
       return Effect.succeed(
         cells.filter((cell) => cell.capabilityKey === query.capabilityKey && cell.mode === query.mode),
       );
     },
+    readCompanyOwnership: (query) => Effect.succeed(query.tenantId === tenantId && query.legalEntityId === companyId),
     readConnection: () => Effect.succeed(Option.none()),
     readScope: (query) => {
       expect(query.tenantId).toBe(tenantId);
@@ -250,7 +250,7 @@ it('the published employee.update owns bulk mutation and apply-command publishes
   const encoded = Schema.encodeSync(UpdateEmployeePayloadSchema)(payload);
   expect(Schema.is(ApplyCommandPayloadSchema)(payload)).toBe(false);
   expect(Schema.is(UpdateEmployeePayloadSchema)(payload)).toBe(true);
-  expect(encoded.command._tag).toBe('BulkUpdateEmployees');
+  expect(Predicate.isTagged(encoded.command, 'BulkUpdateEmployees')).toBe(true);
 });
 const noTransactions = (): number => 0;
 for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
@@ -260,7 +260,7 @@ for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
         const gate = makeTestBoundAccessGate({
           answers: {
             'demo.workforce.employee.update': { outcome: 'ALLOWED' },
-            [recordsDeclaration.key]: { outcome },
+            [recordsCarrier.accessDeclaration.key]: { outcome },
           },
         });
         const harness = yield* makeActionTestHarness({
@@ -281,7 +281,9 @@ for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
             transport: { correlationId: 'bulk-read-refusal', idempotencyKey: `bulk-read-${outcome}` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe(outcome === 'DENIED' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError');
+        expect(
+          Predicate.isTagged(failure, outcome === 'DENIED' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError'),
+        ).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
         for (const declaration of [
@@ -354,7 +356,7 @@ for (const refuseMiddle of [false, true]) {
         };
         if (refuseMiddle) {
           const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-          expect(failure._tag).toBe('ActionPermissionDenied');
+          expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
           expect(writes).toBe(0);
           expect(harness.snapshot().committed).toEqual([]);
         } else {
@@ -371,7 +373,7 @@ for (const refuseMiddle of [false, true]) {
           const readCalls = readTargets.length;
           const remoteCalls = gate.remoteChecks();
           const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-          expect(replay._tag).toBe('ActionAlreadyCommitted');
+          expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
           expect(asked).toHaveLength(calls);
           expect(readTargets).toHaveLength(readCalls);
           expect(gate.remoteChecks()).toBe(remoteCalls);
@@ -395,7 +397,10 @@ for (const ids of [[], [employeeId, employeeId]]) {
             transport: { correlationId: 'bad-bulk', idempotencyKey: `bad-bulk-${ids.length}` },
           })
           .pipe(Effect.flip);
-        expect(['ActionPayloadValidationError', 'ActionPermissionCheckError']).toContain(failure._tag);
+        expect(
+          Predicate.isTagged(failure, 'ActionPayloadValidationError') ||
+            Predicate.isTagged(failure, 'ActionPermissionCheckError'),
+        ).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
       }),
@@ -414,7 +419,7 @@ it.effect('the retired apply-command cannot execute even an otherwise allowed bu
           transport: { correlationId: 'retired-bulk', idempotencyKey: 'retired-bulk' },
         })
         .pipe(Effect.flip);
-      expect(failure._tag).toBe('ActionPayloadValidationError');
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
       expect(harness.snapshot().transactionCount).toBe(0);
     }),
   ),
@@ -422,7 +427,7 @@ it.effect('the retired apply-command cannot execute even an otherwise allowed bu
 it.effect('one missing employee prevents the entire owner state transition', () =>
   Effect.gen(function* missingEmployee() {
     const failure = yield* evolveEmployeeState({ employees: [employee] }, payload.command, { now }).pipe(Effect.flip);
-    expect(failure._tag).toBe('WorkforceNotFound');
+    expect(Predicate.isTagged(failure, 'WorkforceNotFound')).toBe(true);
     expect(employee.active).toBe(true);
   }),
 );
@@ -478,7 +483,7 @@ it.effect('expired admission and Changing or missing company fences never reach 
             transport: { correlationId: `fenced-${fenceState}`, idempotencyKey: `fenced-${fenceState}` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionCheckError');
+        expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
         expect(persisted.remoteChecks()).toBe(0);
         expect(fencedHarness.snapshot().transactionCount).toBe(0);
         expect(fencedHarness.snapshot().committed).toEqual([]);

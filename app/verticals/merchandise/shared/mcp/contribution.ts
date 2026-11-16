@@ -17,6 +17,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     priceMinor: 'Cena bez DPH',
     reason: 'Důvod',
     status: 'Stav',
+    taxClassificationCode: 'Daňová klasifikace (základní / snížená sazba DPH)',
   },
   commands: {
     AiDecideChanges: 'hidden',
@@ -91,6 +92,8 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canManageMarkets',
       title: { cs: 'Změnit nabídku produktu v trhu', en: 'Change a product offer in a market' },
     },
+    // Tax activation and staff run the resync; agents never resync VAT rates themselves.
+    SyncTaxRates: 'hidden',
     UpdateCategory: {
       agentProposalOnly: true,
       liveRight: 'canManageCatalog',

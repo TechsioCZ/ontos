@@ -2,7 +2,7 @@ import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Match, Redacted, Schema } from 'effect';
+import { Config, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/http';
 
 import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
@@ -60,6 +60,7 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(function
   const endpointHeaders = yield* decodeActionEndpointHeaders(request.headers).pipe(
     Effect.mapError(partyCommandProblem.invalid),
   );
+  let failureTag: string | undefined;
   return yield* runActionHttp<
     PayloadSchema,
     ResultSchema,
@@ -75,14 +76,30 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(function
     endpointHeaders,
     internalProblem: partyCommandProblem.internal,
     invalidCorrelationProblem: partyCommandProblem.invalid,
-    mapError: mapPartyActionProblem,
+    mapError: (error) => {
+      failureTag = error._tag;
+      return mapPartyActionProblem(error);
+    },
     payload,
     registration,
     requestHeaders: {
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': request.headers['x-correlation-id'],
     },
-  }).pipe(Effect.catchIf(isPartyCommandAuthenticationProblem, failPartyCommandProblem));
+  }).pipe(
+    Effect.tapError(() =>
+      Config.Boolean('ONTOS_C14_TRACE_PROBLEMS').pipe(
+        Config.withDefault(false),
+        Effect.orElseSucceed(() => false),
+        Effect.flatMap((enabled) =>
+          enabled
+            ? Effect.logWarning({ boundary: 'party-command', failureTag: failureTag ?? 'transport' })
+            : Effect.void,
+        ),
+      ),
+    ),
+    Effect.catchIf(isPartyCommandAuthenticationProblem, failPartyCommandProblem),
+  );
 });
 
 const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadPartyCommand')(
@@ -240,10 +257,12 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
         transport: { correlationId },
       })
       .pipe(
-        Effect.mapError((cause) =>
-          Match.value(cause).pipe(
-            Match.tag('ReadPermissionDenied', partyCommandProblem.unavailable),
-            Match.orElse((failure) => Object.assign(partyCommandProblem.unavailable(), { cause: failure })),
+        // Every refusal or failure of the owned result (a denied current source Privacy included) answers the one
+        // data-only 503 problem, as main's governed read servers do. A failure value must stay data: attaching the
+        // read's failure chain let Effect structurally hash runtime objects when it merged causes.
+        Effect.catch((error) =>
+          Effect.logWarning('The owned Party Create result is unavailable', { reason: error._tag }).pipe(
+            Effect.andThen(failPartyCommandProblem(partyCommandProblem.unavailable())),
           ),
         ),
       );

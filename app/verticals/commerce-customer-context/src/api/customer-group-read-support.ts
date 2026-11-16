@@ -1,5 +1,9 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect } from 'effect';
+import type {
+  CommerceCustomerGroupMembership,
+  CommerceCustomerGroupMembershipRead,
+} from '../../shared/domain/group-contract.ts';
 import type { CustomerGroupLookupOutcome, CustomerGroupPersistence } from '../../shared/domain/group-service.ts';
 
 export { customerGroupServiceFactory as customerGroupReadServiceFactory } from '../actions/customer-group-action-support.ts';
@@ -41,5 +45,26 @@ export const requireCustomerGroupReadLegalEntityId = (
   legalEntityId: string | undefined,
 ): Effect.Effect<string, ReadHandlerUnavailable> =>
   legalEntityId === undefined ? Effect.fail(customerGroupReadUnavailable()) : Effect.succeed(legalEntityId);
+
+const projectMembershipRemoval = ({ source, ...removal }: NonNullable<CommerceCustomerGroupMembership['removal']>) =>
+  source === undefined ? removal : { ...removal, source: { order: source.order } };
+
+export const projectCustomerGroupMembershipRead = ({
+  management,
+  removal,
+  ...membership
+}: CommerceCustomerGroupMembership): CommerceCustomerGroupMembershipRead => {
+  const projected = { ...membership, removal: removal === null ? null : projectMembershipRemoval(removal) };
+  if (management === undefined) {
+    return projected;
+  }
+  return {
+    ...projected,
+    management:
+      management.kind === 'EXTERNAL_SOURCE'
+        ? { ...management, source: { order: management.source.order } }
+        : management,
+  };
+};
 
 export type CustomerGroupReadServices = CustomerGroupPersistence;

@@ -85,6 +85,7 @@ it.effect('acts for the originator and accepts an assertion issued to this modul
     expect(Redacted.value(owner.credential)).toBe(`Bearer ${delegated.token}`);
     expect(delegated.requests.at(-1)).toMatchObject({
       audience: 'party-registry',
+      callingAppId: 'commerce-customer-context',
       legalEntityScope: 'subject',
       requestCorrelation: 'enrollment-owner-test',
       subject: { _tag: 'Originator', actionInvocationId, compositionRevision, legalEntityId, tenantId },

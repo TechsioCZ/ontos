@@ -48,7 +48,12 @@
     "./Route": "./src/federation-entry.tsx",
     "./Widget": "./src/components/inventory-widget.tsx",
     "./api/current-stock-evidence-for-availability": "./shared/apis/current-stock-evidence-for-availability.ts",
-    "./api/current-relevant-stock-position-set": "./shared/apis/current-relevant-stock-position-set.ts"
+    "./api/current-relevant-stock-position-set": "./shared/apis/current-relevant-stock-position-set.ts",
+    "./source-import": "./shared/actions/import-source-assertion.ts",
+    "./source-assertion": "./shared/domain/inventory-source-assertion.ts",
+    "./source-import-outcome": "./shared/domain/inventory-source-import-outcome.ts",
+    "./api/inventory-source-import-receipt": "./shared/apis/inventory-source-import-receipt.ts",
+    "./testing/c14-source-import-native": "./tests/support/c14-source-import-native.ts"
   },
   "scripts": {
     "build": "cross-env JITI_NATIVE_MODULES='[\"effect\"]' modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target dist && ultramodern-create ultramodern public-surface --app inventory --target dist && cross-env MODERNJS_DEPLOY=node JITI_NATIVE_MODULES='[\"effect\"]' modern deploy --skip-build",
@@ -97,13 +102,13 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.67.0",
+    "@effect/tsgo": "0.69.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
     "@rsbuild/plugin-tailwindcss": "^2.0.3",
-    "@rstest/core": "0.11.12",
+    "@rstest/core": "0.12.6",
     "@types/node": "^26.4.1",
     "@types/pg": "8.20.0",
     "@types/react": "^19.3.0",
@@ -111,11 +116,11 @@
     "@typescript/native": "npm:typescript@7.0.2",
     "cross-env": "10.1.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "effect-rstest": "1.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
     "zephyr-rspack-plugin": "1.2.4",
-    "tsrs": "0.21.0-ts7.1.0-beta"
+    "tsrs": "0.25.0-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

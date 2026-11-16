@@ -28,6 +28,7 @@ import type {
   IssuedApiKey,
   SafeApiKeyMetadata,
 } from './api-key-service.ts';
+import { ManagedApiKeyTargetEligibility } from '@app/core-runtime/auth/managed-api-key-eligibility';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -84,9 +85,31 @@ const publicMetadata = ({
 > => metadata;
 
 export const makeIdentityLifecycleService = (
-  ...dependencies: readonly [ActionRuntimeService, ApiKeyServiceContract, PrincipalResolverService]
+  ...dependencies: readonly [
+    ActionRuntimeService,
+    ApiKeyServiceContract,
+    PrincipalResolverService,
+    (typeof ManagedApiKeyTargetEligibility)['Service']?,
+  ]
 ) => {
-  const [actionRuntime, keys, resolver] = dependencies;
+  const [actionRuntime, keys, resolver, eligibility] = dependencies;
+  /**
+   * A managed key's target is checked before the provider issues anything, so a refused target (a platform principal,
+   * one bound to a platform-registered workload, the wrong kind) never gets a key. The bind Action checks again.
+   */
+  const eligibleTarget = (input: {
+    readonly managedPrincipalId?: string;
+    readonly managedScope?: ManagedKeyScope;
+    readonly principal: TrustedPrincipalContext;
+  }): Effect.Effect<void, IdentityLifecycleError> =>
+    input.managedPrincipalId === undefined || input.managedScope === undefined || eligibility === undefined
+      ? Effect.void
+      : eligibility.check({
+          legalEntityId: input.principal.legalEntityId,
+          principalId: input.managedPrincipalId,
+          scope: input.managedScope,
+          tenantId: input.principal.tenantId,
+        });
   const reconcileProviderKey = (providerKeyId: string): Effect.Effect<void, IdentityLifecycleError> =>
     resolver.resolveBetterAuthApiKey(providerKeyId).pipe(
       Effect.match({
@@ -194,10 +217,13 @@ export const makeIdentityLifecycleService = (
       readonly requestHeaders: Headers;
     },
   ) =>
-    reconcilePendingCleanup({
-      lifecycleOperationId: input.idempotencyKey,
-      principal: input.principal,
-    }).pipe(
+    eligibleTarget(input).pipe(
+      Effect.andThen(
+        reconcilePendingCleanup({
+          lifecycleOperationId: input.idempotencyKey,
+          principal: input.principal,
+        }),
+      ),
       Effect.flatMap(() =>
         keys.issue(
           input.requestHeaders,
@@ -502,6 +528,7 @@ export const IdentityLifecycleLive = Layer.effect(
     const actionRuntime = yield* ActionRuntime;
     const apiKeys = yield* ApiKeyService;
     const principalResolver = yield* PrincipalResolver;
-    return makeIdentityLifecycleService(actionRuntime, apiKeys, principalResolver);
+    const eligibility = yield* ManagedApiKeyTargetEligibility;
+    return makeIdentityLifecycleService(actionRuntime, apiKeys, principalResolver, eligibility);
   }),
 );

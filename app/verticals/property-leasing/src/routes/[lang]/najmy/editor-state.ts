@@ -1,6 +1,6 @@
 import { Data, Match, Option } from 'effect';
 import type { Effect, Schema } from 'effect';
-import type { listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
+import type { findCustomers, listCustomers } from './party-customers.ts';
 import type { Occupancy, OccupancySchema, RentTerms } from '../../../../shared/apis/records.ts';
 import { crownsInput } from './lease-story.tsx';
 
@@ -45,7 +45,7 @@ export interface OccupancyEditorState extends EditorInputs {
   readonly customers: Effect.Success<ReturnType<typeof listCustomers>>;
   readonly customersLoading: boolean;
   readonly editor: Option.Option<'lease' | 'stay'>;
-  readonly guests: Effect.Success<ReturnType<typeof loadPartiesClient>>;
+  readonly guests: Effect.Success<ReturnType<typeof findCustomers>>;
   readonly rentEditorOpen: boolean;
 }
 export type OccupancyEditorMode = Option.Option.Value<OccupancyEditorState['editor']>;

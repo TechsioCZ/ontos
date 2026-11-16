@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect';
 import { canWriteAnything, canWriteClient } from '../domain/access.ts';
 import type { CrmViewer } from '../domain/access.ts';
 
-import { EntityIdSchema, makeEntityId } from '../domain/common.ts';
+import { EntityIdSchema } from '../domain/common.ts';
 import type { IsoTimeSchema, EntityId } from '../domain/common.ts';
 
 import type { Client } from '../domain/clients.ts';
@@ -50,7 +50,7 @@ export type Reducer<C> = (
 
 /** Deterministic new id for the n-th entity a command creates. */
 export const newId = (context: CommandContext, suffix: string | number = 0) =>
-  makeEntityId(`${context.invocationId}-${suffix}`);
+  EntityIdSchema.make(`${context.invocationId}-${suffix}`);
 
 export const notFound = (reason: string) => Effect.fail(new CrmNotFound({ code: 'crm_not_found', reason }));
 export const denied = (reason: string) =>

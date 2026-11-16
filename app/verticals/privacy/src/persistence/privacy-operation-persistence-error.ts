@@ -17,6 +17,7 @@ export class PrivacyOperationPersistenceError extends Schema.TaggedError<Privacy
 // Only these owner-defined identities and idempotency keys represent business conflicts.
 const privacyConflictConstraints = new Set([
   'privacy_subjects_scope_id_uk',
+  'privacy_subjects_source_identity_uk',
   'privacy_processing_purposes_scope_id_uk',
   'privacy_processing_purposes_scope_code_uk',
   'privacy_purpose_versions_scope_id_uk',

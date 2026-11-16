@@ -11,7 +11,7 @@ import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Effect, Match, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
-import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../../../shared/api.ts';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../../../shared/browser-api.ts';
 import type { IdentityClientError } from '../../../api/auth-client.ts';
 
 export const ConnectionsFailureSchema = Schema.Literals([

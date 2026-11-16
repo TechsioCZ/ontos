@@ -18,16 +18,16 @@ import type { AccessDecisionService } from '@app/core-runtime/access/enforcement
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
 import { DATABASE_IDENTITIES } from '../../../../database/identity-enrollment.ts';
 import { bootstrapRuntimeRoles } from '../../../../scripts/postgres/runtime-role-bootstrap.mts';
 import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { AuthDatabase, AuthDatabaseForExpectedRoleLive } from '../../api/auth/db/client.ts';
 import { session, user } from '../../api/auth/db/schema.ts';
-import { makeShellTestAuthentication } from './shell-authentication.ts';
+import { shellTestAuthentication } from './shell-authentication.ts';
 
 export class NativeHumanSessionFixtureError extends Schema.TaggedError<NativeHumanSessionFixtureError>()(
   'NativeHumanSessionFixtureError',
@@ -170,7 +170,10 @@ export const makeNativeHumanSessionProvider = Effect.fn('NativeHumanSessions.mak
     BETTER_AUTH_URL: 'http://localhost',
     DATABASE_URL: runtime.connectionString,
   }).pipe(Effect.mapError(unavailable));
-  const authDatabase = yield* makeAuthDatabase(runtime).pipe(Effect.mapError(unavailable));
+  const authDatabase = yield* Layer.build(AuthDatabaseForExpectedRoleLive(runtime)).pipe(
+    Effect.map((context) => Context.get(context, AuthDatabase)),
+    Effect.mapError(unavailable),
+  );
   const resolver = makePrincipalResolver(options.coreDatabase, {
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
   });
@@ -181,7 +184,7 @@ export const makeNativeHumanSessionProvider = Effect.fn('NativeHumanSessions.mak
     Layer.succeed(DatabaseIdentityEnrollmentContext, options.enrollment),
     Layer.succeed(PrincipalResolver, resolver),
   );
-  const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+  const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
     Effect.provide(base),
     Effect.mapError(unavailable),
   );

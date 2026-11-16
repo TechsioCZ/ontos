@@ -1,6 +1,7 @@
 import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { CustomerProfileIcoResponseSchema } from '../../shared/apis/customer-profile-ico.ts';
 import {
   CustomerProfileReadRequestSchema,
   CustomerProfileReadResponseSchema,
@@ -20,6 +21,7 @@ import { RetailPrincipalResolutionRequestSchema } from '../../shared/apis/retail
 import { ProfileReconciliationCaseRefSchema } from '../../shared/resources/profile-reconciliation-case.ts';
 import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
 import type { ProfileScopedRoutineInvoker } from '../../src/persistence/profile-persistence.ts';
+import { readCustomerProfileIcoFromServices } from '../../src/api/customer-profile-ico.read.ts';
 import { readCustomerProfileFromServices } from '../../src/api/customer-profile-read.read.ts';
 import {
   decideRetailAccessFromCurrentOwnerSnapshot,
@@ -196,6 +198,75 @@ it.effect('profile reads expose fail-closed reconciliation, trading, and Guest d
       sellingLegalEntityRef,
     });
     expect(guestStatus.outcome.canAcceptOrder).toBe(false);
+  }),
+);
+
+it.effect('reports migration required for exact Retail and Counterparty profiles before IČO cutover', () =>
+  Effect.gen(function* customerProfileIcoBeforeCutover() {
+    for (const { profileRef, scopeLegalEntityId, subject } of [
+      {
+        profileRef: taggedRetailProfileRef,
+        scopeLegalEntityId: sellingLegalEntityRef.resourceId,
+        subject: retailSubject,
+      },
+      { profileRef: taggedCounterpartyProfileRef, scopeLegalEntityId: legalEntityId, subject: counterpartySubject },
+    ]) {
+      const input = yield* Schema.decodeUnknownEffect(CustomerProfileReadRequestSchema)({
+        authorizationSubject: subject,
+        profileRef,
+      });
+      const profile = yield* Schema.decodeUnknownEffect(CustomerProfileReadResponseSchema)({
+        _tag: 'PROFILE_AVAILABLE',
+        completeness: 'FULL',
+        profile: {
+          createdAt: '2026-09-09T10:00:00.000Z',
+          kind: subject.kind,
+          profileRef,
+          revision: 1,
+          state: 'ACTIVE',
+          stateChangedAt: '2026-09-09T10:00:00.000Z',
+          subject,
+          updatedAt: '2026-09-09T10:00:00.000Z',
+        },
+        provenance,
+        unavailableSections: [],
+      });
+      const readProfile = () => Effect.succeed(profile);
+
+      const result = yield* readCustomerProfileIcoFromServices(input, tenantId, scopeLegalEntityId, { readProfile });
+      expect(Schema.is(CustomerProfileIcoResponseSchema)(result)).toBe(true);
+      expect(result.profileRef).toStrictEqual(input.profileRef);
+
+      const wrongSubject = yield* Effect.flip(
+        readCustomerProfileIcoFromServices(
+          {
+            ...input,
+            authorizationSubject:
+              subject.kind === 'RETAIL'
+                ? { ...subject, partyRef: { ...subject.partyRef, resourceId: 'wrong-party' } }
+                : { ...subject, counterpartyRef: { ...subject.counterpartyRef, resourceId: 'wrong-counterparty' } },
+          },
+          tenantId,
+          scopeLegalEntityId,
+          { readProfile },
+        ),
+      );
+      expect(Predicate.isTagged(wrongSubject, 'ReadHandlerNotFound')).toBe(true);
+    }
+  }),
+);
+
+it.effect('keeps an unavailable profile owner distinct from an unresolved IČO migration', () =>
+  Effect.gen(function* customerProfileIcoOwnerUnavailable() {
+    const error = yield* Effect.flip(
+      readCustomerProfileIcoFromServices(
+        { authorizationSubject: counterpartySubject, profileRef: taggedCounterpartyProfileRef },
+        tenantId,
+        legalEntityId,
+        { readProfile: () => Effect.fail(unavailable()) },
+      ),
+    );
+    expect(Predicate.isTagged(error, 'ReadHandlerUnavailable')).toBe(true);
   }),
 );
 

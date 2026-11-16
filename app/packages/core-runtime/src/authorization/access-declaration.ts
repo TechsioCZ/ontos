@@ -1,9 +1,13 @@
 import { Result, Schema } from 'effect';
 
 import { withOptional } from '../access/decision/optional.ts';
+import { AccessKeySyntaxSchema, WorkloadKeySchema } from './access-key-syntax.ts';
+
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import { AccessCatalogError } from './access-catalog-error.ts';
 import { AccessDeclarationError } from './access-declaration-error.ts';
+
+export { AccessKeySyntaxSchema, WorkloadKeySchema } from './access-key-syntax.ts';
 
 /** One scalar money value of the governed command in minor units (O18); decoded from the payload. */
 export type { AccessAmount } from '../access/decision/contract.ts';
@@ -115,14 +119,7 @@ const accessKeyVerbSegments = (key: string, moduleKey: string): string | undefin
 };
 
 /** Lowercase kebab segments `<module>.<resource>.<verb>[.<qualifier>]`; module IDs may be dotted. */
-/** Lowercase kebab segments `<module>.<resource>.<verb>[.<qualifier>]`; module IDs may be dotted. */
-const accessKeySyntax = Schema.String.check(
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*){2,}$/u),
-);
-/** The key grammar alone, for authored descriptors that still carry the key as a plain string. */
-export const AccessKeySyntaxSchema = accessKeySyntax;
-export const AccessKeySchema = accessKeySyntax.pipe(Schema.brand('AccessKey'));
+export const AccessKeySchema = AccessKeySyntaxSchema.pipe(Schema.brand('AccessKey'));
 export type AccessKey = typeof AccessKeySchema.Type;
 
 const accessFieldClassSchema = Schema.String.check(
@@ -153,6 +150,13 @@ const accessDeclarationFields = Schema.Struct({
   admitsAdminSurface: Schema.optionalKey(Schema.Literal(true)),
   /** One scalar money value of the Action payload, or a server-derived total for composites (O18). */
   amountInput: Schema.optionalKey(accessPathSchema),
+  /**
+   * The Shell's frame, so a signed-in member can load the product at all, never a business record. No Role cell holds
+   * it: when a person's Roles do not grant it, the engine admits them as a member of the scope they ask in, proven by
+   * one `access_scope#access` check (`structural.member_baseline`). Only a routine, basic, unselected read of the Shell
+   * may be baseline, and the engine checks that again at decision time; exactly `true` or absent.
+   */
+  baseline: Schema.optionalKey(Schema.Literal(true)),
   /** A short-lived proof that cannot wait for an approval (O22). */
   ephemeral: Schema.optionalKey(Schema.Boolean),
   fieldClass: Schema.optionalKey(accessFieldClassSchema),
@@ -236,6 +240,15 @@ const declarationIssue = (declaration: AccessDeclarationFields): string | undefi
   }
   if (kind !== 'action' && (declaration.amountInput !== undefined || declaration.ephemeral !== undefined)) {
     return 'amountInput and ephemeral are supported only by action declarations';
+  }
+  if (
+    declaration.baseline === true &&
+    (kind !== 'read' ||
+      risk !== 'routine' ||
+      declaration.placement.level !== 'basic' ||
+      declaration.selectors.length > 0)
+  ) {
+    return 'only a routine, basic read without record selectors may be baseline';
   }
   return modesIssue(declaration) ?? lineageIssue(declaration);
 };
@@ -375,6 +388,9 @@ export const accessDeclarationEntrypointIssue = (
   const surfaceIssue = adminSurfaceIssue(declaration, owner);
   if (surfaceIssue !== undefined) {
     return surfaceIssue;
+  }
+  if (declaration.baseline === true && moduleKey !== 'core.shell') {
+    return 'only the Shell frame (core.shell) declares baseline access';
   }
   return isActionCarrier(owner) ? actionEntrypointIssue(declaration) : directEntrypointIssue(declaration, owner);
 };
@@ -560,10 +576,6 @@ export const decodeAccessFieldGroups = <Input>(
  * `core.identity-provider`). A direct `accessWorkload` stays in its carrier module's root namespace.
  * An `accessActor` subject workload keeps the calling flow's namespace, not the receiving owner's.
  */
-export const WorkloadKeySchema = Schema.String.check(
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u),
-).pipe(Schema.brand('WorkloadKey'));
 export type WorkloadKey = typeof WorkloadKeySchema.Type;
 
 /**
@@ -575,6 +587,10 @@ export type WorkloadKey = typeof WorkloadKeySchema.Type;
 export const AccessWorkloadSchema = Schema.Struct({
   /** Why no human or agent may run this Action; the only human-readable field. */
   reason: Schema.String.check(Schema.isMaxLength(400), Schema.isMinLength(1), Schema.isTrimmed()),
+  /** A Read that requires a signed exact request hash and this decoded purpose. */
+  requestPurpose: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(80), Schema.isMinLength(1), Schema.isTrimmed()),
+  ),
   /** The registered workloads allowed to run this carrier; at least one, never repeated (O73). */
   workloads: Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isUnique()),
 });
@@ -612,11 +628,14 @@ export const decodeAccessWorkload = <Input>(
 ): Result.Result<AccessWorkload, AccessDeclarationError> =>
   decodeAccessWorkloadFields(input).pipe(
     Result.mapError((issue) => invalidDeclaration(`accessWorkload: ${issue.message}`)),
-    Result.map((workload) => Object.freeze({ reason: workload.reason, workloads: Object.freeze(workload.workloads) })),
+    Result.map((workload) => Object.freeze({ ...workload, workloads: Object.freeze(workload.workloads) })),
     Result.flatMap((workload) => {
       const reason = accessWorkloadEntrypointIssue(owner);
       if (reason !== undefined) {
         return Result.fail(invalidDeclaration(reason));
+      }
+      if (workload.requestPurpose !== undefined && !isGovernedReadCarrier(owner)) {
+        return Result.fail(invalidDeclaration('accessWorkload.requestPurpose requires a governed Read'));
       }
       const foreign = workload.workloads.find((key) => !workloadKeyBelongsToModule(key, owner.moduleKey));
       return foreign === undefined
@@ -658,10 +677,26 @@ export const AccessActorSchema = Schema.Struct({
    * carrier.
    */
   subjectWorkloads: Schema.optionalKey(Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isUnique())),
+  /**
+   * The callers that may bring one of `subjectWorkloads` as the subject; absent, every caller may. A caller outside
+   * it is refused a workload subject exactly as a carrier that names no workload refuses one.
+   */
+  subjectWorkloadCallers: Schema.optionalKey(Schema.NonEmptyArray(TopologyAppIdSchema).check(Schema.isUnique())),
 }).check(
   Schema.makeFilter((actor) =>
     actor.subject === 'workload' && actor.subjectWorkloads === undefined
       ? 'a workload-only module actor requires subjectWorkloads'
+      : undefined,
+  ),
+  // A narrowing of the workload-subject callers needs workload keys and may name only callers.
+  Schema.makeFilter((actor) =>
+    actor.subjectWorkloadCallers !== undefined && actor.subjectWorkloads === undefined
+      ? 'subjectWorkloadCallers needs subjectWorkloads'
+      : undefined,
+  ),
+  Schema.makeFilter((actor) =>
+    actor.subjectWorkloadCallers?.some((caller) => !actor.callers.includes(caller)) === true
+      ? 'subjectWorkloadCallers must be callers'
       : undefined,
   ),
 );
@@ -692,9 +727,13 @@ export const decodeAccessActor = <Input>(
     Result.map((actor): AccessActor =>
       Object.freeze(
         withOptional(
-          { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
-          'subjectWorkloads',
-          actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+          withOptional(
+            { callers: Object.freeze(actor.callers), reason: actor.reason, subject: actor.subject },
+            'subjectWorkloads',
+            actor.subjectWorkloads === undefined ? undefined : Object.freeze(actor.subjectWorkloads),
+          ),
+          'subjectWorkloadCallers',
+          actor.subjectWorkloadCallers === undefined ? undefined : Object.freeze(actor.subjectWorkloadCallers),
         ),
       ),
     ),

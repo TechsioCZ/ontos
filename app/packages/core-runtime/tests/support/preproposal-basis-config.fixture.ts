@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off -- Native proof child reads its private config and writes one protocol frame to fd 3 before any Effect layer exists; expires: 2027-03-31.
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off -- Native proof child reads its private config and writes one protocol frame to fd 5 before any Effect layer exists; expires: 2027-03-31.
 import { readFileSync, writeSync } from 'node:fs';
 import { NodeRuntime } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
@@ -21,7 +21,7 @@ type CanonicalPermissionEnvironment = {
   -readonly [Key in keyof typeof environmentSchema.Type]: (typeof environmentSchema.Type)[Key];
 };
 
-/** Core owns the parser. Configuration and canonical output use only private fd4/fd3. */
+/** Core owns the parser. Configuration and canonical output use only private fd4/fd5. */
 const canonicalize = Effect.gen(function* canonicalizeAllocatedConfiguration() {
   const document = yield* Effect.try(() => readFileSync(4, 'utf-8'));
   const input = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(inputSchema), {
@@ -46,7 +46,7 @@ const runCanonicalizer = canonicalize.pipe(
     onFailure: () => ({ protocol, stage: 'configuration-invalid', type: 'failed' as const }),
     onSuccess: (result) => result,
   }),
-  Effect.flatMap((result) => Effect.try(() => writeSync(3, `${JSON.stringify(result)}\n`))),
+  Effect.flatMap((result) => Effect.try(() => writeSync(5, `${JSON.stringify(result)}\n`))),
   // Never render a Cause: parser failures may contain private configuration.
   Effect.catchCause(() =>
     Effect.sync(() => {

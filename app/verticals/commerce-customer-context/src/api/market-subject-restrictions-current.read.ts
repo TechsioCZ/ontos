@@ -13,7 +13,7 @@ import type {
   MarketSubjectRestrictionsCurrentResponse,
 } from '../../shared/apis/market-subject-restrictions-current.ts';
 import type { CommerceCustomerProfileState } from '../../shared/domain/profile-contracts.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { profileReadServicesForVerifiedScope } from '../profile-service-factory.ts';
 import { restrictionSubjectOwnerFacts } from './read-owner-facts.ts';
 
 export interface MarketSubjectRestrictionProfileObservation {
@@ -185,7 +185,7 @@ export const marketSubjectRestrictionsCurrentRead = defineRead(
       ),
   },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    profileReadServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(
         ({ marketSubjectRestrictionsCurrent }): MarketSubjectRestrictionsCurrentServices =>
           marketSubjectRestrictionsCurrent,

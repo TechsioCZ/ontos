@@ -9,7 +9,7 @@ import { expect, it } from 'effect-rstest';
 
 import { propertyRelations } from '../../src/database/schema.ts';
 import type { PropertyState } from '../../shared/apis/records.ts';
-import { invalidSearchSource } from '../../src/search/projection.ts';
+import { invalidSearchSource } from '../../src/services/search-projection.ts';
 import { loadSearchSnapshot } from '../../src/services/search-source.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';

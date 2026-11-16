@@ -39,7 +39,7 @@ import {
 
 export interface RecordAntiResurrectionProtectionServices extends Pick<
   PrivacyOperationRepositoryService,
-  'getPrivacyMeasureHandoff' | 'recordAntiResurrectionProtection'
+  'getPrivacyMeasureHandoff' | 'getPrivacyMeasureDispatchOriginator' | 'recordAntiResurrectionProtection'
 > {
   readonly accessEvidence?: readonly DataAccessEventInput[];
   readonly authority: OwnerExecutionAuthorityService;
@@ -128,6 +128,7 @@ const prepareProtectionServices = Effect.fn('RecordAntiResurrectionProtectionAct
         accessEvidence: reads,
         authority: preparedOwnerExecutionAuthority(prepared),
         enforcementAuthority: preparedAntiResurrectionAuthority(prepared, structuredClone(receipt)),
+        getPrivacyMeasureDispatchOriginator: repository.getPrivacyMeasureDispatchOriginator,
         getPrivacyMeasureHandoff: repository.getPrivacyMeasureHandoff,
         recordAntiResurrectionProtection: repository.recordAntiResurrectionProtection,
       };

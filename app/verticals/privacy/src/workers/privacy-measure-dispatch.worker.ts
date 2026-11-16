@@ -22,7 +22,7 @@ export class PrivacyMeasureDispatchRejected extends Schema.TaggedError<PrivacyMe
   },
 ) {}
 
-const launchOwners = new Set(['party.registry', 'commerce.customer-context']);
+const launchOwners = new Set(['party.registry', 'commerce.customer-context', 'integration.symmy']);
 const WORKER_KEY = 'privacy.core.privacy-measure-dispatch' as const;
 
 /**

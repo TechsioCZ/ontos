@@ -129,7 +129,8 @@ export const StorefrontSearch = ({
         resultSlot={renderResult}
         size="sm"
         translations={{
-          noResults: noResultsMessage,
+          // The kit's status region announces async outcomes; Zag's immediate empty notice is premature.
+          noResults: "",
           resultsCount: () => d.suggestionsReady,
           triggerLabel: d.search,
         }}

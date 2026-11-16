@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Uploads only planned services. Uploads serialize, builds overlap, and readiness remains push-service.sh's gate.
+# Uploads only planned services, longest build first. Uploads serialize, builds overlap.
+# One upload owns runner bandwidth at a time so the per-service 25s truncation guard remains useful.
 # This is a rolling service deployment, not an atomic cross-service swap.
 set -euo pipefail
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
@@ -10,7 +11,7 @@ services="$(jq -er --arg head "$GITHUB_SHA" '
   if .sourceRevision == $head and (.services | type == "array") and
      (.services | length > 0) and (.services | unique | length) == (.services | length) and
      (.services | all(. == "app" or . == "storefront" or . == "shop" or . == "n1"))
-  then .services | join(" ") else error("invalid delivery plan") end' "$plan")"
+  then .services | sort_by(if . == "n1" then 0 elif . == "app" then 1 elif . == "storefront" then 2 else 3 end) | join(" ") else error("invalid delivery plan") end' "$plan")"
 # Validate every selected target before starting the first remote mutation.
 for service in $services; do
   case "$service" in
@@ -20,6 +21,15 @@ for service in $services; do
     n1) : "${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}" ;;
   esac
 done
+# The project's public hostnames (the workflow's STAGE_*_URL), so each upload says whether it enters through them.
+if [ -z "${PUSH_PROJECT_HOSTS:-}" ]; then
+  PUSH_PROJECT_HOSTS=''
+  for url in "${STAGE_SHELL_URL:-}" "${STAGE_STOREFRONT_URL:-}" "${STAGE_SHOP_URL:-}" "${STAGE_N1_URL:-}"; do
+    host="${url#*://}"
+    if [ -n "$url" ]; then PUSH_PROJECT_HOSTS+="${host%%[/:?#]*} "; fi
+  done
+fi
+export PUSH_PROJECT_HOSTS
 pids=()
 started="$(date +%s)"
 for service in $services; do
@@ -30,17 +40,16 @@ for service in $services; do
     n1) id="${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1 ;;
     *) echo "unknown delivery service: $service" >&2; exit 1 ;;
   esac
-  if [ "$service" = app ]; then
-    bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" >"$RUNNER_TEMP/push-$service.log" 2>&1 &
-  else
-    PUSH_EXCLUDE=app/.zerops-prebuilt.tar.zst bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" >"$RUNNER_TEMP/push-$service.log" 2>&1 &
-  fi
+  # Each push's timestamped lines reach the job log as they happen (and its own log file, which gates the next upload).
+  # A storefront push carries only zerops.yaml and its runner-built archive (push-service.sh), so nothing to exclude.
+  PUSH_SERVICE_NAME="$service" bash "$script_dir/push-service.sh" "$id" "$setup" "$GITHUB_SHA" > >(tee "$RUNNER_TEMP/push-$service.log") 2>&1 &
   pid=$!
   pids+=("$pid")
-  until grep -q '^build and deploy process' "$RUNNER_TEMP/push-$service.log" || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done
+  until grep -q 'build and deploy process' "$RUNNER_TEMP/push-$service.log" 2>/dev/null || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done
 done
 status=0
 for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+# The same lines once more, one collapsed group per service, so each push reads whole after the parallel run.
 for service in $services; do
   echo "::group::push $service"
   cat "$RUNNER_TEMP/push-$service.log"

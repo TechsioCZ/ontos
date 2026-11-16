@@ -4,6 +4,7 @@ import { Context, Duration, Effect, Layer, Option, Redacted } from 'effect';
 import { loadDatabaseConfig } from '../db/config.ts';
 import type { DatabaseConfigError } from '../db/config-error.ts';
 import { DatabaseConnectionError } from '../db/connection-error.ts';
+import { findPostgresFailure } from '../database/postgres-failure.ts';
 import {
   DatabaseIdentityEnrollmentContext,
   gatewayScopeGrantRoleForAudience,
@@ -41,9 +42,14 @@ const REGISTRATION_TIMEOUT = Duration.seconds(5);
 // halve the queueing for a full fan-out while adding at most two connections per Shell process to the database budget.
 const REGISTRAR_MAX_CONNECTIONS = 4;
 
+const UNAVAILABLE_REASON = 'Gateway scope grant registration is unavailable';
+
 const unavailableError = (cause?: unknown): GatewayScopeGrantUnavailableError => {
-  const error = new GatewayScopeGrantUnavailableError({
-    reason: 'Gateway scope grant registration is unavailable',
+  // The SQLSTATE is the one sanitized fact that explains a refusal (an audience the trust catalog does not enroll,
+  // an inactive principal, a missing grant), so it is classified here at the persistence edge.
+  const error = Option.match(findPostgresFailure(cause), {
+    onNone: () => new GatewayScopeGrantUnavailableError({ reason: UNAVAILABLE_REASON }),
+    onSome: ({ code }) => new GatewayScopeGrantUnavailableError({ reason: UNAVAILABLE_REASON, sqlState: code }),
   });
   return cause === undefined
     ? error

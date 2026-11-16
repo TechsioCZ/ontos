@@ -46,15 +46,20 @@ it.effect(
       const body = yield* Effect.promise(() => response.text());
       expect(response.status).toBe(403);
       expect(response.headers.get("content-type")).toContain("application/problem+json");
-      expect(JSON.parse(body)).toEqual({
-        _tag: "PortalRefusedProblem",
-        detail: "Portal account request could not be completed.",
-        diagnostic: "bff-origin-refused",
-        state: "refused",
-        status: 403,
-        title: "Portal account",
-        type: "urn:n1:portal-account",
-      });
+      expect(
+        Schema.decodeUnknownSync(Schema.fromJsonString(PortalRefusedProblem), {
+          onExcessProperty: "error",
+        })(body),
+      ).toEqual(
+        PortalRefusedProblem.make({
+          detail: "Portal account request could not be completed.",
+          diagnostic: "bff-origin-refused",
+          state: "refused",
+          status: 403,
+          title: "Portal account",
+          type: "urn:n1:portal-account",
+        }),
+      );
       expect(upstreamCalls).toBe(0);
       expect(body).not.toContain(secret);
       expect(body).not.toContain("71000000-0000-4000-8000-000000000099");

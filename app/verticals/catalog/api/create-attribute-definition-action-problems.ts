@@ -61,10 +61,12 @@ export const createAttributeDefinitionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateAttributeDefinitionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateAttributeDefinitionActionForbiddenProblem'> =>
     CreateAttributeDefinitionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateAttributeDefinitionAction
       ActionInvocationStateError: (failure) => createAttributeDefinitionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createAttributeDefinitionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createAttributeDefinitionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createAttributeDefinitionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createAttributeDefinitionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createAttributeDefinitionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createAttributeDefinitionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createAttributeDefinitionActionProblem.conflict(failure.code),

@@ -128,6 +128,7 @@ export const fakeVm = (
     relatedCustomer: false,
     reload: constVoid,
     requestVoid: constVoid,
+    scope: 'finance-form-test-scope',
     selected: absent<Invoice>(),
     snapshot: {
       canWrite: true,

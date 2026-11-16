@@ -2,7 +2,7 @@ import {
   customerSegmentDefinitions,
   SalesDemoCustomerFixtureSchema,
 } from '@app/shared-contracts/demo/sales-customer-fixtures';
-import { DateTime, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { v5 } from 'uuid';
 
@@ -47,14 +47,16 @@ it('projects a synthetic organization customer as a business name, never a perso
   expect(party).not.toHaveProperty('lastName');
 });
 
-it('asserts BUSINESS_NAME under the business-name seed id and keeps the PARTY_TYPE evidence', () => {
-  const ids = salesDemoSeedIds(customer, demoId);
-  expect(ids).not.toHaveProperty('displayName');
-  expect(ids.businessName).toBe(demoId('party.fact-assertion', 'ico-12345678:BUSINESS_NAME'));
+it.effect('asserts BUSINESS_NAME under the business-name seed id and keeps the PARTY_TYPE evidence', () =>
+  Effect.gen(function* assertsBusinessName() {
+    const ids = salesDemoSeedIds(customer, demoId);
+    expect(ids).not.toHaveProperty('displayName');
+    expect(ids.businessName).toBe(demoId('party.fact-assertion', 'ico-12345678:BUSINESS_NAME'));
 
-  const facts = salesDemoOrganizationIdentityFacts({ customer, ids, reference: 'sales-demo:ico-12345678' });
-  expect(facts.map(({ factKind }) => factKind)).toEqual(['PARTY_TYPE', 'BUSINESS_NAME']);
-  expect(facts[0].evidenceEvaluation.subjectEligible).toBe(true);
-  expect(facts[1].assertionId).toBe(ids.businessName);
-  expect(facts[1].normalizedValue).toBe(customer.name);
-});
+    const facts = yield* salesDemoOrganizationIdentityFacts({ customer, ids, reference: 'sales-demo:ico-12345678' });
+    expect(facts.map(({ factKind }) => factKind)).toEqual(['PARTY_TYPE', 'BUSINESS_NAME']);
+    expect(facts[0].evidenceEvaluation.subjectEligible).toBe(true);
+    expect(facts[1].assertionId).toBe(ids.businessName);
+    expect(facts[1].normalizedValue).toBe(customer.name);
+  }),
+);

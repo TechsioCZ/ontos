@@ -1,4 +1,4 @@
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
@@ -226,7 +226,7 @@ it.effect('refuses another active file tenant principal with the value-free own-
         second,
       ],
     }).pipe(Effect.flip);
-    expect(failure._tag).toBe('StageAccountsFileError');
+    expect(Predicate.isTagged(failure, 'StageAccountsFileError')).toBe(true);
     expect(failure.reason).toBe('Every registered workload needs a principal of its own tenant');
     expect(failure.cause).toBeUndefined();
     for (const value of [

@@ -63,6 +63,7 @@ import { paymentApplicabilityPersistenceForTransaction } from '../../src/persist
 import { paymentRegistration } from '../../vertical.registration.ts';
 import {
   AUTHORIZATION_COD_CARRIER,
+  authorizationAttemptFor,
   authorizationNetDaysSnapshot,
   authorizationTermRefFor,
   makeAuthorizationOwnerEvidenceFixture,
@@ -120,6 +121,7 @@ type ModuleStateSetup = TenantModuleState | 'MISSING' | 'OPEN';
 
 interface HarnessOptions {
   readonly access?: TestAccessOutcome;
+  readonly explicitAttemptEvidence?: boolean;
   readonly moduleState?: ModuleStateSetup;
 }
 
@@ -232,21 +234,23 @@ const makeHarness = Effect.fn('AuthorizationNativeTests.makeHarness')(function* 
   });
   const atR1 = actionRuntimeAt(R1);
   const atR2 = actionRuntimeAt(R2);
+  const purchases = new Map<string, PaymentRecord['purchasingContext']>();
 
   const issue = (payload: IssuePaymentAuthorizationPayload, compositionRevision: string = R1) =>
-    Effect.all([randomUuid, Schema.encodeEffect(IssuePaymentAuthorizationPayloadSchema)(payload)], {
-      concurrency: 1,
-    }).pipe(
-      Effect.flatMap(([key, encoded]) =>
-        (compositionRevision === R2 ? atR2 : atR1).runAction({
-          payload: encoded,
-          principal,
-          registration: issuePaymentAuthorizationAction,
-          transport: { correlationId: `issue-${key}`, idempotencyKey: `issue-${key}` },
-        }),
-      ),
-      Effect.provide(evidence.layer),
-    );
+    Effect.gen(function* issueWithOwnerFixture() {
+      const purchasingContext = purchases.get(payload.binding.paymentId);
+      if (options.explicitAttemptEvidence !== true && purchasingContext !== undefined) {
+        yield* evidence.putAttempt(yield* authorizationAttemptFor(payload.binding, purchasingContext, scope));
+      }
+      const key = yield* randomUuid;
+      const encoded = yield* Schema.encodeEffect(IssuePaymentAuthorizationPayloadSchema)(payload);
+      return yield* (compositionRevision === R2 ? atR2 : atR1).runAction({
+        payload: encoded,
+        principal,
+        registration: issuePaymentAuthorizationAction,
+        transport: { correlationId: `issue-${key}`, idempotencyKey: `issue-${key}` },
+      });
+    }).pipe(Effect.provide(evidence.layer));
 
   const validate = (input: PaymentAuthorizationValidationRequest) =>
     Schema.encodeEffect(PaymentAuthorizationValidationRequestSchema)(input).pipe(
@@ -269,7 +273,7 @@ const makeHarness = Effect.fn('AuthorizationNativeTests.makeHarness')(function* 
       transport: { correlationId: 'payment-history' },
     });
 
-  return { admin, adminClient, database, evidence, history, issue, runtimeClient, scope, validate };
+  return { admin, adminClient, database, evidence, history, issue, purchases, runtimeClient, scope, validate };
 });
 type Harness = Effect.Success<ReturnType<typeof makeHarness>>;
 
@@ -349,6 +353,7 @@ const createPayment = Effect.fn('AuthorizationNativeTests.createPayment')(functi
       termSemanticEvidence,
     }),
   );
+  harness.purchases.set(created.record.paymentId, created.record.purchasingContext);
   return created.record;
 });
 
@@ -697,6 +702,42 @@ it.live('#1149 zero payable purchase issues an explicit ZERO_PAYABLE proof witho
   ),
 );
 
+it.live('#1149 a superseded intent cannot issue or validate Current proof, but exact replay remains historical', () =>
+  nativeRun(
+    Effect.gen(function* supersededIntent() {
+      const harness = yield* makeHarness();
+      const payment = yield* createPayment(harness, { amountMinor: 0 });
+      const binding = bindingFor(payment, 'attempt-superseded', yield* frozenT(harness, 1));
+      const issuance = issuePayload(binding, 'before-successor');
+      const issued = yield* harness.issue(issuance);
+      const validation = { authorizationId: issued.proof.authorizationId, binding };
+      expect((yield* harness.validate(validation)).outcome).toBe('VALID');
+
+      const successor = yield* newPaymentInput(harness.scope, 100_000);
+      yield* withPersistence(harness.database, harness.scope, (persistence) =>
+        persistence.insertPayment({
+          ...successor,
+          predecessorPaymentId: payment.paymentId,
+          purchaseCorrelationId: payment.purchaseCorrelationId,
+        }),
+      );
+
+      expect(yield* harness.validate(validation)).toMatchObject({
+        outcome: 'NOT_VALID',
+        reasons: ['PAYMENT_SUPERSEDED'],
+      });
+      expect(yield* failureCode(harness.issue(issuePayload(binding, 'after-successor')))).toBe(
+        'payment_authorization_issuance_conflict',
+      );
+      expect(yield* harness.issue(issuance)).toEqual({ issuance: 'REPLAYED', proof: issued.proof });
+      expect(yield* harness.history(payment.paymentId)).toMatchObject({
+        authorizations: [issued.proof],
+        currentValidityClaimed: false,
+      });
+    }),
+  ),
+);
+
 // ---------------------------------------------------------------------------------------------
 // Method conditions
 // ---------------------------------------------------------------------------------------------
@@ -866,6 +907,7 @@ it.live('#1149 Deferred term is supported without a concrete invoice', () =>
         new Set([
           'authorizationId',
           'binding',
+          'commitmentAttemptEvidenceRef',
           'condition',
           'expiresAt',
           'issuanceKey',
@@ -1107,6 +1149,38 @@ it.live(
 // ---------------------------------------------------------------------------------------------
 // Exact Attempt / binding / scope
 // ---------------------------------------------------------------------------------------------
+
+it.live('#1149 issuance and Current validation require the owner evidence for the exact Attempt', () =>
+  nativeRun(
+    Effect.gen(function* exactOwnerEvidence() {
+      const harness = yield* makeHarness({ explicitAttemptEvidence: true });
+      const payment = yield* createPayment(harness);
+      yield* confirmCollect(harness, payment);
+      const binding = bindingFor(payment, 'owner-verified-attempt', yield* frozenT(harness, 1));
+      const request = issuePayload(binding, 'owner-verified-issuance');
+      expect(yield* failureCode(harness.issue(request))).toBe('payment_authorization_binding_mismatch');
+
+      const attempt = yield* authorizationAttemptFor(binding, payment.purchasingContext, harness.scope);
+      yield* harness.evidence.putAttempt({
+        ...attempt,
+        orderCommitmentTime: DateTime.add(attempt.orderCommitmentTime, { seconds: 1 }),
+      });
+      expect(yield* failureCode(harness.issue(request))).toBe('payment_authorization_binding_mismatch');
+      yield* harness.evidence.putAttempt(attempt);
+      const issued = yield* harness.issue(request);
+      expect(issued.proof.commitmentAttemptEvidenceRef).toBe(attempt.evidenceRef);
+
+      const input = { authorizationId: issued.proof.authorizationId, binding };
+      expect((yield* harness.validate(input)).outcome).toBe('VALID');
+      yield* harness.evidence.removeAttempt(binding.orderCommitmentAttemptId);
+      expect(yield* harness.validate(input)).toMatchObject({
+        outcome: 'NOT_VALID',
+        reasons: ['ATTEMPT_EVIDENCE_NOT_CURRENT'],
+      });
+      expect(yield* harness.issue(request)).toMatchObject({ issuance: 'REPLAYED', proof: issued.proof });
+    }),
+  ),
+);
 
 it.live('#1149 exact foreign or mismatched Attempt or binding never produces or validates a proof', () =>
   nativeRun(

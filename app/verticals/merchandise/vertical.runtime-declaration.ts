@@ -50,7 +50,6 @@ const searchContribution = (value: typeof ShellSearchContributionSchema.Encoded)
 const moduleKey = 'demo.merchandise';
 const recordsPageKey = 'demo.merchandise.page.products';
 const ordersPageKey = 'demo.merchandise.page.orders';
-const moduleAccess = { kind: 'protected' } as const;
 
 const productDetailPageKey = 'demo.merchandise.page.product-detail';
 
@@ -142,7 +141,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           contributionKey: 'demo.merchandise.navigation.orders',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: ordersPageKey,
             moduleKey,
             role: 'page',
@@ -167,7 +166,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           contributionKey: 'demo.merchandise.navigation.records',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: recordsPageKey,
             moduleKey,
             role: 'page',
@@ -197,7 +196,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           contributionKey: ordersPageKey,
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: ordersPageKey,
             moduleKey,
             role: 'page',
@@ -241,7 +240,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           contributionKey: recordsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: recordsPageKey,
             moduleKey,
             role: 'page',
@@ -275,7 +274,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           contributionKey: 'demo.merchandise.search.orders',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: 'demo.merchandise.search.orders',
             moduleKey,
             role: 'search',
@@ -309,7 +308,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
           contributionKey: 'demo.merchandise.search.products',
           entrypoint: {
             access: 'read',
-            authorization: moduleAccess,
+            authorization: { kind: 'protected' },
             entrypointKey: 'demo.merchandise.search.products',
             moduleKey,
             role: 'search',

@@ -221,6 +221,23 @@ import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compati
 import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
 import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
 import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
+import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
+import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
+import { BindInitialVariantSourceRecoveryApi } from './shared/apis/bind-initial-variant-source-recovery.ts';
+import { bindInitialVariantSourceRecoveryRead } from './src/api/bind-initial-variant-source-recovery.read.ts';
+import { CatalogSourceProductsApi } from './shared/apis/catalog-source-products.ts';
+import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
+import { SetVariantLocalizedFactsActionApi } from './shared/apis/set-variant-localized-facts-action.ts';
+import { setVariantLocalizedFactsRecoveryRead } from './src/api/set-variant-localized-facts-recovery.read.ts';
+import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
+import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
+import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
+import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
+import { CreateProductActionApi } from './shared/apis/create-product-action.ts';
+import { CreateVariantActionApi } from './shared/apis/create-variant-action.ts';
+import { UpdateProductActionApi } from './shared/apis/update-product-action.ts';
+import { CorrectProductActionApi } from './shared/apis/correct-product-action.ts';
+import { BindInitialVariantSourceActionApi } from './shared/apis/bind-initial-variant-source-action.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 
@@ -337,6 +354,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       setVariantAttributeOverrideAction,
       setVariantLocalizedFactsAction,
       updateProductAction,
+      bindInitialVariantSourceAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -351,10 +369,13 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'assortment-product-classification-v1': AssortmentProductClassificationV1Api,
       'assortment-selection-assessment-v1': AssortmentSelectionAssessmentV1Api,
       'assortment-set-composition-v1': AssortmentSetCompositionV1Api,
+      'bind-initial-variant-source-action': BindInitialVariantSourceActionApi,
+      'bind-initial-variant-source-recovery': BindInitialVariantSourceRecoveryApi,
       'brand-current': BrandCurrentApi,
       'brand-history': BrandHistoryApi,
       'catalog-document-current': CatalogDocumentCurrentApi,
       'catalog-media-current': CatalogMediaCurrentApi,
+      'catalog-source-products': CatalogSourceProductsApi,
       'catalog-source-resolution': CatalogSourceResolutionApi,
       'change-local-override-recovery': ChangeLocalOverrideRecoveryApi,
       'change-product-manufacturer-recovery': ChangeProductManufacturerRecoveryApi,
@@ -365,6 +386,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'confirm-gtin-recovery': ConfirmGtinRecoveryApi,
       'confirm-variant-combination-recovery': ConfirmVariantCombinationRecoveryApi,
       'correct-gtin-recovery': CorrectGtinRecoveryApi,
+      'correct-product-action': CorrectProductActionApi,
       'correct-product-recovery': CorrectProductRecoveryApi,
       'correct-sku-recovery': CorrectSkuRecoveryApi,
       'create-attribute-definition-recovery': CreateAttributeDefinitionRecoveryApi,
@@ -372,12 +394,14 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'create-configuration-unit-recovery': CreateConfigurationUnitRecoveryApi,
       'create-controlled-attribute-value-recovery': CreateControlledAttributeValueRecoveryApi,
       'create-package-definition-recovery': CreatePackageDefinitionRecoveryApi,
+      'create-product-action': CreateProductActionApi,
       'create-product-category-recovery': CreateProductCategoryRecoveryApi,
       'create-product-recovery': CreateProductRecoveryApi,
       'create-product-relationship-recovery': CreateProductRelationshipRecoveryApi,
       'create-product-type-recovery': CreateProductTypeRecoveryApi,
       'create-product-unit-recovery': CreateProductUnitRecoveryApi,
       'create-set-composition-recovery': CreateSetCompositionRecoveryApi,
+      'create-variant-action': CreateVariantActionApi,
       'create-variant-recovery': CreateVariantRecoveryApi,
       'decide-product-type-unnecessary-recovery': DecideProductTypeUnnecessaryRecoveryApi,
       'effective-attribute-values-current': EffectiveAttributeValuesCurrentApi,
@@ -457,8 +481,10 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'set-product-type-recovery': SetProductTypeRecoveryApi,
       'set-product-unit-target-divisibility-recovery': SetProductUnitTargetDivisibilityRecoveryApi,
       'set-variant-attribute-override-recovery': SetVariantAttributeOverrideRecoveryApi,
+      'set-variant-localized-facts-action': SetVariantLocalizedFactsActionApi,
       'set-variant-localized-facts-recovery': SetVariantLocalizedFactsRecoveryApi,
       'sku-lookup': SkuLookupApi,
+      'update-product-action': UpdateProductActionApi,
       'update-product-recovery': UpdateProductRecoveryApi,
       'variant-history': VariantHistoryApi,
       // </generated-module-manifest-apis>
@@ -485,6 +511,76 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         apiKey: 'product-variant-snapshot',
         operationKey: 'productVariantSnapshot.execute',
         registration: productVariantSnapshotRead,
+      },
+      {
+        apiKey: 'assortment-product-classification-v1',
+        operationKey: 'assortmentProductClassificationV1.execute',
+        registration: assortmentProductClassificationV1Read,
+      },
+      {
+        apiKey: 'bind-initial-variant-source-action',
+        operationKey: 'bindInitialVariantSourceAction.execute',
+        registration: bindInitialVariantSourceAction,
+      },
+      {
+        apiKey: 'correct-product-action',
+        operationKey: 'correctProductAction.execute',
+        registration: correctProductAction,
+      },
+      {
+        apiKey: 'update-product-action',
+        operationKey: 'updateProductAction.execute',
+        registration: updateProductAction,
+      },
+      {
+        apiKey: 'set-variant-localized-facts-action',
+        operationKey: 'setVariantLocalizedFactsAction.execute',
+        registration: setVariantLocalizedFactsAction,
+      },
+      {
+        apiKey: 'create-variant-action',
+        operationKey: 'createVariantAction.execute',
+        registration: createVariantAction,
+      },
+      {
+        apiKey: 'create-product-action',
+        operationKey: 'createProductAction.execute',
+        registration: createProductAction,
+      },
+      {
+        apiKey: 'correct-product-recovery',
+        operationKey: 'correctProductRecovery.execute',
+        registration: correctProductRecoveryRead,
+      },
+      {
+        apiKey: 'update-product-recovery',
+        operationKey: 'updateProductRecovery.execute',
+        registration: updateProductRecoveryRead,
+      },
+      {
+        apiKey: 'set-variant-localized-facts-recovery',
+        operationKey: 'setVariantLocalizedFactsRecovery.execute',
+        registration: setVariantLocalizedFactsRecoveryRead,
+      },
+      {
+        apiKey: 'create-variant-recovery',
+        operationKey: 'createVariantRecovery.execute',
+        registration: createVariantRecoveryRead,
+      },
+      {
+        apiKey: 'create-product-recovery',
+        operationKey: 'createProductRecovery.execute',
+        registration: createProductRecoveryRead,
+      },
+      {
+        apiKey: 'bind-initial-variant-source-recovery',
+        operationKey: 'bindInitialVariantSourceRecovery.execute',
+        registration: bindInitialVariantSourceRecoveryRead,
+      },
+      {
+        apiKey: 'catalog-source-products',
+        operationKey: 'catalogSourceProducts.execute',
+        registration: catalogSourceProductsRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],
@@ -571,6 +667,14 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     pricingPurposeEquivalenceRead,
     productVariantSnapshotRead,
     manufacturerRelationCurrentRead,
+    assortmentProductClassificationV1Read,
+    correctProductRecoveryRead,
+    updateProductRecoveryRead,
+    setVariantLocalizedFactsRecoveryRead,
+    createVariantRecoveryRead,
+    createProductRecoveryRead,
+    bindInitialVariantSourceRecoveryRead,
+    catalogSourceProductsRead,
     // </generated-module-registration-reads>
   ],
 };

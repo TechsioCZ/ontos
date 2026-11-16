@@ -20,6 +20,8 @@ import type { BusinessPermissionDescriptor } from '../permissions/business-permi
 import { OntosExternalIdentityProviderSchema } from '../auth/external-identity-provider.ts';
 import type { OntosExternalIdentityProviderInput } from '../auth/external-identity-provider.ts';
 import { OntosMcpContributionSchema } from './mcp-contribution.ts';
+import { OntosRegisteredWorkloadCallsSchema } from './registered-workload-calls.ts';
+import type { OntosRegisteredWorkloadCallInput } from './registered-workload-calls.ts';
 import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
@@ -101,10 +103,22 @@ export const OntosModuleIdentitySchema = Schema.Struct({
 
 export const OntosModuleActivationSchema = Schema.Struct({
   defaultState: OntosModuleActivationStateSchema,
+  /**
+   * Other modules a Tenant gets with this one: activating this module installs each of them `active` in the same
+   * transaction when the Tenant has no state for it yet. A state somebody set is never changed. Unlike an intrinsic
+   * requirement, it never refuses an operation of this module.
+   */
+  installsWith: Schema.optionalKey(Schema.Array(OntosModuleIdSchema).check(Schema.isMaxLength(64))),
   preservesHistoryWhenInactive: Schema.Boolean,
   scope: Schema.Literal('tenant'),
   supportedStates: Schema.Array(OntosModuleActivationStateSchema),
 });
+
+/** A module never installs itself with itself, and names each module it installs with once. */
+const installsWithIssue = (moduleId: string, installsWith: readonly string[] | undefined): string | undefined =>
+  installsWith === undefined || (new Set(installsWith).size === installsWith.length && !installsWith.includes(moduleId))
+    ? undefined
+    : 'activation installsWith must name distinct modules other than the module itself';
 
 export const OntosActionContractSchema = Schema.Struct({
   accessActor: Schema.optionalKey(AccessActorSchema),
@@ -283,12 +297,19 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
    */
   originatorActions: Schema.optionalKey(Schema.Array(OntosModuleIdSchema)),
   publicSurface: OntosSerializedPublicSurfaceSchema,
+  /**
+   * The registered-workload calls this module's credential makes (absent: none, so the Shell refuses every one with
+   * `registered_workload_unmatched`). Upstream main has no production source for these rules (`[]` in
+   * `.env.example`); this is demo divergence exception 8, to be offered upstream.
+   */
+  registeredWorkloadCalls: Schema.optionalKey(OntosRegisteredWorkloadCallsSchema),
   requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
 }).check(
   Schema.makeFilter((manifest) => {
     const pageIssue = shellSearchPresentationPageIssue(manifest.publicSurface.shellContributions);
     return (
       pageIssue ??
+      installsWithIssue(manifest.module.id, manifest.activation.installsWith) ??
       shellSearchPresentationBindingIssue(manifest.publicSurface.shellContributions, {
         moduleId: manifest.module.id,
         resourceTypeKeys: new Set(manifest.publicSurface.resourceTypes.map(({ key }) => key)),
@@ -381,6 +402,8 @@ export interface OntosModuleManifestInput {
   /** See `OntosSerializedModuleManifestSchema.originatorActions`. */
   readonly originatorActions?: readonly string[];
   readonly publicSurface: OntosAuthoredPublicSurface;
+  /** See `OntosSerializedModuleManifestSchema.registeredWorkloadCalls`. */
+  readonly registeredWorkloadCalls?: readonly OntosRegisteredWorkloadCallInput[];
   readonly requirements?: OntosModuleRequirements;
 }
 
@@ -482,12 +505,28 @@ export const projectOntosModuleOperationContracts = (
     if (!Object.hasOwn(manifest.publicSurface.api, binding.apiKey)) {
       throw invalidManifest('public operation contract references an undeclared local API key');
     }
-    return exactDecode(OntosOperationContractSchema, {
+    const contract = {
       apiKey: canonicalOntosPublicApiKey(manifest.module.id, binding.apiKey),
       entrypoint: registration.descriptor.entrypoint,
       operationKey: binding.operationKey,
       schemaVersion: registration.descriptor.schemaVersion,
-    });
+    };
+    // Demo divergence exception 8: publish the workloads the operation admits, so the Shell can check a caller's
+    // declared registered-workload call against the installed receiver.
+    const carriers: {
+      readonly accessActor?: { readonly subjectWorkloads?: readonly string[] | undefined } | undefined;
+      readonly accessDeclaration?: { readonly key: string } | undefined;
+      readonly accessWorkload?: { readonly workloads: readonly string[] } | undefined;
+      readonly schemaVersion: string;
+    } = registration.descriptor;
+    const { accessActor, accessDeclaration, accessWorkload } = carriers;
+    const workloads = [...(accessWorkload?.workloads ?? []), ...(accessActor?.subjectWorkloads ?? [])];
+    if (accessDeclaration !== undefined && workloads.length > 0) {
+      Object.assign(contract, {
+        workloadCarrier: { declarationKey: accessDeclaration.key, workloads: [...new Set(workloads)] },
+      });
+    }
+    return exactDecode(OntosOperationContractSchema, contract);
   });
   const declarations = {
     api: Object.entries(manifest.publicSurface.api).map(([key, api]) => ({
@@ -534,7 +573,11 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
   input: Input,
   publicSurface: PublicSurface,
 ): void => {
-  assertExactKeys(input, ['activation', 'module', 'originatorActions', 'publicSurface', 'requirements'], 'manifest');
+  assertExactKeys(
+    input,
+    ['activation', 'module', 'originatorActions', 'publicSurface', 'registeredWorkloadCalls', 'requirements'],
+    'manifest',
+  );
   assertExactKeys(
     publicSurface,
     [
@@ -607,6 +650,18 @@ const validateSearchDescriptorReferences = (
   }
 };
 
+/** The default state is a supported one, supported states are distinct, and `installsWith` names other modules once. */
+const validateActivationDeclaration = (moduleId: string, activation: OntosModuleActivation): void => {
+  if (!activation.supportedStates.includes(activation.defaultState)) {
+    throw invalidManifest('activation defaultState must be included in supportedStates');
+  }
+  assertUnique(activation.supportedStates, 'activation state');
+  const installsWithProblem = installsWithIssue(moduleId, activation.installsWith);
+  if (installsWithProblem !== undefined) {
+    throw invalidManifest(installsWithProblem);
+  }
+};
+
 /**
  * Defines the owner-authored contract. Executable values remain direct references in this
  * in-process value and are never part of the serializable deployment contract.
@@ -620,12 +675,13 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   if (input.module.kind !== 'business_module') {
     throw invalidManifest('V0 MicroVertical deployments may define only one business_module');
   }
-  if (!input.activation.supportedStates.includes(input.activation.defaultState)) {
-    throw invalidManifest('activation defaultState must be included in supportedStates');
-  }
-  assertUnique(input.activation.supportedStates, 'activation state');
+  validateActivationDeclaration(input.module.id, input.activation);
   const originatorActions = (input.originatorActions ?? []).map((key) => exactDecode(OntosModuleIdSchema, key));
   assertUnique(originatorActions, 'originator Action key');
+  const registeredWorkloadCalls =
+    input.registeredWorkloadCalls === undefined
+      ? undefined
+      : exactDecode(OntosRegisteredWorkloadCallsSchema, input.registeredWorkloadCalls);
 
   validateOntosModuleExecutableReferences(
     input.publicSurface.actions,
@@ -788,13 +844,26 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   }
   const manifest = {
     ...input,
-    activation: freezePlain({ ...input.activation, supportedStates: [...input.activation.supportedStates] }),
+    activation: freezePlain(
+      input.activation.installsWith === undefined
+        ? { ...input.activation, supportedStates: [...input.activation.supportedStates] }
+        : {
+            ...input.activation,
+            installsWith: Object.freeze([...input.activation.installsWith]),
+            supportedStates: [...input.activation.supportedStates],
+          },
+    ),
     module: freezePlain({ ...input.module }),
     originatorActions: Object.freeze(originatorActions),
     publicSurface: Object.freeze(publicSurface),
   };
   if (input.requirements !== undefined) {
     Object.assign(manifest, { requirements: copyOntosModuleRequirements(input.requirements) });
+  }
+  if (registeredWorkloadCalls !== undefined) {
+    Object.assign(manifest, {
+      registeredWorkloadCalls: Object.freeze(registeredWorkloadCalls.map((call) => freezePlain({ ...call }))),
+    });
   }
   return Object.freeze(manifest);
 };

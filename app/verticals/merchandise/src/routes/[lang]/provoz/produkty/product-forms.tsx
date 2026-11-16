@@ -1,6 +1,7 @@
+import { isStockQuantity, MAX_QUANTITY, MIN_STOCK_QUANTITY } from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -17,27 +18,33 @@ import {
 } from '@app/admin-ui';
 import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import { useState } from 'react';
-import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
+import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
-import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { MONEY_FORMAT, QUANTITY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { productCommandOutcome, runCommand } from './products-api.ts';
 import type { CommandOutcome, ProductCommand } from './products-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
+import { CategorySearchCombobox } from './category-search-combobox.tsx';
+import { loadProductRecord } from './product-reads.ts';
+import type { ProductRecordState } from './product-reads.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
 import {
   PRODUCT_LIMITS,
   UNITS,
-  VAT_RATES,
   fieldError,
   focusFirstInvalid,
   lowStockErrorKey,
   priceErrorKey,
   tooLongMessage,
 } from './product-form-validation.ts';
+import { DEFAULT_TAX_CLASSIFICATION, classificationChoices, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
+import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
 
 export interface FormDialogProps {
   /** Called after a successful command. The page shows the toast and reloads. */
@@ -50,6 +57,7 @@ export interface FormDialogProps {
 }
 
 const RESIZE_LABEL_KEY = 'merchandise.sidePanel.resize';
+const LOADING_KEY = 'merchandise.loading';
 const REQUIRED_KEY = 'validation.required';
 
 const DialogActions = ({
@@ -96,8 +104,9 @@ interface ProductDraft {
   readonly priceCzk: number;
   readonly priceText: string;
   readonly sku: string;
+  /** Picked by staff; until then the form uses the first classification with a rate in force. */
+  readonly taxClassificationCode?: CzVatClassificationCode;
   readonly unit: ProductUnit;
-  readonly vatRate: VatRate;
 }
 
 const blankProduct: ProductDraft = {
@@ -109,7 +118,6 @@ const blankProduct: ProductDraft = {
   priceText: '',
   sku: '',
   unit: 'ks',
-  vatRate: 21,
 };
 
 /** The texts carry the numbers, so two drafts with the same texts are the same draft. */
@@ -119,8 +127,8 @@ const sameProduct = (left: ProductDraft, right: ProductDraft): boolean =>
   left.name === right.name &&
   left.priceText === right.priceText &&
   left.sku === right.sku &&
-  left.unit === right.unit &&
-  left.vatRate === right.vatRate;
+  left.taxClassificationCode === right.taxClassificationCode &&
+  left.unit === right.unit;
 
 interface FormSaveOptions<V> {
   /** The product command that sends the draft. */
@@ -232,10 +240,20 @@ const FormSaveActions = ({ form }: { readonly form: FormSave }) => {
 };
 
 /**
- * Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. The server refuses a
+ * Create product: SKU, name, unit, category, VAT classification, price, minimum stock. Sends CreateProduct. The server refuses a
  * SKU the catalog already has; the field then shows that message until the SKU changes.
  */
-export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
+export const CreateProductDialog = ({
+  onCommitted,
+  onOpenChange,
+  onReload,
+  open,
+  revision,
+  vat,
+}: FormDialogProps & {
+  /** The company's VAT rates from the staff records read; they name the classifications the select offers. */
+  readonly vat: CompanyVat;
+}) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<ProductDraft>(blankProduct);
@@ -243,6 +261,21 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   // The SKU the server refused as a duplicate. Only that exact value shows the message, so editing it clears it.
   const [takenSku, setTakenSku] = useState<string | null>(null);
 
+  const taxLabels = useTaxLabels();
+  const choices = classificationChoices(vat, DateTime.nowUnsafe());
+  // A new product starts on the first classification the company has a rate for (standard first).
+  const firstPriced = choices.find((choice) => choice.current !== undefined)?.code;
+  const classificationOf = (value: ProductDraft) =>
+    value.taxClassificationCode ?? firstPriced ?? DEFAULT_TAX_CLASSIFICATION;
+  const classificationError = (value: ProductDraft) => {
+    if (firstPriced === undefined) {
+      return taxLabels.noRateToCreate;
+    }
+    const code = classificationOf(value);
+    return choices.find((choice) => choice.code === code)?.current === undefined
+      ? taxLabels.rateNotInForce(code)
+      : undefined;
+  };
   const errorsOf = (value: ProductDraft) => {
     const skuTakenError = takenSku !== null && sameSku(takenSku, value.sku) ? k('validation.skuTaken') : undefined;
     const priceKey = priceErrorKey(value.priceCzk);
@@ -255,6 +288,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
       price: priceKey === undefined ? undefined : k(priceKey),
       sku:
         value.sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, value.sku, PRODUCT_LIMITS.sku)),
+      taxClassification: classificationError(value),
     };
   };
   const form = useFormSave<ProductDraft>({
@@ -266,8 +300,8 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
       name: value.name.trim(),
       priceMinor: Math.round(value.priceCzk * 100),
       sku: value.sku.trim(),
+      taxClassificationCode: classificationOf(value),
       unit: value.unit,
-      vatRate: value.vatRate,
     }),
     equals: sameProduct,
     initial: blankProduct,
@@ -356,19 +390,11 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
               placeholder={k('selectPlaceholder')}
               value={[draft.unit]}
             />
-            <SelectTemplate
-              items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
-              label={k('fields.vat')}
-              name="vat"
-              onValueChange={(details) => {
-                const [next] = details.value;
-                const picked = VAT_RATES.find((rate) => String(rate) === next);
-                if (picked !== undefined) {
-                  update({ vatRate: picked });
-                }
-              }}
-              placeholder={k('selectPlaceholder')}
-              value={[String(draft.vatRate)]}
+            <TaxClassificationSelect
+              error={errors.taxClassification}
+              onChange={(taxClassificationCode) => update({ taxClassificationCode })}
+              value={classificationOf(draft)}
+              vat={vat}
             />
           </div>
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
@@ -414,12 +440,78 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
   );
 };
 
+/** The picked product's read, shown under the product field: loading, or a failure the retry button answers. */
+const receiptReadStatus = (
+  read: { readonly failed: boolean; readonly loading: boolean },
+  k: ReturnType<typeof useProductLabel>,
+) => {
+  if (read.failed) {
+    return { helpText: k('receipt.productFailed'), validateStatus: 'error' as const };
+  }
+  return read.loading ? { helpText: k('states.loading') } : {};
+};
+
+interface ReceiptPick {
+  readonly product: ProductRecord;
+  readonly record: ProductRecordState;
+}
+
+/**
+ * The picked product with its full record (variants), read when it is picked or retried. A record that arrives after
+ * another pick is dropped, so a receipt never takes its variants from the previously picked product.
+ */
+const useReceiptSelection = () => {
+  const [pick, setPick] = useState<ReceiptPick | null>(null);
+  const [variantId, setVariantId] = useState('');
+  const read = (product: ProductRecord) => {
+    setPick({ product, record: { status: 'loading' } });
+    loadProductRecord(product.id, (record) =>
+      setPick((current) => (current?.product.id === product.id ? { ...current, record } : current)),
+    );
+  };
+  const handleProductSelect = (picked: ProductRecord | null) => {
+    setVariantId('');
+    if (picked === null) {
+      setPick(null);
+      return;
+    }
+    read(picked);
+  };
+  const handleRetry = () => {
+    if (pick !== null) {
+      read(pick.product);
+    }
+  };
+  const clearSelection = () => {
+    setPick(null);
+    setVariantId('');
+  };
+  const fullProduct = pick?.record.status === 'ready' ? pick.record.product : undefined;
+  const variants = fullProduct?.variantRecords ?? [];
+  const variant = variants.find((entry) => entry.id === variantId);
+  return {
+    clearSelection,
+    failed: pick?.record.status === 'error',
+    fullProduct,
+    handleProductSelect,
+    handleRetry,
+    handleVariantSelect: setVariantId,
+    loading: pick?.record.status === 'loading',
+    product: pick?.product ?? null,
+    variant,
+    variantId,
+    variantMissing: variants.length > 0 && variant === undefined,
+    variants,
+  };
+};
+
 /** Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. */
 export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const failure = useCommandFailure();
-  const [product, setProduct] = useState<ProductRecord | null>(null);
+  const selection = useReceiptSelection();
+  const { fullProduct, product, variant, variantId, variantMissing, variants } = selection;
   const productId = product?.id ?? null;
   const [quantity, setQuantity] = useState(1);
   const [quantityText, setQuantityText] = useState('1');
@@ -430,12 +522,17 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const dirty = productId !== null || quantityText !== '1' || note !== '';
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
-  const quantityError = Number.isInteger(quantity) && quantity >= 1 ? undefined : k('validation.quantity');
+  const quantityError = isStockQuantity(quantity) && quantity > 0 ? undefined : k('validation.quantity');
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
-  const valid = productError === undefined && quantityError === undefined && noteError === undefined;
+  const valid =
+    fullProduct !== undefined &&
+    !variantMissing &&
+    productError === undefined &&
+    quantityError === undefined &&
+    noteError === undefined;
 
   const clearForm = () => {
-    setProduct(null);
+    selection.clearSelection();
     setQuantity(1);
     setQuantityText('1');
     setNote('');
@@ -449,10 +546,11 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
       return;
     }
     setSubmitted(true);
-    if (productId === null || quantityError !== undefined || noteError !== undefined) {
+    if (productId === null || !valid) {
       // The combobox puts its id on the input as `${id}-input`.
       focusFirstInvalid([
         ['receipt-product-input', productId === null],
+        ['receipt-variant', variantMissing],
         ['receipt-quantity', quantityError !== undefined],
         ['receipt-note', noteError !== undefined],
       ]);
@@ -461,12 +559,8 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
-    const receipt = {
-      _tag: 'RecordStockMovement' as const,
-      delta: Math.round(quantity),
-      productId,
-      reason: 'RECEIPT' as const,
-    };
+    const movement = { _tag: 'RecordStockMovement' as const, delta: quantity, productId, reason: 'RECEIPT' as const };
+    const receipt = variant === undefined ? movement : { ...movement, variantId: variant.id };
     runCommand(trimmed === '' ? receipt : { ...receipt, note: trimmed }, revision, (outcome) => {
       setBusy(false);
       if (!outcome.ok) {
@@ -515,21 +609,42 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
             errorMessage={k('states.error')}
             id="receipt-product"
             label={k('fields.product')}
-            loadingMessage={t('merchandise.loading')}
+            loadingMessage={t(LOADING_KEY)}
             noResultsMessage={k('states.noResults')}
-            onSelect={setProduct}
+            onSelect={selection.handleProductSelect}
             placeholder={k('filters.search')}
             retryLabel={k('common.retry')}
             selected={product}
-            {...fieldError(submitted, productError)}
+            {...(productId === null ? fieldError(submitted, productError) : receiptReadStatus(selection, k))}
           />
+          {selection.failed && (
+            <div>
+              <Button onClick={selection.handleRetry} size="sm" theme="outlined" type="button" variant="secondary">
+                {k('common.retry')}
+              </Button>
+            </div>
+          )}
+          {variants.length > 0 && (
+            <SelectTemplate
+              id="receipt-variant"
+              items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
+              label={t('merchandise.ui.variant')}
+              name="receiptVariant"
+              onValueChange={(details) => selection.handleVariantSelect(details.value[0] ?? '')}
+              placeholder={t('merchandise.ui.selectVariant')}
+              required
+              value={variantId === '' ? [] : [variantId]}
+              {...fieldError(submitted && variantMissing, k(REQUIRED_KEY))}
+            />
+          )}
           <FormNumericInput
             clampValueOnBlur={false}
-            formatOptions={WHOLE_NUMBER_FORMAT}
+            formatOptions={QUANTITY_FORMAT}
             id="receipt-quantity"
             label={k('fields.quantity')}
             locale="cs-CZ"
-            min={1}
+            max={MAX_QUANTITY}
+            min={MIN_STOCK_QUANTITY}
             name="quantity"
             onValueChange={(details) => {
               setQuantity(details.valueAsNumber);
@@ -575,7 +690,11 @@ const openingPercent: PercentDraft = { percent: 5, percentText: '5' };
 const validPercent = (percent: number) =>
   Number.isInteger(percent) && percent >= PERCENT_MIN && percent <= PERCENT_MAX && percent !== 0;
 
-/** Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. */
+/**
+ * Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. Products priced by their
+ * variants cannot take it (each variant has its own price); the selected ones the list shows are named before
+ * anything is typed, and the server refuses any others.
+ */
 export const PriceChangeDialog = ({
   ids,
   onCommitted,
@@ -583,7 +702,12 @@ export const PriceChangeDialog = ({
   onReload,
   open,
   revision,
-}: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
+  variantProducts,
+}: FormDialogProps & {
+  readonly ids: readonly ProductRecord['id'][];
+  /** Selected products the list knows to be priced by sellable variants. */
+  readonly variantProducts: readonly Pick<ProductRecord, 'id' | 'name'>[];
+}) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<PercentDraft>(openingPercent);
@@ -591,7 +715,7 @@ export const PriceChangeDialog = ({
     command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { priceChangePercent: value.percent } }),
     equals: (left, right) => left.percentText === right.percentText,
     initial: noPercent,
-    isValid: (value) => validPercent(value.percent) && ids.length > 0,
+    isValid: (value) => validPercent(value.percent) && ids.length > 0 && variantProducts.length === 0,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.priceChanged')),
@@ -623,6 +747,13 @@ export const PriceChangeDialog = ({
           <p className="text-fg-secondary text-sm tabular-nums">
             {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
           </p>
+          {variantProducts.length > 0 && (
+            <StatusText showIcon status="error">
+              {t('merchandise.pages.products.priceDialog.variantProducts', {
+                names: variantProducts.map((product) => product.name).join(', '),
+              })}
+            </StatusText>
+          )}
           {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}
           <FormNumericInput
             clampValueOnBlur={false}
@@ -653,38 +784,56 @@ export const PriceChangeDialog = ({
 };
 
 interface CategoryDraft {
-  readonly category: string;
+  /** The picked storefront tree category (a company with a tree). */
+  readonly category: CategoryTrail | null;
+  /** The typed category label (a company without a tree). */
+  readonly label: string;
 }
 
-const noCategory: CategoryDraft = { category: '' };
+const noCategory: CategoryDraft = { category: null, label: '' };
 
-/** Bulk category change. Sends BulkUpdateProducts with the new category. */
+/**
+ * Bulk category change. A company with a storefront tree picks a tree category and sends its identity, so the server
+ * derives each product's category path; a company without a tree types the category label as before.
+ */
 export const CategoryDialog = ({
+  hasTree,
   ids,
   onCommitted,
   onOpenChange,
   onReload,
   open,
   revision,
-}: FormDialogProps & { readonly ids: readonly ProductRecord['id'][] }) => {
+}: FormDialogProps & { readonly hasTree: boolean; readonly ids: readonly ProductRecord['id'][] }) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [draft, setDraft] = useState<CategoryDraft>(noCategory);
-  const errorOf = (value: CategoryDraft) =>
-    value.category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.category, PRODUCT_LIMITS.category);
+  const errorOf = (value: CategoryDraft) => {
+    if (hasTree) {
+      return value.category === null ? k(REQUIRED_KEY) : undefined;
+    }
+    return value.label.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.label, PRODUCT_LIMITS.category);
+  };
   const form = useFormSave<CategoryDraft>({
-    command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { category: value.category.trim() } }),
-    equals: (left, right) => left.category === right.category,
+    command: (value) => ({
+      _tag: 'BulkUpdateProducts',
+      ids: [...ids],
+      patch: hasTree && value.category !== null ? { categoryId: value.category.id } : { category: value.label.trim() },
+    }),
+    equals: (left, right) => left.category?.id === right.category?.id && left.label === right.label,
     initial: noCategory,
     isValid: (value) => errorOf(value) === undefined && ids.length > 0,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.bulkUpdated')),
     open,
+    // With a tree the only business refusal is a category that no longer exists (deleted or moved meanwhile).
+    refused: (outcome) => (hasTree && outcome.reason === 'rejected' ? k('category.missing') : null),
     reset: setDraft,
     revision,
     value: draft,
   });
+  const fieldState = fieldError(form.record.status === 'invalid', errorOf(draft));
 
   return (
     <>
@@ -702,16 +851,33 @@ export const CategoryDialog = ({
         title={k('category.title')}
       >
         <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
-          <FormInput
-            autoComplete="off"
-            id="bulk-category"
-            label={k('category.field')}
-            name="category"
-            onChange={(event) => setDraft({ category: event.target.value })}
-            required
-            value={draft.category}
-            {...fieldError(form.record.status === 'invalid', errorOf(draft))}
-          />
+          {hasTree ? (
+            <CategorySearchCombobox
+              errorMessage={k('filters.categoryError')}
+              id="bulk-category"
+              label={k('category.field')}
+              loadingMessage={t(LOADING_KEY)}
+              moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
+              noResultsMessage={k('filters.categoryNoResults')}
+              onSelect={(category) => setDraft({ ...draft, category })}
+              placeholder={k('filters.categorySearch')}
+              required
+              retryLabel={k('filters.categoryRetry')}
+              selected={draft.category}
+              {...fieldState}
+            />
+          ) : (
+            <FormInput
+              autoComplete="off"
+              id="bulk-category"
+              label={k('category.field')}
+              name="category"
+              onChange={(event) => setDraft({ ...draft, label: event.target.value })}
+              required
+              value={draft.label}
+              {...fieldState}
+            />
+          )}
         </form>
       </SidePanel>
       <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />

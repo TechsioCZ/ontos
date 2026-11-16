@@ -1,3 +1,4 @@
+import type { PriceGroupSourceCorrelation } from '../../shared/apis/price-group-source-associations.ts';
 import type {
   OperationContextUnavailable,
   OperationalScope,
@@ -5,6 +6,7 @@ import type {
   ScopedRoutineInvocationError,
 } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
+import { PriceGroupBusinessOriginalInvocationIdSchema } from '../../shared/domain/source-operation.ts';
 
 import { PriceGroupContainmentProjectionReconciliationSchema } from '../../shared/actions/create-price-group.ts';
 import {
@@ -75,8 +77,14 @@ const CurrentnessReasonSchema = Schema.Literals([
 ]);
 
 const DefinitionMutationOutcomeSchema = Schema.Union([
-  Schema.TaggedStruct('accepted', { definition: PriceGroupDefinitionRevisionSchema }),
-  Schema.TaggedStruct('replayed', { definition: PriceGroupDefinitionRevisionSchema }),
+  Schema.TaggedStruct('accepted', {
+    businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
+    definition: PriceGroupDefinitionRevisionSchema,
+  }),
+  Schema.TaggedStruct('replayed', {
+    businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
+    definition: PriceGroupDefinitionRevisionSchema,
+  }),
   Schema.TaggedStruct('not_found', {}),
   Schema.TaggedStruct('business_code_conflict', { conflictingCode: Schema.String }),
   Schema.TaggedStruct('catalog_conflict', {}),
@@ -103,10 +111,12 @@ type DefinitionMutationOutcome = typeof DefinitionMutationOutcomeSchema.Type;
 
 const CreatePriceGroupMutationOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('accepted', {
+    businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
     definition: PriceGroupDefinitionRevisionSchema,
     projection: PriceGroupContainmentProjectionReconciliationSchema,
   }),
   Schema.TaggedStruct('replayed', {
+    businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
     definition: PriceGroupDefinitionRevisionSchema,
     projection: PriceGroupContainmentProjectionReconciliationSchema,
   }),
@@ -135,10 +145,12 @@ const CreatePriceGroupMutationOutcomeSchema = Schema.Union([
 type CreatePriceGroupMutationOutcome = typeof CreatePriceGroupMutationOutcomeSchema.Type;
 const CreatePriceGroupMutationSuccessSchema = Schema.Union([
   Schema.TaggedStruct('accepted', {
+    businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
     definition: PriceGroupDefinitionRevisionSchema,
     projection: PriceGroupContainmentProjectionReconciliationSchema,
   }),
   Schema.TaggedStruct('replayed', {
+    businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
     definition: PriceGroupDefinitionRevisionSchema,
     projection: PriceGroupContainmentProjectionReconciliationSchema,
   }),
@@ -213,6 +225,7 @@ export interface CreatePriceGroupInput {
   readonly expectedCatalogRevision: number;
   readonly priceGroupId?: string;
   readonly reason: string;
+  readonly sourceCorrelation?: PriceGroupSourceCorrelation;
   readonly trustedEffectiveAt: Date;
 }
 
@@ -231,6 +244,7 @@ interface CreatePriceGroupDefinitionRevisionInput {
   readonly semanticDecision:
     | { readonly comparedDefinitionRevisionId: string; readonly decision: 'SAME_MEANING' }
     | { readonly decision: 'MATERIAL_CHANGE' };
+  readonly sourceCorrelation?: PriceGroupSourceCorrelation;
   readonly trustedEffectiveAt: Date;
 }
 
@@ -248,7 +262,10 @@ type PriceGroupPersistenceFailure = PriceGroupOwnerFailure;
 export interface PriceGroupCatalogPersistence {
   readonly createDefinitionRevision: (
     input: CreatePriceGroupDefinitionRevisionInput,
-  ) => Effect.Effect<PriceGroupDefinitionRevision, PriceGroupPersistenceFailure>;
+  ) => Effect.Effect<
+    PriceGroupDefinitionRevision & { readonly businessOriginalInvocationId?: string },
+    PriceGroupPersistenceFailure
+  >;
   readonly createPriceGroup: (
     input: CreatePriceGroupInput,
   ) => Effect.Effect<CreatePriceGroupPersistenceResult, PriceGroupPersistenceFailure>;
@@ -273,7 +290,7 @@ export interface PriceGroupCatalogPersistence {
 }
 
 export interface CreatePriceGroupPersistenceResult {
-  readonly businessResult: PriceGroupCreatedResult;
+  readonly businessResult: PriceGroupCreatedResult & { readonly businessOriginalInvocationId?: string };
   readonly projection: typeof PriceGroupContainmentProjectionReconciliationSchema.Type;
 }
 
@@ -317,6 +334,7 @@ const invocationConstraint = (failure: ScopedRoutineInvocationError): string | u
   Option.getOrUndefined(failure.constraint);
 
 const idempotencyConstraints = new Set([
+  'price_group_source_identity_uk',
   'price_group_catalog_ledger_scope_invocation_uk',
   'price_group_catalog_definitions_invocation_uk',
   'price_group_catalog_retirements_invocation_uk',
@@ -385,10 +403,16 @@ const mapDefinitionOutcome = (
   outcome: DefinitionMutationOutcome,
   priceGroupRef: StablePriceGroupRef,
   actionInvocationId: string,
-): Effect.Effect<PriceGroupDefinitionRevision, PriceGroupOwnerFailure> =>
+): Effect.Effect<
+  PriceGroupDefinitionRevision & { readonly businessOriginalInvocationId?: string },
+  PriceGroupOwnerFailure
+> =>
   Match.value(outcome).pipe(
     Match.tags({
-      accepted: ({ definition }) => Effect.succeed(definition),
+      accepted: ({ businessOriginalInvocationId, definition }) =>
+        Effect.succeed(
+          businessOriginalInvocationId === undefined ? definition : { ...definition, businessOriginalInvocationId },
+        ),
       business_code_conflict: ({ conflictingCode }) =>
         Effect.fail(
           new PriceGroupCodeConflict({
@@ -436,7 +460,10 @@ const mapDefinitionOutcome = (
           }),
         ),
       not_found: () => Effect.fail(notFound()),
-      replayed: ({ definition }) => Effect.succeed(definition),
+      replayed: ({ businessOriginalInvocationId, definition }) =>
+        Effect.succeed(
+          businessOriginalInvocationId === undefined ? definition : { ...definition, businessOriginalInvocationId },
+        ),
       semantic_identity_conflict: ({ existingMeaningFingerprint, existingPriceGroupId, requestedMeaningFingerprint }) =>
         Effect.fail(
           new PriceGroupSemanticIdentityConflict({
@@ -484,7 +511,10 @@ const mapCreatePriceGroupOutcome = (
       initialDefinition: definition,
     });
     return Effect.succeed({
-      businessResult,
+      businessResult:
+        outcome.businessOriginalInvocationId === undefined
+          ? businessResult
+          : { ...businessResult, businessOriginalInvocationId: outcome.businessOriginalInvocationId },
       projection: outcome.projection,
     });
   }

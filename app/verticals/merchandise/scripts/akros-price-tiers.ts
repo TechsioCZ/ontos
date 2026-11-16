@@ -15,8 +15,15 @@ interface Priced {
 interface PricedProduct extends Priced {
   readonly id: string;
   readonly variants?: readonly Priced[] | undefined;
-  readonly vatRate?: number | undefined;
 }
+
+/**
+ * The rate the seeded gross tiers include: AKROS goods are all standard-rated, at the rate the Tax baseline seeds
+ * for the company. Tiers keep the gross stored with them: a later rule in Tax reprices no tier (only a staff price
+ * change rescales them), and a tier whose gross no longer matches its net at the unit's rate is not used as a base price
+ * below the first break (`baseGrossOf`).
+ */
+export const AKROS_SEED_STANDARD_RATE = 21;
 
 /** Products with photographed goods or the DIN 933 screws the demo shows; every variant gets the breaks. */
 export const AKROS_TIERED_PRODUCT_IDS: ReadonlySet<string> = new Set([
@@ -58,7 +65,7 @@ export const applyDemoPriceTiers = <P extends PricedProduct>(product: P): P => {
   if (!AKROS_TIERED_PRODUCT_IDS.has(product.id)) {
     return product;
   }
-  const vatRate = product.vatRate ?? 21;
+  const vatRate = AKROS_SEED_STANDARD_RATE;
   // A product with variants sells only its variants, so only they get the breaks.
   const tiered = (product.variants?.length ?? 0) > 0 ? product : withDemoTiers(product, vatRate);
   const variants = product.variants?.map((variant) => withDemoTiers(variant, vatRate));

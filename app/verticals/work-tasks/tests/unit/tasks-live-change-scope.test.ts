@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { taskRecords } from '../../src/routes/[lang]/ukoly/page.tsx';
 
 const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useRouterState: () => '' }));
 rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({

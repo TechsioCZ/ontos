@@ -95,10 +95,12 @@ export const reviseMarketDefinitionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReviseMarketDefinitionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReviseMarketDefinitionActionForbiddenProblem'> =>
     ReviseMarketDefinitionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -211,7 +213,8 @@ const mapCoreProblem = (error: ActionCoreError): ReviseMarketDefinitionActionPro
       ActionInvocationStateError: (failure) => reviseMarketDefinitionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reviseMarketDefinitionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reviseMarketDefinitionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reviseMarketDefinitionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reviseMarketDefinitionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reviseMarketDefinitionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reviseMarketDefinitionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reviseMarketDefinitionActionProblem.conflict(failure.code),

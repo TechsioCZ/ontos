@@ -78,10 +78,12 @@ export const registerStorefrontApplicationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RegisterStorefrontApplicationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RegisterStorefrontApplicationActionForbiddenProblem'> =>
     RegisterStorefrontApplicationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): RegisterStorefrontApplicationAc
       ActionInvocationStateError: (failure) => registerStorefrontApplicationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: registerStorefrontApplicationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => registerStorefrontApplicationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => registerStorefrontApplicationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        registerStorefrontApplicationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => registerStorefrontApplicationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => registerStorefrontApplicationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => registerStorefrontApplicationActionProblem.conflict(failure.code),

@@ -27,14 +27,18 @@ describe('Pricing module contract', () => {
       'currency-support-result-lookup',
       'current-pricing-decision',
       'current-supported-currencies',
+      'define-price-action',
       'exact-price-resolution',
       'owner-action-approvals',
       'price-definition',
+      'price-group-source-prices',
       'price-result-lookup',
       'price-schedule',
+      'price-source-result-lookup',
       'quantity-tier-result-lookup',
       'quotation-result-lookup',
       'quotation-verification',
+      'revise-price-action',
       'zero-floor-authorization-result-lookup',
     ]);
     expect(pricingManifest.publicSurface.api['owner-action-approvals']).toBe(OwnerActionApprovalApi);

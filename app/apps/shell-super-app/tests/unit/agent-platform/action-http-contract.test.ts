@@ -5,7 +5,7 @@ import {
   AgentActionRequestHeadersSchema,
   AgentProposalRequestHeadersSchema,
   ShellAuthenticationApi,
-} from '../../../shared/api.ts';
+} from '../../../shared/browser-api.ts';
 
 it('requires the canonical bounded ingress key on every proposal mutation', () => {
   const { endpoints } = ShellAuthenticationApi.groups.agentPlatform;

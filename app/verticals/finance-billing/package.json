@@ -5,6 +5,7 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/finance-billing-client.ts",
+    "./apis/records/client": "./src/api/records-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
     "./clients/lease-invoices": "./src/api/lease-invoices-consumer.ts",
     "./clients/records": "./src/api/records-consumer.ts",
@@ -46,6 +47,7 @@
     "@app/sales-pipeline": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/tax": "workspace:*",
     "@app/work-tasks": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
@@ -74,7 +76,7 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.67.0",
+    "@effect/tsgo": "0.69.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
@@ -88,9 +90,9 @@
     "typescript": "7.0.2",
     "zephyr-rspack-plugin": "1.2.4",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "@rstest/core": "0.11.12",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
-    "tsrs": "0.21.0-ts7.1.0-beta"
+    "@rstest/core": "0.12.6",
+    "effect-rstest": "1.0.0",
+    "tsrs": "0.25.0-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",

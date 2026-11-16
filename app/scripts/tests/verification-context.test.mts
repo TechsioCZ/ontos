@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect';
+import { Effect, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { policyReleaseEntries } from '../demo/access-policy.mts';
@@ -108,8 +108,8 @@ it.effect('refuses a Role that reaches a module the pinned release does not decl
     // A composition that serves no declaration of the module at all: the release names no module key.
     const emptyRelease = [{ descriptors: [], moduleId: taskModule }] as const;
     const failure = yield* verificationContext(emptyRelease).pipe(Effect.flip);
-    expect(failure._tag).toBe('VerificationContextError');
-    if (failure._tag === 'VerificationContextError') {
+    expect(Predicate.isTagged(failure, 'VerificationContextError')).toBe(true);
+    if (Predicate.isTagged(failure, 'VerificationContextError')) {
       expect(failure.reason).toContain(taskModule);
     }
   }),
@@ -144,8 +144,8 @@ it.effect('refuses a Role that names a capability the pinned release does not de
       },
     ] as const;
     const failure = yield* verificationContext(wrongCapability).pipe(Effect.flip);
-    expect(failure._tag).toBe('VerificationContextError');
-    if (failure._tag === 'VerificationContextError') {
+    expect(Predicate.isTagged(failure, 'VerificationContextError')).toBe(true);
+    if (Predicate.isTagged(failure, 'VerificationContextError')) {
       expect(failure.reason).toContain(taskCommand);
     }
   }),

@@ -1,26 +1,29 @@
 import type { OpportunityStageChangedLine, OutboxPayload } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { DateTime, Option, Schema } from 'effect';
+import { DateTime, Option } from 'effect';
 import type { FinanceCommand } from '../actions/apply-command.ts';
-import { VatRateSchema } from '../apis/records.ts';
-import type { InvoiceLine, VatRate } from '../apis/records.ts';
+import type { InvoiceLine, OpportunityLeftWon } from '../apis/records.ts';
+import { classificationOfStoredRate } from '../domain/line-vat.ts';
 
 export type CreateInvoiceFromOpportunityCommand = Extract<
   FinanceCommand,
   { readonly _tag: 'CreateInvoiceFromOpportunity' }
 >;
 
-/** Czech VAT rates are 0, 10, 12 or 21 %; any other producer rate falls back to the standard 21 %. */
-export const STANDARD_VAT_RATE: VatRate = 21;
-const isVatRate = Schema.is(VatRateSchema);
-export const narrowVatRate = (rate: number): VatRate => (isVatRate(rate) ? rate : STANDARD_VAT_RATE);
-
-const invoiceLine = (line: OpportunityStageChangedLine): InvoiceLine => ({
-  description: line.productName,
-  productId: line.productId,
-  quantity: line.quantity,
-  unitPriceMinor: line.unitPriceMinor,
-  vatRate: narrowVatRate(line.vatRate),
-});
+/**
+ * The opportunity's line as a draft invoice line. Its rate is the one the opportunity was won with; 21 % and 12 % name
+ * the standard and the reduced classification. The draft gets Tax's current rate when someone edits it.
+ */
+const invoiceLine = (line: OpportunityStageChangedLine): InvoiceLine => {
+  const classification = classificationOfStoredRate(line.vatRate);
+  const snapshot: InvoiceLine = {
+    description: line.productName,
+    productId: line.productId,
+    quantity: line.quantity,
+    unitPriceMinor: line.unitPriceMinor,
+    vatRate: line.vatRate,
+  };
+  return classification === undefined ? snapshot : { ...snapshot, vatClassification: classification };
+};
 
 /**
  * Maps a sales-pipeline stage change to the billing command. Only WON drafts an invoice, from the price
@@ -43,3 +46,26 @@ export const opportunityWonInvoiceCommand = (
     partyId: payload.partyId,
   });
 };
+
+/**
+ * Whether a WON message misses part of what was sold. The message carries only catalog lines, while `amountMinor` is
+ * the whole opportunity, free-text lines included; a draft from the lines alone would bill less than was won, so
+ * Finance drafts nothing instead of a partial invoice.
+ */
+export const wonOpportunityLinesIncomplete = (payload: OutboxPayload): boolean =>
+  payload.toStage === 'WON' &&
+  payload.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0) !== payload.amountMinor;
+
+/**
+ * A stage change that takes a won opportunity out of WON (lost, or reopened to an earlier stage), stamped with the
+ * Sales Pipeline revision of that change. Sales Pipeline publishes every transition on this one topic, so the won
+ * message and the later change reach the same worker; none for every other change.
+ */
+export const opportunityLeftWon = (payload: OutboxPayload): Option.Option<OpportunityLeftWon> =>
+  payload.fromStage === 'WON' && payload.toStage !== 'WON'
+    ? Option.some({
+        leftAt: DateTime.makeUnsafe(payload.changedAt),
+        opportunityId: payload.opportunityId,
+        revision: payload.revision,
+      })
+    : Option.none();

@@ -31,6 +31,9 @@ import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
 import { financeBillingBackendRegistration } from '../../vertical.runtime-declaration.ts';
 
+/** The release fixture lock every suite publishing the active release holds for its scenario. */
+const FIXTURE_LOCK = "hashtextextended('ontos.search-test-authority', 0)";
+
 const audience = 'finance-billing';
 const issuer = 'https://shell.finance-records-read-root.test';
 const keyId = 'finance-records-read-root';
@@ -148,8 +151,13 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer), { excludeTestServ
             Layer.provideMerge(Reactivity.layer),
           ),
         );
-        const adminDatabase = yield* testCoreDatabase.pipe(
-          Effect.provideService(PgClient.PgClient, Context.get(adminContext, PgClient.PgClient)),
+        const admin = Context.get(adminContext, PgClient.PgClient);
+        const adminDatabase = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, admin));
+        // The active release is one row for the whole database: a suite running alongside that publishes its own would
+        // make the owner refuse this scenario's reads. Every suite publishing it holds the same fixture lock for its
+        // scenario, on a session of its own (this client's one connection).
+        yield* Effect.acquireRelease(admin.unsafe(`select pg_advisory_lock(${FIXTURE_LOCK})`), () =>
+          admin.unsafe(`select pg_advisory_unlock(${FIXTURE_LOCK})`).pipe(Effect.orDie),
         );
         yield* publishTestApplicationCompositionAuthority(adminDatabase, snapshot);
         const fixture = yield* Effect.acquireRelease(

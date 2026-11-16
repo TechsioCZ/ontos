@@ -30,7 +30,10 @@ import { ApplyCommandPayloadSchema as ActivityPayloadSchema } from '@app/crm-act
 import { executeApplyCommandWithAuthorization } from '@app/work-tasks/clients/apply-command';
 import { executeRecordsWithAuthorization as readTasks } from '@app/work-tasks/clients/records';
 import { ApplyCommandPayloadSchema } from '@app/work-tasks/contracts/apply-command';
-import { RecordsForbiddenProblemSchema as TaskForbiddenSchema } from '@app/work-tasks/contracts/records';
+import {
+  RecordsForbiddenProblemSchema as TaskForbiddenSchema,
+  RecordsRequestSchema as TaskRecordsRequestSchema,
+} from '@app/work-tasks/contracts/records';
 import { NodeHttpClient } from '@effect/platform-node';
 import { Effect, Predicate, Redacted, Result, Schema } from 'effect';
 import { expect, layer } from 'effect-rstest';
@@ -52,6 +55,8 @@ const shellOrigin = 'http://localhost:3020';
 const shellApiBaseUrl = `${shellOrigin}/shell-super-app-api`;
 const assignedTaskId = '76000000-0000-4000-8000-000000000035';
 const unrelatedTaskId = '76000000-0000-4000-8000-000000000032';
+/** Work Tasks records requests carry the owner's branded task id, so the fixtures decode through its contract. */
+const taskRequest = Schema.decodeUnknownSync(TaskRecordsRequestSchema);
 const assignedActivityId = '76000000-0000-4000-8000-000000000038';
 const assignedCounterpartyId = '76000000-0000-4000-8000-000000000016';
 const invoiceId = '76000000-0000-4000-8000-000000000027';
@@ -634,7 +639,12 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
     Effect.gen(function* externalAssignedReads() {
       const session = yield* signIn('external@najempark.demo');
       const work = yield* authorize(session, WORK_TASKS);
-      const tasks = yield* readTasks({ resourceId: assignedTaskId }, work.credential, correlation(), work.options);
+      const tasks = yield* readTasks(
+        taskRequest({ resourceId: assignedTaskId }),
+        work.credential,
+        correlation(),
+        work.options,
+      );
       expect(tasks.items.map((task) => task.ref.resourceId)).toEqual([assignedTaskId]);
       const relationships = yield* authorize(session, CRM_ACTIVITIES);
       const activities = yield* readActivities(
@@ -669,7 +679,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
       const session = yield* signIn('external@najempark.demo');
       const work = yield* authorize(session, WORK_TASKS);
       const task = yield* Effect.result(
-        readTasks({ resourceId: unrelatedTaskId }, work.credential, correlation(), work.options),
+        readTasks(taskRequest({ resourceId: unrelatedTaskId }), work.credential, correlation(), work.options),
       );
       expect(Result.match(task, { onFailure: Schema.is(TaskForbiddenSchema), onSuccess: () => false })).toBe(true);
       const finance = yield* authorize(session, FINANCE_BILLING);

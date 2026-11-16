@@ -1,0 +1,28 @@
+# The app container's runtime tree, relative to the repository root: what scripts/zerops/pack-app-release.sh packs
+# into the one release archive and what scripts/prove-zerops-migrator-artifact.sh assembles in CI.
+# Native TS imports, migrations and owner-local drizzle-kit executables run from it, so the whole installed workspace
+# ships, dev dependencies included, except the build, lint and test tools of scripts/zerops/app-runtime-excluded-packages.txt
+# (scripts/zerops/prove-app-runtime.mts proves the tree complete without them). Never the unit cache, build logs,
+# storefront sources or builds, docs or agent workspaces.
+app/node_modules
+app/apps
+app/verticals
+app/packages
+app/scripts
+app/database
+app/topology
+app/tools
+app/patches
+app/package.json
+app/pnpm-lock.yaml
+app/pnpm-workspace.yaml
+app/tsconfig.json
+app/tsconfig.base.json
+app/tsconfig.node-tooling.json
+app/module-federation.shared.ts
+# Merchandise operator scripts read these generated catalog files directly.
+app/akros-storefront/src/catalog-import
+app/.zerops/runtime/outbox-worker-host
+app/.zerops/bun
+# The app host records its boots here (scripts/zerops/app-host.mts, HOST_BOOT_RECORD).
+app/.zerops/state

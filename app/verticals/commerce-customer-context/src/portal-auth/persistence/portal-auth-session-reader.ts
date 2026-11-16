@@ -13,7 +13,7 @@ import {
   encodeCommerceSessionReference,
   parseCommerceSessionReference,
 } from '../../../api/portal-auth/provider/session-reference.ts';
-import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
+import { CommercePortalAuthDatabase } from './portal-auth-database-service.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { session, user } from './portal-auth-tables.ts';
 

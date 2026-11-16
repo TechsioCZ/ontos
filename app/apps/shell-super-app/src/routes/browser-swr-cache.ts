@@ -1,6 +1,6 @@
 import { Cache, Clock, Effect, Exit, Option } from 'effect';
 
-import type { SafeTenantIdentity } from '../../shared/api.ts';
+import type { SafeTenantIdentity } from '../../shared/browser-api.ts';
 import type { ShellAuthenticationClientOptions } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 

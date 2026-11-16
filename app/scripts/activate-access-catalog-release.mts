@@ -19,7 +19,11 @@
  * the migrator reports it and keeps the release booting, because authorization then simply stays at the previous
  * release.
  */
-import { NodeServices } from '@effect/platform-node';
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Cause,
   Config,
@@ -40,10 +44,6 @@ import { Command, Flag } from 'effect/cli';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
 import { AccessCatalogModulesSchema } from '../packages/core-runtime/src/access/catalog/module-schema.ts';
 import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
-import {
   AccessChangesStoreLive,
   AccessReleaseStoreLive,
 } from '../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
@@ -58,7 +58,7 @@ import { activateCatalogRelease, planCatalogRelease } from '../packages/core-run
 import type { CatalogReleaseActivationReport } from '../packages/core-runtime/src/access/release/activation.ts';
 import { CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../packages/core-runtime/src/db/config.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../packages/core-runtime/src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../packages/core-runtime/src/db/database-identities.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 
 const AUTHORIZATION_CATALOG_ARTIFACT_PATH = 'topology/authorization-catalog.json';
@@ -97,7 +97,7 @@ const DatabaseRuntimeLive = Layer.unwrap(
     );
     return Layer.mergeAll(
       CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
-      makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
   }),
 );
@@ -246,6 +246,9 @@ export const command = Command.make(
 
 /** The one loud line for every failure: arguments, settings, the runtime it is composed with, or the run itself. */
 const failureReason = (cause: Cause.Cause<unknown>): string => {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return 'stopped by a signal; a projection already under way was finished first';
+  }
   const problem = Cause.squash(cause);
   if (Schema.is(AccessCatalogReleaseActivationFailure)(problem)) {
     return problem.reason;
@@ -253,14 +256,21 @@ const failureReason = (cause: Cause.Cause<unknown>): string => {
   return Predicate.hasProperty(problem, '_tag') ? `unexpected failure (${String(problem._tag)})` : 'unexpected failure';
 };
 
+// The migrator stops this child with SIGTERM when its budget is spent, and a container shutdown does the same. `runMain`
+// turns the signal into an interrupt, so a tenant whose projection already took its access fence finishes that
+// projection and gives the fence back (the writer makes that stretch uninterruptible) before the process exits;
+// without it Node exits at once and the fence stays held.
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(
+  NodeRuntime.runMain(
     Command.run(command, { version: '1.0.0' }).pipe(
-      Effect.tapCause((cause) =>
-        Console.error(`[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${failureReason(cause)}`),
+      // `onExit`, not `tapCause`: it also runs when a signal interrupts the run, so a stop is never silent.
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? Console.error(`[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${failureReason(exit.cause)}`)
+          : Effect.void,
       ),
       Effect.provide(NodeServices.layer),
     ),
+    { disableErrorReporting: true },
   );
-  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

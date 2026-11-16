@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem } from 'effect';
+import { Effect, FileSystem, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CORE_MIGRATION_EQUIVALENCES } from '../../src/db/migration-equivalence-data.ts';
@@ -33,7 +33,7 @@ it.layer(NodeServices.layer)('scenario migration identities', (suite) => {
       const name = CORE_MIGRATION_EQUIVALENCES[0].main;
       sources.set(name, 'select 0;');
       const failure = yield* Effect.flip(coreScenarioMigrationStatements(sources));
-      expect(failure._tag).toBe('ScenarioMigrationIdentityError');
+      expect(Predicate.isTagged(failure, 'ScenarioMigrationIdentityError')).toBe(true);
       expect(failure.migration).toBe(name);
     }),
   );
@@ -44,7 +44,7 @@ it.layer(NodeServices.layer)('scenario migration identities', (suite) => {
       const name = CORE_MIGRATION_EQUIVALENCES[0].demo;
       sources.set(name, 'select 0;');
       const failure = yield* Effect.flip(coreScenarioMigrationStatements(sources));
-      expect(failure._tag).toBe('ScenarioMigrationIdentityError');
+      expect(Predicate.isTagged(failure, 'ScenarioMigrationIdentityError')).toBe(true);
       expect(failure.migration).toBe(name);
     }),
   );
@@ -57,7 +57,7 @@ it.layer(NodeServices.layer)('scenario migration identities', (suite) => {
           const incomplete = new Map(sources);
           incomplete.delete(name);
           const failure = yield* Effect.flip(coreScenarioMigrationStatements(incomplete));
-          expect(failure._tag).toBe('ScenarioMigrationIdentityError');
+          expect(Predicate.isTagged(failure, 'ScenarioMigrationIdentityError')).toBe(true);
           expect(failure.migration).toBe(name);
         }
       }

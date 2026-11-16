@@ -14,7 +14,6 @@ import {
   persistenceService,
 } from '../services/persistence.service.ts';
 import { OverviewRequestSchema, OverviewResponseSchema } from '../../shared/apis/overview.ts';
-import { facilityOperationsOverviewReadDeclaration } from '../../shared/domain/access-declarations.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -62,7 +61,14 @@ const makeOverviewServices: ReadServiceFactory<Services> = (transaction, scope) 
 /** Přehled provozu / Moje agenda: deadlines, incidents, counts and search rows computed from the readable agendas. */
 export const overviewRead = defineRead(
   {
-    accessDeclaration: facilityOperationsOverviewReadDeclaration,
+    accessDeclaration: {
+      key: 'facility.operations.api-overview.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'facility-operations', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: overviewEntrypoint,
     evidencePolicy: {

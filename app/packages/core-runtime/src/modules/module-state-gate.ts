@@ -45,6 +45,12 @@ export const tenantStatesAllowingAccess = (access: ModuleEntrypointAccess): read
     TENANT_MODULE_STATES.flatMap((state) => (allowedAccessByState[state].has(access) ? [state] : [])).toSorted(),
   );
 
+/**
+ * The states in which a tenant has a module installed for authorization: its data is still offered (O7). The access
+ * gate's tenant intent and every reader that asks "is this module installed here" use exactly this set.
+ */
+export const INSTALLED_TENANT_MODULE_STATES: readonly TenantModuleState[] = tenantStatesAllowingAccess('read');
+
 const ModuleStateSnapshotInvariantError = Schema.TaggedError<Error>()('ModuleStateSnapshotInvariantError', {
   reason: Schema.String,
 });

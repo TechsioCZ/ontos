@@ -9,7 +9,10 @@ import {
   UpdateCustomerGroupResultSchema,
 } from '../../shared/actions/update-customer-group.ts';
 import type { UpdateCustomerGroupPayload } from '../../shared/actions/update-customer-group.ts';
-import { CustomerGroupActionAuditEvidenceSchema } from '../../shared/domain/group-contract.ts';
+import {
+  CustomerGroupActionAuditEvidenceSchema,
+  CustomerGroupDefinitionSourceRejected,
+} from '../../shared/domain/group-contract.ts';
 import {
   CustomerGroupArchivedCorrectionForbidden,
   CustomerGroupDefinitionChangeRequiresNewGroup,
@@ -35,6 +38,7 @@ export { UpdateCustomerGroupPayloadSchema } from '../../shared/actions/update-cu
 export type { UpdateCustomerGroupPayload } from '../../shared/actions/update-customer-group.ts';
 
 const UpdateCustomerGroupErrorSchema = Schema.Union([
+  CustomerGroupDefinitionSourceRejected,
   CustomerGroupArchivedCorrectionForbidden,
   CustomerGroupDefinitionChangeRequiresNewGroup,
   CustomerGroupNotFound,
@@ -43,80 +47,99 @@ const UpdateCustomerGroupErrorSchema = Schema.Union([
   CustomerGroupScopeMismatch,
 ]);
 
-const handleUpdateCustomerGroup = Effect.fn('UpdateCustomerGroupAction.handle')(
-  (payload: UpdateCustomerGroupPayload, context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>) =>
-    executeCustomerGroupAction(payload, context, {
-      auditEvidence: ({ payload: evidencePayload, recordedAt, resolved }) => {
+const handleUpdateCustomerGroup = Effect.fn('UpdateCustomerGroupAction.handle')((
+  payload: UpdateCustomerGroupPayload,
+  context: ActionHandlerContext<typeof domainEvents, CustomerGroupPersistence>,
+) => {
+  if (context.scope.authMethod === 'system' && payload.source === undefined) {
+    return Effect.fail(
+      new CustomerGroupDefinitionSourceRejected({
+        code: 'customer_group_source_authority_denied',
+        reason: 'A source workload must supply its exact qualified source definition context',
+      }),
+    );
+  }
+  return executeCustomerGroupAction(payload, context, {
+    auditEvidence: ({ payload: evidencePayload, recordedAt, resolved }) => {
+      const beforeDefinition = resolved.changed
+        ? (resolved.group.definitionHistory.at(-2) ?? resolved.group.currentDefinition)
+        : resolved.group.currentDefinition;
+      return {
+        afterDefinitionRevision: resolved.group.currentDefinition.revision,
+        beforeDefinitionRevision: beforeDefinition.revision,
+        changed: resolved.changed,
+        definitionChangeKind: resolved.group.currentDefinition.changeKind,
+        effectiveAt: recordedAt,
+        groupRef: resolved.group.groupRef,
+        operation: 'UPDATE',
+        reason: evidencePayload.reason,
+        revision: resolved.group.revision,
+      };
+    },
+    dataAccess: ({ payload: accessPayload }) => ({
+      accessKind: 'read',
+      queryHash: `customer-group-revision:${accessPayload.groupRef.resourceId}:${accessPayload.expectedRevision}`,
+      resultCount: 1,
+      servingModuleKey: MODULE_KEY,
+      targetModuleKey: MODULE_KEY,
+      targetResourceId: accessPayload.groupRef.resourceId,
+      targetResourceType: accessPayload.groupRef.resourceType,
+    }),
+    event: {
+      eventType: 'commerce.customer-context.customer-group-updated.v1',
+      outboxMessage: createCustomerGroupUpdatedOutboxMessage,
+      payload: (_payload, resolved) => {
         const beforeDefinition = resolved.changed
           ? (resolved.group.definitionHistory.at(-2) ?? resolved.group.currentDefinition)
           : resolved.group.currentDefinition;
         return {
-          afterDefinitionRevision: resolved.group.currentDefinition.revision,
-          beforeDefinitionRevision: beforeDefinition.revision,
-          changed: resolved.changed,
-          definitionChangeKind: resolved.group.currentDefinition.changeKind,
-          effectiveAt: recordedAt,
+          afterDefinition: resolved.group.currentDefinition,
+          beforeDefinition,
           groupRef: resolved.group.groupRef,
-          operation: 'UPDATE',
-          reason: evidencePayload.reason,
           revision: resolved.group.revision,
         };
       },
-      dataAccess: ({ payload: accessPayload }) => ({
-        accessKind: 'read',
-        queryHash: `customer-group-revision:${accessPayload.groupRef.resourceId}:${accessPayload.expectedRevision}`,
-        resultCount: 1,
-        servingModuleKey: MODULE_KEY,
-        targetModuleKey: MODULE_KEY,
-        targetResourceId: accessPayload.groupRef.resourceId,
-        targetResourceType: accessPayload.groupRef.resourceType,
+    },
+    invoke: ({ command, context: actionContext, payload: actionPayload }) =>
+      actionContext.services.update({
+        ...command,
+        description: actionPayload.description,
+        membershipCriteria: actionPayload.membershipCriteria,
+        name: actionPayload.name,
+        purpose: actionPayload.purpose,
+        source: actionPayload.source,
       }),
-      event: {
-        eventType: 'commerce.customer-context.customer-group-updated.v1',
-        outboxMessage: createCustomerGroupUpdatedOutboxMessage,
-        payload: (_payload, resolved) => {
-          const beforeDefinition = resolved.changed
-            ? (resolved.group.definitionHistory.at(-2) ?? resolved.group.currentDefinition)
-            : resolved.group.currentDefinition;
-          return {
-            afterDefinition: resolved.group.currentDefinition,
-            beforeDefinition,
-            groupRef: resolved.group.groupRef,
-            revision: resolved.group.revision,
-          };
-        },
-      },
-      invoke: ({ command, context: actionContext, payload: actionPayload }) =>
-        actionContext.services.update({
-          ...command,
-          description: actionPayload.description,
-          membershipCriteria: actionPayload.membershipCriteria,
-          name: actionPayload.name,
-          purpose: actionPayload.purpose,
-        }),
-      resolve: (result) =>
-        Match.value(result).pipe(
-          Match.tag('new_group_required', () =>
-            Effect.fail(
-              new CustomerGroupDefinitionChangeRequiresNewGroup({
-                code: 'customer_group_definition_change_requires_new_group',
-                reason: 'Changing customer-group purpose or member eligibility requires a separately created group',
-              }),
-            ),
+    resolve: (result) =>
+      Match.value(result).pipe(
+        Match.tag('definition_source_rejected', ({ code }) =>
+          Effect.fail(
+            new CustomerGroupDefinitionSourceRejected({
+              code,
+              reason: 'The current source authority, identity or order does not admit this Group definition effect',
+            }),
           ),
-          Match.tag('archived_correction_forbidden', () =>
-            Effect.fail(
-              new CustomerGroupArchivedCorrectionForbidden({
-                code: 'customer_group_archived_correction_forbidden',
-                reason: 'This change is not an allowed correction to an archived customer group',
-              }),
-            ),
-          ),
-          Match.tag('updated', ({ changed, group }) => Effect.succeed({ changed, group } as const)),
-          Match.exhaustive,
         ),
-    }),
-);
+        Match.tag('new_group_required', () =>
+          Effect.fail(
+            new CustomerGroupDefinitionChangeRequiresNewGroup({
+              code: 'customer_group_definition_change_requires_new_group',
+              reason: 'Changing customer-group purpose or member eligibility requires a separately created group',
+            }),
+          ),
+        ),
+        Match.tag('archived_correction_forbidden', () =>
+          Effect.fail(
+            new CustomerGroupArchivedCorrectionForbidden({
+              code: 'customer_group_archived_correction_forbidden',
+              reason: 'This change is not an allowed correction to an archived customer group',
+            }),
+          ),
+        ),
+        Match.tag('updated', ({ changed, group }) => Effect.succeed({ changed, group } as const)),
+        Match.exhaustive,
+      ),
+  });
+});
 
 export const updateCustomerGroupAction = defineAction(
   {
@@ -131,6 +154,10 @@ export const updateCustomerGroupAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.update-customer-group.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Registered Commerce source writers may revise qualified source-managed Group definitions',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.update-customer-group',
     auditEvidenceSchema: CustomerGroupActionAuditEvidenceSchema,

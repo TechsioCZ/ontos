@@ -22,6 +22,7 @@ export {
   WORKLOAD_PRINCIPAL_KINDS,
   isWorkloadPrincipalKind,
   makeDrizzleAccessPrincipalKinds,
+  readScopedGatewayPrincipalKind,
   resolveGateActor,
 } from './actor.ts';
 export type { GateScope } from './capability.ts';
@@ -106,7 +107,6 @@ export type {
   SubjectScopeInspection,
 } from './inspection-contract.ts';
 export { SubjectAccessInspection, SubjectInspectionUnavailable } from './inspection-contract.ts';
-export { SubjectAccessInspectionLive } from './inspection-live.ts';
 export type { SubjectIdentityFacts, SubjectIdentityFactsSource } from './inspection-facts.ts';
 export {
   SubjectInspectionIdentitySource,
@@ -114,4 +114,25 @@ export {
   makeDrizzleSubjectIdentityFacts,
 } from './inspection-facts.ts';
 export type { SubjectInspectionCatalog, SubjectInspectionPorts } from './inspection.ts';
-export { makeSubjectAccessInspection } from './inspection.ts';
+export { SubjectAccessInspectionLive, makeSubjectAccessInspection } from './inspection.ts';
+
+export { readScopedSystemWorkloadEnrollment } from '../workloads/system-enrollment.ts';
+
+export { computeActionRequestHash, computeCanonicalValueHash } from '../../actions/repository.ts';
+export { readScopedOriginalActionInvocation } from '../workloads/original-action-invocation.ts';
+export type { OriginalActionInvocationQuery } from '../workloads/original-action-invocation.ts';
+
+export { readScopedAdmittedWorkload } from './workload-admission.ts';
+
+export {
+  openScopedSourceExecutionFence,
+  cancelScopedSourceExecutionFence,
+} from '../workloads/source-execution-fence.ts';
+
+export { requireScopedSourceExecutionFenceOpen } from '../workloads/source-execution-fence.ts';
+export { readScopedSourceExecutionFence } from '../workloads/source-execution-fence.ts';
+export type { SourceExecutionFenceFact } from '../workloads/source-execution-fence.ts';
+export { readScopedSourceAdmissionEnrollment } from '../workloads/source-admission-enrollment.ts';
+export type { SourceAdmissionEnrollmentFact } from '../workloads/source-admission-enrollment.ts';
+
+export { readVerifiedGatewayRecovery } from '../../auth/system-principal-context-provenance.ts';

@@ -11,6 +11,7 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   insideDatabaseTransaction,
   refuseInsideDatabaseTransaction,
@@ -22,12 +23,16 @@ import { orderFinalizationSnapshotFixture } from './order-finalization-fixtures.
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const authenticationNamespaceId = 'ontos.shell.better-auth.v1';
-const configuration = ConfigProvider.layer(
-  ConfigProvider.fromUnknown({
-    ONTOS_COMMERCE_ORDER_API_BASE_URL: 'https://order.example.test/commerce-order-api',
-    ONTOS_GATEWAY_MODULE_API_KEY: 'test-only-customer-context-module-key',
-    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
-  }),
+const configuration = Layer.merge(
+  ConfigProvider.layer(
+    ConfigProvider.fromUnknown({
+      ONTOS_COMMERCE_ORDER_API_BASE_URL: 'https://order.example.test/commerce-order-api',
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+    }),
+  ),
+  Layer.effectDiscard(
+    holdTestModuleCredentials({ 'commerce-customer-context': 'test-only-customer-context-module-key' }),
+  ),
 );
 const moduleActor = (appId: string): VerifiedGatewayActor => ({
   appId,

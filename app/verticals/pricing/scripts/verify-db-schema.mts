@@ -170,7 +170,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.quantity_tier_routine_count === 5,
     row.quantity_tier_routine_public_execute_count === 0,
     row.quantity_tier_table_count === 9,
-    row.routine_count === 134,
+    row.routine_count === 135,
     row.runtime_compatibility_membership_count === 0,
     row.runtime_support_helper_count === 2,
     row.routine_public_execute_count === 0,

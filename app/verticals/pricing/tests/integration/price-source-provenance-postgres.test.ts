@@ -18,10 +18,16 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { DefinePricePersistenceCommand, PricePersistence } from '../../src/services/price-persistence.service.ts';
+import type {
+  DefinePricePersistenceCommand,
+  PricePersistence,
+  PriceActionResultLookupPersistence,
+} from '../../src/services/price-persistence.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { priceGroupSourcePricesPersistenceForScope } from '../../src/persistence/price-group-source-prices-persistence.ts';
+import type { PriceGroupSourcePricesRequest } from '../../shared/apis/price-group-source-prices.ts';
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
@@ -150,7 +156,7 @@ const defineCommand = (input: {
 
 const withPersistence = <Value, Failure>(
   database: PricingTestDatabase,
-  operation: (persistence: PricePersistence) => Effect.Effect<Value, Failure>,
+  operation: (persistence: PricePersistence & PriceActionResultLookupPersistence) => Effect.Effect<Value, Failure>,
 ) =>
   database.transaction((transaction: PricingTransaction) =>
     Effect.gen(function* scopedPricePersistence() {
@@ -162,6 +168,19 @@ const withPersistence = <Value, Failure>(
       const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* pricePersistenceForScope(ownerTransaction, scope);
       return yield* operation(persistence);
+    }),
+  );
+
+const withGroupSourcePrices = (database: PricingTestDatabase, input: PriceGroupSourcePricesRequest) =>
+  database.transaction((transaction: PricingTransaction) =>
+    Effect.gen(function* scopedGroupPrices() {
+      yield* transaction.execute(
+        sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+        'objects',
+      );
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+      const service = yield* priceGroupSourcePricesPersistenceForScope(ownerTransaction, scope);
+      return yield* service.list(input);
     }),
   );
 
@@ -260,6 +279,17 @@ it.live('binds one exact canonical revision to one stable owner fact and retains
       expect(replayed.definition.priceRef).toEqual(created.definition.priceRef);
       expect(replayed.definition.revision.revisionId).toBe(created.definition.revision.revisionId);
       expect(replayed.provenance.provenanceRef).toBe(created.provenance.provenanceRef);
+      // The business source fact is reused, but this delivery's native/Core invocation has its own
+      // immutable result link. Never recover it by substituting the first business invocation.
+      const replayReceipt = yield* withPersistence(runtime, (persistence) =>
+        persistence.lookupResult({ actionInvocationId: 'e7600000-0000-4000-8000-000000000013' }),
+      );
+      expect(replayReceipt).toMatchObject({
+        actionInvocationId: 'e7600000-0000-4000-8000-000000000013',
+        outcome: 'PRICE_ACTION_RESULT_FOUND',
+        result: { definition: created.definition, outcome: 'REUSED' },
+      });
+
       expect(created.provenance.canonicalLink.revisionId).toBe(created.definition.revision.revisionId);
       expect(created.provenance.canonicalLink.effectiveFrom).toBe(effectiveFrom);
       expect(created.provenance.canonicalLink.identityKey).toEqual(identityKey);
@@ -507,4 +537,135 @@ it.live('links an identity-changing source correction from the old exact Price t
       return null;
     }),
   ),
+);
+
+it.live(
+  'C14 source group projection lists only exact native group and issuer Current Prices with complete provenance',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* groupSourcePricesConformance() {
+        const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+        const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+        yield* cleanup(admin);
+        yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+        const groupRef = {
+          moduleId: 'pricing.price-group-catalog' as const,
+          resourceId: 'e7600000-0000-4000-8000-000000000050',
+          resourceType: 'pricing.price-group-catalog.price-group' as const,
+          tenantId,
+        };
+        const firstKey: PriceIdentityKey = {
+          ...identityKey,
+          priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: groupRef },
+        };
+        const secondKey: PriceIdentityKey = {
+          ...firstKey,
+          catalogSelection: {
+            ...firstKey.catalogSelection,
+            variantRef: { ...firstKey.catalogSelection.variantRef, resourceId: 'e7600000-0000-4000-8000-000000000051' },
+          },
+        };
+        const firstAssertion = sourceAssertion({
+          importedAt: '2026-09-27T10:02:00.000Z',
+          sourceAssertionId: 'e7600000-0000-4000-8000-000000000052',
+        });
+        const secondAssertion = yield* Schema.decodeUnknownEffect(PriceSourceAssertionInputSchema)({
+          ...sourceAssertion({
+            importedAt: '2026-09-27T10:02:00.000Z',
+            sourceAssertionId: 'e7600000-0000-4000-8000-000000000053',
+          }),
+          sourceRecord: {
+            ...firstAssertion.sourceRecord,
+            sourceSystem: { ...firstAssertion.sourceRecord.sourceSystem, sourceSystemRef: 'internal-other-issuer' },
+          },
+        });
+        const first = yield* withPersistence(runtime, (persistence) =>
+          persistence.define(
+            defineCommand({
+              actionInvocationId: 'e7600000-0000-4000-8000-000000000054',
+              evidence: evidenceFor(firstAssertion, '2026-09-27T10:03:00.000Z', firstKey),
+              identityKey: firstKey,
+              priceId: canonicalPriceId,
+              requestCorrelationId: 'internal-c14-group-source-first',
+            }),
+          ),
+        );
+        const second = yield* withPersistence(runtime, (persistence) =>
+          persistence.define(
+            defineCommand({
+              actionInvocationId: 'e7600000-0000-4000-8000-000000000055',
+              evidence: evidenceFor(secondAssertion, '2026-09-27T10:03:00.000Z', secondKey),
+              identityKey: secondKey,
+              priceId: replayPriceId,
+              requestCorrelationId: 'internal-c14-group-source-second',
+            }),
+          ),
+        );
+        expect(first.outcome).toBe('CREATED');
+        expect(second.outcome).toBe('CREATED');
+        const request = {
+          limit: 1,
+          offset: 0,
+          priceGroupRef: groupRef,
+          sourceSystem: firstAssertion.sourceRecord.sourceSystem,
+        };
+        const firstPage = yield* withGroupSourcePrices(runtime, request);
+        expect(firstPage.count).toBe(1);
+        expect(firstPage.prices).toHaveLength(1);
+        expect(firstPage.prices[0]).toMatchObject({
+          price: {
+            definition: { identityKey: firstKey, priceRef: priceRef(canonicalPriceId) },
+            outcome: 'PRICE_DEFINITION_CURRENT',
+          },
+          provenance: { evidence: { sourceAssertion: { sourceRecord: firstAssertion.sourceRecord } } },
+        });
+        const otherIssuer = yield* withGroupSourcePrices(runtime, {
+          ...request,
+          sourceSystem: secondAssertion.sourceRecord.sourceSystem,
+        });
+        expect(otherIssuer.count).toBe(1);
+        expect(otherIssuer.prices[0]).toMatchObject({ price: { definition: { priceRef: priceRef(replayPriceId) } } });
+        const emptyPage = yield* withGroupSourcePrices(runtime, { ...request, offset: 1 });
+        expect(emptyPage).toMatchObject({ count: 1, prices: [] });
+        const wrongGroup = yield* withGroupSourcePrices(runtime, {
+          ...request,
+          priceGroupRef: { ...groupRef, resourceId: 'e7600000-0000-4000-8000-000000000056' },
+        });
+        expect(wrongGroup).toMatchObject({ count: 0, prices: [] });
+        const schedule = yield* withPersistence(runtime, (persistence) =>
+          persistence.readSchedule(priceRef(canonicalPriceId), instant('2026-11-01T00:00:00.000Z')),
+        );
+        if (schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' || schedule.schedule.current === undefined) {
+          return yield* Effect.die('Expected the native Current source Price schedule');
+        }
+        const currentRevision = schedule.schedule.current;
+        const retired = yield* withPersistence(runtime, (persistence) =>
+          persistence.revise({
+            actingPrincipalId: principalId,
+            actionInvocationId: 'e7600000-0000-4000-8000-000000000057',
+            expectedCurrent: {
+              effectivePeriod: currentRevision.effectivePeriod,
+              priceRef: priceRef(canonicalPriceId),
+              revision: currentRevision.definition.revision.revision,
+              revisionId: currentRevision.definition.revision.revisionId,
+              scheduleRevision: schedule.schedule.scheduleRevision,
+            },
+            intent: 'RETIRE_CURRENT',
+            priceRef: priceRef(canonicalPriceId),
+            reason: 'Internal C14 source Price read must preserve a genuine schedule gap.',
+            requestCorrelationId: 'internal-c14-source-read-gap',
+            trustedOperationAt: instant('2026-11-01T00:00:00.000Z'),
+          }),
+        );
+        expect(retired.outcome).toBe('REVISED');
+        const unresolved = yield* withGroupSourcePrices(runtime, request);
+        expect(unresolved.count).toBe(1);
+        expect(unresolved.prices[0]?.price).toMatchObject({
+          outcome: 'PRICE_DEFINITION_CONFLICT',
+          reason: 'ZERO_CURRENT_REVISION',
+        });
+        return yield* Effect.void;
+      }),
+    ),
 );

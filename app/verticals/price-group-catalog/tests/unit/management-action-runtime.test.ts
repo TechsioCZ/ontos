@@ -58,6 +58,8 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const principalId = '22222222-2222-4222-8222-222222222222';
 const priceGroupId = '33333333-3333-4333-8333-333333333333';
 const definitionRevisionId = '44444444-4444-4444-8444-444444444444';
@@ -317,7 +319,8 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   const database = {
     executor: yield* makeTestDatabase((statement, values) => {
       const sql = statement.toLowerCase();
-      if (sql.includes('set_config')) {
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (statement === installAndReadScopeSql) {
         const [installedTenant, installedLegalEntity] = values;
         if (Predicate.isString(installedTenant)) {
           installedTenantId = installedTenant;
@@ -325,6 +328,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         if (Predicate.isString(installedLegalEntity)) {
           installedLegalEntityId = installedLegalEntity;
         }
+        return Effect.succeed([
+          { legal_entity_id: installedLegalEntityId, role: 'ontos_runtime', tenant_id: installedTenantId },
+        ]);
       }
       if (sql === 'commit' && options.commitIndeterminate === true) {
         return Effect.fail(new SqlError({ reason: new ConnectionError({ cause: { code: '08007' } }) }));
@@ -352,11 +358,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
             },
           ]),
         );
-      }
-      if (sql.includes('current_setting')) {
-        return Effect.succeed([
-          { legal_entity_id: installedLegalEntityId, role: 'ontos_runtime', tenant_id: installedTenantId },
-        ]);
       }
       if (sql.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: new Date('2026-11-30T00:00:00.000Z') }]);

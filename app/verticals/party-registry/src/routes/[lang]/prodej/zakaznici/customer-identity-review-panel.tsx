@@ -111,11 +111,16 @@ const ReviewCaseDetail = ({
         </p>
       ))}
       <h3 className="font-medium">{t(`${reviewKey}.evidence`)}</h3>
-      {(duplicate.candidateCase.candidate.subjectEvidence ?? []).map((evidence) => (
-        <p className="break-words text-sm" key={evidence.evidenceRef}>
-          {evidence.statement}
-        </p>
-      ))}
+      {/* A client source assertion carries no reviewed statement; only attested and declared evidence renders here. */}
+      {(duplicate.candidateCase.candidate.subjectEvidence ?? []).flatMap((evidence) =>
+        evidence.kind === 'CLIENT_SOURCE_ASSERTION'
+          ? []
+          : [
+              <p className="break-words text-sm" key={evidence.evidenceRef}>
+                {evidence.statement}
+              </p>,
+            ],
+      )}
       {(duplicate.candidateCase.evaluatedEvidence ?? []).map((evidence) => (
         <p
           className="break-words text-sm"

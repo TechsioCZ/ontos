@@ -267,11 +267,18 @@ export const createCategoryCommand = Effect.fn('Merchandise.createCategoryComman
       reason: 'Kategorie s tímto identifikátorem už existuje',
     });
   }
-  const parent = value.parentId === null ? undefined : categories.find((category) => category.id === value.parentId);
-  if (value.parentId !== null && parent === undefined) {
+  if (categories.some((category) => category.slug === value.slug)) {
+    return yield* new MerchandiseLifecycleConflict({
+      code: 'merchandise_category_slug_taken',
+      reason: 'Tuto adresu v e-shopu už používá jiná kategorie. Zvolte jinou adresu.',
+    });
+  }
+  const parentId = Option.getOrNull(value.parentId);
+  const parent = parentId === null ? undefined : categories.find((category) => category.id === parentId);
+  if (parentId !== null && parent === undefined) {
     return yield* new MerchandiseNotFound({ code: 'merchandise_not_found', reason: 'Nadřazená kategorie neexistuje' });
   }
-  const siblings = categories.filter((category) => Option.getOrNull(category.parentId) === value.parentId);
+  const siblings = categories.filter((category) => Option.getOrNull(category.parentId) === parentId);
   const created: CatalogCategory = {
     description: '',
     hasChildren: false,
@@ -281,7 +288,7 @@ export const createCategoryCommand = Effect.fn('Merchandise.createCategoryComman
     imageSrc: '',
     longDescription: '',
     name: value.name,
-    parentId: Option.fromNullishOr(value.parentId ?? undefined),
+    parentId: value.parentId,
     position: value.position ?? siblings.length,
     published: value.published ?? true,
     slug: value.slug,

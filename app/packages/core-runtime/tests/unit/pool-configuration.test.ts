@@ -107,3 +107,77 @@ it.effect('rejects a budget that is not a positive integer', () =>
       }),
   ),
 );
+
+const sharedRuntimeUrl = Redacted.make('postgresql://ontos_runtime:secret@localhost:5432/ontos');
+
+it.effect('keeps no connection warm by default', () =>
+  Effect.gen(function* verifyDefaultMinimum() {
+    const configuration = yield* configureDatabasePool(sharedRuntimeUrl).pipe(
+      withPoolBudget({ ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6', ONTOS_DATABASE_POOL_SHARED: 'true' }),
+    );
+    expect(configuration.minConnections).toBe(0);
+  }),
+);
+
+const minimum = (url: Redacted.Redacted, environment: Readonly<Record<string, string>>, requested?: number) =>
+  configureDatabasePool(url, undefined, requested).pipe(
+    withPoolBudget(environment),
+    Effect.map(({ maxConnections, minConnections }) => ({ maxConnections, minConnections })),
+  );
+
+it.effect('keeps the minimum warm only on the process-shared runtime-role pool', () =>
+  Effect.gen(function* verifyMinimumScope() {
+    const shared = {
+      ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6',
+      ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '2',
+      ONTOS_DATABASE_POOL_SHARED: 'true',
+    };
+    expect(yield* minimum(sharedRuntimeUrl, shared)).toStrictEqual({ maxConnections: 6, minConnections: 2 });
+    // Owner pools of other roles, the administrator and the gateway issuer keep none.
+    for (const role of ['party_registry_runtime', 'ontos_admin', 'shell_gateway_issuer']) {
+      const url = Redacted.make(`postgresql://${role}:secret@localhost:5432/ontos`);
+      expect((yield* minimum(url, shared)).minConnections).toBe(0);
+    }
+    // A process that does not share pools would multiply the minimum by every owner client.
+    expect((yield* minimum(sharedRuntimeUrl, { ...shared, ONTOS_DATABASE_POOL_SHARED: 'false' })).minConnections).toBe(
+      0,
+    );
+    // A pool asking for fewer connections than the minimum never keeps more than it may open.
+    expect(yield* minimum(sharedRuntimeUrl, shared, 1)).toStrictEqual({ maxConnections: 1, minConnections: 1 });
+  }),
+);
+
+it.effect('fails closed on a minimum that is not a non-negative integer or exceeds the maximum', () =>
+  Effect.forEach(
+    [
+      { ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '-1' },
+      { ONTOS_DATABASE_POOL_MIN_CONNECTIONS: 'two' },
+      { ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '1.5' },
+      { ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6', ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '7' },
+      // Without a cap the driver opens at most ten.
+      { ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '11' },
+    ],
+    (environment) =>
+      Effect.gen(function* verifyInvalidMinimum() {
+        const error = yield* Effect.flip(
+          configureDatabasePool(sharedRuntimeUrl).pipe(
+            withPoolBudget({ ...environment, ONTOS_DATABASE_POOL_SHARED: 'true' }),
+          ),
+        );
+        expect(Predicate.isTagged(error, 'DatabaseConnectionError')).toBe(true);
+      }),
+  ),
+);
+
+it.effect('accepts a minimum equal to the maximum', () =>
+  Effect.gen(function* verifyMinimumAtCap() {
+    const configuration = yield* configureDatabasePool(sharedRuntimeUrl).pipe(
+      withPoolBudget({
+        ONTOS_DATABASE_POOL_MAX_CONNECTIONS: '6',
+        ONTOS_DATABASE_POOL_MIN_CONNECTIONS: '6',
+        ONTOS_DATABASE_POOL_SHARED: 'true',
+      }),
+    );
+    expect(configuration.minConnections).toBe(6);
+  }),
+);

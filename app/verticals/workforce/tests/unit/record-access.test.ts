@@ -6,10 +6,12 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { recordsCarrier, applyCommandCarrier } from '../../shared/access-declarations.ts';
+import { recordsCarrier, applyCommandCarrier, searchCarrier } from '../../shared/access-declarations.ts';
 import { recordReachSql, recordVisible, validRecordPredicate } from '../../src/services/record-reach.ts';
 import { workforceRecordsGrants } from '../../src/services/persistence.service.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+import { employeesRead } from '../../src/search/employees.provider.ts';
 import { workforceRegistration } from '../../vertical.registration.ts';
 import { EmployeeIdSchema } from '../../shared/resources/employee.ts';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
@@ -36,6 +38,8 @@ const team = Schema.decodeSync(ListAccessConditionSchema)({ _tag: 'TeamMemberOf'
 it('shares the exact declaration with the registered owner read', () => {
   expect(workforceRegistration.moduleId).toBe(recordsRead.descriptor.owningModuleKey);
   expect(recordsCarrier.accessDeclaration).toEqual(recordsRead.descriptor.accessDeclaration);
+  expect(applyCommandCarrier.accessDeclaration).toEqual(applyCommandAction.descriptor.accessDeclaration);
+  expect(searchCarrier.accessDeclaration).toEqual(employeesRead.descriptor.accessDeclaration);
   expect(recordsRead.descriptor.accessDeclaration?.selectors.length).toBeGreaterThan(0);
 });
 it.effect('selector reads use list, preserve the full predicate and never treat approval as write', () =>

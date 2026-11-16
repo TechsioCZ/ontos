@@ -25,7 +25,7 @@ rstest.mock('react', () => ({
 }));
 
 const { reads } = rstest.hoisted(() => ({ reads: { records: rstest.fn() } }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({
+rstest.mock('../../src/api/records-client.ts', () => ({
   executeRecords: (...invocation: readonly unknown[]) => reads.records(...invocation),
 }));
 

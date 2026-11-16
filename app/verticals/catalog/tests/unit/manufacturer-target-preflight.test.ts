@@ -17,6 +17,7 @@ import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { ManufacturerTargetSchema } from '../../shared/domain/manufacturer-relation.ts';
+import { ManufacturerMutationOutcomeSchema } from '../../src/persistence/manufacturer-persistence.ts';
 import {
   ManufacturerTargetForbidden,
   ManufacturerTargetUnavailable,
@@ -31,6 +32,7 @@ import {
   prepareChangeProductManufacturerServices,
 } from '../../src/actions/change-product-manufacturer.action.ts';
 
+const [, NotFoundOutcome] = ManufacturerMutationOutcomeSchema.members;
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const target = Schema.decodeUnknownSync(ManufacturerTargetSchema)({
   kind: 'LEGAL_ENTITY',
@@ -47,6 +49,8 @@ const scope = {
   principalId: '33333333-3333-4333-8333-333333333333',
   tenantId,
 };
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const requestScope = { requestId: scope.correlationId, tenantId };
 
 describe('Manufacturer target preflight evidence', () => {
@@ -140,11 +144,14 @@ it.effect(
             Effect.andThen(runtime.runtime.runRead(input)),
           ),
       };
-      const connection = testSqlConnection((sql) => {
-        if (sql.includes('set_config')) {
-          return Effect.succeed([]);
+      const connection = testSqlConnection((sql, params) => {
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (sql === 'select current_user::text as role') {
+          return Effect.succeed([{ role: 'ontos_runtime' }]);
         }
-        if (sql.includes('current_user')) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        if (sql === installAndReadScopeSql) {
+          expect(params).toEqual([tenantId, '']);
           return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         if (/^(?:begin|commit|rollback|savepoint|release)/iu.test(sql.trim())) {
@@ -207,7 +214,7 @@ it.effect(
               principalId: operationScope.principalId,
             };
             const result = yield* kind === 'set' ? services.set(input) : services.change(input);
-            expect(result._tag).toBe('not_found');
+            expect(result).toEqual(NotFoundOutcome.make({}));
           }).pipe(
             insideDatabaseTransaction('commerce.catalog.manufacturer-preflight-test'),
             Effect.provideService(ReadRuntime, {

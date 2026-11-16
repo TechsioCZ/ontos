@@ -40,6 +40,11 @@ export interface PolicyRole {
   readonly restrictedModules?: readonly string[];
   /** Tenant ownership: the `owner` membership in the tenant-context scope. */
   readonly tenantOwner?: true;
+  /**
+   * Capabilities the role's module access would bring that it does not hold: a page the person could not use (it
+   * reads another module the role cannot read). Named keys are never withheld.
+   */
+  readonly withoutKeys?: readonly string[];
 }
 
 /**
@@ -110,7 +115,8 @@ const keysForModule = (
       ? []
       : moduleEntries
           .filter((entry) => (access === 'read' ? entry.kind === 'read' || entry.kind === 'field_read' : true))
-          .map((entry) => entry.key);
+          .map((entry) => entry.key)
+          .filter((key) => !(role.withoutKeys ?? []).includes(key));
   return [...new Set([...generic, ...named])];
 };
 

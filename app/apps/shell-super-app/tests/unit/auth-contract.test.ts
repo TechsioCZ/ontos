@@ -22,7 +22,8 @@ import {
   ShellRateLimitedProblemSchema,
   TenantCapabilityUnavailableProblemSchema,
   shellAuthenticationApiContract,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
+import { ShellAuthenticationApi as ShellServerApi, SymmyIngressGroup } from '../../shared/api.ts';
 import {
   AccessDecisionReasonCodeSchema,
   DecideAccessChangesPayloadSchema,
@@ -52,6 +53,20 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
   return tag.literal;
 };
 
+it('shares each browser group with the server and mounts the ingress groups only on the server contract', () => {
+  expect(ShellServerApi.identifier).toBe(ShellAuthenticationApi.identifier);
+  expect(Object.keys(ShellServerApi.groups)).toEqual([
+    ...Object.keys(ShellAuthenticationApi.groups),
+    'symmy',
+    'paymentNotifications',
+    'paymentReconciliation',
+  ]);
+  for (const group of Object.values(ShellAuthenticationApi.groups)) {
+    expect(ShellServerApi.groups[group.identifier]).toBe(group);
+  }
+  expect(ShellServerApi.groups.symmy).toBe(SymmyIngressGroup);
+});
+
 it('publishes authentication, identity lifecycle, and gateway operations', () => {
   const authenticationEndpoints = Object.keys(ShellAuthenticationApi.groups.authentication.endpoints).toSorted();
   const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
@@ -74,8 +89,10 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect(gatewayEndpoints).toEqual([
     'issueGatewayContext',
     'issueApiKeyGatewayContext',
-    'readWithApiKeyGatewayContext',
     'issueDelegatedGatewayContext',
+  ]);
+  expect(Object.keys(ShellAuthenticationApi.groups.apiKeyGatewayRead.endpoints)).toEqual([
+    'readWithApiKeyGatewayContext',
   ]);
   expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
     'issueDocumentGatewayContexts',

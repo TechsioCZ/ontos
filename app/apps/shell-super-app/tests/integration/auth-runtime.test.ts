@@ -1,8 +1,7 @@
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
-import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -89,6 +88,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistry,
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
+import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
@@ -109,7 +109,7 @@ import {
   ResolvedModuleTargetSchema,
   ShellTargetForbiddenProblemSchema,
   ShellTargetNotFoundProblemSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import {
   makeModuleEntrypointLoadScheduler,
   moduleEntrypointLoadIdentity,
@@ -547,7 +547,7 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeShellTestAuthentication({
+    const authentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, configuration),
@@ -652,9 +652,9 @@ it.live(
     ]);
     yield* coreDatabase.insert(accessScopes).values(
       fixtureAccessScopes.map((entry) => ({
-        legalEntityId: entry._tag === 'LegalEntity' ? entry.legalEntityId : null,
+        legalEntityId: Predicate.isTagged(entry, 'LegalEntity') ? entry.legalEntityId : null,
         scopeId: entry.scopeId,
-        tenantContextId: entry._tag === 'TenantContext' ? tenantId : null,
+        tenantContextId: Predicate.isTagged(entry, 'TenantContext') ? tenantId : null,
         tenantId,
       })),
     );
@@ -732,6 +732,20 @@ it.live(
     );
     expect(anonymousModulesResponse.status).toBe(401);
     expect(headerValue(anonymousModulesResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
+    // The frame (admitted to members by the baseline) reads the Shell session only: an OAuth connection's bearer
+    // token or an API key is no session (`enableSessionForAPIKeys: false`), so it gets no frame either.
+    const credentialOnlyResponse = yield* Effect.tryPromise(() =>
+      unavailableHandler.handler(
+        new Request(`${configuration.baseUrl}/shell/composition`, {
+          headers: {
+            authorization: 'Bearer connection-access-token-is-not-a-session',
+            origin: configuration.baseUrl,
+            'x-api-key': 'an-api-key-is-not-a-session',
+          },
+        }),
+      ),
+    );
+    expect(credentialOnlyResponse.status).toBe(401);
     const anonymousPageResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/module-target`, {
@@ -1906,7 +1920,7 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeShellTestAuthentication({
+    const authentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, configuration),
@@ -2161,7 +2175,7 @@ it.live(
       .update(principals)
       .set({ status: 'active' })
       .where(eq(principals.principalId, secondPrincipalId));
-    const resolverUnavailableAuthentication = yield* makeShellTestAuthentication({}).pipe(
+    const resolverUnavailableAuthentication = yield* shellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(CoreDatabase, { executor: coreDatabase }),
@@ -2556,13 +2570,13 @@ const readFixtureReleaseIdentity = Effect.fn('TenantPartyGatewayTest.releaseIden
     )(
       yield* Effect.tryPromise(() => readFile(path.join(appRoot, directory, 'shared/ultramodern-build.json'), 'utf-8')),
     );
-    return yield* Effect.try(() =>
-      resolveUltramodernReleaseIdentity({
-        generationBuildMarker: generated.deliveryUnit.buildMarker,
-        unitId: generated.deliveryUnit.unitId,
-        workspaceRoot: appRoot,
-      }),
-    );
+    // The identity of the built unit whose public documents this test reads (a kept build keeps its own).
+    return yield* resolveOwnerReleaseIdentity({
+      generationBuildMarker: generated.deliveryUnit.buildMarker,
+      unitDirectory: directory,
+      unitId: generated.deliveryUnit.unitId,
+      workspaceRoot: appRoot,
+    });
   },
 );
 
@@ -2844,7 +2858,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
       Layer.provide(Layer.succeed(DatabaseConfig, isolated.connections.runtime)),
     ),
   );
-  const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+  const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
     Effect.provideService(AuthConfig, configuration),
     Effect.provideService(AuthDatabase, authPersistence),
     Effect.provideService(CoreDatabase, { executor: Context.get(resolverContext, CoreDatabase).executor }),

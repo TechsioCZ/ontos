@@ -4,23 +4,38 @@ import {
   ActiveApplicationCompositionService,
   InstalledModuleCatalogService,
   InstalledModuleCatalogServiceLive,
+  OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   scopedRoutineInvokerFromTransaction,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Redacted, Result, Schema } from 'effect';
+import {
+  Cause,
+  ConfigProvider,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { commerceCustomerContextRegistration } from '../../verticals/commerce-customer-context/vertical.registration.ts';
+import { MarketRetirementImpactAssessmentUnavailable } from '../../verticals/commerce-market-catalog/src/actions/market-retirement-impact-assessment-unavailable.ts';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
 } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { OperationalScopeTransactionService } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { insideDatabaseTransaction } from '../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { holdTestModuleCredentials } from '../../packages/core-runtime/tests/support/module-credentials.ts';
 import { withModuleOperationExecution } from '../../packages/core-runtime/src/modules/module-operation-execution.ts';
 import { manageMarketRetirementAdmissionAction } from '../../verticals/commerce-market-catalog/src/actions/manage-market-retirement-admission.action.ts';
 import type { marketRetirementAdmissions } from '../../verticals/commerce-market-catalog/src/database/schema.ts';
@@ -150,7 +165,6 @@ const assessmentResponse = {
 } as const;
 
 const gatewayConfiguration = ConfigProvider.fromUnknown({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'module-credential',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 
@@ -226,7 +240,7 @@ const ownerTable = (scope: OperationalScope, initialRows: readonly AdmissionRow[
   const service: OperationalScopeTransactionService = {
     delete: unusedDatabaseOperation,
     insert: unusedDatabaseOperation,
-    install: () => Effect.void,
+    install: () => Effect.succeed('session_setting' as const),
     scopedRoutineInvoker: () => scopedRoutineInvokerFromTransaction(() => Effect.succeed([]), scope),
     select: unusedDatabaseOperation,
     update: unusedDatabaseOperation,
@@ -308,12 +322,15 @@ const preparedFactory = (
       revision: fixture.compositionRevision,
       scope: fixture.scope,
     },
-    prepareMarketRetirementAdmissionServices(payload, context).pipe(
-      Effect.provide(MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer))),
-      Effect.provide(NodeCrypto.layer),
-      Effect.provideService(ConfigProvider.ConfigProvider, gatewayConfiguration),
-      Effect.provideService(FetchHttpClient.Fetch, scriptedFetchFor(fixture.compositionRevision)),
-    ),
+    // Market's own module credential, as the host hands it over: through its claimed store copy.
+    holdTestModuleCredentials({ 'commerce-market-catalog': 'module-credential' })
+      .pipe(Effect.andThen(prepareMarketRetirementAdmissionServices(payload, context)))
+      .pipe(
+        Effect.provide(MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer))),
+        Effect.provide(NodeCrypto.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, gatewayConfiguration),
+        Effect.provideService(FetchHttpClient.Fetch, scriptedFetchFor(fixture.compositionRevision)),
+      ),
   );
 };
 
@@ -409,10 +426,10 @@ describe('Market retirement admission phase boundary', () => {
         compositionRevision: fixture.compositionRevision,
         legalEntityScope: 'subject',
       });
-      expect(delegated?.subject._tag).toBe('Assertion');
-      expect(delegated?.subject._tag === 'Assertion' ? Redacted.value(delegated.subject.sourceAssertion) : null).toBe(
-        'original-requester-assertion',
-      );
+      expect(Predicate.isTagged(delegated?.subject, 'Assertion')).toBe(true);
+      expect(
+        Predicate.isTagged(delegated?.subject, 'Assertion') ? Redacted.value(delegated.subject.sourceAssertion) : null,
+      ).toBe('original-requester-assertion');
       expect(assessmentRequests).toHaveLength(1);
       expect(assessmentRequests[0]?.authorization).toBe('Bearer delegated-original-requester-token');
       expect(assessmentRequests[0]?.correlation).toBe(requestCorrelation);
@@ -440,10 +457,8 @@ describe('Market retirement admission phase boundary', () => {
         const failure = yield* ownerServices(factory(transaction, candidate.scope, candidate.revision)).pipe(
           Effect.flip,
         );
-        expect(failure).toMatchObject({
-          _tag: 'OperationContextUnavailable',
-          reason: 'Prepared retirement basis belongs to another operation context',
-        });
+        expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason: 'Prepared retirement basis belongs to another operation context' });
       }
       expect(write.inserted).toEqual([]);
     }),
@@ -469,8 +484,8 @@ describe('Market retirement admission phase boundary', () => {
       expect(outcome.basisRead).toBe(false);
       expect(Result.isFailure(outcome.result)).toBe(true);
       if (Result.isFailure(outcome.result)) {
+        expect(Schema.is(MarketRetirementImpactAssessmentUnavailable)(outcome.result.failure)).toBe(true);
         expect(outcome.result.failure).toMatchObject({
-          _tag: 'MarketRetirementImpactAssessmentUnavailable',
           reason: 'The original retirement basis must be prepared before the owner transaction',
         });
       }

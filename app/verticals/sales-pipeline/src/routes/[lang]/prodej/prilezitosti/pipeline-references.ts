@@ -1,16 +1,15 @@
 import { documentNavigationModules } from '@app/shared-contracts';
-import { listProducts } from '@app/merchandise/clients/records';
-import type { ProductRecord } from '@app/merchandise/contracts/records';
-import { listCustomers } from '@app/party-registry/api/client';
-import type { CustomerListItem } from '@app/party-registry/api/client';
-import { subjectsWithTag } from '@app/tagging/clients/records';
+import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
+import { executeRecords } from '@app/merchandise/apis/records/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, TagId } from '@app/tagging/contracts/records';
-import { listEmployees } from '@app/workforce/clients/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import type { Employee } from '@app/workforce/contracts/records';
-import { Effect, Option, Random, Schema } from 'effect';
+import { DateTime, Effect, Option, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { VatRateSchema } from '../../../../../shared/model/opportunity.ts';
 import type { OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import {
   EmployeeIdSchema,
@@ -18,7 +17,29 @@ import {
   ProductIdSchema,
 } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { subjectsWithTag } from './opportunity-tags.ts';
 import { loadPipeline } from './pipeline-api.ts';
+
+/** One Merchandise product as the records read returns it. */
+type ProductRecord = Effect.Success<ReturnType<typeof executeRecords>>['products'][number];
+/** One current CUSTOMER Counterparty as Party Registry's customer-list read returns it. */
+type CustomerListItem = Effect.Success<ReturnType<typeof executeCustomerList>>['items'][number];
+
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = (request: Parameters<typeof executeCustomerList>[0] = {}) =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) =>
+      executeCustomerList(request, `party-registry:customer-list:${first}:${second}`),
+    ),
+    Effect.map(({ items }) => items),
+  );
+
+/** Workforce employees for this view, read under its own correlation. */
+const listEmployees = () =>
+  Random.nextInt.pipe(
+    Effect.flatMap((nonce) => executeEmployeeRecords({}, `workforce:list:${nonce}`)),
+    Effect.map((response) => response.items),
+  );
 
 type PartyId = typeof PartyIdSchema.Type;
 type EmployeeId = typeof EmployeeIdSchema.Type;
@@ -78,15 +99,27 @@ const toEmployeeOption = (item: Employee): Option.Option<EmployeeOption> =>
     id,
   }));
 
-const toProductOption = (item: ProductRecord): Option.Option<ProductOption> =>
-  Option.map(Schema.decodeOption(ProductIdSchema)(item.id), (id) => ({
-    active: item.active,
-    currentPriceMinor: item.currentPriceMinor,
-    id,
-    name: item.name,
-    sku: item.sku,
-    vatRate: item.vatRate,
-  }));
+/** A product is offered only with the VAT rate Merchandise sells it at now (from Tax); otherwise it is left out. */
+const toProductOption = ({
+  product: item,
+  vatRate,
+}: {
+  readonly product: ProductRecord;
+  readonly vatRate: number | undefined;
+}): Option.Option<ProductOption> =>
+  Option.all({
+    id: Schema.decodeOption(ProductIdSchema)(item.id),
+    vatRate: Schema.decodeUnknownOption(VatRateSchema)(vatRate),
+  }).pipe(
+    Option.map(({ id, vatRate: rate }) => ({
+      active: item.active,
+      currentPriceMinor: item.currentPriceMinor,
+      id,
+      name: item.name,
+      sku: item.sku,
+      vatRate: rate,
+    })),
+  );
 
 const loadCustomers = listCustomers({}).pipe(
   Effect.map((items) => items.flatMap((item) => Option.toArray(toCustomerOption(item)))),
@@ -103,8 +136,18 @@ const loadProducts = catalogReadable.pipe(
   Effect.flatMap((readable) =>
     readable
       ? correlated('products').pipe(
-          Effect.flatMap((id) => listProducts(id, { limit: 250, ordersLimit: 0, summary: true })),
-          Effect.map((items) => items.flatMap((item) => Option.toArray(toProductOption(item)))),
+          Effect.flatMap((id) => executeRecords({ view: { limit: 250, ordersLimit: 0, summary: true } }, id)),
+          Effect.flatMap((response) =>
+            DateTime.now.pipe(
+              Effect.map((now) =>
+                response.products.flatMap((product) =>
+                  Option.toArray(
+                    toProductOption({ product, vatRate: vatRateAt(response, product.taxClassificationCode, now) }),
+                  ),
+                ),
+              ),
+            ),
+          ),
         )
       : Effect.succeed<readonly ProductOption[]>([]),
   ),

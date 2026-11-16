@@ -9,7 +9,10 @@ describe('Customer Context owner-authored dependency contracts', () => {
     const { requirements } = commerceCustomerContextManifest;
     expect(requirements?.intrinsic).toEqual([]);
     const party = requirements?.operations.filter(({ provider }) => provider.moduleId === 'party.registry');
-    expect(party).toHaveLength(6);
+    const addresses = party?.filter(({ entrypointKey }) => /(?:add|update|remove)-saved-address$/u.test(entrypointKey));
+    expect(new Set(addresses?.map(({ entrypointKey }) => entrypointKey))).toEqual(
+      new Set(['commerce.customer-context.add-saved-address', 'commerce.customer-context.update-saved-address']),
+    );
     expect(party?.some(({ entrypointKey }) => /saved-address-(?:list|detail|defaults)$/u.test(entrypointKey))).toBe(
       false,
     );

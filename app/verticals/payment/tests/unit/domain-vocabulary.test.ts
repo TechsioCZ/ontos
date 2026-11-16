@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import {
   PaymentBankAccountingReceiptBindingSchema,
   PaymentExecutionBindingSchema,
@@ -24,7 +24,6 @@ import {
 import { CommitmentOutcomePort } from '../../src/ports/commitment-outcome-port.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
-import { GatewayBindingPort } from '../../src/ports/gateway-binding-port.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort } from '../../src/ports/pickup-capability-port.ts';
 import { RefundableItemsPort } from '../../src/ports/refundable-items-port.ts';
@@ -105,17 +104,10 @@ describe('H1094-01=A owner ports fail closed by default', () => {
   it.effect('every production-default port is explicitly unavailable, never absence', () =>
     Effect.gen(function* unavailablePorts() {
       const termEvidence = yield* PaymentTermEvidencePort;
-      const gateway = yield* GatewayBindingPort;
       const delivery = yield* DeliveryCapabilityPort;
       const pickup = yield* PickupCapabilityPort;
       const commitment = yield* CommitmentOutcomePort;
       const refundableItems = yield* RefundableItemsPort;
-      const binding = {
-        _tag: 'GATEWAY_ACCOUNT',
-        environment: 'production',
-        providerAccountRef: 'acct-1',
-        providerFamily: 'STRIPE',
-      } as const;
       const failures = yield* Effect.all(
         [
           termEvidence
@@ -141,10 +133,6 @@ describe('H1094-01=A owner ports fail closed by default', () => {
               scope,
             })
             .pipe(Effect.flip),
-          gateway.listEnabledBindings({ customerConfigurationId: 'configuration-1', scope }).pipe(Effect.flip),
-          gateway
-            .verifySelectedBinding({ binding, customerConfigurationId: 'configuration-1', scope })
-            .pipe(Effect.flip),
           delivery.verifyCashOnDelivery({ amount: czk, deliveryOfferRef: 'offer-1', scope }).pipe(Effect.flip),
           pickup.verifyPickupCollection({ amount: czk, pickupCapabilityRef: 'pickup-1', scope }).pipe(Effect.flip),
           commitment
@@ -165,8 +153,6 @@ describe('H1094-01=A owner ports fail closed by default', () => {
       expect(failures.every((failure) => Schema.is(PaymentOwnerEvidenceUnavailable)(failure))).toBe(true);
       expect(failures.map((failure) => failure.port)).toEqual([
         'PAYMENT_TERM_EVIDENCE',
-        'GATEWAY_BINDING',
-        'GATEWAY_BINDING',
         'DELIVERY_CAPABILITY',
         'PICKUP_CAPABILITY',
         'COMMITMENT_OUTCOME',

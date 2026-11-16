@@ -46,6 +46,9 @@ const scope = {
 };
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-25T12:00:00.000Z'));
 const transport = { correlationId: scope.correlationId };
+// A session-setting role installs its scope and reads back the connected role in one statement.
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 
 it('keeps activity authorization separate from read_people and manage_people', () => {
   for (const resolver of [
@@ -258,7 +261,7 @@ it.effect(
     Effect.gen(function* scopedSql() {
       const queries: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
       const database = yield* makeTestDatabase((sql, params) => {
-        if (sql.includes('current_setting')) {
+        if (sql === installAndReadScopeSql) {
           return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
         }
         queries.push({ params, sql });

@@ -1,3 +1,4 @@
+import { AccessDecisionGate } from '../access/enforcement/contract.ts';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
@@ -71,6 +72,37 @@ export interface ReadTestHarnessOptions extends Pick<
 }
 
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
+
+const SESSION_INSTALL_AND_READ_SCOPE_SQL =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
+const SESSION_INSTALL_SCOPE_SQL =
+  "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)";
+const SESSION_READ_SCOPE_SQL =
+  "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id";
+
+/**
+ * A session-setting role's scope statements, each matched by its exact text: installing records the scope from its
+ * parameters, and the one-statement install and the read-back answer the connected role with it. None for any other
+ * statement.
+ */
+const sessionScopeRows = Effect.fn('ReadTestHarness.sessionScopeRows')(function* sessionScopeRows(
+  text: string,
+  params: readonly unknown[],
+  scope: { legalEntityId: string; tenantId: string },
+  role: string,
+) {
+  if (text === SESSION_INSTALL_AND_READ_SCOPE_SQL || text === SESSION_INSTALL_SCOPE_SQL) {
+    [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
+      Effect.orDie,
+    );
+  }
+  if (text === SESSION_INSTALL_SCOPE_SQL) {
+    return Option.some<readonly object[]>([]);
+  }
+  return text === SESSION_INSTALL_AND_READ_SCOPE_SQL || text === SESSION_READ_SCOPE_SQL
+    ? Option.some<readonly object[]>([{ legal_entity_id: scope.legalEntityId, role, tenant_id: scope.tenantId }])
+    : Option.none<readonly object[]>();
+});
 const readCommittedIsolation = 'read committed';
 const fencedScopeValuesSchema = Schema.Tuple([Schema.String, Schema.String, Schema.Literal(readCommittedIsolation)]);
 const installReadScopeSql =
@@ -110,6 +142,19 @@ const compositionPublicationLockRows = (
  * admission and evidence writes execute normally; this does not prove native PostgreSQL or RLS.
  * The caller owns its Effect scope. Permissions and owner authorization default to denied.
  */
+/** Read and write admissions select only the fence columns; matching also reads the approved subscriptions. */
+const COMPOSITION_FENCE_SUBSCRIPTIONS: ReadonlyMap<string, { readonly subscriptionsJson: readonly never[] | null }> =
+  new Map([
+    [
+      'select "phase", "revision", null, "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1',
+      { subscriptionsJson: null },
+    ],
+    [
+      'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1',
+      { subscriptionsJson: [] },
+    ],
+  ]);
+
 export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* makeReadTestHarness(
   options: ReadTestHarnessOptions,
 ) {
@@ -146,35 +191,27 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/u.test(text)) {
         return [];
       }
+      if (text === 'select current_user::text as role') {
+        return [{ role: connection.role }];
+      }
       const publicationLock = compositionPublicationLockRows(text, params);
       if (Option.isSome(publicationLock)) {
         return yield* publicationLock.value;
       }
-      // Read and write admissions (the unlocked precheck and the locked fence) select only the fence columns;
-      // matching also reads the approved subscriptions.
-      if (
-        text ===
-        'select "phase", "revision", null, "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
-      ) {
-        return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: null, unexpired: true }];
+      const fence = COMPOSITION_FENCE_SUBSCRIPTIONS.get(text);
+      if (fence !== undefined) {
+        return [
+          {
+            phase: 'active',
+            revision: options.compositionRevision,
+            subscriptionsJson: fence.subscriptionsJson,
+            unexpired: true,
+          },
+        ];
       }
-      if (
-        text ===
-        'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
-      ) {
-        return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: [], unexpired: true }];
-      }
-      if (text === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)") {
-        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
-          Effect.orDie,
-        );
-        return [];
-      }
-      if (
-        text ===
-        "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
-      ) {
-        return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
+      const sessionScope = yield* sessionScopeRows(text, params, scope, connection.role);
+      if (Option.isSome(sessionScope)) {
+        return sessionScope.value;
       }
       if (
         text ===
@@ -344,10 +381,10 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
+  // The same scripted gate answers the runtime and any owner code that asks the gate itself (O62).
+  const scriptedGate = makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied');
   let runtimeOptions: ReadRuntimeOptions = {
-    accessDecision:
-      options.accessDecision ??
-      makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied').bound,
+    accessDecision: options.accessDecision ?? scriptedGate.bound,
     databaseIdentities,
     onStage: (stage) => {
       stages.push(stage);
@@ -377,7 +414,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
   );
   return {
-    layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
+    layer: Layer.mergeAll(
+      Layer.succeed(ReadRuntime, runtime),
+      Layer.succeed(ContextAccess, contextAccess),
+      // A default only: a gate the test supplies around this layer wins, so a test's own gate is never shadowed.
+      Layer.effect(
+        AccessDecisionGate,
+        Effect.serviceOption(AccessDecisionGate).pipe(Effect.map(Option.getOrElse(() => scriptedGate.accessDecision))),
+      ),
+    ),
     ownerServices: Layer.mergeAll(
       Layer.succeed(CoreDatabase, database),
       Layer.succeed(DatabaseIdentityEnrollmentContext, databaseIdentities),

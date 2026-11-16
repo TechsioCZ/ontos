@@ -1,0 +1,2 @@
+ALTER TABLE "commerce_auth"."portal_auth_audit_event" ADD COLUMN "action_invocation_id" uuid;--> statement-breakpoint
+CREATE INDEX "commerce_auth_audit_event_action_invocation_id_idx" ON "commerce_auth"."portal_auth_audit_event" ("action_invocation_id");

@@ -9,11 +9,15 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer } from '@app/core-runtime/testing/scripted-pg-client';
 import { propertyLeasingRegistration } from '../../vertical.registration.ts';
 import { occupancyState } from '../../src/database/schema.ts';
-import { transitionOccupancy, unavailableOccupancyValidators } from '../../src/services/persistence.service.ts';
+import {
+  OccupancyReferenceValidators,
+  transitionOccupancy,
+  unavailableOccupancyValidators,
+} from '../../src/services/persistence.service.ts';
 import type { OccupancyValidators } from '../../src/services/persistence.service.ts';
 import { expect, it } from 'effect-rstest';
 
-import { applyCommandAction, CommandReferenceValidators } from '../../src/actions/apply-command.action.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { leasesRead } from '../../src/search/leases.provider.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
@@ -160,7 +164,14 @@ it.layer(queryCompilationLayer)('Leasing prepared business writes', (suite) => {
           transport: { correlationId: 'lease-search-test', idempotencyKey: 'create-1' },
         })
         .pipe(
-          Effect.provideService(CommandReferenceValidators, validators),
+          Effect.provideService(OccupancyReferenceValidators, {
+            forScope: (scope) =>
+              Effect.sync(() => {
+                expect(scope.legalEntityId).toBe(principal.legalEntityId);
+                expect(scope.tenantId).toBe(tenantId);
+                return validators;
+              }),
+          }),
           Effect.provideService(ActiveApplicationCompositionService, {
             load: Effect.die('Unexpected reference transport in a lifecycle-only test'),
           }),

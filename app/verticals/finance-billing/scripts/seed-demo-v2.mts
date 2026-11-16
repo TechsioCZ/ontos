@@ -6,6 +6,7 @@
 //   node verticals/finance-billing/scripts/seed-demo-v2.mts [--legal-entity <uuid>] [--force]
 //
 // Idempotent: a state already carrying the seed marker is left alone unless --force.
+import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import { alignRentalTemplates } from './align-rental-templates.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Config, Console, Crypto, DateTime, Effect, FileSystem, Layer, Path, Schema } from 'effect';
@@ -280,7 +281,15 @@ const seed = Effect.fn('Finance.seedDemoV2')(function* seedDemoV2(LEGAL_ENTITY: 
           documentNumber: number,
           dueDate: entry.due,
           issueDate: entry.issued,
-          lines: [{ description: entry.text, quantity: 1, unitPriceMinor: entry.amount, vatRate: 21 }],
+          lines: [
+            {
+              description: entry.text,
+              quantity: 1,
+              unitPriceMinor: entry.amount,
+              vatClassification: CZ_VAT_STANDARD,
+              vatRate: 21,
+            },
+          ],
           note: `Vydaná faktura (${MARKER})`,
         } satisfies FinanceCommand;
         const draft = yield* invoiceOf(
@@ -329,7 +338,15 @@ const seed = Effect.fn('Finance.seedDemoV2')(function* seedDemoV2(LEGAL_ENTITY: 
         counterpartyRef: ref(template.who),
         dueDays: 14,
         issueDay: 1,
-        lines: [{ description: `Nájemné ${template.unit}`, quantity: 1, unitPriceMinor: template.amount, vatRate: 21 }],
+        lines: [
+          {
+            description: `Nájemné ${template.unit}`,
+            quantity: 1,
+            unitPriceMinor: template.amount,
+            vatClassification: CZ_VAT_STANDARD,
+            vatRate: 21,
+          },
+        ],
         name: template.name,
       } satisfies FinanceCommand;
       return apply(template.who.partyId === undefined ? command : { ...command, partyId: template.who.partyId });

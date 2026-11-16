@@ -1,7 +1,7 @@
 // Loads every Nájempark source the calendar / overview / search read, each through its owner's PUBLIC governed read
 // (own gateway audience, own permission check). A source the person may not read, or that is down, is reported
 // per source ("bez oprávnění" / "zdroj nedostupný") and never replaced by zeros. Owned by the ops-agenda lane.
-import { listCustomers } from '@app/party-registry/api/client';
+import { listCustomers } from '../party-customers.ts';
 import { executeRecords as executeAgreements } from '@app/legal-agreements/clients/records';
 import { executeRecords as executeOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as executeProperty } from '@app/property-portfolio/clients/records';
@@ -12,7 +12,7 @@ import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-
 import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { OverviewResponse } from '../../../shared/apis/overview.ts';
-import { readFinance } from '../../api/finance-reads.ts';
+import { readFinance } from '../finance-reads.ts';
 import { executeOverview } from '../../api/overview-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { loadSalesCases } from './sales-source.ts';

@@ -13,6 +13,7 @@ import {
   makeProductionDependenciesPlugin,
 } from '../materialize-outbox-worker.mjs';
 
+const WORKER_ENTRY_SPECIFIER = '@app/core-runtime/outbox/worker';
 const workerEntrypointPath = '../../packages/core-runtime/src/outbox/worker-entrypoint.ts';
 
 it('reads live value re-exports from Core, ignoring comments, strings, and type-only ones', () => {
@@ -46,7 +47,7 @@ it('reads only live value exports of the focused entrypoint', () => {
   expect(EffectArray.sort([...exports], Order.String)).toEqual(['Live', 'Renamed']);
 });
 
-it('routes hosted worker enrollment through its owning subpath, not the focused Core entrypoint', () => {
+it('routes hosted worker enrollment through the focused Core worker entrypoint, never a Core db/ subpath', () => {
   const entrypoint = focusedEntrypointValueExports(
     readFileSync(new URL(workerEntrypointPath, import.meta.url), 'utf-8'),
   );
@@ -78,10 +79,10 @@ it('routes hosted worker enrollment through its owning subpath, not the focused 
       .map(({ specifier }) => specifier);
     enrollmentImports.push(...declarations);
     for (const specifier of declarations) {
-      expect(specifier, filename).toBe('@app/core-runtime/db/database-identity-manifest');
+      expect(specifier, filename).toBe(WORKER_ENTRY_SPECIFIER);
     }
     for (const { name, specifier } of imports) {
-      if (specifier === '@app/core-runtime' || specifier === '@app/core-runtime/outbox/worker') {
+      if (specifier === '@app/core-runtime' || specifier === WORKER_ENTRY_SPECIFIER) {
         expect(entrypoint.has(name ?? ''), `${filename} imports ${name} from ${specifier}`).toBe(true);
       }
     }
@@ -90,7 +91,7 @@ it('routes hosted worker enrollment through its owning subpath, not the focused 
   expect(entrypoint.has('makeDatabaseIdentityEnrollmentLive')).toBe(true);
   expect(entrypoint.has('CoreSearchQueryRuntime')).toBe(true);
   expect(entrypoint.has('CoreSearchProjectionInvalid')).toBe(true);
-  expect(entrypoint.has('defineDatabaseIdentityEnrollment')).toBe(false);
+  expect(entrypoint.has('defineDatabaseIdentityEnrollment')).toBe(true);
 });
 
 it('exports every Core value the deployed worker hosts re-export', () => {
@@ -172,7 +173,7 @@ it.live('bundles every deployed worker with the original production dependency r
     const entrypoint = focusedEntrypointValueExports(
       yield* fs.readFileString(path.join(workspaceRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts')),
     );
-    expect(entrypoint.has('defineDatabaseIdentityEnrollment')).toBe(false);
+    expect(entrypoint.has('defineDatabaseIdentityEnrollment')).toBe(true);
     const enrollmentSpecifiers: string[] = [];
     for (const input of inputs.filter((file) => /^(?:apps|verticals)\/.*\.(?:ts|mts)$/u.test(file))) {
       const source = yield* fs.readFileString(path.join(workspaceRoot, input));
@@ -187,7 +188,7 @@ it.live('bundles every deployed worker with the original production dependency r
           )
         ) {
           enrollmentSpecifiers.push(`${input} ${statement.moduleRequest.value}`);
-          expect(statement.moduleRequest.value, input).toBe('@app/core-runtime/db/database-identity-manifest');
+          expect(statement.moduleRequest.value, input).toBe(WORKER_ENTRY_SPECIFIER);
         }
       }
     }

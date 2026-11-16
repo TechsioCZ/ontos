@@ -1,8 +1,10 @@
+import { documentNavigationModules } from '@app/shared-contracts';
 import { definePageData } from '@app/shared-contracts/page-data';
-import { recordsOfKind } from '@app/tagging/clients/records';
+import { executeRecords as executeTagRecords } from '@app/tagging/clients/records';
+import type { TagCallFailure, TagsStatus } from '@app/tagging/components/tag-controls';
 import type { Assignment, SubjectId, Tag } from '@app/tagging/contracts/records';
-import { Data, Effect, Match, Schema } from 'effect';
-import { executeRecords } from '../../../../api/records-consumer.ts';
+import { Data, Effect, Match, Predicate, Schema } from 'effect';
+import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { AiActivityEntry } from '../../../../../shared/apis/records.ts';
 import { newRequestToken } from './employee-model.ts';
@@ -56,11 +58,27 @@ const employeeTagsOf = (records: {
   return { catalog: records.tags.filter((tag) => tag.subjectKinds.includes('employee')), tagsBySubject };
 };
 
+/**
+ * False when the Shell's per-document navigation hint leaves tagging out, so the page never sends a tag read the
+ * owner would refuse. Without the hint nothing is known and tags are read.
+ */
+export const tagsReadable = (): boolean => documentNavigationModules()?.has('demo.tagging') ?? true;
+
+/** A refused tag read (owner 403 or gateway refusal) reads as `forbidden`; anything else as a retryable error. */
+export const tagsFailureStatus = (failure: TagCallFailure): TagsStatus =>
+  Predicate.isTagged(failure, 'RecordsForbiddenProblem') || Predicate.isTagged(failure, 'GatewayForbiddenProblem')
+    ? 'forbidden'
+    : 'error';
+
 /** Tags of every employee in one tagging read; it does not wait for the employee ids, so both load side by side. */
 export const employeeTagsData = definePageData({
   changesFrom: ['tagging', 'workforce'],
   key: (legalEntityId: string) => legalEntityId,
-  load: () => recordsOfKind('employee').pipe(Effect.map(employeeTagsOf)),
+  load: () =>
+    newRequestToken.pipe(
+      Effect.flatMap((token) => executeTagRecords({ subjectKind: 'employee' }, `workforce:tags:${token}`)),
+      Effect.map(employeeTagsOf),
+    ),
   runtime: browserRuntime,
 });
 

@@ -10,7 +10,7 @@ import type { GateInput } from '@app/core-runtime/access/enforcement';
 import type { LegalEntityNavigationExclusionsContract } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
-import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
+import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/browser-api.ts';
 import type { ShellAccessDecision, ShellAccessGate } from './shell-access-decisions.ts';
 import {
   isScopeMismatch,

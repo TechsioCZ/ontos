@@ -1,7 +1,9 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
   IdentityAdministrationAuditEvidenceSchema,
@@ -32,20 +34,20 @@ const scopeEffect = Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(pr
 );
 const transport = { correlationId: 'original-audit-request' };
 
-it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
-  suite.effect('declares only tenant manage_identity OR the original selected-company manage_people', () =>
+/** The company's agent administrator: the read's own v2 question (`core.identity.agent-status.manage`) is ALLOWED. */
+const AGENT_ADMINISTRATOR = Layer.succeed(
+  AccessDecisionGate,
+  makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+);
+
+it.layer(Layer.mergeAll(NodeCrypto.layer, AGENT_ADMINISTRATOR))('identity-administration-audit-read', (suite) => {
+  suite.effect('is admitted in the selected company only, and asks no legacy relation', () =>
     Effect.gen(function* permissionContract() {
       const scope = yield* scopeEffect;
       const resolver = getReadPermissionTargetResolver(identityAdministrationAuditRead);
       expect(Predicate.isFunction(resolver)).toBe(true);
       if (Predicate.isFunction(resolver)) {
-        expect(resolver({ subjects: 'people' }, scope)).toEqual({
-          kind: 'any_of',
-          targets: [
-            { kind: 'tenant', permission: 'manage_identity' },
-            { kind: 'legal_entity', permission: 'manage_people' },
-          ],
-        });
+        expect(resolver({ subjects: 'agents' }, scope)).toEqual({ kind: 'legal_entity' });
       }
       expect(identityAdministrationAuditRead.descriptor.legalEntityScope).toBe('required');
       expect(identityAdministrationAuditRead.descriptor.entrypoint.authorization).toEqual({
@@ -66,8 +68,10 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
         scope,
       });
       for (const input of [
-        { members: [targetId], subjects: 'people' },
-        { memberIds: [targetId], subjects: 'people' },
+        { members: [targetId], subjects: 'agents' },
+        { memberIds: [targetId], subjects: 'agents' },
+        // The people audit is gone: the Agents page reads only the agent administration audit.
+        { subjects: 'people' },
         { subjects: 'agents', tenantId },
         { legalEntityId, subjects: 'agents' },
         { subjects: 'all' },
@@ -91,7 +95,7 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
       });
       yield* denied.runtime
         .runRead({
-          input: { subjects: 'people' },
+          input: { subjects: 'agents' },
           principal: scope,
           registration: identityAdministrationAuditRead,
           transport,
@@ -109,7 +113,7 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
       for (const original of [{ ...scope, tenantId: '10000000-0000-4000-8000-000000000099' }, withoutCompany]) {
         yield* allowed.runtime
           .runRead({
-            input: { subjects: 'people' },
+            input: { subjects: 'agents' },
             principal: original,
             registration: identityAdministrationAuditRead,
             transport,
@@ -120,7 +124,44 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
     }),
   );
 
-  for (const subjects of ['agents', 'people'] as const) {
+  suite.effect(
+    "a member who is not the company's agent administrator is DENIED, an unreadable authority unavailable",
+    () =>
+      Effect.gen(function* ownQuestion() {
+        const scope = yield* scopeEffect;
+        for (const [answer, refusal] of [
+          [{ outcome: 'DENIED' }, 'ReadPermissionDenied'],
+          [{ outcome: 'UNAVAILABLE' }, 'ReadHandlerUnavailable'],
+        ] as const) {
+          const harness = yield* makeReadTestHarness({
+            executeOwnerQuery: () => Effect.die('A refused caller reached audit SQL'),
+            operationTime,
+            ownerAuthorizationDecision: 'allowed',
+            permissionDecision: 'allowed',
+            scope,
+          });
+          const failure = yield* harness.runtime
+            .runRead({
+              input: { subjects: 'agents' },
+              principal: scope,
+              registration: identityAdministrationAuditRead,
+              transport,
+            })
+            .pipe(
+              Effect.provideService(
+                AccessDecisionGate,
+                makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': answer } }),
+              ),
+              Effect.flip,
+            );
+          expect(Predicate.isTagged(failure, refusal)).toBe(true);
+          expect(harness.snapshot().ownerQueries).toEqual([]);
+        }
+      }),
+  );
+
+  {
+    const subjects = 'agents';
     suite.effect(
       `${subjects} SQL retains exact scope, event selection, newest-first order, ID tie-break and 80 bound`,
       () =>
@@ -138,24 +179,12 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
                 'order by "core"."audit_events"."occurred_at" desc, "core"."audit_events"."audit_event_id" desc',
               );
               expect(query.sql).toContain('core.identity.manage-demo-account');
-              if (subjects === 'agents') {
-                for (const action of ['configure-agent', 'manage-agent-status', 'replace-agent-operators']) {
-                  expect(query.sql).toContain(`core.identity.${action}`);
-                }
-                expect(query.params).toContain('identity.agent_operators_changed');
-                expect(query.sql).not.toContain('principal_company_memberships');
-                expect(query.params).not.toContain('authn.rejected');
-              } else {
-                expect(query.params).toContain('authn.rejected');
-                expect(query.params).toContain('principal_inactive');
-                expect(query.params).toContain('human');
-                expect(query.sql).toContain('"core"."principal_company_memberships"');
-                expect(query.sql).toContain('"core"."principal_company_memberships"."tenant_id" =');
-                expect(query.sql).toContain('"core"."principal_company_memberships"."legal_entity_id" =');
-                expect(query.sql).not.toContain('"core"."principal_company_memberships"."status" =');
-                expect(query.sql).toContain('"core"."audit_events"."legal_entity_id" is null');
-                expect(query.params).not.toContain('identity.agent_operators_changed');
+              for (const action of ['configure-agent', 'manage-agent-status', 'replace-agent-operators']) {
+                expect(query.sql).toContain(`core.identity.${action}`);
               }
+              expect(query.params).toContain('identity.agent_operators_changed');
+              expect(query.sql).not.toContain('principal_company_memberships');
+              expect(query.params).not.toContain('authn.rejected');
               return Effect.succeed([]);
             },
             operationTime,
@@ -263,20 +292,20 @@ it.layer(NodeCrypto.layer)('identity-administration-audit-read', (suite) => {
       }),
   );
 
-  suite.effect('inactive-person rejection targets the retained principal; optional scalars become native Options', () =>
-    Effect.gen(function* inactiveDetails() {
+  suite.effect('optional scalars become native Options; unsupported evidence is dropped', () =>
+    Effect.gen(function* optionalDetails() {
       const evidence = yield* Schema.decodeUnknownEffect(IdentityAdministrationAuditEvidenceSchema)({
         audience: null,
-        reason: 'principal_disabled',
+        reason: 'agent_disabled',
         source: 'operational_scope',
         targetPrincipalId: targetId,
       });
-      const details = yield* identityAdministrationAuditDetails(evidence, 'authn.rejected', principalId);
-      expect(details.targetPrincipalId).toEqual(Option.some(principalId));
+      const details = yield* identityAdministrationAuditDetails(evidence);
+      expect(details.targetPrincipalId).toEqual(Option.some(targetId));
       expect(details.audience).toEqual(Option.none());
-      expect(details.reason).toEqual(Option.some('principal_disabled'));
+      expect(details.reason).toEqual(Option.some('agent_disabled'));
       expect(details).not.toHaveProperty('source');
-      const unsupported = yield* identityAdministrationAuditDetails({ revokedConnections: 7 }, 'action.executed', null);
+      const unsupported = yield* identityAdministrationAuditDetails({ revokedConnections: 7 });
       expect(unsupported).not.toHaveProperty('revokedConnections');
     }),
   );

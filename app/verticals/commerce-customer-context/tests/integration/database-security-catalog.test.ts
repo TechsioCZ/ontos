@@ -45,18 +45,35 @@ const privateRoutines = [
   'store_customer_commerce_policy_generation',
 ] as const;
 
+const privateInvokerSearchPaths = {
+  apply_partial_membership_set_locked: securityDefinerSearchPath,
+  customer_group_membership_snapshot_digest: 'search_path=pg_catalog, pg_temp',
+  lock_customer_group_membership_scope: 'search_path=pg_catalog, pg_temp',
+  project_membership_source_result: 'search_path=pg_catalog, pg_temp',
+  project_organization_membership_result: 'search_path=pg_catalog, pg_temp',
+  project_organization_profile_ico: securityDefinerSearchPath,
+  project_organization_profile_ico_receipt: securityDefinerSearchPath,
+} as const;
+
 /** Routines the runtime role must be able to execute; every owner surface reaches the database through one. */
 const grantedRoutines = [
   'add_saved_address',
   'admit_portal_enrollment_attempt',
+  'admit_customer_group_membership_snapshot',
+  'apply_customer_group_definition_source',
+  'apply_customer_group_membership_source',
   'archive_customer_group',
   'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
   'assign_customer_group_membership',
+  'assign_organization_price_group',
   'assign_price_group',
   'authorize_portal_enrollment_account_creation',
+  'authorize_saved_address_source',
   'bind_price_group_assignment_compatibility_evidence',
   'change_address_default',
+  'change_customer_profile_ico',
+  'change_organization_profile_ico',
   'change_purchase_limit_policy',
   'claim_portal_enrollment_sweep',
   'claim_portal_enrollment_transition',
@@ -67,10 +84,12 @@ const grantedRoutines = [
   'create_customer_group',
   'create_portal_enrollment_attempt',
   'create_purchase_proposal_revision',
+  'customer_profile_ico_state',
   'decide_purchase_approval_request',
   'ensure_counterparty_profile',
   'ensure_retail_profile',
   'fail_portal_enrollment',
+  'ensure_source_customer_profile',
   'grant_access',
   'inspect_commerce_quantity_assignment_profile',
   'inspect_price_group_profile',
@@ -84,17 +103,21 @@ const grantedRoutines = [
   'load_payment_term_policy_state',
   'load_purchase_currency_policy_state',
   'lock_access_grant_authority',
+  'lock_profile_ico_correlation',
+  'migrate_customer_profile_ico',
   'migrate_price_group_assignments',
   'mutate_access_invitation',
   'mutate_retail_portal_binding',
   'observe_party_merge_reconciliation',
   'open_profile_reconciliation',
-  'persist_customer_payment_terms',
+  'organization_profile_ico_state',
   'persist_commerce_quantity_rule_assignments',
   'persist_commerce_quantity_rule_state',
+  'persist_customer_payment_terms',
   'persist_market_bootstrap_policy_state',
   'persist_payment_term_policy_state',
   'persist_purchase_currency_policy_state',
+  'profile_ico_target_inventory',
   'purchase_proposal_basis_state',
   'reactivate_customer_group',
   'read_access_invitation',
@@ -107,11 +130,17 @@ const grantedRoutines = [
   'read_current_retail_enrollment',
   'read_customer_consent_receipt',
   'read_customer_group',
+  'read_customer_group_definition_source',
   'read_customer_group_history',
   'read_customer_group_members',
+  'read_customer_group_membership_source_receipt',
   'read_customer_payment_terms',
+  'read_customer_price_group_assignment_receipt',
   'read_customer_profile',
   'read_demo_newsletter_choice',
+  'read_customer_profile_organization_business_facts',
+  'read_customer_profile_organization_ico_facts',
+  'read_customer_profile_source',
   'read_effective_customer_group_memberships',
   'read_enrollment_invitation_claim',
   'read_guest_attribution',
@@ -120,6 +149,7 @@ const grantedRoutines = [
   'read_order_commitment_approval_evidence',
   'read_order_service_approval_proof',
   'read_original_portal_enrollment',
+  'read_organization_customer_profile_source_receipt',
   'read_portal_enrollment_attempt',
   'read_portal_enrollment_originator',
   'read_portal_enrollment_owner_operation',
@@ -136,13 +166,16 @@ const grantedRoutines = [
   'read_retail_portal_binding',
   'read_retail_profile_by_party',
   'read_saved_address',
+  'read_saved_address_source_receipt',
   'reconcile_portal_enrollment_outcome',
   'reconcile_profile_reconciliation_owner',
   'record_address_book_reconciliation_receipt',
+  'record_customer_price_group_assignment_receipt',
   'record_guest_attribution',
   'record_portal_enrollment_outcome',
   'record_privacy_measure_execution',
   'record_profile_reconciliation_owner_outcome',
+  'record_saved_address_source_receipt',
   'recover_buyer_approval_revalidation',
   'recover_market_retirement_reservation',
   'redeem_invitation_claim_secret',
@@ -151,8 +184,8 @@ const grantedRoutines = [
   'remove_price_group_assignment',
   'remove_saved_address',
   'reroute_purchase_approval_request',
-  'reserve_payment_term_retirement',
   'reserve_market_retirement',
+  'reserve_payment_term_retirement',
   'resolve_legacy_payment_term_grant_intent_v1',
   'resolve_price_group_assignments',
   'resolve_profile_reconciliation',
@@ -299,8 +332,14 @@ it.live('governs business tables through forced RLS and limits global ingress re
         'objects',
       );
       const callable = routines.filter(({ returnsTrigger }) => !returnsTrigger);
-      expect(callable.filter(({ definer }) => !definer)).toEqual([]);
-      expect(callable.filter(({ searchPath }) => searchPath !== securityDefinerSearchPath)).toEqual([]);
+      const definerRoutines = callable.filter(({ definer }) => definer);
+      expect(definerRoutines.filter(({ searchPath }) => searchPath !== securityDefinerSearchPath)).toEqual([]);
+      const invokerRoutines = callable.filter(({ definer }) => !definer);
+      expect(invokerRoutines.filter(({ executable }) => executable)).toEqual([]);
+      expect(names(invokerRoutines)).toEqual(EffectArray.sort(Object.keys(privateInvokerSearchPaths), Order.String));
+      expect(Object.fromEntries(invokerRoutines.map(({ name, searchPath }) => [name, searchPath]))).toEqual(
+        privateInvokerSearchPaths,
+      );
       expect(routines.filter(({ executable, returnsTrigger }) => returnsTrigger && executable)).toEqual([]);
       expect(names(routines.filter(({ executable }) => executable))).toEqual(
         EffectArray.sort([...grantedRoutines], Order.String),

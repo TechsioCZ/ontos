@@ -36,6 +36,7 @@ import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testin
 import { PartyCorrectionResponseSchema } from '../../shared/apis/party-correction.ts';
 import { PartyCorrectionGovernance } from '../../shared/domain/correction-contracts.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
+import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
@@ -869,6 +870,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               transport: yield* freshTransport,
             }),
           );
+          assert.isOk(Schema.is(PartySchema)(named));
           expect(Option.getOrNull(named.firstName)).toBe('Ada');
           expect(Option.getOrNull(named.lastName)).toBe('Byron');
           expect(Option.getOrNull(named.businessName)).toBe('Analytical Engines');
@@ -918,6 +920,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             }),
           );
           expect(equalUpdated.revision).toBe(surnameUpdated.revision + 1);
+          assert.isOk(Schema.is(PartySchema)(equalUpdated));
           expect(Option.getOrNull(equalUpdated.lastName)).toBe('Lovelace');
           const equalDetail = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal, true));
           const oldSurname = afterNames.currentFactAssertions.find((fact) => fact.factKind === 'LAST_NAME');
@@ -1085,6 +1088,40 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(nameOf(afterTypeCorrection, 'lastName')).toBe('King');
           expect(nameOf(afterTypeCorrection, 'businessName')).toBe('Corrected Engines');
           expect(displayNameOf(afterTypeCorrection)).toBe('Augusta King');
+          const manual = yield* run(
+            create({
+              ...candidate('27074358'),
+              evidenceRefs: [],
+              firstName: 'Internal fixture',
+              officialIdentifiers: [],
+              partyType: 'PERSON',
+              provenance: { method: 'DECLARATION', source: 'internal-contract-fixture' },
+              subjectEvidence: [
+                {
+                  kind: 'MANUAL_DECLARATION',
+                  observedSubject: 'PERSON',
+                  statement: 'Entered the name declared by this person',
+                },
+              ],
+            }),
+          );
+          assert.isOk(manual.outcome === 'CREATED');
+          const [manualDecision] = yield* admin
+            .select()
+            .from(partyMatchDecisions)
+            .where(eq(partyMatchDecisions.matchDecisionId, manual.decisionRef.resourceId));
+          expect(manualDecision?.evidenceEvaluation).toMatchObject({
+            reasonCode: 'declared_concrete_subject',
+            subjectEligible: true,
+            typeSupported: true,
+          });
+          expect(manualDecision?.evidenceEvaluation?.evidence).toEqual([
+            {
+              kind: 'MANUAL_DECLARATION',
+              observedSubject: 'PERSON',
+              statement: 'Entered the name declared by this person',
+            },
+          ]);
         }),
       ),
   );

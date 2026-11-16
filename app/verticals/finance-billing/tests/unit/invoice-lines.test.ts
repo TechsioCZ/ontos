@@ -89,11 +89,37 @@ describe('Invoice line totals', () => {
     expect(computeInvoiceTotals(outOfRangeLines)).toBeUndefined();
   });
 
-  it('rejects unsupported VAT rates, empty line lists and fractional quantities at the public contract', () => {
+  it('rejects impossible VAT, empty line lists and fractional quantities at the public contract', () => {
     const base = { _tag: 'CreateInvoiceFromOpportunity', lines, opportunityId, partyId };
     expect(Schema.is(FinanceCommandSchema)(base)).toBe(true);
     expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [] })).toBe(false);
-    expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], vatRate: 15 }] })).toBe(false);
+    // An older whole-percent rate stays storable; a rate outside 0–100 % or a fraction never is.
+    expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], vatRate: 15 }] })).toBe(true);
+    expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], vatRate: 101 }] })).toBe(false);
+    expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], vatRate: 12.5 }] })).toBe(false);
+    // A treatment is 0 % without a classification; a Tax revision always names its classification.
+    expect(
+      Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], vatRate: 21, vatTreatment: 'EXEMPT' }] }),
+    ).toBe(false);
+    expect(
+      Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], vatRate: 0, vatTreatment: 'EXEMPT' }] }),
+    ).toBe(true);
+    expect(
+      Schema.is(FinanceCommandSchema)({
+        ...base,
+        lines: [
+          {
+            ...lines[1],
+            taxRuleRevisionRef: {
+              moduleId: 'commerce.tax',
+              resourceId: 'revision-1',
+              resourceType: 'commerce.tax.tax-rule-revision',
+              tenantId: '00000000-0000-4000-8000-0000000000aa',
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
     expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], quantity: 1.5 }] })).toBe(false);
     expect(Schema.is(FinanceCommandSchema)({ ...base, lines: [{ ...lines[1], unitPriceMinor: -1 }] })).toBe(false);
   });
@@ -108,7 +134,7 @@ describe('Invoice line totals', () => {
 describe('Invoice line snapshots', () => {
   it.effect('stores computed totals at create, recomputes only on draft update, and never after confirm', () =>
     Effect.gen(function* snapshotImmutability() {
-      const create: FinanceCommand = {
+      const create = {
         _tag: 'CreateInvoiceDraft',
         counterpartyRef,
         currency: 'CZK',
@@ -119,7 +145,7 @@ describe('Invoice line snapshots', () => {
         lines,
         partyId,
         totalMinor: 1,
-      };
+      } satisfies FinanceCommand;
       const draft = yield* run({ ...empty, invoices: [legacyInvoice] }, create, 'invoice-manual');
       if (draft.invoice === undefined) {
         expect.unreachable('The draft transition must return its invoice');

@@ -128,10 +128,11 @@ it.live('lane15 preserves the fence across cancellation, seal failure, retry and
           .from(applicationCompositionDurableWork)
           .where(eq(applicationCompositionDurableWork.workId, deniedWorkId)),
       ).toEqual([]);
-      yield* Fiber.interrupt(blocked).pipe(Effect.timeout('3 seconds'));
-      // Cancellation cannot count an unresolved obligation as settled or reopen admission.
+      yield* Fiber.interrupt(blocked).pipe(Effect.timeout('20 seconds'));
+      // Cancellation never counts an unresolved obligation as settled. It does give the release that keeps serving its
+      // durable admission back: an interrupted publication returns its authority to active with admission open.
       expect(yield* Ref.get(migrationCalls)).toBe(0);
-      expect((yield* authority)[0]).toMatchObject({ durableWorkAdmission: 'closed', phase: 'active' });
+      expect((yield* authority)[0]).toMatchObject({ durableWorkAdmission: 'open', phase: 'active' });
       expect(
         yield* database.executor
           .select()

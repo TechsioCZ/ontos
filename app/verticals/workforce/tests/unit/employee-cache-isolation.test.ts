@@ -5,11 +5,11 @@ import type ReactRuntime from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { RecordsForbiddenProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { executeRecords } from '../../src/api/records-consumer.ts';
+import { executeRecords } from '../../src/api/records-client.ts';
 import { employeesData } from '../../src/routes/[lang]/prodej/zamestnanci/employees-data.ts';
 import { usePageData } from '../../src/runtime/use-page-data.ts';
 
-rstest.mock('../../src/api/records-consumer.ts');
+rstest.mock('../../src/api/records-client.ts');
 // Renders the real `usePageData` snapshot without React's client subscription: the probe shows what the page's
 // `loadStateOf` turns into rows (`ready`) or into the forbidden empty state (`failed`).
 rstest.mock('react', () => ({

@@ -20,6 +20,9 @@ export const merchandiseManifest: OntosModuleManifestInput = defineOntosModuleMa
   ...merchandiseRuntimeManifest,
   activation: {
     defaultState: 'inactive',
+    // Tax is the one source of VAT rates and seller VAT regime for every line this module sells: installing this
+    // module installs Tax with it in the same operation.
+    installsWith: ['commerce.tax'],
     preservesHistoryWhenInactive: true,
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],

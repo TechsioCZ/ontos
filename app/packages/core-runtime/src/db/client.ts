@@ -47,8 +47,11 @@ export const guardedPgClientLayer = (
         session.maxConnections,
       );
       const reactivity = yield* Reactivity.make;
+      // A private session opens its connections on demand and keeps none warm.
       const client = yield* (
-        session.pooling === 'pooled' ? openDatabaseClient(configuration) : PgClient.make(configuration)
+        session.pooling === 'pooled'
+          ? openDatabaseClient(configuration)
+          : PgClient.make({ ...configuration, minConnections: 0 })
       ).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
       return guardPoolAcquisition(client);
     }),

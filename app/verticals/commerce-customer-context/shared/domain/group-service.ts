@@ -7,6 +7,7 @@ import type {
   CustomerGroupDefinitionRevision,
   CustomerGroupIsoTimestamp,
   CustomerGroupMeaningKey,
+  CustomerGroupDefinitionSource,
   CustomerGroupProfileLifecycle,
 } from './group-contract.ts';
 import {
@@ -463,6 +464,7 @@ interface CreateCustomerGroupCommand extends CustomerGroupCommandContext {
   readonly name: string;
   readonly purpose: string;
   readonly reason: string;
+  readonly source?: CustomerGroupDefinitionSource | undefined;
 }
 
 const CreateCustomerGroupPersistenceOutcomeSchema = Schema.Union([
@@ -470,14 +472,25 @@ const CreateCustomerGroupPersistenceOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('reused', { group: CommerceCustomerGroupSchema }),
   Schema.TaggedStruct('business_code_conflict', {}),
   Schema.TaggedStruct('semantic_duplicate', {}),
+  Schema.TaggedStruct('definition_source_rejected', {
+    code: Schema.Literals([
+      'customer_group_source_authority_denied',
+      'customer_group_source_conflict',
+      'customer_group_source_stale',
+    ]),
+  }),
 ]);
 export type CreateCustomerGroupPersistenceOutcome = typeof CreateCustomerGroupPersistenceOutcomeSchema.Type;
 
 interface UpdateCustomerGroupCommand extends CustomerGroupCommandContext, Omit<ReviseCustomerGroupInput, 'recordedAt'> {
   readonly groupRef: CustomerGroupRef;
+  readonly source?: CustomerGroupDefinitionSource | undefined;
 }
 
-export type UpdateCustomerGroupPersistenceOutcome = NotFound | ReviseCustomerGroupOutcome;
+export type UpdateCustomerGroupPersistenceOutcome =
+  | NotFound
+  | ReviseCustomerGroupOutcome
+  | Extract<CreateCustomerGroupPersistenceOutcome, { readonly _tag: 'definition_source_rejected' }>;
 
 interface ArchiveCustomerGroupCommand
   extends CustomerGroupCommandContext, Omit<ArchiveCustomerGroupInput, 'recordedAt'> {
@@ -495,10 +508,13 @@ export interface AssignCustomerGroupCommand extends CustomerGroupCommandContext 
   readonly reason: string;
 }
 
+const SourceAuthorityDeniedSchema = Schema.TaggedStruct('source_authority_denied', {});
+
 const AssignCustomerGroupPersistenceOutcomeSchema = Schema.Union([
   AssignCustomerGroupMembershipOutcomeSchema,
   NotFoundSchema,
   Schema.TaggedStruct('profile_not_found', {}),
+  SourceAuthorityDeniedSchema,
 ]);
 export type AssignCustomerGroupPersistenceOutcome = typeof AssignCustomerGroupPersistenceOutcomeSchema.Type;
 
@@ -510,7 +526,10 @@ export interface RemoveCustomerGroupCommand extends CustomerGroupCommandContext 
   readonly reason: string;
 }
 
-export type RemoveCustomerGroupPersistenceOutcome = RemoveCustomerGroupMembershipOutcome | NotFound;
+export type RemoveCustomerGroupPersistenceOutcome =
+  | RemoveCustomerGroupMembershipOutcome
+  | NotFound
+  | typeof SourceAuthorityDeniedSchema.Type;
 
 interface CustomerGroupDetailQuery {
   readonly groupRef: CustomerGroupRef;

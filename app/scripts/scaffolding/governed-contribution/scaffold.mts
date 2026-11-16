@@ -1,7 +1,5 @@
-import path from 'node:path';
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
-import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -80,18 +78,15 @@ import {
 import { renderLegacyReadPermissionResolver, renderLegacyReadPermissionTarget } from '../read-permission-compat.mts';
 import {
   governedApiBinding,
-  hasRuntimeNamedSourceImport,
-  hasExistingOwnerReadHandlerMount,
+  governedRedemptionRuntimeTarget,
   hasValidGovernedHttpCompositionRoot,
 } from '../../generated-governed-http-boundary.mts';
-import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import { OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT } from '../microvertical-action-boundary/owner-approval-publication.mts';
+import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiContract,
-  hasGeneratedModuleApiReadContract,
-  generatedModuleApiEntrypointReference,
   hasNamedImportBinding,
   hasGeneratedProviderApiContract,
   hasGeneratedOperationPrincipalContract,
@@ -192,9 +187,14 @@ const governedRedemptionImport =
 const governedRedemptionDatabaseImport =
   "import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive, GatewayAssertionRedemptionDatabaseLive } from './auth/gateway-assertion-redemption.ts';";
 const normalizeSupportImport = (candidate: string) => candidate.replaceAll(/\s+/gu, ' ').replaceAll(/,\s*\}/gu, ' }');
+// Demo-only exception 1 (owner-action approvals): an owner that publishes the approval API keeps main's principal
+// verifier import and adds only the approval authenticator binding to it. It stands in for the principal import.
+const ownerApprovalPrincipalImport = OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT;
+const isGovernedPrincipalImport = (entry: string) =>
+  entry === governedPrincipalImport || entry === ownerApprovalPrincipalImport;
 const supportedGovernedImports = new Set([
   governedPrincipalImport,
-  OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT,
+  ownerApprovalPrincipalImport,
   governedRedemptionImport,
   governedRedemptionDatabaseImport,
 ]);
@@ -924,12 +924,39 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           ),
         ),
     ]);
+    const redemptionSources = new Map<string, string>();
+    const redemptionFacade = yield* tryScaffold('failed to resolve owner Auth facade', () =>
+      resolveContainedPath(vertical.directory, 'api', 'auth', 'gateway-assertion-redemption.ts'),
+    );
     if (
-      !hasValidGovernedHttpCompositionRoot(
-        sharedApi,
-        handlerRoot,
-        vertical.runtimeDeclaration === undefined ? undefined : `${toCamelCase(vertical.slug)}BackendRegistration`,
-      )
+      yield* fileSystem
+        .exists(redemptionFacade)
+        .pipe(Effect.mapError((cause) => scaffoldFailure('failed to inspect owner Auth facade', cause)))
+    ) {
+      const facade = yield* fileSystem
+        .readFileString(redemptionFacade)
+        .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read owner Auth facade', cause)));
+      redemptionSources.set(redemptionFacade, facade);
+      const target = governedRedemptionRuntimeTarget(facade, vertical.directory);
+      if (
+        target !== undefined &&
+        (yield* fileSystem
+          .exists(target)
+          .pipe(Effect.mapError((cause) => scaffoldFailure('failed to inspect owner Auth runtime', cause))))
+      ) {
+        redemptionSources.set(
+          target,
+          yield* fileSystem
+            .readFileString(target)
+            .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read owner Auth runtime', cause))),
+        );
+      }
+    }
+    if (
+      !hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot, {
+        ownerPath: vertical.directory,
+        sources: redemptionSources,
+      })
     ) {
       return raiseScaffoldFailure('governed HTTP composition slots are not bound to the exported runtime root');
     }
@@ -973,9 +1000,7 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         ).map(normalizeSupportImport);
         if (
           supportEntries.some((entry) => !supportedGovernedImports.has(entry)) ||
-          supportEntries.filter(
-            (entry) => entry === governedPrincipalImport || entry === OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT,
-          ).length > 1 ||
+          supportEntries.filter(isGovernedPrincipalImport).length > 1 ||
           supportEntries.filter(
             (entry) => entry === governedRedemptionImport || entry === governedRedemptionDatabaseImport,
           ).length > 1
@@ -987,16 +1012,8 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         for (const supportImport of [governedPrincipalImport, governedRedemptionImport]) {
           if (
             supportEntries.includes(supportImport) ||
-            (supportImport === governedPrincipalImport &&
-              supportEntries.includes(OWNER_APPROVAL_AUTHENTICATION_SUPPORT_IMPORT)) ||
-            (supportImport === governedRedemptionImport &&
-              (supportEntries.includes(governedRedemptionDatabaseImport) ||
-                hasRuntimeNamedSourceImport(
-                  next,
-                  'GovernedGatewayAssertionRedemptionLive',
-                  'GatewayAssertionRedemptionLive',
-                  './auth/gateway-assertion-redemption.ts',
-                )))
+            (supportImport === governedPrincipalImport && supportEntries.includes(ownerApprovalPrincipalImport)) ||
+            (supportImport === governedRedemptionImport && supportEntries.includes(governedRedemptionDatabaseImport))
           ) {
             continue;
           }
@@ -1764,182 +1781,6 @@ const patchSharedDeclarationOwners = Effect.fn('GovernedContributionScaffold.sha
   },
 );
 
-const planGovernedOwnerBindings = Effect.fn('GovernedContributionScaffold.ownerBindings')(
-  function* planGovernedOwnerBindings(
-    vertical: OntosVerticalMetadata,
-    kind: GovernedContributionKind,
-    name: string,
-    resource: string | undefined,
-    config: GovernedContributionScaffoldConfig,
-  ) {
-    const isApi = kind === MODULE_API_KIND;
-    if (vertical.runtimeDeclaration === undefined) {
-      let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
-      let registrationSource = vertical.registrationContent;
-      if (isApi) {
-        manifest = yield* tryScaffold('failed to initialize operation contract bindings', () =>
-          patchOperationReadImport(
-            ensureOperationBindingSlot(
-              manifest,
-              'operationContracts',
-              MODULE_MANIFEST_OPERATION_SLOT_START,
-              MODULE_MANIFEST_OPERATION_SLOT_END,
-              MODULE_MANIFEST_REPORT_SLOT_START,
-              'reports',
-            ),
-            MODULE_MANIFEST_IMPORT_SLOT_START,
-            MODULE_MANIFEST_IMPORT_SLOT_END,
-            name,
-          ),
-        );
-        registrationSource = yield* tryScaffold('failed to initialize runtime Read bindings', () =>
-          patchOperationReadImport(
-            ensureOperationBindingSlot(
-              registrationSource,
-              'reads',
-              MODULE_REGISTRATION_READ_SLOT_START,
-              MODULE_REGISTRATION_READ_SLOT_END,
-              MODULE_REGISTRATION_WORKER_SLOT_START,
-              'outboxWorkers',
-            ),
-            MODULE_REGISTRATION_IMPORT_SLOT_START,
-            MODULE_REGISTRATION_IMPORT_SLOT_END,
-            name,
-          ),
-        );
-      }
-      const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
-        slotLine(kind, vertical, name, resource, config),
-      );
-      const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
-        manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
-        return patchSlots(registrationSource, slots.registration, registrationOwnerSlots);
-      });
-      const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
-        updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
-      );
-      const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
-        updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
-      );
-      return [manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined);
-    }
-    const slots = yield* tryScaffold('failed to plan shared contribution slots', () =>
-      slotLine(kind, vertical, name, resource, config),
-    );
-    return yield* patchSharedDeclarationOwners(vertical, kind, name, slots);
-  },
-);
-
-/**
- * Publishes an already mounted original Read without rerendering its native contract or client.
- * Full phase, factory and transport validation remains mandatory in the combined boundary checker.
- */
-const existingReadOwnerSources = Effect.fn('GovernedContributionScaffold.existingReadOwnerSources')(
-  function* existingReadOwnerSources(workspaceRoot: string, ownerPath: string, rootFile: string, root: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const sources = new Map([[rootFile, root]]);
-    const pending = [rootFile];
-    while (pending.length > 0) {
-      const file = pending.pop() ?? rootFile;
-      const source = sources.get(file) ?? '';
-      for (const match of source.matchAll(/\bfrom\s*['"](?<module>\.\.?\/[^'"]+\.ts)['"]/gu)) {
-        const module = match.groups?.['module'] ?? '';
-        const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), module));
-        if (target.startsWith(`${ownerPath}/`) && !sources.has(target)) {
-          const content = yield* fileSystem
-            .readFileString(resolveContainedPath(workspaceRoot, target))
-            .pipe(Effect.mapError((cause) => scaffoldFailure(`failed to read original owner source ${target}`, cause)));
-          sources.set(target, content);
-          pending.push(target);
-        }
-      }
-    }
-    return sources;
-  },
-);
-
-export const planExistingReadPublication = Effect.fn('GovernedContributionScaffold.existingReadPublication')(
-  function* planExistingReadPublication(workspaceRoot: string, config: GovernedContributionScaffoldConfig) {
-    const name = yield* tryScaffold('existing Read name is invalid', () =>
-      requireCanonicalSlug(config.name, MODULE_API_KIND),
-    );
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-    const fileSystem = yield* FileSystem.FileSystem;
-    const artifactPath = yield* tryScaffold('existing Read path is invalid', () =>
-      resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
-    );
-    const readSource = (file: string) =>
-      fileSystem
-        .readFileString(file)
-        .pipe(
-          Effect.mapError((cause) => scaffoldFailure(`failed to read existing Read publication source ${file}`, cause)),
-        );
-    const { handler, read, server, shared } = yield* Effect.all({
-      handler: readSource(resolveContainedPath(vertical.directory, 'api', 'index.ts')),
-      read: readSource(artifactPath),
-      server: readSource(resolveContainedPath(vertical.directory, 'api', `${name}-read-server.ts`)),
-      shared: readSource(resolveContainedPath(vertical.directory, 'shared', 'api.ts')),
-    });
-    const readName = `${toCamelCase(name)}Read`;
-    const layer = `${toCamelCase(name)}ReadApiLive`;
-    const entrypoint = generatedModuleApiEntrypointReference(read, readName);
-    const imports = [
-      ['defineRead', '@app/core-runtime'],
-      ['defineTenantModuleEntrypoint', '@app/core-runtime'],
-    ] as const;
-    const ownerPath = path.relative(workspaceRoot, vertical.directory).split(path.sep).join('/');
-    const rootFile = `${ownerPath}/api/index.ts`;
-    const sources = yield* existingReadOwnerSources(workspaceRoot, ownerPath, rootFile, handler);
-    const context = { ownerPath, rootFile, sources };
-    const mounted = yield* tryScaffold(
-      'existing Read handler mount is invalid',
-      () =>
-        readGeneratedSlotEntries(
-          handler,
-          GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
-          GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
-        ).filter((entry) => hasExistingOwnerReadHandlerMount(entry, layer, context)).length === 1,
-    );
-    if (
-      entrypoint === undefined ||
-      !acceptsGeneratedRead(MODULE_API_KIND, vertical, name, config)(read) ||
-      !hasGeneratedModuleApiReadContract(
-        read,
-        vertical.moduleId,
-        name,
-        { kind: config.authorization },
-        entrypoint.name,
-      ) ||
-      !imports.every(([binding, module]) => hasRuntimeNamedSourceImport(read, binding, binding, module)) ||
-      !hasValidGovernedHttpCompositionRoot(
-        shared,
-        handler,
-        vertical.runtimeDeclaration === undefined ? undefined : `${toCamelCase(vertical.slug)}BackendRegistration`,
-      ) ||
-      !hasRuntimeNamedSourceImport(handler, layer, layer, `./${name}-read-server.ts`) ||
-      !hasRuntimeNamedSourceImport(server, readName, readName, `../src/api/${name}.read.ts`) ||
-      !hasRuntimeNamedSourceImport(
-        server,
-        'makeGovernedReadHttpHandler',
-        'makeGovernedReadHttpHandler',
-        '@app/core-runtime/http/governed-read',
-      ) ||
-      !mounted
-    ) {
-      return yield* scaffoldFailure(
-        `existing Read ${vertical.moduleId}.api.${name} is not an original mounted Core registration`,
-      );
-    }
-    const mutations = yield* planGovernedOwnerBindings(vertical, MODULE_API_KIND, name, undefined, config);
-    yield* tryScaffold('existing Read publication mutation paths are invalid', () =>
-      ensureUniqueMutationPaths(mutations),
-    );
-    return { mutations, result: { artifactPath } };
-  },
-);
-
-export const existingReadPublicationGenerator = createCodesmithGenerator(planExistingReadPublication);
-
 export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
   function* planGovernedContributionScaffold(
     workspaceRoot: string,
@@ -2007,10 +1848,62 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
     }
     const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name, publicContractPackage);
     const { clientPath, serverPath } = transport;
-    mutations.push(
-      ...transport.mutations,
-      ...(yield* planGovernedOwnerBindings(vertical, kind, name, resource, config)),
-    );
+    mutations.push(...transport.mutations);
+    if (vertical.runtimeDeclaration === undefined) {
+      let manifest = yield* patchGovernedManifestImport(vertical.manifestContent, kind, name);
+      let registrationSource = vertical.registrationContent;
+      if (isApi) {
+        manifest = yield* tryScaffold('failed to initialize operation contract bindings', () =>
+          patchOperationReadImport(
+            ensureOperationBindingSlot(
+              manifest,
+              'operationContracts',
+              MODULE_MANIFEST_OPERATION_SLOT_START,
+              MODULE_MANIFEST_OPERATION_SLOT_END,
+              MODULE_MANIFEST_REPORT_SLOT_START,
+              'reports',
+            ),
+            MODULE_MANIFEST_IMPORT_SLOT_START,
+            MODULE_MANIFEST_IMPORT_SLOT_END,
+            name,
+          ),
+        );
+        registrationSource = yield* tryScaffold('failed to initialize runtime Read bindings', () =>
+          patchOperationReadImport(
+            ensureOperationBindingSlot(
+              registrationSource,
+              'reads',
+              MODULE_REGISTRATION_READ_SLOT_START,
+              MODULE_REGISTRATION_READ_SLOT_END,
+              MODULE_REGISTRATION_WORKER_SLOT_START,
+              'outboxWorkers',
+            ),
+            MODULE_REGISTRATION_IMPORT_SLOT_START,
+            MODULE_REGISTRATION_IMPORT_SLOT_END,
+            name,
+          ),
+        );
+      }
+      const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
+        slotLine(kind, vertical, name, resource, config),
+      );
+      const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
+        manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
+        return patchSlots(registrationSource, slots.registration, registrationOwnerSlots);
+      });
+      const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
+        updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
+      );
+      const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
+        updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
+      );
+      mutations.push(...[manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined));
+    } else {
+      const slots = yield* tryScaffold('failed to plan shared contribution slots', () =>
+        slotLine(kind, vertical, name, resource, config),
+      );
+      mutations.push(...(yield* patchSharedDeclarationOwners(vertical, kind, name, slots)));
+    }
     if (isComponent) {
       mutations.push(yield* patchFederationExposure(vertical, name));
     }

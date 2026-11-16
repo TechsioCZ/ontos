@@ -16,10 +16,8 @@
  *   binds can answer the 202 its contract declares;
  * - the generated client offers the explicit, optional `intent: 'propose'`, so a caller states the
  *   intent instead of having its refusal turned into a proposal.
- * - an existing closed 403 schema includes Core's `action_approval_required` refusal without changing
- *   any owner error code, status, or problem projection.
  *
- * Every other byte stays where the owner put it: owner error schema literals, problem mappers, recovery
+ * Every other byte stays where the owner put it: error schema literals, problem mappers, recovery
  * text, custom server header decoding, custom client composition, and the argument position of the
  * owner's runtime services. Barrels, package files and problem mappers are never part of this plan.
  *
@@ -27,8 +25,7 @@
  * unsupported or ambiguous source shape fails closed before a mutation exists.
  */
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
-import { Effect, FileSystem, Schema, SchemaAST } from 'effect';
-import { hasRuntimeNamedSourceImport } from '../../generated-governed-http-boundary.mts';
+import { Effect, FileSystem, Schema } from 'effect';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
@@ -667,176 +664,6 @@ const resultSchemaNameOf = (content: string, action: string, appId: string): str
   return result?.text ?? raiseScaffoldFailure(`Action HTTP endpoint for ${action} has no named result`);
 };
 
-const exportedInitializer = (cursor: TokenCursor, name: string): number | undefined => {
-  const declarations = identifierIndexes(cursor, name).filter(
-    (index) =>
-      cursor.tokens.at(index - 1)?.kind === SyntaxKind.ConstKeyword &&
-      cursor.tokens.at(index - 2)?.kind === SyntaxKind.ExportKeyword &&
-      cursor.tokens.at(index + 1)?.kind === SyntaxKind.FirstAssignment,
-  );
-  if (declarations.length > 1) {
-    return raiseScaffoldFailure(`Action HTTP contract repeats exported ${name}`);
-  }
-  const declaration = declarations.at(0);
-  return declaration === undefined ? undefined : declaration + 2;
-};
-
-const requireSchemaNamespace = (content: string): void => {
-  if (!hasRuntimeNamedSourceImport(content, 'Schema', 'Schema', '@modern-js/bff-effect/effect-client')) {
-    return raiseScaffoldFailure('Action HTTP contract needs its genuine runtime Schema import');
-  }
-};
-
-const forbiddenSchemaOptions = (cursor: TokenCursor, initializer: number, type: string): number => {
-  const args = callArguments(cursor, initializer + 1);
-  const tag = args.at(0);
-  const status = args.at(1);
-  if (
-    args.length !== 3 ||
-    tag?.first !== tag?.last ||
-    stringLiteralValue(cursor.tokens.at(tag?.first ?? -1)) !== `${type}ActionForbiddenProblem` ||
-    status?.first !== status?.last ||
-    cursor.tokens.at(status?.first ?? -1)?.text !== '403'
-  ) {
-    return raiseScaffoldFailure('Action HTTP forbidden schema must retain its exact tag and 403 status');
-  }
-  const options = objectArgumentAt(cursor, args, 'makeProblemDetailsSchema', 'Action HTTP forbidden schema', 2);
-  return options;
-};
-
-const forbiddenCodeLiterals = (cursor: TokenCursor, options: number): readonly SourceToken[] => {
-  const code = requireMember(objectMembers(cursor, options), 'code', 'Action HTTP forbidden schema');
-  const tokens = memberValueTokens(cursor, code);
-  if (
-    !sameTokens(tokens.slice(0, 5), ['Schema', '.', 'Literals', '(', '[']) ||
-    !sameTokens(tokens.slice(-2), [']', ')'])
-  ) {
-    return raiseScaffoldFailure('Action HTTP forbidden codes must be one closed literal list');
-  }
-  const codeTokens = tokens.slice(5, -2);
-  if (
-    codeTokens.some(
-      (token, index) => token.kind !== (index % 2 === 0 ? SyntaxKind.StringLiteral : SyntaxKind.CommaToken),
-    )
-  ) {
-    return raiseScaffoldFailure('Action HTTP forbidden codes must use separated string literals');
-  }
-  const literals = codeTokens.filter((token) => token.kind !== SyntaxKind.CommaToken);
-  const values = literals.map(stringLiteralValue);
-  if (
-    values.some((value) => value === undefined) ||
-    new Set(values).size !== values.length ||
-    !values.includes('action_permission_denied')
-  ) {
-    return raiseScaffoldFailure('Action HTTP forbidden codes must preserve the exact Core permission refusal');
-  }
-  return literals;
-};
-
-/** Keep every owner problem projection, adding only Core's newly supported exact refusal code. */
-export const upgradeActionHttpForbiddenContract = (
-  input: Pick<ActionHttpProposalContractInput, 'action' | 'content' | 'moduleId'>,
-): string => {
-  const { action, content, moduleId } = input;
-  requireActionHttpOwnership(content, moduleId, action, 'Action HTTP contract');
-  const cursor = cursorOf(content);
-  const type = toPascalCase(action);
-  const initializer = exportedInitializer(cursor, `${type}ActionForbiddenProblemSchema`);
-  if (initializer === undefined) {
-    return content;
-  }
-  requireSchemaNamespace(content);
-  if (
-    !hasRuntimeNamedSourceImport(
-      content,
-      'makeProblemDetailsSchema',
-      'makeProblemDetailsSchema',
-      PROBLEM_DETAILS_MODULE,
-    ) ||
-    !isIdentifier(cursor.tokens.at(initializer), 'makeProblemDetailsSchema') ||
-    cursor.tokens.at(initializer + 1)?.kind !== SyntaxKind.OpenParenToken
-  ) {
-    return raiseScaffoldFailure('Action HTTP forbidden schema must use its genuine problem factory');
-  }
-  const options = forbiddenSchemaOptions(cursor, initializer, type);
-  const literals = forbiddenCodeLiterals(cursor, options);
-  const values = literals.map(stringLiteralValue);
-  if (values.includes('action_approval_required')) {
-    return content;
-  }
-  const first = literals.at(0);
-  if (first === undefined) {
-    return raiseScaffoldFailure('Action HTTP forbidden codes cannot be empty');
-  }
-  return applySourceEdits(content, [
-    {
-      end: first.start,
-      start: first.start,
-      text: "'action_approval_required', ",
-    },
-  ]);
-};
-
-/**
- * An owner may add optional post-commit observations to its native result. Prove the local extension
- * preserves every native field and imports the real public result before validating that base contract.
- */
-export const publicProposalResultSchemaName = (
-  content: string,
-  action: string,
-  appId: string,
-  resultSchema: Schema.Top,
-): string => {
-  const result = resultSchemaNameOf(content, action, appId);
-  const cursor = cursorOf(content);
-  const initializer = exportedInitializer(cursor, result);
-  if (initializer === undefined) {
-    return result;
-  }
-  requireSchemaNamespace(content);
-  if (!sameTokens(cursor.tokens.slice(initializer, initializer + 4), ['Schema', '.', 'Struct', '('])) {
-    return raiseScaffoldFailure('Local Action HTTP response must extend the native result Struct');
-  }
-  const args = callArguments(cursor, initializer + 3);
-  const object = objectArgumentAt(cursor, args, 'Schema.Struct', 'Local Action HTTP response', 0);
-  if (args.length !== 1 || !SchemaAST.isObjects(resultSchema.ast)) {
-    return raiseScaffoldFailure('Local Action HTTP response needs one native object result');
-  }
-  const nativeResult = `${toPascalCase(action)}ResultSchema`;
-  if (!hasRuntimeNamedSourceImport(content, nativeResult, nativeResult, `../actions/${action}.ts`)) {
-    return raiseScaffoldFailure('Local Action HTTP response must import its exact owner result');
-  }
-  const members = objectMembers(cursor, object);
-  const spread = members.at(0);
-  if (
-    spread === undefined ||
-    !sameTokens(cursor.tokens.slice(spread.first, spread.separator), ['...', nativeResult, '.', 'fields'])
-  ) {
-    return raiseScaffoldFailure('Local Action HTTP response must retain all native result fields first');
-  }
-  const nativeFields = new Set(resultSchema.ast.propertySignatures.map((property) => property.name));
-  const additional = members.slice(1);
-  const names = additional.map((member) => member.name);
-  if (new Set(names).size !== names.length) {
-    return raiseScaffoldFailure('Local Action HTTP response repeats an observation field');
-  }
-  for (const member of additional) {
-    const tokens = memberValueTokens(cursor, member);
-    if (
-      member.name === null ||
-      nativeFields.has(member.name) ||
-      !sameTokens(tokens.slice(0, 4), ['Schema', '.', 'optionalKey', '(']) ||
-      member.valueFirst === null ||
-      cursor.matches.get(member.valueFirst + 3) !== member.valueLast
-    ) {
-      return raiseScaffoldFailure(
-        'Local Action HTTP observations must be optional and cannot replace native result fields',
-      );
-    }
-  }
-  return nativeResult;
-};
-
 const importAnchor = (statements: readonly ModuleStatement[]): ModuleStatement => {
   const statement =
     statements.find((entry) => entry.kind === 'import' && entry.source === PROBLEM_DETAILS_MODULE) ??
@@ -888,7 +715,7 @@ export const upgradeActionHttpProposalContract = (input: ActionHttpProposalContr
   for (const [offset, lines] of insertions.entries()) {
     edits.push({ end: offset, start: offset, text: lines.join('') });
   }
-  return upgradeActionHttpForbiddenContract({ action, content: applySourceEdits(content, edits), moduleId });
+  return applySourceEdits(content, edits);
 };
 
 export interface ActionHttpProposalServerInput {
@@ -989,35 +816,19 @@ const proposalIntentAnchor = (
 ): number | undefined => {
   const label = `Action HTTP client for ${moduleId}/${action}`;
   const declared = findMember(members, 'intent');
-  if (declared !== undefined && !sameTokens(memberTokens(cursor, declared), PROPOSAL_INTENT_MEMBER_TOKENS)) {
-    return raiseScaffoldFailure(`${label} already declares an unsupported intent option`);
-  }
-  const anchor =
-    members.find((member) => member.name !== null && member.name.localeCompare('intent') > 0) ??
-    members.find((member) => cursor.tokens.at(member.nameIndex)?.kind === SyntaxKind.OpenBracketToken);
-  if (anchor === undefined) {
-    if (declared !== undefined) {
-      return undefined;
+  if (declared !== undefined) {
+    if (!sameTokens(memberTokens(cursor, declared), PROPOSAL_INTENT_MEMBER_TOKENS)) {
+      return raiseScaffoldFailure(`${label} already declares an unsupported intent option`);
     }
-    return raiseScaffoldFailure(`${label} has no anchor for the optional proposal intent`);
-  }
-  if (declared !== undefined && declared.first < anchor.first) {
     return undefined;
   }
-  return tokenAt(cursor, anchor.first).start;
-};
-
-/** Move only the exact documented member this generator owns, never an owner's differently documented option. */
-const removeGeneratedIntent = (content: string, cursor: TokenCursor, declared: SourceMember): SourceEdit => {
-  const token = tokenAt(cursor, declared.first);
-  const indentation = indentationAt(content, token.start);
-  const block = `${PROPOSAL_INTENT_MEMBERS.map((line) => indentation + line).join('\n')}\n`;
-  const end = tokenAt(cursor, declared.separator).end + 1;
-  const start = end - block.length;
-  if (content.slice(start, end) !== block) {
-    return raiseScaffoldFailure('Only the exact generated proposal-intent documentation may be moved');
+  const anchor =
+    members.find((member) => cursor.tokens.at(member.nameIndex)?.kind === SyntaxKind.OpenBracketToken) ??
+    members.find((member) => member.name !== null && member.name.localeCompare('intent') > 0);
+  if (anchor === undefined) {
+    return raiseScaffoldFailure(`${label} has no anchor for the optional proposal intent`);
   }
-  return { end, start, text: '' };
+  return tokenAt(cursor, anchor.first).start;
 };
 
 /**
@@ -1030,8 +841,7 @@ export const upgradeActionHttpProposalClient = (input: ActionHttpProposalClientI
   const cursor = cursorOf(content);
   const label = `Action HTTP client for ${moduleId}/${action}`;
   const optionsOpen = clientOptionsInterfaceOpen(cursor, moduleId, action);
-  const optionsMembers = interfaceMembers(cursor, optionsOpen);
-  const anchor = proposalIntentAnchor(cursor, optionsMembers, moduleId, action);
+  const anchor = proposalIntentAnchor(cursor, interfaceMembers(cursor, optionsOpen), moduleId, action);
   const clientMembers = objectMembers(
     cursor,
     objectArgumentAt(
@@ -1045,10 +855,6 @@ export const upgradeActionHttpProposalClient = (input: ActionHttpProposalClientI
   const declaredIntent = findMember(clientMembers, 'intent');
   const edits: SourceEdit[] = [];
   if (anchor !== undefined) {
-    const existing = findMember(optionsMembers, 'intent');
-    if (existing !== undefined) {
-      edits.push(removeGeneratedIntent(content, cursor, existing));
-    }
     edits.push(blockBeforeEdit(content, anchor, PROPOSAL_INTENT_MEMBERS));
   }
   if (declaredIntent === undefined) {
@@ -1209,7 +1015,7 @@ export const planActionHttpProposalUpgrade = Effect.fn('ActionHttpProposalScaffo
     // result schema; do not impose fresh-scaffold naming on artifacts we will leave untouched.
     if (proposalAccepted) {
       const resultSchemaName = yield* tryScaffold('Action HTTP result schema is unsupported', () =>
-        publicProposalResultSchemaName(contract, action, vertical.appId, inspected.descriptor.resultSchema),
+        resultSchemaNameOf(contract, action, vertical.appId),
       );
       yield* validatePublicActionSchemas(publicActionPath, type, resultSchemaName);
     }

@@ -1,14 +1,18 @@
 import { administrationProjectionLayer } from './oauth-connections-admin/administration-runtime.fixture.ts';
 import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect' with { rstest: 'importActual' };
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import { makeTestAgentLifecycleAuthority } from '@app/core-runtime/testing/access-gate';
 import {
   ActionRuntime,
   ActionAuthorizationPreflight,
+  AgentLifecycleAuthority,
   ActiveApplicationCompositionService,
   ContextAccess,
   manageAgentStatusAction,
   mutateAgentProposalsAction,
   ReadRuntime,
+  TenantModuleStateService,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
 import {
@@ -27,6 +31,7 @@ import {
   bindActionTestServices,
   makeActionTestHarness,
 } from '../../../../packages/core-runtime/src/testing/actions.ts';
+import { unusedModuleState } from '../support/unused-module-state.ts';
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeReadTestHarness } from '../../../../packages/core-runtime/src/testing/reads.ts';
 import {
@@ -56,7 +61,6 @@ import { proposalSubcommandKey } from '../../api/agent-platform/proposal-store.t
 import { manageAgentEntity } from '../../api/auth/agent-entities.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
-import { DemoAccountForbidden } from '../../api/auth/demo-accounts.ts' with { rstest: 'importActual' };
 import type { DemoAccountCaller } from '../../api/auth/demo-accounts.ts';
 import { DemoAccountUnavailable } from '../../api/auth/demo-account-unavailable.ts';
 import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
@@ -69,13 +73,13 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { nativeDemoAccountTestServices } from '../support/native-demo-account-services.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+import { AccessPeopleBff, unusedAccessPeopleBff } from '../support/access-people-bff-double.ts';
 
 interface CleanupState {
   administrator: boolean;
   connections: string[];
   events: string[];
   failStep: string | null;
-  grants: number;
   proposals: number;
 }
 const external = rs.hoisted(() => {
@@ -84,7 +88,6 @@ const external = rs.hoisted(() => {
     connections: ['connection-1', 'connection-2'],
     events: [],
     failStep: null,
-    grants: 2,
     proposals: 1,
   };
   return state;
@@ -99,21 +102,6 @@ const step = (name: string) =>
     }
     return Effect.void;
   });
-rs.mock('../../../../packages/core-runtime/src/install/demo-account-administration.ts', () => ({
-  get openDemoAccountGrants() {
-    return Effect.succeed({
-      replaceAgentGrants: () =>
-        step('grants').pipe(
-          Effect.map(() => {
-            const revoked = external.grants;
-            external.grants = 0;
-            return { granted: 0, revoked };
-          }),
-        ),
-      rolePolicyOf: () => Effect.succeed([]),
-    });
-  },
-}));
 rs.mock('../../../../packages/core-runtime/src/db/session-advisory-lock.ts', () => ({
   withPostgresSessionAdvisoryLock: <A, E, R>(
     _connection: Parameters<typeof withPostgresSessionAdvisoryLock>[0],
@@ -124,10 +112,12 @@ rs.mock('../../../../packages/core-runtime/src/db/session-advisory-lock.ts', () 
 rs.mock('../../api/auth/demo-accounts.ts', () => ({
   auditForbiddenAttempt: () =>
     step('denied-audit').pipe(Effect.mapError((cause) => new DemoAccountUnavailable({ cause }))),
-  requireAdministrator: () =>
-    Effect.suspend(() => {
+}));
+rs.mock('../../api/auth/administration-access.ts', () => ({
+  agentAdministrationDecision: () =>
+    Effect.sync(() => {
       external.events.push('administrator');
-      return external.administrator ? Effect.void : Effect.fail(new DemoAccountForbidden({ reason: 'Denied' }));
+      return { outcome: external.administrator ? 'ALLOWED' : 'DENIED', reasons: [] };
     }),
 }));
 beforeEach(() => {
@@ -135,7 +125,6 @@ beforeEach(() => {
   external.connections = ['connection-1', 'connection-2'];
   external.events = [];
   external.failStep = null;
-  external.grants = 2;
   external.proposals = 1;
 });
 
@@ -278,6 +267,9 @@ const scriptOwner = (state: AgentState, options: ReplayOptions) => (sql: string,
     if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/iu.test(sql.trim())) {
       return [];
     }
+    if (sql.trim() === 'select current_user::text as role') {
+      return [{ role: SHARED_RUNTIME_IDENTITY.role }];
+    }
     if (sql.includes('set_config')) {
       expect(params).toEqual([principal.tenantId, principal.legalEntityId]);
       return [
@@ -372,12 +364,21 @@ const fixture = (options: ReplayOptions = {}) =>
     const composition = yield* makeCompositionSnapshot([
       makeModuleContractFixture({ appId: 'notes', moduleId: AgentModuleKeySchema.make('fixture.notes') }),
     ]);
+    // The caller holds the agent-status right, which alone decides the agent's proposal withdrawal.
+    const agentStatusGate = makeTestAccessDecision({
+      answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } },
+    });
     const preparation = yield* AgentProposalCommandPreparation.pipe(
       Effect.provide(AgentProposalCommandPreparationLive),
       Effect.provideService(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       Effect.provideService(CoreDatabase, { executor: owner }),
       Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
-      Effect.provideService(ContextAccess, makeContextAccessDouble('allowed')),
+      Effect.provideService(AccessDecisionGate, agentStatusGate),
+      Effect.provideService(
+        AgentLifecycleAuthority,
+        makeTestAgentLifecycleAuthority({ prepare: () => 'allowed', recheck: () => 'allowed' }),
+      ),
+      Effect.provideService(TenantModuleStateService, unusedModuleState),
       Effect.provideService(ActionAuthority, {
         checkActionAuthorities: () => Effect.die('Lifecycle withdrawal does not confer business execution'),
         checkActionProposalPermission: () => Effect.die('Unexpected proposal authority'),
@@ -396,7 +397,7 @@ const fixture = (options: ReplayOptions = {}) =>
         bindActionTestServices(manageAgentStatusAction, { transaction: scoped }),
         bindActionTestServices(mutateAgentProposalsAction, {
           ...proposalCommandsFromTransaction(scoped),
-          consumePreparation: preparation.consume,
+          consumePreparation: (input) => preparation.consume({ ...input, transaction: scoped }),
         }),
       ],
     }).pipe(Effect.provideService(ActionAuthorizationPreflight, preflight));
@@ -464,7 +465,8 @@ const fixture = (options: ReplayOptions = {}) =>
     };
     const nativeServices = yield* nativeDemoAccountTestServices(caller, transport, makeContextAccessDouble('allowed'));
     const run = (request: ManageAgentEntityRequest) =>
-      manageAgentEntity(caller, request, deps).pipe(
+      manageAgentEntity(caller, request, new Headers(), deps).pipe(
+        Effect.provideService(AccessPeopleBff, unusedAccessPeopleBff),
         Effect.provideService(ReadRuntime, readRuntime),
         Effect.provideService(AgentProposalCommandPreparation, preparation),
         Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
@@ -473,6 +475,7 @@ const fixture = (options: ReplayOptions = {}) =>
         Effect.provideService(AgentReadRequestIdentity, readTransport),
         Effect.provideService(ActionRuntime, runtime),
         Effect.provideService(ContextAccess, makeContextAccessDouble('allowed')),
+        Effect.provideService(TenantModuleStateService, unusedModuleState),
         Effect.provideService(AuthDatabase, {
           get adapter(): AuthDatabase['Service']['adapter'] {
             throw new Error('Unexpected authentication adapter IO');
@@ -567,7 +570,7 @@ it.effect('resumes a committed status change after projection interruption despi
 it.effect('resumes archive cleanup after the target disappears without reading hidden archived profiles', () =>
   Effect.gen(function* committedArchiveRetry() {
     const test = yield* fixture();
-    external.failStep = 'grants';
+    external.failStep = 'confirm-archived';
     expect(yield* test.run(archive).pipe(Effect.flip)).toBeInstanceOf(ConnectionsUnavailable);
     expect(test.state.status).toBe('archived');
     expect(external.events).toEqual([
@@ -582,26 +585,24 @@ it.effect('resumes archive cleanup after the target disappears without reading h
       'connection-2',
       'proposals',
       'withdraw-action',
-      'grants',
+      'confirm-archived',
     ]);
     external.events = [];
     const result = yield* test.run(archive);
     expect(result.status).toBe('archived');
     expect(result.revokedConnections).toBe(0);
-    expect(result.grantsRevoked).toBe(2);
+    expect(result.grantsRevoked).toBe(0);
     expect(external.events).toEqual([
       'administrator',
       'action',
       'projection',
       'connections',
       'proposals',
-      'grants',
       'confirm-archived',
     ]);
     expect(test.actions[0]?.payload).toEqual(test.actions[1]?.payload);
     expect(test.harness.snapshot().committed).toHaveLength(2);
     expect(test.proposalActions).toHaveLength(1);
-    expect(external.grants).toBe(0);
   }),
 );
 
@@ -648,7 +649,6 @@ it.effect('fails closed when denied-attempt auditing fails and performs no Actio
     expect(test.harness.snapshot().committed).toHaveLength(0);
     expect(external.connections).toEqual(['connection-1', 'connection-2']);
     expect(external.proposals).toBe(1);
-    expect(external.grants).toBe(2);
     expect(test.state.status).toBe('active');
   }),
 );
@@ -685,14 +685,13 @@ it.effect('keeps native optimistic status conflict enforcement for a fresh reque
   }),
 );
 
-it.effect('finishes interrupted revocations before withdrawing proposals or removing grants/operators', () =>
+it.effect('finishes interrupted revocations before withdrawing proposals or confirming the archive', () =>
   Effect.gen(function* interruptedRevocation() {
     const test = yield* fixture();
     external.failStep = 'connection-2';
     yield* test.run(archive).pipe(Effect.flip);
     expect(external.connections).toEqual(['connection-2']);
     expect(external.proposals).toBe(1);
-    expect(external.grants).toBe(2);
     external.events = [];
     yield* test.run(archive);
     expect(external.events).toEqual([
@@ -703,7 +702,6 @@ it.effect('finishes interrupted revocations before withdrawing proposals or remo
       'connection-2',
       'proposals',
       'withdraw-action',
-      'grants',
       'confirm-archived',
     ]);
     expect(test.harness.snapshot().committed).toHaveLength(2);
@@ -719,8 +717,6 @@ for (const request of [disable, archive]) {
       expect(test.state.status).toBe(request.operation === 'delete' ? 'archived' : 'disabled');
       expect(external.connections).toEqual([]);
       expect(external.proposals).toBe(1);
-      expect(external.grants).toBe(2);
-      expect(external.events).not.toContain('grants');
       expect(external.events).not.toContain('confirm-archived');
       expect(test.proposalActions).toHaveLength(0);
       external.events = [];

@@ -1,4 +1,8 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import {
+  readVerifiedGatewayRecovery,
+  readVerifiedGatewayWorkload,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { isDeepStrictEqual } from 'node:util';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
@@ -51,6 +55,25 @@ export const validCatalogActionResultIdentity = ({
   Number.isSafeInteger(schemaVersion) &&
   schemaVersion > 0;
 
+/** A receipt capability addresses one Core invocation; a business-source predecessor is not an alias. */
+export const catalogRecoveryIdentityMatchesScope = (
+  scope: OperationalScope,
+  identity: CatalogActionResultIdentity,
+): boolean => {
+  const recovery = readVerifiedGatewayRecovery(scope);
+  if (recovery === undefined) {
+    return true;
+  }
+  const actionPrefix = 'commerce.catalog.';
+  return (
+    identity.actionKey.startsWith(actionPrefix) &&
+    identity.actionInvocationId === recovery.originalActionInvocationId &&
+    identity.actionKey === recovery.originalActionKey &&
+    readVerifiedGatewayWorkload(scope)?.entrypointKey ===
+      `commerce.catalog.api.${identity.actionKey.slice(actionPrefix.length)}-recovery`
+  );
+};
+
 const normalizedJson = Effect.fn('CatalogActionResultSnapshot.normalizedJson')(function* normalize(encoded: object) {
   const text = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(encoded).pipe(
     Effect.mapError(unavailable),
@@ -89,7 +112,8 @@ export const catalogActionResultSnapshotForScope = <Result>(
 
   const matchesIdentity = (row: typeof catalogResultSnapshots.$inferSelect, identity: CatalogActionResultIdentity) =>
     row.tenantId === scope.tenantId &&
-    row.actingPrincipalId === scope.principalId &&
+    row.actingPrincipalId === (readVerifiedGatewayRecovery(scope)?.originalPrincipalId ?? scope.principalId) &&
+    catalogRecoveryIdentityMatchesScope(scope, identity) &&
     row.actionInvocationId === identity.actionInvocationId &&
     row.actionKey === identity.actionKey &&
     row.schemaVersion === identity.schemaVersion;

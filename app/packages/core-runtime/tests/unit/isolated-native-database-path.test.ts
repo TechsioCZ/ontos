@@ -213,9 +213,11 @@ if (program === 'pg_dump') {
   5000,
 );
 
-it.effect(
-  'keeps the Assortment authorization purpose forbidden in deployed environments before database or process I/O',
-  () =>
+for (const purpose of [
+  'implementation-1290-assortment-authorization',
+  'implementation-1096-privacy-business-reads',
+] as const) {
+  it.effect(`keeps ${purpose} forbidden in deployed environments before database or process I/O`, () =>
     Effect.scoped(
       Effect.gen(function* rejectsDeployedAssortmentFixture() {
         const context = yield* Layer.build(
@@ -229,7 +231,7 @@ it.effect(
           makeIsolatedNativeDatabaseFixture({
             compositionSnapshot,
             mode: 'schema-only',
-            purpose: 'implementation-1290-assortment-authorization',
+            purpose,
           }).pipe(
             Effect.provideContext(context),
             Effect.provideService(
@@ -243,7 +245,8 @@ it.effect(
         });
       }),
     ),
-);
+  );
+}
 
 // With `isolate: false` one module registry is shared by every file a worker runs, so these
 // replacements outlive this file and would leak into whatever runs next. Remove them and drop the

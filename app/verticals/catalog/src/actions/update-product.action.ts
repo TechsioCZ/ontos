@@ -128,6 +128,10 @@ export const updateProductAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.update-product.access.v1',
     },
+    accessWorkload: {
+      reason: 'Native Product writes for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

@@ -1,4 +1,4 @@
-import { DateTime, Option, Result } from 'effect';
+import { DateTime, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -12,7 +12,7 @@ import {
   catalogReleaseDigest,
   catalogReleaseId,
 } from '../../src/access/catalog/release.ts';
-import { orderCatalogRelease } from '../../src/access/catalog/release-ordering.ts';
+import { CatalogReleaseOrderingSchema, orderCatalogRelease } from '../../src/access/catalog/release-ordering.ts';
 import type { RoleWithRevision } from '../../src/access/changes/role-edits.ts';
 import {
   CapabilityKeySchema,
@@ -128,22 +128,26 @@ const planned = (
   });
 const plan = (...input: Parameters<typeof planned>) => Result.getOrThrow(planned(...input));
 
+const [PublishOrdering, CurrentOrdering, PublishedBeforeOrdering, NotASuccessorOrdering] =
+  CatalogReleaseOrderingSchema.members;
+const publishOrdering = PublishOrdering.make({});
+const currentOrdering = CurrentOrdering.make({});
+const notASuccessor = (key: string) => NotASuccessorOrdering.make({ uncoveredKeys: [CapabilityKeySchema.make(key)] });
+
 const keysOf = (cells: readonly Cell[]) => [...new Set(cells.map(({ capabilityKey }) => capabilityKey))].toSorted();
 
 describe('ordering a deployment catalog against the published releases', () => {
   it('publishes the first release and a wider one, and recognises the newest one', () => {
-    expect(orderCatalogRelease({ candidate: first, newest: Option.none(), publishedDigests: new Set() })).toEqual({
-      _tag: 'Publish',
-    });
+    expect(orderCatalogRelease({ candidate: first, newest: Option.none(), publishedDigests: new Set() })).toEqual(
+      publishOrdering,
+    );
     const published = new Set([first.digest]);
     expect(orderCatalogRelease({ candidate: second, newest: Option.some(first), publishedDigests: published })).toEqual(
-      {
-        _tag: 'Publish',
-      },
+      publishOrdering,
     );
-    expect(orderCatalogRelease({ candidate: first, newest: Option.some(first), publishedDigests: published })).toEqual({
-      _tag: 'Current',
-    });
+    expect(orderCatalogRelease({ candidate: first, newest: Option.some(first), publishedDigests: published })).toEqual(
+      currentOrdering,
+    );
   });
 
   it('never lets an older catalog become the newest release again', () => {
@@ -154,7 +158,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(second),
         publishedDigests: new Set([first.digest, second.digest]),
       }),
-    ).toEqual({ _tag: 'PublishedBefore' });
+    ).toEqual(PublishedBeforeOrdering.make({}));
     // An older deployment whose own activation never published: narrower than the newest release.
     expect(
       orderCatalogRelease({
@@ -162,7 +166,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(third),
         publishedDigests: new Set([first.digest, third.digest]),
       }),
-    ).toEqual({ _tag: 'NotASuccessor', uncoveredKeys: [VOID] });
+    ).toEqual(notASuccessor(VOID));
   });
 
   it('never publishes an older catalog that still holds what the newest release renamed or narrowed', () => {
@@ -179,10 +183,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(renamed),
         publishedDigests: new Set([renamed.digest]),
       }),
-    ).toEqual({
-      _tag: 'NotASuccessor',
-      uncoveredKeys: ['billing.invoices.invoice.cancel'],
-    });
+    ).toEqual(notASuccessor('billing.invoices.invoice.cancel'));
     // The rename itself moved `void` along declared lineage, so it was a successor of the release before.
     expect(
       orderCatalogRelease({
@@ -190,9 +191,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(third),
         publishedDigests: new Set([third.digest]),
       }),
-    ).toEqual({
-      _tag: 'Publish',
-    });
+    ).toEqual(publishOrdering);
     // Dropping a mode the newest release declares is a narrowing, whatever else the catalog adds.
     const narrowed = releaseOf([
       ...first.entries,
@@ -205,10 +204,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(second),
         publishedDigests: new Set([second.digest]),
       }),
-    ).toEqual({
-      _tag: 'NotASuccessor',
-      uncoveredKeys: [APPROVE],
-    });
+    ).toEqual(notASuccessor(APPROVE));
   });
 
   it('withholds a plain removal, which stays inert in the newest release', () => {
@@ -218,20 +214,19 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(second),
         publishedDigests: new Set([second.digest]),
       }),
-    ).toEqual({
-      _tag: 'NotASuccessor',
-      uncoveredKeys: [APPROVE],
-    });
+    ).toEqual(notASuccessor(APPROVE));
   });
 
   it('keeps the newest release when the newer deployment restarts after an older one tried', () => {
     const published = new Set([first.digest, third.digest]);
     expect(
-      orderCatalogRelease({ candidate: second, newest: Option.some(third), publishedDigests: published })._tag,
-    ).toBe('NotASuccessor');
-    expect(orderCatalogRelease({ candidate: third, newest: Option.some(third), publishedDigests: published })).toEqual({
-      _tag: 'Current',
-    });
+      Schema.is(NotASuccessorOrdering)(
+        orderCatalogRelease({ candidate: second, newest: Option.some(third), publishedDigests: published }),
+      ),
+    ).toBe(true);
+    expect(orderCatalogRelease({ candidate: third, newest: Option.some(third), publishedDigests: published })).toEqual(
+      currentOrdering,
+    );
   });
 
   it('publishes a catalog whose entries changed even when it declares the same keys', () => {
@@ -245,9 +240,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(second),
         publishedDigests: new Set([second.digest]),
       }),
-    ).toEqual({
-      _tag: 'Publish',
-    });
+    ).toEqual(publishOrdering);
   });
 });
 

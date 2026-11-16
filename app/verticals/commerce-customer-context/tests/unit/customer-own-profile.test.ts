@@ -12,13 +12,14 @@ import {
 } from '../../api/portal-auth/profile/party-profile.ts';
 import { CustomerOwnProfileSchema, UpdateCustomerOwnProfileSchema } from '../../shared/portal-auth/profile-api.ts';
 import {
-  customerProfileReadOwnEntrypoint,
-  customerProfileUpdateOwnEntrypoint,
-} from '../../shared/portal-auth/profile-entrypoints.ts';
-import {
-  customerProfileReadOwnPermission,
-  customerProfileUpdateOwnPermission,
-} from '../../shared/permissions/customer-profile-self-service.ts';
+  CustomerOwnPortalReadInputSchema,
+  UpdateOwnCustomerProfilePayloadSchema,
+} from '../../shared/portal-auth/own-session.ts';
+import { changeOwnCustomerPasswordAction } from '../../src/actions/change-own-customer-password.action.ts';
+import { updateOwnCustomerConsentAction } from '../../src/actions/update-own-customer-consent.action.ts';
+import { updateOwnCustomerProfileAction } from '../../src/actions/update-own-customer-profile.action.ts';
+import { customerOwnConsentRead } from '../../src/portal-auth/reads/customer-own-consent.read.ts';
+import { customerOwnProfileRead } from '../../src/portal-auth/reads/customer-own-profile.read.ts';
 import {
   makeCustomerOwnProfileClientLayer,
   readCustomerOwnProfileWithAuthorization,
@@ -246,18 +247,32 @@ it.effect('rejects a changed name plus an invalid phone before acquiring any nat
   }).pipe(Effect.provide(TestClock.layer()), Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
-it('declares distinct read/write context permissions, never storefront Party access', () => {
-  expect(customerProfileReadOwnEntrypoint.access).toBe('read');
-  expect(customerProfileUpdateOwnEntrypoint.access).toBe('write');
-  for (const [entrypoint, permission] of [
-    [customerProfileReadOwnEntrypoint, customerProfileReadOwnPermission],
-    [customerProfileUpdateOwnEntrypoint, customerProfileUpdateOwnPermission],
-  ] as const) {
-    expect(entrypoint.authorization).toEqual({ kind: 'context_permission', permission: permission.key });
-    expect(permission.allowedScopeKinds).toEqual(['module']);
-    expect(permission.protectedEntrypoints).toEqual([entrypoint.entrypointKey]);
-    expect(entrypoint.moduleKey).toBe('commerce.customer-context');
+it('serves the own profile as a storefront-client read and Action only, never a person, agent or Party parameter', () => {
+  expect(customerOwnProfileRead.descriptor.entrypoint).toMatchObject({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    role: 'api',
+  });
+  expect(updateOwnCustomerProfileAction.descriptor.entrypoint).toMatchObject({
+    access: 'write',
+    authorization: { kind: 'protected' },
+    role: 'action',
+  });
+  for (const descriptor of [
+    customerOwnProfileRead.descriptor,
+    customerOwnConsentRead.descriptor,
+    updateOwnCustomerProfileAction.descriptor,
+    updateOwnCustomerConsentAction.descriptor,
+    changeOwnCustomerPasswordAction.descriptor,
+  ]) {
+    // A workload-only carrier: no capability a person's role could hold, so humans are refused `deny.workload_only`.
+    expect(descriptor.accessDeclaration).toBeUndefined();
+    expect(descriptor.accessWorkload?.workloads).toEqual(['commerce.storefront-client']);
+    expect(descriptor.legalEntityScope).toBe('required');
   }
+  // The only Party either names is the admitted session's own.
+  expect(Object.keys(CustomerOwnPortalReadInputSchema.fields)).toEqual(['session']);
+  expect(Object.keys(UpdateOwnCustomerProfilePayloadSchema.fields)).toEqual(['session', 'update']);
 });
 
 it('projects strict profile intent/completion evidence without editable PII', () => {

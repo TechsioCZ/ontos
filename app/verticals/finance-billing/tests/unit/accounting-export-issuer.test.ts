@@ -13,7 +13,7 @@ const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId 
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
 const deployedShell = ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' });
 const trusted: FinanceValidators = {
-  exportReferences: Effect.succeed({ issuerName: 'Nájempark', partners: new Map() }),
+  exportReferences: () => Effect.succeed({ issuerName: 'Nájempark', partners: new Map() }),
   invoice: () => Effect.void,
 };
 const counterpartyRef = {
@@ -30,7 +30,8 @@ const invoice = (id: string, overrides: Partial<Invoice> = {}): Invoice => ({
   createdAt: now,
   currency: 'CZK',
   direction: 'OUTGOING',
-  documentNumber: id,
+  // A number an accounting system accepts: POHODA refuses anything over 32 characters.
+  documentNumber: `FV-${id.slice(-12)}`,
   dueDate: '2026-10-30',
   issueDate: '2026-10-01',
   paidMinor: 0,
@@ -175,6 +176,25 @@ describe('S08 export issuer identity', () => {
       );
       expect(Schema.is(FinanceReferenceUnavailable)(failure)).toBe(true);
       expect('reason' in failure ? failure.reason : undefined).toBe('export_references_unavailable');
+    }),
+  );
+
+  it.effect('a filtered read keeps the handover of its own invoices, without other invoices or the file', () =>
+    Effect.gen(function* filteredHandover() {
+      const created = yield* run(
+        { ...empty, invoices: [invoice('a'), invoice('b')] },
+        { _tag: 'CreateAccountingExport', format: 'CSV', invoiceResourceIds: ['a', 'b'] },
+      );
+      const exportId = created.state.accountingExports?.[0]?.id ?? '';
+      const handedOver = yield* run(created.state, { _tag: 'HandOverAccountingExport', exportId });
+      const onlyA = projectFinanceRecords(handedOver.state, 2, { resourceId: 'a' });
+      expect(onlyA.state.accountingExports).toHaveLength(1);
+      const [entry] = onlyA.state.accountingExports ?? [];
+      expect(entry).toMatchObject({ id: exportId, invoiceResourceIds: ['a'], status: 'HANDED_OVER' });
+      expect(entry?.content).toBe('');
+      // An invoice that was never handed over gets no package at all.
+      const unrelated = { ...handedOver.state, invoices: [...handedOver.state.invoices, invoice('c')] };
+      expect(projectFinanceRecords(unrelated, 3, { resourceId: 'c' }).state.accountingExports).toEqual([]);
     }),
   );
 

@@ -32,6 +32,7 @@ import { InventoryEffectOutcomeApi } from './apis/inventory-effect-outcome.ts';
 import { InventoryReconciliationEvidenceApi } from './apis/inventory-reconciliation-evidence.ts';
 import { InventoryReservationDetailApi } from './apis/inventory-reservation-detail.ts';
 import { InventorySourceConflictDetailApi } from './apis/inventory-source-conflict-detail.ts';
+import { InventorySourceImportReceiptApi } from './apis/inventory-source-import-receipt.ts';
 import { RecoverInventoryEffectActionApi } from './apis/recover-inventory-effect-action.ts';
 import { ReleaseInventoryReservationActionApi } from './apis/release-inventory-reservation-action.ts';
 import { ReservationConfirmationVerificationApi } from './apis/reservation-confirmation-verification.ts';
@@ -89,6 +90,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof InventoryReconciliationEvidenceApi
   | typeof InventoryReservationDetailApi
   | typeof InventorySourceConflictDetailApi
+  | typeof InventorySourceImportReceiptApi
   | typeof RecoverInventoryEffectActionApi
   | typeof ReleaseInventoryReservationActionApi
   | typeof ReservationConfirmationVerificationApi
@@ -129,6 +131,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(InventoryReconciliationEvidenceApi)
   .addHttpApi(InventoryReservationDetailApi)
   .addHttpApi(InventorySourceConflictDetailApi)
+  .addHttpApi(InventorySourceImportReceiptApi)
   .addHttpApi(RecoverInventoryEffectActionApi)
   .addHttpApi(ReleaseInventoryReservationActionApi)
   .addHttpApi(ReservationConfirmationVerificationApi)

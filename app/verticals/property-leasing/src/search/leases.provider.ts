@@ -10,8 +10,8 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { loadOwnerSearch, requireLeaseSearchPredicate } from './search-read.ts';
-import type { LeaseSearchCurrentState } from './search-read.ts';
+import { loadOwnerSearch, requireLeaseSearchPredicate } from '../services/search-read.ts';
+import type { LeaseSearchCurrentState } from '../services/search-read.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import { LeasesProviderRequestSchema, LeasesProviderResponseSchema } from '../../shared/apis/leases-search.ts';
 

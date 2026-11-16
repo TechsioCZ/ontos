@@ -32,8 +32,8 @@ const PRODUCT_LABELS = {
   name: 'Název',
   priceMinor: 'Cena bez DPH',
   sku: 'Kód (SKU)',
+  taxClassificationCode: 'Sazba DPH',
   unit: 'Jednotka',
-  vatRate: 'Sazba DPH',
 };
 
 /** Prices are amounts in haléře. */

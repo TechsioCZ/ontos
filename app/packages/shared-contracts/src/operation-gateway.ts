@@ -30,7 +30,7 @@ export interface OperationGateway<IssuerFailure> {
 
 const deniedAudienceProblem = GatewayForbiddenProblemSchema.make({
   detail: 'The authenticated principal cannot open this module in the current company.',
-  status: 403,
+  status: GatewayForbiddenProblemSchema.fields.status.literal,
   title: 'Gateway context forbidden',
   type: 'https://ontos.dev/problems/gateway-forbidden',
 });

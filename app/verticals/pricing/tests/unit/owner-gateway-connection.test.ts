@@ -8,6 +8,7 @@ import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-cont
 import { ConfigProvider, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   acquireOwnerGatewayConnection,
   ownerConnectionForComposition,
@@ -38,11 +39,10 @@ const verifiedScope = () =>
     { assertion: Redacted.make('verified-source-assertion'), audience: 'commerce-pricing' },
   );
 
-const shellConfiguration = ConfigProvider.layer(
-  ConfigProvider.fromUnknown({
-    ONTOS_GATEWAY_MODULE_API_KEY: 'module-key',
-    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.internal.example/',
-  }),
+const shellConfiguration = Layer.merge(
+  ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.internal.example/' })),
+  // Pricing holds its own key, so a refusal below comes from the copied scope and not from a missing credential.
+  Layer.effectDiscard(holdTestModuleCredentials({ pricing: 'module-key' })),
 );
 
 it.effect('returns the owner connection when the credential belongs to the active composition', () =>
@@ -93,6 +93,9 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, shellConfiguration))('owner connection
       ).pipe(Effect.flip);
       expect(failure.reason).toBe('Owner gateway is unavailable');
       expect(Schema.is(GatewayDelegationSourceError)(failure.cause)).toBe(true);
+      expect(Schema.is(GatewayDelegationSourceError)(failure.cause) ? failure.cause.reason : undefined).toBe(
+        'Verified gateway scope is required to act for the requester',
+      );
     }),
   );
 });

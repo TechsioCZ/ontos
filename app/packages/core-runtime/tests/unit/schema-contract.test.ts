@@ -3,7 +3,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
-import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../../src/db/identity-policies.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -57,6 +57,11 @@ it('exports exactly the Core table inventory in PostgreSQL schema core', () => {
 it('keeps the mail ledger protected by tenant and legal entity row policies', () => {
   const config = getTableConfig(schemaExports.emailDeliveries);
   expect(config.enableRLS).toBe(true);
+  // A delivery key is unique within one company only: another company's row never suppresses its e-mail.
+  expect(config.primaryKeys.map((key) => key.columns.map((column) => column.name))).toEqual([
+    ['tenant_id', 'legal_entity_id', 'dedupe_key'],
+  ]);
+  expect(config.columns.find((column) => column.name === 'dedupe_key')?.primary).toBe(false);
   expect(config.policies.map(({ name }) => name).toSorted()).toEqual([
     'demo_email_deliveries_scope_insert',
     'demo_email_deliveries_scope_select',
@@ -88,7 +93,7 @@ it('keeps publication authority singleton state admin-owned with one read-only r
   const config = getTableConfig(applicationCompositionAuthority);
   const policies = [
     ...config.policies,
-    ...makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+    ...coreIdentityPolicyDescriptors(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
       .filter(({ table }) => table === applicationCompositionAuthority)
       .map(({ policy }) => policy),
   ];

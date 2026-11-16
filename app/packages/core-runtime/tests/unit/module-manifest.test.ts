@@ -765,6 +765,44 @@ it('declares the Action keys the module may act for as an originator, exactly an
   ).toThrow();
 });
 
+it('declares the modules activation installs with it, carried into the deployment contract and validated there', () => {
+  const declared = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    activation: { ...emptyManifestInput().activation, installsWith: ['commerce.tax'] },
+  });
+  expect(declared.activation.installsWith).toEqual(['commerce.tax']);
+  expect(Object.isFrozen(declared.activation.installsWith)).toBe(true);
+  expect(defineOntosModuleManifest(emptyManifestInput()).activation).not.toHaveProperty('installsWith');
+  for (const installsWith of [['property.registry'], ['commerce.tax', 'commerce.tax'], ['not a module']]) {
+    expect(() =>
+      defineOntosModuleManifest({
+        ...emptyManifestInput(),
+        activation: { ...emptyManifestInput().activation, installsWith },
+      }),
+    ).toThrow();
+  }
+  const contract = {
+    deployment: { appId: 'property-registry', buildMarker: 'build' },
+    manifest: {
+      activation: declared.activation,
+      module: declared.module,
+      publicSurface: { ...emptyManifestInput().publicSurface, actions: [], api: [], components: [] },
+    },
+    runtime: { outboxSubscriptions: [] },
+    schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  };
+  expect(decodeOntosModuleDeploymentContract(contract).manifest.activation.installsWith).toEqual(['commerce.tax']);
+  expect(() =>
+    decodeOntosModuleDeploymentContract({
+      ...contract,
+      manifest: {
+        ...contract.manifest,
+        activation: { ...contract.manifest.activation, installsWith: ['property.registry'] },
+      },
+    }),
+  ).toThrow(/installsWith/u);
+});
+
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   expect(() =>
     defineOntosModuleManifest({

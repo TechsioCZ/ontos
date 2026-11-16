@@ -30,7 +30,7 @@ import {
 } from '../../packages/core-runtime/src/access/approvals/action-mandate-dispatch.ts';
 import {
   freezeActionCommandV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
 } from '../../packages/core-runtime/src/access/approvals/action-command-v2.ts';
 import {
   ApprovalStore,
@@ -922,7 +922,7 @@ it.layer(
         const crypto = yield* Crypto.Crypto;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch, gate, owner);
-        const expectedCommand = yield* makeActionCommandV2({
+        const expectedCommand = yield* resolveActionCommandV2({
           payload: PAYLOAD,
           registration: createBrandAction,
           scope: jana,

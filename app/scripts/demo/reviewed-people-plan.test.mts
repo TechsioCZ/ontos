@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { DateTime, Effect, Match, Option, Result } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { stableUuid } from '@app/core-runtime/access/catalog';
@@ -33,7 +33,11 @@ import {
   observedCellOf,
   planReviewedPeople,
   PRINCIPAL_IDS,
+  NEW_IN_THIS_REVIEW,
   previewIssue,
+  reviewedAdditions,
+  slotOf,
+  reviewedExclusions,
   stepWithinAllowList,
   TENANT_ID,
   TENANT_SCOPE,
@@ -54,6 +58,7 @@ const OWNER = AccessHumanIdSchema.make('493dafec-c9b1-5a84-89cb-bee630de3c34');
 const NAJEMPARK = AccessCompanyIdSchema.make('71000000-0000-4000-8000-000000000021');
 const FULL_ACCESS_ROLE = AccessRoleIdSchema.make('a2542ee7-34b0-8eff-89d5-0b2e4b0dc4ae');
 const ROUTING = 'demo-shell-routing';
+const COMPANY_IDENTITY = 'accounting-company-identity';
 const NEXT_GENERATION = '--generation 2';
 const OUTSIDE = 'outside the three people';
 const AT = DateTime.makeUnsafe('2026-11-10T13:00:00.000Z');
@@ -255,7 +260,7 @@ const haltOf = (result: ReturnType<typeof plan>) => (Result.isFailure(result) ? 
 const applied = (state: DesiredState) =>
   simulateAll(stageBefore(state), stepsOf(plan(state, stageBefore(state), apply1)));
 const firstSave = (steps: readonly PlannedStep[]): SaveRole => {
-  const [save] = steps.flatMap((step) => (step._tag === 'SaveRole' ? [step] : []));
+  const [save] = steps.flatMap((step) => (Predicate.isTagged(step, 'SaveRole') ? [step] : []));
   if (save === undefined) {
     throw new Error('no save step');
   }
@@ -263,9 +268,9 @@ const firstSave = (steps: readonly PlannedStep[]): SaveRole => {
 };
 const roleId = (key: string) =>
   stableUuid(['ontos.shell.access-roles.role', TENANT_ID, `ontos-demo-reviewed-role:v1:${key}`].join(':'));
-const PEOPLE_STEPS = [...times(3, 'AdmitMember'), ...times(6, 'Assign')];
+const PEOPLE_STEPS = [...times(3, 'AdmitMember'), ...times(7, 'Assign')];
 
-it.effect('pins the reviewed roles, their dangerous cells and the six assignments of the three people', () =>
+it.effect('pins the reviewed roles, their dangerous cells and the seven assignments of the three people', () =>
   Effect.gen(function* exactDesiredState() {
     const state = yield* desired;
     expect(PRINCIPAL_IDS).toEqual([
@@ -283,29 +288,45 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
         scope,
       ]),
     ).toEqual([
-      ['sales', 440, 397, roleId('sales'), COMPANY_SCOPE],
-      ['accounting', 154, 125, roleId('accounting'), COMPANY_SCOPE],
+      ['sales', 442, 398, roleId('sales'), COMPANY_SCOPE],
+      ['accounting', 162, 130, roleId('accounting'), COMPANY_SCOPE],
       ['warehouse', 33, 23, roleId('warehouse'), COMPANY_SCOPE],
       [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
+      // The company identity read is decided in the tenant context, so its two keys live in a tenant-scope role.
+      [COMPANY_IDENTITY, 2, 2, roleId(COMPANY_IDENTITY), TENANT_SCOPE],
     ]);
+    // Capabilities the release declared after the review stay with full access: no reviewed role holds one.
+    const excluded = new Set<string>(Object.values(reviewedExclusions).flat());
+    expect([reviewedExclusions.sales.length, reviewedExclusions.accounting.length, excluded.size]).toEqual([
+      16, 10, 16,
+    ]);
+    expect([...excluded].filter((key) => !state.entries.has(key))).toEqual([]);
+    expect(
+      state.roles.flatMap(({ cells, key }) =>
+        cells
+          .filter(({ capabilityKey }) => excluded.has(capabilityKey))
+          .map(({ capabilityKey }) => [key, capabilityKey]),
+      ),
+    ).toEqual([]);
     const [obchodnik, ucetni, sklad] = PRINCIPAL_IDS;
     expect(state.assignments.map(({ principalId, roleKey, scope }) => [principalId, roleKey, scope])).toEqual([
       [obchodnik, 'sales', COMPANY_SCOPE],
       [obchodnik, ROUTING, TENANT_SCOPE],
       [ucetni, 'accounting', COMPANY_SCOPE],
       [ucetni, ROUTING, TENANT_SCOPE],
+      [ucetni, COMPANY_IDENTITY, TENANT_SCOPE],
       [sklad, 'warehouse', COMPANY_SCOPE],
       [sklad, ROUTING, TENANT_SCOPE],
     ]);
   }),
 );
 
-it.effect('writes only the three people, the four roles and tenant or company 0020 on a stage-shaped state', () =>
+it.effect('writes only the three people, the five roles and tenant or company 0020 on a stage-shaped state', () =>
   Effect.gen(function* limitedToNamedPeople() {
     const state = yield* desired;
     const before = stageBefore(state);
     const steps = stepsOf(plan(state, before, apply1));
-    expect(tagsOf(steps)).toEqual([...times(4, ['CreateRole', 'SaveRole']).flat(), ...PEOPLE_STEPS]);
+    expect(tagsOf(steps)).toEqual([...times(5, ['CreateRole', 'SaveRole']).flat(), ...PEOPLE_STEPS]);
     const named = JSON.stringify(steps).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu) ?? [];
     const allowed = new Set<string>([
       ...PRINCIPAL_IDS,
@@ -368,13 +389,13 @@ it.effect('plans exactly the remaining steps from every halfway state and nothin
     const holders = observed.roles
       .filter(({ id }) => MANAGED_ROLE_IDS.includes(id))
       .map(({ holderCount }) => holderCount);
-    expect(holders).toEqual([1, 1, 1, 3]);
-    // All four roles created but still empty: four saves, then the people.
+    expect(holders).toEqual([1, 1, 1, 3, 1]);
+    // All five roles created but still empty: five saves, then the people.
     const created = simulateAll(
       before,
-      steps.filter(({ _tag }) => _tag === 'CreateRole'),
+      steps.filter((step) => Predicate.isTagged(step, 'CreateRole')),
     );
-    expect(tagsOf(stepsOf(plan(state, created, apply1)))).toEqual([...times(4, 'SaveRole'), ...PEOPLE_STEPS]);
+    expect(tagsOf(stepsOf(plan(state, created, apply1)))).toEqual([...times(5, 'SaveRole'), ...PEOPLE_STEPS]);
   }),
 );
 
@@ -389,7 +410,7 @@ it.effect('halts instead of saving over a managed role with other cells or an un
       ...created,
       roles: created.roles.map((role) =>
         role.id === save.roleId
-          ? { ...role, cells: [{ plain: true, slot: 'work.tasks.api-records.read run all' }] }
+          ? { ...role, cells: [{ plain: true, slot: 'core.identity.unreviewed.read run all' }] }
           : role,
       ),
     };
@@ -402,6 +423,127 @@ it.effect('halts instead of saving over a managed role with other cells or an un
     expect(previewIssue(save, { ...exact, affectedHolders: [Option.some(OWNER)] })).toContain(OUTSIDE);
   }),
 );
+
+const TAX_PREFIX = 'commerce.tax.';
+const TAX_RULE_SET_READ_SLOT = 'commerce.tax.tax-rule-set.read run all';
+/** A capability new in this review: the VAT reads of Phase 1. */
+const isNew = (capabilityKey: string) => NEW_IN_THIS_REVIEW.has(capabilityKey);
+const slotKey = (slot: string) => slot.split(' ')[0] ?? slot;
+/** The role as saved before this review: without any of the capabilities new in it. */
+const withoutNew = (observed: ObservedState, id: string): ObservedState => ({
+  ...observed,
+  roles: observed.roles.map((role) =>
+    role.id === id ? { ...role, cells: role.cells.filter(({ slot }) => !isNew(slotKey(slot))) } : role,
+  ),
+});
+
+it.effect('adds only the newly reviewed VAT reads to a role saved before them, and names each one', () =>
+  Effect.gen(function* extendsSavedRole() {
+    const state = yield* desired;
+    const accounting = state.roles.find(({ key }) => key === 'accounting');
+    if (accounting === undefined) {
+      throw new Error('no accounting role');
+    }
+    // No preset role holds a Tax write: the accountant only reads Tax.
+    expect(accounting.cells.filter(({ capabilityKey }) => capabilityKey.startsWith(TAX_PREFIX)).map(slotOf)).toEqual([
+      'commerce.tax.seller-vat-regime-declaration.read-history run all',
+      'commerce.tax.seller-vat-regime.read-at-instant run all',
+      TAX_RULE_SET_READ_SLOT,
+      'commerce.tax.tax-rule.read-history run all',
+    ]);
+    const newCells = accounting.cells.filter(({ capabilityKey }) => isNew(capabilityKey));
+    expect(newCells.map(slotOf)).toEqual([
+      'commerce.tax.seller-vat-regime-declaration.read-history run all',
+      'commerce.tax.seller-vat-regime.read-at-instant run all',
+      TAX_RULE_SET_READ_SLOT,
+      'commerce.tax.tax-rule.read-history run all',
+      'finance.billing.navigation-vat.read run all',
+      'finance.billing.page-vat.read run all',
+      'finance.billing.vat-choices.read run all',
+    ]);
+    // Stage holds the three reviewed roles as saved before Phase 1: everything except their new VAT reads.
+    let before = applied(state);
+    for (const id of MANAGED_ROLE_IDS) {
+      before = withoutNew(before, id);
+    }
+    const steps = stepsOf(plan(state, before, apply1));
+    // The warehouse role gains nothing: it needs no VAT read of its own.
+    expect(tagsOf(steps)).toEqual(['SaveRole', 'SaveRole']);
+    const saves = steps.flatMap((step) => (Predicate.isTagged(step, 'SaveRole') ? [step] : []));
+    expect(saves.map(({ addedCells, roleKey }) => [roleKey, addedCells.length])).toEqual([
+      ['sales', 1],
+      ['accounting', 7],
+    ]);
+    const [, save] = saves;
+    if (save === undefined) {
+      throw new Error('no accounting save');
+    }
+    expect(save.addedCells.map(slotOf)).toEqual(newCells.map(slotOf));
+    expect(save.cells).toEqual(accounting.cells);
+    expect(save.confirmations.length).toBeGreaterThan(0);
+    expect(save.confirmations.every(({ slot }) => isNew(slotKey(slot)))).toBe(true);
+    // The Shell must preview exactly the additions on top of the saved cells.
+    const exact = {
+      added: save.addedCells.map(observedCellOf),
+      affectedHolders: [],
+      cells: save.cells.map(observedCellOf),
+      dangerous: save.confirmations,
+      removed: [],
+    };
+    expect(previewIssue(save, exact)).toBeUndefined();
+    expect(previewIssue(save, { ...exact, added: exact.cells })).toContain('does not add exactly');
+    // Once saved, nothing is left to do.
+    expect(stepsOf(plan(state, simulateAll(before, steps), apply1))).toEqual([]);
+  }),
+);
+
+it.effect('never gives back a reviewed cell a person removed from a saved role; only the new cells are added', () =>
+  Effect.gen(function* keepsRemovals() {
+    const state = yield* desired;
+    const accounting = state.roles.find(({ key }) => key === 'accounting');
+    if (accounting === undefined) {
+      throw new Error('no accounting role');
+    }
+    const removed = accounting.cells.find(({ capabilityKey }) => !isNew(capabilityKey));
+    if (removed === undefined) {
+      throw new Error('the accounting role holds no other cell');
+    }
+    // Saved before Phase 1, and since then a person removed one of its reviewed cells in the role editor.
+    let before = withoutNew(applied(state), accounting.roleId);
+    before = {
+      ...before,
+      roles: before.roles.map((role) =>
+        role.id === accounting.roleId
+          ? { ...role, cells: role.cells.filter(({ slot }) => slot !== slotOf(removed)) }
+          : role,
+      ),
+    };
+    const steps = stepsOf(plan(state, before, apply1));
+    const saves = steps.flatMap((step) => (Predicate.isTagged(step, 'SaveRole') ? [step] : []));
+    expect(saves.map(({ roleKey }) => roleKey)).toEqual(['accounting']);
+    const [save] = saves;
+    expect(save?.addedCells.every(({ capabilityKey }) => isNew(capabilityKey))).toBe(true);
+    expect(save?.cells.map(slotOf)).not.toContain(slotOf(removed));
+    expect(save?.cells).toHaveLength(accounting.cells.length - 1);
+    // Once the new cells are saved there is nothing left to do: the removal stays.
+    expect(stepsOf(plan(state, simulateAll(before, steps), apply1))).toEqual([]);
+  }),
+);
+
+it('extends a saved role only when it holds nothing but plain reviewed cells', () => {
+  const reviewed = [
+    { capabilityKey: AccessCapabilityKeySchema.make('commerce.tax.tax-rule-set.read'), mode: 'run', selector: 'all' },
+    { capabilityKey: AccessCapabilityKeySchema.make('work.tasks.api-records.read'), mode: 'run', selector: 'all' },
+  ] as const;
+  const tasksCell = { plain: true, slot: 'work.tasks.api-records.read run all' };
+  expect(reviewedAdditions([tasksCell], reviewed)?.map(slotOf)).toEqual([TAX_RULE_SET_READ_SLOT]);
+  // Only what is new in this review is ever added: the Tasks read a role lacks was removed by a person.
+  expect(reviewedAdditions([], reviewed)?.map(slotOf)).toEqual([TAX_RULE_SET_READ_SLOT]);
+  expect(reviewedAdditions([tasksCell], reviewed, new Set())).toEqual([]);
+  expect(reviewedAdditions([{ ...tasksCell, plain: false }], reviewed)).toBeUndefined();
+  expect(reviewedAdditions([{ plain: true, slot: 'core.identity.unreviewed.read run all' }], reviewed)).toBeUndefined();
+  expect(reviewedAdditions([tasksCell, tasksCell], reviewed)).toBeUndefined();
+});
 
 it.effect('after a rollback asks for a new generation, and generation 2 admits and assigns under fresh ids', () =>
   Effect.gen(function* reapplyAfterRollback() {
@@ -417,7 +559,7 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     expect(haltOf(plan(state, oneEnded, apply1))?.reason).toContain(NEXT_GENERATION);
     expect(tagsOf(stepsOf(plan(state, oneEnded, apply2)))).toEqual(['Assign']);
 
-    expect(tagsOf(rollback)).toEqual([...times(6, 'RevokeAssignment'), ...times(6, 'EndMembership')]);
+    expect(tagsOf(rollback)).toEqual([...times(7, 'RevokeAssignment'), ...times(6, 'EndMembership')]);
     const rolledBack = simulateAll(done, rollback);
     expect(stepsOf(plan(state, rolledBack, rollback1))).toEqual([]);
     expect(haltOf(plan(state, rolledBack, apply1))?.reason).toContain(NEXT_GENERATION);
@@ -425,7 +567,9 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     const again = stepsOf(plan(state, rolledBack, apply2));
     expect(tagsOf(again)).toEqual(PEOPLE_STEPS);
     expect(again.every(({ idempotencyKey }) => idempotencyKey.includes(':g2:'))).toBe(true);
-    const freshIds = again.flatMap((step) => (step._tag === 'Assign' ? [assignmentIdOf(step.idempotencyKey)] : []));
+    const freshIds = again.flatMap((step) =>
+      Predicate.isTagged(step, 'Assign') ? [assignmentIdOf(step.idempotencyKey)] : [],
+    );
     expect(freshIds.filter((id) => firstIds.has(id))).toEqual([]);
     expect(stepsOf(plan(state, simulateAll(rolledBack, again), apply2))).toEqual([]);
 
@@ -433,7 +577,7 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     const steps = stepsOf(plan(state, stageBefore(state), apply1));
     const admitted = simulateAll(
       stageBefore(state),
-      steps.filter(({ _tag }) => _tag !== 'Assign'),
+      steps.filter((step) => !Predicate.isTagged(step, 'Assign')),
     );
     const endedEarly = simulateAll(admitted, stepsOf(plan(state, admitted, rollback1)));
     expect(haltOf(plan(state, endedEarly, apply1))?.reason).toContain(NEXT_GENERATION);
@@ -455,7 +599,7 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
       })),
     };
     const applySteps = stepsOf(plan(state, memberBefore, apply1));
-    expect(applySteps.filter(({ _tag }) => _tag === 'AdmitMember')).toHaveLength(2);
+    expect(applySteps.filter((step) => Predicate.isTagged(step, 'AdmitMember'))).toHaveLength(2);
     const done = simulateAll(memberBefore, applySteps);
     expect(
       done.people
@@ -471,12 +615,12 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
 
     // Her managed roles are revoked, but her own memberships are not the script's to end.
     const rollback = stepsOf(plan(state, done, rollback1));
-    expect(tagsOf(rollback)).toEqual([...times(6, 'RevokeAssignment'), ...times(4, 'EndMembership')]);
-    const ended = rollback.flatMap((step) => (step._tag === 'EndMembership' ? [step.principalId] : []));
+    expect(tagsOf(rollback)).toEqual([...times(7, 'RevokeAssignment'), ...times(4, 'EndMembership')]);
+    const ended = rollback.flatMap((step) => (Predicate.isTagged(step, 'EndMembership') ? [step.principalId] : []));
     expect(ended).not.toContain(ucetni);
     // A rollback named with a later generation still recognizes the rows generation 1 admitted.
     const later = stepsOf(plan(state, done, { generation: 2, mode: 'rollback' }));
-    expect(later.filter(({ _tag }) => _tag === 'EndMembership')).toHaveLength(4);
+    expect(later.filter((step) => Predicate.isTagged(step, 'EndMembership'))).toHaveLength(4);
 
     // Anything ending an admitted membership would close beyond the two plain member rows stops the plan.
     const withExtra = (extra: (person: ObservedPerson) => ObservedPerson) => ({

@@ -1,5 +1,16 @@
 import { HttpServerRequest } from 'effect/http';
 import {
+  isTrustedSystemPrincipalContext,
+  readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
+  readVerifiedGatewayRecovery,
+  RegisteredGatewayWorkloadSchema,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import type {
+  RegisteredGatewayRouteScope,
+  RegisteredGatewayWorkload,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
   ActiveApplicationCompositionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
@@ -15,6 +26,7 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
+  WORKLOAD_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_VERSION,
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
@@ -73,6 +85,17 @@ interface FixturePrincipal {
   readonly trustedStorefrontId?: string;
 }
 
+const makeRedemptionCounter = () => {
+  let count = 0;
+  return {
+    consume: () =>
+      Effect.sync(() => {
+        count += 1;
+      }),
+    count: () => count,
+  };
+};
+
 const makeFixture = (
   audience: string,
   version: number = GATEWAY_ASSERTION_VERSION,
@@ -80,7 +103,9 @@ const makeFixture = (
   releaseClaims: {
     readonly act?: { readonly appId: string; readonly buildMarker: string; readonly principalId: string };
     readonly compositionRevision?: string;
+    readonly routeScope?: unknown;
     readonly targetBuildMarker?: string;
+    readonly workload?: RegisteredGatewayWorkload;
   } = {},
 ) =>
   Effect.gen(function* createFixture() {
@@ -97,8 +122,10 @@ const makeFixture = (
         act: releaseClaims.act,
         compositionRevision: releaseClaims.compositionRevision ?? snapshot.composition.revision,
         principal: fixturePrincipal,
+        routeScope: releaseClaims.routeScope,
         targetBuildMarker: releaseClaims.targetBuildMarker ?? GATEWAY_FIXTURE_BUILD_MARKER,
         ver: version,
+        workload: releaseClaims.workload,
       })
         .setProtectedHeader({
           alg: 'EdDSA',
@@ -283,15 +310,12 @@ it.effect('admits the Shell own release and refuses a different local Shell buil
     const fixture = yield* makeFixture('shell-super-app', GATEWAY_ASSERTION_VERSION, principal, {
       targetBuildMarker: 'shell-fixture-build',
     });
-    let redemptions = 0;
+    const redemptions = makeRedemptionCounter();
     const options = {
       currentTimeSeconds: Effect.succeed(currentTimeSeconds),
       environment: fixture.environment,
       redemption: {
-        consume: () =>
-          Effect.sync(() => {
-            redemptions += 1;
-          }),
+        consume: redemptions.consume,
       },
     };
     const verified = yield* bindGatewayPrincipalVerifier('shell-super-app', {
@@ -299,7 +323,7 @@ it.effect('admits the Shell own release and refuses a different local Shell buil
       buildMarker: 'shell-fixture-build',
     }).verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), options);
     expect(verified).toEqual(principal);
-    expect(redemptions).toBe(1);
+    expect(redemptions.count()).toBe(1);
 
     const failure = yield* bindGatewayPrincipalVerifier('shell-super-app', {
       appId: 'shell-super-app',
@@ -308,7 +332,7 @@ it.effect('admits the Shell own release and refuses a different local Shell buil
       .verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), options)
       .pipe(Effect.flip);
     expect(isScopeError(failure)).toBe(true);
-    expect(redemptions).toBe(1);
+    expect(redemptions.count()).toBe(1);
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
@@ -334,7 +358,7 @@ it.effect('rejects composition and release mismatches before redeeming an assert
     ];
 
     for (const scenario of scenarios) {
-      let redemptions = 0;
+      const redemptions = makeRedemptionCounter();
       const failure = yield* bindGatewayPrincipalVerifier('party-registry', {
         appId: 'party-registry',
         buildMarker: scenario.localBuildMarker,
@@ -343,10 +367,7 @@ it.effect('rejects composition and release mismatches before redeeming an assert
           currentTimeSeconds: Effect.succeed(currentTimeSeconds),
           environment: scenario.fixture.environment,
           redemption: {
-            consume: () =>
-              Effect.sync(() => {
-                redemptions += 1;
-              }),
+            consume: redemptions.consume,
           },
         })
         .pipe(
@@ -354,7 +375,7 @@ it.effect('rejects composition and release mismatches before redeeming an assert
           Effect.flip,
         );
       expect(isScopeError(failure)).toBe(true);
-      expect(redemptions).toBe(0);
+      expect(redemptions.count()).toBe(0);
     }
   }),
 );
@@ -380,7 +401,7 @@ it.effect('rejects expired authority and invalid full contracts before assertion
       },
     ];
     for (const authority of scenarios) {
-      let redemptions = 0;
+      const redemptions = makeRedemptionCounter();
       const failure = yield* bindGatewayPrincipalVerifier('party-registry', {
         appId: 'party-registry',
         buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
@@ -389,10 +410,7 @@ it.effect('rejects expired authority and invalid full contracts before assertion
           currentTimeSeconds: Effect.succeed(currentTimeSeconds),
           environment: fixture.environment,
           redemption: {
-            consume: () =>
-              Effect.sync(() => {
-                redemptions += 1;
-              }),
+            consume: redemptions.consume,
           },
         })
         .pipe(
@@ -400,7 +418,7 @@ it.effect('rejects expired authority and invalid full contracts before assertion
           Effect.flip,
         );
       expect(isUnavailableError(failure)).toBe(true);
-      expect(redemptions).toBe(0);
+      expect(redemptions.count()).toBe(0);
     }
   }),
 );
@@ -951,4 +969,277 @@ it.effect('reference forwarding verifies real signatures and the current composi
     const staleSource = yield* referenceSource(stale, yield* referenceHeader('party-registry', stale.token));
     expect(isScopeError(yield* Effect.flip(staleSource.issue('party-registry')))).toBe(true);
   }),
+);
+
+it.effect(
+  'redeems a real signed registered workload without external identity or widening its Principal company scope',
+  () =>
+    Effect.gen(function* verifyRegisteredWorkload() {
+      const runReference = '60000000-0000-4000-8000-000000000002';
+      const workload: RegisteredGatewayWorkload = {
+        admissionInvocationId: runReference,
+        bindingIncarnation: '60000000-0000-4000-8000-000000000003',
+        declarationKey: 'party.registry.party.create',
+        entrypointKey: 'test.operation.read',
+        jobKey: 'source-import',
+        legalEntityId: '70000000-0000-4000-8000-000000000001',
+        legalEntityScope: 'required',
+        originalOwnerBindingIncarnation: '60000000-0000-4000-8000-000000000005',
+        originalPrincipalId: '40000000-0000-4000-8000-000000000002',
+        originalWorkloadBindingIncarnation: '60000000-0000-4000-8000-000000000004',
+        originalWorkloadKey: 'integration.source-admit',
+        runReference,
+        schemaVersion: '1',
+        sourceAppId: 'billing',
+        sourceBuildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+        sourceMode: 'admission',
+        workloadKey: 'party.registry.source-import',
+      };
+      const system = {
+        authContextRef: `job:source-import:run:${runReference}`,
+        authMethod: 'system' as const,
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      };
+      const fixture = yield* makeFixture('party-registry', WORKLOAD_GATEWAY_ASSERTION_VERSION, system, { workload });
+      const verifier = bindGatewayPrincipalVerifier('party-registry', {
+        appId: 'party-registry',
+        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+      });
+      const options = { currentTimeSeconds: Effect.succeed(currentTimeSeconds), environment: fixture.environment };
+      const unredeemed = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), options);
+      expect(isTrustedSystemPrincipalContext(unredeemed)).toBe(false);
+      const verified = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+        ...options,
+        redemption: { consume: () => Effect.void },
+      });
+      expect(isTrustedSystemPrincipalContext(verified)).toBe(true);
+      expect(verified.legalEntityId).toBeUndefined();
+      expect(verified.authenticationNamespaceId).toBeUndefined();
+      expect(readVerifiedGatewayWorkload(verified)).toEqual(workload);
+      expect(isTrustedSystemPrincipalContext({ ...verified })).toBe(false);
+      expect(readVerifiedGatewayActor(verified)).toBeUndefined();
+      const recovery = {
+        originalActionInvocationId: runReference,
+        originalActionKey: 'party.registry.source-create',
+        originalAuthContextRef: `job:source-import:run:${runReference}`,
+        originalIdempotencyKey: 'original-command',
+        originalPrincipalId: workload.originalPrincipalId,
+        originalRequestHash: 'a'.repeat(64),
+        requestHash: 'b'.repeat(64),
+      };
+      const recoveryFixture = yield* makeFixture('party-registry', WORKLOAD_GATEWAY_ASSERTION_VERSION, system, {
+        workload: { ...workload, recovery },
+      });
+      const recoveryPrincipal = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${recoveryFixture.token}`), {
+        ...options,
+        environment: recoveryFixture.environment,
+        redemption: { consume: () => Effect.void },
+      });
+      const proof = readVerifiedGatewayRecovery(recoveryPrincipal);
+      expect(proof).toEqual(recovery);
+      expect(Object.isFrozen(proof)).toBe(true);
+      if (proof !== undefined) {
+        expect(Reflect.set(proof, 'originalRequestHash', 'f'.repeat(64))).toBe(false);
+      }
+      expect(readVerifiedGatewayRecovery(recoveryPrincipal)?.originalRequestHash).toBe('a'.repeat(64));
+      const wrongBuild = yield* makeFixture('party-registry', WORKLOAD_GATEWAY_ASSERTION_VERSION, system, {
+        workload: { ...workload, sourceBuildMarker: 'not-approved' },
+      });
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            verifier.verifyAndRedeem(Redacted.make(`Bearer ${wrongBuild.token}`), {
+              ...options,
+              environment: wrongBuild.environment,
+              redemption: { consume: () => Effect.void },
+            }),
+          ),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+const registeredRouteScope: RegisteredGatewayRouteScope = {
+  legalEntityId: '70000000-0000-4000-8000-000000000001',
+  operations: [{ entrypointKey: 'party.registry.api.route-context', schemaVersion: '1' }],
+  principalId: principal.principalId,
+  routeId: '70000000-0000-4000-8000-000000000002',
+  routeKey: 'product-import',
+  routeRevision: 'route-1',
+  sourceRouteId: '70000000-0000-4000-8000-000000000003',
+  sourceRouteRevision: 'source-1',
+  tenantId: principal.tenantId,
+};
+const registeredRoutePrincipal = {
+  authBindingId: principal.authBindingId,
+  authContextRef: 'better-auth-api-key:registered-route-key',
+  authenticationNamespaceId: 'private-route.identity.v1',
+  authMethod: 'api_key' as const,
+  legalEntityId: registeredRouteScope.legalEntityId,
+  principalId: principal.principalId,
+  tenantId: principal.tenantId,
+};
+
+it.effect('seals an exact signed V2 private route scope only after redemption without exposing a copyable marker', () =>
+  Effect.gen(function* signedRouteScope() {
+    const fixture = yield* makeFixture('party-registry', EXTERNAL_GATEWAY_ASSERTION_VERSION, registeredRoutePrincipal, {
+      routeScope: registeredRouteScope,
+    });
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const options = { currentTimeSeconds: Effect.succeed(currentTimeSeconds), environment: fixture.environment };
+    const signatureOnly = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), options);
+    expect(readVerifiedGatewayRouteScope(signatureOnly)).toBeUndefined();
+    const verified = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+      ...options,
+      redemption: { consume: () => Effect.void },
+    });
+    const scope = readVerifiedGatewayRouteScope(verified);
+    expect(scope).toEqual(registeredRouteScope);
+    expect(Object.isFrozen(scope)).toBe(true);
+    expect(Object.isFrozen(scope?.operations)).toBe(true);
+    expect(Object.isFrozen(scope?.operations[0])).toBe(true);
+    if (scope !== undefined) {
+      expect(Reflect.set(scope, 'legalEntityId', '70000000-0000-4000-8000-000000000009')).toBe(false);
+      const [operation] = scope.operations;
+      if (operation !== undefined) {
+        expect(Reflect.set(operation, 'entrypointKey', 'party.registry.api.other')).toBe(false);
+      }
+    }
+    expect(Object.hasOwn(verified, 'routeScope')).toBe(false);
+    expect(readVerifiedGatewayRouteScope({ ...verified })).toBeUndefined();
+    expect(readVerifiedGatewayWorkload(verified)).toBeUndefined();
+    expect(readVerifiedGatewayActor(verified)).toBeUndefined();
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('rejects mismatched, non-finite, or non-API-key route scopes and rejects the marker on V1, V3, and V4', () =>
+  Effect.gen(function* invalidSignedRouteScope() {
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const invalidScopes: readonly unknown[] = [
+      { ...registeredRouteScope, tenantId: '70000000-0000-4000-8000-000000000004' },
+      { ...registeredRouteScope, principalId: '70000000-0000-4000-8000-000000000004' },
+      { ...registeredRouteScope, legalEntityId: '70000000-0000-4000-8000-000000000004' },
+      { ...registeredRouteScope, operations: [] },
+      { ...registeredRouteScope, operations: [...registeredRouteScope.operations, ...registeredRouteScope.operations] },
+      {
+        ...registeredRouteScope,
+        operations: Array.from({ length: 33 }, (_, index) => ({
+          entrypointKey: `party.registry.api.route-${index}`,
+          schemaVersion: '1',
+        })),
+      },
+      { ...registeredRouteScope, routeRevision: '' },
+      { ...registeredRouteScope, sourceRouteId: 'not-a-route-identity' },
+    ];
+    const redemptions = makeRedemptionCounter();
+    for (const routeScope of invalidScopes) {
+      const fixture = yield* makeFixture(
+        'party-registry',
+        EXTERNAL_GATEWAY_ASSERTION_VERSION,
+        registeredRoutePrincipal,
+        { routeScope },
+      );
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+              environment: fixture.environment,
+              redemption: {
+                consume: redemptions.consume,
+              },
+            }),
+          ),
+        ),
+      ).toBe(true);
+    }
+    const session = yield* makeFixture(
+      'party-registry',
+      EXTERNAL_GATEWAY_ASSERTION_VERSION,
+      { ...registeredRoutePrincipal, authMethod: 'session' },
+      { routeScope: registeredRouteScope },
+    );
+    expect(
+      Exit.isFailure(
+        yield* Effect.exit(
+          verifier.verify(Redacted.make(`Bearer ${session.token}`), {
+            currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+            environment: session.environment,
+          }),
+        ),
+      ),
+    ).toBe(true);
+    const runReference = '70000000-0000-4000-8000-000000000006';
+    const workload = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)({
+      admissionInvocationId: runReference,
+      bindingIncarnation: runReference,
+      declarationKey: 'party.registry.route.read',
+      entrypointKey: 'party.registry.api.route',
+      jobKey: 'route-marker-control',
+      legalEntityScope: 'forbidden',
+      originalOwnerBindingIncarnation: runReference,
+      originalPrincipalId: principal.principalId,
+      originalWorkloadBindingIncarnation: runReference,
+      originalWorkloadKey: 'integration.route-admit',
+      runReference,
+      schemaVersion: '1',
+      sourceAppId: 'billing',
+      sourceBuildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+      sourceMode: 'admission',
+      workloadKey: 'party.registry.route-read',
+    });
+    const system = {
+      authContextRef: `job:route-marker-control:run:${runReference}`,
+      authMethod: 'system' as const,
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    };
+    const versions = [
+      { context: principal, extra: {}, version: GATEWAY_ASSERTION_VERSION },
+      {
+        context: registeredRoutePrincipal,
+        extra: {
+          act: {
+            appId: 'billing',
+            buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+            principalId: '70000000-0000-4000-8000-000000000007',
+          },
+        },
+        version: DELEGATED_GATEWAY_ASSERTION_VERSION,
+      },
+      { context: system, extra: { workload }, version: WORKLOAD_GATEWAY_ASSERTION_VERSION },
+    ];
+    for (const version of versions) {
+      const control = yield* makeFixture('party-registry', version.version, version.context, version.extra);
+      yield* verifier.verify(Redacted.make(`Bearer ${control.token}`), {
+        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        environment: control.environment,
+      });
+      const marked = yield* makeFixture('party-registry', version.version, version.context, {
+        ...version.extra,
+        routeScope: registeredRouteScope,
+      });
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            verifier.verifyAndRedeem(Redacted.make(`Bearer ${marked.token}`), {
+              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+              environment: marked.environment,
+              redemption: {
+                consume: redemptions.consume,
+              },
+            }),
+          ),
+        ),
+      ).toBe(true);
+    }
+    expect(redemptions.count()).toBe(0);
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );

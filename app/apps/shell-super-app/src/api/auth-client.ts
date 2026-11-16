@@ -9,7 +9,7 @@ import type {
 import { Context, Crypto, PlatformError } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
-import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../../shared/module-target-diagnostics.ts';
 import type { ModuleTargetSource } from '../../shared/module-target-diagnostics.ts';
 import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
@@ -122,7 +122,7 @@ import type {
   ShellResourceResponse,
   ShellSearchPayload,
   ShellSearchResponse,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import type { PeopleList, PeopleListRequest } from '../../shared/people-api.ts';
 
 export { issueGatewayContext } from '@app/shared-contracts';

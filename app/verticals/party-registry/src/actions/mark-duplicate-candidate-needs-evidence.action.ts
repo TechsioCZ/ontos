@@ -48,7 +48,14 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     schemaVersion: '1',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'NEEDS_EVIDENCE'),
+  (transaction, scope) =>
+    duplicateCaseResolutionService(
+      transaction,
+      scope.tenantId,
+      'NEEDS_EVIDENCE',
+      'party.registry.mark-duplicate-candidate-needs-evidence',
+      scope,
+    ),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

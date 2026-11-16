@@ -12,6 +12,7 @@ import type { CrmState } from '../../../../../shared/domain/state.ts';
 import {
   UNASSIGNED,
   clientSalesFacts,
+  csvDecimal,
   orderMoney,
   ordersCsv,
   toCsv,
@@ -62,7 +63,7 @@ export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: Cr
     groupsOf(report, grouping).map((group) => [
       group.label,
       group.count,
-      ...report.currencies.map((currency) => totalIn(group.totals, currency)?.amount.replace('.', ',') ?? '—'),
+      ...report.currencies.map((currency) => csvDecimal(totalIn(group.totals, currency)?.amount) ?? '—'),
       group.lastOrderAt === undefined ? '—' : pipe(group.lastOrderAt, orderDateText, formatDate),
       ...(grouping === 'client'
         ? [

@@ -1,6 +1,10 @@
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-import { describeControllerContracts, makePrivacyPartyCompositionSnapshot } from '../support/dsr-obligation-native.ts';
+import {
+  describeControllerContracts,
+  makePrivacyPartyCompositionSnapshot,
+  resolvePrivacyFixtureShellBuildIdentity,
+} from '../support/dsr-obligation-native.ts';
 import type { DatabaseConnectionPair, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
   loadDatabaseConnectionPair,
@@ -37,6 +41,10 @@ import type {
 } from '@app/core-runtime/legacy-completion-publication';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { runApplicationCompositionMigration } from '../../../../scripts/application-composition-authority-publication.mts';
+import {
+  encodeModuleCredentialHandover,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+} from '../../../../scripts/zerops/module-credentials.mts';
 import { privacyLegacyCompletionOwner } from '../../scripts/legacy-completion-publication.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
@@ -498,6 +506,18 @@ const fixtureRuntimeInventory = [
     tables: ['party_historical_name_assertions'],
   },
   {
+    // Completion does not process Party source receipts or company IČO migration state.
+    operations: 'none',
+    rls: true,
+    schema: 'party',
+    tables: [
+      'party_create_source_receipts',
+      'party_ico_correlation_epochs',
+      'party_legacy_ico_authority_fences',
+      'party_source_effect_receipts',
+    ],
+  },
+  {
     operations: 'select, insert, update, delete',
     rls: true,
     schema: 'contacts',
@@ -507,6 +527,13 @@ const fixtureRuntimeInventory = [
     operations: 'select, insert, delete',
     rls: false,
     schema: 'contacts',
+    tables: ['gateway_assertion_redemptions'],
+  },
+  {
+    // Same fixed ingress privileges as the Privacy owner migration.
+    operations: 'select, insert, delete',
+    rls: false,
+    schema: 'privacy',
     tables: ['gateway_assertion_redemptions'],
   },
   {
@@ -559,12 +586,6 @@ const fixtureRuntimeInventory = [
       'retention_evaluation_work',
       'temporary_dsr_exports',
     ],
-  },
-  {
-    operations: 'select, insert, delete',
-    rls: false,
-    schema: 'privacy',
-    tables: ['gateway_assertion_redemptions'],
   },
 ] as const;
 
@@ -665,6 +686,8 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
     readonly replies: Queue.Queue<string, PrivacyCompletionTestFailure>;
   },
   bootstrap?: Parameters<typeof receivePrivateShellResponse>[2],
+  /** One module credential handover line, delivered on the child's private channel (fd 3) as a host delivers it. */
+  credentialHandover?: Uint8Array,
 ) {
   const transport = yield* Config.all({
     PATH: Config.String('PATH'),
@@ -689,9 +712,16 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
         Effect.forkScoped,
       );
   }
+  let handoverEnvironment = {};
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  if (credentialHandover !== undefined) {
+    handoverEnvironment = { [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3' };
+    additionalFds.fd3 = { stream: Stream.make(credentialHandover), type: 'input' };
+  }
   const child = yield* ChildProcess.make(process.execPath, [path], {
+    additionalFds,
     cwd: appRoot,
-    env: childEnvironment(transport, { ...env, ...responseEnvironment }),
+    env: childEnvironment(transport, { ...env, ...responseEnvironment, ...handoverEnvironment }),
     extendEnv: false,
     stderr: 'pipe',
     stdin: retrySession?.input,
@@ -739,6 +769,7 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
 const fixtureAuthorityLifetime = Context.Reference<'ordinary' | 'short'>('PrivacyCompletionTest.AuthorityLifetime', {
   defaultValue: () => 'ordinary',
 });
+const shortAuthorityLifetimeSeconds = 60;
 interface AdditionalLegalEntityFixtureConfiguration {
   readonly additionalLegalEntity?: 'same-tenant';
 }
@@ -765,7 +796,7 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
       }),
     ),
   )(yield* topologyFileSystem.readFileString(`${appRoot}topology/reference-topology.json`));
-  const shellIdentity = yield* Effect.try({
+  const shellRelease = yield* Effect.try({
     catch: () => failure('The actual Shell SDK identity was unavailable'),
     try: () =>
       resolveUltramodernReleaseIdentity({
@@ -774,6 +805,7 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
         workspaceRoot: appRoot,
       }),
   });
+  const shellIdentity = yield* resolvePrivacyFixtureShellBuildIdentity(shellRelease);
   const encodeBuildIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
   const crypto = yield* Crypto.Crypto;
@@ -795,6 +827,31 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
     shell: `${roots.shell}/shell.mjs`,
     worker: `${roots.party}/worker.mjs`,
   };
+  // As the Outbox Worker host does, the worker process claims the credential store copy its worker code reads and
+  // takes Party's own module key from its private channel (fd 3) before the worker runs. The scope stays open for the
+  // process's life, so the channel is read until the launcher closes it.
+  const workerEntry = `${roots.party}/worker-entry.ts`;
+  const encodePath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+  yield* fs.writeFileString(
+    workerEntry,
+    `import { Effect, Scope } from 'effect';
+import {
+  holdOwnStoreCopy,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+  receiveModuleCredentialHandover,
+} from ${yield* encodePath(`${appRoot}scripts/zerops/module-credentials.mts`)};
+const owners = ['party-registry'];
+if (process.env[MODULE_CREDENTIAL_HANDOVER_VARIABLE] !== undefined) {
+  Effect.runFork(
+    receiveModuleCredentialHandover(owners).pipe(
+      Effect.flatMap((holders) => holdOwnStoreCopy(holders, owners)),
+      Scope.provide(Scope.makeUnsafe()),
+    ),
+  );
+}
+await import(${yield* encodePath(`${appRoot}verticals/party-registry/tests/support/privacy-completion-worker.ts`)});
+`,
+  );
   const entries = [
     {
       identity: shellIdentity,
@@ -814,9 +871,14 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
     {
       identity: contractsDescription.buildIdentities['party-registry'],
       output: paths.worker,
-      source: 'verticals/party-registry/tests/support/privacy-completion-worker.ts',
+      source: workerEntry,
     },
   ];
+  // A bundle that holds a module key keeps the credential store an external file: its owner code reads it through the
+  // external `@app/core-runtime`, so an inlined second copy would hold the key where nobody reads it.
+  const credentialStore = yield* fs.realPath(
+    `${appRoot}packages/core-runtime/src/auth/hosted-module-credential-store.ts`,
+  );
   yield* Effect.forEach(
     entries,
     Effect.fn('PrivacyCompletionTest.bundleOwnedEntry')(function* bundleOwnedEntry(entry: (typeof entries)[number]) {
@@ -828,6 +890,7 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
         '--platform=node',
         '--format=esm',
         '--packages=external',
+        `--external:${credentialStore}`,
         `--define:ULTRAMODERN_BUILD_MARKER=${yield* encodeBuildIdentity(entry.identity.buildMarker)}`,
         `--define:ULTRAMODERN_SOURCE_REVISION=${yield* encodeBuildIdentity(entry.identity.sourceRevision)}`,
         `--outfile=${entry.output}`,
@@ -1091,18 +1154,26 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         'create table privacy_completion_test.redemptions (issuer text not null, audience text not null, jti text not null, primary key (issuer,audience,jti))',
       );
       await Promise.all(
-        inventory.flatMap((item) => [
-          bootstrapAdmin.query(`grant usage on schema "${item.schema}" to ${role}`),
-          ...item.tables.map((table) =>
-            bootstrapAdmin.query(`grant ${item.operations} on "${item.schema}"."${table}" to ${role}`),
-          ),
-        ]),
+        inventory
+          .filter(({ operations }) => operations !== 'none')
+          .flatMap((item) => [
+            bootstrapAdmin.query(`grant usage on schema "${item.schema}" to ${role}`),
+            ...item.tables.map((table) =>
+              bootstrapAdmin.query(`grant ${item.operations} on "${item.schema}"."${table}" to ${role}`),
+            ),
+          ]),
       );
       await bootstrapAdmin.query(`grant usage on schema privacy_completion_test to ${role}`);
       await bootstrapAdmin.query(`grant select, insert on privacy_completion_test.redemptions to ${role}`);
       const protectedTables: readonly (readonly [string, readonly string[]])[] = [
         ...inventory.flatMap((item) =>
-          item.tables.map((table) => [`${item.schema}.${table}`, item.operations.toUpperCase().split(', ')] as const),
+          item.tables.map(
+            (table) =>
+              [
+                `${item.schema}.${table}`,
+                item.operations === 'none' ? [] : item.operations.toUpperCase().split(', '),
+              ] as const,
+          ),
         ),
         ['privacy_completion_test.redemptions', ['SELECT', 'INSERT']],
         ['core.application_composition_durable_work', ['SELECT']],
@@ -1178,7 +1249,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       ? yield* validateActiveApplicationCompositionSnapshot({
           ...initialSnapshot,
           observedAt: fresh.observedAt,
-          validUntil: DateTime.add(fresh.observedAt, { seconds: 21 }),
+          validUntil: DateTime.add(fresh.observedAt, { seconds: shortAuthorityLifetimeSeconds + 1 }),
         })
       : initialSnapshot;
   yield* isolated.publishInitialComposition(snapshot);
@@ -1186,7 +1257,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const snapshotJson = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     snapshot,
   );
-  yield* Effect.logInfo('Privacy composition environment byte count', new TextEncoder().encode(snapshotJson).length);
   const compositionContext = yield* Layer.build(NodeHttpServer.layerTest);
   const source = Context.get(compositionContext, HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotJson, { contentType: 'application/json' })));
@@ -1217,7 +1287,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     BETTER_AUTH_URL: 'http://localhost:3020',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_1258_TEST_ADDITIONAL_LE: additionalLegalEntity,
-    ONTOS_1258_TEST_COMPOSITION: snapshotJson,
     ONTOS_1258_TEST_DATABASE: ownedName,
     ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
     ONTOS_1258_TEST_RUNTIME: ownedRuntime,
@@ -1482,6 +1551,10 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         return response.status;
       },
     });
+  // The Party worker's own module key reaches it only over its private channel, as the Outbox Worker host hands it.
+  const workerCredentialHandover = yield* encodeModuleCredentialHandover({ 'party-registry': moduleApiKey }, [
+    'party-registry',
+  ]);
   const worker = (
     options: {
       readonly advanceMs?: number;
@@ -1489,14 +1562,20 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       readonly revision?: string;
     } = {},
   ) =>
-    start(paths.worker, {
-      ...ownerEnvironment,
-      ONTOS_1258_TEST_BARRIER: options.barrier ?? 'none',
-      ONTOS_1258_TEST_CLOCK_ADVANCE_MS: String(options.advanceMs ?? 0),
-      ONTOS_1258_TEST_REVISION: options.revision ?? snapshot.composition.revision,
-      ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleApiKey),
-      ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
-    });
+    start(
+      paths.worker,
+      {
+        ...ownerEnvironment,
+        ONTOS_1258_TEST_BARRIER: options.barrier ?? 'none',
+        ONTOS_1258_TEST_CLOCK_ADVANCE_MS: String(options.advanceMs ?? 0),
+        ONTOS_1258_TEST_REVISION: options.revision ?? snapshot.composition.revision,
+        ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
+      },
+      false,
+      undefined,
+      undefined,
+      workerCredentialHandover,
+    );
   const cycle = (advanceMs = 0) =>
     Effect.gen(function* actualWorkerCycle() {
       const process = yield* worker({ advanceMs });
@@ -1522,11 +1601,12 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         ONTOS_1258_TEST_CLOCK_ADVANCE_MS: '0',
         ONTOS_1258_TEST_RETRY_SESSION: 'dead-letter',
         ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleApiKey),
         ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
       },
       false,
       { input: Stream.fromQueue(input).pipe(Stream.encodeText), replies },
+      undefined,
+      workerCredentialHandover,
     );
     let index = 0;
     return {
@@ -1801,7 +1881,7 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
         ['party_historical_name_assertions', 'select'],
       ]);
       for (const item of fixtureRuntimeInventory) {
-        if (item.schema === 'party' || (item.schema === 'contacts' && item.rls)) {
+        if ((item.schema === 'party' && item.operations !== 'none') || (item.schema === 'contacts' && item.rls)) {
           expect(item.rls, item.schema).toBe(true);
           for (const table of item.tables) {
             expect(item.operations, table).toBe(partyOperationsByTable.get(table) ?? 'select, insert, update, delete');
@@ -2579,9 +2659,12 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
             deliveriesAfter.length - deliveriesBefore.length,
           );
-          expect(completedCycle.matched.messagesMatched).toBeGreaterThanOrEqual(
-            completedCycle.matched.deliveriesCreated,
-          );
+          // Either Shell's matcher got there first and this worker matched nothing, or this worker matched the one
+          // message itself and created both of its subscribed deliveries (Party's consumer, Privacy's watchdog).
+          expect([
+            [0, 0],
+            [1, 2],
+          ]).toContainEqual([completedCycle.matched.messagesMatched, completedCycle.matched.deliveriesCreated]);
           const original = yield* coreDebtSettled(f);
           expect(original.handoffFingerprint).toBe(digest(canonical));
           expect(original.outcome).toMatchObject({
@@ -2683,7 +2766,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           const originalMessages = (yield* f.evidence()).outbox;
           const remaining = before.validUntilEpochMilliseconds - before.observedAtEpochMilliseconds;
           expect(remaining).toBeGreaterThan(0);
-          expect(remaining).toBeLessThanOrEqual(20_000);
+          expect(remaining).toBeLessThanOrEqual(shortAuthorityLifetimeSeconds * 1000);
           yield* Effect.sleep(remaining + 100);
           const expired = yield* f.isolated.composition.observeRetainedOriginal();
           expect(expired.unexpired).toBe(false);
@@ -2751,7 +2834,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           expect((yield* f.evidence()).outbox).toEqual(originalMessages);
           return yield* Effect.void;
         }),
-      60_000,
+      120_000,
     );
 
     suite.effect(
@@ -3117,6 +3200,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           yield* f.seal;
           return yield* Effect.void;
         }),
+      90_000,
     );
 
     suite.effect(

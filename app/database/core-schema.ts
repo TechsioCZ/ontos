@@ -2,7 +2,7 @@ import type { PgPolicy } from 'drizzle-orm/pg-core';
 import { Schema } from 'effect';
 
 import type { DatabaseIdentityEnrollment } from '../packages/core-runtime/src/db/database-identity-manifest.ts';
-import { makeCoreIdentityPolicies } from '../packages/core-runtime/src/db/identity-policies.ts';
+import { coreIdentityPolicyDescriptors } from '../packages/core-runtime/src/db/identity-policies.ts';
 import {
   coreDatabaseSchema,
   coreSchema,
@@ -31,7 +31,7 @@ export type CoreMigrationExport = PgPolicy | (typeof baseMigrationExports)[keyof
 export const makeCoreMigrationSchema = (
   enrollment: DatabaseIdentityEnrollment,
 ): Readonly<Record<string, CoreMigrationExport>> => {
-  const descriptors = makeCoreIdentityPolicies(enrollment);
+  const descriptors = coreIdentityPolicyDescriptors(enrollment);
   const policies: Record<string, PgPolicy> = Object.fromEntries(descriptors.map(({ policy }) => [policy.name, policy]));
   if (
     Object.keys(policies).length !== descriptors.length ||

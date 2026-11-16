@@ -11,6 +11,7 @@ import type {
   ExternalIdentityWorkloadGrant,
   ExternalIdentityWorkloadOperation,
 } from './configuration.ts';
+import { PlatformWorkloadKeyAdmission } from '../platform-workload-key-admission.ts';
 
 const ExternalIdentityWorkloadAuthenticationErrorSchema = Schema.TaggedStruct(
   'ExternalIdentityWorkloadAuthenticationError',
@@ -52,14 +53,14 @@ export interface ExternalIdentityWorkloadAuthorizationService {
   ) => Effect.Effect<
     TrustedPrincipalContext,
     ExternalIdentityWorkloadAuthorizationError,
-    ApiKeyService | PrincipalResolver
+    ApiKeyService | PrincipalResolver | PlatformWorkloadKeyAdmission
   >;
   readonly authorize: (
     input: ExternalIdentityWorkloadAuthorizationInput,
   ) => Effect.Effect<
     TrustedPrincipalContext,
     ExternalIdentityWorkloadAuthorizationError,
-    ExternalIdentityHttpConfigurationService | ApiKeyService | PrincipalResolver
+    ExternalIdentityHttpConfigurationService | ApiKeyService | PrincipalResolver | PlatformWorkloadKeyAdmission
   >;
   readonly authorizePrincipal: (
     principal: TrustedPrincipalContext,
@@ -135,7 +136,7 @@ const authenticateWorkloadWith = (admit: IntegrationCredentialAdmission) =>
   ): Effect.fn.Return<
     TrustedPrincipalContext,
     ExternalIdentityWorkloadAuthorizationError,
-    ApiKeyService | PrincipalResolver
+    ApiKeyService | PrincipalResolver | PlatformWorkloadKeyAdmission
   > {
     const rawKey = Redacted.value(apiKey);
     if (rawKey === undefined || rawKey.trim().length === 0) {
@@ -180,6 +181,21 @@ const authenticateWorkloadWith = (admit: IntegrationCredentialAdmission) =>
         return workloadUnavailableError('Principal resolution is unavailable', error);
       }),
     );
+    // A module's internal workload acts only with the key the platform issued it, never through this endpoint's grants.
+    yield* (yield* PlatformWorkloadKeyAdmission)
+      .admit({
+        legalEntityId: null,
+        principalId: identity.principalId,
+        providerKeyId: verified.providerKeyId,
+        tenantId: identity.tenantId,
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          error.code === 'forbidden'
+            ? workloadForbiddenError('An internal workload acts only with the key the platform issued it')
+            : workloadUnavailableError('The internal workload key check is unavailable', error),
+        ),
+      );
     return yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
       authBindingId: identity.authBindingId,
       authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
@@ -243,7 +259,7 @@ export const externalIdentityWorkloadAuthorizationLive = Layer.effect(
     ): Effect.fn.Return<
       TrustedPrincipalContext,
       ExternalIdentityWorkloadAuthorizationError,
-      ExternalIdentityHttpConfigurationService | ApiKeyService | PrincipalResolver
+      ExternalIdentityHttpConfigurationService | ApiKeyService | PrincipalResolver | PlatformWorkloadKeyAdmission
     > {
       const principal = yield* authenticateWorkload(input.apiKey);
       return yield* authorizeWorkloadPrincipal(principal, input);

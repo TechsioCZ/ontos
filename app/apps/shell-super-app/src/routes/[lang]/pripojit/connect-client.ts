@@ -13,7 +13,7 @@ import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Effect, Match, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
-import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../../../shared/api.ts';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../../../shared/browser-api.ts';
 import type { OAuthConnectProblem } from '../../../../shared/oauth-connect-api.ts';
 import { navigationTarget } from './connect-view-model.ts';
 import type { ConnectFailure } from './connect-view-model.ts';

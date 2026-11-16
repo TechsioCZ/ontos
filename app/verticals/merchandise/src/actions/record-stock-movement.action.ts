@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug record-stock-movement
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { recordStockMovementDeclaration } from '../../shared/access-declarations.ts';
 import {
   RecordStockMovementPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const recordStockMovementAction = defineAction(
   {
-    accessDeclaration: recordStockMovementDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.stock-movement.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'stock-movement', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.record-stock-movement.access.v1',

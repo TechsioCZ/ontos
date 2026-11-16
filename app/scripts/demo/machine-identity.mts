@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Config, ConfigProvider, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
+import { SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { Cookies, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { AuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
@@ -62,7 +63,6 @@ const IssueKeyBodySchema = Schema.Struct({
   scope: Schema.Literal('tenant-managed'),
 });
 const IssuedKeySchema = Schema.Struct({ secret: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))) });
-const SECURE_COOKIE_PREFIX = '__Secure-';
 
 /** The Shell signs into a `__Secure-` cookie the API-key instance reads without the prefix; send both. */
 const sessionCookieHeader = (cookies: Cookies.Cookies) => {

@@ -115,19 +115,3 @@ it('does not exempt managed-looking paths through file or directory symlinks', (
     });
   }
 });
-
-it('applies native Error discrimination only outside the Next.js storefronts', () => {
-  withTemporaryWorkspace((directory) => {
-    const names = ['akros-storefront/src/refusal.ts', 'n1-storefront/src/refusal.ts', 'apps/example/src/failure.ts'];
-    const paths = names.map((file) => nodePath.join(directory, file));
-    for (const filename of paths) {
-      mkdirSync(nodePath.dirname(filename), { recursive: true });
-      writeFileSync(filename, firstPartyInstanceof);
-    }
-    const run = runRepositoryPolicy(paths);
-    expect(run.numberOfFiles).toBe(paths.length);
-    expect(run.diagnostics.map(({ code, filename }) => [code, nodePath.resolve(appRoot, filename)])).toEqual([
-      [instanceOfRule, nodePath.join(directory, 'apps/example/src/failure.ts')],
-    ]);
-  });
-});

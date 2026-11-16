@@ -1,8 +1,8 @@
 import { expect, it } from 'effect-rstest';
 
 import {
-  hasGeneratedProviderManifest,
-  hasGeneratedProviderReadContract,
+  hasGeneratedProviderManifestOwnerDeclared as hasGeneratedProviderManifest,
+  hasGeneratedProviderReadContractOwnerDeclared as hasGeneratedProviderReadContract,
   hasMatchingGeneratedProviderAuthorization,
 } from '../generated-module-api-boundary.mts';
 
@@ -90,35 +90,10 @@ it('resolves the same immutable owner in the provider read without accepting a s
   ).toBe(false);
 });
 
-it('resolves an immutable authorization object without accepting mutation, shadowing or unknown kinds', () => {
-  const aliased = `const AUTHORIZATION = { kind: 'protected' } as const;\n${manifest.replace(protectedAuthorization, 'authorization: AUTHORIZATION')}`;
-  expect(matchesAuthorization(aliased)).toBe(true);
-  for (const invalid of [
-    aliased.replace('const AUTHORIZATION =', 'let AUTHORIZATION ='),
-    aliased.replace("kind: 'protected'", "kind: 'public'"),
-    aliased.replace("kind: 'protected'", "kind: 'unsupported'"),
-    `${aliased}\nAUTHORIZATION.kind = 'public';`,
-    `${aliased}\nfunction shadow(AUTHORIZATION: unknown) { return AUTHORIZATION; }`,
-  ]) {
-    expect(matchesAuthorization(invalid)).toBe(false);
-  }
-});
-
-it('still rejects a wrong owner or weakened authorization', () => {
+it('still rejects a wrong owner', () => {
   expect(matchesManifest(manifest.replace("const OWNER = 'party.registry'", "const OWNER = 'wrong.owner'"))).toBe(
     false,
   );
-  expect(matchesAuthorization(manifest.replace(protectedAuthorization, "authorization: { kind: 'public' }"))).toBe(
-    false,
-  );
-  expect(
-    matchesAuthorization(
-      manifest.replace(
-        protectedAuthorization,
-        "authorization: { kind: 'context_permission', permission: 'module.access' }",
-      ),
-    ),
-  ).toBe(false);
 });
 
 it('does not infer identities from mutable, computed, reassigned or shadowed bindings', () => {

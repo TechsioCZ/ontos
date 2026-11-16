@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CustomerProfileSourceAssertionSchema } from '../domain/customer-profile-source.ts';
 import {
   CustomerPriceGroupAssignmentSchema,
   PriceGroupInstantJsonSchema,
@@ -13,8 +14,10 @@ export const AssignCustomerPriceGroupPayloadSchema = Schema.Struct({
   effectiveTo: Schema.optionalKey(PriceGroupInstantJsonSchema),
   expectedProfileRevision: PriceGroupRevisionSchema,
   priceGroupRef: PriceGroupRefSchema,
+  processingKind: Schema.optionalKey(Schema.Literal('PERSONAL_DATA')),
   profile: RetailPriceGroupProfileTargetSchema,
   reason: PriceGroupReasonSchema,
+  source: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
 }).check(
   Schema.makeFilter((payload) =>
     payload.effectiveTo === undefined || payload.effectiveTo > payload.effectiveFrom

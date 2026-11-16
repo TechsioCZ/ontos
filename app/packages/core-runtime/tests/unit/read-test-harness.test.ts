@@ -19,7 +19,7 @@ import {
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadServiceFactory } from '../../src/reads/definition.ts';
 import type { ReadHandlerContext, ReadLoadContext } from '../../src/reads/context.ts';
-import { ReadHandlerUnavailable, ReadPermissionDenied } from '../../src/reads/errors.ts';
+import { ReadHandlerUnavailable, ReadPermissionDenied, ReadPermissionUnavailable } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 
@@ -241,13 +241,13 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
           expect(harness.snapshot().evidenceWrites).toBe(1);
         } else {
           const failure = yield* result.pipe(Effect.flip);
-          let expectedFailure = 'ReadHandlerUnavailable';
+          let expectedFailure: Schema.Schema<unknown> = ReadHandlerUnavailable;
           if (control === 'denied') {
-            expectedFailure = 'ReadPermissionDenied';
+            expectedFailure = ReadPermissionDenied;
           } else if (control === 'unavailable') {
-            expectedFailure = 'ReadPermissionUnavailable';
+            expectedFailure = ReadPermissionUnavailable;
           }
-          expect(failure._tag).toBe(expectedFailure);
+          expect(Schema.is(expectedFailure)(failure)).toBe(true);
           expect(calls).toBe(0);
         }
         expect(harness.snapshot().ownerQueries).toEqual([]);
@@ -368,9 +368,11 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       const scopeIndex = statements.findIndex((statement) => statement.includes('set_config'));
       expect(scopeIndex).toBeGreaterThan(fenceIndex + 1);
       expect(ownerIndex).toBeGreaterThan(scopeIndex);
-      expect(statements.slice(scopeIndex, ownerIndex).some((statement) => statement.includes('current_setting'))).toBe(
-        true,
+      // The scope install reads back the connected role in the same statement; no separate verification read.
+      expect(statements[scopeIndex]).toBe(
+        "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id",
       );
+      expect(statements.slice(scopeIndex + 1, ownerIndex)).toEqual(['select transaction_timestamp() as operation_at']);
       expect(statements[ownerIndex + 1]).toBe('COMMIT');
       expect(statements.some((statement) => statement.includes('SAVEPOINT'))).toBe(false);
       expect(evidenceWrites).toBe(1);

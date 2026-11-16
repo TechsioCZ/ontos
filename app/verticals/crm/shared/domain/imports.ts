@@ -27,8 +27,61 @@ export function orderDateText(value: OrderDate | undefined): string | undefined 
 /** Exact decimal as a string ("1234.50"); never a float. Always paired with a currency. */
 export const DecimalStringSchema = Schema.String.check(Schema.isPattern(/^-?\d{1,15}(?:\.\d{1,4})?$/u));
 
+/** Canonical columns of the crm-orders-csv-v1 template (header aliases resolve to these). */
+export const CsvColumnKeySchema = Schema.Literals([
+  'zdroj',
+  'id_objednavky',
+  'cislo_objednavky',
+  'datum_objednavky',
+  'id_zakaznika',
+  'nazev_zakaznika',
+  'ico_zakaznika',
+  'email_zakaznika',
+  'castka',
+  'mena',
+  'stav',
+  'cas_udalosti',
+  'id_udalosti',
+  'polozky',
+]);
+export type CsvColumnKey = typeof CsvColumnKeySchema.Type;
+
+/** Longest accepted text cell (ShortTextSchema); quoted back to the person who fixes the file. */
+export const CSV_TEXT_MAX_LENGTH = 200;
+
+const CsvRowSchema = Schema.Int;
+/** 1-based position of a cell in its CSV line, for cells that have no canonical column. */
+const CsvPositionSchema = Schema.Int;
+
+/**
+ * Why the parser refused a file or a row: a language-free code with its parameters. Screens translate it; the
+ * parser never produces sentences. Values are echoed only after they passed the text-length check.
+ */
+export const CsvProblemSchema = Schema.Union([
+  Schema.TaggedStruct('AmountWithoutCurrency', { row: CsvRowSchema }),
+  Schema.TaggedStruct('DuplicateHeader', { column: CsvColumnKeySchema }),
+  Schema.TaggedStruct('EmptyFile', {}),
+  Schema.TaggedStruct('InvalidAmount', { row: CsvRowSchema, value: ShortTextSchema }),
+  Schema.TaggedStruct('InvalidCurrency', { row: CsvRowSchema, value: ShortTextSchema }),
+  Schema.TaggedStruct('InvalidHeaderCell', { maxLength: Schema.Int, position: CsvPositionSchema }),
+  Schema.TaggedStruct('InvalidLine', { item: Schema.Int, maxLength: Schema.Int, row: CsvRowSchema }),
+  Schema.TaggedStruct('InvalidText', { column: CsvColumnKeySchema, maxLength: Schema.Int, row: CsvRowSchema }),
+  Schema.TaggedStruct('InvalidTime', {
+    column: Schema.Literals(['cas_udalosti', 'datum_objednavky']),
+    row: CsvRowSchema,
+  }),
+  Schema.TaggedStruct('LineAmountWithoutCurrency', { row: CsvRowSchema }),
+  Schema.TaggedStruct('MissingColumns', { columns: Schema.Array(CsvColumnKeySchema) }),
+  Schema.TaggedStruct('MissingValue', { column: CsvColumnKeySchema, row: CsvRowSchema }),
+  Schema.TaggedStruct('SurplusCells', { position: CsvPositionSchema, row: CsvRowSchema }),
+  Schema.TaggedStruct('UnterminatedQuote', { position: CsvPositionSchema, row: CsvRowSchema }),
+]);
+export type CsvProblem = typeof CsvProblemSchema.Type;
+
+/** A refused row. `message` keeps the server's Czech sentence; `problem` lets screens render it in any language. */
 export const ImportRowErrorSchema = Schema.Struct({
   message: LongTextSchema,
+  problem: Schema.optionalKey(CsvProblemSchema),
   row: Schema.Int,
 });
 
@@ -41,6 +94,7 @@ export const ImportRowResultSchema = Schema.Struct({
   message: LongTextSchema,
   orderId: Schema.optionalKey(EntityIdSchema),
   outcome: ImportRowOutcomeSchema,
+  problem: Schema.optionalKey(CsvProblemSchema),
   row: Schema.Int,
 });
 export type ImportRowResult = typeof ImportRowResultSchema.Type;

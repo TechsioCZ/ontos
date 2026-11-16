@@ -106,10 +106,12 @@ export const provisionVoucherActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ProvisionVoucherActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ProvisionVoucherActionForbiddenProblem'> =>
     ProvisionVoucherActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -220,7 +222,7 @@ const mapCoreProblem = (error: ActionCoreError): ProvisionVoucherActionProblem =
       ActionInvocationStateError: (failure) => provisionVoucherActionProblem.conflict(failure.code),
       ActionPayloadValidationError: provisionVoucherActionProblem.invalid,
       ActionPermissionCheckError: (failure) => provisionVoucherActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => provisionVoucherActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => provisionVoucherActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => provisionVoucherActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => provisionVoucherActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => provisionVoucherActionProblem.conflict(failure.code),

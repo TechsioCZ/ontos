@@ -88,7 +88,7 @@ beforeEach(() => {
 
 it.effect('passes the property owner credential and preserves the structured reference', () =>
   Effect.gen(function* serviceTaskReference() {
-    const created = yield* createServiceTask(draft, device, tenantId);
+    const created = yield* createServiceTask(draft, { device, tenantId });
     expect(created.status).toBe('created');
     expect(makeReferenceGatewayCredentials).toHaveBeenCalledWith(['property-portfolio']);
     const [call] = rstest.mocked(executeApplyCommand).mock.calls;
@@ -125,7 +125,7 @@ it.effect('never retries an unavailable owner by dropping contextRefs', () =>
       { readonly _tag: 'ApplyCommandActionUnavailableProblem' }
     >;
     rstest.mocked(executeApplyCommand).mockReturnValue(Effect.fail(unavailable));
-    expect(yield* createServiceTask(draft, device, tenantId)).toEqual({ status: 'failed' });
+    expect(yield* createServiceTask(draft, { device, tenantId })).toEqual({ status: 'failed' });
     expect(executeApplyCommand).toHaveBeenCalledTimes(1);
     expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[0].command).toHaveProperty('contextRefs');
   }),
@@ -149,7 +149,7 @@ it.effect('retries only one revision conflict, still carrying the unit link and 
       ...device,
       location: { id: propertyId, kind: 'unit', label: 'Rezidence Parková' },
     } satisfies typeof device;
-    const created = yield* createServiceTask(draft, unit, tenantId);
+    const created = yield* createServiceTask(draft, { device: unit, tenantId });
     expect(created.status).toBe('created');
     expect(executeApplyCommand).toHaveBeenCalledTimes(2);
     for (const [payload, , options] of rstest.mocked(executeApplyCommand).mock.calls) {
@@ -170,7 +170,7 @@ it.effect('reports a parked proposal as pending approval without a task and neve
         }),
       ),
     );
-    expect(yield* createServiceTask(draft, device, tenantId)).toEqual({ status: 'pending_approval' });
+    expect(yield* createServiceTask(draft, { device, tenantId })).toEqual({ status: 'pending_approval' });
     expect(executeApplyCommand).toHaveBeenCalledTimes(1);
     expect(rstest.mocked(executeApplyCommand).mock.calls[0]?.[2].referenceCredentials).toBe(credentials);
   }),

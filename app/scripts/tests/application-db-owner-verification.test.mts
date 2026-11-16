@@ -8,6 +8,7 @@ import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
+  MAX_VERIFIER_CONCURRENCY,
   validateVerifierConcurrency,
   verifyOwnerSchema,
   verifyOwnerSchemas,
@@ -15,12 +16,12 @@ import {
 import { loadApplicationMigrationInventory } from '../application-migration-inventory.mts';
 
 it.effect(
-  'retains all 33 source-owned verifiers including Projects, Payment, Promotion and the Core application enrollment wrapper',
+  'retains all 34 source-owned verifiers including Projects, Payment, Promotion, Symmy and the Core application enrollment wrapper',
   () =>
     Effect.gen(function* sourceOwnedVerifiers() {
       const inventory = yield* loadApplicationMigrationInventory();
       const ownerVerifierPaths = inventory.filter((owner) => !owner.optional).flatMap((owner) => owner.verifierPaths);
-      expect(ownerVerifierPaths).toHaveLength(33);
+      expect(ownerVerifierPaths).toHaveLength(34);
       expect(inventory.find((owner) => owner.ownerId === 'core-runtime')?.verifierPaths).toEqual([
         'scripts/verify-core-db-schema.mts',
       ]);
@@ -59,6 +60,7 @@ it.effect(
           'verticals/tax/scripts/verify-db-schema.mts',
           'verticals/projects/scripts/verify-db-schema.mts',
           'verticals/promotion/scripts/verify-db-schema.mts',
+          'verticals/symmy-integration/scripts/verify-db-schema.mts',
         ].toSorted(),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -197,9 +199,10 @@ it.effect('rejects unbounded concurrency without replacing canonical source inve
   Effect.gen(function* validateConcurrency() {
     expect(yield* validateVerifierConcurrency(4)).toBe(4);
     expect(yield* validateVerifierConcurrency(2)).toBe(2);
-    for (const value of [0, 5, -1, 1.5]) {
+    expect(yield* validateVerifierConcurrency(MAX_VERIFIER_CONCURRENCY)).toBe(8);
+    for (const value of [0, 9, -1, 1.5]) {
       const failure = yield* validateVerifierConcurrency(value).pipe(Effect.flip);
-      expect(failure.reason).toContain('between 1 and 4');
+      expect(failure.reason).toContain('between 1 and 8');
     }
   }),
 );

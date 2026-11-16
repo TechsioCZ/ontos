@@ -14,8 +14,11 @@ import {
   InvoiceSchema,
   IssuerIcoSchema,
   IssuerVatIdSchema,
+  MAX_PAYMENT_RECORDS,
+  ManualPaymentSchema,
 } from '../apis/records.ts';
 import { buildPohodaDataPack } from './pohoda-xml.ts';
+import type { PohodaExportRefused } from './pohoda-xml.ts';
 
 const pragueDateFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
@@ -60,64 +63,164 @@ export interface PaymentEvent {
   readonly direction: Invoice['direction'];
   readonly id: string;
   readonly invoiceResourceId: string;
-  /** PRIOR = an earlier advance/partial amount taken into account by hand: it settles, but moves no money. */
-  readonly source: 'MANUAL' | 'PRIOR' | 'SNAPSHOT';
+  /**
+   * MANUAL = confirmed by a user; IMPORT = the paid amount an invoice was imported or seeded with; PRIOR = an earlier
+   * advance/partial amount taken into account by hand: it settles, but moves no money.
+   */
+  readonly source: 'IMPORT' | 'MANUAL' | 'PRIOR';
 }
 
-const isoDateOf = (value: Invoice['updatedAt']): string => DateTime.formatIsoDateUtc(value);
+const recordsByInvoice = (payments: readonly ManualPayment[]): ReadonlyMap<string, readonly ManualPayment[]> => {
+  const byInvoice = new Map<string, ManualPayment[]>();
+  for (const payment of payments) {
+    byInvoice.set(payment.invoiceResourceId, [...(byInvoice.get(payment.invoiceResourceId) ?? []), payment]);
+  }
+  return byInvoice;
+};
 
 /**
- * Every confirmed payment of every invoice exactly once. Simulated observations are cumulative, so each one
- * contributes its increment; manual payments contribute their amount. Whatever part of `paidMinor` no event
- * explains (older seeded snapshots) becomes one SNAPSHOT event, so the sum always equals `paidMinor`.
+ * Every payment of every confirmed invoice exactly once: the earlier advances it takes into account, dated when it
+ * was approved, and its payment records, each on its own payment date. A record never moves, whatever later edits
+ * the invoice, so a cash-flow month counts a payment once and in the month it was paid.
  */
 export const paymentEvents = (
   state: Pick<FinanceState, 'invoices'> & {
     readonly manualPayments?: readonly ManualPayment[];
   },
 ): readonly PaymentEvent[] => {
+  const records = recordsByInvoice(state.manualPayments ?? []);
   const events: PaymentEvent[] = [];
   for (const invoice of state.invoices) {
-    if (invoice.businessState !== 'CONFIRMED' || invoice.paidMinor === 0) {
+    if (invoice.businessState !== 'CONFIRMED') {
       continue;
     }
     const id = invoice.ref.resourceId;
-    let explained = 0;
-    for (const [index, entry] of (invoice.priorSettlement?.entries ?? []).entries()) {
-      events.push({
-        amountMinor: entry.amountMinor,
-        date: isoDateOf(invoice.approvedAt ?? invoice.priorSettlement?.confirmedAt ?? invoice.updatedAt),
-        direction: invoice.direction,
-        id: `${id}:prior:${index}`,
-        invoiceResourceId: id,
-        source: 'PRIOR',
-      });
-      explained += entry.amountMinor;
+    const { priorSettlement } = invoice;
+    if (priorSettlement !== undefined) {
+      const date = DateTime.formatIsoDateUtc(invoice.approvedAt ?? priorSettlement.confirmedAt);
+      for (const [index, entry] of priorSettlement.entries.entries()) {
+        events.push({
+          amountMinor: entry.amountMinor,
+          date,
+          direction: invoice.direction,
+          id: `${id}:prior:${index}`,
+          invoiceResourceId: id,
+          source: 'PRIOR',
+        });
+      }
     }
-    for (const payment of (state.manualPayments ?? []).filter((entry) => entry.invoiceResourceId === id)) {
+    for (const payment of records.get(id) ?? []) {
       events.push({
         amountMinor: payment.amountMinor,
         date: payment.paidOn,
         direction: invoice.direction,
         id: payment.id,
         invoiceResourceId: id,
-        source: 'MANUAL',
-      });
-      explained += payment.amountMinor;
-    }
-    if (explained < invoice.paidMinor) {
-      events.push({
-        amountMinor: invoice.paidMinor - explained,
-        date: isoDateOf(invoice.updatedAt),
-        direction: invoice.direction,
-        id: `${id}:snapshot`,
-        invoiceResourceId: id,
-        source: 'SNAPSHOT',
+        source: payment.source ?? 'MANUAL',
       });
     }
   }
   return events;
 };
+
+/**
+ * An imported or seeded ledger with the part of each invoice's `paidMinor` that neither its payment records nor the
+ * earlier advances it takes into account explain turned into one IMPORT payment record, dated on the invoice's
+ * `updatedAt` as the ledger hands it over. Taken over once, at the import boundary, before any edit can move that
+ * date. The Finance migration `imported-payment-records` applies exactly this rule to the ledgers already stored.
+ */
+/** A seeded or imported ledger whose paid amounts cannot all become readable payment records. */
+export class ImportedPaymentRecordsRefused extends Schema.TaggedError<ImportedPaymentRecordsRefused>()(
+  'ImportedPaymentRecordsRefused',
+  { invoice: Schema.String, problem: Schema.String },
+) {}
+
+const firstRepeated = <Item>(items: readonly Item[], key: (item: Item) => string): Item | undefined => {
+  const seen = new Set<string>();
+  return items.find((item) => {
+    const value = key(item);
+    const repeated = seen.has(value);
+    seen.add(value);
+    return repeated;
+  });
+};
+
+export const withImportedPaymentRecords = Effect.fn('Finance.withImportedPaymentRecords')(
+  function* withImportedPaymentRecords(state: FinanceState) {
+    const existing = state.manualPayments ?? [];
+    const records = recordsByInvoice(existing);
+    const unrecorded = state.invoices.flatMap((invoice) => {
+      const { resourceId } = invoice.ref;
+      const settledByPrior = (invoice.priorSettlement?.entries ?? []).reduce(
+        (sum, entry) => sum + entry.amountMinor,
+        0,
+      );
+      const recorded = (records.get(resourceId) ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
+      const amountMinor = invoice.paidMinor - settledByPrior - recorded;
+      return amountMinor > 0
+        ? [
+            {
+              amountMinor,
+              id: `${resourceId}:import`,
+              invoiceResourceId: resourceId,
+              paidOn: DateTime.formatIsoDateUtc(invoice.updatedAt),
+              recordedAt: DateTime.formatIso(invoice.updatedAt),
+              source: 'IMPORT',
+            },
+          ]
+        : [];
+    });
+    if (unrecorded.length === 0) {
+      return state;
+    }
+    // The refusals of the Finance migration `imported-payment-records`, so a seed never writes what it would refuse.
+    // A reference becomes a record id only as Finance reads it back: trimmed as JavaScript trims.
+    const padded = unrecorded.find(
+      (record) => record.invoiceResourceId.trim() !== record.invoiceResourceId || record.invoiceResourceId === '',
+    );
+    if (padded !== undefined) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: padded.invoiceResourceId,
+        problem: 'its reference is empty or has surrounding whitespace',
+      });
+    }
+    const takenIds = new Set(existing.map((payment) => payment.id));
+    const taken = unrecorded.find((record) => takenIds.has(record.id));
+    if (taken !== undefined) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: taken.invoiceResourceId,
+        problem: `a payment record already has the id ${taken.id}`,
+      });
+    }
+    const repeated = firstRepeated(unrecorded, (record) => record.id);
+    if (repeated !== undefined) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: repeated.invoiceResourceId,
+        problem: 'another invoice of the ledger has the same reference',
+      });
+    }
+    const [first] = unrecorded;
+    if (existing.length + unrecorded.length > MAX_PAYMENT_RECORDS) {
+      return yield* new ImportedPaymentRecordsRefused({
+        invoice: first?.invoiceResourceId ?? '',
+        problem: `the ledger would hold more than ${MAX_PAYMENT_RECORDS} payment records`,
+      });
+    }
+    const imported = yield* Schema.decodeUnknownEffect(Schema.Array(ManualPaymentSchema))(unrecorded).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new ImportedPaymentRecordsRefused({
+            invoice: first?.invoiceResourceId ?? '',
+            problem: 'its reference makes no readable payment record id',
+          }),
+          'cause',
+          { value: cause },
+        ),
+      ),
+    );
+    return { ...state, manualPayments: [...existing, ...imported] };
+  },
+);
 
 /** Plan item amount weighted by its optional probability (absent = certain), rounded to whole haléře. */
 export const planItemWeightedMinor = (item: Pick<PlanItem, 'amountMinor' | 'probabilityPercent'>): number =>
@@ -130,8 +233,16 @@ export const budgetVariance = (plannedMinor: number, actualMinor: number) => ({
 });
 
 /**
- * Invoice actual for a budget line: confirmed invoices of that month, category and direction; a budget for a
- * property, unit or středisko only counts invoices assigned to that same object.
+ * What an invoice adds to budget actuals: its total without the earlier advances or partial invoices it takes into
+ * account, since those documents are confirmed invoices of their own and already count where they were issued.
+ */
+const ownActualMinor = (invoice: Pick<Invoice, 'priorSettlement' | 'totalMinor'>): number =>
+  invoice.totalMinor - (invoice.priorSettlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
+
+/**
+ * Invoice actual for a budget line: confirmed invoices of that month, category and direction, each without what an
+ * earlier advance already counted; a budget for a property, unit or středisko only counts invoices assigned to that
+ * same object.
  */
 export const invoiceActualMinor = (
   budget: Pick<BudgetLine, 'category' | 'kind' | 'period'> &
@@ -149,7 +260,7 @@ export const invoiceActualMinor = (
         (budget.unitRef === undefined || invoice.unitRef?.resourceId === budget.unitRef.resourceId) &&
         (budget.costCenter === undefined || invoice.costCenter === budget.costCenter),
     )
-    .reduce((sum, invoice) => sum + invoice.totalMinor, 0);
+    .reduce((sum, invoice) => sum + ownActualMinor(invoice), 0);
 
 /** The manual actual wins when entered; otherwise the matching confirmed invoices are the actual. */
 export const budgetActualMinor = (budget: BudgetLine, invoices: readonly Invoice[]) =>
@@ -279,10 +390,38 @@ export const cashFlowMonths = (
   });
 };
 
+/** Months the cash-flow view shows: the previous month, the current one and four ahead. */
+const FORECAST_WINDOW_MONTHS = 6;
+const monthIndex = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
+
+/**
+ * The cash-flow view's months: from the previous month through four months ahead of `businessDate`. The forecast
+ * balance accumulates every month from the opening balance up to there, so an opening set long ago still carries
+ * all later payments and obligations instead of the view stopping six months after the opening.
+ */
+export const cashFlowForecast = (
+  state: Parameters<typeof cashFlowMonths>[0],
+  businessDate: string,
+): readonly CashFlowMonth[] => {
+  const windowStart = addMonths(monthOf(businessDate), -1);
+  const openingDate = state.cashFlowOpening?.openingDate;
+  const openingMonth = openingDate === undefined ? windowStart : monthOf(openingDate);
+  const fromMonth = openingMonth < windowStart ? openingMonth : windowStart;
+  const months = monthIndex(windowStart) - monthIndex(fromMonth) + FORECAST_WINDOW_MONTHS;
+  return cashFlowMonths(state, { businessDate, fromMonth, months }).filter((entry) => entry.month >= windowStart);
+};
+
 const csvCell = (value: string | number | undefined) => {
   const text = value === undefined ? '' : String(value);
   return /[";\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
+
+/**
+ * A spreadsheet runs a text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return as a formula.
+ * Text from users and other modules is therefore prefixed with an apostrophe, so it always opens as plain text;
+ * amounts and the batch version are written by OntOS itself and stay numeric.
+ */
+const csvTextCell = (value: string) => csvCell(/^[=+\-@\t\r]/u.test(value) ? `'${value}` : value);
 
 const amount = (minor: number | undefined) => (minor === undefined ? '' : (minor / 100).toFixed(2));
 
@@ -377,7 +516,7 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
   readonly format: AccountingExportFormat;
   readonly meta: ExportMeta;
   readonly rows: readonly ExportRow[];
-}): Effect.fn.Return<string, Schema.SchemaError> {
+}): Effect.fn.Return<string, PohodaExportRefused | Schema.SchemaError> {
   if (format === 'CSV') {
     const header = [
       'schema_version',
@@ -402,28 +541,26 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
     ];
     const lines = rows.map(({ counterpartyName, documentLink, invoice }) =>
       [
-        ACCOUNTING_EXPORT_SCHEMA_VERSION,
-        meta.batchNumber,
-        meta.version,
-        invoice.ref.resourceId,
-        invoice.number ?? invoice.documentNumber,
-        invoice.documentKind ?? 'STANDARD',
-        invoice.direction === 'OUTGOING' ? 'VYDANA' : 'PRIJATA',
-        counterpartyName,
-        invoice.counterpartyRef.resourceId,
-        invoice.issueDate,
-        invoice.dueDate,
-        invoice.currency,
-        amount(invoice.subtotalMinor),
-        amount(invoice.vatMinor),
-        amount(invoice.totalMinor),
-        amount(invoice.paidMinor),
-        invoice.paymentState,
-        objectLabel(invoice),
-        documentLink,
-      ]
-        .map(csvCell)
-        .join(';'),
+        csvCell(ACCOUNTING_EXPORT_SCHEMA_VERSION),
+        csvTextCell(meta.batchNumber),
+        csvCell(meta.version),
+        csvTextCell(invoice.ref.resourceId),
+        csvTextCell(invoice.number ?? invoice.documentNumber),
+        csvTextCell(invoice.documentKind ?? 'STANDARD'),
+        csvTextCell(invoice.direction === 'OUTGOING' ? 'VYDANA' : 'PRIJATA'),
+        csvTextCell(counterpartyName),
+        csvTextCell(invoice.counterpartyRef.resourceId),
+        csvTextCell(invoice.issueDate),
+        csvTextCell(invoice.dueDate),
+        csvTextCell(invoice.currency),
+        csvCell(amount(invoice.subtotalMinor)),
+        csvCell(amount(invoice.vatMinor)),
+        csvCell(amount(invoice.totalMinor)),
+        csvCell(amount(invoice.paidMinor)),
+        csvTextCell(invoice.paymentState),
+        csvTextCell(objectLabel(invoice)),
+        csvTextCell(documentLink),
+      ].join(';'),
     );
     return `﻿${[header.join(';'), ...lines].join('\r\n')}\r\n`;
   }
@@ -457,7 +594,7 @@ export const buildAccountingExport = Effect.fn('Finance.buildAccountingExport')(
     const content = yield* Schema.encodeUnknownEffect(AccountingExportDocumentJsonSchema)(document);
     return `${content}\n`;
   }
-  return buildPohodaDataPack(rows, meta);
+  return yield* buildPohodaDataPack(rows, meta);
 });
 
 const czk = (minor: number) => `${czkNumberFormatter.format(minor / 100)} Kč`;

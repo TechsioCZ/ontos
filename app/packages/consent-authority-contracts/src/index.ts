@@ -228,7 +228,7 @@ export const PrivacyNoticeChannelProofSchema = Schema.Struct({
 export type PrivacyNoticeChannelProof = typeof PrivacyNoticeChannelProofSchema.Type;
 
 /** A minimal, immutable fact about one notice information step. Raw page or transport payloads are deliberately absent. */
-const privacyNoticeProvisionFields = {
+const privacyNoticeProvisionDraftFields = {
   actionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   anonymousContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
   businessInteractionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
@@ -245,9 +245,10 @@ const privacyNoticeProvisionFields = {
   providedLanguage: Ref,
   provisionedAt: Timestamp,
   provisionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyProvisionId'))),
-  recordedAt: Timestamp,
   supersedesProvisionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
 } as const;
+
+const privacyNoticeProvisionFields = { ...privacyNoticeProvisionDraftFields, recordedAt: Timestamp } as const;
 
 export const PrivacyNoticeProvisionSchema = Schema.Struct(privacyNoticeProvisionFields);
 export type PrivacyNoticeProvision = typeof PrivacyNoticeProvisionSchema.Type;
@@ -255,7 +256,6 @@ export type PrivacyNoticeProvision = typeof PrivacyNoticeProvisionSchema.Type;
 const RecordPrivacyNoticeProvisionInputSchema = Schema.Struct(privacyNoticeProvisionFields);
 export type RecordPrivacyNoticeProvisionInput = typeof RecordPrivacyNoticeProvisionInputSchema.Type;
 
-const { recordedAt: _recordedAt, ...privacyNoticeProvisionDraftFields } = privacyNoticeProvisionFields;
 const PrivacyNoticeProvisionDraftSchema = Schema.Struct(privacyNoticeProvisionDraftFields);
 export type PrivacyNoticeProvisionDraft = typeof PrivacyNoticeProvisionDraftSchema.Type;
 

@@ -2,7 +2,7 @@ import { LegalEntityContext, OperationalScopeResolver, PrincipalResolver } from 
 import type { OperationalScope } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Result } from 'effect';
+import { Effect, Layer, Predicate, Result } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -16,6 +16,7 @@ import {
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import {
   enrolledModuleCredentials,
+  noInternalWorkloadPrincipals,
   unreadableModuleCredentialEnrolment,
 } from '../support/module-credential-enrolment.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
@@ -52,6 +53,7 @@ const issue = Effect.fn('test.apiKeyGatewayContext')(function* issue(
     Effect.provide(
       Layer.mergeAll(
         NodeCrypto.layer,
+        noInternalWorkloadPrincipals,
         options.enrolmentUnreadable === true
           ? unreadableModuleCredentialEnrolment
           : enrolledModuleCredentials([{ appId: 'commerce-customer-context', providerKeyId: MODULE_KEY }]),
@@ -96,7 +98,7 @@ it.effect('refuses to mint a subject context for an enrolled module credential b
     const { events, result } = yield* issue(MODULE_KEY);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('GatewayForbiddenProblem');
+      expect(Predicate.isTagged(result.failure, 'GatewayForbiddenProblem')).toBe(true);
       expect(result.failure.status).toBe(403);
     }
     expect(events).toEqual([]);
@@ -116,7 +118,7 @@ it.effect('answers an unreadable module enrolment as unavailable instead of admi
     const { events, result } = yield* issue(INTEGRATION_KEY, { enrolmentUnreadable: true });
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('GatewayUnavailableProblem');
+      expect(Predicate.isTagged(result.failure, 'GatewayUnavailableProblem')).toBe(true);
     }
     expect(events).toEqual([]);
   }),

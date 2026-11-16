@@ -3,7 +3,8 @@
 // command builder and `editOrder`. Only the two generated clients are replaced. The order detail keeps the form
 // mounted while its order reloads, so these prove what the draft does when the reloaded order arrives.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -81,7 +82,7 @@ const sentEdits = () =>
       command,
       expectedRevision: payload.expectedRevision,
       expectedUpdatedAt:
-        command._tag === 'EditOrder' && command.expectedUpdatedAt !== undefined
+        Predicate.isTagged(command, 'EditOrder') && command.expectedUpdatedAt !== undefined
           ? DateTime.formatIso(command.expectedUpdatedAt)
           : undefined,
     };
@@ -115,7 +116,7 @@ const serveLikeTheRegister = (start: Order, startRevision: number, afterEdits: r
   rstest.mocked(executeManageCatalog).mockImplementation(({ command }) =>
     Effect.suspend(() => {
       const next = afterEdits[register.accepted];
-      const named = command._tag === 'EditOrder' ? command.expectedUpdatedAt : undefined;
+      const named = Predicate.isTagged(command, 'EditOrder') ? command.expectedUpdatedAt : undefined;
       if (
         next === undefined ||
         named === undefined ||
@@ -151,7 +152,14 @@ interface HarnessProps {
 }
 
 const Harness = ({ isValid, order, revision }: HarnessProps) => {
-  const value = useOrderEditDraft({ isValid, order, revision });
+  const value = useOrderEditDraft({
+    isValid,
+    onOfferedPriceChanged: () => Effect.void,
+    onSaveSucceeded: constVoid,
+    onSend: constVoid,
+    order,
+    revision,
+  });
   useEffect(() => {
     latest = value;
   }, [value]);

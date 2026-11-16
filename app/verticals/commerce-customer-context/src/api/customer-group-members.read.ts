@@ -10,6 +10,7 @@ import type { CustomerGroupMembersRequest } from '../../shared/apis/customer-gro
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
+  projectCustomerGroupMembershipRead,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -43,7 +44,10 @@ const handleCustomerGroupMembers = Effect.fn('CustomerGroupMembersRead.handle')(
     })
     .pipe(Effect.mapError(customerGroupReadUnavailable));
   const result = yield* unwrapCustomerGroupLookup(outcome);
-  return { evidence: { resultCount: result.items.length }, result };
+  return {
+    evidence: { resultCount: result.items.length },
+    result: { ...result, items: result.items.map(projectCustomerGroupMembershipRead) },
+  };
 });
 
 export const customerGroupMembersRead = defineRead(

@@ -1,11 +1,12 @@
 // The security device card's values: a new device is submitted once, an edit of an existing one is sent on Uložit.
 import { Option } from 'effect';
+import type { Types } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { IsoDateSchema, PropertyRef } from '../../../../../shared/domain/common.ts';
 import type { SecurityDevice, SecurityDeviceState, SecurityDeviceType } from '../../../../../shared/domain/security.ts';
 
 type DeviceFields = Omit<Extract<OpsCommand, { readonly _tag: 'SecurityDeviceCreate' }>, '_tag'>;
-type MutableDeviceFields = { -readonly [Key in keyof DeviceFields]: DeviceFields[Key] };
+type MutableDeviceFields = Types.Mutable<DeviceFields>;
 type UpdateCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceUpdate' }>;
 
 export interface DeviceDraft {
@@ -104,7 +105,7 @@ export const deviceUpdateCommandOf = (
   if (deviceNameMissing(draft)) {
     return Option.none();
   }
-  const command: { -readonly [Key in keyof UpdateCommand]: UpdateCommand[Key] } = {
+  const command: Types.Mutable<UpdateCommand> = {
     _tag: 'SecurityDeviceUpdate',
     ...deviceFieldsOf(draft, location),
     clear: [

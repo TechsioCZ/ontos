@@ -11,15 +11,15 @@ const CorePackageSchema = Schema.fromJsonString(
 
 layer(NodeServices.layer)('unit transport conditional contract', (testing) => {
   testing.effect(
-    'keeps a types-only declaration branch and no browser runtime fallback',
+    'declares only the workerd and node hosts, with no browser runtime fallback',
     Effect.fn(function* declaredConditions() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const file = yield* path.fromFileUrl(new URL('../../package.json', import.meta.url));
       const corePackage = yield* fs.readFileString(file).pipe(Effect.flatMap(Schema.decodeEffect(CorePackageSchema)));
       const conditions = corePackage.imports['#unit-service-fetch'];
-      expect(Object.keys(conditions)).toEqual(['types', 'workerd', 'node']);
-      expect(conditions['types']).toBe('./src/http/unit-service-fetch.ts');
+      // Host conditions only: lean-core:check proves the Node-only transport closure from them.
+      expect(Object.keys(conditions)).toEqual(['workerd', 'node']);
       expect(Object.hasOwn(conditions, 'default')).toBe(false);
       expect(Object.hasOwn(conditions, 'browser')).toBe(false);
     }),

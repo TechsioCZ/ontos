@@ -1,9 +1,8 @@
-import { Data, DateTime, Option, Schema } from 'effect';
+import { Data, DateTime, Schema } from 'effect';
 
-import { PaymentOperationIdempotencyMaterialSchema } from '../../shared/domain/evidence-contract.ts';
 import type {
-  PaymentProviderIdempotencyGuarantee,
   PaymentProviderReplayAssessment,
+  PaymentProviderReplayGuarantee,
   PaymentRecoveryTrigger,
 } from '../../shared/domain/evidence-contract.ts';
 import { PaymentGatewayAccountBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
@@ -11,14 +10,20 @@ import type {
   PaymentExecutionBinding,
   PaymentGatewayAccountBinding,
 } from '../../shared/domain/payment-execution-binding.ts';
-import type { PaymentOperationOutcome, PaymentRecoveryMode } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
+import type {
+  PaymentOperationKind,
+  PaymentOperationOutcome,
+  PaymentRecoveryMode,
+} from '../../shared/domain/payment-vocabulary.ts';
+import type { OutboxPayload as RecoveryRequested } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
+import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
 import { isDefinitiveOutcome } from './operation-lifecycle.ts';
 
 /**
  * Same-operation recovery planning (#1151 "Idempotency and monetary recovery"). Pure: the caller
- * supplies the ORIGINAL stored operation (binding, material request, admission time) and the actual
- * time read after the Payment row lock. Recovery never creates an operation, never switches account,
- * environment or provider, and never proves non-execution.
+ * supplies the original operation, qualified C17 dispatch evidence, and the actual time after the
+ * Payment row lock. Recovery retains the same operation and provider binding.
  */
 
 /** Strongest first: a caller may ask for a weaker mode, never a stronger one than evidence permits. */
@@ -31,15 +36,19 @@ const MODE_STRENGTH: Readonly<Record<PaymentRecoveryMode, number>> = Object.free
 
 export interface PaymentRecoveryOperationView {
   readonly binding: PaymentExecutionBinding;
-  /** Admission time of the operation; the conservative start of any provider guarantee window. */
   readonly createdAt: DateTime.Utc;
-  readonly materialRequest: Schema.Json;
+  readonly kind: PaymentOperationKind;
+  readonly materialHash: string;
+  readonly operationId: string;
   readonly outcome: PaymentOperationOutcome;
+  readonly paymentId: string;
 }
 
 export interface PaymentRecoveryRequestInput {
+  readonly guarantee?: PaymentProviderReplayGuarantee | undefined;
   readonly now: DateTime.Utc;
   readonly requestedMode: PaymentRecoveryMode | undefined;
+  readonly scope: PaymentOwnerScope;
   readonly trigger: PaymentRecoveryTrigger;
 }
 
@@ -62,31 +71,110 @@ export const PaymentRecoveryPlan = Data.taggedEnum<PaymentRecoveryPlanCase>();
 
 const isGatewayBinding = Schema.is(PaymentGatewayAccountBindingSchema);
 
-const decodeGuarantee = Schema.decodeUnknownOption(PaymentOperationIdempotencyMaterialSchema);
+const sameGatewayBinding = (left: PaymentGatewayAccountBinding, right: PaymentGatewayAccountBinding) =>
+  left.providerFamily === right.providerFamily &&
+  left.providerAccountRef === right.providerAccountRef &&
+  left.environment === right.environment;
 
-const guaranteeMatchesBinding = (
-  guarantee: PaymentProviderIdempotencyGuarantee,
-  binding: PaymentGatewayAccountBinding,
+type RecoveryTarget = Pick<
+  PaymentRecoveryOperationView,
+  'binding' | 'kind' | 'materialHash' | 'operationId' | 'paymentId'
+>;
+
+const guaranteeMatchesTarget = (
+  guarantee: PaymentProviderReplayGuarantee,
+  target: RecoveryTarget,
+  scope: PaymentOwnerScope,
 ) =>
-  guarantee.providerFamily === binding.providerFamily &&
-  guarantee.providerAccountRef === binding.providerAccountRef &&
-  guarantee.environment === binding.environment;
+  isGatewayBinding(target.binding) &&
+  sameGatewayBinding(guarantee.binding, target.binding) &&
+  guarantee.tenantId === scope.tenantId &&
+  guarantee.legalEntityId === scope.legalEntityId &&
+  guarantee.paymentId === target.paymentId &&
+  guarantee.operationId === target.operationId &&
+  guarantee.operationKind === target.kind &&
+  guarantee.materialHash === target.materialHash;
 
-/** Does the stored binding prove a provider idempotency guarantee whose window still covers `now`? */
-export const assessProviderReplay = (
-  operation: PaymentRecoveryOperationView,
+const assessGuaranteeWindow = (
+  guarantee: PaymentProviderReplayGuarantee,
   now: DateTime.Utc,
 ): PaymentProviderReplayAssessment => {
-  const { binding } = operation;
-  if (!isGatewayBinding(binding)) {
-    return 'NOT_APPLICABLE';
-  }
-  const guarantee = Option.map(decodeGuarantee(operation.materialRequest), (material) => material.providerIdempotency);
-  if (Option.isNone(guarantee) || !guaranteeMatchesBinding(guarantee.value, binding)) {
+  const time = DateTime.toEpochMillis(now);
+  if (guarantee.startsAtEpochMs >= guarantee.expiresAtEpochMs || time < guarantee.startsAtEpochMs) {
     return 'NOT_PROVEN';
   }
-  const windowEnd = DateTime.add(operation.createdAt, { seconds: guarantee.value.windowSeconds });
-  return DateTime.isLessThan(now, windowEnd) ? 'COVERS_NOW' : 'EXPIRED';
+  return time < guarantee.expiresAtEpochMs ? 'COVERS_NOW' : 'EXPIRED';
+};
+
+/** Checks the original provider dispatch evidence against the admitted operation and actual time. */
+export const assessProviderReplay = (
+  operation: PaymentRecoveryOperationView,
+  request: Pick<PaymentRecoveryRequestInput, 'guarantee' | 'now' | 'scope'>,
+): PaymentProviderReplayAssessment => {
+  if (!isGatewayBinding(operation.binding)) {
+    return 'NOT_APPLICABLE';
+  }
+  const { guarantee, now, scope } = request;
+  if (
+    guarantee === undefined ||
+    !guaranteeMatchesTarget(guarantee, operation, scope) ||
+    guarantee.startsAtEpochMs < DateTime.toEpochMillis(operation.createdAt)
+  ) {
+    return 'NOT_PROVEN';
+  }
+  return assessGuaranteeWindow(guarantee, now);
+};
+
+const sameProviderDispatch = (queued: PaymentProviderReplayGuarantee, retained: PaymentProviderReplayGuarantee) =>
+  queued.endpointRef === retained.endpointRef &&
+  queued.providerRequestHash === retained.providerRequestHash &&
+  queued.providerIdempotencyKeyHash === retained.providerIdempotencyKeyHash &&
+  queued.startsAtEpochMs === retained.startsAtEpochMs &&
+  queued.expiresAtEpochMs === retained.expiresAtEpochMs;
+
+type CurrentRecoveryOperation = PaymentRecoveryOperationView & {
+  readonly provenance: PaymentExecutionProvenance;
+};
+
+const sameRecoveryLineage = (message: RecoveryRequested, current: CurrentRecoveryOperation) =>
+  message.operationId === current.operationId &&
+  message.paymentId === current.paymentId &&
+  message.operationKind === current.kind &&
+  message.materialHash === current.materialHash &&
+  message.originalCompositionRevision === current.provenance.compositionRevision &&
+  message.originalActionInvocationId === current.provenance.actionInvocationId &&
+  isGatewayBinding(message.binding) &&
+  isGatewayBinding(current.binding) &&
+  sameGatewayBinding(message.binding, current.binding);
+
+/**
+ * C17 supplies the governed Current operation and its retained dispatch immediately before a send.
+ * A queue delay, legacy message, changed request, or missing proof leaves authoritative lookup.
+ */
+export const paymentRecoveryModeAtDispatch = (
+  message: RecoveryRequested,
+  current: CurrentRecoveryOperation,
+  scope: PaymentOwnerScope,
+  now: DateTime.Utc,
+  retained: PaymentProviderReplayGuarantee | undefined,
+): PaymentRecoveryMode | 'ALREADY_RESOLVED' => {
+  if (!sameRecoveryLineage(message, current) || current.outcome === 'CONFLICT') {
+    return 'GOVERNED_RECONCILIATION';
+  }
+  if (isDefinitiveOutcome(current.outcome)) {
+    return 'ALREADY_RESOLVED';
+  }
+  if (message.mode !== 'PROVIDER_IDEMPOTENT_REPLAY') {
+    return message.mode;
+  }
+  const queued = message.providerReplayGuarantee;
+  return queued !== undefined &&
+    retained !== undefined &&
+    guaranteeMatchesTarget(queued, current, scope) &&
+    sameProviderDispatch(queued, retained) &&
+    assessProviderReplay(current, { guarantee: retained, now, scope }) === 'COVERS_NOW'
+    ? 'PROVIDER_IDEMPOTENT_REPLAY'
+    : 'AUTHORITATIVE_LOOKUP';
 };
 
 const strongestPermittedMode = (
@@ -111,7 +199,7 @@ export const planPaymentRecovery = (
   if (isDefinitiveOutcome(operation.outcome)) {
     return PaymentRecoveryPlan.AlreadyResolved({ outcome: operation.outcome });
   }
-  const providerReplay = assessProviderReplay(operation, request.now);
+  const providerReplay = assessProviderReplay(operation, request);
   const permitted = strongestPermittedMode(operation, request.trigger, providerReplay);
   const requested = request.requestedMode ?? permitted;
   const modeDowngraded = MODE_STRENGTH[requested] < MODE_STRENGTH[permitted];

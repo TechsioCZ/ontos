@@ -5,7 +5,11 @@ import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { crmActivitiesRegistration } from '../../vertical.registration.ts';
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import {
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
+  ActiveApplicationCompositionService,
+} from '@app/core-runtime';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
 
@@ -62,7 +66,9 @@ for (const [index, command] of commands.entries()) {
               },
             })
             .pipe(Effect.flip);
-          expect(failure._tag).toBe(access === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError');
+          expect(Schema.is(access === 'denied' ? ActionPermissionDenied : ActionPermissionCheckError)(failure)).toBe(
+            true,
+          );
           expect(harness.snapshot().transactionCount).toBe(0);
           expect(harness.snapshot().committed).toEqual([]);
         }),

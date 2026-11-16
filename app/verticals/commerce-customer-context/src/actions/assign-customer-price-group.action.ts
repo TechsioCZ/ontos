@@ -28,6 +28,7 @@ import {
   CustomerPriceGroupRevisionConflict,
   CustomerPriceGroupRetroactiveScheduleRejected,
   CustomerPriceGroupScopeMismatch,
+  CustomerPriceGroupSourceRejected,
 } from '../../shared/domain/price-group-errors.ts';
 import type {
   AssignCustomerPriceGroupStoreResult,
@@ -38,7 +39,8 @@ import type {
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
 import { prepareAssignCustomerPriceGroupServices } from './price-group-action-preparation.ts';
-import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
+import { assignCustomerPriceGroupServicesForTransaction } from './price-group-action-services.ts';
+import type { CustomerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
 
 export { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
 export type { AssignCustomerPriceGroupPayload } from '../../shared/actions/assign-customer-price-group.ts';
@@ -54,13 +56,14 @@ const AssignCustomerPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupRevisionConflict,
   CustomerPriceGroupRetroactiveScheduleRejected,
   CustomerPriceGroupScopeMismatch,
+  CustomerPriceGroupSourceRejected,
 ]);
 
 type DomainEvents = Readonly<{
   'commerce.customer-context.customer-price-group-assigned.v1': typeof CustomerPriceGroupAssignedEventSchema;
 }>;
 
-interface AssignCustomerPriceGroupServices {
+interface AssignCustomerPriceGroupServices extends CustomerPriceGroupAssignmentReceiptCapture {
   readonly catalog: PriceGroupCatalogPort;
   readonly now: Effect.Effect<string>;
   readonly profileValidation: CustomerPriceGroupProfileValidationPort;
@@ -277,6 +280,7 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
   'AssignCustomerPriceGroupAction.handleAssignCustomerPriceGroup',
 )(function* assign(payload: AssignCustomerPriceGroupPayload, context: AssignCustomerPriceGroupContext) {
   yield* validateAssignmentScope(payload, context);
+  yield* context.services.validateAssignmentSource({ _tag: 'RETAIL', payload });
   const recordedAt = yield* recordAssignmentTime(payload, context);
   yield* validateAssignableProfile(payload, context);
   const catalogOutcome = yield* resolveAssignableCatalogPriceGroup(payload, context, recordedAt);
@@ -311,11 +315,16 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
   yield* recordAssignmentDataAccess(payload, catalogOutcome, context);
   yield* publishAssignmentEvent(result, context);
 
-  return {
+  const committedResult = {
     assignment: result.assignment,
     changed: result.changed,
     replacedAssignmentRef: result.replacedAssignmentRef,
   };
+  yield* context.services.captureAssignmentReceipt(context.actionInvocationId, committedResult, {
+    _tag: 'RETAIL',
+    payload,
+  });
+  return committedResult;
 });
 
 export const assignCustomerPriceGroupAction = defineAction(
@@ -331,6 +340,10 @@ export const assignCustomerPriceGroupAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.assign-customer-price-group.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Explicitly enrolled source integrations execute affirmative native Price Group Assignments',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.assign-customer-price-group',
     auditEvidenceSchema: CustomerPriceGroupAssignedAuditEvidenceSchema,
@@ -355,6 +368,6 @@ export const assignCustomerPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleAssignCustomerPriceGroup,
-  priceGroupActionServicesForTransaction,
+  assignCustomerPriceGroupServicesForTransaction,
   { prepareServices: prepareAssignCustomerPriceGroupServices },
 );

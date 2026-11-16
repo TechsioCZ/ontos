@@ -51,6 +51,7 @@ export const makePrivacyCompletionAccessGate = (
     decide: gate.decide,
     decideMany: gate.decideMany,
     list: gate.list,
+    listMany: gate.listMany,
     selectableLegalEntities: scopeAccess.selectableLegalEntities,
   });
   return Object.freeze({

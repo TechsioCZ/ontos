@@ -52,7 +52,7 @@ import { searchLabelsReadApiLive } from './search-labels-read-server.ts';
 import { unitsReadApiLive } from './units-search-server.ts';
 // </generated-governed-http-handler-imports>
 
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -69,7 +69,7 @@ const governedCompositionHttpClientLive = GovernedFetchHttpClient.layer.pipe(
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(governedCompositionHttpClientLive),
 );
-const governedActiveApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 
@@ -206,7 +206,7 @@ const propertyPortfolioReadinessLayer = HttpApiBuilder.group(propertyPortfolioAp
 const apiHandlersLive = propertyPortfolioReadinessLayer;
 const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
-  GovernedReadLayer.provide(ActiveApplicationCompositionConfigLive),
+  GovernedReadLayer.provide(GovernedApplicationCompositionConfigLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.provide(databaseIdentitiesLive),

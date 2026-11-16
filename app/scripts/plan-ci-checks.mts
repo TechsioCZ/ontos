@@ -1,10 +1,11 @@
-import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Schema } from 'effect';
+import { Array as EffectArray, Console, Config, Effect, FileSystem, Order, Path, Predicate, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
 const CommandEntrySchema = Schema.Struct({
+  'artifact-units': Schema.optionalKey(Schema.String),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -12,18 +13,31 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
+  'artifact-units': Schema.optionalKey(Schema.String),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
   'package-filters': Schema.optionalKey(Schema.String),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
+  'root-rstest-shard': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'rstest-shard': Schema.optionalKey(Schema.String),
+  /** Rstest file workers; integration rows share one job database and its composition authority, so they run 1. */
+  'rstest-workers': Schema.optionalKey(Schema.Literals([1, 2])),
+  /** skip: leave out, only: run just the files that must migrate their own database (rstest-weighted-shard.sh). */
+  'fresh-database-tests': Schema.optionalKey(Schema.Literals(['skip', 'only'])),
+  /** Rstest projects a weighted package row runs one after another; `integration` when absent. */
+  'rstest-projects': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-z-]+(?: [a-z-]+)*$/u))),
+  /** The row may restore the cached seed database (scripts/ci/integration-seed.mts) instead of migrating its own. */
+  seed: Schema.optionalKey(Schema.Boolean),
   suite: Schema.Literals(['integration', 'browser']),
 }).check(
   Schema.makeFilter((entry) =>
-    entry.suite === 'integration' && (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Every complete integration template must name its package filters'
+    entry.suite === 'integration' &&
+    entry['root-suite'] !== true &&
+    entry['native-preproposal'] !== true &&
+    (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
+      ? 'Integration templates must name package filters, run the root suite or run the native preproposal proof'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
@@ -33,8 +47,12 @@ const IntegrationEntrySchema = Schema.Struct({
   ),
 );
 export const CiTemplatesSchema = Schema.Struct({
+  /** Test files that must migrate or recover their job's database; the seed model refuses exactly these. */
+  'fresh-database-tests': Schema.optionalKey(Schema.Array(Schema.String)),
   integration: Schema.Array(IntegrationEntrySchema),
   source: Schema.Array(CommandEntrySchema),
+  /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */
+  'test-weights': Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
   unit: Schema.Array(CommandEntrySchema),
 });
 type Templates = typeof CiTemplatesSchema.Type;
@@ -44,6 +62,8 @@ export interface CiWorkspacePackage {
   readonly contractProducer?: string;
   readonly dependencies: readonly string[];
   readonly directory: string;
+  /** Package-relative files the manifest's `exports` map points at: what other packages consume from it. */
+  readonly exportTargets?: readonly string[];
   readonly name: string;
   readonly uncertain?: boolean;
 }
@@ -101,10 +121,14 @@ export const withCiTopologyDependencies = (
 const gateIds = [
   'workspace-gate',
   'workspace-unit',
+  'workspace-unit-artifacts',
   'static-contracts',
   'format-and-lint',
   'service-integration',
+  'integration-seed-proof',
+  'browser-integration',
   'node-artifact-build',
+  'node-artifact-proof',
 ] as const;
 
 const rootDocumentation = (changedPath: string) =>
@@ -148,6 +172,22 @@ const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage
   );
 };
 
+/**
+ * Whether a change reaches the package's consumers. Everything the broad-path rule does not already widen to the
+ * complete suite and that is not part of the package's public surface (its runtime declaration, locales and the
+ * files its `exports` map points at) is the package's own: only its own tests select it. The Shell and the root
+ * suites consume every vertical through that surface, so a change confined to a vertical's internals no longer
+ * selects them.
+ */
+const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
+  const relative = changedPath.slice(`app/${owner.directory}/`.length);
+  return (
+    owner.directory === '.' ||
+    /^(?:vertical\.runtime-declaration\.[cm]?[jt]sx?|locales\/.*)$/u.test(relative) ||
+    (owner.exportTargets ?? []).includes(relative)
+  );
+};
+
 export const planCiChecks = (input: {
   readonly applyAffected: boolean;
   readonly changedPaths: readonly string[];
@@ -156,12 +196,19 @@ export const planCiChecks = (input: {
   readonly templates: Templates;
 }) => {
   const { packages, templates } = input;
-  const seeds = input.changedPaths.flatMap((changedPath) =>
+  const owned = input.changedPaths.flatMap((changedPath) =>
     packages
       .filter(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`))
-      .map(({ name }) => name),
+      .map((owner) => ({ consumed: reachesConsumers(changedPath, owner), name: owner.name })),
   );
-  const affectedNames = workspaceConsumerClosure(packages, seeds);
+  const seeds = owned.map(({ name }) => name);
+  const affectedNames = new Set([
+    ...workspaceConsumerClosure(
+      packages,
+      owned.filter(({ consumed }) => consumed).map(({ name }) => name),
+    ),
+    ...seeds,
+  ]);
   const affected = packages.filter(({ name }) => affectedNames.has(name));
   const affectedPackages = EffectArray.sort([...affectedNames], Order.String);
   const uncertain = packages.some(
@@ -195,7 +242,12 @@ export const planCiChecks = (input: {
     if (entry.suite === 'browser') {
       return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
     }
-    const selected = matchingPackages(entry['package-filters'] ?? '', affected);
+    // The files that migrate or recover their own database run in every affected round, from a fresh preparation.
+    if (entry['fresh-database-tests'] === 'only') {
+      return [entry];
+    }
+    const packageFilters = entry['package-filters'] ?? '';
+    const selected = packageFilters.length === 0 ? [] : matchingPackages(packageFilters, affected);
     const rootSuite = entry['root-suite'] === true && affected.some(({ directory }) => directory === '.');
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
     if (selected.length === 0 && !rootSuite && !proofAffected) {
@@ -205,16 +257,21 @@ export const planCiChecks = (input: {
     return [{ ...entry, 'package-filters': filters, 'root-suite': rootSuite }];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
-    const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
+    const filters = entry.commands.split('\n')[0] ?? '';
+    const selected = matchingPackages(filters, affected);
     if (selected.length === 0) {
       return [];
     }
-    const filters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
+    // A row whose every package is affected runs exactly as planned, including a weighted shard of one package.
+    if (selected.length === matchingPackages(filters, packages).length) {
+      return [entry];
+    }
+    const selectedFilters = selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
     return [
       {
         ...entry,
         commands: ['test:unit', 'test:component']
-          .map((script) => `pnpm -r --no-sort --if-present ${filters} run ${script}`)
+          .map((script) => `pnpm -r --no-sort --if-present ${selectedFilters} run ${script}`)
           .join('\n'),
       },
     ];
@@ -222,9 +279,32 @@ export const planCiChecks = (input: {
   // A malformed/empty unit mapping never becomes a green no-op.
   const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
   const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
-  const expected = Object.fromEntries(
-    gateIds.map((gate) => [gate, gate === 'service-integration' && integration.length === 0 ? 'skipped' : 'success']),
-  );
+  const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
+  // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
+  // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
+  // Eligible rows restore the cached seed when it exists and prepare their own database otherwise; the seed
+  // producer runs whenever an integration row does, to prove and refresh it.
+  const jobs = {
+    browser: integration.filter(({ suite }) => suite === 'browser'),
+    services: integration.filter(({ suite }) => suite === 'integration'),
+    unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
+    unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
+  };
+  // Every gate names its row count; gates without a matrix always run one row. The seed producer runs whenever an
+  // integration row does.
+  const rows = {
+    'browser-integration': jobs.browser.length,
+    'format-and-lint': 3,
+    'integration-seed-proof': jobs.services.length,
+    'node-artifact-build': 1,
+    'node-artifact-proof': 1,
+    'service-integration': jobs.services.length,
+    'static-contracts': 1,
+    'workspace-gate': 1,
+    'workspace-unit': jobs.unitPlain.length,
+    'workspace-unit-artifacts': jobs.unitArtifacts.length,
+  } satisfies Readonly<Record<(typeof gateIds)[number], number>>;
+  const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows[gate] === 0 ? 'skipped' : 'success']));
   let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
   if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
     reason = input.applyAffected
@@ -236,21 +316,40 @@ export const planCiChecks = (input: {
     candidateIntegration: broad ? templates.integration : selectedIntegration,
     expected,
     integration,
+    jobs,
     mode: effectiveMode,
     reason,
     source: templates.source,
-    unit: effectiveMode === 'full' ? templates.unit : selectedUnit,
+    unit,
   };
 };
+
+/** A package `exports` target: a path, a condition map, or a fallback list of either. */
+type ExportTarget = string | readonly ExportTarget[] | { readonly [condition: string]: ExportTarget };
+const ExportTargetSchema: Schema.Codec<ExportTarget> = Schema.suspend(() =>
+  Schema.Union([Schema.String, Schema.Array(ExportTargetSchema), Schema.Record(Schema.String, ExportTargetSchema)]),
+);
 
 const ManifestSchema = Schema.Struct({
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   devDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  exports: Schema.optionalKey(ExportTargetSchema),
   name: Schema.String,
   ontosContractOwner: Schema.optionalKey(Schema.Struct({ packageName: Schema.String })),
   optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
+
+/** Every file an `exports` map points at, package-relative, through conditions and fallback lists. */
+const exportTargets = (exports: ExportTarget | undefined): readonly string[] => {
+  if (exports === undefined) {
+    return [];
+  }
+  if (Predicate.isString(exports)) {
+    return [exports.replace(/^\.\//u, '')];
+  }
+  return (Array.isArray(exports) ? exports : Object.values(exports)).flatMap(exportTargets);
+};
 
 const readWorkspace = Effect.gen(function* readCiWorkspace() {
   const fs = yield* FileSystem.FileSystem;
@@ -303,6 +402,7 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
         ),
       ],
       directory,
+      exportTargets: exportTargets(manifest.exports),
       name: manifest.name,
       uncertain:
         (directory !== '.' &&
@@ -351,10 +451,12 @@ const cli = Command.make(
       });
       const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
       const encoded = yield* Effect.all({
+        browser: encode(plan.jobs.browser),
         expected: encode(plan.expected),
-        integration: encode(plan.integration),
+        integration: encode(plan.jobs.services),
         source: encode(plan.source),
-        unit: encode(plan.unit),
+        unit: encode(plan.jobs.unitPlain),
+        'unit-artifacts': encode(plan.jobs.unitArtifacts),
       });
       const output = yield* Config.String('GITHUB_OUTPUT');
       const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);
@@ -372,7 +474,7 @@ const cli = Command.make(
           `Affected-plan integration shards: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
           '',
           'Node artifact proof, static policy, compiler diagnostics and lint enforcement remain blocking.',
-          'Set the CI_AFFECTED_ENABLED repository variable to true only after reviewing shadow plans.',
+          'Only a candidate/* dispatch without force-ci-full applies affected selection; every other run is complete.',
           '',
         ].join('\n'),
         { flag: 'a' },

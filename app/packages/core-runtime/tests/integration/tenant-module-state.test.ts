@@ -34,6 +34,7 @@ import { changeTenantModuleStateAction } from '../../src/modules/actions/change-
 import { TenantModuleStateValidationUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import {
+  TENANT_MODULE_INSTALLED_WITH_EVENT,
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
@@ -346,18 +347,21 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
     return Effect.gen(function* transitionSequence() {
       const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
       expect(created).toEqual({
+        installedWith: [],
         moduleKey,
         newState: 'active',
         previousState: null,
       });
       const suspended = yield* runtime.runAction(actionInput(moduleKey, 'suspended', 'suspend'));
       expect(suspended).toEqual({
+        installedWith: [],
         moduleKey,
         newState: 'suspended',
         previousState: 'active',
       });
       const reactivated = yield* runtime.runAction(actionInput(moduleKey, 'active', 'reactivate'));
       expect(reactivated).toEqual({
+        installedWith: [],
         moduleKey,
         newState: 'active',
         previousState: 'suspended',
@@ -722,6 +726,16 @@ const intrinsicCatalogFixture = (target: string, provider: string, transitive: s
   );
 };
 
+/** Runs the module-state Action against one trusted catalog. */
+const runAgainst =
+  (runtime: ReturnType<typeof makeActionRuntime>, trustedCatalog: InstalledModuleCatalog) =>
+  (moduleKey: string, state: 'active' | 'suspended' | 'inactive', key: string) =>
+    runtime.runAction(actionInput(moduleKey, state, key)).pipe(
+      Effect.provideService(InstalledModuleCatalogService, {
+        loadForRevision: (_revision) => Effect.succeed(trustedCatalog),
+      }),
+    );
+
 const tenantModuleStateIntrinsicActivation = withDatabase((database) =>
   Effect.gen(function* intrinsicActivationStateChecks() {
     const crypto = yield* Crypto.Crypto;
@@ -737,12 +751,7 @@ const tenantModuleStateIntrinsicActivation = withDatabase((database) =>
       testOperationalScopeResolver,
       moduleStateRuntimeOptions,
     );
-    const run = (moduleKey: string, state: 'active' | 'suspended' | 'inactive', key: string) =>
-      runtime.runAction(actionInput(moduleKey, state, key)).pipe(
-        Effect.provideService(InstalledModuleCatalogService, {
-          loadForRevision: (_revision) => Effect.succeed(trustedCatalog),
-        }),
-      );
+    const run = runAgainst(runtime, trustedCatalog);
     const assertNoTargetWrites = Effect.gen(function* targetRemainsAbsent() {
       const state = yield* database.executor
         .select()
@@ -801,6 +810,154 @@ const tenantModuleStateIntrinsicActivation = withDatabase((database) =>
     expect(independentRows).toHaveLength(2);
     expect(independentRows.every(({ state }) => state === 'active')).toBe(true);
     yield* run('uninstalled.cleanup', 'inactive', 'intrinsic-unknown-inactive-cleanup');
+  }),
+);
+
+/** A selling module whose manifest installs a tax module with it, the tax module, and a module that brings nothing. */
+const installsWithCatalogFixture = (seller: string, tax: string, plain: string) => {
+  const base = installedContract(seller);
+  return catalogFrom(
+    { ...base, manifest: { ...base.manifest, activation: { ...base.manifest.activation, installsWith: [tax] } } },
+    installedContract(tax),
+    installedContract(plain),
+  );
+};
+
+const tenantModuleStateInstallsWith = withDatabase((database) =>
+  Effect.gen(function* installsWithActivation() {
+    const crypto = yield* Crypto.Crypto;
+    const seller = testModuleKey('installs-with-seller', tenantOne);
+    const tax = testModuleKey('installs-with-tax', tenantOne);
+    const plain = testModuleKey('installs-with-plain', tenantOne);
+    const trustedCatalog = installsWithCatalogFixture(seller, tax, plain);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(crypto),
+      allowedPermission,
+      testOperationalScopeResolver,
+      moduleStateRuntimeOptions,
+    );
+    const run = runAgainst(runtime, trustedCatalog);
+    const stateOf = (moduleKey: string) =>
+      database.executor
+        .select({ state: tenantModuleStates.state })
+        .from(tenantModuleStates)
+        .where(and(eq(tenantModuleStates.tenantId, tenantOne), eq(tenantModuleStates.moduleKey, moduleKey)));
+    const historyOf = (moduleKey: string) =>
+      database.executor
+        .select({
+          actionInvocationId: tenantModuleStateChanges.actionInvocationId,
+          changedByPrincipalId: tenantModuleStateChanges.changedByPrincipalId,
+          changeSource: tenantModuleStateChanges.changeSource,
+          newState: tenantModuleStateChanges.newState,
+          previousState: tenantModuleStateChanges.previousState,
+          reason: tenantModuleStateChanges.reason,
+        })
+        .from(tenantModuleStateChanges)
+        .where(and(eq(tenantModuleStateChanges.tenantId, tenantOne), eq(tenantModuleStateChanges.moduleKey, moduleKey)))
+        .orderBy(asc(tenantModuleStateChanges.occurredAt));
+
+    const auditsOf = (actionInvocationId: string | null | undefined) =>
+      database.executor
+        .select({
+          auditProfile: auditEvents.auditProfile,
+          authContextRef: auditEvents.authContextRef,
+          authMethod: auditEvents.authMethod,
+          eventType: auditEvents.eventType,
+          evidenceJson: auditEvents.evidenceJson,
+          outcome: auditEvents.outcome,
+          outcomeCode: auditEvents.outcomeCode,
+          principalId: auditEvents.principalId,
+          targetModuleKey: auditEvents.targetModuleKey,
+        })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantOne), eq(auditEvents.actionInvocationId, actionInvocationId ?? '')));
+
+    // Activating the selling module in a Tenant without the tax module installs it in the same operation, recorded as
+    // the same person's change in the same Action invocation; the result names it.
+    expect(yield* run(seller, 'active', 'installs-with-first')).toEqual({
+      installedWith: [tax],
+      moduleKey: seller,
+      newState: 'active',
+      previousState: null,
+    });
+    expect(yield* stateOf(tax)).toEqual([{ state: 'active' }]);
+    const [sellerChange] = yield* historyOf(seller);
+    expect(yield* historyOf(tax)).toEqual([
+      {
+        actionInvocationId: sellerChange?.actionInvocationId,
+        changedByPrincipalId: principalOne,
+        changeSource: 'user',
+        newState: 'active',
+        previousState: null,
+        reason: `Installed with ${seller}`,
+      },
+    ]);
+    const events = yield* database.executor
+      .select({ subjectModuleKey: domainEvents.subjectModuleKey })
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.tenantId, tenantOne),
+          eq(domainEvents.actionInvocationId, sellerChange?.actionInvocationId ?? ''),
+        ),
+      );
+    expect(events.map(({ subjectModuleKey }) => subjectModuleKey).toSorted()).toEqual([seller, tax].toSorted());
+    // The tax module gets its own audit record next to the Action's own, by the same person, as the release audits it.
+    const sellerAudits = yield* auditsOf(sellerChange?.actionInvocationId);
+    expect(sellerAudits.filter(({ eventType }) => eventType === 'action.executed')).toHaveLength(1);
+    expect(sellerAudits.filter(({ eventType }) => eventType !== 'action.executed')).toEqual([
+      {
+        auditProfile: 'sensitive',
+        authContextRef: sellerAudits.find(({ eventType }) => eventType === 'action.executed')?.authContextRef ?? null,
+        authMethod: 'session',
+        eventType: TENANT_MODULE_INSTALLED_WITH_EVENT,
+        evidenceJson: {
+          compositionRevision: expect.any(String),
+          installedWith: seller,
+          moduleKey: tax,
+          newState: 'active',
+          previousState: null,
+          risk: 'critical',
+        },
+        outcome: 'succeeded',
+        outcomeCode: 'module_installed',
+        principalId: principalOne,
+        targetModuleKey: tax,
+      },
+    ]);
+
+    // An already active tax module is left untouched when the selling module is activated again.
+    yield* run(seller, 'suspended', 'installs-with-suspend');
+    expect(yield* run(seller, 'active', 'installs-with-reactivate')).toMatchObject({ installedWith: [] });
+    expect(yield* historyOf(tax)).toHaveLength(1);
+    const reactivations = yield* historyOf(seller);
+    const reactivationAudits = yield* auditsOf(reactivations.at(-1)?.actionInvocationId);
+    expect(reactivationAudits.map(({ eventType }) => eventType)).toEqual(['action.executed']);
+
+    // A state somebody set is never changed by it.
+    yield* run(tax, 'suspended', 'installs-with-tax-suspended');
+    yield* run(seller, 'suspended', 'installs-with-suspend-again');
+    yield* run(seller, 'active', 'installs-with-reactivate-again');
+    expect(yield* stateOf(tax)).toEqual([{ state: 'suspended' }]);
+    expect(yield* historyOf(tax)).toHaveLength(2);
+
+    // A module that declares nothing brings nothing, and is audited once.
+    expect(yield* run(plain, 'active', 'installs-with-plain')).toMatchObject({ installedWith: [] });
+    const [plainChange] = yield* historyOf(plain);
+    expect((yield* auditsOf(plainChange?.actionInvocationId)).map(({ eventType }) => eventType)).toEqual([
+      'action.executed',
+    ]);
+    const sameInvocation = yield* database.executor
+      .select({ moduleKey: tenantModuleStateChanges.moduleKey })
+      .from(tenantModuleStateChanges)
+      .where(
+        and(
+          eq(tenantModuleStateChanges.tenantId, tenantOne),
+          eq(tenantModuleStateChanges.actionInvocationId, plainChange?.actionInvocationId ?? ''),
+        ),
+      );
+    expect(sameInvocation).toEqual([{ moduleKey: plain }]);
   }),
 );
 
@@ -931,5 +1088,9 @@ it.layer(Fixtures, { excludeTestServices: true })('tenant module state', (suite)
   suite.effect(
     'serializes provider suspension before consumer activation under the existing tenant lock',
     () => tenantModuleStateIntrinsicSerialization,
+  );
+  suite.effect(
+    'activation installs the modules its manifest installs with it, never changing a state somebody set',
+    () => tenantModuleStateInstallsWith,
   );
 });

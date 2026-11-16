@@ -1,10 +1,12 @@
-import { listCustomers } from '@app/party-registry/api/client';
-import { listMovements, listOrders, listProducts } from '@app/merchandise/clients/records';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { listInvoices } from '@app/finance-billing/clients/records';
-import { listTasks } from '@app/work-tasks/clients/records';
-import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
-import { listEmployees } from '@app/workforce/clients/records';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
+import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/apis/records/client';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeFinanceRecords } from '@app/finance-billing/apis/records/client';
+import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
+import { executeRecords as executeTagRecords } from '@app/tagging/clients/records';
+import { SubjectIdsQuerySchema } from '@app/tagging/contracts/records';
+import type { RecordsRequest as TagRecordsRequest, SubjectKind } from '@app/tagging/contracts/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
 import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { Effect, Random, Ref, Schema } from 'effect';
@@ -23,6 +25,78 @@ import type {
 } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { unreadableSources } from './readable-sources.ts';
+
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = (request: Parameters<typeof executeCustomerList>[0] = {}) =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) =>
+      executeCustomerList(request, `party-registry:customer-list:${first}:${second}`),
+    ),
+    Effect.map(({ items }) => items),
+  );
+
+/** Work Tasks records for this view, each read under its own correlation. */
+const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
+
+/** Workforce employees for this view, read under its own correlation. */
+const listEmployees = () =>
+  Random.nextInt.pipe(
+    Effect.flatMap((nonce) => executeEmployeeRecords({}, `workforce:list:${nonce}`)),
+    Effect.map((response) => response.items),
+  );
+
+/** Tagging records for this view, each read under its own correlation. */
+const readTagRecords = (payload: TagRecordsRequest) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTagRecords(payload, `tagging:records:${id}`)));
+
+/** All tags with their tag-wide assignment counts per subject kind. */
+const listTags = readTagRecords({}).pipe(Effect.map((records) => records.tags));
+
+/** `SubjectIdsQuerySchema` caps one records query at this many characters. */
+const subjectIdsQueryLimit = 8000;
+
+/** Comma-joined id lists, each within the records query limit. The caller's ids are never mutated. */
+const subjectIdQueries = (ids: readonly string[]): string[] => {
+  const queries: string[] = [];
+  for (const id of ids) {
+    const last = queries.at(-1);
+    if (last !== undefined && last.length + 1 + id.length <= subjectIdsQueryLimit) {
+      queries.splice(-1, 1, `${last},${id}`);
+    } else {
+      queries.push(id);
+    }
+  }
+  return queries;
+};
+
+/**
+ * Assignments of subjects of several kinds, across all tags. One records read covers every kind; a list longer than
+ * the query limit takes one more read per extra chunk. Only assignments of the requested (kind, id) pairs are
+ * returned, so an id shared by two kinds never leaks the other kind's tags.
+ */
+const assignmentsForSubjects = (subjects: readonly { readonly id: string; readonly kind: SubjectKind }[]) => {
+  const wanted = new Set(subjects.map((subject) => `${subject.kind}:${subject.id}`));
+  const ids = [...new Set(subjects.map((subject) => subject.id))];
+  return ids.length === 0
+    ? Effect.succeed([])
+    : Effect.forEach(
+        subjectIdQueries(ids),
+        (query) =>
+          Schema.decodeEffect(SubjectIdsQuerySchema)(query).pipe(
+            Effect.flatMap((subjectIds) => readTagRecords({ subjectIds })),
+          ),
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map((pages) =>
+          pages.flatMap((records) =>
+            records.assignments.filter((assignment) =>
+              wanted.has(`${assignment.subject.kind}:${assignment.subject.id}`),
+            ),
+          ),
+        ),
+      );
+};
 
 export const StatisticsSourceSchema = Schema.Literals([
   'customers',
@@ -256,36 +330,36 @@ const entityData = {
   invoices: sourceData(
     'invoices',
     requestId('invoices').pipe(
-      Effect.flatMap((id) => listInvoices({}, id)),
-      Effect.map((items) => items.map(toInvoice)),
+      Effect.flatMap((id) => executeFinanceRecords({}, id)),
+      Effect.map((response) => response.state.invoices.map(toInvoice)),
     ),
   ),
   movements: sourceData(
     'movements',
     requestId('movements').pipe(
-      Effect.flatMap((id) => listMovements(id)),
-      Effect.map((items) => items.map(toMovement)),
+      Effect.flatMap((id) => executeMerchandiseRecords({}, id)),
+      Effect.map(({ movements }) => movements.map(toMovement)),
     ),
   ),
   opportunities: sourceData(
     'opportunities',
     requestId('opportunities').pipe(
-      Effect.flatMap((id) => listOpportunities({}, id)),
+      Effect.flatMap((id) => executeOpportunityRecords({}, id)),
       Effect.map((response) => response.items.map(toOpportunity)),
     ),
   ),
   orders: sourceData(
     'orders',
     requestId('orders').pipe(
-      Effect.flatMap((id) => listOrders(id)),
-      Effect.map((items) => items.map(toOrder)),
+      Effect.flatMap((id) => executeMerchandiseRecords({}, id)),
+      Effect.map(({ orders }) => orders.map(toOrder)),
     ),
   ),
   products: sourceData(
     'products',
     requestId('products').pipe(
-      Effect.flatMap((id) => listProducts(id)),
-      Effect.map((items) => items.map(toProduct)),
+      Effect.flatMap((id) => executeMerchandiseRecords({}, id)),
+      Effect.map(({ products }) => products.map(toProduct)),
     ),
   ),
   tags: sourceData(

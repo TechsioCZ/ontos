@@ -63,6 +63,7 @@ import {
   makeApiKeyGatewayNativeFixture,
   sealApiKeyGatewayNativeComposition,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { deriveActiveApplicationCompositionSnapshot } from '../../../../scripts/active-application-composition.mts';
 import { makeCurrentStorefrontNativeReceiver } from '@app/storefront-registry/testing/current-storefront-native';
 import { makeMarketRetirementNativeReceiver } from '@app/commerce-customer-context/testing/market-retirement-native';
@@ -94,11 +95,9 @@ import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import {
   commerceMarketCatalogActionRuntimeDependenciesLive,
-  MarketRetirementActionRuntimeLive,
+  commerceMarketCatalogApiRuntimeFromContext,
   MarketRetirementRuntimeBindings,
 } from '../../api/index.ts';
-import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
-import { commerceMarketCatalogApiRuntimeFromContext } from './market-http-runtime-from-context.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
@@ -570,8 +569,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // Build scoped Core clients once; retained Registry callbacks use this same live context.
   const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
-  // Market's own module credential, provisioned by the platform as on every environment.
+  // Market's own module credential, provisioned by the platform and handed over by the host, as on every environment.
   const relayBinding = yield* shell.provisionRelaySource();
+  yield* holdTestModuleCredentials({ 'commerce-market-catalog': Redacted.value(relayBinding.secret) });
   const context = Context.add(
     baseContext,
     ConfigProvider.ConfigProvider,
@@ -579,7 +579,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       ConfigProvider.fromEnvRecord({
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
         ONTOS_GATEWAY_ISSUER: shell.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
         ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
       }),
@@ -716,22 +715,6 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       ReadRuntime,
     );
     const crypto = yield* Crypto.Crypto;
-    const actionContext = yield* Layer.build(
-      MarketRetirementActionRuntimeLive.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(MarketRetirementRuntimeBindings, {
-              base,
-              coreFactory,
-              crypto,
-              readRuntime,
-              scopeResolver: Context.get(dependencies, OperationalScopeResolver),
-            }),
-            MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer)),
-          ),
-        ),
-      ),
-    );
     const searchContext = yield* Layer.build(
       CoreSearchQueryRuntimeLive.pipe(
         Layer.provide(CoreSearchProjectionStoreLive),
@@ -741,7 +724,13 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
     );
     const runtime = yield* commerceMarketCatalogApiRuntimeFromContext.pipe(
       Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(ActionRuntime, Context.get(actionContext, ActionRuntime)),
+      Effect.provideService(MarketRetirementRuntimeBindings, {
+        base,
+        coreFactory,
+        crypto,
+        readRuntime,
+        scopeResolver: Context.get(dependencies, OperationalScopeResolver),
+      }),
       Effect.provideService(OwnerActionApprovals, Context.get(ownerApprovalsContext, OwnerActionApprovals)),
       Effect.provideService(AccessDecisionGate, Context.get(accessEnforcementContext, AccessDecisionGate)),
       Effect.provideService(CoreSearchQueryRuntime, Context.get(searchContext, CoreSearchQueryRuntime)),

@@ -147,6 +147,11 @@ it.effect('a bound decision reads the request authority until a transaction is n
     expect(ownerDecision.outcome).toBe('ALLOWED');
     expect(joined.calls.readScope).toBeGreaterThan(0);
     expect(joined.calls.readCells).toBeGreaterThan(0);
+    const joinedReads = joined.calls.readScope;
+    const decideMany = bound.decideMany ?? (() => Effect.die('The bound gate must answer joined batches'));
+    const ownerBatch = yield* executor.transaction((transaction) => decideMany([gateInput, gateInput], transaction));
+    expect(ownerBatch.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'ALLOWED']);
+    expect(joined.calls.readScope).toBeGreaterThan(joinedReads);
     expect(request.calls.readScope).toBe(requestReads);
     expect(request.calls.readCells).toBe(requestCellReads);
   }),
@@ -233,6 +238,7 @@ it.layer(NodeCrypto.layer)(
           intent: {
             authorityFor: () => ({
               readCells: () => Effect.succeed([]),
+              readCompanyOwnership: () => Effect.succeed(false),
               readConfigureBases: () => Effect.succeed([]),
               readConnection: () => Effect.succeed(Option.none()),
               readScope: () => Effect.succeed(Option.none()),
@@ -253,10 +259,9 @@ it.layer(NodeCrypto.layer)(
             const joinedWorkloads = joined.workloadBindings;
             expect(joinedWorkloads).toBeDefined();
             if (joinedWorkloads !== undefined) {
-              yield* joinedWorkloads.readActiveWorkloadKeys({ principalId: person, scope, tenantId: tenant });
-              // The company declaration joins the same transaction, so a prepared Action's recheck reads
-              // it from the snapshot its receipt belongs to, never from a second connection (D6, O75).
-              yield* joinedWorkloads.readCompanyDeclaration({ principalId: person, scope, tenantId: tenant });
+              // The keys and registered companies join the same transaction, so a prepared Action's recheck reads
+              // them from the snapshot its receipt belongs to, never from a second connection (D6, O75).
+              yield* joinedWorkloads.readWorkloadAuthority({ principalId: person, scope, tenantId: tenant });
             }
             return statements.slice(before);
           }),

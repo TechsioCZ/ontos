@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 
-import type { ShellSearchResult } from '../../../../shared/api.ts';
+import type { ShellSearchResult } from '../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { buildShellNavigation, ShellRouteLink, shellSearchScopeKey } from '../../shell-frame.tsx';
 import { shellSearchResultKey } from '../../shell-search-match.ts';
@@ -287,7 +287,7 @@ const useSamePageSearch = ({
     const shouldSearch =
       routeSearch.samePage &&
       routeSearch.q.length > 0 &&
-      loaderModel.state === 'ready' &&
+      (loaderModel.state === 'ready' || loaderModel.state === 'pending') &&
       (navigationEpoch > 0 || loaderKey !== requestKey) &&
       !scopeBlocked &&
       authenticatedShell !== undefined &&
@@ -366,11 +366,22 @@ const resolveSearchPageState = ({
           state: 'ready',
         } satisfies SearchPageModel)
       : undefined;
-  const activeModel = emptyRouteModel ?? (needsFresh ? (clientModel ?? loaderModel) : loaderModel);
+  // A server render carries no answer yet: show the loading state until the browser search has answered.
+  const loaderAnswer =
+    loaderModel.state === 'pending'
+      ? ({
+          filters: { availableFamilies: [], selectedFamilies: [] },
+          query: loaderModel.query,
+          response: { partial: false, results: [] },
+          shell: loaderModel.shell,
+          state: 'ready',
+        } satisfies SearchPageModel)
+      : loaderModel;
+  const activeModel = emptyRouteModel ?? (needsFresh ? (clientModel ?? loaderAnswer) : loaderAnswer);
   const searching =
     routeSearch.samePage &&
     routeSearch.q.length > 0 &&
-    loaderKey !== undefined &&
+    (loaderKey !== undefined || loaderModel.state === 'pending') &&
     needsFresh &&
     client?.key !== requestKey;
   return { activeModel, searching };

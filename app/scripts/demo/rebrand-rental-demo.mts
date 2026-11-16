@@ -11,7 +11,7 @@ import {
   ShellAuthenticationApi,
   shellAuthenticationApiContract,
   TenantIdSchema,
-} from '../../apps/shell-super-app/shared/api.ts';
+} from '../../apps/shell-super-app/shared/browser-api.ts';
 import { validateSeedTarget } from './seed-client.mts';
 import { DEFAULT_PASSWORD } from '../ops/stage-demo-verify.mjs';
 

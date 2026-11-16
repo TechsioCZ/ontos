@@ -9,7 +9,7 @@ const schema = 'price_group_catalog';
 const tenant = { source: 'tenantId', type: 'uuid' } as const;
 
 export const createPriceGroupRoutine = defineScopedRoutine({
-  name: 'create_price_group_with_complete_schedule',
+  name: 'create_price_group_with_source_correlation',
   ownerModuleKey,
   parameters: [tenant, { source: 'input', type: 'jsonb' }],
   resultSchema: PriceGroupRoutineRowSchema,
@@ -18,7 +18,7 @@ export const createPriceGroupRoutine = defineScopedRoutine({
 });
 
 export const createDefinitionRevisionRoutine = defineScopedRoutine({
-  name: 'create_definition_revision_with_continuity',
+  name: 'create_definition_revision_with_source_correlation',
   ownerModuleKey,
   parameters: [tenant, { source: 'input', type: 'jsonb' }],
   resultSchema: PriceGroupRoutineRowSchema,
@@ -71,5 +71,23 @@ export const validateCompatibilityRoutine = defineScopedRoutine({
   ],
   resultSchema: PriceGroupRoutineRowSchema,
   routineKey: 'catalog.validate-compatibility',
+  schema,
+});
+
+export const readPriceGroupSourceAssociationsRoutine = defineScopedRoutine({
+  name: 'read_price_group_source_associations',
+  ownerModuleKey,
+  parameters: [tenant, { source: 'input', type: 'jsonb' }],
+  resultSchema: PriceGroupRoutineRowSchema,
+  routineKey: 'catalog.read-price-group-source-associations',
+  schema,
+});
+
+export const readPriceGroupOperationReceiptRoutine = defineScopedRoutine({
+  name: 'read_price_group_operation_receipt',
+  ownerModuleKey,
+  parameters: [tenant, { source: 'input', type: 'jsonb' }],
+  resultSchema: PriceGroupRoutineRowSchema,
+  routineKey: 'catalog.read-price-group-operation-receipt',
   schema,
 });

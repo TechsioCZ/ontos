@@ -1,6 +1,7 @@
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
 import { LegalEntityIdSchema, RecordKeySchema, TenantIdSchema } from '../../src/access/ids.ts';
 import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identities.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
@@ -32,16 +33,12 @@ const fenceDatabase = (fences: ActionTestAccessFences) =>
         if (['begin', 'commit', 'rollback'].includes(statement)) {
           return [];
         }
-        if (
-          statement === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)"
-        ) {
-          [tenantId, legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(Effect.orDie);
-          return [];
-        }
+        // A session-setting role installs its scope and reads back the connected role in one statement.
         if (
           statement ===
-          "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
+          "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id"
         ) {
+          [tenantId, legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValues)(params).pipe(Effect.orDie);
           return [{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }];
         }
         const answer = fences.read({ params, scope: { legalEntityId, tenantId }, sql });
@@ -126,7 +123,7 @@ for (const state of ['Ready', 'Changing', 'missing'] as const) {
           expect(remoteChecks).toBeGreaterThan(0);
           expect(harness.snapshot().committed).toHaveLength(1);
           const calls = remoteChecks;
-          expect((yield* Effect.flip(harness.runtime.runAction(request)))._tag).toBe('ActionAlreadyCommitted');
+          expect(Schema.is(ActionAlreadyCommitted)(yield* Effect.flip(harness.runtime.runAction(request)))).toBe(true);
           expect(remoteChecks).toBe(calls);
         } else {
           expect(result).toMatchObject({ failure: { _tag: 'ActionPermissionCheckError' } });

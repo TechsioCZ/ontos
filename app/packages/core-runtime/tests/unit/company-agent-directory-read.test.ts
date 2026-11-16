@@ -26,18 +26,12 @@ const scope = {
   correlationId: 'company-agent-directory-test',
 };
 
-test('directory preserves tenant OR selected-company read_people without manage_people or identity module gates', () => {
+test('directory is admitted in the selected company only and asks no legacy relation (its own question is in prepare)', () => {
   const resolver = getReadPermissionTargetResolver(companyAgentDirectoryRead);
   if (!Predicate.isFunction(resolver)) {
     throw new TypeError('Expected the directory permission resolver');
   }
-  expect(resolver({}, scope)).toEqual({
-    kind: 'any_of',
-    targets: [
-      { kind: 'tenant', permission: 'read_people' },
-      { kind: 'legal_entity', permission: 'read_people' },
-    ],
-  });
+  expect(resolver({}, scope)).toEqual({ kind: 'legal_entity' });
   expect(companyAgentDirectoryRead.descriptor.entrypoint.authorization).toEqual({ kind: 'authenticated_principal' });
   expect(companyAgentDirectoryRead.descriptor.legalEntityScope).toBe('required');
   expect(Object.keys(CompanyAgentDirectoryInputSchema.fields)).toEqual([]);

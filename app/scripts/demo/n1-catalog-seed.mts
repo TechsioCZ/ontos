@@ -219,8 +219,8 @@ export const mapN1Dataset = (dataset: typeof N1DatasetSchema.Type, origin: strin
         stockTracked: false,
         unit: 'ks',
         variants,
-        // Demo assumption, not a claim about tax data in the source export.
-        vatRate: 21,
+        // Demo assumption, not a claim about tax data in the source export: Tax holds the standard rate.
+        taxClassificationCode: 'cz.vat.standard',
       });
       yield* Match.value(command).pipe(
         Match.tag('CreateProduct', (value) =>

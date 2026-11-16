@@ -4,7 +4,11 @@ import { expect, it } from 'effect-rstest';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
-import { makePartyRef, PartySubjectEvidenceSchema } from '../../shared/domain/identity-contracts.ts';
+import {
+  makePartyRef,
+  PartyActorAttestationSchema,
+  PartySubjectEvidenceSchema,
+} from '../../shared/domain/identity-contracts.ts';
 import { PartyMatchDecisionRecordSchema, committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
@@ -210,7 +214,7 @@ it('Guest-bound attestations require one currently trusted selected LE without c
       tenantId: evidenceTenantId,
     },
   };
-  const unbound = Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
+  const unbound = Schema.decodeUnknownSync(PartyActorAttestationSchema)({
     basis: 'DIRECT_INTERACTION',
     evidenceRef: 'guest-proof',
     kind: 'ACTOR_ATTESTATION',

@@ -2,12 +2,12 @@ import { DateTime } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
-import type { PartyCandidate, PartySubjectEvidence } from '../../shared/domain/identity-contracts.ts';
+import type { PartyActorAttestation, PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { evaluatePartySubjectEvidence } from '../../src/policies/create-party-without-strong-identifier.policy.ts';
 import { candidateFingerprint } from '../../src/services/party-matching-persistence.service.ts';
 
-const evidence = (observedSubject: PartySubjectEvidence['observedSubject']): PartySubjectEvidence => ({
+const evidence = (observedSubject: PartyActorAttestation['observedSubject']): PartyActorAttestation => ({
   basis: 'DIRECT_INTERACTION',
   evidenceRef: 'meeting/42',
   kind: 'ACTOR_ATTESTATION',

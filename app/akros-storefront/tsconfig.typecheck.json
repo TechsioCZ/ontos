@@ -1,0 +1,23 @@
+{
+  // AKROS as a project of the workspace's tsrs typecheck: the root tsconfig.json references this
+  // file, so CI's `pnpm typecheck` fails on a storefront type error. Next.js keeps reading
+  // tsconfig.json; this file only adds what a build-graph project needs.
+  // `pnpm --filter akros-storefront typecheck` runs the full Next.js shape (generated route types
+  // included) on the same tsrs binary.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "../node_modules/.cache/tsgo/declarations/akros-storefront",
+    "tsBuildInfoFile": "../node_modules/.cache/tsgo/akros-storefront.tsbuildinfo",
+    // next-env.d.ts is left out: it imports .next/types, which exists only after `next typegen` or
+    // `next build`. These are the type packages it and TypeScript 5.9's automatic @types provided.
+    "types": ["node", "react", "react-dom", "next", "next/image-types/global"]
+  },
+  // A build-graph project must list the JSON files it imports (the generated catalogue).
+  "include": ["**/*.ts", "**/*.tsx", "src/**/*.json"],
+  "exclude": ["node_modules", "next-env.d.ts", ".next"]
+}

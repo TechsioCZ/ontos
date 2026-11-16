@@ -25,6 +25,14 @@ import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-com
 import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
 import { productVariantSnapshotRead } from '../../src/api/product-variant-snapshot.read.ts';
 import { manufacturerRelationCurrentRead } from '../../src/api/manufacturer-relation-current.read.ts';
+import { assortmentProductClassificationV1Read } from '../../src/api/assortment-product-classification-v1.read.ts';
+import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
+import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
+import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-localized-facts-recovery.read.ts';
+import { createVariantRecoveryRead } from '../../src/api/create-variant-recovery.read.ts';
+import { createProductRecoveryRead } from '../../src/api/create-product-recovery.read.ts';
+import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
+import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -34,7 +42,7 @@ describe('Catalog backend declaration and full publication', () => {
     expect(declaration.actions).toBe(runtimeManifest.publicSurface.actions);
     const backendActions = getVerticalRuntimeActions(backendRegistration);
     const fullActions = getVerticalRuntimeActions(registration);
-    expect(backendActions).toHaveLength(82);
+    expect(backendActions).toHaveLength(83);
     expect(fullActions).toHaveLength(backendActions.length);
     for (const [index, action] of backendActions.entries()) {
       expect(action).toBe(fullActions[index]);
@@ -54,6 +62,14 @@ describe('Catalog backend declaration and full publication', () => {
       pricingPurposeEquivalenceRead,
       productVariantSnapshotRead,
       manufacturerRelationCurrentRead,
+      assortmentProductClassificationV1Read,
+      correctProductRecoveryRead,
+      updateProductRecoveryRead,
+      setVariantLocalizedFactsRecoveryRead,
+      createVariantRecoveryRead,
+      createProductRecoveryRead,
+      bindInitialVariantSourceRecoveryRead,
+      catalogSourceProductsRead,
     ];
     expect(declaration.reads).toHaveLength(reads.length);
     for (const [index, read] of reads.entries()) {

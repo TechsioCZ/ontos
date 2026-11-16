@@ -4,7 +4,7 @@
  * writes, and sends them one at a time. Every decision lives here, so a unit test can pin it.
  *
  * The plan is limited to hard constants: one tenant, one company (Nájempark and every other company are out
- * of reach), exactly three people and exactly four roles whose ids are derived from fixed idempotency keys.
+ * of reach), exactly three people and exactly five roles whose ids are derived from fixed idempotency keys.
  * A planned write that names anything else is refused before it is returned, and again before it is sent.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -42,7 +42,14 @@ import {
 } from '../../packages/core-runtime/src/access/model.ts';
 import { policyRoleCellRows } from './access-policy.mts';
 import { demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { demoHumanAccounts, demoShellRoutingRoleKey, reviewedDemoAssignments } from './permissions.mts';
+import {
+  demoHumanAccounts,
+  accountingCompanyIdentityRoleKey,
+  demoShellRoutingRoleKey,
+  financeVatReadKeys,
+  reviewedDemoAssignments,
+  taxAccountantKeys,
+} from './permissions.mts';
 
 export type HumanId = typeof AccessHumanIdSchema.Type;
 export type RoleId = typeof AccessRoleIdSchema.Type;
@@ -67,7 +74,13 @@ export const PRINCIPAL_IDS: readonly HumanId[] = [
   '4f94471b-1d15-5aa9-a836-c87e0f8a449d',
   '3952547a-564f-5468-9038-8dce11185c44',
 ].map((principalId) => AccessHumanIdSchema.make(principalId));
-export const MANAGED_ROLE_KEYS = ['sales', 'accounting', 'warehouse', demoShellRoutingRoleKey] as const;
+export const MANAGED_ROLE_KEYS = [
+  'sales',
+  'accounting',
+  'warehouse',
+  demoShellRoutingRoleKey,
+  accountingCompanyIdentityRoleKey,
+] as const;
 export const ManagedRoleKeySchema = Schema.Literals(MANAGED_ROLE_KEYS);
 export type ManagedRoleKey = typeof ManagedRoleKeySchema.Type;
 
@@ -254,9 +267,49 @@ const sortedSlots = (rows: readonly ReviewedCell[]): string =>
     .toSorted((left, right) => left.localeCompare(right))
     .join('\n');
 
-const reviewedCells = (role: Parameters<typeof policyRoleCellRows>[0], localEntries: readonly CatalogSnapshotEntry[]) =>
+const customerContextReadsAfterReview = [
+  'commerce.customer-context.customer-group-definition-source.read',
+  'commerce.customer-context.customer-group-membership-source-receipt.read',
+  'commerce.customer-context.customer-price-group-assignment-receipt.read',
+  'commerce.customer-context.customer-profile-ico-migration.read',
+  'commerce.customer-context.customer-profile-ico.read',
+  'commerce.customer-context.customer-profile-organization-ico-facts.read',
+  'commerce.customer-context.customer-profile-source.read',
+  'commerce.customer-context.organization-customer-profile-ico-migration.read',
+  'commerce.customer-context.organization-customer-profile-ico.read',
+  'commerce.customer-context.saved-address-source-receipt.read',
+] as const;
+
+/**
+ * Capabilities the release declared after these roles were reviewed. No reviewed role gains them: they stay
+ * with full access only, which follows the release by additions. A key here the release no longer declares
+ * fails the plan, so the list cannot go stale silently.
+ */
+export const reviewedExclusions = {
+  accounting: customerContextReadsAfterReview,
+  [accountingCompanyIdentityRoleKey]: [],
+  [demoShellRoutingRoleKey]: [],
+  sales: [
+    ...customerContextReadsAfterReview,
+    'commerce.customer-context.customer-group-membership-snapshot.admit',
+    'commerce.customer-context.customer-group-membership-source.apply',
+    'commerce.customer-context.customer-profile-ico.change',
+    'commerce.customer-context.customer-profile-ico.migrate',
+    'commerce.customer-context.organization-customer-profile-ico.change',
+    'commerce.customer-context.organization-customer-profile-ico.migrate',
+  ],
+  warehouse: [],
+} as const satisfies Readonly<Record<ManagedRoleKey, readonly string[]>>;
+const excludedFrom = (key: ManagedRoleKey): ReadonlySet<string> => new Set(reviewedExclusions[key]);
+
+const reviewedCells = (
+  key: ManagedRoleKey,
+  role: Parameters<typeof policyRoleCellRows>[0],
+  localEntries: readonly CatalogSnapshotEntry[],
+) =>
   Result.map(policyRoleCellRows(role, localEntries, 'human'), (rows) =>
     rows
+      .filter(({ capabilityKey }) => !excludedFrom(key).has(capabilityKey))
       .map(({ capabilityKey, mode, selector }) => ({
         capabilityKey: AccessCapabilityKeySchema.make(capabilityKey),
         mode,
@@ -274,7 +327,11 @@ const compileRole = (
   entries: ReadonlyMap<string, CatalogSnapshotEntry>,
 ): Result.Result<DesiredRole, string> => {
   const held = ours.filter(({ roleKey }) => roleKey === key);
-  const compiled = held.map(({ role }) => reviewedCells(role, localEntries));
+  const undeclared = [...excludedFrom(key)].filter((capabilityKey) => !entries.has(capabilityKey));
+  if (undeclared.length > 0) {
+    return Result.fail(`role ${key} excludes ${undeclared.join(', ')}, which the release does not declare`);
+  }
+  const compiled = held.map(({ role }) => reviewedCells(key, role, localEntries));
   const [first] = held;
   const [firstCells] = compiled;
   if (first === undefined || firstCells === undefined || Result.isFailure(firstCells)) {
@@ -315,7 +372,7 @@ const isManagedRole = (roleId: string): boolean => MANAGED_ROLE_IDS.some((id) =>
 
 /**
  * The reviewed matrix restricted to the three people: their roles compiled from the local release, and
- * their six assignments. Anything the matrix gives them outside the four roles and the two scopes fails.
+ * their seven assignments. Anything the matrix gives them outside the five roles and the two scopes fails.
  */
 export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Result.Result<DesiredState, string> => {
   const fixturePeople = demoHumanAccounts.slice(1).map(({ principalId }) => principalId);
@@ -343,7 +400,7 @@ export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Res
   for (const principalId of PRINCIPAL_IDS) {
     for (const { legalEntityId, roleKey } of ours.filter((assignment) => assignment.principalId === principalId)) {
       if (!Schema.is(ManagedRoleKeySchema)(roleKey) || (legalEntityId !== undefined && legalEntityId !== COMPANY_ID)) {
-        return Result.fail(`the matrix gives ${principalId} ${roleKey} outside the four roles of company 0020`);
+        return Result.fail(`the matrix gives ${principalId} ${roleKey} outside the five managed roles`);
       }
       assignments.push({
         principalId,
@@ -433,9 +490,14 @@ export const CreateRoleStep = Schema.TaggedStruct('CreateRole', {
   scope: AccessScopeTargetSchema,
 });
 export const SaveRoleStep = Schema.TaggedStruct('SaveRole', {
+  /** The cells this save adds: every cell of a new role, or only the reviewed additions to a saved one. */
+  addedCells: Schema.Array(ReviewedCellSchema),
+  /** The admin-kind cells among the added ones, by name, for sign-off. */
   adminCells: Schema.Array(Schema.String),
   catalogSnapshotId: AccessCatalogSnapshotIdSchema,
+  /** The role's whole reviewed cell set after the save. */
   cells: Schema.Array(ReviewedCellSchema),
+  /** The dangerous effects of the added cells, as the Shell's preview names them. */
   confirmations: Schema.Array(ConfirmationSchema),
   /** Known once the role exists; the driver only sends a step whose revision is known. */
   expectedRoleRevisionId: Schema.Option(AccessRoleRevisionIdSchema),
@@ -528,7 +590,7 @@ const revokedHolder = (step: typeof RevokeAssignmentStep.Type, observed: Observe
   );
 
 /**
- * The last guard before a write: it names only the three people, the four roles, and the tenant or company
+ * The last guard before a write: it names only the three people, the five roles, and the tenant or company
  * 0020, and a revoked assignment is one the three hold on a managed role. The driver calls it again on the
  * exact step it is about to send.
  */
@@ -606,19 +668,59 @@ const holdersIssue = (desired: DesiredState, observed: ObservedState): string | 
 const revisionOf = (observed: ObservedState, roleId: RoleId): Option.Option<RoleRevisionId> =>
   Option.map(Option.fromUndefinedOr(observed.roles.find(({ id }) => id === roleId)), ({ revisionId }) => revisionId);
 
+/**
+ * The capabilities that are new in this review: the only ones a role saved earlier is ever extended with. Today the
+ * VAT reads of Phase 1, all reads: the accountant's four Tax reads and Finance's three VAT reads (no Tax write is in
+ * any preset role). A reviewed cell outside this set that a saved role lacks was removed by a person and is never
+ * given back by this script.
+ */
+export const NEW_IN_THIS_REVIEW: ReadonlySet<string> = new Set<string>([...taxAccountantKeys, ...financeVatReadKeys]);
+
+/**
+ * The cells new in this review that a saved role lacks, when it holds nothing but plain reviewed cells. `undefined`
+ * when the role holds a cell outside the review or a narrowed cell; that role is never rewritten.
+ */
+export const reviewedAdditions = (
+  held: readonly ObservedCell[],
+  reviewed: readonly ReviewedCell[],
+  newInReview: ReadonlySet<string> = NEW_IN_THIS_REVIEW,
+): readonly ReviewedCell[] | undefined => {
+  const reviewedSlots = new Set(reviewed.map(slotOf));
+  const heldSlots = new Set(held.map(({ slot }) => slot));
+  if (heldSlots.size !== held.length || held.some(({ plain, slot }) => !plain || !reviewedSlots.has(slot))) {
+    return undefined;
+  }
+  return reviewed.filter((cell) => !heldSlots.has(slotOf(cell)) && newInReview.has(cell.capabilityKey));
+};
+
 /** The writes one reviewed role still needs, or why it must not be touched. */
-const roleSteps = (role: DesiredRole, observed: ObservedState): Planned => {
+const roleSteps = (
+  role: DesiredRole,
+  observed: ObservedState,
+  entries: ReadonlyMap<string, CatalogSnapshotEntry>,
+): Planned => {
   const listed = observed.roles.find(({ id }) => id === role.roleId);
-  const save = SaveRoleStep.make({
-    adminCells: role.adminCells,
-    catalogSnapshotId: observed.release.catalogSnapshotId,
-    cells: role.cells,
-    confirmations: role.confirmations,
-    expectedRoleRevisionId: revisionOf(observed, role.roleId),
-    idempotencyKey: role.saveKey,
-    roleId: role.roleId,
-    roleKey: role.key,
-  });
+  const save = (addedCells: readonly ReviewedCell[], cells: readonly ReviewedCell[]): Planned => {
+    const confirmations = confirmationsOf(addedCells, entries);
+    if (Result.isFailure(confirmations)) {
+      return halt(`role ${role.key}: ${confirmations.failure}`);
+    }
+    const addedSlots = new Set(addedCells.map(slotOf));
+    return Result.succeed([
+      SaveRoleStep.make({
+        addedCells,
+        adminCells: role.adminCells.filter((admin) => addedSlots.has(admin.slice(0, admin.lastIndexOf(' (')))),
+        catalogSnapshotId: observed.release.catalogSnapshotId,
+        cells,
+        confirmations: confirmations.success,
+        expectedRoleRevisionId: revisionOf(observed, role.roleId),
+        // The key names the exact cell set saved, so a save that keeps a person's removal is its own write.
+        idempotencyKey: keyOf(`ontos-demo-reviewed-role-save:v1:${role.key}:${digest(sortedSlots(cells))}`),
+        roleId: role.roleId,
+        roleKey: role.key,
+      }),
+    ]);
+  };
   if (listed === undefined) {
     const create = CreateRoleStep.make({
       catalogSnapshotId: observed.release.catalogSnapshotId,
@@ -628,18 +730,33 @@ const roleSteps = (role: DesiredRole, observed: ObservedState): Planned => {
       roleKey: role.key,
       scope: role.scope,
     });
-    return Result.succeed([create, save]);
+    return Result.map(save(role.cells, role.cells), (steps) => [create, ...steps]);
   }
   const wanted: string = role.scope.kind === 'company' ? role.scope.legalEntityId : 'tenant';
   if (Option.getOrElse(listed.legalEntityId, (): string => 'tenant') !== wanted) {
     return halt(`the managed role ${role.key} exists in another scope`);
   }
-  if (listed.cells.length === 0) {
-    return Result.succeed([save]);
+  if (holdsExactly(listed.cells, role.cells)) {
+    return Result.succeed([]);
   }
-  return holdsExactly(listed.cells, role.cells)
-    ? Result.succeed([])
-    : halt(`the managed role ${role.key} holds other cells; this script never rewrites a saved role`);
+  if (listed.cells.length === 0) {
+    // Created by an earlier run and not yet saved: its first save is the whole reviewed set.
+    return save(role.cells, role.cells);
+  }
+  const additions = reviewedAdditions(listed.cells, role.cells);
+  if (additions === undefined) {
+    return halt(`the managed role ${role.key} holds other cells; this script never rewrites a saved role`);
+  }
+  if (additions.length === 0) {
+    // Nothing new in this review is missing; whatever else it lacks a person removed, and it stays removed.
+    return Result.succeed([]);
+  }
+  const heldSlots = new Set(listed.cells.map(({ slot }) => slot));
+  const addedSlots = new Set(additions.map(slotOf));
+  return save(
+    additions,
+    role.cells.filter((cell) => heldSlots.has(slotOf(cell)) || addedSlots.has(slotOf(cell))),
+  );
 };
 
 /** The admission one person still needs, or why the plan must stop. */
@@ -749,7 +866,7 @@ const applyPlan = (desired: DesiredState, observed: ObservedState, generation: n
     return halt(issue);
   }
   const planned = sequence([
-    ...desired.roles.map((role) => () => roleSteps(role, observed)),
+    ...desired.roles.map((role) => () => roleSteps(role, observed, desired.entries)),
     ...PRINCIPAL_IDS.map((principalId) => () => admissionSteps(principalId, observed, generation)),
     () => assignmentSteps(desired.assignments, observed, generation),
   ]);
@@ -913,14 +1030,15 @@ export interface ObservedPreview {
 }
 
 /**
- * The save goes ahead only when the server previews exactly the planned edit: nothing removed, every reviewed
- * cell added, the dangerous set equal to the one computed here, and no holder outside the three people.
+ * The save goes ahead only when the server previews exactly the planned edit: nothing removed, exactly the
+ * planned cells added, the reviewed set after it, the dangerous set equal to the one computed here for the added
+ * cells, and no holder outside the three people.
  */
 export const previewIssue = (step: SaveRole, preview: ObservedPreview): string | undefined => {
   if (preview.removed.length > 0) {
     return `the preview of ${step.roleKey} removes ${preview.removed.length} cells`;
   }
-  if (!holdsExactly(preview.added, step.cells) || !holdsExactly(preview.cells, step.cells)) {
+  if (!holdsExactly(preview.added, step.addedCells) || !holdsExactly(preview.cells, step.cells)) {
     return `the preview of ${step.roleKey} does not add exactly the reviewed cells`;
   }
   if (!sameConfirmations(preview.dangerous, step.confirmations)) {

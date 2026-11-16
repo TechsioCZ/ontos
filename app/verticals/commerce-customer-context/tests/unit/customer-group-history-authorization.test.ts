@@ -23,6 +23,8 @@ const groupRef = {
   resourceType: 'commerce.customer-context.customer-group' as const,
   tenantId,
 };
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const principal = {
   authBindingId: '50000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:customer-group-history-authorization',
@@ -41,7 +43,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
 ) {
   let dataAccessEvidence = 0;
   let groupRoutineCalls = 0;
-  const query = (text: string) => {
+  const query = (text: string, params: readonly unknown[]) => {
     if (text.includes('transaction_timestamp')) {
       return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
     }
@@ -49,7 +51,9 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
       dataAccessEvidence += 1;
       return Effect.succeed([]);
     }
-    if (text.includes('current_setting')) {
+    // A session-setting role installs its scope and reads back the connected role in one statement.
+    if (text === installAndReadScopeSql) {
+      expect(params).toEqual([tenantId, legalEntityId]);
       return Effect.succeed([
         {
           legal_entity_id: legalEntityId,

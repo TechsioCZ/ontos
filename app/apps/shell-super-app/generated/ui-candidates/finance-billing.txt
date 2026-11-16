@@ -1,6 +1,7 @@
 ----
 --arrow-left
 --bank-check
+--calendar-plus
 --cancel
 --cash-multiple
 --cash-plus
@@ -30,6 +31,7 @@
 --package-variant-closed
 --paperclip
 --pencil-outline
+--percent-outline
 --plus
 --printer-outline
 --receipt-text-outline
@@ -64,6 +66,7 @@ gap-250
 gap-300
 gap-50
 gap-500
+gap-75
 gap-x-300
 gap-x-400
 gap-y-100
@@ -79,6 +82,7 @@ h-full
 hidden
 icon-[mdi--arrow-left]
 icon-[mdi--bank-check]
+icon-[mdi--calendar-plus]
 icon-[mdi--cancel]
 icon-[mdi--cash-multiple]
 icon-[mdi--cash-plus]
@@ -102,6 +106,7 @@ icon-[mdi--link-variant-plus]
 icon-[mdi--package-variant-closed]
 icon-[mdi--paperclip]
 icon-[mdi--pencil-outline]
+icon-[mdi--percent-outline]
 icon-[mdi--plus]
 icon-[mdi--printer-outline]
 icon-[mdi--receipt-text-outline]
@@ -177,6 +182,7 @@ text-fg-primary
 text-fg-secondary
 text-label-md
 text-label-sm
+text-lg
 text-sm
 text-xs
 transition

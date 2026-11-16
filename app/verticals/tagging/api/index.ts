@@ -26,7 +26,7 @@ import {
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
@@ -66,7 +66,7 @@ const governedCompositionHttpClientLive = GovernedFetchHttpClient.layer.pipe(
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(governedCompositionHttpClientLive),
 );
-const governedActiveApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 

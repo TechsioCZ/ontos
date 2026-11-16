@@ -206,6 +206,15 @@ export const deliveryOutcomeOf = (error: { readonly _tag: string }): DeliveryOut
     Match.orElse((failure): DeliveryOutcome => ({ errorTag: failure._tag, status: 'UNKNOWN' })),
   );
 
+/**
+ * A due inquiry notification: SEND to the configured staff inbox, or INBOX_MISSING when the deployment names none. The
+ * dispatcher records INBOX_MISSING in the ledger instead of dropping it, so the inquiry neither disappears silently nor
+ * is rediscovered unseen on every tick. No mailbox is ever invented.
+ */
+export type StorefrontInquiryPlan =
+  | { readonly email: PlannedEmail; readonly kind: 'SEND' }
+  | { readonly email: PlannedEmail; readonly kind: 'INBOX_MISSING' };
+
 /** One staff notification from committed inquiry task state. Ledger guarantees never-twice submission. */
 export const planStorefrontInquiryEmail = (
   task: StorefrontInquiryTaskInput,
@@ -216,14 +225,14 @@ export const planStorefrontInquiryEmail = (
     readonly recipient: string;
     readonly tenantId: string;
   },
-): PlannedEmail | null => {
+): StorefrontInquiryPlan | null => {
   if (
     DateTime.toEpochMillis(DateTime.makeUnsafe(task.createdAt)) <
-      DateTime.toEpochMillis(DateTime.makeUnsafe(options.enabledSince)) ||
-    options.recipient.trim() === ''
+    DateTime.toEpochMillis(DateTime.makeUnsafe(options.enabledSince))
   ) {
     return null;
   }
+  const recipient = options.recipient.trim();
   const inquiry = task.storefrontInquiry;
   const labels = {
     COMPLAINT: 'Podnět k reklamaci (zatím ne reklamace)',
@@ -243,14 +252,14 @@ export const planStorefrontInquiryEmail = (
     `Úkol v OntOS: ${options.appUrl.replace(/\/+$/u, '')}/cs/ukoly`,
   ].join('\n');
 
-  return {
+  const email: PlannedEmail = {
     dedupeKey: `storefront-inquiry:${task.ref.resourceId}`,
     event: 'INQUIRY_RECEIVED',
     eventAt: task.createdAt,
     eventLabel: 'Nový dotaz z e-shopu',
     html: `<pre>${escapeHtml(text)}</pre>`,
     legalEntityId: options.legalEntityId,
-    recipient: options.recipient.trim(),
+    recipient,
     source: 'storefront-inquiry',
     subject: `${options.legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'ŠroubShop' : 'E-shop'}: ${inquiry.subject}`,
     subjectId: task.ref.resourceId,
@@ -258,4 +267,5 @@ export const planStorefrontInquiryEmail = (
     tenantId: options.tenantId,
     text,
   };
+  return { email, kind: recipient === '' ? 'INBOX_MISSING' : 'SEND' };
 };

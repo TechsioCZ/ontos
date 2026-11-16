@@ -1,0 +1,7 @@
+ALTER TABLE "symmy_integration"."sync_admission_attempts" DROP CONSTRAINT "sync_admission_attempts_Sv43IZsUuhcP_fkey";--> statement-breakpoint
+ALTER TABLE "symmy_integration"."privacy_measure_executions" ADD COLUMN "attempt" integer NOT NULL;--> statement-breakpoint
+ALTER TABLE "symmy_integration"."sync_admissions" ADD CONSTRAINT "symmy_sync_admissions_tenant_admission_uq" UNIQUE("tenant_id","admission_id");--> statement-breakpoint
+ALTER TABLE "symmy_integration"."privacy_measure_executions" DROP CONSTRAINT "symmy_privacy_executions_scope_key_uq";--> statement-breakpoint
+ALTER TABLE "symmy_integration"."privacy_measure_executions" ADD CONSTRAINT "symmy_privacy_executions_scope_key_uq" UNIQUE("tenant_id","governance_legal_entity_id","idempotency_digest","attempt");--> statement-breakpoint
+ALTER TABLE "symmy_integration"."sync_admission_attempts" ADD CONSTRAINT "symmy_sync_attempt_scope_fk" FOREIGN KEY ("tenant_id","admission_id") REFERENCES "symmy_integration"."sync_admissions"("tenant_id","admission_id") ON DELETE RESTRICT;--> statement-breakpoint
+ALTER TABLE "symmy_integration"."privacy_measure_executions" ADD CONSTRAINT "symmy_privacy_executions_attempt_ck" CHECK ("attempt" >= 1 and ("outcome"->>'attempt')::integer = "attempt");

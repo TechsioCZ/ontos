@@ -130,7 +130,8 @@ const mapCoreProblem = (error: ActionCoreError): BindRetailPortalProfileActionPr
       ActionInvocationStateError: (failure) => bindRetailPortalProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: bindRetailPortalProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) => bindRetailPortalProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => bindRetailPortalProfileActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        bindRetailPortalProfileActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => bindRetailPortalProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => bindRetailPortalProfileActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => bindRetailPortalProfileActionProblem.conflict(failure.code),

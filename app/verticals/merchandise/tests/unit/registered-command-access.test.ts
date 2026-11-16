@@ -7,7 +7,7 @@ import type { ActionRegistration } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { MerchandiseCommandPayloadSchema, MerchandiseErrorSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
@@ -25,8 +25,11 @@ import { placeStorefrontOrderAction } from '../../src/actions/place-storefront-o
 import { proposeOrderChangesAction } from '../../src/actions/propose-order-changes.action.ts';
 import { reviewOrderChangesAction } from '../../src/actions/review-order-changes.action.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
+import { TaxRateSource } from '../../src/services/tax-rates.ts';
+import { TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 
 const unusedRuntimeDependencies = Layer.mergeAll(
+  Layer.succeed(TaxRateSource, { read: () => Effect.succeed(TEST_TAX_BOOK) }),
   Layer.mock(ActiveApplicationCompositionService, {}),
   Layer.mock(GatewayPrincipalVerifierConfiguration, {}),
   Layer.succeed(
@@ -90,7 +93,7 @@ const commandTests = <Payload extends Schema.ConstraintDecoder<unknown>, Owner e
           bindActionTestServices(registration, {
             apply: (actual, revision) =>
               Effect.sync(() => {
-                expect(actual._tag).toBe(command._tag);
+                expect(Predicate.isTagged(actual, command._tag)).toBe(true);
                 expect(revision).toBe(1);
                 writes += 1;
                 return result;
@@ -128,7 +131,7 @@ const commandTests = <Payload extends Schema.ConstraintDecoder<unknown>, Owner e
           transport: { correlationId: 'approval-only', idempotencyKey: registration.descriptor.actionKey },
         })
         .pipe(Effect.flip);
-      expect(failure._tag).toBe('ActionPermissionDenied');
+      expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
       expect(harness.snapshot().committed).toEqual([]);
       expect(harness.snapshot().transactionCount).toBe(0);
     }).pipe(Effect.provide(unusedRuntimeDependencies)),
@@ -148,13 +151,13 @@ const commandTests = <Payload extends Schema.ConstraintDecoder<unknown>, Owner e
             transport: { correlationId: 'no-broad-grant', idempotencyKey: registration.descriptor.actionKey },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect(harness.snapshot().committed).toEqual([]);
         expect(harness.snapshot().transactionCount).toBe(0);
       }).pipe(Effect.provide(unusedRuntimeDependencies)),
     );
   }
-  if (command._tag !== 'CreateProduct') {
+  if (!Predicate.isTagged(command, 'CreateProduct')) {
     it.effect(`the original dispatcher cannot bypass ${registration.descriptor.actionKey}`, () =>
       Effect.gen(function* noDispatcherBypass() {
         const harness = yield* makeActionTestHarness({ access: 'allowed', ownerRegistration: merchandiseRegistration });
@@ -166,7 +169,7 @@ const commandTests = <Payload extends Schema.ConstraintDecoder<unknown>, Owner e
             transport: { correlationId: 'no-bypass', idempotencyKey: registration.descriptor.actionKey },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPayloadValidationError');
+        expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
         expect(harness.snapshot().committed).toEqual([]);
         expect(harness.snapshot().transactionCount).toBe(0);
       }).pipe(Effect.provide(unusedRuntimeDependencies)),
@@ -181,8 +184,8 @@ commandTests(applyCommandAction, {
   name: 'Bolt',
   priceMinor: 100,
   sku: 'BOLT',
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
-  vatRate: 21,
 });
 commandTests(manageCatalogAction, { _tag: 'UpdateProduct', id: 'product-1', patch: { name: 'Bolt' } });
 commandTests(manageMarketsAction, { _tag: 'RemoveMarket', marketId: '50000000-0000-4000-8000-000000000001' });

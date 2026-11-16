@@ -6,7 +6,7 @@ import { Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
 
 import { compareInventoryCatalog } from '../src/database/catalog.ts';
 import { InventoryDatabase, InventoryDatabaseLive } from '../src/database/client.ts';
-import { INVENTORY_SCHEMA_NAME, INVENTORY_TABLES } from '../src/database/schema.ts';
+import { INVENTORY_GOVERNED_TABLES, INVENTORY_SCHEMA_NAME, INVENTORY_TABLES } from '../src/database/schema.ts';
 
 class VerificationError extends Schema.TaggedError<VerificationError>()('InventoryVerificationError', {
   reason: Schema.String,
@@ -25,6 +25,7 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly commitment_protection_trigger_count: number;
   readonly effect_ledger_contract_current: boolean;
   readonly force_rls_count: number;
+  readonly ingress_contract_current: boolean;
   readonly journal_count: number;
   readonly policy_count: number;
   readonly private_trigger_function_executable: boolean;
@@ -132,6 +133,15 @@ const verification = Effect.gen(function* verifyDatabase() {
   const [infrastructure] = yield* database.executor.execute<InfrastructureRow>(
     sql`select
       count(distinct relation.oid)::integer as table_count,
+      coalesce((select not ingress.relrowsecurity and not ingress.relforcerowsecurity
+        and not has_table_privilege(${'ontos_runtime'}, ingress.oid, ${'UPDATE'})
+        and not exists (select 1 from aclexplode(ingress.relacl) acl where acl.grantee = 0)
+        and exists (select 1 from pg_catalog.pg_constraint audience where audience.conrelid=ingress.oid
+          and audience.conname=${'inventory_gateway_redemptions_audience_ck'}
+          and pg_catalog.pg_get_constraintdef(audience.oid) like ${"%audience = 'inventory'%"})
+        from pg_catalog.pg_class ingress join pg_catalog.pg_namespace ns on ns.oid=ingress.relnamespace
+        where ns.nspname=${INVENTORY_SCHEMA_NAME} and ingress.relname=${'gateway_assertion_redemptions'}), false)
+        as ingress_contract_current,
       count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count,
       count(distinct relation.oid) filter (where pg_catalog.pg_get_userbyid(relation.relowner) <> ${connections.admin.user})::integer as wrong_owner_count,
       coalesce((select pg_catalog.pg_get_constraintdef(constraint_record.oid) like ${`%${reservedProtectionKind}%`} and pg_catalog.pg_get_constraintdef(constraint_record.oid) not like ${`%${unsupportedCorrectionKind}%`} from pg_catalog.pg_constraint constraint_record join pg_catalog.pg_class governed on governed.oid = constraint_record.conrelid join pg_catalog.pg_namespace ns on ns.oid = governed.relnamespace where ns.nspname = ${INVENTORY_SCHEMA_NAME} and governed.relname = ${'effect_ledger'} and constraint_record.conname = ${'inventory_effect_ledger_kind_ck'}), false)
@@ -242,10 +252,11 @@ const verification = Effect.gen(function* verifyDatabase() {
   if (
     infrastructure === undefined ||
     !infrastructure.effect_ledger_contract_current ||
+    !infrastructure.ingress_contract_current ||
     infrastructure.table_count !== INVENTORY_TABLES.length ||
-    infrastructure.force_rls_count !== INVENTORY_TABLES.length - 1 ||
+    infrastructure.force_rls_count !== INVENTORY_GOVERNED_TABLES.length ||
     infrastructure.wrong_owner_count !== 0 ||
-    infrastructure.policy_count !== (INVENTORY_TABLES.length - 1) * 4 ||
+    infrastructure.policy_count !== INVENTORY_GOVERNED_TABLES.length * 4 ||
     infrastructure.required_index_count !== 1 ||
     infrastructure.required_trigger_count !== 69 ||
     infrastructure.commitment_protection_trigger_count !== 5 ||
@@ -256,7 +267,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     !infrastructure.runtime_usage ||
     infrastructure.runtime_select_count !== INVENTORY_TABLES.length ||
     infrastructure.runtime_insert_count !== INVENTORY_TABLES.length ||
-    infrastructure.runtime_update_count !== INVENTORY_TABLES.length - 1 ||
+    infrastructure.runtime_update_count !== INVENTORY_GOVERNED_TABLES.length ||
     infrastructure.runtime_delete_count !== INVENTORY_TABLES.length ||
     infrastructure.role_super ||
     infrastructure.role_bypass_rls

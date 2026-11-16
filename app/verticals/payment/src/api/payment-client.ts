@@ -12,6 +12,16 @@ export {
 } from './accept-payment-observation-action-client.ts';
 export type { AcceptPaymentObservationActionClientOptions } from './accept-payment-observation-action-client.ts';
 export {
+  executeCaptureProviderNotification,
+  executeCaptureProviderNotificationWithAuthorization,
+} from './capture-provider-notification-action-client.ts';
+export type { CaptureProviderNotificationActionClientOptions } from './capture-provider-notification-action-client.ts';
+export {
+  executeConfigureGatewayEnablement,
+  executeConfigureGatewayEnablementWithAuthorization,
+} from './configure-gateway-enablement-action-client.ts';
+export type { ConfigureGatewayEnablementActionClientOptions } from './configure-gateway-enablement-action-client.ts';
+export {
   executeConfigurePaymentMethodEnablement,
   executeConfigurePaymentMethodEnablementWithAuthorization,
 } from './configure-payment-method-enablement-action-client.ts';
@@ -21,6 +31,11 @@ export {
   executeConfigurePaymentSourceAuthorityWithAuthorization,
 } from './configure-payment-source-authority-action-client.ts';
 export type { ConfigurePaymentSourceAuthorityActionClientOptions } from './configure-payment-source-authority-action-client.ts';
+export {
+  executeConfigureProviderAccountBinding,
+  executeConfigureProviderAccountBindingWithAuthorization,
+} from './configure-provider-account-binding-action-client.ts';
+export type { ConfigureProviderAccountBindingActionClientOptions } from './configure-provider-account-binding-action-client.ts';
 export { executeCreatePayment, executeCreatePaymentWithAuthorization } from './create-payment-action-client.ts';
 export type { CreatePaymentActionClientOptions } from './create-payment-action-client.ts';
 export {
@@ -53,6 +68,11 @@ export {
   executeRequestPaymentRefundWithAuthorization,
 } from './request-payment-refund-action-client.ts';
 export type { RequestPaymentRefundActionClientOptions } from './request-payment-refund-action-client.ts';
+export {
+  executeRotateProviderCredential,
+  executeRotateProviderCredentialWithAuthorization,
+} from './rotate-provider-credential-action-client.ts';
+export type { RotateProviderCredentialActionClientOptions } from './rotate-provider-credential-action-client.ts';
 export {
   executeStartPaymentCollection,
   executeStartPaymentCollectionWithAuthorization,

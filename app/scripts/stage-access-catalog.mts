@@ -17,7 +17,7 @@ import { ModuleEntrypointSchema } from '../packages/core-runtime/src/modules/mod
 import {
   decodeCarrierActor,
   decodeTopologyCallerAppIds,
-  isAccessCatalogSourcePath,
+  isAccessCatalogContextSourcePath,
   ownerLocalImportTargets,
   scanAccessCatalogSource,
 } from './authorization-catalog.mts';
@@ -109,15 +109,22 @@ const carrierRef = (carrier: ScannedCarrier): string => `${carrier.file}: ${carr
 export interface StageAccessActor {
   readonly callers: readonly string[];
   readonly subject: AccessActor['subject'];
+  /** The callers that may bring such a workload subject, when narrower than every caller. */
+  readonly subjectWorkloadCallers?: readonly string[];
   /** The workload keys that may stand as the subject of an identity call (workload subject), when declared. */
   readonly subjectWorkloads?: readonly string[];
 }
 
 /** The module caller of a descriptor as the pinned artifact records it: the decoded carrier, minus its reason. */
-const stageActorOf = (actor: AccessActor): StageAccessActor =>
-  actor.subjectWorkloads === undefined
-    ? { callers: actor.callers, subject: actor.subject }
-    : { callers: actor.callers, subject: actor.subject, subjectWorkloads: actor.subjectWorkloads };
+const stageActorOf = (actor: AccessActor): StageAccessActor => {
+  if (actor.subjectWorkloads === undefined) {
+    return { callers: actor.callers, subject: actor.subject };
+  }
+  const withWorkloads = { callers: actor.callers, subject: actor.subject, subjectWorkloads: actor.subjectWorkloads };
+  return actor.subjectWorkloadCallers === undefined
+    ? withWorkloads
+    : { ...withWorkloads, subjectWorkloadCallers: actor.subjectWorkloadCallers };
+};
 
 /** A catalog descriptor, plus the module caller a call to it declares when it carries one. */
 export type StageAccessDescriptor = AccessCatalogDescriptor & {
@@ -338,14 +345,12 @@ const readSources = (
     for (const segment of STAGE_ACCESS_CATALOG_ROOTS) {
       for (const file of yield* walk(path.join(root, segment))) {
         const relative = path.relative(root, file).replaceAll('\\', '/');
-        if (!isAccessCatalogSourcePath(relative)) {
+        if (!isAccessCatalogContextSourcePath(relative)) {
           continue;
         }
         const source = yield* fileSystem.readFileString(file, 'utf-8');
-        // The cheap prefilter the report uses keeps the scan off the bulk of the repository sources.
-        if (source.includes('entrypoint') || source.includes('accessDeclaration') || source.includes('accessActor')) {
-          sources.push({ file: relative, source });
-        }
+        // Mutation-only importers are custody evidence even when they declare no carrier themselves.
+        sources.push({ file: relative, source });
       }
     }
     return sources;

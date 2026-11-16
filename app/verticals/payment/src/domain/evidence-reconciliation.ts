@@ -4,6 +4,12 @@ import type {
   PaymentEvidenceRejectionCode,
   PaymentReconciliationDecisionBody,
 } from '../../shared/domain/evidence-contract.ts';
+import {
+  isBankAccountingReceiptBinding,
+  isPickupCapabilityBinding,
+  sameBankReceiptAuthority,
+} from '../../shared/domain/payment-execution-binding.ts';
+import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type {
   PaymentObservationAcceptanceOutcome,
@@ -26,7 +32,7 @@ import {
 } from './evidence-interpretation.ts';
 import { sameAmount } from './money.ts';
 import { isAllowedOutcomeTransition, isDefinitiveOutcome } from './operation-lifecycle.ts';
-import { PAYMENT_SELECTED_CAPABILITY_SOURCES } from './source-qualification.ts';
+import { isBankReceiptFactFamily, PAYMENT_SELECTED_CAPABILITY_SOURCES } from './source-qualification.ts';
 
 /**
  * Governed reconciliation decisions (#1151 "Operator reconciliation cannot fabricate money"). Pure:
@@ -49,6 +55,8 @@ export interface PaymentReconciliationEvidenceSource {
   readonly accountRef: string;
   readonly environment: string;
   readonly factFamily: PaymentSourceFactFamily;
+  readonly pickupCapabilityRef?: string | undefined;
+  readonly sourceAuthorityId?: string | undefined;
   readonly sourceKind: PaymentSourceKind;
   readonly sourceSystem: string;
 }
@@ -84,6 +92,10 @@ export interface PaymentReconciliationEvidenceFacts {
    * measures it. Such a statement proves less than it states (#1150).
    */
   readonly correctedAmount?: PaymentMonetaryAmount | undefined;
+  /** The recorded correction already moved the operation into conflict. */
+  readonly correctionReopened?: boolean;
+  /** Correction evidence concerns a statement that still establishes a Current outcome. */
+  readonly correctionTargetEstablished?: boolean;
   /**
    * Operations this observation's economic effect already counts toward: its own accepted
    * interpretation, governed attachments of it, and those of other observations of the same source
@@ -135,12 +147,14 @@ export interface PaymentReconciliationCaseEvidence {
 export interface PaymentReconciliationRefundRoute {
   readonly accountRef: string;
   readonly environment: string;
+  readonly sourceAuthorityId: string;
   readonly sourceKind: PaymentSourceKind;
   readonly sourceSystem: string;
 }
 
 /** One operation as reconciliation needs it (structurally satisfied by `PaymentOperationRecord`). */
 export interface PaymentReconciliationOperationView extends PaymentEvidenceOperationView {
+  readonly binding?: PaymentExecutionBinding | undefined;
   readonly refundExecutionRoute?: PaymentReconciliationRefundRoute | undefined;
 }
 
@@ -204,21 +218,44 @@ const targetOperation = (
     : Result.succeed(operation);
 };
 
-/**
- * A REFUND keeps the executor it was requested through: any other executor binding (another source kind,
- * system, account or environment) never evidences it, whichever entry path the evidence took (#1150/#1152).
- */
+/** Governed evidence uses the same recorded executor identity as direct REFUND ingress. */
 const bypassesRefundRoute = (
   source: PaymentReconciliationEvidenceSource,
   operation: PaymentReconciliationOperationView,
 ): boolean => {
+  if (operation.kind !== 'REFUND') {
+    return false;
+  }
   const route = operation.refundExecutionRoute;
   return (
-    route !== undefined &&
-    (route.sourceKind !== source.sourceKind ||
-      route.sourceSystem !== source.sourceSystem ||
-      route.accountRef !== source.accountRef ||
-      route.environment !== source.environment)
+    route === undefined ||
+    source.factFamily !== 'REFUND_EXECUTION' ||
+    route.sourceAuthorityId !== source.sourceAuthorityId ||
+    route.sourceKind !== source.sourceKind ||
+    route.sourceSystem !== source.sourceSystem ||
+    route.accountRef !== source.accountRef ||
+    route.environment !== source.environment
+  );
+};
+
+/** An unresolved receipt from before original source pinning cannot establish collection by attachment. */
+const bypassesOriginalBankReceiptAuthority = (
+  facts: PaymentReconciliationEvidenceFacts,
+  operation: PaymentReconciliationOperationView,
+): boolean => {
+  const { source } = facts;
+  if (facts.factKind !== 'COLLECTION_CONFIRMED' || !isBankReceiptFactFamily(source.factFamily)) {
+    return false;
+  }
+  const original =
+    operation.kind === 'COLLECT' && isBankAccountingReceiptBinding(operation.binding)
+      ? operation.binding.receiptAuthority
+      : undefined;
+  return (
+    original === undefined ||
+    source.sourceKind !== 'BANK_ACCOUNTING' ||
+    source.sourceAuthorityId === undefined ||
+    !sameBankReceiptAuthority(original, { ...source, sourceAuthorityId: source.sourceAuthorityId })
   );
 };
 
@@ -231,7 +268,7 @@ const qualificationRefusal = (
     return 'The evidence does not belong to the Payment of this case';
   }
   if (!QUALIFYING_ACCEPTANCE.has(facts.acceptanceOutcome)) {
-    return 'Only authorized, recorded evidence can be attached';
+    return 'Only authorized, recorded evidence is admissible';
   }
   if (!facts.sourceAuthorityActive) {
     return 'The evidence source is not a configured ACTIVE authority';
@@ -241,6 +278,16 @@ const qualificationRefusal = (
   }
   if (facts.operationId !== undefined && facts.operationId !== operation.operationId) {
     return 'The evidence is correlated to another operation';
+  }
+  if (
+    facts.source.sourceKind === 'LOCAL_POS_OPERATOR' &&
+    (!isPickupCapabilityBinding(operation.binding) ||
+      facts.source.pickupCapabilityRef !== operation.binding.pickupCapabilityRef)
+  ) {
+    return 'The POS/operator authority is not configured for the selected pickup capability';
+  }
+  if (bypassesOriginalBankReceiptAuthority(facts, operation)) {
+    return 'The evidence does not prove the original bank receipt authority of the collection';
   }
   if (bypassesRefundRoute(facts.source, operation)) {
     return 'The evidence does not come from the refund execution route the REFUND was requested through';
@@ -357,7 +404,7 @@ const decideAttach = (
     // One operation is one monetary effect: a second proven effect is never folded into it.
     return reject(
       'payment_reconciliation_evidence_not_qualified',
-      'The evidence proves an economic effect distinct from the one that already established this operation',
+      'The evidence does not prove the same economic effect as the one that established this operation',
     );
   }
   if (contradictsEstablishedOutcome(facts, operation, meaning.outcome)) {
@@ -401,20 +448,69 @@ const decideAttach = (
   });
 };
 
+const showsOperationConflict = (
+  facts: PaymentReconciliationEvidenceFacts,
+  operation: PaymentReconciliationOperationView,
+): boolean => {
+  if (facts.factKind === 'SOURCE_CORRECTION') {
+    return (
+      facts.correctionTargetEstablished === true ||
+      (facts.correctionReopened === true && operation.outcome === 'CONFLICT')
+    );
+  }
+  const meaning = paymentFactMeaning(facts.factKind);
+  if (meaning === undefined || meaning.kind !== operation.kind || !isDefinitiveOutcome(meaning.outcome)) {
+    return false;
+  }
+  if (facts.acceptanceOutcome === 'CONFLICT') {
+    return true;
+  }
+  if (facts.acceptanceOutcome !== 'HELD_UNRESOLVED' || !isDefinitiveOutcome(operation.outcome)) {
+    return false;
+  }
+  if (operation.outcome !== meaning.outcome) {
+    return true;
+  }
+  const hasIdentifiedStandingEffect = facts.establishedEffects.some(
+    (established) =>
+      established.operationId === operation.operationId &&
+      established.observationId !== facts.observationId &&
+      established.economicEffectKey !== undefined &&
+      paymentFactMeaning(established.factKind)?.outcome === meaning.outcome,
+  );
+  return (
+    facts.economicEffectKey !== undefined &&
+    hasIdentifiedStandingEffect &&
+    statesDistinctEffect(facts, operation, meaning.outcome)
+  );
+};
+
 const decideClassify = (input: PaymentReconciliationDecisionInput): PaymentReconciliationStepCase => {
   if (input.subject.operationId === undefined) {
     return reject('payment_reconciliation_decision_not_applicable', 'Only an operation case can hold a conflict');
   }
-  return Result.match(targetOperation(input, input.subject.operationId), {
-    onFailure: (refusal) => refusal,
-    onSuccess: (operation) =>
-      PaymentReconciliationStep.Apply({
-        change: changeTo(operation, 'CONFLICT'),
-        closeCase: false,
-        decisionKind: 'CLASSIFY_CONFLICT',
-        evidenceRef: Option.none(),
-        resultingOutcome: Option.some('CONFLICT'),
-      }),
+  const target = targetOperation(input, input.subject.operationId);
+  if (Result.isFailure(target)) {
+    return target.failure;
+  }
+  const operation = target.success;
+  const facts = Option.getOrUndefined(input.evidence);
+  if (facts?.operationId !== operation.operationId) {
+    return reject('payment_reconciliation_evidence_not_qualified', 'The case lacks evidence for this operation');
+  }
+  const refusal = qualificationRefusal(facts, input.subject, operation);
+  if (refusal !== undefined) {
+    return reject('payment_reconciliation_evidence_not_qualified', refusal);
+  }
+  if (selectedCapabilityUnproven(facts) || !showsOperationConflict(facts, operation)) {
+    return reject('payment_reconciliation_evidence_not_qualified', 'The case evidence does not support a conflict');
+  }
+  return PaymentReconciliationStep.Apply({
+    change: changeTo(operation, 'CONFLICT'),
+    closeCase: false,
+    decisionKind: 'CLASSIFY_CONFLICT',
+    evidenceRef: Option.some(facts.observationId),
+    resultingOutcome: Option.some('CONFLICT'),
   });
 };
 

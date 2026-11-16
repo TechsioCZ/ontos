@@ -1,3 +1,4 @@
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
@@ -71,6 +72,11 @@ const fixture = (confirmed: CompanyDirectorySnapshot, request: CompanyDirectoryR
     };
     const layer = Layer.mergeAll(
       Layer.succeed(ReadRuntime, reads),
+      // The directory read asks the agent administration right; the caller holds it.
+      Layer.succeed(
+        AccessDecisionGate,
+        makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+      ),
       Layer.succeed(ActionRuntime, actions.runtime),
       Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
       administrationScopeLayer(request),

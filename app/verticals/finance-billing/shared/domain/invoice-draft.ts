@@ -1,12 +1,14 @@
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { DateTime, Option, Schema } from 'effect';
-import type { InvoiceLine, InvoiceLineSchema, VatRate } from '../apis/records.ts';
+import type { InvoiceLine, InvoiceLineSchema } from '../apis/records.ts';
+import type { VatChoices } from '../apis/vat-choices.ts';
 import { computeInvoiceTotals } from './invoice-totals.ts';
+import { lineVatIssue, lineVatOf } from './line-vat.ts';
+import type { InvoiceDirection, LineVatChoice } from './line-vat.ts';
 
 /** Payment terms offered on a new invoice, in calendar days after the issue date. */
 export const PAYMENT_TERM_DAYS = [7, 14, 30] as const;
 export type PaymentTermDays = (typeof PAYMENT_TERM_DAYS)[number];
-/** 10 % has been obsolete since 1. 1. 2024; `VatRate` still decodes it so stored invoices keep reading. */
-export const VAT_RATE_CHOICES: readonly VatRate[] = [0, 12, 21];
 
 export const DraftLineKindSchema = Schema.Literals(['free', 'product']);
 export type DraftLineKind = typeof DraftLineKindSchema.Type;
@@ -34,7 +36,8 @@ export interface DraftLine {
   readonly productId: string | null;
   readonly quantity: number;
   readonly unitPriceMinor: number;
-  readonly vatRate: VatRate;
+  /** The line's VAT: a Tax classification (its rate comes from Tax at the issue date), a treatment, or a stored rate. */
+  readonly vat: LineVatChoice;
 }
 
 export const DraftLineIssueSchema = Schema.Literals([
@@ -44,37 +47,46 @@ export const DraftLineIssueSchema = Schema.Literals([
   'price',
   'product',
   'quantity',
+  'vat',
 ]);
 export type DraftLineIssue = typeof DraftLineIssueSchema.Type;
 
 /** Largest quantity the stored invoice line accepts (`InvoiceLineSchema`). */
 export const MAX_LINE_QUANTITY = 1_000_000;
 
-export const newDraftLine = (key: string, kind: DraftLineKind): DraftLine => ({
+export const newDraftLine = (key: string, kind: DraftLineKind, vat: LineVatChoice): DraftLine => ({
   description: '',
   key,
   kind,
   productId: null,
   quantity: 1,
   unitPriceMinor: 0,
-  vatRate: 21,
+  vat,
 });
 
-/** Copies the product name, current price and VAT rate into the line; later catalog changes do not reach it. */
+/**
+ * Copies the product name, current net price and VAT classification into the line; later catalog changes do not
+ * reach it. The rate is the one Tax gives the classification at the issue date (a company that is not a VAT payer
+ * invoices it with the non-payer treatment). A product without a classification (never on a staff read) keeps the
+ * line's VAT as it was.
+ */
 export const withProductSnapshot = (
   line: DraftLine,
   product: {
     readonly currentPriceMinor: number;
     readonly id: string;
     readonly name: string;
-    readonly vatRate: VatRate;
+    readonly taxClassificationCode?: CzVatClassificationCode | undefined;
   },
 ): DraftLine => ({
   ...line,
   description: product.name,
   productId: product.id,
   unitPriceMinor: product.currentPriceMinor,
-  vatRate: product.vatRate,
+  vat:
+    product.taxClassificationCode === undefined
+      ? line.vat
+      : { code: product.taxClassificationCode, kind: 'classification' },
 });
 
 /** Form amounts are entered in CZK and stored in minor units (haléře). */
@@ -94,13 +106,22 @@ export const draftLineDiscount = (line: DraftLine): InvoiceLine['discount'] => {
 type EncodedInvoiceLine = typeof InvoiceLineSchema.Encoded;
 type MutableInvoiceLine = { -readonly [Key in keyof EncodedInvoiceLine]: EncodedInvoiceLine[Key] };
 
-export const toInvoiceLine = (line: DraftLine): EncodedInvoiceLine => {
+/**
+ * The stored line, with the rate and revision Tax publishes in `choices`. Undefined while the line's classification
+ * has no rate there (Tax has not answered, or publishes none for that date).
+ */
+export const toInvoiceLine = (line: DraftLine, choices: VatChoices | undefined): EncodedInvoiceLine | undefined => {
+  const vat = lineVatOf(line.vat, choices);
+  if (vat === undefined) {
+    return undefined;
+  }
   const discount = draftLineDiscount(line);
+  // `vat` holds exactly the VAT fields the line stores: a rate, plus a classification and revision or a treatment.
   const invoiceLine: MutableInvoiceLine = {
+    ...vat,
     description: line.description.trim(),
     quantity: line.quantity,
     unitPriceMinor: line.unitPriceMinor,
-    vatRate: line.vatRate,
   };
   if (discount !== undefined) {
     invoiceLine.discount = discount;
@@ -112,6 +133,25 @@ export const toInvoiceLine = (line: DraftLine): EncodedInvoiceLine => {
     return { ...invoiceLine, productId: line.productId };
   }
   return invoiceLine;
+};
+
+/** Every line as stored, or undefined while one of them has no VAT Tax publishes. */
+export const storedLinesOf = (
+  lines: readonly DraftLine[],
+  choices: VatChoices | undefined,
+): readonly EncodedInvoiceLine[] | undefined => {
+  const stored = lines.flatMap((line) => {
+    const invoiceLine = toInvoiceLine(line, choices);
+    return invoiceLine === undefined ? [] : [invoiceLine];
+  });
+  return stored.length === lines.length ? stored : undefined;
+};
+
+/** Whether the line's amount leaves the stored money range; the range does not depend on the rate. */
+const amountOutOfRange = (line: DraftLine): boolean => {
+  const amounts = { quantity: line.quantity, unitPriceMinor: line.unitPriceMinor, vatRate: 0 };
+  const discount = draftLineDiscount(line);
+  return computeInvoiceTotals([discount === undefined ? amounts : { ...amounts, discount }]) === undefined;
 };
 
 /**
@@ -136,17 +176,35 @@ export const lineValueIssue = (line: DraftLine): DraftLineIssue | undefined => {
     }
   }
   // A valid quantity times a large price can pass the stored money range, which would total as 0 Kč.
-  return computeInvoiceTotals([toInvoiceLine(line)]) === undefined ? 'amount' : undefined;
+  return amountOutOfRange(line) ? 'amount' : undefined;
 };
 
-export const lineIssue = (line: DraftLine): DraftLineIssue | undefined => {
+/**
+ * Whether the line's VAT can be stored as the server checks it: Tax must publish a rate for its classification, and
+ * the classification or treatment must suit the direction and the company's VAT regime. An older rate without a
+ * classification cannot be chosen for a new line.
+ */
+export const lineVatProblem = (
+  line: Pick<DraftLine, 'vat'>,
+  choices: VatChoices | undefined,
+  direction: InvoiceDirection,
+): boolean => {
+  const stored = lineVatOf(line.vat, choices);
+  return stored === undefined || (choices !== undefined && lineVatIssue(stored, choices, direction) !== undefined);
+};
+
+export const lineIssue = (
+  line: DraftLine,
+  choices: VatChoices | undefined,
+  direction: InvoiceDirection,
+): DraftLineIssue | undefined => {
   if (line.kind === 'product' && line.productId === null) {
     return 'product';
   }
   if (line.kind === 'free' && line.description.trim() === '') {
     return 'description';
   }
-  return lineValueIssue(line);
+  return lineValueIssue(line) ?? (lineVatProblem(line, choices, direction) ? 'vat' : undefined);
 };
 
 export interface DraftTotals {
@@ -159,8 +217,17 @@ export interface DraftTotals {
  * Totals of the complete lines, using the same arithmetic the backend stores on create. Returns `undefined` when
  * the lines together pass the money range, so the form flags the sum instead of showing 0 Kč.
  */
-export const draftTotals = (lines: readonly DraftLine[]): DraftTotals | undefined => {
-  const totals = computeInvoiceTotals(lines.filter((line) => lineIssue(line) === undefined).map(toInvoiceLine));
+export const draftTotals = (
+  lines: readonly DraftLine[],
+  choices: VatChoices | undefined,
+  direction: InvoiceDirection,
+): DraftTotals | undefined => {
+  const totals = computeInvoiceTotals(
+    lines.flatMap((line) => {
+      const stored = lineIssue(line, choices, direction) === undefined ? toInvoiceLine(line, choices) : undefined;
+      return stored === undefined ? [] : [stored];
+    }),
+  );
   return totals === undefined
     ? undefined
     : { subtotalMinor: totals.subtotalMinor, totalMinor: totals.totalMinor, vatMinor: totals.vatMinor };

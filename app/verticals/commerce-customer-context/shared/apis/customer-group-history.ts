@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
-  CommerceCustomerGroupMembershipSchema,
+  CommerceCustomerGroupMembershipReadSchema,
   CommerceCustomerGroupSchema,
   CustomerGroupIsoTimestampSchema,
   CustomerGroupPageLimitSchema,
@@ -20,7 +20,7 @@ export type CustomerGroupHistoryRequest = typeof CustomerGroupHistoryRequestSche
 export const CustomerGroupHistoryResponseSchema = Schema.Struct({
   asOf: Schema.toEncoded(Schema.OptionFromNullOr(CustomerGroupIsoTimestampSchema)),
   group: CommerceCustomerGroupSchema,
-  memberships: Schema.Array(CommerceCustomerGroupMembershipSchema),
+  memberships: Schema.Array(CommerceCustomerGroupMembershipReadSchema),
   nextCursor: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
 });
 export type CustomerGroupHistoryResponse = typeof CustomerGroupHistoryResponseSchema.Type;

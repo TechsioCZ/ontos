@@ -129,7 +129,7 @@ export const inventoryPublicActionContracts = [
     kind: 'ACTION',
     outcomes: {
       sourceSchemaName: 'ImportSourceAssertionResultSchema',
-      vocabulary: ['IMPORTED', 'EXACT_REPLAY', 'CONFLICT_RECORDED', 'INDETERMINATE'],
+      vocabulary: ['ACCEPTED', 'DUPLICATE', 'STALE', 'REJECTED', 'INDETERMINATE'],
     },
     owner: INVENTORY_OWNER,
     safeCallerNextSteps: ['Use only determinate Current evidence.', 'Reconcile typed conflicts or uncertainty.'],
@@ -547,6 +547,28 @@ export const inventoryPublicActionContracts = [
 ] as const satisfies readonly InventoryPublicOperationDescriptor[];
 
 export const inventoryGovernedReadContracts = [
+  {
+    authority: 'Inventory returns the immutable original Source Import receipt under Current authorization.',
+    boundaries: ['RECOVER_ORIGINAL_IDENTITY', 'OWNER_CONTRACT_ONLY', 'TYPED_SOURCE_COVERAGE'],
+    businessIntent: 'Recover the original stock assertion outcome after a lost response without issuing another write.',
+    idempotency: {
+      identity:
+        'The read identity is the original Action Invocation, item index, qualified source assertion and material proposal.',
+      recovery: 'Missing or mismatched receipts remain INDETERMINATE and never prove absence of an effect.',
+      retry: 'Repeat the same governed read with the original proposal; never retarget through a revised mapping.',
+    },
+    inputPrecision:
+      'Original Action Invocation and item index plus assertion, Position, issuer, Item/Location, Unit, time, order and coverage.',
+    key: 'commerce.inventory.api.inventory-source-import-receipt',
+    kind: 'GOVERNED_READ',
+    outcomes: {
+      sourceSchemaName: 'InventorySourceImportReceiptResponseSchema',
+      vocabulary: ['RECORDED', 'INDETERMINATE'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: ['Use the recorded original owner outcome.', 'Keep unresolved effects indeterminate.'],
+    scopeSubject: 'Original Inventory Source Assertion for one exact Stock Position',
+  },
   {
     authority: 'Inventory resolves its owner-governed Current binding under the selected Customer Configuration.',
     boundaries: ['ONE_CONFIGURATION_ONE_BACKEND', 'EXACT_BINDING'],

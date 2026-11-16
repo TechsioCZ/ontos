@@ -3,7 +3,7 @@ import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Config } from 'effect';
 import { Url, UrlParams } from 'effect/http';
 
-import type { ShellSearchResponse } from '../../../../shared/api.ts';
+import type { ShellSearchResponse } from '../../../../shared/browser-api.ts';
 import { searchResources } from '../../../api/auth-client.ts';
 import type { ShellSearchClientError, ShellAuthenticationClientOptions } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
@@ -11,7 +11,10 @@ import { planShellSearchFilters } from '../../shell-search-match.ts';
 import type { ShellSearchFilterPlan as SearchFilterPlan } from '../../shell-search-match.ts';
 import { shellSearchPresentationIndex } from '../../shell-search-resource-types.ts';
 import type { ShellSearchPresentationIndex } from '../../shell-search-resource-types.ts';
-import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';
+import {
+  isServerRender,
+  shellAuthenticationClientOptionsFromRequest,
+} from '../../shell-authentication-client-options.ts';
 import { loadHomePageModel, sessionEndedModel } from '../home-page-model.ts';
 import { requireSignedIn } from '../../sign-in-return.ts';
 import type { HomePageModel } from '../home-page-model.ts';
@@ -26,7 +29,11 @@ export type SearchPageModel =
   | {
       readonly query: string;
       readonly shell: HomePageModel;
-      readonly state: 'reload_required' | 'selection_required' | 'unavailable';
+      /**
+       * The server render sends the page without results; the browser runs the search after hydration. `notGranted`:
+       * search is a right of its own, and this person's Roles do not include it here.
+       */
+      readonly state: 'notGranted' | 'pending' | 'reload_required' | 'selection_required' | 'unavailable';
     }
   | {
       readonly filters: SearchFilterPlan;
@@ -166,6 +173,7 @@ export const searchFailureModel = (
       'ShellSelectionRequiredProblem',
       () => 'selection_required' as const,
     ),
+    Match.tag('ShellTargetForbiddenProblem', () => 'notGranted' as const),
     Match.tag(
       'ConfigError',
       'HttpClientError',
@@ -177,7 +185,6 @@ export const searchFailureModel = (
       'ShellPolicyUnprocessableProblem',
       'ShellPreconditionRequiredProblem',
       'ShellRateLimitedProblem',
-      'ShellTargetForbiddenProblem',
       'ShellTargetNotFoundProblem',
       () => 'unavailable' as const,
     ),
@@ -221,6 +228,11 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
                 },
               ),
             );
+          }
+          // The search fans out to every module and waits for the slowest one, and the page is not indexable. Keep it
+          // out of the server render so the document is sent at once; the browser loader answers it after hydration.
+          if (isServerRender()) {
+            return Effect.succeed<SearchPageModel>({ query, shell, state: 'pending' });
           }
           return shellAuthenticationClientOptionsFromRequest(request).pipe(
             Effect.flatMap((options) =>

@@ -1,7 +1,7 @@
-// The canonical Authorization v2 declarations of the CRM module (ADR-0030). They are plain data:
-// the descriptors carry them, Core decodes and freezes them, and the owner asks the one access gate
-// about exactly these keys. One source, so a descriptor and the owner's business check can never
-// name a different capability.
+// The owner-side copies of the CRM Authorization v2 declarations (ADR-0030). The registered
+// descriptors carry the same values as closed inline literals, because the catalog accepts only
+// literal custody; the owner asks the one access gate about exactly these keys, and
+// crm-access-reach.test.ts pins both sides equal.
 import type { AccessDeclarationInput, AccessFieldGroupInput } from '@app/core-runtime';
 
 import {

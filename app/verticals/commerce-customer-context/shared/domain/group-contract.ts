@@ -3,6 +3,12 @@ import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterpart
 import { CustomerGroupMembershipRefSchema } from '../resources/customer-group-membership.ts';
 import { CustomerGroupRefSchema } from '../resources/customer-group.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
+import {
+  CustomerGroupMembershipManagementSchema,
+  MembershipSourceAssertionSchema,
+  MembershipSourceManagerSchema,
+  MembershipSourceOrderSchema,
+} from './customer-group-membership-source.ts';
 
 export const CustomerGroupRevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 export const CustomerGroupLegalEntityIdSchema = Schema.toEncoded(
@@ -21,6 +27,42 @@ export const CustomerGroupMeaningKeySchema = Schema.Trim.check(
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 ).pipe(Schema.brand('CustomerGroupMeaningKey'));
 export type CustomerGroupMeaningKey = typeof CustomerGroupMeaningKeySchema.Type;
+
+const DefinitionSourceKeySchema = Schema.toEncoded(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isPattern(/^\S(?:[\s\S]*\S)?$/u)).pipe(
+    Schema.brand('CustomerGroupDefinitionSourceKey'),
+  ),
+);
+/** Declared source evidence, never authority by itself; the owner checks the current route binding. */
+export const CustomerGroupDefinitionSourceSchema = Schema.Struct({
+  definitionEvidence: Schema.Struct({
+    kind: Schema.Literals(['SOURCE_RECORD', 'NAMED_CONFIGURATION']),
+    reference: DefinitionSourceKeySchema,
+    revision: DefinitionSourceKeySchema,
+  }),
+  effectId: DefinitionSourceKeySchema,
+  issuer: DefinitionSourceKeySchema,
+  mappingRevision: DefinitionSourceKeySchema,
+  namespace: DefinitionSourceKeySchema,
+  order: Schema.Int.check(Schema.isBetween({ maximum: 2_147_483_647, minimum: 0 })),
+  recordId: DefinitionSourceKeySchema,
+  revision: DefinitionSourceKeySchema,
+  route: Schema.Struct({ id: DefinitionSourceKeySchema, revision: DefinitionSourceKeySchema }),
+  sourceCode: DefinitionSourceKeySchema,
+});
+export type CustomerGroupDefinitionSource = typeof CustomerGroupDefinitionSourceSchema.Type;
+
+export class CustomerGroupDefinitionSourceRejected extends Schema.TaggedError<CustomerGroupDefinitionSourceRejected>()(
+  'CustomerGroupDefinitionSourceRejected',
+  {
+    code: Schema.Literals([
+      'customer_group_source_authority_denied',
+      'customer_group_source_conflict',
+      'customer_group_source_stale',
+    ]),
+    reason: Schema.String,
+  },
+) {}
 
 const customerGroupCanonicalInstant = Schema.makeFilter((value: string) => {
   const parsed = DateTime.make(value);
@@ -93,7 +135,15 @@ const CustomerGroupMembershipRemovalSchema = Schema.Struct({
   kind: Schema.Literals(['EXPLICIT_END', 'EXPLICIT_CANCEL', 'GROUP_ARCHIVED']),
   reason: CustomerGroupTextSchema,
   recordedAt: CustomerGroupIsoTimestampSchema,
+  source: Schema.optionalKey(MembershipSourceAssertionSchema),
 });
+
+const checkMembershipInterval = Schema.makeFilter(
+  (membership: Readonly<{ effectiveFrom: string; effectiveTo: string | null }>) =>
+    membership.effectiveTo === null || membership.effectiveTo > membership.effectiveFrom
+      ? undefined
+      : [{ issue: 'effectiveTo must be later than effectiveFrom', path: ['effectiveTo'] }],
+);
 
 export const CommerceCustomerGroupMembershipSchema = Schema.Struct({
   assignedAt: CustomerGroupIsoTimestampSchema,
@@ -101,19 +151,37 @@ export const CommerceCustomerGroupMembershipSchema = Schema.Struct({
   effectiveFrom: CustomerGroupIsoTimestampSchema,
   effectiveTo: Schema.toEncoded(Schema.OptionFromNullOr(CustomerGroupInstantSchema)),
   groupRef: CustomerGroupRefSchema,
+  management: Schema.optionalKey(CustomerGroupMembershipManagementSchema),
   membershipRef: CustomerGroupMembershipRefSchema,
   profile: CommerceCustomerProfileSubjectSchema,
   removal: Schema.toEncoded(Schema.OptionFromNullOr(CustomerGroupMembershipRemovalSchema)),
   revision: CustomerGroupRevisionSchema,
   state: Schema.Literals(['VALID', 'CANCELLED']),
-}).check(
-  Schema.makeFilter((membership) =>
-    membership.effectiveTo === null || membership.effectiveTo > membership.effectiveFrom
-      ? undefined
-      : [{ issue: 'effectiveTo must be later than effectiveFrom', path: ['effectiveTo'] }],
-  ),
-);
+}).check(checkMembershipInterval);
 export type CommerceCustomerGroupMembership = typeof CommerceCustomerGroupMembershipSchema.Type;
+
+const MembershipSourceReadSchema = Schema.Struct({ order: MembershipSourceOrderSchema });
+const MembershipRemovalReadSchema = Schema.Struct({
+  ...CustomerGroupMembershipRemovalSchema.fields,
+  source: Schema.optionalKey(MembershipSourceReadSchema),
+});
+const MembershipManagementReadSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('MANUAL') }),
+  Schema.Struct({ kind: Schema.Literal('LEGACY_UNATTRIBUTED') }),
+  Schema.Struct({
+    kind: Schema.Literal('EXTERNAL_SOURCE'),
+    manager: MembershipSourceManagerSchema,
+    source: MembershipSourceReadSchema,
+  }),
+]);
+
+/** Ordinary Membership Reads expose attribution and source order without recovery identifiers. */
+export const CommerceCustomerGroupMembershipReadSchema = Schema.Struct({
+  ...CommerceCustomerGroupMembershipSchema.fields,
+  management: Schema.optionalKey(MembershipManagementReadSchema),
+  removal: Schema.toEncoded(Schema.OptionFromNullOr(MembershipRemovalReadSchema)),
+}).check(checkMembershipInterval);
+export type CommerceCustomerGroupMembershipRead = typeof CommerceCustomerGroupMembershipReadSchema.Type;
 
 export const CustomerGroupProfileLifecycleSchema = Schema.Literals([
   'ACTIVE',

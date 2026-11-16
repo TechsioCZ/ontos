@@ -37,9 +37,10 @@ import type {
   combineOutboxWorkerHealth,
   createOutboxWorkerHealth,
   OutboxWorkerHealth,
-  OutboxWorkerHostStatus,
   serveOutboxWorkerHealth,
 } from './health.ts';
+import { OutboxWorkerHostStatusSchema } from './status.ts';
+import type { OutboxWorkerHostStatusJson } from './status.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { OutboxPollingConfig, RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
@@ -316,8 +317,8 @@ const admissionReport = (admission: Ref.Ref<LoopAdmission>): AdmissionReport => 
   identify: (deployment) => Ref.update(admission, (current) => ({ ...current, deployment: Option.some(deployment) })),
 });
 
-/** Each owner's admission in host order; readiness is that loop's own health, never the combined host's. */
-const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<OutboxWorkerHostStatus> =>
+/** Each owner's admission in host order, encoded as the /status JSON; readiness is that loop's own health, never the combined host's. */
+const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<OutboxWorkerHostStatusJson> =>
   Effect.forEach(
     loops,
     ({ admission, health }) =>
@@ -337,7 +338,11 @@ const hostStatus = (loops: readonly HostedLoop<unknown>[]): Effect.Effect<Outbox
         })),
       ),
     { concurrency: 1 },
-  ).pipe(Effect.map((owners) => ({ owners })));
+  ).pipe(
+    Effect.map((owners) => ({ owners })),
+    Effect.flatMap(Schema.encodeEffect(OutboxWorkerHostStatusSchema)),
+    Effect.orDie,
+  );
 
 /**
  * Runs every entry's polling loop in one process behind one signal handler and one readiness

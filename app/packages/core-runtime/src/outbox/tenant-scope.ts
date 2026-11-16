@@ -1,3 +1,5 @@
+import { readOriginalActionInvocationFacts } from '../access/workloads/original-action-invocation.ts';
+import type { OriginalActionInvocationReader } from '../access/workloads/original-action-invocation.ts';
 import { eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { SqlError } from 'effect/sql/SqlError';
@@ -14,6 +16,8 @@ import type { OutboxWorkerHandlerContext } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './definition.ts';
 import { OutboxWorkerTenantScopeError } from './tenant-scope-error.ts';
 import { lifetimeBoundOutboxWorkerOwnerCapabilities } from './worker-owner-scope-lifetime.ts';
+import { readWorkerWorkloadPrincipalEligibility } from './workload-principal-eligibility.ts';
+import type { WorkerWorkloadPrincipalEligibility } from './workload-principal-eligibility.ts';
 
 export { OutboxWorkerTenantScopeError } from './tenant-scope-error.ts';
 
@@ -25,6 +29,8 @@ const tenantStatuses = ['active'] as const;
 
 export interface OutboxWorkerTenantScopeView {
   readonly completionPublisher: OutboxWorkerCompletionPublisher;
+  readonly readOriginalActionInvocation: OriginalActionInvocationReader;
+  readonly readWorkloadPrincipalEligibility: WorkerWorkloadPrincipalEligibility;
   readonly routineInvoker: ScopedRoutineInvoker;
   readonly tenantId: string;
 }
@@ -97,11 +103,15 @@ const ownerScope = (
       legalEntityId: null,
       persist: persistOutboxWorkerCompletion(transaction),
     }),
+    (input) => readWorkerWorkloadPrincipalEligibility(transaction, context.tenantId, input),
+    (input) => readOriginalActionInvocationFacts(transaction, context.tenantId, input),
   );
   return Object.freeze({
     close: capabilities.close,
     scope: Object.freeze({
       completionPublisher: capabilities.completionPublisher,
+      readOriginalActionInvocation: capabilities.readOriginalActionInvocation,
+      readWorkloadPrincipalEligibility: capabilities.readWorkloadPrincipalEligibility,
       routineInvoker: capabilities.routineInvoker,
       tenantId: context.tenantId,
     }),

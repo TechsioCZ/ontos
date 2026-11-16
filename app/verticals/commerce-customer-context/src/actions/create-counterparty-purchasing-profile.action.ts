@@ -3,9 +3,9 @@
 // @ontos-action-slug create-counterparty-purchasing-profile
 import type {
   ActionHandlerContext,
+  ActionServiceFactory,
   ActionServicePreparationContext,
   OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
@@ -18,11 +18,12 @@ import type {
   CreateCounterpartyPurchasingProfilePayload,
   CreateCounterpartyPurchasingProfileResult,
 } from '../../shared/actions/create-counterparty-purchasing-profile.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { createWithSourceCarrier, profileServicesForVerifiedScope } from '../profile-service-factory.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
   withPreparedCounterpartyRoleCurrent,
 } from '../profile-counterparty-role-eligibility.ts';
+import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
 import {
   ProfilePersistenceDependencyFailure,
   profilePersistenceServicesForTransaction,
@@ -48,6 +49,13 @@ const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyP
     payload: CreateCounterpartyPurchasingProfilePayload,
     context: ActionHandlerContext<DomainEvents, CreateCounterpartyPurchasingProfileServices>,
   ) {
+    if (context.scope.authMethod === 'system' && payload.source === undefined) {
+      return yield* new CreateCounterpartyPurchasingProfileRejected({
+        code: 'SOURCE_AUTHORITY_DENIED',
+        reason: 'System source workloads require an exact admitted source assertion',
+        retryable: false,
+      });
+    }
     if (payload.subject.counterpartyRef.tenantId !== context.scope.tenantId) {
       return yield* new CreateCounterpartyPurchasingProfileRejected({
         code: 'SUBJECT_NOT_RESOLVED_OR_INVALID',
@@ -78,9 +86,9 @@ const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyP
     yield* recordProfileResourceLookup(
       context,
       result.profileRef,
-      `counterparty-profile-current:${result.profileRef.resourceId}:${result.revision}`,
+      `counterparty-profile-${result.sourceEffect?.replayed === true ? 'source-receipt' : 'current'}:${result.profileRef.resourceId}:${result.revision}`,
     );
-    if (result.outcome === 'PROFILE_CREATED') {
+    if (result.outcome === 'PROFILE_CREATED' && result.sourceEffect?.replayed !== true) {
       const event = yield* context.addDomainEvent({
         eventType: 'commerce.customer-context.counterparty-purchasing-profile-created.v1',
         payloadJson: result,
@@ -105,6 +113,15 @@ const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyP
   },
 );
 
+/** The registered owner factory, with main's source Profile dependencies and source-workload carrier check. */
+const sourceAwareProfileCreationServices = (transaction: ProfileScopedRoutineInvoker, scope: OperationalScope) =>
+  profileServicesForVerifiedScope(transaction, scope).pipe(
+    Effect.map(
+      ({ createCounterpartyPurchasingProfile }): CreateCounterpartyPurchasingProfileServices =>
+        createCounterpartyPurchasingProfile,
+    ),
+  );
+
 const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingProfileAction.prepareServices')(
   function* prepareServices(
     payload: CreateCounterpartyPurchasingProfilePayload,
@@ -118,6 +135,12 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
         reason: 'Counterparty profile creation must use the verified scope',
         retryable: false,
       });
+    }
+    // A source Profile proves its Counterparty, Organization CUSTOMER and Privacy authority through the source owner
+    // dependencies in the owner transaction (declared evidence calls); it never uses the actor-bound Counterparty role
+    // read prepared below, so it keeps the registered source-aware factory.
+    if (payload.source !== undefined) {
+      return sourceAwareProfileCreationServices;
     }
     const roleFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
     const role = yield* roleFactory
@@ -157,7 +180,11 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
               }),
             ),
     };
-    return (transaction: ScopedTransactionExecutor, verifiedScope: OperationalScope, revision: string) => {
+    const factory: ActionServiceFactory<CreateCounterpartyPurchasingProfileServices> = (
+      transaction,
+      verifiedScope,
+      revision,
+    ) => {
       if (
         verifiedScope.legalEntityId !== legalEntityId ||
         verifiedScope.tenantId !== scope.tenantId ||
@@ -178,14 +205,18 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
         principalId: verifiedScope.principalId,
         tenantId: verifiedScope.tenantId,
       };
-      const services = profilePersistenceServicesForTransaction(transaction, ownerScope, {
-        resolveCounterpartyRole: preparedRole.make({
-          legalEntityId: ownerScope.legalEntityId,
-          operationalScope: verifiedScope,
-          requestCorrelation: verifiedScope.correlationId,
-          tenantId: ownerScope.tenantId,
-        }),
-      }).createCounterpartyPurchasingProfile;
+      // The source-workload carrier check holds here too: a source workload never creates an ordinary Profile.
+      const services = createWithSourceCarrier(
+        { scope: verifiedScope, transaction },
+        profilePersistenceServicesForTransaction(transaction, ownerScope, {
+          resolveCounterpartyRole: preparedRole.make({
+            legalEntityId: ownerScope.legalEntityId,
+            operationalScope: verifiedScope,
+            requestCorrelation: verifiedScope.correlationId,
+            tenantId: ownerScope.tenantId,
+          }),
+        }).createCounterpartyPurchasingProfile,
+      );
       return Effect.succeed({
         create: (candidate, actionContext) =>
           actionContext.actionInvocationId !== context.actionInvocationId ||
@@ -219,6 +250,7 @@ const prepareProfileCreationServices = Effect.fn('CreateCounterpartyPurchasingPr
               ),
       } satisfies CreateCounterpartyPurchasingProfileServices);
     };
+    return factory;
   },
 );
 export const createCounterpartyPurchasingProfileAction = defineAction(
@@ -234,6 +266,10 @@ export const createCounterpartyPurchasingProfileAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-counterparty-purchasing-profile.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Registered Commerce source workloads create only qualified source Profiles',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.create-counterparty-purchasing-profile',
     auditProfile: 'standard',
@@ -258,13 +294,7 @@ export const createCounterpartyPurchasingProfileAction = defineAction(
     schemaVersion: '1',
   },
   handleCreateCounterpartyPurchasingProfile,
-  (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(
-        ({ createCounterpartyPurchasingProfile }): CreateCounterpartyPurchasingProfileServices =>
-          createCounterpartyPurchasingProfile,
-      ),
-    ),
+  sourceAwareProfileCreationServices,
   { prepareServices: prepareProfileCreationServices },
 );
 

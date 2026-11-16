@@ -31,6 +31,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
       'facility_operations_permission_denied',
       'facility_operations_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCommandActionNotFoundProblemSchema = makeProblemDetailsSchema(

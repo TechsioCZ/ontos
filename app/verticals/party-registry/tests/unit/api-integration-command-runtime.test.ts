@@ -477,6 +477,9 @@ const recoveryRequest = (invocationId: string, token?: string) => {
   });
 };
 
+const [NotStartedCommitResolution] = ResolvePartyCommandCommitResultSchema.members;
+const notStartedResolution = NotStartedCommitResolution.make({ retryCommand: true, state: 'NOT_STARTED' });
+
 const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(function* expectCommitResolution(
   app: ReturnType<typeof mounted>,
   invocationId: string,
@@ -488,8 +491,8 @@ const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(function
   const resolutionBody = yield* Schema.decodeUnknownEffect(ResolvePartyCommandCommitResultSchema)(
     yield* Effect.promise(() => resolution.json()),
   );
+  // Decoding through the result schema already proves the PartyCommandCommitResolution member.
   expect(resolutionBody).toMatchObject({
-    _tag: 'PartyCommandCommitResolution',
     invocationId,
     retryCommand: false,
     state,
@@ -1740,11 +1743,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       expect(Predicate.isTagged(malformedBody, 'PartyCommandInvalidRequestProblem')).toBe(true);
       const absent = yield* handle(app, recoveryRequest(yield* nextUuid, assertion.token));
       expect(absent.status).toBe(200);
-      expect(yield* Effect.promise(() => absent.json())).toEqual({
-        _tag: 'PartyCommandCommitResolution',
-        retryCommand: true,
-        state: 'NOT_STARTED',
-      });
+      expect(yield* Effect.promise(() => absent.json())).toEqual(notStartedResolution);
       expect(harness.snapshot().invocations.length).toBe(0);
     }),
   );
@@ -1931,11 +1930,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const committedSnapshot = harness.snapshot();
         const deniedRecovery = yield* handle(app, recoveryRequest(invocationId, assertion.otherToken));
         expect(deniedRecovery.status).toBe(200);
-        expect(yield* Effect.promise(() => deniedRecovery.json())).toEqual({
-          _tag: 'PartyCommandCommitResolution',
-          retryCommand: true,
-          state: 'NOT_STARTED',
-        });
+        expect(yield* Effect.promise(() => deniedRecovery.json())).toEqual(notStartedResolution);
         const resolution = yield* expectCommitResolution(app, invocationId, assertion.token, 'COMMITTED');
         expect(resolution.state === 'COMMITTED' ? resolution.createResult : undefined).toEqual({
           decisionRef: {

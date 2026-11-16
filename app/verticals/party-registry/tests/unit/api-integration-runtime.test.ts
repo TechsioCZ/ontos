@@ -575,6 +575,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               tenantId: principal.tenantId,
             },
           },
+          '/reads/party-source-effect-receipt': { operation: 'CREATE', payload: { candidate } },
         } as const;
         for (const [index, { endpoint, group }] of endpoints.entries()) {
           const callsBefore: number = actionCalls + actionExecutionCalls + readCalls;

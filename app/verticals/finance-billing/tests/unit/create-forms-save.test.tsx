@@ -2,9 +2,10 @@
 // The create forms (recurring template, received invoice, new invoice) create their record only from the shared Save
 // button ("Uložit"), last in the footer: typing changes only the draft, an untouched form closes without asking, and
 // typed input asks before it is left. Only the i18n runtime, the router blocker and the two pickers are replaced.
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import { baselineVatChoices } from '../support/finance-tax-rates.ts';
 import { createElement } from 'react';
 import { CreateInvoiceDialog } from '../../src/routes/[lang]/finance/create-invoice-dialog.tsx';
 import type { FinanceViewModel } from '../../src/routes/[lang]/finance/finance-ui.tsx';
@@ -45,6 +46,14 @@ rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
       toasts.push({ title: toast.title, type: toast.type });
     },
     dismiss: constVoid,
+  }),
+}));
+// Tax answers with the company's baseline rates: 21 % standard and 12 % reduced.
+rstest.mock('../../src/routes/[lang]/finance/use-vat-choices.ts', () => ({
+  choicesOf: (vat: { readonly choices?: unknown }) => vat.choices,
+  useVatChoices: () => ({
+    choices: baselineVatChoices('00000000-0000-4000-8000-0000000000aa', '2026-10-05'),
+    state: 'ready',
   }),
 }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -157,13 +166,8 @@ describe('create forms save from Uložit only', () => {
       yield* clickSave;
       yield* waitUntil(() => left.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'CreateRecurringTemplate',
-        dueDays: 14,
-        issueDay: 1,
-        name: 'Nájem kavárna',
-        partyId: customer.partyId,
-      });
+      expect(Predicate.isTagged(sent[0], 'CreateRecurringTemplate')).toBe(true);
+      expect(sent[0]).toMatchObject({ dueDays: 14, issueDay: 1, name: 'Nájem kavárna', partyId: customer.partyId });
     }),
   );
 
@@ -190,12 +194,8 @@ describe('create forms save from Uložit only', () => {
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'RecordIncomingInvoice',
-        documentNumber: 'ZF-2026-77',
-        supplierName: 'ČEZ Prodej',
-        totalMinor: 121_000,
-      });
+      expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
+      expect(sent[0]).toMatchObject({ documentNumber: 'ZF-2026-77', supplierName: 'ČEZ Prodej', totalMinor: 121_000 });
     }),
   );
 

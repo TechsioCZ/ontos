@@ -61,10 +61,12 @@ export const removeProductLocalizedFactsActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveProductLocalizedFactsActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveProductLocalizedFactsActionForbiddenProblem'> =>
     RemoveProductLocalizedFactsActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveProductLocalizedFactsActi
       ActionInvocationStateError: (failure) => removeProductLocalizedFactsActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeProductLocalizedFactsActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeProductLocalizedFactsActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeProductLocalizedFactsActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeProductLocalizedFactsActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeProductLocalizedFactsActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeProductLocalizedFactsActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeProductLocalizedFactsActionProblem.conflict(failure.code),

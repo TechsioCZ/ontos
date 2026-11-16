@@ -95,6 +95,8 @@ export type PaymentAuthorizationCondition = typeof PaymentAuthorizationCondition
 export const PaymentAuthorizationProofSchema = Schema.Struct({
   authorizationId: PaymentAuthorizationIdSchema,
   binding: PaymentAuthorizationBindingSchema,
+  /** Reference to the exact owner Attempt used at issuance. Legacy history can omit it. */
+  commitmentAttemptEvidenceRef: Schema.optionalKey(PaymentEvidenceRefSchema),
   condition: PaymentAuthorizationConditionSchema,
   /** The Current coverage revision a prepaid proof was issued against; absent for method conditions. */
   coverageRevision: Schema.optionalKey(PaymentRevisionSchema),
@@ -112,7 +114,9 @@ export type PaymentAuthorizationProof = typeof PaymentAuthorizationProofSchema.T
 export const PAYMENT_AUTHORIZATION_INVALIDITY_REASONS = [
   'PROOF_UNKNOWN',
   'ATTEMPT_MISMATCH',
+  'ATTEMPT_EVIDENCE_NOT_CURRENT',
   'PAYMENT_MISMATCH',
+  'PAYMENT_SUPERSEDED',
   'PURCHASE_MISMATCH',
   'AMOUNT_MISMATCH',
   'METHOD_MISMATCH',

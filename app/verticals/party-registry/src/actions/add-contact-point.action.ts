@@ -2,6 +2,8 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug add-contact-point
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { requireAdmittedPartySourceReference } from '../services/party-client-source-evidence.service.ts';
+import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
@@ -10,6 +12,7 @@ import type { AddContactPointPayload } from '../../shared/actions/add-contact-po
 import {
   PartyContactPointAlreadyExists,
   PartyContactPointInvalid,
+  PartyContactPointLifecycleConflict,
   PartyContactPointPartyNotFound,
   PartyContactPointPersistenceUnavailable,
 } from '../../shared/domain/contact-point-errors.ts';
@@ -22,10 +25,15 @@ import type {
   ContactPointInput,
   ContactPointPrivacyClassification,
   ContactPointProvenance,
-  PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
-import { addContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
+import { addContactPointSourceRecord } from '../services/party-source-lifecycle.service.ts';
+import type { SourceContactPoint } from '../services/party-source-lifecycle.service.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import type {
+  PartyEvidenceInsufficientError,
+  PartyPersistenceUnavailableError,
+} from '../../shared/domain/identity-contracts.ts';
 import { createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
 
 export { AddContactPointPayloadSchema } from '../../shared/actions/add-contact-point.ts';
@@ -34,10 +42,13 @@ export type { AddContactPointPayload } from '../../shared/actions/add-contact-po
 const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
 
 const AddContactPointErrorSchema = Schema.Union([
+  PartyEvidenceInsufficient,
+  PartyPersistenceUnavailable,
   PartyAliasWriteRejected,
   PartyContactPointPartyNotFound,
   PartyContactPointAlreadyExists,
   PartyContactPointInvalid,
+  PartyContactPointLifecycleConflict,
   PartyContactPointPersistenceUnavailable,
 ]);
 
@@ -48,6 +59,7 @@ const ContactPointAddedEventSchema = Schema.Struct({
 });
 
 export interface AddContactPointCommand {
+  readonly sourceReference?: AddContactPointPayload['sourceReference'];
   readonly acceptedByActionInvocationId: string;
   readonly acceptedByPrincipalId: string;
   readonly contactPoint: ContactPointInput;
@@ -61,10 +73,13 @@ interface Services {
   readonly add: (
     command: AddContactPointCommand,
   ) => Effect.Effect<
-    PartyContactPoint,
+    SourceContactPoint,
+    | PartyEvidenceInsufficientError
+    | PartyPersistenceUnavailableError
     | PartyAliasWriteRejected
     | PartyContactPointAlreadyExists
     | PartyContactPointInvalid
+    | PartyContactPointLifecycleConflict
     | PartyContactPointPartyNotFound
     | PartyContactPointPersistenceUnavailable
   >;
@@ -99,7 +114,7 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
   >,
 ) {
   const command = yield* validateAndNormalize(payload);
-  const contactPoint = yield* context.services.add({
+  const { sourceReplayed, ...contactPoint } = yield* context.services.add({
     ...command,
     acceptedByActionInvocationId: context.actionInvocationId,
     acceptedByPrincipalId: context.scope.principalId,
@@ -114,6 +129,9 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
     targetResourceId: contactPoint.partyRef.resourceId,
     targetResourceType: contactPoint.partyRef.resourceType,
   });
+  if (sourceReplayed === true) {
+    return contactPoint;
+  }
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.contact-point-added.v1',
     payloadJson: {
@@ -144,6 +162,10 @@ export const addContactPointAction = defineAction(
       subjectWorkloads: ['demo.crm.party-intake'],
       reason:
         'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
+    accessWorkload: {
+      workloads: ['party.registry.source-write'],
+      reason: 'Execute the enrolled client source occurrence through the native Contact Point lifecycle.',
     },
     accessDeclaration: {
       key: 'party.registry.contact-point.add',
@@ -182,6 +204,10 @@ export const addContactPointAction = defineAction(
   handleAddContactPoint,
   (transaction, scope) =>
     Effect.succeed({
-      add: (command: AddContactPointCommand) => addContactPointRecord(transaction, scope, command),
+      add: (command: AddContactPointCommand) =>
+        requireAdmittedPartySourceReference(transaction, scope, command.sourceReference).pipe(
+          Effect.andThen(addContactPointSourceRecord(transaction, scope, command)),
+          withPartyClientSourcePrivacyRequirement('party.registry.add-contact-point'),
+        ),
     }),
 );

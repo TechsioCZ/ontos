@@ -190,6 +190,25 @@ it.effect('an idle products list reloads its page and choices every 20 s and war
   }),
 );
 
+it.effect('an opened products list warms its rows only once the browser is idle', () =>
+  Effect.gen(function* warmWhenIdle() {
+    yield* mount(ProductsList);
+    expect([count('list'), count('detail')]).toEqual([1, 0]);
+    yield* idle(1);
+    expect(count('detail')).toBe(LIST_WARM_ROWS);
+  }),
+);
+
+it.effect('a products list unmounted before the browser is idle sends no detail read', () =>
+  Effect.gen(function* leaveBeforeIdle() {
+    yield* mount(ProductsList);
+    unmount?.();
+    unmount = null;
+    yield* idle(5);
+    expect(count('detail')).toBe(0);
+  }),
+);
+
 it.effect('live changes reload the page on screen, not the details of its unchanged rows', () =>
   Effect.gen(function* liveList() {
     yield* mount(ProductsList);

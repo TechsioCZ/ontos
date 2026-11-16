@@ -10,8 +10,8 @@ import { RecordKeySchema } from '@app/core-runtime/access/ids';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { buildSearchDocuments } from '../../src/search/projection.ts';
-import { loadOwnerSearch } from '../../src/search/search-read.ts';
+import { buildSearchDocuments } from '../../src/services/search-projection.ts';
+import { loadOwnerSearch } from '../../src/services/search-read.ts';
 import { searchCompanyId, searchState, searchTenantId } from '../support/search-state.ts';
 
 const scope = {

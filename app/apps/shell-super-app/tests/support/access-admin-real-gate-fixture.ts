@@ -5,12 +5,18 @@ import { v1 } from '@authzed/authzed-node';
 import {
   AccessDeclarationSchema,
   DatabaseConfig,
+  DatabaseIdentityEnrollmentContext,
   loadDatabaseConnectionPair,
   makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { AccessDeclaration, DatabaseConnectionPair, TrustedPrincipalContext } from '@app/core-runtime';
+import type {
+  AccessDeclaration,
+  ActiveApplicationCompositionSnapshot,
+  DatabaseConnectionPair,
+  TrustedPrincipalContext,
+} from '@app/core-runtime';
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { CoreDatabase, CoreDatabaseLive } from '@app/core-runtime/db/client';
@@ -22,8 +28,16 @@ import {
   AccessWorkloadBindingSourceLive,
   LegalEntityCandidatesLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
-import type { AccessDecisionService } from '@app/core-runtime/access/enforcement';
+import {
+  AccessDecisionGate,
+  AccessDecisionLogBatch,
+  AccessDecisionLogBatchLive,
+  AccessIntent,
+  AccessPrincipalKindSource,
+  makeDrizzleSubjectIdentityFacts,
+  makeSubjectAccessInspection,
+} from '@app/core-runtime/access/enforcement';
+import type { AccessDecisionService, SubjectAccessInspectionService } from '@app/core-runtime/access/enforcement';
 import {
   makeAccessProjectionCompiler,
   makeAccessProjectionTransport,
@@ -81,16 +95,10 @@ import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/perm
 const UNREACHABLE_SPICEDB_ENDPOINT = '127.0.0.1:1';
 
 /**
- * The fixed template the full-catalog authority suites still clone by name (`templateDatabaseLayer`).
- * Every process that builds it first drops it, so two sessions running those suites against one
- * PostgreSQL server can still destroy each other's template.
+ * Every administration suite clones this process's own template. The UUID also isolates independent
+ * module instances in one worker, and the scoped layer drops only its own template.
  */
-const SHARED_TEMPLATE_DATABASE = 'p14_access_admin_template';
-/**
- * This process's own template (`accessAdminTemplateLayer`): no other session can drop it while a case
- * clones it, and the layer drops it when the suite ends.
- */
-export const ACCESS_ADMIN_TEMPLATE_DATABASE = `${SHARED_TEMPLATE_DATABASE}_${process.pid}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
+export const ACCESS_ADMIN_TEMPLATE_DATABASE = `p14_access_admin_template_${process.pid}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
 const CASE_DATABASE_PREFIX = 'p14_access_admin_';
 const LOGIN_ROLES = ['ontos_runtime', 'party_registry_runtime', 'party_registry_worker'] as const;
 
@@ -221,11 +229,32 @@ export interface GateAnswer {
   readonly reasonCodes: readonly string[];
 }
 
+/** One role a scenario grants a persona: its capability cells and where it lives. */
+export interface RoleGrant {
+  readonly capabilityKeys: readonly string[];
+  /** The company the role and its assignment live in; without it, the tenant context. */
+  readonly legalEntityId?: string | undefined;
+  readonly persona: Persona;
+}
+
+/** One workload binding a scenario registers. */
+export interface WorkloadBinding {
+  /** The companies the binding is registered for; none leaves it unregistered (tenant-wide, no company). */
+  readonly legalEntityIds: readonly string[];
+  readonly persona: Persona;
+  readonly workloadKey: string;
+}
+
 /** The Shell BFF a test drives: one real handler, one fixture-owned session source, one real gate. */
 
 export interface AccessAdminCase {
   /** The case's own admin connection, for reading back what a write persisted. */
   readonly admin: PgClient.PgClient;
+  /**
+   * Registers one active workload binding of a persona (`core.access_workload_bindings`) and, for each named
+   * company, its company registration (`core.access_workload_company_bindings`), as the install path writes them.
+   */
+  readonly bindWorkload: (input: WorkloadBinding) => Effect.Effect<void>;
   /** The published catalog this case bootstrapped: exactly the declarations the gate can decide. */
   readonly catalog: readonly AccessCatalogModule[];
   readonly companies: readonly string[];
@@ -238,9 +267,20 @@ export interface AccessAdminCase {
   /** Every declaration the published catalog carries, keyed the way the gate asks for it. */
   readonly declarations: ReadonlyMap<string, PublishedDeclaration>;
   /** The foreign tenant's own principals (its owner and its directory member among them). */
+  /** The foreign tenant's own companies. */
+  readonly foreignCompanies: readonly string[];
   readonly foreignIds: ReadonlyMap<Persona, AccessAdminIdentifiers>;
   readonly foreignTenantId: string;
+  /** The real gate itself, for code under test that asks the gate through its own service (O62). */
+  readonly gate: AccessDecisionService;
+  /**
+   * Grants one persona a role whose `run` cells are exactly the named capabilities, in one company or (without
+   * one) in the tenant context, and reconciles the tenant through the Core writer as a command would.
+   */
+  readonly grantRole: (input: RoleGrant) => Effect.Effect<void>;
   readonly ids: ReadonlyMap<Persona, AccessAdminIdentifiers>;
+  /** The real subject inspection over this case's intent and engine (what an administrator asks about someone). */
+  readonly inspection: SubjectAccessInspectionService;
   /** The trusted request scope of one persona (O66), for intent a scenario writes itself. */
   readonly scopeFor: (persona: Persona, legalEntityId?: string) => Effect.Effect<OperationalScope>;
   /** The scope id of one company, or of the tenant context when omitted. */
@@ -311,23 +351,29 @@ const makeClient = (connectionString: string, maxConnections: number) =>
     );
   }).pipe(Effect.orDie);
 
-/** The suite's template: the committed core and staff-auth schemas plus the runtime login roles. */
-const buildTemplateDatabase = (admin: PgClient.PgClient) =>
-  Effect.gen(function* buildTemplate() {
-    yield* Effect.forEach(
-      LOGIN_ROLES,
-      (role) =>
-        admin
-          .unsafe(
+/** Login roles are cluster-wide; initialize them under one lock on the shared admin database. */
+const prepareLoginRoles = (admin: PgClient.PgClient) =>
+  admin.withTransaction(
+    Effect.gen(function* prepareRoles() {
+      yield* admin.unsafe("select pg_advisory_xact_lock(hashtextextended('p14.access-admin.login-roles', 0))");
+      return yield* Effect.forEach(
+        LOGIN_ROLES,
+        (role) =>
+          admin.unsafe(
             `do $$ begin
                if not exists (select 1 from pg_roles where rolname = '${role}') then
                  create role ${role} login password '${role}';
                end if;
              end $$`,
-          )
-          .pipe(Effect.orDie),
-      { concurrency: 1, discard: true },
-    );
+          ),
+        { concurrency: 1, discard: true },
+      );
+    }),
+  );
+
+/** The suite's template: the committed core and staff-auth schemas and database-local grants. */
+const buildTemplateDatabase = (admin: PgClient.PgClient) =>
+  Effect.gen(function* buildTemplate() {
     yield* runStatements(admin, yield* migrationStatements(coreMigrationDirectory, retiredCoreMigrationDirectories));
     yield* runStatements(admin, yield* migrationStatements(authMigrationDirectory));
     yield* runStatements(admin, [
@@ -353,6 +399,7 @@ const prepareTemplateDatabase = (name: string) =>
   Effect.gen(function* prepareTemplate() {
     const adminUrl = yield* serverAdminUrl;
     const admin = yield* makeClient(adminUrl, 1);
+    yield* prepareLoginRoles(admin);
     yield* dropDatabase(admin, name);
     yield* admin.unsafe(`create database "${name}"`).pipe(Effect.orDie);
     const template = yield* makeClient(replacedDatabase(adminUrl, name), 1);
@@ -368,9 +415,6 @@ const dropTemplateDatabase = (name: string) =>
   Effect.gen(function* dropTemplate() {
     yield* dropDatabase(yield* makeClient(yield* serverAdminUrl, 1), name);
   }).pipe(Effect.scoped);
-
-/** The shared, fixed-name template of the full-catalog authority suites, which clone it by that name. */
-export const templateDatabaseLayer = Layer.effectDiscard(prepareTemplateDatabase(SHARED_TEMPLATE_DATABASE));
 
 /** Whether this process's own template exists: `withAccessAdminCase` clones nothing else. */
 let accessAdminTemplateReady = false;
@@ -696,7 +740,7 @@ const insertRole = (
     readonly catalogSnapshotId: string;
     readonly createdBy: string;
     /** The company the role lives in (O7); without it the role is the tenant context's. */
-    readonly legalEntityId?: string;
+    readonly legalEntityId?: string | undefined;
     readonly mode: 'propose' | 'run';
     readonly name: string;
     readonly roleId: string;
@@ -924,6 +968,34 @@ export const buildGate = (input: Parameters<typeof buildGateContext>[0]) =>
   buildGateContext(input).pipe(Effect.map((context) => Context.get(context, AccessDecisionGate)));
 
 /** Action execution prepares remote evidence before entering its transaction, then joins that transaction. */
+/**
+ * The real subject inspection over the same intent, engine and evidence ports as the case's gate. Its currentness
+ * check reads a catalog without Actions: a capability question names its own carrier, so none is consulted.
+ */
+export const buildInspection = (input: Parameters<typeof buildGateContext>[0]) =>
+  buildGateContext(input).pipe(
+    Effect.flatMap((context) =>
+      Effect.gen(function* inspectionOverCaseGate() {
+        const database = Context.get(context, CoreDatabase);
+        const enrollment = Context.get(context, DatabaseIdentityEnrollmentContext);
+        const decisionLog = yield* AccessDecisionLogBatch.pipe(
+          Effect.provide(AccessDecisionLogBatchLive),
+          Effect.provide(NodeCrypto.layer),
+          Effect.provideContext(context),
+        );
+        const service: SubjectAccessInspectionService = makeSubjectAccessInspection({
+          authorityFor: Context.get(context, AccessIntent).authorityFor,
+          check: Context.get(context, DecisionCheck),
+          currentCatalog: Effect.succeed({ actions: new Map(), revision: 'access-admin-real-gate' }),
+          decisionLog,
+          identities: makeDrizzleSubjectIdentityFacts({ enrollment, executor: database.executor }),
+          principalKinds: Context.get(context, AccessPrincipalKindSource),
+        });
+        return service;
+      }),
+    ),
+  );
+
 export const buildActionGate = (input: Parameters<typeof buildGateContext>[0]) =>
   buildGateContext(input).pipe(
     Effect.flatMap((context) => bindLiveActionAccessGate.pipe(Effect.provideContext(context))),
@@ -1181,6 +1253,8 @@ const seedPeopleIntent = (
  */
 export const withAccessAdminCase = <Value, Failure>(
   run: (accessCase: AccessAdminCase) => Effect.Effect<Value, Failure>,
+  /** Companies of the case tenant beyond A and B, which only the bootstrapped owner administers (stage shape). */
+  options: { readonly extraCompanies?: number } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* accessAdminCase() {
@@ -1190,7 +1264,11 @@ export const withAccessAdminCase = <Value, Failure>(
       const seedSuffix = (yield* crypto.randomUUIDv4()).replaceAll('-', '');
       const tenantId = yield* crypto.randomUUIDv4();
       const foreignTenantId = yield* crypto.randomUUIDv4();
-      const companies = [yield* crypto.randomUUIDv4(), yield* crypto.randomUUIDv4()];
+      const companies = yield* Effect.forEach(
+        Array.from({ length: 2 + (options.extraCompanies ?? 0) }),
+        () => crypto.randomUUIDv4(),
+        { concurrency: 1 },
+      );
       const foreignCompanies = [yield* crypto.randomUUIDv4()];
       const personas = yield* seedsOf;
       const foreignPersonas = yield* seedsOf;
@@ -1383,6 +1461,7 @@ export const withAccessAdminCase = <Value, Failure>(
       yield* labelled('reconcile', graph.writer.reconcileTenant({ scope: yield* scopeFor('owner') }));
 
       const live = yield* labelled('gate', buildGate({ configuration, executor: graph.executor }));
+      const inspection = yield* labelled('inspection', buildInspection({ configuration, executor: graph.executor }));
       const dead = yield* labelled(
         'gate-unavailable',
         buildGate({
@@ -1392,18 +1471,69 @@ export const withAccessAdminCase = <Value, Failure>(
       );
 
       const questionContext: QuestionContext = { companyA, declarations, scopeFor };
+      const bindWorkload = (binding: WorkloadBinding) =>
+        Effect.gen(function* registerScenarioWorkload() {
+          const bindingId = yield* crypto.randomUUIDv4();
+          yield* admin.unsafe(
+            `insert into core.access_workload_bindings
+               (binding_id, tenant_id, incarnation, principal_id, workload_key, status)
+             values ('${bindingId}', '${tenantId}', gen_random_uuid(), '${holderOf(binding.persona)}',
+                     '${binding.workloadKey}', 'active')`,
+          );
+          for (const legalEntityId of binding.legalEntityIds) {
+            yield* admin.unsafe(
+              `insert into core.access_workload_company_bindings
+                 (company_binding_id, tenant_id, incarnation, legal_entity_id, workload_binding_id, status)
+               values (gen_random_uuid(), '${tenantId}', gen_random_uuid(), '${legalEntityId}', '${bindingId}', 'active')`,
+            );
+          }
+        }).pipe(Effect.orDie);
+      const grantRole = (grant: RoleGrant) =>
+        Effect.gen(function* grantScenarioRole() {
+          const role: SeededRole = {
+            roleId: yield* crypto.randomUUIDv4(),
+            roleRevisionId: yield* crypto.randomUUIDv4(),
+          };
+          const scopeId = yield* companyScopeIdFor(grant.legalEntityId);
+          yield* insertRole(admin, {
+            capabilityKeys: grant.capabilityKeys,
+            catalogSnapshotId: ownerBootstrap.catalogSnapshotId,
+            createdBy: ownerPrincipal,
+            legalEntityId: grant.legalEntityId,
+            mode: 'run',
+            name: `Scenario role ${role.roleId}`,
+            ...role,
+            scopeId,
+            tenantId,
+          });
+          yield* insertAssignment(admin, {
+            assignedBy: ownerPrincipal,
+            holderColumn: holderColumnOf(grant.persona),
+            incarnationId: yield* crypto.randomUUIDv4(),
+            principalId: holderOf(grant.persona),
+            ...role,
+            scopeId,
+            tenantId,
+          });
+          yield* graph.writer.reconcileTenant({ scope: yield* scopeFor('owner') });
+        }).pipe(Effect.orDie);
 
       return yield* run({
         admin,
+        bindWorkload,
         catalog,
         companies,
         databases,
         decide: askWith(live, questionContext),
         decideUnavailable: askWith(dead, questionContext),
         declarations,
+        foreignCompanies,
         foreignIds: identifiersOf(foreignPersonas),
         foreignTenantId,
+        gate: live,
+        grantRole,
         ids: identifiersOf(personas),
+        inspection,
         scopeFor,
         scopeIdOf: companyScopeIdFor,
         seeded,
@@ -1449,9 +1579,13 @@ export interface ShellHttpRequest {
   readonly payload: unknown;
   /** The signed-in persona; a request without one has no session at all. */
   readonly persona?: Persona;
+  /** A request the Shell's own page sends (`sec-fetch-site: same-origin`), as its origin-checked writes require. */
+  readonly sameOrigin?: boolean;
 }
 
 export interface ShellHttp {
+  /** A GET of the Shell API: the payload is ignored. */
+  readonly get: (request: Omit<ShellHttpRequest, 'payload'>) => Effect.Effect<ShellHttpAnswer>;
   readonly post: (request: ShellHttpRequest) => Effect.Effect<ShellHttpAnswer>;
 }
 
@@ -1480,7 +1614,38 @@ const personaAuthentication = (
     createFixtureUser: () => unsupportedSession('createFixtureUser'),
     currentSession: () => unsupportedSession('currentSession'),
     resolveDocumentContext: () => unsupportedSession('resolveDocumentContext'),
-    resolveShellContext: () => unsupportedSession('resolveShellContext'),
+    // The same persona as `resolveTenantContext`, as the Shell surfaces that resolve a full shell session read it: with
+    // a company selected the session is `authenticated` in that company, otherwise it stays in the tenant context.
+    resolveShellContext: (headers) => {
+      const principal = principals.get(sessionKey(headers.get(PERSONA_HEADER) ?? '', headers.get(LEGAL_ENTITY_HEADER)));
+      if (principal === undefined) {
+        return Effect.succeed({ setCookieHeaders: [], state: 'anonymous' as const });
+      }
+      const identity = {
+        displayName: 'P14 person',
+        email: 'p14@example.test',
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      };
+      const { legalEntityId } = principal;
+      return Effect.succeed(
+        legalEntityId === undefined
+          ? {
+              availableLegalEntities: [],
+              identity,
+              principal,
+              setCookieHeaders: [],
+              state: 'tenant_authenticated' as const,
+            }
+          : {
+              availableLegalEntities: [{ legalEntityId, legalName: 'P14 company' }],
+              identity: { ...identity, legalEntityId, legalName: 'P14 company' },
+              principal,
+              setCookieHeaders: [],
+              state: 'authenticated' as const,
+            },
+      );
+    },
     resolveTenantContext: (headers) => {
       const principal = principals.get(sessionKey(headers.get(PERSONA_HEADER) ?? '', headers.get(LEGAL_ENTITY_HEADER)));
       return Effect.succeed(
@@ -1520,14 +1685,24 @@ const personaAuthentication = (
  *
  * `api/index.ts` is loaded on first use, so the suites that only need the gate never load the Shell.
  */
-export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* shellHttp(accessCase: AccessAdminCase) {
-  const [shell, authentication, api, bff] = yield* Effect.promise(
+export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* shellHttp(
+  accessCase: AccessAdminCase,
+  /** The installed release a surface reads its module catalog from (a deployed Shell loads it from the composition). */
+  installed?: ActiveApplicationCompositionSnapshot,
+  /**
+   * `frame`: also pin the Shell's own read authority to that release, so the Shell's governed reads (composition, module
+   * target) are admitted end to end; the suite then writes the release's active authority row itself.
+   */
+  serves?: 'frame',
+) {
+  const [shell, authentication, api, bff, catalog] = yield* Effect.promise(
     async () =>
       await Promise.all([
         import('../../api/index.ts'),
         import('../../api/auth/service.ts'),
-        import('../../shared/api.ts'),
+        import('../../shared/browser-api.ts'),
         import('@modern-js/bff-effect/effect-edge'),
+        import('../../api/modules/installed-module-catalog.ts'),
       ]),
   );
   const principals = new Map<string, TrustedPrincipalContext>();
@@ -1545,14 +1720,14 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     personaAuthentication(authentication.AuthenticationService, principals),
     issuer,
     moduleStates,
-    undefined,
+    installed === undefined ? undefined : catalog.makeInstalledModuleCatalogLoader(Effect.succeed(installed)),
     false,
     undefined,
     undefined,
     undefined,
     undefined,
     undefined,
-    undefined,
+    serves === 'frame' && installed !== undefined ? { load: Effect.succeed(installed) } : undefined,
     accessCase.databases,
   );
   const { apiPrefix } = api.shellAuthenticationApiContract;
@@ -1563,9 +1738,9 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
     (created) => Effect.promise(created.dispose.bind(created)),
   );
   const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-  const post = (request: ShellHttpRequest) =>
-    Effect.gen(function* postJson() {
-      const headers = new Headers({ 'content-type': 'application/json' });
+  const send = (request: ShellHttpRequest, method: 'GET' | 'POST') =>
+    Effect.gen(function* sendRequest() {
+      const headers = new Headers(method === 'POST' ? { 'content-type': 'application/json' } : {});
       if (request.persona !== undefined) {
         headers.set(PERSONA_HEADER, request.persona);
       }
@@ -1575,15 +1750,19 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
       if (request.idempotencyKey !== undefined) {
         headers.set('idempotency-key', request.idempotencyKey);
       }
-      const body = yield* encodeJson(request.payload).pipe(Effect.orDie);
-      const response = yield* Effect.promise(
-        async () =>
-          await handler.handler(
-            new Request(`http://shell.test${apiPrefix}${request.path}`, { body, headers, method: 'POST' }),
-          ),
-      );
+      if (request.sameOrigin === true) {
+        headers.set('sec-fetch-site', 'same-origin');
+      }
+      const url = `http://shell.test${apiPrefix}${request.path}`;
+      const init: RequestInit =
+        method === 'POST'
+          ? { body: yield* encodeJson(request.payload).pipe(Effect.orDie), headers, method }
+          : { headers };
+      const response = yield* Effect.promise(async () => await handler.handler(new Request(url, init)));
       const text = yield* Effect.promise(async () => await response.text());
       return { status: response.status, text } satisfies ShellHttpAnswer;
     });
-  return { post } satisfies ShellHttp;
+  const post = (request: ShellHttpRequest) => send(request, 'POST');
+  const get = (request: Omit<ShellHttpRequest, 'payload'>) => send({ ...request, payload: null }, 'GET');
+  return { get, post } satisfies ShellHttp;
 });

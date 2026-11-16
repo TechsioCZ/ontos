@@ -1,5 +1,6 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type {
+  ActionServiceFactory,
   ActionServicePreparationContext,
   OperationalScope,
   ScopedRoutineInvoker,
@@ -48,6 +49,7 @@ import {
   PurchaseLimitCounterpartyRefSchema,
   PurchaseLimitDependencyUnavailableSchema,
 } from '../../shared/domain/purchase-limit-policy.ts';
+import type { PurchaseLimitDependencyUnavailable } from '../../shared/domain/purchase-limit-policy.ts';
 import type { PurchaseValue } from '../../shared/domain/purchase-limit.ts';
 import { CommerceCustomerProfileRefSchema } from '../../shared/domain/profile-decisions.ts';
 import {
@@ -736,6 +738,25 @@ const purchaseApprovalCurrentnessForTransaction = (
   return service;
 };
 
+/** Commit-time services bound to one prepared approval observation; Core supplies the actual executor and scope. */
+interface PreparedPurchaseApprovalCurrentness {
+  readonly currentness: PurchaseApprovalCurrentnessService;
+  readonly revalidate: () => Effect.Effect<void, PurchasingApprovalRejected | PurchaseLimitDependencyUnavailable>;
+}
+
+/** Rechecks the prepared Order approval observation on the actual commit executor and scope. */
+type PreparedOrderCommitValidator = (
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  revision: string,
+) => Effect.Effect<
+  {
+    readonly revalidate: () => Effect.Effect<void, PurchasingApprovalRejected>;
+    readonly trusted: TrustedRevalidatePurchaseApprovalInput;
+  },
+  PurchasingApprovalRejected
+>;
+
 const submissionPreparationUnavailable = (cause: unknown) =>
   Object.defineProperty(
     new OperationContextUnavailable({
@@ -788,11 +809,9 @@ export const preparePurchaseApprovalSubmissionCurrentness = Effect.fn('PurchaseA
     ).pipe(Effect.mapError(mapCurrentnessError('Current submission owner evidence is unavailable')));
     const sameProposal = Schema.toEquivalence(Schema.toType(ProposalFactsSchema));
     const intentRevision = stableRevision(claimed);
-    return Effect.fn('PurchaseApprovalCurrentness.submissionCommitServices')(function* commitServices(
-      transaction: ScopedTransactionExecutor,
-      currentScope: OperationalScope,
-      revision: string,
-    ) {
+    const factory: ActionServiceFactory<PreparedPurchaseApprovalCurrentness> = Effect.fn(
+      'PurchaseApprovalCurrentness.submissionCommitServices',
+    )(function* commitServices(transaction, currentScope, revision) {
       const [prepared, current] = yield* Effect.all(
         [
           prepareBasis(transaction, currentScope, revision),
@@ -867,6 +886,7 @@ export const preparePurchaseApprovalSubmissionCurrentness = Effect.fn('PurchaseA
           ),
       };
     });
+    return factory;
   },
 );
 
@@ -1011,46 +1031,46 @@ export const preparePurchaseApprovalRevalidationCurrentness = Effect.fn(
     Effect.mapError(mapCurrentnessError('Current approval purchase source cannot be prepared')),
   );
   yield* context.transaction(
-    Effect.fn('PurchaseApprovalCurrentness.checkBeforeFinalAuthority')(function* checkBeforeFinalAuthority(
-      transaction: ScopedTransactionExecutor,
-    ) {
-      yield* recheckApprovalOwnerObservation(transaction, context.scope, context.compositionRevision, context, owner);
-      const basis = yield* prepareBasis(transaction, context.scope, context.compositionRevision);
-      const facts = yield* loadCurrentApprovalFacts(
-        transaction,
-        owner.snapshot,
-        owner.businessScope,
-        basis.currentness,
-        preparedApprovalRole(owner),
-      );
-      if (facts.buyer !== 'ALLOWED') {
-        return yield* new PurchasingApprovalRejected({
-          code: 'BUYER_PERMISSION_DENIED',
-          reason: 'Current buyer authorization no longer permits this approval',
-          retryable: false,
-        });
-      }
-      if (facts.profile.gate.outcome !== 'ACTIVE' || !facts.profile.gate.canAcceptNewOrder) {
-        return yield* new PurchasingApprovalRejected({
-          code: 'PROFILE_INACTIVE',
-          reason: 'The purchasing profile is no longer active',
-          retryable: false,
-        });
-      }
-      return yield* verifyCurrentApprovalEvaluation(
-        purchaseLimitEvaluationSourceForTransaction(
+    Effect.fn('PurchaseApprovalCurrentness.checkBeforeFinalAuthority')(
+      function* checkBeforeFinalAuthority(transaction) {
+        yield* recheckApprovalOwnerObservation(transaction, context.scope, context.compositionRevision, context, owner);
+        const basis = yield* prepareBasis(transaction, context.scope, context.compositionRevision);
+        const facts = yield* loadCurrentApprovalFacts(
           transaction,
-          {
-            ...context.scope,
-            legalEntityId: owner.businessScope.legalEntityId,
-            trustedStorefrontId: owner.businessScope.storefrontId,
-          },
+          owner.snapshot,
+          owner.businessScope,
           basis.currentness,
-        ),
-        owner.snapshot,
-        owner.businessScope,
-      );
-    }),
+          preparedApprovalRole(owner),
+        );
+        if (facts.buyer !== 'ALLOWED') {
+          return yield* new PurchasingApprovalRejected({
+            code: 'BUYER_PERMISSION_DENIED',
+            reason: 'Current buyer authorization no longer permits this approval',
+            retryable: false,
+          });
+        }
+        if (facts.profile.gate.outcome !== 'ACTIVE' || !facts.profile.gate.canAcceptNewOrder) {
+          return yield* new PurchasingApprovalRejected({
+            code: 'PROFILE_INACTIVE',
+            reason: 'The purchasing profile is no longer active',
+            retryable: false,
+          });
+        }
+        return yield* verifyCurrentApprovalEvaluation(
+          purchaseLimitEvaluationSourceForTransaction(
+            transaction,
+            {
+              ...context.scope,
+              legalEntityId: owner.businessScope.legalEntityId,
+              trustedStorefrontId: owner.businessScope.storefrontId,
+            },
+            basis.currentness,
+          ),
+          owner.snapshot,
+          owner.businessScope,
+        );
+      },
+    ),
   );
   const finalBindingEvidence = yield* authority.value
     .verifyRevalidation({
@@ -1064,11 +1084,9 @@ export const preparePurchaseApprovalRevalidationCurrentness = Effect.fn(
       Effect.mapError(mapCurrentnessError('The final Bundle/Attempt authority evidence is unavailable')),
     );
   const intentRevision = stableRevision(claimed);
-  return Effect.fn('PurchaseApprovalCurrentness.revalidationCommitServices')(function* revalidationCommitServices(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    revision: string,
-  ) {
+  const factory: ActionServiceFactory<PreparedPurchaseApprovalCurrentness> = Effect.fn(
+    'PurchaseApprovalCurrentness.revalidationCommitServices',
+  )(function* revalidationCommitServices(transaction, scope, revision) {
     const revalidate = () =>
       recheckApprovalOwnerObservation(transaction, scope, revision, context, owner).pipe(
         Effect.andThen(DateTime.now),
@@ -1122,6 +1140,7 @@ export const preparePurchaseApprovalRevalidationCurrentness = Effect.fn(
         ),
     };
   });
+  return factory;
 });
 
 /** Service admission remains the authenticated actor. Buyer/Storefront are separately owner-proven facts. */
@@ -1180,63 +1199,62 @@ export const prepareOrderPurchaseApprovalRevalidation = Effect.fn(
   ) {
     return yield* currentnessRejected('The Order authority did not verify the exact fresh prepared binding');
   }
-  return Effect.fn('PurchaseApprovalCurrentness.orderCommitValidator')(function* orderCommitValidator(
-    transaction: ScopedTransactionExecutor,
-    actualScope: OperationalScope,
-    revision: string,
-  ) {
-    const revalidate = () =>
-      recheckApprovalOwnerObservation(transaction, actualScope, revision, context, prepared).pipe(
-        Effect.andThen(DateTime.now),
-        Effect.filterOrFail(
-          (instant) => DateTime.isLessThan(instant, finalBindingEvidence.validUntil),
-          () => currentnessRejected('The Order binding evidence expired before commit'),
-        ),
-        Effect.asVoid,
+  const validator: PreparedOrderCommitValidator = Effect.fn('PurchaseApprovalCurrentness.orderCommitValidator')(
+    function* orderCommitValidator(transaction, actualScope, revision) {
+      const revalidate = () =>
+        recheckApprovalOwnerObservation(transaction, actualScope, revision, context, prepared).pipe(
+          Effect.andThen(DateTime.now),
+          Effect.filterOrFail(
+            (instant) => DateTime.isLessThan(instant, finalBindingEvidence.validUntil),
+            () => currentnessRejected('The Order binding evidence expired before commit'),
+          ),
+          Effect.asVoid,
+        );
+      yield* revalidate();
+      const { evaluationSource, facts } = yield* Effect.all(
+        {
+          evaluationSource: purchaseLimitEvaluationSourceForVerifiedOrderSubject(transaction, {
+            actualScope,
+            businessSubject: subject,
+            currentness: purchaseLimitCurrentness,
+          }).pipe(Effect.mapError(mapCurrentnessError('Current Order Purchase Limit evaluation is unavailable'))),
+          facts: loadCurrentApprovalFacts(
+            transaction,
+            snapshot,
+            businessScope,
+            purchaseLimitCurrentness,
+            preparedApprovalRole(prepared),
+            actualScope.principalId,
+          ),
+        },
+        { concurrency: 1 },
       );
-    yield* revalidate();
-    const { evaluationSource, facts } = yield* Effect.all(
-      {
-        evaluationSource: purchaseLimitEvaluationSourceForVerifiedOrderSubject(transaction, {
-          actualScope,
-          businessSubject: subject,
-          currentness: purchaseLimitCurrentness,
-        }).pipe(Effect.mapError(mapCurrentnessError('Current Order Purchase Limit evaluation is unavailable'))),
-        facts: loadCurrentApprovalFacts(
-          transaction,
-          snapshot,
-          businessScope,
-          purchaseLimitCurrentness,
-          preparedApprovalRole(prepared),
-          actualScope.principalId,
-        ),
-      },
-      { concurrency: 1 },
-    );
-    yield* verifyCurrentApprovalEvaluation(evaluationSource, snapshot, businessScope);
-    const checkedAt = yield* DateTime.now;
-    const trusted = makeTrustedRevalidation({
-      buyer: facts.buyer,
-      claimed,
-      finalBindingEvidence,
-      now: checkedAt,
-      profileState:
-        facts.profile.gate.outcome === 'ACTIVE' && facts.profile.gate.canAcceptNewOrder ? 'ACTIVE' : 'INACTIVE',
-      scope: businessScope,
-      snapshot,
-      sourceRevisions: facts.sourceRevisions,
-    });
-    yield* revalidate();
-    return {
-      revalidate,
-      trusted: {
-        ...trusted,
-        validUntil: DateTime.makeUnsafe(
-          Math.min(DateTime.toEpochMillis(trusted.validUntil), prepared.validUntil, preparedRoleEnd(prepared.role)),
-        ),
-      },
-    };
-  });
+      yield* verifyCurrentApprovalEvaluation(evaluationSource, snapshot, businessScope);
+      const checkedAt = yield* DateTime.now;
+      const trusted = makeTrustedRevalidation({
+        buyer: facts.buyer,
+        claimed,
+        finalBindingEvidence,
+        now: checkedAt,
+        profileState:
+          facts.profile.gate.outcome === 'ACTIVE' && facts.profile.gate.canAcceptNewOrder ? 'ACTIVE' : 'INACTIVE',
+        scope: businessScope,
+        snapshot,
+        sourceRevisions: facts.sourceRevisions,
+      });
+      yield* revalidate();
+      return {
+        revalidate,
+        trusted: {
+          ...trusted,
+          validUntil: DateTime.makeUnsafe(
+            Math.min(DateTime.toEpochMillis(trusted.validUntil), prepared.validUntil, preparedRoleEnd(prepared.role)),
+          ),
+        },
+      };
+    },
+  );
+  return validator;
 });
 
 /**

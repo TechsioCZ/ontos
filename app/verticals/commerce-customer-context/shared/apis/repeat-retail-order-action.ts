@@ -28,6 +28,7 @@ export const RepeatRetailOrderActionForbiddenProblemSchema = makeProblemDetailsS
       'operation_context_invalid',
       'history_access_denied',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const RepeatRetailOrderActionNotFoundProblemSchema = makeProblemDetailsSchema(

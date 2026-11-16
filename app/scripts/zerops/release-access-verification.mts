@@ -1,3 +1,7 @@
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 /**
  * Release step: canonical access readiness for every active Tenant, proven read-only before the release
@@ -34,10 +38,6 @@ import {
 } from 'effect';
 import type { ConfigProvider } from 'effect';
 
-import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
 import type { AccessProjectionCompiler } from '../../packages/core-runtime/src/access/intent/projection-compiler.ts';
 import type { TenantIntentLoader } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';

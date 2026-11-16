@@ -253,3 +253,77 @@ it.effect('requires coherent current PERSON owner facts rather than a structural
     expect(issued).toBe(attempts);
   }),
 );
+
+it.effect('uses a real source-person owner receipt without fabricating raw type assertions', () =>
+  Effect.gen(function* sourcePersonOwnerEvidence() {
+    const sourceReference = {
+      occurrenceId: 'occurrence:source-person',
+      recordId: 'record:source-person',
+      source: {
+        issuer: 'internal:ebs-fixture',
+        namespace: 'clients',
+        recordType: 'customer',
+        routeRef: 'route:source-person',
+      },
+    };
+    const receipt = {
+      outcome: 'SOURCE_PERSON_CURRENT',
+      partyRef,
+      partyRevision: 7,
+      sourceActionInvocationId: '50000000-0000-4000-8000-000000000002',
+      sourceDecisionRef: {
+        moduleId: 'party.registry',
+        resourceId: '50000000-0000-4000-8000-000000000003',
+        resourceType: 'party.registry.party-match-decision',
+        tenantId,
+      },
+    };
+    let response = receipt;
+    let issued = 0;
+    let calls = 0;
+    const credentials = Layer.succeed(PrivacySubjectPartyCredentials, {
+      acquire: (_scope, declarationKey) =>
+        Effect.sync(() => {
+          expect(declarationKey).toBe('party.registry.source-person-admission.read');
+          issued += 1;
+          return {
+            authorization: Redacted.make(`Bearer source-person-${issued}`),
+            baseUrl: 'https://party.example.test',
+            compositionRevision: 'a'.repeat(64),
+          };
+        }),
+    });
+    const owner = yield* PrivacySubjectPartyOwner.pipe(
+      Effect.provide(PrivacySubjectPartyOwnerLive.pipe(Layer.provide(credentials))),
+    );
+    const fakeFetch: typeof globalThis.fetch = (input, init) => {
+      calls += 1;
+      const request = new Request(input, init);
+      expect(new URL(request.url).pathname).toContain('/reads/source-person-admission');
+      expect(request.headers.get('authorization')).toBe(`Bearer source-person-${calls}`);
+      return Promise.resolve(Response.json(response));
+    };
+    const resolve = () =>
+      owner
+        .resolve(partyRef, scope, true, sourceReference)
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    const proof = yield* resolve();
+    expect(proof.ownerRevision).toBe(7);
+    expect(proof.typeAssertions).toEqual([]);
+    expect(proof.sourcePersonAdmission?.sourceDecisionRef).toEqual(receipt.sourceDecisionRef);
+    response = {
+      ...receipt,
+      partyRef: Schema.decodeUnknownSync(PrivacyPartyRefSchema)({
+        ...partyRef,
+        resourceId: '20000000-0000-4000-8000-000000000002',
+      }),
+    };
+    expect((yield* Effect.flip(resolve())).code).toBe('privacy_operation_persistence_unavailable');
+    response = {
+      ...receipt,
+      sourceDecisionRef: { ...receipt.sourceDecisionRef, tenantId: '90000000-0000-4000-8000-000000000001' },
+    };
+    expect((yield* Effect.flip(resolve())).code).toBe('privacy_operation_persistence_unavailable');
+    expect(issued).toBe(calls);
+  }),
+);

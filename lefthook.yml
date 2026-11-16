@@ -19,7 +19,7 @@ pre-commit:
         - "app/tools/ontos-agent-mcp/**/*.{ts,mts,js,mjs}"
       exclude:
         - "app/tools/oxlint/effect-native/tests/fixtures/*"
-      run: pnpm exec effect-tsgo --tsrs-lint oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files}
+      run: pnpm exec effect-tsgo oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
 
 pre-push:

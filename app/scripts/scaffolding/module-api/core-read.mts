@@ -28,6 +28,7 @@ const markers = {
   clientImports: 'core-read-client-imports',
   clientOperations: 'core-read-client-operations',
   coreExports: 'core-read-exports',
+  serverApiGroups: 'core-read-server-api-groups',
   serverGroups: 'core-read-server-groups',
   serverImports: 'core-read-server-imports',
   serverLayers: 'core-read-server-layers',
@@ -266,7 +267,10 @@ export const planCoreReadScaffold = Effect.fn('CoreReadScaffold.plan')(function*
   const coreIndex = yield* tryScaffold('invalid Core export path', () =>
     resolveContainedPath(coreRoot, 'src', 'index.ts'),
   );
-  const sharedApi = yield* tryScaffold('invalid Shell API path', () =>
+  const browserApi = yield* tryScaffold('invalid Shell browser API path', () =>
+    resolveContainedPath(shellRoot, 'shared', 'browser-api.ts'),
+  );
+  const serverApi = yield* tryScaffold('invalid Shell server API path', () =>
     resolveContainedPath(shellRoot, 'shared', 'api.ts'),
   );
   const serverRoot = yield* tryScaffold('invalid Shell server path', () =>
@@ -283,7 +287,7 @@ export const planCoreReadScaffold = Effect.fn('CoreReadScaffold.plan')(function*
     readAndPatch(coreIndex, [
       [markers.coreExports, name, `export { ${value}Read } from './generated-reads/${name}.ts';`],
     ]),
-    readAndPatch(sharedApi, [
+    readAndPatch(browserApi, [
       [
         markers.sharedImports,
         name,
@@ -291,6 +295,7 @@ export const planCoreReadScaffold = Effect.fn('CoreReadScaffold.plan')(function*
       ],
       [markers.sharedGroups, name, renderApiGroup(name, type)],
     ]),
+    readAndPatch(serverApi, [[markers.serverApiGroups, name, `  .add(ShellBrowserApi.groups.coreRead${type})`]]),
     readAndPatch(
       serverRoot,
       [

@@ -2,7 +2,7 @@
 // A new meter and a meter reading are sent by the shared Uložit only: typing changes the draft, one click sends the
 // same command as the old button did, and leaving with typed input asks first while an untouched form just closes.
 import { requiredLabelFor } from '@app/admin-ui';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
 import { MeterSchema } from '../../shared/domain/meters.ts';
@@ -74,7 +74,8 @@ describe('new meter', () => {
       yield* typeInto('#meter-serial', 'EL-77');
       yield* saveSent(runner, 1);
       expect(runner.sent).toHaveLength(1);
-      expect(runner.sent[0]).toMatchObject({ _tag: 'MeterCreate', serialNumber: 'EL-77' });
+      expect(Predicate.isTagged(runner.sent[0], 'MeterCreate')).toBe(true);
+      expect(runner.sent[0]).toMatchObject({ serialNumber: 'EL-77' });
       expect(calls).toEqual(['saved:created-1']);
     }),
   );

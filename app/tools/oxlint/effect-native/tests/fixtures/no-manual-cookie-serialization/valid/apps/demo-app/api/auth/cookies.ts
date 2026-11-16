@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { Cookies, HttpServerResponse } from 'effect/http';
+import { Cookies, HttpServerResponse } from 'effect/unstable/http';
 
 declare const parseCookies: (raw: string) => Map<string, string>;
 

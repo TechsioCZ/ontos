@@ -76,10 +76,12 @@ export const retirePackageOptionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RetirePackageOptionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RetirePackageOptionActionForbiddenProblem'> =>
     RetirePackageOptionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -189,7 +191,8 @@ const mapCoreProblem = (error: ActionCoreError): RetirePackageOptionActionProble
       ActionInvocationStateError: (failure) => retirePackageOptionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: retirePackageOptionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => retirePackageOptionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => retirePackageOptionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        retirePackageOptionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => retirePackageOptionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => retirePackageOptionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => retirePackageOptionActionProblem.conflict(failure.code),

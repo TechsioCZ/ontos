@@ -60,10 +60,12 @@ export const manageCommitmentConfirmationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ManageCommitmentConfirmationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageCommitmentConfirmationActionForbiddenProblem'> =>
     ManageCommitmentConfirmationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -170,7 +172,8 @@ const mapCoreProblem = (error: ActionCoreError): ManageCommitmentConfirmationAct
       ActionInvocationStateError: (failure) => manageCommitmentConfirmationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageCommitmentConfirmationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageCommitmentConfirmationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageCommitmentConfirmationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        manageCommitmentConfirmationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageCommitmentConfirmationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageCommitmentConfirmationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageCommitmentConfirmationActionProblem.conflict(failure.code),

@@ -359,6 +359,20 @@ const deriveApiOperationKeys = (api: HttpApi.Top): readonly string[] =>
     (left, right) => left.localeCompare(right),
   );
 
+/**
+ * Demo divergence exception 8: a registered-workload call may only name a deployment of this topology. The workspace
+ * check (`check-ontos-module-contracts`) also refuses a call its receiver does not declare.
+ */
+export const registeredWorkloadCallTopologyIssue = (
+  calls: readonly { readonly audience: string }[],
+  topologyAppIds: readonly string[],
+): string | undefined => {
+  const unknownReceiver = calls.find((call) => !topologyAppIds.includes(call.audience));
+  return unknownReceiver === undefined
+    ? undefined
+    : `registered-workload call names ${unknownReceiver.audience}, which is not a topology deployment`;
+};
+
 const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOwnerValues) =>
   Effect.gen(function* deriveContractEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -511,6 +525,17 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
     if (safeRuntime.requirements !== undefined) {
       Object.assign(manifest, { requirements: safeRuntime.requirements });
     }
+    const { registeredWorkloadCalls } = owner.manifest;
+    if (registeredWorkloadCalls !== undefined) {
+      const topologyIssue = registeredWorkloadCallTopologyIssue(
+        registeredWorkloadCalls,
+        (topology.verticals ?? []).flatMap(({ id }) => (id === undefined ? [] : [id])),
+      );
+      if (topologyIssue !== undefined) {
+        return yield* failure(topologyIssue);
+      }
+      Object.assign(manifest, { registeredWorkloadCalls });
+    }
     const contract = {
       deployment: { appId, buildMarker: releaseIdentity.buildMarker },
       manifest,
@@ -537,7 +562,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
   });
 
 /** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */
-const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
+export const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
   Effect.gen(function* deriveModuleReleaseProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'));

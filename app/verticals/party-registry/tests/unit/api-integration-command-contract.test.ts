@@ -4,6 +4,7 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { FileSystem, Effect, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { FenceLegacyIcoAuthorityActionApi } from '../../shared/apis/fence-legacy-ico-authority-action.ts';
 import { partyRegistryCommandsApi, PartyCommandAliasWriteRejectedProblemSchema } from '../../shared/command-api.ts';
 import { CreateCrmClientPartyActionApi } from '../../shared/apis/create-crm-client-party-action.ts';
 
@@ -27,6 +28,7 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
       const endpoints = [
         ...Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints),
         CreateCrmClientPartyActionApi.groups.createCrmClientPartyAction.endpoints.execute,
+        ...Object.values(FenceLegacyIcoAuthorityActionApi.groups.fenceLegacyIcoAuthorityAction.endpoints),
       ];
       expect(endpoints.length).toBe(actions.length);
       expect(endpoints.map((endpoint) => endpoint.path).toSorted()).toEqual(
@@ -43,7 +45,13 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
           .split('-')
           .map((part, index) => (index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
           .join('');
-        expect(Object.hasOwn(partyRegistryCommandsApi.groups.partyCommands.endpoints, name)).toBe(true);
+        expect(
+          slug === 'fence-legacy-ico-authority'
+            ? FenceLegacyIcoAuthorityActionApi.groups.fenceLegacyIcoAuthorityAction.endpoints.execute.path.endsWith(
+                slug,
+              )
+            : Object.hasOwn(partyRegistryCommandsApi.groups.partyCommands.endpoints, name),
+        ).toBe(true);
       }
     }),
   );

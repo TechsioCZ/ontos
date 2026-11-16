@@ -7,6 +7,7 @@ import {
   PriceResultLookupResponseSchema,
 } from '../../shared/apis/price-result-lookup.ts';
 import { readPriceResult, resolvePriceResultCommit } from '../../src/api/price-result-lookup.read.ts';
+import type { PriceActionCommitResolution } from '../../src/api/price-result-lookup.read.ts';
 import { PricePersistenceUnavailable } from '../../src/services/price-persistence.service.ts';
 
 /** prepare (Core commit state) then load (the owner result), as the governed Read runs them. */
@@ -14,7 +15,7 @@ const lookupPriceResult = (
   input: Parameters<typeof readPriceResult>[0],
   trustedScope: Parameters<typeof resolvePriceResultCommit>[1],
   services: Parameters<typeof readPriceResult>[2] & {
-    readonly resolveCommit: Parameters<typeof resolvePriceResultCommit>[2];
+    readonly resolveCommit: (actionInvocationId: string) => Effect.Effect<PriceActionCommitResolution>;
   },
 ) =>
   resolvePriceResultCommit(input, trustedScope, services.resolveCommit).pipe(

@@ -15,12 +15,19 @@ const receipt: DisproofTargetRow = {
 };
 const correction = (overrides: Partial<DisproofCorrectionRow> = {}): DisproofCorrectionRow => ({
   acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+  accountRef: 'bank-account',
   amountMinor: null,
   capabilityCorrelated: null,
   correctsObservationId: RECEIPT_ID,
+  currency: null,
+  economicEffectKey: null,
+  environment: 'test',
   factKind: 'SOURCE_CORRECTION',
+  operationId: null,
   paymentId: PAYMENT_ID,
   sourceAuthorityId: AUTHORITY_ID,
+  sourceKind: 'BANK_ACCOUNTING',
+  sourceSystem: 'bank',
   ...overrides,
 });
 const disproves = (row: DisproofCorrectionRow, target: DisproofTargetRow = receipt) =>

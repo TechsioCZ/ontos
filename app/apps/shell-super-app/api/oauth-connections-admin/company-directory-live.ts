@@ -1,3 +1,4 @@
+import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Hex } from 'effect/encoding';
@@ -5,7 +6,6 @@ import { Hex } from 'effect/encoding';
 import {
   ActionRuntime,
   companyAgentDirectoryRead,
-  openPrincipalOperators,
   OperationalScopeResolver,
   ReadRuntime,
   replaceAgentOperatorsAction,
@@ -68,6 +68,8 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
     CompanyDirectory,
     Effect.gen(function* companyDirectoryService() {
       const reads = yield* ReadRuntime;
+      // The directory read asks the agent administration right in its `prepare`, through this composition's gate.
+      const gateContext = yield* Effect.context<AccessDecisionGate>();
       const actions = yield* ActionRuntime;
       const projectionWriter = yield* AccessProjectionWriter;
       const scopeResolver = yield* OperationalScopeResolver;
@@ -80,6 +82,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
           transport: { correlationId: request.transport.correlationId },
         }),
       ).pipe(
+        Effect.provideContext(gateContext),
         Effect.map(directorySnapshot),
         Effect.mapError(fromRuntimeError),
         Effect.withSpan('CompanyDirectory.snapshot'),
@@ -175,11 +178,9 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         agentPrincipalId: string,
       ) {
         yield* reconcile();
-        // Archive removes company membership. Confirm graph cleanup without emitting a second command.
-        const operators = yield* Effect.scoped(
-          openPrincipalOperators.pipe(Effect.flatMap((port) => port.operatorsOf(agentPrincipalId))),
-        ).pipe(Effect.mapError(unavailable));
-        if (operators.length !== 0) {
+        // Archive takes the agent out of the company's directory. Confirm it there without emitting a second command.
+        const remaining = (yield* loadSnapshot).agents.find((agent) => agent.principalId === agentPrincipalId);
+        if (remaining !== undefined && remaining.status !== 'archived') {
           return yield* unavailable('Archived agent cleanup has not converged; reload and retry');
         }
         return yield* Effect.void;

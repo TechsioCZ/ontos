@@ -1,14 +1,14 @@
 // @rstest-environment happy-dom
 // The market exceptions store reloads on a live change only when merchandise or this vertical changed.
-import { executeRecords } from '@app/merchandise/clients/records';
-import { RecordsResponseSchema } from '@app/merchandise/contracts/records';
+import { executeRecords } from '@app/merchandise/apis/records/client';
+import { RecordsResponseSchema } from '@app/merchandise/apis/records';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
 import { expect, it, rstest } from 'effect-rstest';
 
 import { marketExceptionsData } from '../../src/market-admin/page-data.ts';
 
-rstest.mock('@app/merchandise/clients/records');
+rstest.mock('@app/merchandise/apis/records/client');
 
 const legalEntityId = '33333333-3333-4333-8333-333333333333';
 const marketId = '30000000-0000-4000-8000-000000000001';

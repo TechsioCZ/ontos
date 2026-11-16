@@ -9,7 +9,7 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/access/ids';
 import { AccessPeopleDirectory } from '@app/core-runtime/access/intent/people-directory';
-import { Context, Effect, Layer, Option } from 'effect';
+import { Context, Effect, Layer, Option, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ApprovalOwnerTransport } from '../../api/access-admin/approval-owner-transport.ts';
@@ -124,18 +124,25 @@ const fixture = Effect.fn('OwnerApprovalPersistenceTest.fixture')(function* pers
   return { inspections, ownerCalls, reads, result };
 });
 
+/** The command's success, or nothing when it failed. */
+type CommandOutcome = Effect.Success<ReturnType<typeof fixture>>['result'];
+type CommandResult = Result.Result<
+  CommandOutcome extends Result.Result<infer A, unknown> ? A : never,
+  CommandOutcome extends Result.Result<unknown, infer E> ? E : never
+>;
+const succeeded = (result: CommandResult) => (Result.isSuccess(result) ? result.success : undefined);
+/** The command's failure, or nothing when it succeeded. */
+const failed = (result: CommandResult) => (Result.isFailure(result) ? result.failure : undefined);
+
 it.effect('returns the actual reloaded persisted approval, not the owner acknowledgement', () =>
   Effect.gen(function* persistedApproval() {
     const { ownerCalls, reads, result } = yield* fixture([approved], false, 'approve');
     expect(ownerCalls).toBe(1);
     expect(reads).toBe(2);
-    expect(result).toMatchObject({
-      _tag: 'Success',
-      success: {
-        approval: { approvedAt: approval.approvedAt, approverId: approval.approverId, expiresAt: approval.expiresAt },
-        id: approved.id,
-        status: 'approved',
-      },
+    expect(succeeded(result)).toMatchObject({
+      approval: { approvedAt: approval.approvedAt, approverId: approval.approverId, expiresAt: approval.expiresAt },
+      id: approved.id,
+      status: 'approved',
     });
     expect(JSON.stringify(result)).not.toContain('AssignmentIncarnationId');
   }).pipe(Effect.scoped),
@@ -165,7 +172,7 @@ for (const { name, proposals } of mismatches) {
       const { ownerCalls, reads, result } = yield* fixture(proposals, false, 'approve');
       expect(ownerCalls).toBe(1);
       expect(reads).toBe(2);
-      expect(result).toMatchObject({ _tag: 'Failure', failure: { _tag: 'ApprovalPortUnavailable' } });
+      expect(Predicate.isTagged(failed(result), 'ApprovalPortUnavailable')).toBe(true);
     }).pipe(Effect.scoped),
   );
 }
@@ -175,7 +182,7 @@ it.effect('rejects a stale revision before calling the owner transport', () =>
     const { ownerCalls, reads, result } = yield* fixture([approved], true, 'approve');
     expect(ownerCalls).toBe(0);
     expect(reads).toBe(1);
-    expect(result).toMatchObject({ _tag: 'Failure', failure: { code: 'revision_stale' } });
+    expect(failed(result)).toMatchObject({ code: 'revision_stale' });
   }).pipe(Effect.scoped),
 );
 
@@ -185,7 +192,7 @@ it.effect('inspects the original stored command without approving and rechecks t
     expect(inspections).toBe(1);
     expect(ownerCalls).toBe(0);
     expect(reads).toBe(2);
-    expect(result).toMatchObject({ _tag: 'Success', success: true });
+    expect(succeeded(result)).toBe(true);
   }).pipe(Effect.scoped),
 );
 
@@ -195,7 +202,7 @@ it.effect('does not advertise an inspection after another caller approves the pr
     expect(inspections).toBe(1);
     expect(ownerCalls).toBe(0);
     expect(reads).toBe(2);
-    expect(result).toMatchObject({ _tag: 'Failure', failure: { code: 'revision_stale' } });
+    expect(failed(result)).toMatchObject({ code: 'revision_stale' });
   }).pipe(Effect.scoped),
 );
 
@@ -205,6 +212,6 @@ it.effect('refuses stale inspection before any receiving owner observation', () 
     expect(inspections).toBe(0);
     expect(ownerCalls).toBe(0);
     expect(reads).toBe(1);
-    expect(result).toMatchObject({ _tag: 'Failure', failure: { code: 'revision_stale' } });
+    expect(failed(result)).toMatchObject({ code: 'revision_stale' });
   }).pipe(Effect.scoped),
 );

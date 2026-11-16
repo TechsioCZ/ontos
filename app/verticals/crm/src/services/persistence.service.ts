@@ -1,10 +1,14 @@
 import { activeAssignmentMember, loadAssignablePrincipalDirectory } from '@app/core-runtime/auth/assignable-principals';
 import { assignmentPrincipalIds } from './assignment-policy.ts';
-import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 // CRM persistence + ACL (owned by crm-scaffold). One JSONB document per (tenant, legal entity), optimistic
 // revision. The viewer (principal + the reach the one access gate resolved + salesperson record) is computed
 // here for every read and command; projections and reducers in shared/ enforce it (C00).
-import { AccessKeySchema, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
+import {
+  AccessKeySchema,
+  agentHistoryPageSql,
+  isConnectionWriteAllowed,
+  OperationContextUnavailable,
+} from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { AccessDecisionGate, capabilityPolicyOf } from '@app/core-runtime/access/enforcement';
 import type { GateCarrier } from '@app/core-runtime/access/enforcement';

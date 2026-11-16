@@ -1,4 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
@@ -635,3 +636,14 @@ export const sellerVatRegimeDeclarationsForScope = (
 
 export const sellerVatRegimeDeclarationServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) =>
   Effect.succeed(sellerVatRegimeDeclarationsForScope(transaction, scope));
+
+export const symmySellerVatFixtureWorkload = 'commerce.tax.symmy-seller-vat-fixture-import';
+
+export const sellerVatRegimeImportServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) => {
+  const { importDeclarations } = sellerVatRegimeDeclarationsForScope(transaction, scope);
+  return Effect.succeed({
+    importDeclarations,
+    readFixtureWorkload: () =>
+      readScopedAdmittedWorkload(transaction, scope, symmySellerVatFixtureWorkload).pipe(Effect.mapError(unavailable)),
+  });
+};

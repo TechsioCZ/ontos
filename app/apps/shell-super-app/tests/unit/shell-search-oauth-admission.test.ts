@@ -26,7 +26,7 @@ import {
   ShellResourceServicesFactory,
 } from '../../api/modules/shell-resources.ts';
 import { ShellSystemSearch } from '../../api/modules/shell-system-search.ts';
-import { ShellSearchResponseSchema } from '../../shared/api.ts';
+import { ShellSearchResponseSchema } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { connectionDescription } from './mcp/fixture-vertical.ts';
 import { retainedGrant } from './oauth-connections/grant-registry-fixture.ts';

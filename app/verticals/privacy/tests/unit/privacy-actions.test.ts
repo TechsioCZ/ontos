@@ -269,7 +269,7 @@ describe('Privacy Actions', () => {
       );
       expect(error.code).toBe('privacy_action_rejected');
       expect(error.reason).toContain('trusted Tenant');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('creates and retains a Processing Purpose through the Action service seam', () =>

@@ -13,6 +13,8 @@ export const ACCESS_CHANGES_COMMAND_ERROR_CODES = [
   'access_changes_command_authority_absent',
   'access_changes_command_conflict',
   'access_changes_command_release_missing',
+  /** The decision is recorded; its projection did not complete, and a retry of the same request finishes it. */
+  'access_changes_command_saved_projection_pending',
   'access_changes_command_unavailable',
 ] as const;
 

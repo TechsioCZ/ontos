@@ -33,7 +33,6 @@ export const ASSORTMENT_TABLE_INVENTORY = [
   'assortment_decision_set_fences',
   'assortment_decision_evidence',
   'assortment_commitment_confirmations',
-  'gateway_assertion_redemptions',
 ] as const;
 
 export const DECISION_SET_FENCE_SOURCE_TABLES = [
@@ -51,7 +50,7 @@ export const DECISION_SET_FENCE_SOURCE_TABLES = [
 
 export const assortmentSchema = pgSchema(ASSORTMENT_SCHEMA_NAME);
 
-/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
+/** One-use assertion replay evidence written before the authenticated Tenant scope is installed. */
 export const gatewayAssertionRedemptions = assortmentSchema.table(
   'gateway_assertion_redemptions',
   {
@@ -64,6 +63,23 @@ export const gatewayAssertionRedemptions = assortmentSchema.table(
   (table) => [
     unique('assortment_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
     index('assortment_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
+/** Only the migration identity enrolls finite internal fixture write capabilities. */
+export const c14RuleFixturePermits = assortmentSchema.table.withRLS(
+  'c14_rule_fixture_permits',
+  {
+    commandDigest: text('command_digest').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    permitDigest: text('permit_digest').primaryKey(),
+    principalId: uuid('principal_id').notNull(),
+    sourcePrincipalId: uuid('source_principal_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    check('assortment_c14_permits_command_digest_ck', sql`${table.commandDigest} ~ '^[0-9a-f]{64}$'`),
+    check('assortment_c14_permits_permit_digest_ck', sql`${table.permitDigest} ~ '^[0-9a-f]{64}$'`),
   ],
 );
 
@@ -96,6 +112,25 @@ const scopedPolicies = (prefix: string, table: Readonly<Record<'tenantId' | 'leg
 const tenantPolicies = (prefix: string, table: Readonly<Record<'tenantId', AnyPgColumn>>) =>
   tenantRlsPolicies(prefix, table.tenantId);
 
+const fixtureRoutineInsert = (
+  prefix: string,
+  table: Readonly<Record<'tenantId' | 'provenanceRef', AnyPgColumn>>,
+  legalEntityColumn?: AnyPgColumn,
+) => {
+  const legalEntityMatches =
+    legalEntityColumn === undefined
+      ? sql`true`
+      : sql`${legalEntityColumn} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+  return pgPolicy(`${prefix}_c14_fixture_insert`, {
+    for: 'insert',
+    to: 'public',
+    withCheck: sql`current_user <> session_user
+      and ${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid
+      and ${table.provenanceRef} ~ '^internal-c14-assortment:[0-9a-f]{64}$'
+      and ${legalEntityMatches}`,
+  });
+};
+
 const trimmed = (name: string, column: AnyPgColumn) =>
   check(name, sql`${column} = btrim(${column}) and length(${column}) between 1 and 1000`);
 
@@ -118,6 +153,7 @@ export const stableRules = assortmentSchema.table.withRLS(
     check('assortment_stable_rules_code_ck', sql`${table.stableCode} ~ '^[a-z][a-z0-9._-]{0,127}$'`),
     trimmed('assortment_stable_rules_provenance_ck', table.provenanceRef),
     ...tenantPolicies('assortment_stable_rules_scope', table),
+    fixtureRoutineInsert('assortment_stable_rules', table),
   ],
 );
 
@@ -162,6 +198,7 @@ export const ruleRevisions = assortmentSchema.table.withRLS(
     check('assortment_rule_revisions_fingerprint_ck', sql`${table.semanticFingerprint} ~ '^[0-9a-f]{64}$'`),
     trimmed('assortment_rule_revisions_provenance_ck', table.provenanceRef),
     ...tenantPolicies('assortment_rule_revisions_scope', table),
+    fixtureRoutineInsert('assortment_rule_revisions', table),
   ],
 );
 
@@ -196,6 +233,7 @@ export const applicabilityBindings = assortmentSchema.table.withRLS(
     ...scopeColumns(),
     ruleRevisionId: uuid('rule_revision_id').notNull(),
     bindingKind: text('binding_kind').notNull(),
+    fixtureScopeVersion: text('fixture_scope_version').$type<'C14_CANONICAL_V1'>(),
     customerGroupResourceId: text('customer_group_resource_id'),
     subjectKind: text('subject_kind'),
     subjectResourceId: text('subject_resource_id'),
@@ -228,7 +266,18 @@ export const applicabilityBindings = assortmentSchema.table.withRLS(
       sql`(${table.bindingKind} = 'SHARED' and ${table.customerGroupResourceId} is null and ${table.subjectKind} is null and ${table.subjectResourceId} is null) or (${table.bindingKind} = 'COMMERCE_CUSTOMER_GROUP' and ${table.customerGroupResourceId} is not null and ${table.subjectKind} is null and ${table.subjectResourceId} is null) or (${table.bindingKind} = 'SUBJECT' and ${table.customerGroupResourceId} is null and ${table.subjectKind} in ('RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY') and ${table.subjectResourceId} is not null)`,
     ),
     trimmed('assortment_bindings_channel_ck', table.channelResourceId),
+    check(
+      'assortment_bindings_fixture_scope_version_ck',
+      sql`${table.fixtureScopeVersion} is null or (
+        ${table.fixtureScopeVersion} = 'C14_CANONICAL_V1'
+        and ${table.bindingKind} = 'COMMERCE_CUSTOMER_GROUP'
+        and ${table.channelResourceId} in ('B2C', 'B2B')
+        and ${table.marketResourceId} is not null
+        and ${table.storefrontResourceId} is not null
+      )`,
+    ),
     ...scopedPolicies('assortment_bindings_scope', table),
+    fixtureRoutineInsert('assortment_bindings', table, table.legalEntityId),
   ],
 );
 
@@ -563,7 +612,6 @@ export const commitmentConfirmations = assortmentSchema.table.withRLS(
 );
 
 const databaseSchema = {
-  gatewayAssertionRedemptions,
   admissionSetEntries,
   admissionSets,
   applicabilityBindingEndFacts,
@@ -574,13 +622,13 @@ const databaseSchema = {
   commitmentConfirmations,
   decisionSetFences,
   decisionEvidence,
+  gatewayAssertionRedemptions,
   ruleRetirementFacts,
   ruleRevisions,
   stableRules,
 } as const;
 
 export const ASSORTMENT_TABLES = [
-  gatewayAssertionRedemptions,
   stableRules,
   ruleRevisions,
   ruleRetirementFacts,

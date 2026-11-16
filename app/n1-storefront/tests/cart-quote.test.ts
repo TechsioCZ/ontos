@@ -39,7 +39,7 @@ describe("cart quote wire and owner verdict", () => {
         const failure = yield* Effect.flip(
           Schema.decodeUnknownEffect(CartQuoteDiagnosticSchema)(untrusted),
         );
-        expect(failure._tag).toBe("SchemaError");
+        expect(Schema.isSchemaError(failure)).toBe(true);
       }
     }),
   );

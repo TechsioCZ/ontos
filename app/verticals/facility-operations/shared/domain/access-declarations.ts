@@ -1,7 +1,7 @@
-// The canonical Authorization v2 declarations of the Facility Operations module (ADR-0030), as plain
-// data: the descriptors carry them, Core decodes them, and the owner asks the one access gate about
-// exactly these keys, so a descriptor and the owner's business check can never name a capability
-// differently.
+// The owner-side copies of the Facility Operations Authorization v2 declarations (ADR-0030). The
+// registered descriptors carry the same values as closed inline literals, because the catalog accepts
+// only literal custody; the owner asks the one access gate about exactly these keys, and
+// facility-grants.test.ts pins both sides equal.
 import type { AccessDeclarationInput, AccessFieldGroupInput } from '@app/core-runtime';
 
 /** The Role-editor placement group of every facility declaration (a suggestion, never a grant). */

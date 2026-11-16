@@ -17,6 +17,8 @@ import { Reactivity } from 'effect/reactivity';
 
 import { preparePartyStructuredNames } from '../../scripts/prepare-party-structured-names.mts';
 import { partyRelations } from '../../src/db/schema.ts';
+import { preparePartyReconciliationNative } from '../support/party-reconciliation-native.fixture.ts';
+import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -31,6 +33,10 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
  * empty-database baseline.
  */
 const fixturePurpose = 'party-verification-removal';
+/**
+ * The pinned folders are the Party chain stage applied from the demo trunk, in its order. The canonical
+ * owner migration then appends main's folders and the merge's convergence leaf, as the next deploy does.
+ */
 const baselineFolders = [
   '20260903174425_yummy_glorian',
   '20260904104109_nebulous_cardiac',
@@ -38,6 +44,7 @@ const baselineFolders = [
   '20261019115249_official_identifier_original_input',
   '20261020063911_party-gateway-scope-rls',
   '20261020113551_legal-entity-scope',
+  '20261027230000_party-migration-equivalence',
 ] as const;
 const structuredNamesFolder = '20261105082358_flashy_gravity';
 const forwardFolders = [
@@ -47,6 +54,8 @@ const forwardFolders = [
   '20261106120000_party-migration-convergence',
   '20261109093237_party-fact-assertion-identities',
 ] as const;
+/** The trunk's later-timestamped twins of two pinned originals; convergence applies one naming lineage. */
+const demoTwinFolders = ['20261024090300_party-gateway-scope-rls', '20261024090400_legal-entity-scope'] as const;
 
 interface ImageRow extends Readonly<Record<string, string>> {
   readonly id: string;
@@ -431,7 +440,28 @@ it.layer(nativeServices, { excludeTestServices: true })('party assertion history
           'objects',
         );
         expect((yield* readIdentities()).some((row) => row.assertionId === registeredStructuredId)).toBe(true);
+
+        // Continue as stage does: the canonical owner migration appends main's Party folders, including
+        // those that sort before the trunk's identity registry, and then the merge's convergence leaf.
+        const convergedIdentities = yield* readIdentities();
+        yield* isolated.publishInitialComposition(yield* partyCompositionSnapshot);
+        yield* preparePartyReconciliationNative(isolated.connections, 'migrate');
+        const pinned: readonly string[] = [...baselineFolders, structuredNamesFolder, ...forwardFolders];
+        const archive = (yield* fs.readDirectory(ownerDirectory))
+          .filter((entry) => /^\d{14}_[a-z0-9_-]+$/u.test(entry))
+          .toSorted();
+        const ledger = (yield* admin.execute<{ readonly name: string }>(
+          sql`select name from drizzle.__drizzle_migrations_party order by id`,
+          'objects',
+        )).map((row) => row.name);
+        expect(ledger.slice(0, pinned.length)).toEqual(pinned);
+        expect(ledger.slice(pinned.length)).toEqual(
+          archive.filter((folder) => !pinned.includes(folder) && !demoTwinFolders.some((twin) => twin === folder)),
+        );
+        expect(ledger.at(-1)).toBe(archive.at(-1));
+        expect(yield* readArchived()).toEqual(archived);
+        expect(yield* readIdentities()).toEqual(convergedIdentities);
       }),
-    180_000,
+    300_000,
   );
 });

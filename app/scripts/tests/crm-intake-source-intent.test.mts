@@ -7,10 +7,10 @@ import { scanAccessCatalogSource, buildAccessCatalogSnapshot } from '../authoriz
 import { policyRoleCellRows } from '../demo/access-policy.mts';
 import {
   CRM_PARTY_INTAKE_WORKLOAD,
-  crmPartyIntakePrincipal,
   partyHumanReaderKeys,
   partyHumanWriterKeys,
   reviewedDemoAssignments,
+  reviewedMachinePrincipals,
   reviewedWorkloadBindings,
 } from '../demo/permissions.mts';
 
@@ -24,16 +24,12 @@ const carrierSources = [
   source('verticals/party-registry/src/api/crm-client-intake-review.read.ts'),
 ];
 
-it('binds the actual reviewed service only to its one owner-declared purpose workload', () => {
-  expect(crmPartyIntakePrincipal.kind).toBe('service');
-  expect(
-    reviewedWorkloadBindings().filter(({ principalId }) => principalId === crmPartyIntakePrincipal.principalId),
-  ).toEqual([{ principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD }]);
-  expect(reviewedDemoAssignments().some(({ principalId }) => principalId === crmPartyIntakePrincipal.principalId)).toBe(
-    false,
-  );
+it('leaves the intake workload to the platform: no hand-made principal, binding or role names it', () => {
+  // The platform registers CRM's internal workload per company at release (release-internal-workloads.mts).
+  expect(reviewedWorkloadBindings().some(({ workloadKey }) => workloadKey === CRM_PARTY_INTAKE_WORKLOAD)).toBe(false);
+  expect(reviewedMachinePrincipals.some(({ displayName }) => displayName.includes('Party Registry'))).toBe(false);
+  expect(reviewedDemoAssignments().some(({ principalId }) => principalId.includes('intake'))).toBe(false);
 });
-
 it('uses actual parsed workload-only CRM carriers and the composed crm delegated Party carrier', () => {
   const snapshot = buildAccessCatalogSnapshot(carrierSources, new Set(['crm']));
   expect(snapshot.invalid).toEqual([]);

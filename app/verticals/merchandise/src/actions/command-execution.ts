@@ -1,10 +1,9 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
+  ActionServiceFactory,
   ActionServicePreflight,
   ActionServicePreparationContext,
-  OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { MerchandiseScopeMismatch, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
@@ -13,7 +12,7 @@ import { AKROS_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/demo-merchandise-search-refresh-requested-v1.ts';
 import { createApplyCommandDemoMerchandiseSearchRefreshRequestedV1OutboxMessage } from './apply-command-demo-merchandise-search-refresh-requested-v1.outbox-message.ts';
 import { merchandiseSearchRefreshTarget } from '../services/merchandise-search-projection.ts';
-import { persistenceService, prepareMerchandiseCommand } from '../services/persistence.service.ts';
+import { persistenceService, prepareCommandTax, prepareMerchandiseCommand } from '../services/persistence.service.ts';
 
 const MODULE = 'demo.merchandise';
 const SEARCH_REFRESH_EVENT = 'demo.merchandise.search-refresh-requested.v1';
@@ -65,31 +64,31 @@ export const prepareApplyCommandServices = Effect.fn('Merchandise.prepareApplyCo
     }
     const preparedAt = yield* DateTime.now;
     yield* prepareMerchandiseCommand(payload.command, context.scope);
-    return Effect.fn('Merchandise.revalidatePreparedGrants')(function* revalidatePreparedGrants(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
-      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-      if (
-        age < 0 ||
-        age >= PREPARED_GRANTS_TTL_MS ||
-        !samePrincipal(scope, context.scope) ||
-        scope.tenantId !== context.scope.tenantId ||
-        scope.legalEntityId !== context.scope.legalEntityId ||
-        scope.correlationId !== context.scope.correlationId ||
-        compositionRevision !== context.compositionRevision
-      ) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Prepared merchandise permissions expired or belong to another operation',
+    const tax = yield* prepareCommandTax(payload.command, context.scope, context.transaction);
+    const factory: ActionServiceFactory<Services, Requirements> = Effect.fn('Merchandise.revalidatePreparedGrants')(
+      function* revalidatePreparedGrants(transaction, scope, compositionRevision) {
+        const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+        if (
+          age < 0 ||
+          age >= PREPARED_GRANTS_TTL_MS ||
+          !samePrincipal(scope, context.scope) ||
+          scope.tenantId !== context.scope.tenantId ||
+          scope.legalEntityId !== context.scope.legalEntityId ||
+          scope.correlationId !== context.scope.correlationId ||
+          compositionRevision !== context.compositionRevision
+        ) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Prepared merchandise permissions expired or belong to another operation',
+          });
+        }
+        return yield* persistenceService(transaction, {
+          prepared: { actionInvocationId: context.actionInvocationId, payload, tax },
+          scope,
         });
-      }
-      return yield* persistenceService(transaction, {
-        prepared: { actionInvocationId: context.actionInvocationId, payload },
-        scope,
-      });
-    });
+      },
+    );
+    return factory;
   },
 ) satisfies ActionServicePreflight<
   MerchandiseCommandPayload,

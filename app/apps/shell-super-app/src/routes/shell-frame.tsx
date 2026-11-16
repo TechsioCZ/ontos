@@ -27,7 +27,7 @@ import { staffRoutePreloads } from './route-preload-scheduler.ts';
 import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
-import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
+import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/browser-api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';

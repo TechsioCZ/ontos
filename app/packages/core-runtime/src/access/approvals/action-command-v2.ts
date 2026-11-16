@@ -261,7 +261,7 @@ const commandFromRegisteredFacts = Effect.fn('ActionCommand.fromRegisteredFactsV
  * Build from genuine registrations and decoded owner input. The caller must already have admitted
  * the exact Action and governing Read against the registered owner and composition catalog.
  */
-export const makeActionCommandV2 = Effect.fn('ActionCommand.makeV2')(function* makeActionCommandV2<
+export const resolveActionCommandV2 = Effect.fn('ActionCommand.makeV2')(function* resolveActionCommandV2<
   Payload extends Schema.ConstraintDecoder<unknown>,
   Result extends Schema.ConstraintDecoder<unknown>,
   DomainError extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
@@ -437,7 +437,7 @@ export const rebindActionCommandV2 = Effect.fn('ActionCommand.rebindV2')(functio
   const decoded = yield* decodeActionPayload(registration.descriptor.payloadSchema, command.payload).pipe(
     Effect.mapError(unavailable),
   );
-  const current = yield* makeActionCommandV2({ payload: decoded, registration, scope });
+  const current = yield* resolveActionCommandV2({ payload: decoded, registration, scope });
   if (computeCanonicalValueHash(current) !== computeCanonicalValueHash(command)) {
     return yield* unavailable();
   }

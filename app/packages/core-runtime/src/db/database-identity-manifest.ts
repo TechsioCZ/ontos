@@ -1,20 +1,4 @@
-import { getOrNull as getOptionOrNull } from 'effect/Option';
-import { getOrThrow as getResultOrThrow, mapError as mapResultError } from 'effect/Result';
-import {
-  Array as ArraySchema,
-  Boolean as BooleanSchema,
-  Literals,
-  OptionFromNullOr,
-  String as StringSchema,
-  Struct,
-  TaggedError,
-  Unknown as UnknownSchema,
-  brand,
-  check,
-  decodeUnknownResult,
-  isPattern,
-  optionalKey,
-} from 'effect/Schema';
+import { Option, Result, Schema } from 'effect';
 
 import { freezeIdentity, SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from './database-identity-data.ts';
 
@@ -324,9 +308,9 @@ export interface DatabaseIdentityEnrollment {
   readonly trustRoutines: readonly TrustRoutine[];
 }
 
-export class DatabaseIdentityEnrollmentError extends TaggedError<DatabaseIdentityEnrollmentError>()(
+export class DatabaseIdentityEnrollmentError extends Schema.TaggedError<DatabaseIdentityEnrollmentError>()(
   'DatabaseIdentityEnrollmentError',
-  { cause: optionalKey(UnknownSchema), reason: StringSchema },
+  { cause: Schema.optionalKey(Schema.Unknown), reason: Schema.String },
 ) {}
 
 /** Routine vocabulary is Core-owned; executor membership comes only from the supplied enrollment. */
@@ -336,8 +320,25 @@ export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity
     identity.scopeAuthority === 'gateway_grant' ? [identity.role] : [],
   );
   const actionRunners = identities.flatMap((identity) => (identity.runsActions ? [identity.role] : []));
+  const sharedRuntime = identities.flatMap((identity) =>
+    identity.id === SHARED_RUNTIME_IDENTITY.id ? [identity.role] : [],
+  );
   return Object.freeze([
     ...[
+      { executableBy: sharedRuntime, signature: 'trust.open_source_execution_fence(uuid,uuid)' },
+      { executableBy: sharedRuntime, signature: 'trust.open_source_execution_fence(uuid,uuid,uuid,text,text)' },
+      { executableBy: [], signature: 'trust.register_source_execution_gated_action(text,text)' },
+      {
+        executableBy: [],
+        signature: 'trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)',
+      },
+      { executableBy: sharedRuntime, signature: 'trust.cancel_source_execution_fence(uuid,uuid)' },
+      { executableBy: actionRunners, signature: 'trust.lock_source_execution_fence(uuid,uuid)' },
+      { executableBy: actionRunners, signature: 'trust.read_source_execution_fence(uuid,uuid)' },
+      {
+        executableBy: [...sharedRuntime, ...requests],
+        signature: 'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
+      },
       {
         executableBy: registrars,
         signature: 'trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)',
@@ -361,38 +362,38 @@ export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity
   ]);
 };
 
-const IdentifierSchema = StringSchema.pipe(check(isPattern(/^[a-z][a-z0-9_]{0,62}$/u)));
-const VariableSchema = StringSchema.pipe(check(isPattern(/^[A-Z][A-Z0-9_]*$/u)));
-const ModuleKeySchema = StringSchema.pipe(
-  check(isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)),
-  brand('DatabaseOwnerModuleKey'),
+const IdentifierSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9_]{0,62}$/u)));
+const VariableSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Z][A-Z0-9_]*$/u)));
+const ModuleKeySchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)),
+  Schema.brand('DatabaseOwnerModuleKey'),
 );
-const AudienceSchema = StringSchema.pipe(check(isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
-const IdentitySchema = Struct({
-  cloudflareHyperdrive: OptionFromNullOr(Struct({ binding: VariableSchema, idVariable: VariableSchema })),
-  gatewayScopeAudiences: ArraySchema(AudienceSchema),
-  handlesBearerAssertions: BooleanSchema,
+const AudienceSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
+const IdentitySchema = Schema.Struct({
+  cloudflareHyperdrive: Schema.OptionFromNullOr(Schema.Struct({ binding: VariableSchema, idVariable: VariableSchema })),
+  gatewayScopeAudiences: Schema.Array(AudienceSchema),
+  handlesBearerAssertions: Schema.Boolean,
   id: IdentifierSchema,
-  ownerModuleKey: OptionFromNullOr(ModuleKeySchema),
-  registersGatewayScopeGrants: BooleanSchema,
+  ownerModuleKey: Schema.OptionFromNullOr(ModuleKeySchema),
+  registersGatewayScopeGrants: Schema.Boolean,
   role: IdentifierSchema,
-  runsActions: BooleanSchema,
-  scopeAuthority: Literals(DATABASE_SCOPE_AUTHORITIES),
-  urlKey: VariableSchema.pipe(brand('DatabaseUrlKey')),
+  runsActions: Schema.Boolean,
+  scopeAuthority: Schema.Literals(DATABASE_SCOPE_AUTHORITIES),
+  urlKey: VariableSchema.pipe(Schema.brand('DatabaseUrlKey')),
 });
-const DescriptorSchema = Struct({
+const DescriptorSchema = Schema.Struct({
   moduleKey: ModuleKeySchema,
   policyPrefix: IdentifierSchema,
   request: IdentitySchema,
-  schemas: ArraySchema(IdentifierSchema),
+  schemas: Schema.Array(IdentifierSchema),
   worker: IdentitySchema,
 });
-const decodeDescriptors = decodeUnknownResult(ArraySchema(DescriptorSchema), { onExcessProperty: 'error' });
+const decodeDescriptors = Schema.decodeUnknownResult(Schema.Array(DescriptorSchema), { onExcessProperty: 'error' });
 const freezeDecodedIdentity = (identity: typeof IdentitySchema.Type): DatabaseIdentity =>
   freezeIdentity({
     ...identity,
-    cloudflareHyperdrive: getOptionOrNull(identity.cloudflareHyperdrive),
-    ownerModuleKey: getOptionOrNull(identity.ownerModuleKey),
+    cloudflareHyperdrive: Option.getOrNull(identity.cloudflareHyperdrive),
+    ownerModuleKey: Option.getOrNull(identity.ownerModuleKey),
   });
 const invalidEnrollment = (reason: string): never => {
   throw new DatabaseIdentityEnrollmentError({ reason });
@@ -409,9 +410,9 @@ const PLATFORM_SCHEMAS = new Set(['auth', 'core', 'drizzle', 'email', 'informati
 export const defineDatabaseIdentityEnrollment = (
   descriptors: readonly DatabaseOwnerIdentityDescriptor[],
 ): DatabaseIdentityEnrollment => {
-  const decoded = getResultOrThrow(
+  const decoded = Result.getOrThrow(
     decodeDescriptors(descriptors).pipe(
-      mapResultError(
+      Result.mapError(
         (cause) =>
           new DatabaseIdentityEnrollmentError({
             cause,

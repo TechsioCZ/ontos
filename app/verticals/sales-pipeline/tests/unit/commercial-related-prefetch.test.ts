@@ -25,10 +25,10 @@ rstest.mock('@app/shared-contracts', () => ({
   ...rstest.requireActual<object>('@app/shared-contracts'),
   documentNavigationModules: () => new Set(['work.tasks', 'demo.merchandise', 'legal.agreements']),
 }));
-rstest.mock('@app/merchandise/clients/records', () => ({ listOrders: mocks.orders }));
+rstest.mock('@app/merchandise/apis/records/client', () => ({ executeRecords: mocks.orders }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: mocks.contracts }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ listTasks: mocks.tasks }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
+rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: mocks.tasks }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.command }));
 rstest.mock('react', () => ({
   ...rstest.requireActual<typeof ReactRuntime>('react'),
@@ -86,7 +86,9 @@ beforeEach(() => {
   opportunityRelatedData.invalidate();
   pipelineRecords.invalidate();
   mocks.contracts.mockReturnValue(Effect.succeed(contracts));
-  mocks.orders.mockReturnValue(Effect.succeed([{ id: 'order-a', number: 'Order A', status: 'NEW', totalMinor: 100 }]));
+  mocks.orders.mockReturnValue(
+    Effect.succeed({ orders: [{ id: 'order-a', number: 'Order A', status: 'NEW', totalMinor: 100 }] }),
+  );
   mocks.tasks.mockReturnValue(
     Effect.succeed({
       items: [
@@ -273,7 +275,9 @@ it.effect('does not invent a successful contract section before the independent 
     expect(mocks.contracts).not.toHaveBeenCalled();
     yield* opportunityRelatedData.read(input);
     expect(mocks.contracts).toHaveBeenCalledTimes(1);
-    expect(mocks.orders.mock.calls[0]?.[1]).toEqual({ limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 });
+    expect(mocks.orders.mock.calls[0]?.[0]).toEqual({
+      view: { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 },
+    });
     expect(mocks.tasks.mock.calls.slice(0, 2).map(([query]) => query)).toEqual([
       { opportunityId: opportunity.id },
       { partyId: opportunity.partyId },

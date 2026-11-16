@@ -12,7 +12,8 @@ import { PersonalAgendaCommandSchema } from '../../shared/actions/personal-agend
 import { executeUpdatePersonalAgenda } from '../api/update-personal-agenda-action-client.ts';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { executeRecords } from '../api/records-consumer.ts';
+import { executeRecords } from '../api/records-client.ts';
+import { RecordsRequestSchema } from '../../shared/apis/records.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { OpsCommand } from '../../shared/agendas.ts';
@@ -35,7 +36,7 @@ export type CommandOutcome =
   | { readonly ok: true; readonly result: ApplyCommandResult }
   | { readonly ok: false; readonly reason: FailureReason };
 
-type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
+type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>> | Schema.SchemaError;
 type CommandEffect = ReturnType<typeof executeApplyCommand> | ReturnType<typeof executeUpdatePersonalAgenda>;
 type CommandFailure = Effect.Error<CommandEffect>;
 
@@ -107,14 +108,14 @@ export const recordsRead = (request: {
 }) =>
   newId.pipe(
     Effect.flatMap((correlation) =>
-      executeRecords(
-        {
-          ...optionalField('agendas', request.agendas === undefined ? undefined : [...request.agendas]),
-          ...optionalField('fileId', request.fileId),
-          ...optionalField('historyFor', request.historyFor),
-        },
-        correlation,
-      ).pipe(Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientAuthFailure })),
+      Schema.decodeEffect(RecordsRequestSchema)({
+        ...optionalField('agendas', request.agendas === undefined ? undefined : [...request.agendas]),
+        ...optionalField('fileId', request.fileId),
+        ...optionalField('historyFor', request.historyFor),
+      }).pipe(
+        Effect.flatMap((payload) => executeRecords(payload, correlation)),
+        Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientAuthFailure }),
+      ),
     ),
   );
 

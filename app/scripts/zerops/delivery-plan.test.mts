@@ -1,14 +1,8 @@
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  DeliveryReceiptSchema,
-  planDelivery,
-  previousVerifiedBase,
-  unitInputDigest,
-  workspaceClosure,
-} from './delivery-plan.mts';
-import type { DeliveryInputs, DeliveryReceipt, GitEntry, WorkspacePackage } from './delivery-plan.mts';
+import { DeliveryReceiptSchema, planDelivery, previousVerifiedBase, workspaceClosure } from './delivery-plan.mts';
+import type { DeliveryInputs, DeliveryReceipt, WorkspacePackage } from './delivery-plan.mts';
 
 const OLD = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
@@ -131,6 +125,8 @@ for (const filepath of [
   'app/zerops-import.yaml',
   'app/scripts/run-zerops-migrator.mjs',
   'app/scripts/zerops/owner-entry.mts',
+  'app/scripts/zerops/hosted-credential-claim.mts',
+  'app/scripts/zerops/hosted-credential-claim-proof.mts',
   '.github/workflows/zerops-stage.yml',
   '.github/actions/install-app/action.yml',
   'app/verticals/crm/shared/api.ts',
@@ -248,37 +244,5 @@ it.effect('refuses unresolved dependency graphs instead of inventing unchanged i
   Effect.gen(function* unresolvedWorkspaceDependency() {
     const exit = yield* workspaceClosure('app/missing', packages).pipe(Effect.exit);
     expect(Exit.isFailure(exit)).toBe(true);
-  }),
-);
-
-const origins = ['https://shell.example', 'https://storefront.example', 'https://shop.example'];
-const entry = (filepath: string, identity = OLD): GitEntry => ({ identity, path: filepath });
-const digest = (entries: readonly GitEntry[]) => unitInputDigest(CRM_DIRECTORY, packages, units, entries, origins);
-it.effect('keeps a unit cache only when its real committed input closure is unchanged', () =>
-  Effect.gen(function* cacheDependencyClosure() {
-    const first = entry(CRM_ENTRY);
-    const second = entry('app/verticals/merchandise/api/index.ts');
-    const baseline = [first, second];
-    const initial = yield* digest(baseline);
-    expect(yield* digest([first, entry(second.path, HEAD)])).toBe(initial);
-    expect(yield* digest([entry(first.path, HEAD), second])).not.toBe(initial);
-    expect(yield* digest([...baseline, entry(STOREFRONT_PAGE)])).toBe(initial);
-    expect(yield* digest([...baseline, entry('app/n1-storefront/src/app/page.tsx')])).toBe(initial);
-    expect(yield* digest([...baseline, entry('docs/README.md')])).toBe(initial);
-    for (const filepath of [
-      'app/packages/shared-contracts/src/api.ts',
-      'app/package.json',
-      'app/pnpm-lock.yaml',
-      'app/.mise.toml',
-      'app/zerops-import.yaml',
-      'app/scripts/run-zerops-migrator.mjs',
-      'app/topology/application-release-intent.json',
-      'app/unknown-input.ts',
-      'app/verticals/merchandise/shared/api.ts',
-    ]) {
-      expect(yield* digest([...baseline, entry(filepath)])).not.toBe(initial);
-    }
-    expect(yield* digest([])).not.toBe(initial);
-    expect(yield* unitInputDigest(CRM_DIRECTORY, packages, units, baseline, [...origins, 'changed'])).not.toBe(initial);
   }),
 );

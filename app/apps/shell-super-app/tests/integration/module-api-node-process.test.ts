@@ -237,7 +237,7 @@ const createFixture = Effect.fn('NativeModuleTransportTest.createFixture')(funct
   return { authorize, layer, owner, request, server, snapshot };
 });
 
-it.live('forwards sanitized owner timings on the native held-assertion module API path', () =>
+it.live('relays no owner timings on the native held-assertion module API path', () =>
   Effect.gen(function* heldAssertionOwnerTimings() {
     const owner = yield* startShellServer(() =>
       Promise.resolve(
@@ -295,7 +295,7 @@ it.live('forwards sanitized owner timings on the native held-assertion module AP
         },
       ),
     );
-    expect(response.headers['server-timing']).toBe('read-owner;dur=1.25, read-encode;dur=2');
+    expect(response.headers['server-timing']).toBeUndefined();
     expect(response.status).toBe(206);
     expect(response.headers['content-length']).toBe('4');
     expect(response.headers['content-type']).toBe('application/octet-stream');

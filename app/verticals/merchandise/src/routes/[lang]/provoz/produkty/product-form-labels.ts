@@ -23,6 +23,21 @@ export const useCommandFailure = () => {
       onReload();
       return label('messages.conflict');
     }
+    if (reason === 'tier-base-price-required') {
+      return label('messages.tierBasePriceRequired');
+    }
+    if (reason === 'category-slug-taken') {
+      return label('messages.categorySlugTaken');
+    }
+    if (reason === 'variant-sku-required') {
+      return label('messages.variantSkuRequired');
+    }
+    if (reason === 'variant-bulk-price-unsupported') {
+      return label('messages.variantBulkPriceUnsupported');
+    }
+    if (reason === 'stock-reconciliation-required') {
+      return label('messages.stockReconciliationRequired');
+    }
     if (reason === 'rejected') {
       return label('messages.rejected');
     }

@@ -85,10 +85,12 @@ export const setCartRankingActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetCartRankingActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetCartRankingActionForbiddenProblem'> =>
     SetCartRankingActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -197,7 +199,7 @@ const mapCoreProblem = (error: ActionCoreError): SetCartRankingActionProblem =>
       ActionInvocationStateError: (failure) => setCartRankingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setCartRankingActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setCartRankingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setCartRankingActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => setCartRankingActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setCartRankingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setCartRankingActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setCartRankingActionProblem.conflict(failure.code),

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NodeCrypto } from '@effect/platform-node';
 import { Crypto, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -14,6 +15,7 @@ import {
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 
+import type { RecordPaymentLocalEvidencePayloadSchema } from '../../shared/actions/record-payment-local-evidence.ts';
 import {
   computePaymentFunds,
   decidePrepaidCoverage,
@@ -29,9 +31,13 @@ import {
 } from '../../shared/domain/payment-refund-basis.ts';
 import type { PaymentRefundBasis } from '../../shared/domain/payment-refund-basis.ts';
 import { OutboxPayloadSchema as OperationRequestedPayloadSchema } from '../../shared/outbox/payment-core-operation-requested-v1.ts';
+import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
+import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
 import { requestPaymentRefundAction } from '../../src/actions/request-payment-refund.action.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { ManualRefundEvidencePort } from '../../src/ports/manual-refund-evidence-port.ts';
+import type { PaymentManualRefundEvidence } from '../../src/ports/manual-refund-evidence-port.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { COMPOSITION_REVISION, failureCodeOf, paymentTestRelations } from './database-fixture.ts';
 import {
@@ -44,7 +50,7 @@ import {
   requestCancellation,
   requestRefund,
 } from '../support/refund-action-driver.ts';
-import type { RefundCaseOptions } from '../support/refund-action-driver.ts';
+import type { RefundCase, RefundCaseOptions } from '../support/refund-action-driver.ts';
 import {
   LATER_COMPOSITION_REVISION,
   loadPaymentAggregate,
@@ -88,8 +94,14 @@ const commitmentAnswer = (answer: 'OUTCOME_UNKNOWN' | 'ATTEMPT_OPEN' | 'TIMEOUT'
 });
 const itemsOf = (basis: PaymentRefundBasis) => (Schema.is(PaymentRefundableItemsBasisSchema)(basis) ? basis.items : []);
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 /** The real Core Action runtime over the worktree database with the registered Payment owner. */
 const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
@@ -107,6 +119,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -188,7 +201,6 @@ it.live('#1150 Attempt to refund half of one item: 250 CZK of a 500 CZK item is 
 it.live('#1150 Two concurrent refunds overlap: a reserved item conflicts and no new key or basis evades it', () =>
   native(
     Effect.gen(function* overlappingRefundsConflict() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { commitment: closedCommitment, items: threeItems };
       const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
@@ -229,7 +241,6 @@ it.live('#1150 Two concurrent refunds overlap: a reserved item conflicts and no 
 it.live('#1150 Refund response is lost: B stays reserved and the same REFUND keeps its original binding', () =>
   native(
     Effect.gen(function* lostRefundResponse() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { items: threeItems };
       const payload = itemsRefund(refundCase, 'refund-b', [B]);
@@ -265,6 +276,11 @@ it.live('#1150 Refund response is lost: B stays reserved and the same REFUND kee
         first.operation.operationId,
       );
       expect(messages).toHaveLength(1);
+      // #1158: the gateway REFUND dispatch is completion-bound executor work of the admitting revision.
+      expect(messages[0]).toMatchObject({
+        completionConsumerModuleKey: 'payment.core',
+        completionOriginalRevision: COMPOSITION_REVISION,
+      });
     }),
   ),
 );
@@ -285,6 +301,12 @@ it.live(
         });
         expect(cancellation.operation.kind).toBe('CANCEL_OR_VOID');
         expect(cancellation.operation.outcome).toBe('PENDING');
+        // #1158: stopping the gateway collection is completion-bound executor work of the admitting revision.
+        expect(
+          yield* operationRequestedMessages(refundCase.native, refundCase.scope, cancellation.operation.operationId),
+        ).toMatchObject([
+          { completionConsumerModuleKey: 'payment.core', completionOriginalRevision: COMPOSITION_REVISION },
+        ]);
         expect(yield* failureCodeOf(requestRefund(refundCase, itemsRefund(refundCase, 'too-early', [B]), owners))).toBe(
           'payment_no_established_collection',
         );
@@ -490,7 +512,6 @@ it.live('#1150 A prior refund is not deducted twice: 1000 collected, 600 confirm
 it.live('#1150 Pending return cannot be carved out to create partial compensation', () =>
   native(
     Effect.gen(function* noCarvedOutCompensation() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { commitment: closedCommitment, items: threeItems };
       const uncertain = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
@@ -596,6 +617,8 @@ it.live(
         );
         expect(messages).toHaveLength(1);
         expect(messages[0]?.producerModuleKey).toBe('payment.core');
+        // A non-gateway route makes no provider call: the request waits for owner evidence, untracked.
+        expect(messages[0]).toMatchObject({ completionConsumerModuleKey: null, completionOriginalRevision: null });
         // The executor learns its route from the durable request; the operation keeps it immutably.
         const [requested] = yield* Schema.decodeUnknownEffect(Schema.Array(OperationRequestedPayloadSchema))(
           messages.map((message) => message.payloadJson),
@@ -748,6 +771,190 @@ it.live('#1150 mixed or untrusted payload shapes never reach the Payment handler
       );
       expect(refundOperations(aggregate)).toHaveLength(0);
       expect(Option.isNone(Option.fromNullishOr(aggregate.activeClaims[0]))).toBe(true);
+    }),
+  ),
+);
+
+const MANUAL_REFUND_SOURCE = {
+  accountRef: 'treasury-manual-1',
+  environment: 'production',
+  sourceKind: 'MANUAL_EXTERNAL_REFUND',
+  sourceSystem: 'treasury-desk',
+} as const;
+type ManualStatement = typeof RecordPaymentLocalEvidencePayloadSchema.Encoded;
+
+const configureManualRefund = (refundCase: RefundCase, status: 'ACTIVE' | 'REVOKED', accountRef: string) =>
+  refundCase.native.actionRuntime.runAction({
+    payload: {
+      factFamily: 'REFUND_EXECUTION',
+      method: 'PAY_ON_PICKUP_OR_ON_SITE',
+      reason: 'Treasury is the governed manual refund executor',
+      refundRoute: true,
+      source: { ...MANUAL_REFUND_SOURCE, accountRef },
+      status,
+      submitterPrincipalIds: [refundCase.scope.principalId],
+    },
+    principal: refundCase.principal,
+    registration: configurePaymentSourceAuthorityAction,
+    transport: { correlationId: 'configure-manual-refund', idempotencyKey: randomUUID() },
+  });
+
+const requestManualRefund = Effect.fn('RefundEvidenceTest.requestManualRefund')(function* requestManualRefund(
+  refundCase: RefundCase,
+  item: typeof A,
+) {
+  const requested = yield* requestRefund(refundCase, itemsRefund(refundCase, `refund-${item.itemRef}`, [item]), {
+    items: threeItems,
+  });
+  const [message] = yield* operationRequestedMessages(
+    refundCase.native,
+    refundCase.scope,
+    requested.operation.operationId,
+  );
+  const operation = yield* Schema.decodeUnknownEffect(OperationRequestedPayloadSchema)(message?.payloadJson);
+  const { legalEntityId, tenantId } = refundCase.scope;
+  const { amount, materialHash, operationId, paymentId, refundExecutionRoute, targetOperationId } = operation;
+  if (refundExecutionRoute === undefined || targetOperationId === undefined) {
+    return yield* Effect.die('Expected the admitted manual refund and its original collection');
+  }
+  const scope = { legalEntityId, tenantId };
+  const statement = (factKind: ManualStatement['factKind']): ManualStatement => ({
+    amount,
+    economicEffectKey: `treasury-effect-${item.itemRef}`,
+    evidenceRef: `treasury-refund-${item.itemRef}-${factKind}`,
+    factFamily: 'REFUND_EXECUTION',
+    factKind,
+    operationId,
+    paymentId,
+    reason: 'Treasury reported the outcome for the exact refund',
+    source: MANUAL_REFUND_SOURCE,
+    sourceOccurrenceId: `treasury-occurrence-${item.itemRef}-${factKind}`,
+    sourceRevision: 1,
+  });
+  const evidence = (factKind: PaymentManualRefundEvidence['claim']['factKind']): PaymentManualRefundEvidence => {
+    const { economicEffectKey, evidenceRef, sourceOccurrenceId, sourceRevision } = statement(factKind);
+    return {
+      claim: { amount, economicEffectKey, evidenceRef, factKind, sourceOccurrenceId, sourceRevision },
+      destinationEvidenceRef: `treasury-verified-destination-${item.itemRef}`,
+      materialHash,
+      operationId,
+      paymentId,
+      refundExecutionRoute,
+      scope,
+      targetOperationId,
+    };
+  };
+  return { evidence, operationId, statement };
+});
+
+const recordManualRefund = (refundCase: RefundCase, payload: ManualStatement) =>
+  refundCase.native.actionRuntime.runAction({
+    payload,
+    principal: refundCase.principal,
+    registration: recordPaymentLocalEvidenceAction,
+    transport: { correlationId: 'record-manual-refund', idempotencyKey: randomUUID() },
+  });
+
+const recordWithManualExecutor = (
+  refundCase: RefundCase,
+  payload: ManualStatement,
+  evidence: PaymentManualRefundEvidence,
+) =>
+  recordManualRefund(refundCase, payload).pipe(
+    Effect.provideService(ManualRefundEvidencePort, { verify: () => Effect.succeed(evidence) }),
+  );
+
+it.live('#1152 Manual refund outcomes require the original executor’s verified destination and effect', () =>
+  native(
+    Effect.gen(function* qualifiedManualRefund() {
+      const refundCase = yield* newRefundCase({
+        amountMinor: 100_000,
+        binding: {
+          _tag: 'PICKUP_CAPABILITY',
+          capabilityEvidenceRef: 'pickup-authority-1',
+          pickupCapabilityRef: 'pickup-prague-1',
+        },
+        collected: true,
+        gatewayRoute: false,
+        method: 'PAY_ON_PICKUP_OR_ON_SITE',
+      });
+      const active = yield* configureManualRefund(refundCase, 'ACTIVE', MANUAL_REFUND_SOURCE.accountRef);
+      const first = yield* requestManualRefund(refundCase, A);
+      const second = yield* requestManualRefund(refundCase, B);
+      yield* configureManualRefund(refundCase, 'ACTIVE', 'treasury-other-account');
+      const pending = yield* recordManualRefund(refundCase, first.statement('REFUND_PENDING'));
+      expect(pending.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+
+      const confirmation = first.statement('REFUND_CONFIRMED');
+      const proof = first.evidence('REFUND_CONFIRMED');
+      const wrongOperation = { ...confirmation, operationId: second.operationId };
+      const wrongExecutor = {
+        ...confirmation,
+        source: { ...MANUAL_REFUND_SOURCE, accountRef: 'treasury-other-account' },
+      };
+      expect(yield* failureCodeOf(recordManualRefund(refundCase, confirmation))).toBe('payment_unavailable');
+      expect(
+        yield* Effect.forEach(
+          [
+            recordWithManualExecutor(refundCase, wrongOperation, proof),
+            recordWithManualExecutor(refundCase, wrongExecutor, proof),
+            recordWithManualExecutor(refundCase, confirmation, { ...proof, destinationEvidenceRef: '' }),
+            recordWithManualExecutor(refundCase, confirmation, { ...proof, materialHash: 'a'.repeat(64) }),
+            recordWithManualExecutor(refundCase, confirmation, {
+              ...proof,
+              scope: { ...proof.scope, legalEntityId: randomUUID() },
+            }),
+            recordWithManualExecutor(refundCase, confirmation, first.evidence('REFUND_NOT_EFFECTED')),
+          ],
+          failureCodeOf,
+        ),
+      ).toEqual(Array.from({ length: 6 }, () => 'payment_source_authority_forbidden'));
+
+      const unknown = yield* recordWithManualExecutor(
+        refundCase,
+        first.statement('REFUND_INDETERMINATE'),
+        first.evidence('REFUND_INDETERMINATE'),
+      );
+      expect(unknown.outcomeChange?.to).toBe('INDETERMINATE');
+      const confirmed = yield* recordWithManualExecutor(refundCase, confirmation, proof);
+      expect(confirmed).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        outcomeChange: { from: 'INDETERMINATE', operationId: first.operationId, to: 'EFFECT_CONFIRMED' },
+        sourceAuthorityId: active.sourceAuthorityId,
+      });
+      const duplicate = yield* recordManualRefund(refundCase, confirmation);
+      expect(duplicate).toMatchObject({ acceptanceOutcome: 'DUPLICATE', observationId: confirmed.observationId });
+      const [retained] = yield* refundCase.native.admin.unsafe<{ evidence_ref: string }>(
+        'select evidence_ref from payment.observations where observation_id = $1',
+        [confirmed.observationId],
+      );
+      expect(retained?.evidence_ref).toBe(proof.claim.evidenceRef);
+      const notEffected = yield* recordWithManualExecutor(
+        refundCase,
+        second.statement('REFUND_NOT_EFFECTED'),
+        second.evidence('REFUND_NOT_EFFECTED'),
+      );
+      expect(notEffected.outcomeChange?.to).toBe('NOT_EFFECTED_CONFIRMED');
+
+      yield* configureManualRefund(refundCase, 'REVOKED', MANUAL_REFUND_SOURCE.accountRef);
+      expect(
+        yield* failureCodeOf(
+          recordWithManualExecutor(
+            refundCase,
+            second.statement('REFUND_CONFIRMED'),
+            second.evidence('REFUND_CONFIRMED'),
+          ),
+        ),
+      ).toBe('payment_source_authority_forbidden');
+      const aggregate = yield* loadPaymentAggregate(
+        refundCase.native.database,
+        refundCase.scope,
+        refundCase.payment.paymentId,
+      );
+      expect(refundOperations(aggregate).map(({ operationId, outcome }) => [operationId, outcome])).toEqual([
+        [first.operationId, 'EFFECT_CONFIRMED'],
+        [second.operationId, 'NOT_EFFECTED_CONFIRMED'],
+      ]);
     }),
   ),
 );

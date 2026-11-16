@@ -2,7 +2,7 @@ import { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Context, DateTime, Duration, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
+import { DateTime, Duration, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
 import type { ReadCoreError } from '@app/core-runtime';
 import type { HttpServerRequest } from 'effect/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
@@ -42,7 +42,7 @@ import { failureLogSummary } from '../problems-support.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
-import type { CommercePortalAuth } from '../provider/auth.ts';
+import { CommercePortalAuthService } from './auth-service.ts';
 import { CommercePortalAuthConfig } from '../provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../provider/config.ts';
 import type { CommercePortalAuthConfigValue } from '../provider/config.ts';
@@ -82,18 +82,6 @@ const httpBridgeTimeoutPolicy = Effect.timeoutOrElse({
       }),
     ),
 });
-
-/**
- * Better Auth is a foreign HTTP provider; its Promise surface is supplied by the root layer. Only
- * the typed API is exposed: the raw `auth.handler` proxy is no longer part of this transport.
- */
-interface CommercePortalAuthHttpPort {
-  readonly api: Pick<CommercePortalAuth['api'], 'changePassword' | 'getSession' | 'signOut'>;
-}
-
-export class CommercePortalAuthService extends Context.Service<CommercePortalAuthService, CommercePortalAuthHttpPort>()(
-  '@app/commerce-customer-context/api/portal-auth/session/http/CommercePortalAuthService',
-) {}
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-session-';
 const problemStatus = {

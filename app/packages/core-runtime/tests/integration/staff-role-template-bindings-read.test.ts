@@ -3,6 +3,8 @@ import { eq } from 'drizzle-orm';
 import { Crypto, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import {
@@ -115,7 +117,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('native staff role-tem
         openModuleEntrypointGateway,
         testOperationalScopeResolver,
         {
-          legalEntities: () => Effect.succeed([]),
+          // The caller is a member of the company it selected (the read's company scope); nothing else is asked.
+          legalEntities: ({ legalEntityIds }) =>
+            Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
           modules: () => Effect.succeed([]),
           resources: () => Effect.succeed([]),
           tenants: () => Effect.succeed([{ decision: 'allowed' as const, key: tenantId }]),
@@ -134,6 +138,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('native staff role-tem
             Effect.provideService(StaffRoleTemplateAccountProvider, {
               lookup: () => Effect.succeed(accounts),
             }),
+            // The read's own question: the caller administers the company's agents.
+            Effect.provideService(
+              AccessDecisionGate,
+              makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+            ),
           );
       expect(yield* read(legalEntityId)).toEqual({ bindings: [{ email, principalId }] });
       expect(yield* read(otherCompanyId)).toEqual({ bindings: [] });

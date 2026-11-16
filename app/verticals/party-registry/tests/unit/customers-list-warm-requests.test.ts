@@ -128,6 +128,26 @@ it.effect('opening a 30-row customers page warms the details of its first rows o
   }),
 );
 
+it.effect('an opened customers page warms its rows only once the browser is idle', () =>
+  Effect.gen(function* warmWhenIdle() {
+    const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+    yield* idle(0);
+    expect(reads()).toBe(0);
+    yield* idle(1);
+    expect(reads()).toBe(LIST_WARM_ROWS * DETAIL_READS);
+    unmount();
+  }),
+);
+
+it.effect('a customers page left before the browser is idle sends no detail read', () =>
+  Effect.gen(function* leaveBeforeIdle() {
+    const { unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
+    unmount();
+    yield* idle(5);
+    expect(reads()).toBe(0);
+  }),
+);
+
 it.effect('pointing at a row further down reads that customer once', () =>
   Effect.gen(function* pointAtColdRow() {
     const last = rows.at(-1);

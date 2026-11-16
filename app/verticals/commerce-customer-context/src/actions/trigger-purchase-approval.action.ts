@@ -8,10 +8,10 @@ import type {
 } from '../services/purchase-approval-trigger-evidence-source.ts';
 import type {
   ActionHandlerContext,
+  ActionServiceFactory,
   ActionServicePreparationContext,
   OperationalScope,
   OwnerAccessFacts,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
@@ -308,11 +308,9 @@ const prepareTriggerServices = Effect.fn('TriggerPurchaseApproval.prepareService
     ],
     { concurrency: 2 },
   ).pipe(Effect.mapError(preparedTriggerUnavailable));
-  return Effect.fn('TriggerPurchaseApproval.commitServices')(function* commitServices(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    revision: string,
-  ) {
+  const factory: ActionServiceFactory<TriggerPurchaseApprovalServices> = Effect.fn(
+    'TriggerPurchaseApproval.commitServices',
+  )(function* commitServices(transaction, scope, revision) {
     const [prepared, submission] = yield* Effect.all(
       [prepareCurrentness(transaction, scope, revision), purchasingApprovalSubmissionForScope(transaction, scope)],
       { concurrency: 1 },
@@ -353,6 +351,7 @@ const prepareTriggerServices = Effect.fn('TriggerPurchaseApproval.prepareService
       },
     } satisfies TriggerPurchaseApprovalServices;
   });
+  return factory;
 });
 
 export const triggerPurchaseApprovalAction = defineAction(

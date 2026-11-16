@@ -79,6 +79,8 @@ export const financeBillingMcpContribution = defineOntosMcpContribution({
     // Exact paginated lease-detail preload, not an independently advertised agent operation.
     'lease-invoices': OntosMcpHidden,
     records: { title: { cs: 'Přehled financí a fakturace', en: 'Finance and billing overview' } },
+    // The invoice form's VAT choices for an issue date; agents read VAT rates and the regime from Tax's own reads.
+    'vat-choices': OntosMcpHidden,
   },
   revision: { read: 'records' },
 });

@@ -27,8 +27,8 @@ const routines = [
 
 it('declares an exact immutable tenant-only owner routine allowlist', () => {
   expect(routines.map(({ name }) => name)).toEqual([
-    'create_price_group_with_complete_schedule',
-    'create_definition_revision_with_continuity',
+    'create_price_group_with_source_correlation',
+    'create_definition_revision_with_source_correlation',
     'retire_price_group',
     'read_current_definition_with_retirement',
     'read_definition_revision_with_retirement',

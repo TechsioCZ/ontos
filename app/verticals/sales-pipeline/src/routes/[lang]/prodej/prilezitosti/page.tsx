@@ -9,7 +9,7 @@ import {
 } from '@app/admin-ui';
 import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
-import { useTagsFor } from '@app/tagging/components/tag-controls';
+import { useTagsFor } from './opportunity-tags.ts';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';

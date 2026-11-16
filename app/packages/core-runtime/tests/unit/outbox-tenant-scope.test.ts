@@ -35,6 +35,8 @@ it.effect('runs exactly once in the attested tenant-only scope', () =>
         calls += 1;
         return observe({
           completionPublisher: { publish: () => Effect.die('not used') },
+          readOriginalActionInvocation: () => Effect.die('not used'),
+          readWorkloadPrincipalEligibility: () => Effect.die('not used'),
           routineInvoker: unavailableInvoker,
           tenantId: workerContext.tenantId,
         });
@@ -44,7 +46,13 @@ it.effect('runs exactly once in the attested tenant-only scope', () =>
     yield* service.run(attestOutboxWorkerHandlerContext(context), (scope) =>
       Effect.sync(() => {
         expect(scope.tenantId).toBe(tenantId);
-        expect(Object.keys(scope).toSorted()).toEqual(['completionPublisher', 'routineInvoker', 'tenantId']);
+        expect(Object.keys(scope).toSorted()).toEqual([
+          'completionPublisher',
+          'readOriginalActionInvocation',
+          'readWorkloadPrincipalEligibility',
+          'routineInvoker',
+          'tenantId',
+        ]);
       }),
     );
     expect(calls).toBe(1);

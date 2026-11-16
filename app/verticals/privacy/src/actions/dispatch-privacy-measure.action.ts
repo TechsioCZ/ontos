@@ -44,6 +44,7 @@ const handleDispatchPrivacyMeasure = Effect.fn('DispatchPrivacyMeasureAction.han
       scope.legalEntityId,
       context.actionInvocationId,
       payload.handoff,
+      context.compositionRevision,
     );
     const result = admission.handoff;
     if (admission.created) {

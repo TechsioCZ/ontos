@@ -66,6 +66,16 @@ export const TaxGovernanceStaleBasis = Schema.TaggedError<typeof StaleBasisSchem
   StaleBasisFields,
 );
 
+const SymmyFixtureAccessDeniedFields = { code: Schema.Literal('tax_symmy_fixture_access_denied'), reason };
+const SymmyFixtureAccessDeniedSchema = Schema.TaggedStruct(
+  'TaxSymmyFixtureAccessDenied',
+  SymmyFixtureAccessDeniedFields,
+);
+export const TaxSymmyFixtureAccessDenied = Schema.TaggedError<typeof SymmyFixtureAccessDeniedSchema.Type>()(
+  'TaxSymmyFixtureAccessDenied',
+  SymmyFixtureAccessDeniedFields,
+);
+
 /**
  * Safe business audit evidence; never credentials, tokens or raw provider payload (#950 F49-F54). It names the
  * business reason, the expected-current evidence the Action was guarded by, and the resulting revision or lifecycle

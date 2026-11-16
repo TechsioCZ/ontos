@@ -7,7 +7,7 @@ import {
   ShellAuthenticationApi,
   TenantIdSchema,
   shellAuthenticationApiContract,
-} from '../../apps/shell-super-app/shared/api.ts';
+} from '../../apps/shell-super-app/shared/browser-api.ts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import { DemoSeedError } from './seed-client.mts';
 

@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { compileShellSearchPresentation } from '../../api/modules/shell-search-presentation.ts';
 import { makeShellSearch, ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
-import { ShellSearchPresentationInventorySchema, ShellSearchResponseSchema } from '../../shared/api.ts';
+import { ShellSearchPresentationInventorySchema, ShellSearchResponseSchema } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const ownerModuleId = 'sample.owner';

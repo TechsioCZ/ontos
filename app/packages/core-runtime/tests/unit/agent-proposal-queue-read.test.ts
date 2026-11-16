@@ -7,6 +7,7 @@ import { getTableColumns } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import { AgentProposalCommandPayloadSchema } from '../../src/auth/agent-proposal-command-contract.ts';
@@ -14,6 +15,7 @@ import type {
   AgentProposalCommandPayload,
   AgentProposalCommandResult,
 } from '../../src/auth/agent-proposal-command-contract.ts';
+import type { AgentProposalQueueInput } from '../../src/auth/agent-proposal-queue-contract.ts';
 import {
   AgentProposalQueueInputSchema,
   AgentProposalQueueModuleReview,
@@ -24,9 +26,22 @@ import { agentProposalQueueUnavailable } from '../../src/auth/agent-proposal-que
 import { agentProposals } from '../../src/db/schema.ts';
 import { canonicalizeApplicationComposition } from '../../src/modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
+import {
+  TenantModuleStateRecordSchema,
+  TenantModuleStateService,
+} from '../../src/modules/tenant-module-state-service.ts';
+import type {
+  TenantModuleState,
+  TenantModuleStateServiceContract,
+} from '../../src/modules/tenant-module-state-service.ts';
+import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-read-unavailable-error.ts';
 import { ActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { ActionAuthorityService } from '../../src/permissions/action-authority.ts';
 import { ContextAccess } from '../../src/permissions/context-access.ts';
+import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
+import type { GateInput } from '../../src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../src/access/enforcement/testing.ts';
+import { testAccessSpecOf } from '../../src/testing/access-gate.ts';
 import { ReadHandlerUnavailable, ReadInputValidationError, ReadPermissionDenied } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 import { makeOutboxWorkerComposition, outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
@@ -93,10 +108,43 @@ const driverRow = (row: typeof agentProposals.$inferSelect = rawProposal) => {
   );
 };
 
+/** One protected v2 Action of `moduleId`, by slug. */
+const ownAction = (moduleId: string, slug: string) => ({
+  accessDeclaration: {
+    key: `${moduleId}.task.${slug}`,
+    kind: 'action' as const,
+    modes: ['run' as const],
+    placement: { group: 'tasks', level: 'basic' as const },
+    risk: 'routine' as const,
+    selectors: [],
+  },
+  actionKey: `${moduleId}.${slug}`,
+  auditProfile: 'standard' as const,
+  entrypoint: {
+    access: 'write' as const,
+    authorization: { kind: 'protected' as const },
+    entrypointKey: `${moduleId}.${slug}`,
+    moduleKey: moduleId,
+    role: 'action' as const,
+    scope: 'tenant' as const,
+  },
+  idempotency: 'required' as const,
+  legalEntityScope: 'required' as const,
+  owningModuleId: moduleId,
+  schemaVersion: '1' as const,
+});
+
 const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition')(function* executableComposition(
   privateRecords: boolean | 'no-review' = 'no-review',
+  /** More Actions of the same module, by slug, besides `update`. */
+  additionalSlugs: readonly string[] = [],
+  /** A second module with one `update` Action of its own and no approval review. */
+  second?: { readonly appId: string; readonly moduleId: string },
 ) {
-  const base = makeOutboxWorkerComposition([{ appId: 'task-service', moduleId: 'work.tasks' }]);
+  const base = makeOutboxWorkerComposition([
+    { appId: 'task-service', moduleId: 'work.tasks' },
+    ...(second === undefined ? [] : [second]),
+  ]);
   const module = base.modules.at(0);
   if (module === undefined) {
     throw new TypeError('Expected fixture module');
@@ -132,6 +180,7 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
         owningModuleId: 'work.tasks',
         schemaVersion: '1',
       },
+      ...additionalSlugs.map((slug) => ownAction('work.tasks', slug)),
     ],
   };
   if (privateRecords !== 'no-review') {
@@ -144,22 +193,33 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
       toolCatalog: { path: '/.well-known/ontos-module-mcp-tools.json', sha256: 'a'.repeat(64), toolCount: 0 },
     };
   }
-  const contractDocument = yield* Schema.encodeEffect(codec)(
-    yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
-      ...contract,
-      manifest: { ...contract.manifest, publicSurface },
-    }),
-  );
-  const sha256 = Hex.encode(sha256Hash(utf8ToBytes(contractDocument)));
+  const withSurface = Effect.fn('AgentProposalQueueReadTest.withSurface')(function* withSurface(
+    target: (typeof base.modules)[number],
+    surface: typeof publicSurface | { readonly actions: readonly ReturnType<typeof ownAction>[] },
+  ) {
+    const own = yield* Schema.decodeEffect(codec)(target.contractDocument);
+    const contractDocument = yield* Schema.encodeEffect(codec)(
+      yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+        ...own,
+        manifest: { ...own.manifest, publicSurface: { ...own.manifest.publicSurface, ...surface } },
+      }),
+    );
+    const sha256 = Hex.encode(sha256Hash(utf8ToBytes(contractDocument)));
+    return {
+      ...target,
+      contract: { ...target.contract, sha256 },
+      contractDocument,
+      publicContract: { ...target.publicContract, sha256 },
+    };
+  });
+  const secondModule = base.modules.at(1);
   const next = {
     ...base,
     modules: [
-      {
-        ...module,
-        contract: { ...module.contract, sha256 },
-        contractDocument,
-        publicContract: { ...module.publicContract, sha256 },
-      },
+      yield* withSurface(module, publicSurface),
+      ...(second === undefined || secondModule === undefined
+        ? []
+        : [yield* withSurface(secondModule, { actions: [ownAction(second.moduleId, 'update')] })]),
     ],
   };
   return {
@@ -213,6 +273,212 @@ const authority = (execute: 'allowed' | 'denied' = 'allowed'): ActionAuthoritySe
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
 
+/** Execution rights for exactly `executable`, recording the Action keys of every question in `calls`. */
+const recordingAuthority = (executable: ReadonlySet<string>, calls: string[][]): ActionAuthorityService => ({
+  checkActionAuthorities: (query) =>
+    Effect.sync(() => {
+      calls.push([...query.actionKeys]);
+      return query.actionKeys.map((actionKey) => ({
+        actionKey,
+        execute: executable.has(actionKey) ? ('allowed' as const) : ('denied' as const),
+        propose: 'allowed' as const,
+      }));
+    }),
+  checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
+});
+
+/** Nine more work-tasks Actions besides `update`: the ninth (`s9`) lies beyond `prepare`'s first round of eight. */
+const LATE_SLUGS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9'];
+
+/** The `index`-th row of the table's batch, naming the work-tasks Action `slug`. */
+const tableRow = (slug: string, index: number) =>
+  driverRow({
+    ...rawProposal,
+    actionSlug: slug,
+    position: index,
+    proposalId: `60000000-0000-4000-8000-00000000000${index + 1}`,
+  });
+
+/** Owner SQL of an exact read over `rows`: the admitted person, no retained command (not started), then the rows. */
+const tableQueries = (rows: readonly ReturnType<typeof driverRow>[]) => (query: { readonly sql: string }) => {
+  if (query.sql.includes('from "core"."principals"')) {
+    return Effect.succeed([{ principalId }]);
+  }
+  return Effect.succeed(query.sql.includes('from "core"."action_invocations"') ? [] : rows);
+};
+
+/** An exact read of the table's batch in `mode`. */
+const tableInput = (mode: 'batch' | 'batch-state' | 'command-recovery'): AgentProposalQueueInput =>
+  mode === 'command-recovery'
+    ? { idempotencyKey: 'table-subcommand', mode, payload: recoveryPayload }
+    : { batchId, mode };
+
+/** How a read ended: refused, unavailable, or another failure. */
+const outcomeOfFailure = (failure: { readonly _tag: string }) => {
+  if (Schema.is(ReadPermissionDenied)(failure)) {
+    return 'denied';
+  }
+  return Schema.is(ReadHandlerUnavailable)(failure) ? 'unavailable' : 'failed';
+};
+
+/**
+ * Forty-eight more work-tasks Actions besides `update`: forty-nine in all, so `prepare` asks them in three rounds of
+ * eight (`update`, `m1`–`m7`), thirty-two (`m8`–`m39`) and the nine left (`m40`–`m48`).
+ */
+const MANY_SLUGS = Array.from({ length: 48 }, (_, index) => `m${index + 1}`);
+
+/** Every Action key of the forty-nine-Action composition, in its declared order. */
+const MANY_ACTIONS = ['work.tasks.update', ...MANY_SLUGS.map((slug) => `work.tasks.${slug}`)];
+
+/** As `recordingAuthority`, but the `failing`-th question (counted from one) cannot be answered. */
+const failingAuthority = (
+  executable: ReadonlySet<string>,
+  calls: string[][],
+  failing: number,
+): ActionAuthorityService => {
+  const answering = recordingAuthority(executable, calls);
+  return {
+    ...answering,
+    checkActionAuthorities: (query) =>
+      Effect.suspend(() =>
+        calls.length + 1 === failing
+          ? Effect.sync(() => calls.push([...query.actionKeys])).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ActionPermissionCheckError({ code: 'action_permission_check_failed', reason: 'engine down' }),
+                ),
+              ),
+            )
+          : answering.checkActionAuthorities(query),
+      ),
+  };
+};
+
+/**
+ * One exact `batch` read of rows naming `rowSlugs` per authority in `authorities`, in turn over one harness and the
+ * forty-nine-Action composition: each read's outcome and whether that read loaded any proposal row.
+ */
+const manyActionReads = Effect.fn('AgentProposalQueueReadTest.manyActionReads')(function* manyActionReads(
+  rowSlugs: readonly string[],
+  authorities: readonly ActionAuthorityService[],
+) {
+  const harness = yield* makeReadTestHarness({
+    executeOwnerQuery: tableQueries(rowSlugs.map((slug, index) => tableRow(slug, index))),
+    operationTime,
+    ownerAuthorizationDecision: 'allowed',
+    permissionDecision: 'allowed',
+    scope,
+  });
+  const services = yield* Layer.build(
+    Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition('no-review', MANY_SLUGS))),
+  );
+  const reads: { readonly loaded: boolean; readonly outcome: string }[] = [];
+  for (const actionAuthority of authorities) {
+    const before = harness.snapshot().ownerQueries.length;
+    const outcome = yield* harness.runtime
+      .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+      .pipe(
+        Effect.provideService(ActionAuthority, actionAuthority),
+        Effect.provide(services),
+        Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+      );
+    const loaded = harness
+      .snapshot()
+      .ownerQueries.slice(before)
+      .some(({ sql }) => sql.includes('"agent_proposals"'));
+    reads.push({ loaded, outcome });
+  }
+  return reads;
+});
+
+/** How the one grouped statement groups: by the proposal columns, unlike the queue page's `group by p.batch_id`. */
+const NAMED_ACTIONS_GROUPING =
+  'group by "core"."agent_proposals"."app_id", "core"."agent_proposals"."module_key", "core"."agent_proposals"."action_slug"';
+
+/** Second tenant: one that runs the party registry the first tenant does not. */
+const otherTenantId = '10000000-0000-4000-8000-000000000002';
+
+/** Each tenant's module states, by module; or a module state nobody can read. */
+const moduleStates = (
+  byTenant: Readonly<Record<string, Readonly<Record<string, TenantModuleState>>>> | 'unavailable',
+): TenantModuleStateServiceContract => ({
+  getTenantModuleStates: () => Effect.die('Unexpected module state lookup'),
+  // The queue counts installed exactly as the gate does, over every state, never by `active` alone.
+  listActiveTenantModules: () => Effect.die('Unexpected active-only module listing'),
+  listTenantModuleStates: (tenant) =>
+    byTenant === 'unavailable'
+      ? Effect.fail(
+          new TenantModuleStateReadUnavailableError({
+            code: 'tenant_module_state_read_unavailable',
+            reason: 'Tenant module state is temporarily unavailable',
+          }),
+        )
+      : Effect.succeed(
+          Object.entries(byTenant[tenant] ?? {}).map(([moduleKey, state]) =>
+            Schema.decodeSync(TenantModuleStateRecordSchema)({ moduleKey, state }),
+          ),
+        ),
+});
+
+/**
+ * Owner SQL of a queue read: the admitted person, the queue page's `rows`, and `named` as the uninstalled modules'
+ * Actions that existing proposals name (the one grouped statement).
+ */
+const queueQueries =
+  (rows: readonly ReturnType<typeof driverRow>[], named: readonly object[]) => (query: { readonly sql: string }) => {
+    if (query.sql.includes('from "core"."principals"')) {
+      return Effect.succeed([{ principalId }]);
+    }
+    return Effect.succeed(query.sql.includes(NAMED_ACTIONS_GROUPING) ? named : rows);
+  };
+
+/** A queue read over work tasks and the party registry, with `running` module state, asked by `actionAuthority`. */
+const partyQueueRead = Effect.fn('AgentProposalQueueReadTest.partyQueueRead')(function* partyQueueRead(
+  running: TenantModuleStateServiceContract,
+  actionAuthority: ActionAuthorityService,
+  named: readonly object[],
+  rows: readonly ReturnType<typeof driverRow>[] = [tableRow('update', 0)],
+) {
+  const harness = yield* makeReadTestHarness({
+    executeOwnerQuery: queueQueries(rows, named),
+    operationTime,
+    ownerAuthorizationDecision: 'allowed',
+    permissionDecision: 'allowed',
+    scope,
+  });
+  const composition = yield* executableComposition('no-review', [], {
+    appId: 'party-service',
+    moduleId: 'party.registry',
+  });
+  const services = yield* Layer.build(Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(composition)));
+  const outcome = yield* harness.runtime
+    .runRead({
+      input: { mode: 'queue', request: {} },
+      principal: scope,
+      registration: agentProposalQueueRead,
+      transport,
+    })
+    .pipe(
+      Effect.provideService(ActionAuthority, actionAuthority),
+      Effect.provideService(TenantModuleStateService, running),
+      Effect.provide(services),
+      Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+    );
+  const groupedQueries = harness
+    .snapshot()
+    .ownerQueries.filter(({ sql }) => sql.includes(NAMED_ACTIONS_GROUPING)).length;
+  return { groupedQueries, outcome };
+});
+
+/** A pending party registry proposal beside the work task one, in the same batch page. */
+const PARTY_PAGE = [
+  tableRow('update', 0),
+  { ...tableRow('update', 1), appId: 'party-service', moduleKey: 'party.registry' },
+];
+
+/** The party registry Action an existing proposal names, as the grouped statement answers it. */
+const PARTY_ROW_ACTION = { actionSlug: 'update', appId: 'party-service', moduleKey: 'party.registry' };
+
 /** A person who exists only in the v2 model holds no `module_access` tuple: that retired relation denies. */
 const retiredModuleRelation = (asked: string[]) => (target: { readonly moduleIds: readonly string[] }) =>
   Effect.sync(() => {
@@ -225,12 +491,21 @@ it.layer(
     NodeCrypto.layer,
     outboxWorkerCompositionLayer(),
     Layer.succeed(ActionAuthority, authority()),
+    // Every fixture module runs for the tenant unless a test says otherwise.
+    Layer.succeed(
+      TenantModuleStateService,
+      moduleStates({ [tenantId]: { 'party.registry': 'active', 'work.tasks': 'active' } }),
+    ),
     Layer.succeed(AgentProposalQueueModuleReview, { review: () => Effect.die('Unexpected module review') }),
     Layer.succeed(ContextAccess, {
       legalEntities: () => Effect.die('Unexpected context access'),
       modules: () => Effect.die('Unexpected module access'),
       resources: () => Effect.die('Unexpected resource access'),
       tenants: () => Effect.die('Unexpected tenant access'),
+    }),
+    Layer.succeed(AccessDecisionGate, {
+      ...makeTestAccessDecision(),
+      decide: () => Effect.die('Only lifecycle withdrawal asks the gate'),
     }),
   ),
 )('Native proposal queue', (suite) => {
@@ -588,6 +863,411 @@ it.layer(
       }),
     );
   }
+
+  /*
+   * An exact batch read refuses a person who may run no Action at all in `prepare`, before any row is loaded or
+   * locked, and then authorizes exactly the Actions its rows name. It gives the same allow/deny answer the read gave
+   * when `prepare` asked every Action of the release: refused unless the person may run at least one Action and every
+   * row's declared Action. That rule is written out below as the reference; running this table against the read as it
+   * was before these changes gave the same allow/deny outcomes (only the Actions it asked differed). The one known
+   * difference is an authority outage confined to a round that is never asked; see `holdsAnyExecutableAction`.
+   */
+  for (const scenario of [
+    { executable: ['update', 'archive'], rows: ['update'] },
+    { executable: ['archive'], rows: ['update'] },
+    { executable: [], rows: ['update'] },
+    { executable: ['update'], rows: ['update', 'update'] },
+    { executable: ['archive'], rows: [] },
+    { executable: [], rows: [] },
+    { executable: ['update', 'archive'], rows: ['other'] },
+  ] as const) {
+    for (const mode of ['batch', 'batch-state', 'command-recovery'] as const) {
+      suite.effect(
+        `gives a ${mode} read the same allow/deny answer as asking every Action (${JSON.stringify(scenario)})`,
+        () =>
+          Effect.gen(function* exactBatchAuthority() {
+            const rows = scenario.rows.map((slug, index) => tableRow(slug, index));
+            const harness = yield* makeReadTestHarness({
+              executeOwnerQuery: tableQueries(rows),
+              operationTime,
+              ownerAuthorizationDecision: 'allowed',
+              permissionDecision: 'allowed',
+              scope,
+            });
+            const services = yield* Layer.build(
+              Layer.mergeAll(
+                harness.layer,
+                outboxWorkerCompositionLayer(yield* executableComposition('no-review', ['archive'])),
+              ),
+            );
+            const calls: string[][] = [];
+            const outcome = yield* harness.runtime
+              .runRead({ input: tableInput(mode), principal: scope, registration: agentProposalQueueRead, transport })
+              .pipe(
+                Effect.provideService(
+                  ActionAuthority,
+                  recordingAuthority(new Set(scenario.executable.map((slug) => `work.tasks.${slug}`)), calls),
+                ),
+                Effect.provide(services),
+                Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+              );
+            const declared = new Set(['update', 'archive']);
+            const runnable = new Set<string>(scenario.executable);
+            const everyRowRunnable = scenario.rows.every((slug) => declared.has(slug) && runnable.has(slug));
+            const allowed = runnable.size > 0 && everyRowRunnable;
+            expect(outcome).toBe(allowed ? `rows ${mode === 'batch-state' ? 0 : scenario.rows.length}` : 'denied');
+            // `prepare` asks whether any Action at all may run (both declared ones fit its first round).
+            expect(calls[0]).toEqual(['work.tasks.update', 'work.tasks.archive']);
+            const loadedProposals = harness
+              .snapshot()
+              .ownerQueries.some(({ sql }) => sql.includes('"agent_proposals"'));
+            if (runnable.size === 0) {
+              // Refused before any row is loaded or locked: an existing and a missing batch cost the same.
+              expect(calls).toHaveLength(1);
+              expect(loadedProposals).toBe(false);
+              return;
+            }
+            expect(loadedProposals).toBe(true);
+            // Both declared Actions were answered in `prepare`'s first round: `finish` applies those answers to the rows,
+            // as the read always applied `prepare`'s, and asks nothing more.
+            expect(calls.slice(1)).toEqual([]);
+          }),
+      );
+    }
+  }
+
+  suite.effect("refuses a batch spanning two modules when one row's Action may not run, having asked that Action", () =>
+    Effect.gen(function* twoModules() {
+      const rows = [
+        tableRow('update', 0),
+        { ...tableRow('update', 1), appId: 'party-service', moduleKey: 'party.registry' },
+      ];
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: tableQueries(rows),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const composition = yield* executableComposition('no-review', [], {
+        appId: 'party-service',
+        moduleId: 'party.registry',
+      });
+      const services = yield* Layer.build(Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(composition)));
+      const calls: string[][] = [];
+      const outcome = yield* harness.runtime
+        .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+        .pipe(
+          Effect.provideService(ActionAuthority, recordingAuthority(new Set(['work.tasks.update']), calls)),
+          Effect.provide(services),
+          Effect.match({ onFailure: outcomeOfFailure, onSuccess: () => 'allowed' }),
+        );
+      expect(outcome).toBe('denied');
+      // The refused row's own Action was asked (so its denial is decided and recorded), with its sibling's.
+      expect(new Set(calls.flat())).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
+    }),
+  );
+
+  suite.effect('refuses an exact batch whose private row the owner review hides', () =>
+    Effect.gen(function* hiddenPrivateRow() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: tableQueries([tableRow('update', 0)]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const services = yield* Layer.build(
+        Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition(true))),
+      );
+      const outcome = yield* harness.runtime
+        .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+        .pipe(
+          Effect.provideService(ActionAuthority, authority()),
+          Effect.provideService(AgentProposalQueueModuleReview, {
+            review: (input) =>
+              Effect.succeed({ items: input.subjects.map(({ key }) => ({ key, visible: false })), state: 'ok' }),
+          }),
+          Effect.provide(services),
+          Effect.match({ onFailure: outcomeOfFailure, onSuccess: () => 'allowed' }),
+        );
+      expect(outcome).toBe('denied');
+    }),
+  );
+
+  suite.effect("asks in finish exactly the rows' Actions prepare did not answer, and applies the others", () =>
+    Effect.gen(function* lateRowAction() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: tableQueries([tableRow('s9', 0)]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const services = yield* Layer.build(
+        Layer.mergeAll(
+          harness.layer,
+          outboxWorkerCompositionLayer(yield* executableComposition('no-review', LATE_SLUGS)),
+        ),
+      );
+      const calls: string[][] = [];
+      const outcome = yield* harness.runtime
+        .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+        .pipe(
+          Effect.provideService(
+            ActionAuthority,
+            recordingAuthority(new Set(['work.tasks.update', 'work.tasks.s9']), calls),
+          ),
+          Effect.provide(services),
+          Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+        );
+      expect(outcome).toBe('rows 1');
+      // `prepare`'s first round (eight Actions) found a right; `finish` asks only the row's Action it did not answer.
+      expect(calls.map((call) => call.length)).toEqual([8, 1]);
+      expect(calls[1]).toEqual(['work.tasks.s9']);
+    }),
+  );
+
+  suite.effect(
+    "answers an exact batch unavailable, never refused or allowed, when its rows' Actions cannot be asked",
+    () =>
+      Effect.gen(function* authorityUnavailable() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: tableQueries([tableRow('s9', 0)]),
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope,
+        });
+        const services = yield* Layer.build(
+          Layer.mergeAll(
+            harness.layer,
+            outboxWorkerCompositionLayer(yield* executableComposition('no-review', LATE_SLUGS)),
+          ),
+        );
+        const asked = { count: 0 };
+        const outcome = yield* harness.runtime
+          .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+          .pipe(
+            Effect.provideService(ActionAuthority, {
+              ...authority(),
+              // `prepare`'s question is answered; the rows' own one in `finish` cannot be.
+              checkActionAuthorities: (query) =>
+                Effect.suspend(() => {
+                  asked.count += 1;
+                  return asked.count === 1
+                    ? authority().checkActionAuthorities(query)
+                    : Effect.fail(
+                        new ActionPermissionCheckError({
+                          code: 'action_permission_check_failed',
+                          reason: 'engine down',
+                        }),
+                      );
+                }),
+            }),
+            Effect.provide(services),
+            Effect.match({ onFailure: outcomeOfFailure, onSuccess: () => 'allowed' }),
+          );
+        expect(asked.count).toBe(2);
+        expect(outcome).toBe('unavailable');
+      }),
+  );
+
+  /*
+   * A person whose only right lies beyond `prepare`'s first round: the rounds go on until one admits an Action, and
+   * the rows' Actions are still decided one by one, each by its own answer (from `prepare` when it asked it, else in
+   * `finish`).
+   */
+  for (const scenario of [
+    { calls: [8, 32, 1], executable: ['m20', 'm45'], outcome: 'rows 2', round: 2, rows: ['m20', 'm45'] },
+    { calls: [8, 32, 1], executable: ['m20'], outcome: 'denied', round: 2, rows: ['m20', 'm45'] },
+    { calls: [8, 32, 9], executable: ['m45'], outcome: 'rows 1', round: 3, rows: ['m45'] },
+    { calls: [8, 32, 9], executable: ['m45'], outcome: 'denied', round: 3, rows: ['m45', 'm3'] },
+  ] as const) {
+    suite.effect(
+      `continues to round ${scenario.round} for a person whose only rights lie there (${JSON.stringify(scenario.rows)} -> ${scenario.outcome})`,
+      () =>
+        Effect.gen(function* laterRoundRight() {
+          const calls: string[][] = [];
+          const runnable = new Set(scenario.executable.map((slug) => `work.tasks.${slug}`));
+          const [read] = yield* manyActionReads(scenario.rows, [recordingAuthority(runnable, calls)]);
+          expect(read?.outcome).toBe(scenario.outcome);
+          expect(read?.loaded).toBe(true);
+          expect(calls.map((call) => call.length)).toEqual(scenario.calls);
+          // Every Action asked once: `prepare`'s answers are applied, and `finish` asks only rows' Actions it did not.
+          expect(calls.flat().toSorted()).toEqual([...new Set(calls.flat())].toSorted());
+          if (scenario.round === 2) {
+            // Round 2 found a right, so `finish` asks the row Action round 3 would have: nothing else.
+            expect(calls[2]).toEqual(['work.tasks.m45']);
+          }
+        }),
+    );
+  }
+
+  for (const rows of [['m1'], []]) {
+    suite.effect(
+      `asks a person with no right every one of more than eight Actions, each once, then refuses (${rows.length === 0 ? 'missing' : 'existing'} batch)`,
+      () =>
+        Effect.gen(function* noRightManyActions() {
+          const calls: string[][] = [];
+          const [read] = yield* manyActionReads(rows, [recordingAuthority(new Set(), calls)]);
+          expect(read).toEqual({ loaded: false, outcome: 'denied' });
+          // Every Action is asked, in its round, so every denial is decided (and so recorded by the real authority).
+          expect(calls.map((call) => call.length)).toEqual([8, 32, 9]);
+          expect(calls.flat()).toEqual(MANY_ACTIONS);
+        }),
+    );
+  }
+
+  for (const scenario of [
+    { calls: [8], failing: 1, round: 1 },
+    { calls: [8, 32, 9], failing: 3, round: 3 },
+  ] as const) {
+    suite.effect(
+      `answers unavailable, never refused or allowed, when prepare's round ${scenario.round} cannot be asked, and keeps nothing for the next read`,
+      () =>
+        Effect.gen(function* prepareUnavailable() {
+          const failed: string[][] = [];
+          const next: string[][] = [];
+          const runnable = new Set(['work.tasks.update']);
+          const [unavailable, after] = yield* manyActionReads(
+            ['update'],
+            [failingAuthority(new Set(), failed, scenario.failing), recordingAuthority(runnable, next)],
+          );
+          expect(unavailable).toEqual({ loaded: false, outcome: 'unavailable' });
+          expect(failed.map((call) => call.length)).toEqual(scenario.calls);
+          // The next read starts over from the first round: no answer of the failed read was kept.
+          expect(after).toEqual({ loaded: true, outcome: 'rows 1' });
+          expect(next.map((call) => call.length)).toEqual([8]);
+        }),
+    );
+  }
+
+  suite.effect(
+    'reads a missing batch as no rows when the authority is down only for a round that is never asked (accepted)',
+    () =>
+      Effect.gen(function* unaskedRoundOutage() {
+        const calls: string[][] = [];
+        const [read] = yield* manyActionReads([], [failingAuthority(new Set(['work.tasks.update']), calls, 2)]);
+        // Round 1 admits `update`, so round 2 (whose question would fail) is never asked: 0 rows, not "unavailable".
+        expect(read).toEqual({ loaded: true, outcome: 'rows 0' });
+        expect(calls.map((call) => call.length)).toEqual([8]);
+      }),
+  );
+
+  /*
+   * The queue asks only the Actions of modules the tenant runs. A proposal that exists for a module it no longer runs
+   * is never shown, and its Action is still asked, so that refusal is decided and recorded as before.
+   */
+  suite.effect(
+    "asks only running modules' Actions up front, and still the Action of an existing proposal of an uninstalled module",
+    () =>
+      Effect.gen(function* uninstalledWithProposal() {
+        const calls: string[][] = [];
+        const read = yield* partyQueueRead(
+          moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
+          recordingAuthority(new Set(['work.tasks.update']), calls),
+          [PARTY_ROW_ACTION],
+        );
+        expect(read.outcome).toBe('rows 1');
+        expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+      }),
+  );
+
+  for (const state of ['read_only', 'deprecated'] as const) {
+    suite.effect(
+      `shows a ${state} module's proposal to a person who may run its Action, as the gate counts it installed`,
+      () =>
+        Effect.gen(function* stillInstalledModule() {
+          const calls: string[][] = [];
+          const read = yield* partyQueueRead(
+            moduleStates({ [tenantId]: { 'party.registry': state, 'work.tasks': 'active' } }),
+            recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+            [],
+            PARTY_PAGE,
+          );
+          expect(read.outcome).toBe('rows 2');
+          // One question, both Actions: the module counts as installed, so its Action is asked up front.
+          expect(calls).toHaveLength(1);
+          expect(new Set(calls[0])).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
+        }),
+    );
+  }
+
+  suite.effect("never shows a suspended module's proposal, and still decides and records its refusal", () =>
+    Effect.gen(function* suspendedModule() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates({ [tenantId]: { 'party.registry': 'suspended', 'work.tasks': 'active' } }),
+        recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+        [PARTY_ROW_ACTION],
+        PARTY_PAGE,
+      );
+      expect(read.outcome).toBe('rows 1');
+      expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+    }),
+  );
+
+  suite.effect(
+    'never asks the Action of an uninstalled module nobody proposed, at the cost of one grouped statement',
+    () =>
+      Effect.gen(function* uninstalledWithoutProposal() {
+        const calls: string[][] = [];
+        const read = yield* partyQueueRead(
+          moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
+          recordingAuthority(new Set(['work.tasks.update']), calls),
+          [],
+        );
+        expect(read.outcome).toBe('rows 1');
+        expect(calls).toEqual([['work.tasks.update']]);
+        expect(read.groupedQueries).toBe(1);
+      }),
+  );
+
+  suite.effect(
+    "treats a module another tenant runs as not running here, and still decides this tenant's proposal of it",
+    () =>
+      Effect.gen(function* otherTenantModule() {
+        const calls: string[][] = [];
+        const read = yield* partyQueueRead(
+          moduleStates({
+            [otherTenantId]: { 'party.registry': 'active', 'work.tasks': 'active' },
+            [tenantId]: { 'work.tasks': 'active' },
+          }),
+          recordingAuthority(new Set(['work.tasks.update', 'party.registry.update']), calls),
+          [PARTY_ROW_ACTION],
+        );
+        // Even an answer that would allow it shows nothing of a module this tenant does not run.
+        expect(read.outcome).toBe('rows 1');
+        expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+      }),
+  );
+
+  suite.effect('answers unavailable, never allowed, when the module state cannot be read, asking nothing', () =>
+    Effect.gen(function* moduleStateUnavailable() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates('unavailable'),
+        recordingAuthority(new Set(['work.tasks.update']), calls),
+        [PARTY_ROW_ACTION],
+      );
+      expect(read.outcome).toBe('unavailable');
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  suite.effect("answers unavailable when an uninstalled module's proposal cannot be decided", () =>
+    Effect.gen(function* uninstalledUndecided() {
+      const calls: string[][] = [];
+      const read = yield* partyQueueRead(
+        moduleStates({ [tenantId]: { 'work.tasks': 'active' } }),
+        failingAuthority(new Set(['work.tasks.update']), calls, 2),
+        [PARTY_ROW_ACTION],
+      );
+      expect(read.outcome).toBe('unavailable');
+      expect(calls).toEqual([['work.tasks.update'], ['party.registry.update']]);
+    }),
+  );
 
   suite.effect('batch access refuses a partial owning-Action view instead of weakening revert-all', () =>
     Effect.gen(function* partialBatch() {
@@ -997,8 +1677,14 @@ it.layer(
         permissionDecision: 'allowed',
         scope,
       });
-      const services = yield* Layer.build(harness.layer);
-      const access = Context.get(services, ContextAccess);
+      // This caller holds the agent administration right; the suite's default gate refuses every question, and a
+      // gate the test supplies always wins over the harness's own.
+      const services = yield* Layer.build(harness.layer).pipe(
+        Effect.provideService(
+          AccessDecisionGate,
+          makeTestAccessDecision({ answers: { 'core.identity.agent-status.manage': { outcome: 'ALLOWED' } } }),
+        ),
+      );
       const pages = yield* Effect.gen(function* pages() {
         const first = yield* harness.runtime.runRead({
           input: { agentPrincipalId: targetAgentId, mode: 'withdrawal-batches' },
@@ -1017,16 +1703,7 @@ it.layer(
           transport,
         });
         return [first.withdrawalBatches, second.withdrawalBatches];
-      }).pipe(
-        Effect.provideService(ContextAccess, {
-          ...access,
-          legalEntities: (input) =>
-            input.permission === 'manage_people'
-              ? Effect.succeed([{ decision: 'allowed', key: legalEntityId }])
-              : access.legalEntities(input),
-        }),
-        Effect.provide(services),
-      );
+      }).pipe(Effect.provide(services));
       expect(pages[0]?.batchIds).toEqual(ids.slice(0, 31));
       expect(pages[1]).toEqual({ batchIds: ids.slice(31) });
       expect(new Set(pages.flatMap((page) => page?.batchIds ?? [])).size).toBe(40);
@@ -1074,70 +1751,76 @@ it.layer(
   }
 
   for (const admin of ['allowed', 'denied', 'unavailable'] as const) {
-    suite.effect(`withdrawal discovery requires live native administration (${admin}), not business execution`, () =>
-      Effect.gen(function* lifecycleDiscovery() {
-        const ids = Array.from(
-          { length: 32 },
-          (_value, index) => `50000000-0000-4000-8000-${(index + 1).toString().padStart(12, '0')}`,
-        );
-        const harness = yield* makeReadTestHarness({
-          executeOwnerQuery: (query) => {
-            if (query.sql.includes('from "core"."principals"')) {
-              return Effect.succeed(query.params.includes('agent') ? [{ status: 'disabled' }] : [{ principalId }]);
-            }
-            expect(query.params).toContain(tenantId);
-            expect(query.params).toContain(legalEntityId);
-            expect(query.params).toContain(principalId);
-            expect(query.params).toContain(32);
-            expect(query.sql).toContain('"decided_at" is null');
-            expect(query.sql).toContain('group by');
-            return Effect.succeed(ids.map((id) => ({ batchId: id })));
-          },
-          operationTime,
-          ownerAuthorizationDecision: 'allowed',
-          permissionDecision: 'allowed',
-          scope,
-        });
-        const services = yield* Layer.build(harness.layer);
-        const access = Context.get(services, ContextAccess);
-        const read = harness.runtime
-          .runRead({
-            input: { agentPrincipalId: principalId, mode: 'withdrawal-batches' },
-            principal: scope,
-            registration: agentProposalQueueRead,
-            transport,
-          })
-          .pipe(
-            Effect.provideService(ActionAuthority, {
-              checkActionAuthorities: () => Effect.die('Lifecycle must not require or confer business execution'),
-              checkActionProposalPermission: () => Effect.die('Unexpected propose'),
-            }),
-            Effect.provideService(ContextAccess, {
-              ...access,
-              legalEntities: (input) =>
-                input.permission === 'manage_people'
-                  ? Effect.succeed([{ decision: admin, key: legalEntityId }])
-                  : access.legalEntities(input),
-              tenants: (input) =>
-                input.permission === 'manage_identity'
-                  ? Effect.succeed([{ decision: 'denied', key: tenantId }])
-                  : access.tenants(input),
-            }),
-            Effect.provide(services),
+    suite.effect(
+      `withdrawal discovery requires the agent administration right (${admin}), not business execution`,
+      () =>
+        Effect.gen(function* lifecycleDiscovery() {
+          const ids = Array.from(
+            { length: 32 },
+            (_value, index) => `50000000-0000-4000-8000-${(index + 1).toString().padStart(12, '0')}`,
           );
-        if (admin === 'allowed') {
-          const result = yield* read;
-          expect(result.withdrawalBatches).toEqual({ batchIds: ids.slice(0, 31), nextAfterBatchId: ids[30] });
-          expect(result.proposals).toEqual([]);
-          expect(result.candidates).toEqual([]);
-        } else {
-          const failure = yield* read.pipe(Effect.flip);
-          expect(
-            admin === 'denied' ? Schema.is(ReadPermissionDenied)(failure) : Schema.is(ReadHandlerUnavailable)(failure),
-          ).toBe(true);
-          expect(harness.snapshot().ownerQueries).toHaveLength(0);
-        }
-      }),
+          const harness = yield* makeReadTestHarness({
+            executeOwnerQuery: (query) => {
+              if (query.sql.includes('from "core"."principals"')) {
+                return Effect.succeed(query.params.includes('agent') ? [{ status: 'disabled' }] : [{ principalId }]);
+              }
+              expect(query.params).toContain(tenantId);
+              expect(query.params).toContain(legalEntityId);
+              expect(query.params).toContain(principalId);
+              expect(query.params).toContain(32);
+              expect(query.sql).toContain('"decided_at" is null');
+              expect(query.sql).toContain('group by');
+              return Effect.succeed(ids.map((id) => ({ batchId: id })));
+            },
+            operationTime,
+            ownerAuthorizationDecision: 'allowed',
+            permissionDecision: 'allowed',
+            scope,
+          });
+          const services = yield* Layer.build(harness.layer);
+          const asked: GateInput[] = [];
+          const scripted = makeTestAccessDecision(testAccessSpecOf({ 'core.identity.agent-status.manage': admin }));
+          const read = harness.runtime
+            .runRead({
+              input: { agentPrincipalId: principalId, mode: 'withdrawal-batches' },
+              principal: scope,
+              registration: agentProposalQueueRead,
+              transport,
+            })
+            .pipe(
+              Effect.provideService(ActionAuthority, {
+                checkActionAuthorities: () => Effect.die('Lifecycle must not require or confer business execution'),
+                checkActionProposalPermission: () => Effect.die('Unexpected propose'),
+              }),
+              Effect.provideService(AccessDecisionGate, {
+                ...scripted,
+                decide: (input: GateInput) => {
+                  asked.push(input);
+                  return scripted.decide(input);
+                },
+              }),
+              Effect.provide(services),
+            );
+          if (admin === 'allowed') {
+            const result = yield* read;
+            expect(result.withdrawalBatches).toEqual({ batchIds: ids.slice(0, 31), nextAfterBatchId: ids[30] });
+            expect(result.proposals).toEqual([]);
+            expect(result.candidates).toEqual([]);
+          } else {
+            const failure = yield* read.pipe(Effect.flip);
+            expect(
+              admin === 'denied'
+                ? Schema.is(ReadPermissionDenied)(failure)
+                : Schema.is(ReadHandlerUnavailable)(failure),
+            ).toBe(true);
+            expect(harness.snapshot().ownerQueries).toHaveLength(0);
+          }
+          // The one question is the right the same person uses to disable or archive the agent, in this company.
+          expect(asked.map((input) => input.carrier.accessDeclaration?.key)).toEqual([
+            'core.identity.agent-status.manage',
+          ]);
+          expect(asked[0]).toMatchObject({ legalEntityScope: 'required', scope: { legalEntityId, tenantId } });
+        }),
     );
   }
 });

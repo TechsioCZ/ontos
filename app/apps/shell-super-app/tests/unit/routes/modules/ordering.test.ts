@@ -25,7 +25,7 @@ import {
   ShellCapabilityUnavailableProblemSchema,
   ShellTargetForbiddenProblemSchema,
   TenantAuthenticationRequiredProblemSchema,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import { resetBrowserSessionCache } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { loader, loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 

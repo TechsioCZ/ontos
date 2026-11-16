@@ -4,7 +4,6 @@ import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization
 
 import {
   IDENTITY_PROVIDER_WORKLOAD,
-  CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
   STOREFRONT_MERCHANDISE_WORKLOAD,
@@ -20,7 +19,6 @@ import {
   crmNavigationKeys,
   tenantAdministratorCrmRole,
   companyAgentKeyAdministratorRole,
-  crmPartyIntakePrincipal,
   demoHumanAccounts,
   demoLegalEntityIds,
   demoModuleIds,
@@ -29,8 +27,6 @@ import {
   demoShellRoutingRoleKey,
   eshopDemoRoles,
   facilityPersonalAgendaCapability,
-  kavarnaMarketAuthorityPrincipal,
-  marketRetirementPrincipal,
   pipelineReadCapability,
   pipelineEntrustCapability,
   pipelineSearchCapability,
@@ -101,12 +97,10 @@ it('keeps the CRM narrowing explicit instead of granting the whole module to a r
 
 it('pins each service principal to its own company and gives it no Role of its own', () => {
   expect(privacyConsentPrincipal.legalEntityId).toBeDefined();
-  expect(marketRetirementPrincipal.legalEntityId).not.toBe(kavarnaMarketAuthorityPrincipal.legalEntityId);
   expect(commerceEnrollmentOperatorActionKeys.every((key) => key.startsWith('commerce.customer-context.'))).toBe(true);
   // Every reviewed Role belongs to a person profile; a service principal is never a Role holder.
   const roleLabels = everyRole().map(([, role]) => role.label);
   expect(roleLabels).not.toContain('Commerce portal (service)');
-  expect(roleLabels).not.toContain('Market retirement authority');
   expect(roleLabels).not.toContain('CRM Party intake');
   expect(roleLabels).not.toContain('Storefront (API)');
 });
@@ -114,11 +108,15 @@ it('pins each service principal to its own company and gives it no Role of its o
 it('maps every reviewed machine identity to exactly the workload keys a carrier declares', () => {
   const bindings = reviewedWorkloadBindings();
   // The storefronts and the portal run the portal-enrollment journey; only the portal is the identity provider.
-  // Each storefront binding is registered for the storefront's own company (D6).
+  // Each storefront binding, and the portal's, is registered for its own company (D6).
   const kavarna = { legalEntityId: storefrontPrincipal.legalEntityId, principalId: storefrontPrincipal.principalId };
   const sroubshop = {
     legalEntityId: akrosStorefrontPrincipal.legalEntityId,
     principalId: akrosStorefrontPrincipal.principalId,
+  };
+  const portal = {
+    legalEntityId: commercePortalPrincipal.legalEntityId,
+    principalId: commercePortalPrincipal.principalId,
   };
   expect(bindings).toEqual([
     { ...kavarna, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
@@ -126,10 +124,11 @@ it('maps every reviewed machine identity to exactly the workload keys a carrier 
     { ...sroubshop, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
     { ...sroubshop, workloadKey: STOREFRONT_MERCHANDISE_WORKLOAD },
     { ...sroubshop, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
-    { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-    { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
-    { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
+    { ...portal, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+    { ...portal, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
   ]);
+  // No binding is tenant-wide by omission: every reviewed workload names the one company it acts for.
+  expect(bindings.every((binding) => binding.legalEntityId !== undefined)).toBe(true);
   // Every bound principal has a principal row, and every row is a machine identity, never a person.
   const machineIds = new Set(reviewedMachinePrincipals.map((machine) => machine.principalId));
   for (const binding of bindings) {
@@ -148,8 +147,6 @@ it('keeps every machine identity out of the reviewed person assignments', () => 
   for (const machine of reviewedMachinePrincipals) {
     expect(assigned.has(machine.principalId)).toBe(false);
   }
-  // The MCP bot and the CRM intake keep their identity but reach nothing through a Role.
-  expect(assigned.has(crmPartyIntakePrincipal.principalId)).toBe(false);
 });
 
 it('keeps the reviewed assignment set free of legacy tuple vocabulary', () => {

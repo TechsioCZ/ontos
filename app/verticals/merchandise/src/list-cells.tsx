@@ -1,5 +1,4 @@
-import { TagBadge } from '@app/admin-ui';
-import { tagColorValue } from '@app/tagging/components/tag-controls';
+import { TagChip } from '@app/tagging/components/tag-controls';
 import type { Tag } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 
@@ -10,7 +9,7 @@ export const TagsCell = ({ tags }: { tags: readonly Tag[] }) => {
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-50">
       {visible.map((tag) => (
-        <TagBadge color={tagColorValue[tag.color]} key={tag.id} name={tag.name} />
+        <TagChip key={tag.id} tag={tag} />
       ))}
       {hiddenCount > 0 && <Badge size="sm" variant="outline">{`+${hiddenCount}`}</Badge>}
     </span>

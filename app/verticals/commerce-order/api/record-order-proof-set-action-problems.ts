@@ -78,10 +78,12 @@ export const recordOrderProofSetActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordOrderProofSetActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordOrderProofSetActionForbiddenProblem'> =>
     RecordOrderProofSetActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -192,7 +194,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordOrderProofSetActionProble
       ActionInvocationStateError: (failure) => recordOrderProofSetActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordOrderProofSetActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordOrderProofSetActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordOrderProofSetActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordOrderProofSetActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordOrderProofSetActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordOrderProofSetActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordOrderProofSetActionProblem.conflict(failure.code),

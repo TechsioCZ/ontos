@@ -629,8 +629,8 @@ nejednoznačné tiers se vynechají, žádné dopočítání21% ani druhý FX p�
 
 PriceBlock.taxLabel a AvailabilityStatus.label používají tyto skutečné údaje.
 Card/quote/cart amount zůstává owner gross. Popis39:2187/2547 je samostatně
-za Tabs.List a přetrvá při přepnutí panelů. Parametry219:2882 mají pouze na
-desktopu vlastní18/28 bold H2, přes native app text role nad dimension18.
+za Tabs.List a přetrvá při přepnutí panelů. Parametry mají po uživatelském upřesnění16.11. společný18/28 bold H2
+a nativní Table na mobilu i desktopu.
 Missing guide61:1716 má title24/36 semibold, p16/gap24 a pravdivý unavailable
 text. Tabs md content padding se váže na dimension0; účet používá size sm.
 Gallery219:2762/2763 má na desktopu oba gapy4 přes existující globální role;
@@ -645,20 +645,23 @@ Selectedvariant stockcorner a responsive Availability typografie mají nadále
 veřejný kit kontrakt gap. Výrobce/sizeguide URL/related
 nejsou vytvářené z fixture, jména, SKU ani náhodného katalogového výběru.
 
-C17 striped řádky219:2885/2892 vážou existující DataTable primary/secondary
-role na canonical neutral300/fill-hover. Palette se nemění.
+Uživatel16.11. výslovně odmítl odlišný mobilní PDP návrh ve Figmě. Pro tyto
+vizuální rozdíly je referencí původní n1-fe.netlify.app, komponenty a paleta
+zůstávají z instalovaného UI kitu. Galerie byla schválena a zůstává beze změny.
 
-C20 řeší desktop Tabs219:2876/223:2174 přes token-only Tailwind utilitu
-`md:n1-product-tabs` na existujícím wrapperu `Tabs.List`: neutral200, base-dark,
-dimension36, padding trigger-sm a nulová základní linka. Sdílený height role
-kit0.57 je přesměrovaný pouze uvnitř tohoto seznamu, nikoli v N1 theme nebo
-na nákupním NumericInput. Account ani mobil tento scope nemají.
+Jednotná tabulka parametrů používá Table/Body/Row/ColumnHeader(scope=row)/Cell,
+nikoli DataTable: jeho striped režim v0.59.3 vynucuje border-b-0 a nedokáže
+vyjádřit původní jemné pruhování současně s řádkovými oddělovači. Nativní Table
+obě vlastnosti podporuje. Stávající n1-product-parameters váže pouze text/md,
+normální váhu popisků a canonical base/fill-hover řádky. Poměr sloupců55/45
+zůstává layoutem; dlouhé hodnoty se při320px zalamují. Skutečné řádky měří37px
+(první36.5 při border-collapse), bez pevně vynucené výšky.
 
-Desktopový wrapper parametrů219:2885 používá `n1-product-parameters`, který
-váže skutečný Table token `--text-table-sm` na canonical `--text-md`.
-DataTable předává velikost do Table; mobilní tabulka je mimo tento wrapper.
-Pozorovaná výška řádku je nyní36 vs cílových37; přesnou geometrickou shodu
-nepotvrzujeme a nedoplňujeme ji nahodilou pevnou výškou.
+Desktopový md:n1-product-tabs nyní používá canonical base a2px rail namísto
+šedého stripu z Figmy. Mobil zachovává přístupné fitted záložky a stejné názvy.
+Kompaktní NumericInput a secondary solid nákupní akce jsou společné pro oba
+viewporty; min/step/error/sold-out/toast chování zůstává zachované. Titulek je
+24/32 a skutečně vybraná varianta se ukazuje také na mobilu.
 
 ### Desktop category panel — 59:1743 / 418:2368
 
@@ -693,19 +696,30 @@ NextImage `fill` inside relative96×96 wrappers preserves proportions for all
 source dimensions, including19×100 artwork. All root/child destinations and
 their ordering remain owner data, including13 original demo text-only items.
 
-### Desktop PDP variant states — 219:2778–2807
+### PDP variant states — legacy reference, user override16.11.
+
+Related products219:2922 are now composed at the product route using the existing
+CatalogView in related mode. Historical N1 selects up to four category products;
+the current owner contract supports one categorySlug, so this app uses the real
+primary category, preserves owner ordering, excludes the current product and
+limits the result to four. Unknown categories never fall back to the whole store.
+Read failure is distinct from a successful empty result. Desktop and mobile use
+the existing responsive cards; no populated mobile Figma fixture is claimed.
+The prior desktop-hidden/mobile-always-empty ProductView placeholder is removed.
 
 Native LinkButton remains secondary/outlined/sm with actual NextLink href and
 aria-current. The existing group/per-variant wrappers bind consumed Button
-roles only at md: unselected fill-hover/neutral300/1px; selected base and
-bg-secondary-base/2px. Both use canonical text-md/normal16/24. Mobile retains
-its existing selected primary/solid/md and selected-option label. No arbitrary
-chip widths or appearance classes on the kit components.
+roles on both viewports: unselected fill-hover/neutral300/1px; selected base and
+bg-secondary-base/2px. Both use canonical text-md/normal16/24 and32px minimum
+height through existing control/padding roles. The mobile yellow selected state
+and added selected-option suffix are removed per user instruction. aria-current
+and the selected-variant summary remain. No arbitrary chip widths or appearance
+classes on the kit components.
 
 Stock corners219:2787/2797/2807 are separate decorative Image/NextImage
 siblings in the existing relative wrapper, not Button icons or CSS shapes.
-The original Figma SVG is local at public/brand/stock-corner.svg,8×8; the
-overlay is hidden on mobile and pointer-events-none/aria-hidden with empty alt.
+The original SVG is local at public/brand/stock-corner.svg,8×8; the overlay is
+visible on both viewports and pointer-events-none/aria-hidden with empty alt.
 It renders only for the individual owner's available/limited variant stock,
 never inferred from selection, group count or parent stock. Historical N1
 showed its green corner and tooltip even at zero stock; that misleading
@@ -826,6 +840,16 @@ ponechává výchozí end. Mění se jen responzivní flex zarovnání app wrapp
 nikoli vzhled nebo interakční kontrakt knihovní komponenty. Skutečné count,
 stránka a query zůstávají datové; návrhových 182 stránek se nekopíruje.
 
+Doplnění 13. 11.: mobilní instance `38:2409` používá knihovní `size="md"`.
+CatalogPagination proto pod `md` používá nativní 44px ovladače. Od stávajícího
+breakpointu `n1-compact` zobrazuje číselné odkazy se `siblingCount={0}`; na
+užším displeji zachovává knihovní compact přehled. Desktop od `md` nadále
+používá `size="sm"` a `siblingCount={1}`. Jde pouze o podporované props a
+responzivní zobrazení instancí, bez vzhledových přepisů nebo změny breakpointů.
+Skutečné lokální GET průchody na 1440/390/320 px ověřily rozdílné produkty
+stránek 1/2, Enter na Další, čistou URL první stránky a historii Zpět/Vpřed.
+Mobilní vyhledávání navíc zachovalo skutečný dotaz `q=fox`.
+
 ### Vyprodaný produkt — 57:2965
 
 Figma zobrazuje AvailabilityStatus unavailable a na mobilu zakázané tlačítko
@@ -936,3 +960,26 @@ z návrhu. Děkovná věta neslibuje odeslaný e-mail, protože pro něj nativn�
 kontrakt nedává důkaz. Žádná nová komponenta, CSS nebo tokenový override.
 Moje objednávky pro guest nákup nepřidáváme; přihlášená větev zůstává
 samostatnou neověřenou částí.
+
+## 13. 11. — akce mobilních katalogových karet
+
+Čerstvá Figma `31:639` rozlišuje akce podle nákupního stavu. Instance
+`38:2206` a další používají blokový `LinkButton md/secondary/outlined`
+pro Detail nebo Vybrat variantu; `38:2402` používá blokový
+`Button md/primary/solid` Do košíku. ListingCards zachovává stejnou skladbu
+obrázek → název → cena → dostupnost → akce, bez nových stylů primitiv.
+
+Dostupná skupina variant naviguje na skutečný detail a sama variantu nevolí.
+Dostupný jednoduchý produkt se známou cenou používá existující CardPurchase
+v prezentaci listing, bez ikony a kompaktní hustoty. Původní featured
+prezentace zůstává zachována. Neznámý či nedostupný stav nabízí Detail.
+Striktní simpleCardEntry nadále vyžaduje potvrzenou absenci variant, skutečné
+minimum/jednotku/balení, kompatibilní měnu a připravený lokální košík;
+nepřipravený přímý nákup zůstává disabled. Úspěšné lokální přidání používá
+stávající toast, bez automatického otevření minikošíku.
+
+Osm testů pokrývá český/anglický výběr akce a neznámé či nedostupné stavy;
+dva další ověřují zachování minima, jednotky a readiness guardu u listing
+prezentace. Živě ověřeno na touch viewports 320/390: navigace bez implicitní
+varianty, přidání skutečného jednoduchého produktu, toast, badge, minikošík,
+platný owner quote a odebrání lokálního draftu. Nevytváří se objednávka.

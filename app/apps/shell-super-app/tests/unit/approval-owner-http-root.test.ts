@@ -16,7 +16,7 @@ import {
 } from '../../api/access-admin/approvals.ts';
 import { AccessAdminSession } from '../../api/access-admin/session.ts';
 import { AccessApprovalSchema, ListAccessApprovalsResponseSchema } from '../../shared/access-admin-api.ts';
-import { ShellAuthenticationApi } from '../../shared/api.ts';
+import { ShellAuthenticationApi } from '../../shared/browser-api.ts';
 import { approvalOwnerCompanyId, approvalOwnerProposal, approvalOwnerTenantScope } from '../fixtures/approval-owner.ts';
 
 const createRoot = Effect.fn('OwnerApprovalHttpRootTest.createRoot')(function* createRoot(

@@ -23,6 +23,7 @@ import type { OrderCustomerOwners } from '../../shared/order-customer-conversion
 import { MerchandiseLifecycleConflict } from '../../shared/errors/merchandise-lifecycle-conflict.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
+import { TEST_TAX } from '../support/tax-fixtures.ts';
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const partyId = '20000000-0000-4000-8000-000000000001';
@@ -353,7 +354,12 @@ it.effect('linking preserves financial/stock snapshots and is idempotent after c
   Effect.gen(function* linkCustomer() {
     const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({ movements: [], orders: [], products: [] });
     const before = { ...state, orders: [order] };
-    const input = { actor: { principalId: partyId, tenantId }, now: DateTime.makeUnsafe(at), resourceId: 'link' };
+    const input = {
+      actor: { principalId: partyId, tenantId },
+      now: DateTime.makeUnsafe(at),
+      resourceId: 'link',
+      tax: TEST_TAX,
+    };
     const result = yield* evolveMerchandiseState(before, link, input);
     expect(result.state.orders[0]?.partyId).toBe(partyId);
     expect(result.state.orders[0]?.lines).toBe(order.lines);
@@ -397,6 +403,7 @@ it.effect('a stale order link cannot overwrite a changed customer', () =>
         actor: { principalId: partyId, tenantId },
         now: DateTime.makeUnsafe(at),
         resourceId: 'link',
+        tax: TEST_TAX,
       },
     ).pipe(Effect.flip);
     expect(Schema.is(MerchandiseLifecycleConflict)(error)).toBe(true);

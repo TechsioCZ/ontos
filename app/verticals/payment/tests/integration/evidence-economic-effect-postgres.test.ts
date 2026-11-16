@@ -15,7 +15,8 @@ import { testOperationalScopeResolver } from '../../../../packages/core-runtime/
 import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 
-import { failureCodeOf, paymentTestRelations, randomUuid } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import { failureCodeOf, paymentTestRelations, randomUuid, COMPOSITION_REVISION } from './database-fixture.ts';
 import {
   acceptObservation,
   decideReconciliation,
@@ -39,8 +40,14 @@ import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
  * different Payment Operations.
  */
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 const nativeRuntime = Effect.gen(function* acquireEvidenceNativeRuntime() {
   const { admin, runtime } = yield* testDatabaseClients;
@@ -57,6 +64,7 @@ const nativeRuntime = Effect.gen(function* acquireEvidenceNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -219,7 +227,6 @@ it.live(
         const B = refundItem('B', 10_000);
         const owners = { items: [A, B] };
         const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
-        const second = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
         const confirmation = (operationId: string, sourceOccurrenceId: string) =>
           refundConfirmation(refundCase, operationId, sourceOccurrenceId);
         // The method-neutral authority confirms the 100 CZK return for the first refund.
@@ -229,6 +236,9 @@ it.live(
         // The same GoPay account is then also configured for online gateway Payments specifically.
         const specific = yield* configureRefundAuthority(refundCase, onlineGatewayRefundAuthority);
         expect(specific.sourceAuthorityId).not.toBe(neutral.sourceAuthorityId);
+        const second = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
+        expect(first.executionRoute?.sourceAuthorityId).toBe(neutral.sourceAuthorityId);
+        expect(second.executionRoute?.sourceAuthorityId).toBe(specific.sourceAuthorityId);
         // The same source's lookup of that return, now qualified by the method-specific authority,
         // is correlated to the second refund: one effect of one source binding cannot confirm it too.
         const reused = yield* confirmation(second.operation.operationId, 'gopay-lookup-refund-1');

@@ -1,4 +1,37 @@
 import { DateTime, Option, Schema } from 'effect';
+import {
+  OrganizationBusinessSourceFieldSchema,
+  OrganizationBusinessSourceProjectionVersion,
+  OrganizationBusinessRecordProjectionVersion,
+  OrganizationBusinessOnboardTemplateProjectionVersion,
+  OrganizationBusinessUpdateFields,
+  OrganizationBusinessCorrectionFields,
+  OrganizationBusinessOnboardFields,
+  OrganizationBusinessEvidenceReadFields,
+} from '@app/party-registry/apis/organization-record-facts';
+import {
+  OrganizationBusinessNameExportFields,
+  OrganizationBusinessNameExportProjectionVersion,
+} from '@app/party-registry/apis/organization-business-name-export';
+import {
+  ORGANIZATION_MEMBERSHIP_PROJECTION_VERSION,
+  ORGANIZATION_MEMBERSHIP_RECOVER_FIELDS,
+  ORGANIZATION_MEMBERSHIP_WRITE_FIELDS,
+} from '@app/commerce-customer-context/domain/organization-membership-source';
+import {
+  ORGANIZATION_PROFILE_SOURCE_CREATE_VERSION,
+  ORGANIZATION_PROFILE_SOURCE_CREATE_TEMPLATE_VERSION,
+  ORGANIZATION_PROFILE_SOURCE_CREATE_FIELDS,
+  ORGANIZATION_PROFILE_SOURCE_CURRENT_VERSION,
+  ORGANIZATION_PROFILE_SOURCE_CURRENT_FIELDS,
+  ORGANIZATION_PROFILE_SOURCE_RECEIPT_VERSION,
+  ORGANIZATION_PROFILE_SOURCE_RECEIPT_FIELDS,
+} from '@app/commerce-customer-context/domain/organization-profile-source';
+import {
+  ORGANIZATION_PRICE_ASSIGNMENT_PROJECTION_VERSION,
+  ORGANIZATION_PRICE_ASSIGNMENT_WRITE_FIELDS,
+  ORGANIZATION_PRICE_ASSIGNMENT_RECEIPT_READ_FIELDS,
+} from '@app/commerce-customer-context/domain/organization-price-assignment-fields';
 
 import { PrivacyResponsibilityAssignmentRefSchema } from '../resources/privacy-responsibility-assignment.ts';
 import { ProcessingPurposeRefSchema } from '../resources/processing-purpose.ts';
@@ -20,11 +53,17 @@ const PrivacyApplicabilityDimensionSchema = Schema.Literals([
   'CONTROLLER_SCOPE',
   'INTENDED_USE',
   'JURISDICTION',
+  'OWNER_RESOURCE',
+  'OWNER_RESOURCE_REVISION',
+  'OWNER_PARTY_KIND',
   'PROCESSING_PURPOSE',
   'PROCESSING_PURPOSE_VERSION',
   'PRIVACY_SUBJECT',
   'RECIPIENT',
   'SITE',
+  'SOURCE_CLASSIFICATION',
+  'SOURCE_OCCURRENCE',
+  'SOURCE_PROJECTION_DIGEST',
   'TENANT',
 ]);
 type PrivacyApplicabilityDimension = typeof PrivacyApplicabilityDimensionSchema.Type;
@@ -100,6 +139,220 @@ export const PrivacyApplicabilityScopeIntentSchema = Schema.Struct({
 });
 export type PrivacyApplicabilityScopeIntent = typeof PrivacyApplicabilityScopeIntentSchema.Type;
 
+/** Exact company-identifier projection approved for native nonpersonal applicability.
+ * It excludes contacts, names, free-text provenance and identifiable actor provenance. */
+export const OrganizationIcoBusinessFieldSchema = Schema.Literals([
+  'assertionRef',
+  'partyRef',
+  'revision',
+  'normalizedValue',
+  'originalInput.kind',
+  'originalInput.digits',
+  'state',
+  'isCurrent',
+  'validFrom',
+  'validTo',
+  'recordedAt',
+  'provenance.ownerReceiptRef',
+]);
+export const OrganizationProfileIcoFieldContractVersion =
+  'commerce.customer-context.organization-ico-business-fields.v1';
+export const OrganizationProfileIcoOperationSchema = Schema.Literals([
+  'customer-profile-ico.read',
+  'customer-profile-ico.write',
+  'customer-profile-ico.migrate',
+]);
+export const OrganizationProfileIcoBusinessFieldSchema = Schema.Literals([
+  'profileRef',
+  'partyRef',
+  'revision',
+  'normalizedValue',
+  'normalizerVersion',
+  'originalInput.kind',
+  'originalInput.digits',
+  'operation',
+  'effectiveAt',
+  'effectiveTo',
+  'isCurrent',
+  'recordedAt',
+  'provenance.ownerReceiptRef',
+]);
+const PartyOrganizationIcoNonPersonalApplicabilitySchema = Schema.Struct({
+  allowedFields: Schema.Array(OrganizationIcoBusinessFieldSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(12),
+    Schema.makeFilter((fields) =>
+      new Set(fields).size === fields.length ? undefined : 'Native ICO policy fields must be unique',
+    ),
+  ),
+  fieldContractVersion: Schema.Literal('party.registry.organization-ico-business-fields.v1'),
+  holdBehavior: Schema.Literal('NO_ACTIVE_SCOPE_HOLD'),
+  kind: Schema.Literal('ORGANIZATION_ICO_ONLY'),
+});
+const ProfileOrganizationIcoNonPersonalApplicabilitySchema = Schema.Struct({
+  allowedFields: Schema.Array(OrganizationProfileIcoBusinessFieldSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(13),
+    Schema.makeFilter((fields) =>
+      new Set(fields).size === fields.length ? undefined : 'Native profile ICO fields must be unique',
+    ),
+  ),
+  fieldContractVersion: Schema.Literal(OrganizationProfileIcoFieldContractVersion),
+  holdBehavior: Schema.Literal('NO_ACTIVE_SCOPE_HOLD'),
+  kind: Schema.Literal('ORGANIZATION_ICO_ONLY'),
+});
+export const OrganizationIcoNonPersonalApplicabilitySchema = Schema.Union([
+  PartyOrganizationIcoNonPersonalApplicabilitySchema,
+  ProfileOrganizationIcoNonPersonalApplicabilitySchema,
+]);
+
+export {
+  OrganizationBusinessSourceFieldSchema,
+  OrganizationBusinessSourceProjectionVersion,
+} from '@app/party-registry/apis/organization-record-facts';
+const uniqueOrganizationBusinessFields = Schema.makeFilter((fields: readonly string[]) =>
+  new Set(fields).size === fields.length ? undefined : 'Organization business policy fields must be unique',
+);
+const organizationBusinessFields = <const Fields extends readonly string[]>(fields: Fields) =>
+  Schema.Array(Schema.Literals(fields)).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(fields.length),
+    uniqueOrganizationBusinessFields,
+  );
+const organizationBusinessMarker = {
+  holdBehavior: Schema.Literal('NO_ACTIVE_SCOPE_HOLD'),
+  kind: Schema.Literal('ORGANIZATION_BUSINESS_ONLY'),
+};
+const sourceBusinessMarker = {
+  ...organizationBusinessMarker,
+  classification: Schema.Literal('SOURCE_ASSERTED_ORGANIZATION'),
+};
+const partyBusinessConsumerSchema = Schema.Literal('party.registry');
+const commerceBusinessConsumerSchema = Schema.Literal('commerce.customer-context');
+const SourceOrganizationBusinessNonPersonalApplicabilitySchema = Schema.Struct({
+  ...sourceBusinessMarker,
+  allowedFields: Schema.Array(OrganizationBusinessSourceFieldSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(OrganizationBusinessSourceFieldSchema.literals.length),
+    uniqueOrganizationBusinessFields,
+  ),
+  consumerModuleId: partyBusinessConsumerSchema,
+  operation: Schema.Literals(['CREATE', 'MATCH']),
+  projectionVersion: Schema.Literal(OrganizationBusinessSourceProjectionVersion),
+});
+const membershipBusinessMarker = {
+  ...organizationBusinessMarker,
+  classification: Schema.Literal('CANONICAL_ORGANIZATION'),
+  consumerModuleId: commerceBusinessConsumerSchema,
+  projectionVersion: Schema.Literal(ORGANIZATION_MEMBERSHIP_PROJECTION_VERSION),
+};
+const partyRecordBusinessMarker = {
+  ...organizationBusinessMarker,
+  classification: Schema.Literal('CANONICAL_ORGANIZATION'),
+  consumerModuleId: partyBusinessConsumerSchema,
+  projectionVersion: Schema.Literal(OrganizationBusinessRecordProjectionVersion),
+};
+const commerceRecordBusinessMarker = {
+  ...organizationBusinessMarker,
+  classification: Schema.Literal('CANONICAL_ORGANIZATION'),
+  consumerModuleId: commerceBusinessConsumerSchema,
+};
+export const OrganizationBusinessNonPersonalApplicabilitySchema = Schema.Union([
+  SourceOrganizationBusinessNonPersonalApplicabilitySchema,
+  Schema.Struct({
+    ...partyRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(OrganizationBusinessUpdateFields),
+    operation: Schema.Literal('UPDATE'),
+  }),
+  Schema.Struct({
+    ...partyRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(OrganizationBusinessCorrectionFields),
+    operation: Schema.Literal('CORRECTION'),
+  }),
+  Schema.Struct({
+    ...partyRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(OrganizationBusinessOnboardFields),
+    operation: Schema.Literal('ONBOARD_COUNTERPARTY_CUSTOMER'),
+  }),
+  Schema.Struct({
+    ...partyRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(OrganizationBusinessEvidenceReadFields),
+    operation: Schema.Literal('EVIDENCE_READ'),
+  }),
+  Schema.Struct({
+    ...commerceRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(ORGANIZATION_PROFILE_SOURCE_CREATE_FIELDS),
+    operation: Schema.Literal('COUNTERPARTY_PROFILE_CREATE'),
+    projectionVersion: Schema.Literal(ORGANIZATION_PROFILE_SOURCE_CREATE_VERSION),
+  }),
+  Schema.Struct({
+    ...commerceRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(ORGANIZATION_PROFILE_SOURCE_CURRENT_FIELDS),
+    operation: Schema.Literals(['customer-profile-source.write', 'customer-profile-source.read']),
+    projectionVersion: Schema.Literal(ORGANIZATION_PROFILE_SOURCE_CURRENT_VERSION),
+  }),
+  Schema.Struct({
+    ...commerceRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(ORGANIZATION_PROFILE_SOURCE_RECEIPT_FIELDS),
+    operation: Schema.Literal('customer-profile-source.recover'),
+    projectionVersion: Schema.Literal(ORGANIZATION_PROFILE_SOURCE_RECEIPT_VERSION),
+  }),
+  Schema.Struct({
+    ...membershipBusinessMarker,
+    allowedFields: Schema.Array(Schema.Literals(ORGANIZATION_MEMBERSHIP_WRITE_FIELDS)).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(ORGANIZATION_MEMBERSHIP_WRITE_FIELDS.length),
+      uniqueOrganizationBusinessFields,
+    ),
+    operation: Schema.Literal('customer-group-membership.write'),
+  }),
+  Schema.Struct({
+    ...membershipBusinessMarker,
+    allowedFields: Schema.Array(Schema.Literals(ORGANIZATION_MEMBERSHIP_RECOVER_FIELDS)).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(ORGANIZATION_MEMBERSHIP_RECOVER_FIELDS.length),
+      uniqueOrganizationBusinessFields,
+    ),
+    operation: Schema.Literal('customer-group-membership.recover'),
+  }),
+  Schema.Struct({
+    ...commerceRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(ORGANIZATION_PRICE_ASSIGNMENT_WRITE_FIELDS),
+    operation: Schema.Literal('PRICE_GROUP_ASSIGN'),
+    projectionVersion: Schema.Literal(ORGANIZATION_PRICE_ASSIGNMENT_PROJECTION_VERSION),
+  }),
+  Schema.Struct({
+    ...commerceRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(ORGANIZATION_PRICE_ASSIGNMENT_RECEIPT_READ_FIELDS),
+    operation: Schema.Literal('PRICE_GROUP_ASSIGNMENT_RECEIPT_READ'),
+    projectionVersion: Schema.Literal(ORGANIZATION_PRICE_ASSIGNMENT_PROJECTION_VERSION),
+  }),
+  Schema.Struct({
+    ...sourceBusinessMarker,
+    allowedFields: organizationBusinessFields(OrganizationBusinessOnboardFields),
+    consumerModuleId: partyBusinessConsumerSchema,
+    operation: Schema.Literal('ONBOARD_COUNTERPARTY_CUSTOMER'),
+    projectionVersion: Schema.Literal(OrganizationBusinessOnboardTemplateProjectionVersion),
+  }),
+  Schema.Struct({
+    ...sourceBusinessMarker,
+    allowedFields: organizationBusinessFields(ORGANIZATION_PROFILE_SOURCE_CREATE_FIELDS),
+    consumerModuleId: commerceBusinessConsumerSchema,
+    operation: Schema.Literal('COUNTERPARTY_PROFILE_CREATE'),
+    projectionVersion: Schema.Literal(ORGANIZATION_PROFILE_SOURCE_CREATE_TEMPLATE_VERSION),
+  }),
+  Schema.Struct({
+    ...partyRecordBusinessMarker,
+    allowedFields: organizationBusinessFields(OrganizationBusinessNameExportFields),
+    operation: Schema.Literal('ORGANIZATION_BUSINESS_NAME_EXPORT'),
+    projectionVersion: Schema.Literal(OrganizationBusinessNameExportProjectionVersion),
+  }),
+]);
+export const PrivacyNonPersonalApplicabilitySchema = Schema.Union([
+  OrganizationIcoNonPersonalApplicabilitySchema,
+  OrganizationBusinessNonPersonalApplicabilitySchema,
+]);
+
 export const PrivacyApplicabilityPolicySchema = Schema.Struct({
   composition: Schema.Struct({
     precedence: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
@@ -113,6 +366,7 @@ export const PrivacyApplicabilityPolicySchema = Schema.Struct({
   ),
   jurisdictionProfile: PrivacyApplicabilityProfileRefSchema,
   mandatoryDimensions: Schema.Array(PrivacyApplicabilityDimensionSchema).check(Schema.isMaxLength(16)),
+  nonPersonalApplicability: Schema.optionalKey(PrivacyNonPersonalApplicabilitySchema),
   policyKey: PolicyKeySchema,
   policyVersion: Version,
   scopeKey: ScopeKeySchema,
@@ -122,8 +376,64 @@ export const PrivacyApplicabilityPolicySchema = Schema.Struct({
     if (policy.effectiveTo !== null && policy.effectiveTo <= policy.effectiveFrom) {
       return 'Applicability policy effective period is invalid';
     }
-    if (new Set(policy.mandatoryDimensions).size !== policy.mandatoryDimensions.length) {
+    const mandatoryDimensions = new Set(policy.mandatoryDimensions);
+    if (mandatoryDimensions.size !== policy.mandatoryDimensions.length) {
       return 'Applicability policy mandatory dimensions must be unique';
+    }
+    if (policy.nonPersonalApplicability !== undefined) {
+      const exact = (dimension: PrivacyApplicabilityDimension, value: string) =>
+        policy.factPredicates.some(
+          (predicate) =>
+            predicate.dimension === dimension &&
+            predicate.operator === 'EQUALS' &&
+            predicate.values.length === 1 &&
+            predicate.values[0] === value,
+        );
+      const marker = policy.nonPersonalApplicability;
+      if (marker.kind === 'ORGANIZATION_BUSINESS_ONLY') {
+        const source = marker.classification === 'SOURCE_ASSERTED_ORGANIZATION';
+        const required: readonly PrivacyApplicabilityDimension[] = source
+          ? [
+              'OWNER_RESOURCE',
+              'OWNER_RESOURCE_REVISION',
+              'SOURCE_CLASSIFICATION',
+              'SOURCE_OCCURRENCE',
+              'SOURCE_PROJECTION_DIGEST',
+              'CATEGORY',
+              'INTENDED_USE',
+            ]
+          : ['OWNER_RESOURCE', 'OWNER_RESOURCE_REVISION', 'OWNER_PARTY_KIND', 'CATEGORY', 'INTENDED_USE'];
+        if (
+          !exact('CATEGORY', marker.projectionVersion) ||
+          !exact('INTENDED_USE', marker.operation) ||
+          !(source
+            ? exact('SOURCE_CLASSIFICATION', 'SOURCE_ASSERTED_ORGANIZATION')
+            : exact('OWNER_PARTY_KIND', 'ORGANIZATION')) ||
+          !required.every((dimension) => mandatoryDimensions.has(dimension))
+        ) {
+          return 'Organization business policy requires exact classification, projection, operation and current owner facts';
+        }
+        const predicateDimensions = new Set(policy.factPredicates.map(({ dimension }) => dimension));
+        return policy.mandatoryDimensions.every((dimension) => predicateDimensions.has(dimension))
+          ? undefined
+          : 'Applicability policy must define a predicate for every mandatory dimension';
+      }
+      const exactOperation =
+        marker.fieldContractVersion === 'party.registry.organization-ico-business-fields.v1'
+          ? exact('INTENDED_USE', 'party-ico-legacy-inventory.read')
+          : OrganizationProfileIcoOperationSchema.literals.some((operation) => exact('INTENDED_USE', operation));
+      const fixedFacts =
+        exact('OWNER_PARTY_KIND', 'ORGANIZATION') && exact('CATEGORY', marker.fieldContractVersion) && exactOperation;
+      const dimensions: readonly PrivacyApplicabilityDimension[] = [
+        'OWNER_RESOURCE',
+        'OWNER_RESOURCE_REVISION',
+        'OWNER_PARTY_KIND',
+        'CATEGORY',
+        'INTENDED_USE',
+      ];
+      if (!fixedFacts || !dimensions.every((dimension) => mandatoryDimensions.has(dimension))) {
+        return 'Nonpersonal ICO policy requires explicit exact organization, ICO-only projection, operation, owner resource and revision predicates';
+      }
     }
     const predicateDimensions = new Set(policy.factPredicates.map(({ dimension }) => dimension));
     return policy.mandatoryDimensions.every((dimension) => predicateDimensions.has(dimension))
@@ -143,6 +453,7 @@ export const PrivacyApplicabilityDecisionSchema = Schema.Struct({
   evaluatedAt: PrivacyIsoTimestampSchema,
   evaluatedScope: PrivacyApplicabilityScopeSchema,
   evidenceRefs: Schema.Array(Text).check(Schema.isMaxLength(32)),
+  nonPersonalApplicability: Schema.optionalKey(PrivacyNonPersonalApplicabilitySchema),
   outcome: PrivacyApplicabilityDecisionOutcomeSchema,
   policyIdentities: Schema.Array(
     Schema.Struct({
@@ -271,8 +582,13 @@ const decision = (
     reasonCodes,
     responsibilityAssignmentRefs: [...(input.responsibilityAssignmentRefs ?? [])],
   };
+  const nativePolicy = policies.length === 1 ? policies.at(0)?.nonPersonalApplicability : undefined;
+  const classified =
+    outcome === 'APPLICABLE' && nativePolicy !== undefined
+      ? { ...resolved, nonPersonalApplicability: nativePolicy }
+      : resolved;
   if (input.authority === undefined) {
-    return resolved;
+    return classified;
   }
   const authoritativeFields: MaterializedApplicabilityAuthorityFields = { authority: input.authority };
   if (input.authorityEvidenceRefs !== undefined) {
@@ -281,7 +597,7 @@ const decision = (
   if (input.authorityReceiptRef !== undefined) {
     authoritativeFields.authorityReceiptRef = input.authorityReceiptRef;
   }
-  return { ...resolved, ...authoritativeFields };
+  return { ...classified, ...authoritativeFields };
 };
 
 type ApplicabilityPolicySelection =

@@ -20,22 +20,24 @@ import { DateTime, Schema } from 'effect';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useState } from 'react';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
-import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
-import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
+import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { useProductDetailDraft } from './product-detail-save.ts';
-import { detailDraftInvalid, draftOf, measurementInvalid } from './product-detail-draft.ts';
+import { detailDraftInvalid, draftOf, measurementInvalid, detailGrossOf, detailVatOf } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import {
   PRODUCT_LIMITS,
   UNITS,
-  VAT_RATES,
   fieldError,
   lowStockErrorKey,
   priceErrorKey,
   tooLongMessage,
 } from './product-form-validation.ts';
 import { useProductLabel } from './product-form-labels.ts';
+import { rateAt, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
+import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
 import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
@@ -83,6 +85,8 @@ export interface ProductDetailViewProps {
   readonly tab: ProductDetailTab;
   /** The opaque variant target from the URL; resolution happens against the current authorized product. */
   readonly variantId?: string | undefined;
+  /** The company's VAT rates from the staff records read (current and scheduled periods); Tax owns them. */
+  readonly vat: CompanyVat;
 }
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
@@ -96,6 +100,11 @@ export interface ProductMarketsAccess {
 }
 const NO_MARKETS: ProductMarketsAccess = { canManage: false, entries: [] };
 const REQUIRED_MESSAGE_KEY = 'validation.required';
+const grossLabelKeys = {
+  fromVariants: 'fields.priceGrossFromVariants',
+  preview: 'fields.priceGrossPreview',
+  stored: 'fields.priceGross',
+} as const;
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
@@ -139,12 +148,14 @@ interface DetailFormProps {
   /** The form was submitted (Enter in a field): the same one save as the Save button. */
   readonly onSave: () => void;
   readonly product: ProductRecord;
+  readonly vat: CompanyVat;
 }
 
-const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product }: DetailFormProps) => {
+const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: DetailFormProps) => {
   const k = useProductLabel();
+  const taxLabels = useTaxLabels();
   const disabled = !canWrite;
-  const { active, category, lowStock, lowStockText, name, priceCzk, priceText, unit, vatRate } = draft;
+  const { active, category, lowStock, lowStockText, name, priceCzk, priceText, taxClassificationCode, unit } = draft;
   const setActive = (value: boolean) => {
     onDraftChange({ active: value });
   };
@@ -157,8 +168,9 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product }: DetailF
   const setUnit = (value: ProductUnit) => {
     onDraftChange({ unit: value });
   };
-  const setVatRate = (value: VatRate) => {
-    onDraftChange({ vatRate: value });
+  // The same draft path as every other field: the Save button sends it, leaving with it unsaved asks first.
+  const setTaxClassification = (value: CzVatClassificationCode) => {
+    onDraftChange({ taxClassificationCode: value });
   };
 
   const nameError = name.trim() === '' ? k(REQUIRED_MESSAGE_KEY) : tooLongMessage(k, name, PRODUCT_LIMITS.name);
@@ -170,10 +182,18 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product }: DetailF
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
   const priceMinor = Math.round(priceCzk * 100);
   const draftInvalid = detailDraftInvalid(draft);
-  const grossMinor =
-    Number.isFinite(priceMinor) && priceMinor >= 0
-      ? priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate })
-      : null;
+  const detailVat = detailVatOf(
+    product,
+    taxClassificationCode,
+    rateAt(vat, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent,
+  );
+  const gross = detailGrossOf(product, priceMinor, detailVat.appliedRate);
+  const grossText = gross.minor === null ? taxLabels.notSet : formatMoney(gross.minor);
+  // Only a stored gross stays the same on a classification change; with none ("not set") there is no share to keep.
+  const grossNote =
+    gross.kind !== 'preview' && gross.minor !== null && taxClassificationCode !== product.taxClassificationCode
+      ? k('detail.vatShareOnly')
+      : undefined;
 
   // noValidate: the save bar and the field messages say what is missing; native validation would only add a second,
   // differently worded set of messages.
@@ -226,22 +246,18 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product }: DetailF
           placeholder={k('selectPlaceholder')}
           value={[unit]}
         />
-        <SelectTemplate
+        <TaxClassificationSelect
           disabled={disabled}
-          items={VAT_RATES.map((rate) => selectItem(String(rate), `${rate} %`))}
-          label={k('fields.vat')}
-          name="vat"
-          onValueChange={(details) => {
-            const [next] = details.value;
-            const picked = VAT_RATES.find((rate) => String(rate) === next);
-            if (picked !== undefined) {
-              setVatRate(picked);
-            }
-          }}
-          placeholder={k('selectPlaceholder')}
-          value={[String(vatRate)]}
+          onChange={setTaxClassification}
+          value={taxClassificationCode}
+          vat={vat}
         />
       </div>
+      {detailVat.held && detailVat.appliedRate !== undefined && (
+        <p className="text-fg-secondary text-sm">
+          {k('detail.heldRate', { rate: detailVat.appliedRate })} {k('detail.heldRateExplanation')}
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <FormNumericInput
           disabled={disabled}
@@ -287,11 +303,13 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product }: DetailF
       <FormInput
         disabled
         id="detail-price-gross"
-        label={k('fields.priceGross')}
+        label={k(grossLabelKeys[gross.kind])}
         name="grossPrice"
-        value={grossMinor === null ? '—' : formatMoney(grossMinor)}
+        value={grossText}
+        {...(grossNote === undefined ? {} : { helpText: grossNote })}
       />
-      <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>
+      {/* A product with variants sells at its variants' prices: its own net price stores no gross that staff see. */}
+      {gross.kind !== 'fromVariants' && <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>}
       <FormTextarea
         disabled={disabled}
         id="detail-short-description"
@@ -434,6 +452,7 @@ export const ProductDetailView = ({
   storefrontOrigin,
   tab,
   variantId,
+  vat,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { language } = useModernI18n();
@@ -539,6 +558,7 @@ export const ProductDetailView = ({
               onDraftChange={updateDraft}
               onSave={handleSave}
               product={product}
+              vat={vat}
             />
             {/* The form's footer: the one Save button of the product fields, with the state of the draft. */}
             {canWrite && (
@@ -556,6 +576,7 @@ export const ProductDetailView = ({
               product={product}
               revision={revision}
               variantDestination={variantDestination}
+              vat={vat}
             />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-250 py-200" value="eshop">

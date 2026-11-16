@@ -30,11 +30,11 @@ import { principalAuthBindings, principals } from '../../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
+import { actionCreatedAuthBindingId, actionCreatedPrincipalId } from '../../auth/action-principal-ids.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 const roleKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
-const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
 const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
 const RoleKeySchema = decodedStringBrand(roleKey, 'RoleKey');
 const AuditRoleKeySchema = decodedStringBrand(Schema.String, 'RoleKey');
@@ -42,13 +42,13 @@ const AuditPrincipalIdSchema = decodedStringBrand(Schema.String, 'PrincipalId');
 const status = Schema.Literals(['active', 'disabled']);
 
 export const ManageDemoAccountPayloadSchema = Schema.Union([
+  // Creating names no principal or binding: Core gives both their ids, so no caller can place a principal at an id the
+  // platform derives for itself.
   Schema.Struct({
-    authBindingId: AuthBindingIdSchema,
     authUserId: text(120),
     displayName: text(200),
     email: text(320),
     operation: Schema.Literal('create'),
-    principalId: PrincipalIdSchema,
     roleKey: RoleKeySchema,
     roleLabel: text(120),
   }),
@@ -161,10 +161,16 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
   const { tenantId } = context.scope;
   const now = yield* DateTime.nowAsDate;
   if (payload.operation === 'create') {
+    const principalId = actionCreatedPrincipalId({
+      kind: 'demo-account',
+      reference: context.actionInvocationId,
+      tenantId,
+    });
+    const authBindingId = actionCreatedAuthBindingId({ actionInvocationId: context.actionInvocationId, tenantId });
     const existing = yield* transaction
       .select({ principalId: principals.principalId })
       .from(principals)
-      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
       .limit(1)
       .pipe(Effect.mapError(persistenceFailure));
     if (existing.length > 0) {
@@ -175,7 +181,7 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       .values({
         displayName: payload.displayName,
         kind: 'human',
-        principalId: payload.principalId,
+        principalId,
         status: 'active',
         tenantId,
       })
@@ -185,8 +191,8 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       .values({
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         createdByInvocationId: context.actionInvocationId,
-        principalAuthBindingId: payload.authBindingId,
-        principalId: payload.principalId,
+        principalAuthBindingId: authBindingId,
+        principalId,
         provider: 'better_auth',
         providerSubjectId: payload.authUserId,
         status: 'active',
@@ -195,15 +201,15 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       })
       .pipe(Effect.mapError(persistenceFailure));
     yield* context.recordAuditEvidence({
-      ...emptyEvidence(payload.principalId, 'create'),
+      ...emptyEvidence(principalId, 'create'),
       displayName: payload.displayName,
       email: payload.email,
       newRoleKey: payload.roleKey,
       newRoleLabel: payload.roleLabel,
       newStatus: 'active',
     });
-    yield* recordPrincipalLifecycleChange(context, payload.principalId);
-    return { operation: 'create' as const, principalId: payload.principalId, status: 'active' as const };
+    yield* recordPrincipalLifecycleChange(context, principalId);
+    return { operation: 'create' as const, principalId, status: 'active' as const };
   }
   const target = yield* loadManagedPrincipal(transaction, tenantId, payload.principalId);
   if (payload.principalId === context.scope.principalId) {

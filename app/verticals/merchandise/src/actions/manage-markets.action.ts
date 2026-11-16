@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug manage-markets
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { manageMarketsDeclaration } from '../../shared/access-declarations.ts';
 import {
   ManageMarketsPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const manageMarketsAction = defineAction(
   {
-    accessDeclaration: manageMarketsDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.markets.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'markets', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'demo.merchandise.manage-markets.access.v1' },
     actionKey: 'demo.merchandise.manage-markets',
     auditProfile: 'standard',

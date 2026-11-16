@@ -13,6 +13,7 @@ import {
   preparedStorefrontApplicationAuthority,
 } from '../../src/services/storefront-association-preflight.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   getActionHandler,
   getActionServicePreflight,
@@ -403,6 +404,7 @@ describe('Storefront invocation-local prepared authority', () => {
           ),
         );
       };
+      yield* holdTestModuleCredentials({ 'commerce-market-catalog': 'market-module-key' });
       yield* preparation(associatePayload, {
         actionInvocationId,
         compositionRevision: 'a'.repeat(64),
@@ -414,7 +416,6 @@ describe('Storefront invocation-local prepared authority', () => {
         Effect.provide(
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({
-              ONTOS_GATEWAY_MODULE_API_KEY: 'market-module-key',
               ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
             }),
           ),

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { asc } from 'drizzle-orm';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -46,10 +46,12 @@ import {
   at,
   catalogInput,
   catalogState,
+  withStoredGross,
   decodeState,
   encodeState,
   withMerchandise,
 } from './support/merchandise-database.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 const encodeOrder = Schema.encodeSync(OrderSchema);
 const now = DateTime.makeUnsafe('2026-10-22T10:00:00.000Z');
@@ -133,11 +135,11 @@ const runCommand = (
           head,
           workingSetRequestOf(command, resourceId),
         );
-        const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId });
+        const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId, tax: TEST_TAX });
         const revision =
           change.state === working.state
             ? working.revision
-            : yield* persistChange(transaction, fixture.scope, working, change.state, now);
+            : yield* persistChange(transaction, fixture.scope, working, change.state, now, TEST_RATES, {});
         return { change, revision, working };
       }),
     );
@@ -198,7 +200,7 @@ const richInput = {
 };
 
 it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
-  const state = decodeState(richInput);
+  const state = withStoredGross(decodeState(richInput));
   return withMerchandise(state, (fixture) =>
     Effect.gen(function* snapshotRoundTrip() {
       expect(fixture.revision).toBe(0);
@@ -230,14 +232,16 @@ it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
   );
 });
 
+const storedCatalog = withStoredGross(catalogState);
+
 it.live('replaceSnapshot replaces the whole company and advances the revision', () =>
-  withMerchandise(decodeState(richInput), (fixture) =>
+  withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
     Effect.gen(function* replaceCompanySnapshot() {
       const smaller: MerchandiseState = {
-        ...catalogState,
+        ...storedCatalog,
         movements: [],
         orders: [],
-        products: catalogState.products.slice(1, 2),
+        products: storedCatalog.products.slice(1, 2),
       };
       const revision = yield* fixture.db.transaction((transaction) =>
         replaceSnapshot(transaction, fixture.scope, smaller),
@@ -343,6 +347,51 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       expect(replay.change.storefrontOrder?.outcome).toBe('REPLAYED');
       expect(replay.change.state).toBe(replay.working.state);
       expect(yield* rowsOf(fixture)).toEqual(after);
+    }),
+  ),
+);
+
+/** The order row with this id. */
+const orderById = <Row extends { readonly id: string }>(rows: readonly Row[], id: string) =>
+  rows.find((row) => row.id === id);
+
+/** What VAT an order holds as stored: each line's price, rate and classification, and the totals. */
+const orderVatOf = (row: { readonly document: unknown; readonly totalMinor: number } | undefined) =>
+  Effect.map(decodeOrderDocument(row?.document), (order) => ({
+    lines: order.lines.map(({ productId, taxClassificationCode, unitPriceMinor, vatRate }) => ({
+      productId,
+      taxClassificationCode,
+      unitPriceMinor,
+      vatRate,
+    })),
+    totalMinor: row?.totalMinor,
+    totalVatMinor: order.totalVatMinor,
+  }));
+
+it.live('removing a cancelled order keeps its VAT as stored; an order not cancelled is still refused', () =>
+  withMerchandise(catalogState, (fixture) =>
+    Effect.gen(function* removeCancelledOrder() {
+      const orderRow = (id: string) => rowsOf(fixture).pipe(Effect.map(({ orders: stored }) => orderById(stored, id)));
+      const before = yield* orderVatOf(yield* orderRow('o1'));
+      const companyRates = rowsOf(fixture).pipe(Effect.map((rows) => rows.head?.taxRates));
+      const ratesBefore = yield* companyRates;
+      // Not cancelled (and no DEMO storefront order): refused, nothing written.
+      const refused = yield* runCommand(fixture, {
+        _tag: 'RemoveDemoOrder',
+        id: 'o1',
+        reason: 'Úklid objednávky',
+      }).pipe(Effect.flip);
+      expect(Predicate.isTagged(refused, 'MerchandiseLifecycleConflict')).toBe(true);
+      expect(yield* orderVatOf(yield* orderRow('o1'))).toEqual(before);
+      // Cancelled, then removed: soft removal; every line keeps its rate, its classification and its amounts.
+      yield* runCommand(fixture, { _tag: 'ChangeOrderStatus', id: 'o1', status: 'CANCELLED' });
+      yield* runCommand(fixture, { _tag: 'RemoveDemoOrder', id: 'o1', reason: 'Úklid stornované objednávky' });
+      const removed = yield* orderRow('o1');
+      expect(removed?.removed).toBe(true);
+      expect(yield* orderVatOf(removed)).toEqual(before);
+      expect(before.lines.every((line) => line.taxClassificationCode !== undefined)).toBe(true);
+      // The company's rates and holds, the only VAT state not on the order, do not move.
+      expect(yield* companyRates).toEqual(ratesBefore);
     }),
   ),
 );
@@ -477,9 +526,14 @@ it.live('persistChange against a stale revision reports a conflict instead of a 
           Effect.gen(function* staleRevisionTransaction() {
             const head = yield* requiredFixtureValue(yield* loadHead(transaction, fixture.scope, { lock: true }));
             const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, 'x'));
-            const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId: 'x' });
+            const change = yield* evolveMerchandiseState(working.state, command, {
+              actor,
+              now,
+              resourceId: 'x',
+              tax: TEST_TAX,
+            });
             const stale = { ...working, revision: working.revision + 7 };
-            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now);
+            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now, TEST_RATES, {});
             // Persistence turns `undefined` into a revision conflict, which rolls the transaction back.
             return revision ?? (yield* Effect.fail('conflict'));
           }),
@@ -532,10 +586,12 @@ it.live('UpdateCategory rename renames every product of the category in column a
         const renamed = yield* requiredFixtureValue(productRow(after, id));
         expect(renamed.category).toBe('Metrické šrouby');
         expect(renamed.updatedAt.toISOString()).toBe(nowIso);
+        // The rename edits the stored document in place, so it keeps the rate a rollback reads (`rollbackVatRateOf`).
         expect(renamed.document).toEqual({
           ...decodeProductDocument(old.document),
           category: 'Metrické šrouby',
           updatedAt: nowIso,
+          vatRate: Schema.decodeUnknownSync(Schema.Struct({ vatRate: Schema.Number }))(old.document).vatRate,
         });
         expect({ ...renamed, category: old.category, document: old.document, updatedAt: old.updatedAt }).toEqual(old);
       }
@@ -602,7 +658,7 @@ it.live('UpdateCategory without a rename leaves every product row alone', () =>
 );
 
 it.live('secondary membership persists through locked working sets and filters without duplicate products', () =>
-  withMerchandise(decodeState(richInput), (fixture) =>
+  withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
     Effect.gen(function* categoryMembershipPersistence() {
       yield* runCommand(fixture, {
         _tag: 'CreateCategory',
@@ -649,7 +705,7 @@ it.live('secondary membership persists through locked working sets and filters w
 );
 
 it.live('Bulk native memberships commit one scoped delta and roll back entirely on a later invalid primary', () =>
-  withMerchandise(decodeState(richInput), (fixture) =>
+  withMerchandise(withStoredGross(decodeState(richInput)), (fixture) =>
     Effect.gen(function* bulkCategoryMembershipPersistence() {
       yield* runCommand(fixture, {
         _tag: 'CreateCategory',

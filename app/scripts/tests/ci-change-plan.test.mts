@@ -24,7 +24,8 @@ const PRIVACY_DIRECTORY = 'verticals/privacy';
 const PRIVACY = '@app/privacy';
 const SHELL_DIRECTORY = 'apps/shell-super-app';
 const packages = [
-  { dependencies: [], directory: CATALOG_DIRECTORY, name: CATALOG },
+  // The fixture's changed catalog file is one its exports map names: other packages consume it.
+  { dependencies: [], directory: CATALOG_DIRECTORY, exportTargets: ['src/service.ts'], name: CATALOG },
   { dependencies: [CATALOG], directory: 'verticals/pricing', name: PRICING },
   { dependencies: [], directory: PRIVACY_DIRECTORY, name: PRIVACY },
   { dependencies: [], directory: SHELL_DIRECTORY, name: SHELL },
@@ -45,13 +46,94 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
   expect(plan.integration.map(({ name }) => name)).toEqual([
-    'Catalog Integration',
     'Pricing and Inventory Integration',
-    'Market, Order, Payment Term, Price Group, and Storefront Integration',
+    'Catalog Integration',
+    'Native Preproposal Basis and Approval Proof',
+    'Fresh Database Integration (1/2)',
+    'Fresh Database Integration (2/2)',
   ]);
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
   );
+});
+
+const FINANCE_BILLING = '@app/finance-billing';
+const FINANCE_DIRECTORY = 'verticals/finance-billing';
+const FACILITY_OPERATIONS = '@app/facility-operations';
+const narrowPackages = [
+  ...packages.filter(({ name }) => name !== SHELL),
+  {
+    dependencies: [],
+    directory: FINANCE_DIRECTORY,
+    exportTargets: ['src/worker-host/entry.ts'],
+    name: FINANCE_BILLING,
+  },
+  { dependencies: [FINANCE_BILLING], directory: 'verticals/facility-operations', name: FACILITY_OPERATIONS },
+  // The Shell and the root suites consume every vertical.
+  {
+    dependencies: [CATALOG, FINANCE_BILLING, FACILITY_OPERATIONS],
+    directory: SHELL_DIRECTORY,
+    name: SHELL,
+  },
+  { dependencies: [SHELL], directory: '.', name: 'app' },
+];
+const narrowPlan = (changedPath: string) =>
+  planCiChecks({ applyAffected: true, changedPaths: [changedPath], packages: narrowPackages, templates });
+const SHELL_OR_ROOT = (entry: { readonly 'package-filters'?: string; readonly 'root-suite'?: boolean }) =>
+  (entry['package-filters'] ?? '').includes('./apps/shell-super-app') || entry['root-suite'] === true;
+
+it('narrows a change inside one vertical to its own rows, the fresh-database rows and the source gates', () => {
+  const plan = narrowPlan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
+  expect(plan.mode).toBe('affected');
+  expect(plan.affectedPackages).toEqual([FINANCE_BILLING]);
+  const ordinary = plan.integration.filter((entry) => entry['fresh-database-tests'] !== 'only');
+  expect(ordinary.map(({ name }) => name)).toEqual(['Database, Migration, RLS, Authorization, and Outbox Integration']);
+  expect(ordinary[0]?.['package-filters']).toBe(`--filter ./${FINANCE_DIRECTORY}`);
+  // Neither the Shell nor a root suite consumes a vertical's internals; only its public surface.
+  expect(ordinary.some(SHELL_OR_ROOT)).toBe(false);
+  expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(false);
+  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
+  expect(plan.source).toEqual(templates.source);
+  expect(plan.unit.map(({ name }) => name)).toEqual(['Unit and Component Tests (every other package)']);
+  // Its tests are its own as well.
+  expect(narrowPlan(`app/${FINANCE_DIRECTORY}/tests/unit/totals.test.ts`).affectedPackages).toEqual([FINANCE_BILLING]);
+});
+
+it('selects every consumer when a change reaches a vertical public surface, and widens what is shared', () => {
+  // A file its exports map names, its runtime declaration and its locales are consumed: the Shell and root follow.
+  for (const surface of ['src/worker-host/entry.ts', 'vertical.runtime-declaration.ts', 'locales/cs/finance.json']) {
+    const plan = narrowPlan(`app/${FINANCE_DIRECTORY}/${surface}`);
+    expect(plan.mode, surface).toBe('affected');
+    expect(plan.affectedPackages, surface).toEqual(
+      expect.arrayContaining([FINANCE_BILLING, FACILITY_OPERATIONS, SHELL, 'app']),
+    );
+    expect(plan.integration.some(SHELL_OR_ROOT), surface).toBe(true);
+  }
+  // Shared code, the manifest, the registration, migrations and core packages run the complete suite.
+  for (const changedPath of [
+    `app/${FINANCE_DIRECTORY}/shared/domain/invoice.ts`,
+    `app/${FINANCE_DIRECTORY}/vertical.manifest.ts`,
+    `app/${FINANCE_DIRECTORY}/vertical.registration.ts`,
+    `app/${FINANCE_DIRECTORY}/drizzle/0001_invoice.sql`,
+    'app/packages/core-runtime/src/actions/runtime.ts',
+  ]) {
+    expect(narrowPlan(changedPath).mode, changedPath).toBe('full');
+  }
+});
+
+it('selects the Shell rows and the browser checks for a change inside the Shell', () => {
+  const plan = narrowPlan(`app/${SHELL_DIRECTORY}/src/routes/home.tsx`);
+  expect(plan.mode).toBe('affected');
+  expect(plan.affectedPackages).toEqual([SHELL]);
+  expect(
+    plan.integration
+      .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
+      .map((entry) => entry['rstest-shard']),
+  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
+  expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
+  expect(
+    plan.integration.some((entry) => entry['root-suite'] === true && entry['fresh-database-tests'] !== 'only'),
+  ).toBe(false);
 });
 
 it('retains the native preproposal proof for each runtime owner even without ordinary package-filter matches', () => {
@@ -92,6 +174,40 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
       integration: templates.integration.map((entry) => ({ ...entry, 'proof-packages': [] })),
     }),
   ).toBe(false);
+});
+
+it('gives each matrix job only its own rows and plans a job without rows as skipped', () => {
+  const full = planCiChecks({ applyAffected: false, changedPaths: [CATALOG_SOURCE], packages, templates });
+  expect(full.jobs.browser.map(({ suite }) => suite)).toEqual(['browser']);
+  expect(full.jobs.services.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(full.jobs.services.length + full.jobs.browser.length).toBe(templates.integration.length);
+  // The Fresh Database rows run the files that migrate their own database and never restore the seed.
+  const fresh = full.jobs.services.filter((entry) => entry['fresh-database-tests'] === 'only');
+  expect(fresh.length).toBeGreaterThan(0);
+  expect(fresh.some((entry) => entry.seed === true)).toBe(false);
+  expect(full.jobs.unitArtifacts.every((entry) => entry['node-artifacts'] === true)).toBe(true);
+  expect(full.jobs.unitPlain.some((entry) => entry['node-artifacts'] === true)).toBe(false);
+  expect(full.jobs.unitArtifacts.length + full.jobs.unitPlain.length).toBe(templates.unit.length);
+  expect(Object.values(full.expected).every((result) => result === 'success')).toBe(true);
+  const affected = planCiChecks({ applyAffected: true, changedPaths: [CATALOG_SOURCE], packages, templates });
+  // Catalog and Pricing unit rows read built outputs, and no browser row consumes them.
+  expect(affected.expected['workspace-unit-artifacts']).toBe('success');
+  expect(affected.expected['browser-integration']).toBe('skipped');
+  expect(affected.expected['node-artifact-proof']).toBe('success');
+  expect(affected.expected['node-artifact-build']).toBe('success');
+  // The seed producer runs whenever an integration row does, also on an affected round; no row waits for it.
+  expect(affected.expected['integration-seed-proof']).toBe('success');
+  expect(affected.jobs.services.map(({ name }) => name)).toContain('Catalog Integration');
+  // A sharded single-package row whose package is affected runs exactly as planned.
+  const shell = planCiChecks({
+    applyAffected: true,
+    changedPaths: ['app/apps/shell-super-app/src/service.ts'],
+    packages,
+    templates,
+  });
+  expect(shell.unit.filter(({ name }) => name.startsWith('Unit Tests (Shell')).map(({ commands }) => commands)).toEqual(
+    templates.unit.filter(({ name }) => name.startsWith('Unit Tests (Shell')).map(({ commands }) => commands),
+  );
 });
 
 it('keeps affected selection in shadow mode until explicitly enabled', () => {
@@ -169,7 +285,7 @@ it('rejects incomplete full matrices and widens unsupported package-selector syn
   ).toBe('full');
 });
 
-it('selects browser checks and the root integration suite when they consume a changed package', () => {
+it('selects browser checks, all root integration shards and every Shell shard when they consume a changed package', () => {
   const plan = planCiChecks({
     applyAffected: true,
     changedPaths: [CATALOG_SOURCE],
@@ -180,10 +296,18 @@ it('selects browser checks and the root integration suite when they consume a ch
     templates,
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
-  expect(plan.integration.filter((entry) => entry['root-suite'] === true)).toHaveLength(1);
-  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe(
-    '--filter ./apps/shell-super-app',
+  const roots = plan.integration.filter(
+    (entry) => entry['root-suite'] === true && entry['fresh-database-tests'] !== 'only',
   );
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
+  expect(roots.every((entry) => entry['package-filters'] === '')).toBe(true);
+  // The Shell suite runs in its own shards, so the root-suite shard names no package here.
+  expect(plan.integration.find((entry) => entry['root-suite'] === true)?.['package-filters']).toBe('');
+  expect(
+    plan.integration
+      .filter((entry) => entry['package-filters'] === '--filter ./apps/shell-super-app')
+      .map((entry) => entry['rstest-shard']),
+  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
 });
 
 it('keeps a root-only integration shard empty of package filters rather than selecting every package', () => {
@@ -253,7 +377,7 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
   }
 });
 
-it('uses all six customer-context shards for any selected customer-context package change', () => {
+it('uses every customer-context shard for any selected customer-context package change', () => {
   const plan = planCiChecks({
     applyAffected: true,
     changedPaths: ['app/verticals/commerce-customer-context/src/service.ts'],
@@ -261,8 +385,12 @@ it('uses all six customer-context shards for any selected customer-context packa
     templates,
   });
   expect(
-    plan.integration.filter((entry) => entry['rstest-shard'] !== undefined).map((entry) => entry['rstest-shard']),
-  ).toEqual(['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']);
+    plan.integration
+      .filter((entry) => entry['rstest-shard'] !== undefined && entry['fresh-database-tests'] !== 'only')
+      .map((entry) => entry['rstest-shard']),
+  ).toEqual(['1/7', '2/7', '3/7', '4/7', '5/7', '6/7', '7/7']);
+  // Its files that migrate their own database still run, in the Fresh Database rows.
+  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
   expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
 });
 
@@ -313,13 +441,14 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       const base = git('rev-parse', 'HEAD');
       writeFileSync(path.join(directory, 'README.md'), 'after\n');
       git('commit', '--quiet', '-am', 'docs');
-      const run = (event: string, comparison = base, force = 'false') => {
+      const run = (event: string, comparison = base, force = 'false', candidate = 'false') => {
         const output = path.join(directory, 'outputs');
         writeFileSync(output, '');
         execFileSync('/bin/bash', [script, path.join(directory, 'paths')], {
           cwd: directory,
           env: {
             BASE_SHA: comparison,
+            CANDIDATE_DISPATCH: candidate,
             FORCE_FULL: force,
             GITHUB_EVENT_NAME: event,
             GITHUB_OUTPUT: output,
@@ -335,6 +464,10 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
       expect(run('merge_group')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
+      // A candidate dispatch with a resolved comparison point is classified like a pull request, unless forced full.
+      expect(run('workflow_dispatch', base, 'false', 'true')).toContain('mode=docs\n');
+      expect(run('workflow_dispatch', base, 'true', 'true')).toContain('mode=full\n');
+      expect(run('workflow_dispatch', '0'.repeat(40), 'false', 'true')).toContain('mode=full\n');
       expect(run('pull_request', '0'.repeat(40))).toContain('mode=full\n');
       expect(run('pull_request', base, 'true')).toContain('mode=full\n');
       git('mv', 'README.md', 'runtime.ts');

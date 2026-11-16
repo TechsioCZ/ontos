@@ -61,10 +61,12 @@ export const acceptPaymentTermSourceStatementActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AcceptPaymentTermSourceStatementActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AcceptPaymentTermSourceStatementActionForbiddenProblem'> =>
     AcceptPaymentTermSourceStatementActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,8 @@ const mapCoreProblem = (error: ActionCoreError): AcceptPaymentTermSourceStatemen
       ActionInvocationStateError: (failure) => acceptPaymentTermSourceStatementActionProblem.conflict(failure.code),
       ActionPayloadValidationError: acceptPaymentTermSourceStatementActionProblem.invalid,
       ActionPermissionCheckError: (failure) => acceptPaymentTermSourceStatementActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => acceptPaymentTermSourceStatementActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        acceptPaymentTermSourceStatementActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => acceptPaymentTermSourceStatementActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => acceptPaymentTermSourceStatementActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => acceptPaymentTermSourceStatementActionProblem.conflict(failure.code),

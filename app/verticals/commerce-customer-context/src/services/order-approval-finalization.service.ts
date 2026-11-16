@@ -648,9 +648,7 @@ export const finishOrderFinalizationRead = Effect.fn('OrderApprovalFinalization.
       loaded.pricing,
     ).pipe(Effect.mapError(unavailable));
     yield* context.transaction(
-      Effect.fn('OrderApprovalFinalization.recheckPricing')(function* recheckPricing(
-        transaction: ScopedTransactionExecutor,
-      ) {
+      Effect.fn('OrderApprovalFinalization.recheckPricing')(function* recheckPricing(transaction) {
         const current = yield* loadOrderFinalizationReadSnapshot(transaction, scope, input);
         yield* verifyOrderFinalizationSnapshot(
           loaded.snapshot,
@@ -685,7 +683,7 @@ export const finishOrderFinalizationRead = Effect.fn('OrderApprovalFinalization.
   const candidateIdentity = { candidateHash: candidate.candidateHash, candidateRef: candidate.candidateRef };
   if (input.operation === 'RESOLVE_PAYMENT_TERMS') {
     const payment = yield* context.transaction(
-      Effect.fn('OrderApprovalFinalization.loadPayment')(function* loadPayment(transaction: ScopedTransactionExecutor) {
+      Effect.fn('OrderApprovalFinalization.loadPayment')(function* loadPayment(transaction) {
         const current = yield* loadOrderApprovalFinalizationSnapshot(transaction, scope, input.requestRef, false);
         yield* verifyOrderFinalizationSnapshot(
           loaded.snapshot,
@@ -702,9 +700,7 @@ export const finishOrderFinalizationRead = Effect.fn('OrderApprovalFinalization.
       Effect.mapError(unavailable),
     );
     yield* context.transaction(
-      Effect.fn('OrderApprovalFinalization.recheckPayment')(function* recheckPayment(
-        transaction: ScopedTransactionExecutor,
-      ) {
+      Effect.fn('OrderApprovalFinalization.recheckPayment')(function* recheckPayment(transaction) {
         const current = yield* loadOrderApprovalFinalizationSnapshot(transaction, scope, input.requestRef, false);
         yield* verifyOrderFinalizationSnapshot(
           loaded.snapshot,
@@ -728,9 +724,7 @@ export const finishOrderFinalizationRead = Effect.fn('OrderApprovalFinalization.
     }).pipe(Effect.mapError(unavailable));
   }
   const result = yield* context.transaction(
-    Effect.fn('OrderApprovalFinalization.finishLocalProofRead')(function* finishLocalProofRead(
-      transaction: ScopedTransactionExecutor,
-    ) {
+    Effect.fn('OrderApprovalFinalization.finishLocalProofRead')(function* finishLocalProofRead(transaction) {
       const current = yield* loadOrderApprovalFinalizationSnapshot(
         transaction,
         scope,
@@ -813,9 +807,7 @@ export const prepareOrderApprovalFinalizationEvidence = Effect.fn('OrderApproval
     const revision = yield* remote.activeRevision();
     const operationTime = DateTime.formatIso(yield* DateTime.now);
     const before = yield* context.transaction(
-      Effect.fn('OrderApprovalFinalization.snapshotAction')(function* snapshotAction(
-        transaction: ScopedTransactionExecutor,
-      ) {
+      Effect.fn('OrderApprovalFinalization.snapshotAction')(function* snapshotAction(transaction) {
         const snapshot = yield* loadOrderApprovalFinalizationSnapshot(transaction, scope, payload.requestRef, false);
         const pricing = yield* loadPurchasePricingContextSnapshot(
           transaction,

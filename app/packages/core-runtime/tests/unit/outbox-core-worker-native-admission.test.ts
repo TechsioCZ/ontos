@@ -1,20 +1,27 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { AccessOperationIdSchema, AccessScopeIdSchema, CommandDigestSchema } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { projectionWriteRefusal } from '../../src/access/intent/projection-write-error.ts';
+import type { AccessProjectionWriteError } from '../../src/access/intent/projection-write-error.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
+import { ApplicationCompositionAuthorityError } from '../../src/modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
 import type { OntosDeploymentIdentitySchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { isGenuineCoreOutboxWorker } from '../../src/modules/module-operation-execution.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
-import { corePeopleSearchOutboxWorkers, coreSystemOutboxWorkers } from '../../src/outbox/core-system-worker-entry.ts';
+import {
+  corePeopleSearchOutboxWorkers,
+  CoreWorkerFenceWait,
+  coreSystemOutboxWorkers,
+} from '../../src/outbox/core-system-worker-entry.ts';
 import { outboxWorkerTenantScope } from '../../src/outbox/core-authorization-projection.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../../src/outbox/core-system-subscriptions.ts';
 import { defineOutboxWorker, isVerifiedOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
@@ -43,6 +50,7 @@ const composition = makeOutboxWorkerComposition();
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const actorPrincipalId = '10000000-0000-4000-8000-000000000002';
 const invocationId = '10000000-0000-4000-8000-000000000003';
+const companyId = '10000000-0000-4000-8000-000000000006';
 
 const payloadFor = (registration: CoreWorker) =>
   Match.value(registration.descriptor.workerKey).pipe(
@@ -66,9 +74,13 @@ const payloadFor = (registration: CoreWorker) =>
 interface FixtureOptions {
   readonly authority?: 'expired' | 'revision-changed' | 'unavailable';
   readonly deployment?: typeof OntosDeploymentIdentitySchema.Type;
+  /** The company the claimed event's invocation acted in (`core.domain_events.legal_entity_id`); null when none. */
+  readonly legalEntityId?: string;
   readonly registrations?: readonly CoreWorker[];
   readonly selected?: CoreWorker;
   readonly sqlAuthority?: 'expired' | 'sealed' | 'stale';
+  /** The projection writer refuses with these, one per call in order, before it reconciles. */
+  readonly writerRefusals?: readonly AccessProjectionWriteError[];
 }
 
 const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options: FixtureOptions = {}) {
@@ -79,6 +91,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const claims: OutboxClaim[] = [];
   const results: OutboxCycleResult[] = [];
   const { selected } = options;
+  const eventCompany = options.legalEntityId ?? null;
   let openTransactions = 0;
   let claimed = false;
   let completed = false;
@@ -118,6 +131,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
             consumerModuleKey: selected.descriptor.consumerModuleKey,
             deliveryId: 'delivery-1',
             domainEventId: 'event-1',
+            legalEntityId: eventCompany,
             messageId: 'message-1',
             payloadJson: payloadFor(selected),
             producerModuleKey: selected.descriptor.producerModuleKey,
@@ -189,11 +203,18 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const tenantScope = OutboxWorkerTenantScopeLive.pipe(
     Layer.provide(Layer.succeed(CoreDatabase, { executor: database })),
   );
+  const pendingRefusals = [...(options.writerRefusals ?? [])];
   const lifecycle = ActionAuthorizationLifecycleLive.pipe(
     Layer.provide(
       Layer.succeed(AccessProjectionWriter, {
         reconcileTenant: ({ scope }) =>
           refuseInsideDatabaseTransaction('spicedb', 'scripted-core-projection').pipe(
+            Effect.andThen(
+              Effect.suspend(() => {
+                const refusal = pendingRefusals.shift();
+                return refusal === undefined ? Effect.void : Effect.fail(refusal);
+              }),
+            ),
             Effect.andThen(
               Effect.sync(() => {
                 expect(openTransactions).toBe(0);
@@ -237,6 +258,8 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
     expectedDeployment: options.deployment ?? composition.shell.deployment,
     layer: Layer.mergeAll(
       TestClock.layer(),
+      // The clock is a TestClock, so a busy-fence wait must not sleep.
+      Layer.succeed(CoreWorkerFenceWait, { budget: Duration.seconds(30), spacing: Duration.zero }),
       Layer.succeed(OutboxRuntime, observedRuntime),
       lifecycle,
       projector,
@@ -285,7 +308,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const afterExit = yield* Effect.flip(
     repository.claimNext(workers, 'after-entry-exit', DateTime.toDateUtc(DateTime.makeUnsafe(0)), composition.revision),
   );
-  expect(afterExit._tag).toBe('ApplicationCompositionAuthorityError');
+  expect(Predicate.isTagged(afterExit, 'ApplicationCompositionAuthorityError')).toBe(true);
   return { claimed, claims, completed, failures, observed, outcome, reconciled, results, statements };
 });
 
@@ -335,7 +358,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
         { actorPrincipalId, claimId: 'owner:claim', tenantId: 'not-a-tenant' },
       ]) {
         const failure = yield* Effect.flip(outboxWorkerTenantScope(input));
-        expect(failure._tag).toBe('CoreAuthorizationProjectionError');
+        expect(Predicate.isTagged(failure, 'CoreAuthorizationProjectionError')).toBe(true);
       }
     }),
   );
@@ -401,6 +424,21 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
     }),
   );
 
+  /**
+   * Every publication writes CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS into the authority, so the matcher creates a
+   * delivery for each of them. A subscription without a shipped handler is therefore a delivery nothing can
+   * ever finish, which blocks the next release's Outbox drain.
+   */
+  suite.effect('ships a handler for every core-system subscription the authority publishes', () =>
+    Effect.gen(function* coverEveryCoreSubscription() {
+      const registered = new Set(workers.map(({ descriptor }) => descriptor.workerKey));
+      const published = CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS.map(({ workerKey }) => workerKey);
+      expect(published.filter((workerKey) => !registered.has(workerKey))).toEqual([]);
+      expect([...registered].filter((workerKey) => !published.includes(workerKey))).toEqual([]);
+      return yield* Effect.void;
+    }),
+  );
+
   suite.effect('admits all shipped Core workers against Shell without a tenant module contract', () =>
     Effect.gen(function* admitCoreWorkerClaims() {
       const fixture = yield* runEntry();
@@ -408,7 +446,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(fixture.failures).toEqual([]);
       expect(fixture.results[0]?.claimed).toBe(0);
       const claim = fixture.statements.find(({ sql }) => sql.includes('skip locked'));
-      expect(claim?.sql).toContain('inner join "core"."tenant_module_states"');
+      // Core is not an installable tenant module, so its own work is eligible by worker key. A tenant module's
+      // worker still waits for a background-eligible module state, now asked as a predicate rather than a join
+      // so the claim's row lock never reaches a module state row.
+      expect(claim?.sql).not.toContain('inner join "core"."tenant_module_states"');
+      expect(claim?.sql).toContain('exists (select 1 from "core"."tenant_module_states"');
       expect(claim?.sql).toContain('from "core"."tenants"');
       expect(claim?.params).toContain('active');
       for (const worker of workers) {
@@ -422,6 +464,44 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(lock).toBeGreaterThanOrEqual(0);
       expect(authority).toBeGreaterThan(lock);
       expect(candidates).toBeGreaterThan(authority);
+    }),
+  );
+
+  // The shipped tuple's third worker; the first case pins its key, so a reordering cannot silently test another.
+  const { 2: lifecycleWorker } = coreSystemOutboxWorkers;
+
+  suite.effect('waits for a busy tenant fence within the attempt, then reconciles the wake-up itself', () =>
+    Effect.gen(function* waitsForBusyFence() {
+      expect(lifecycleWorker.descriptor.workerKey).toBe('core.authorization.reconcile-principal-lifecycle');
+      // Another writer holds the fence on the first try. The attempt must not count that as its failure, and must
+      // not settle the wake-up on the other writer's word either: it reconciles again once the fence is free.
+      const fixture = yield* runEntry({
+        selected: lifecycleWorker,
+        writerRefusals: [
+          projectionWriteRefusal(
+            'access_projection_write_fence_refused',
+            'fence_held_by_other_operation: Scope 1 is held by operation release-modules (Changing, revision 4) whose hold has not lapsed, so nothing may write',
+          ),
+        ],
+      });
+      expect(fixture.failures).toEqual([]);
+      expect(fixture.completed).toBe(true);
+      expect(fixture.results[0]).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
+      // The wake-up was settled by its own successful reconcile, not by the busy refusal.
+      expect(fixture.reconciled).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('still fails a lifecycle wake-up whose projection was genuinely refused', () =>
+    Effect.gen(function* failsGenuineRefusal() {
+      // Only a busy fence is waited for; an engine failure is this reconcile's own and must retry through the Outbox.
+      const fixture = yield* runEntry({
+        selected: lifecycleWorker,
+        writerRefusals: [projectionWriteRefusal('access_projection_write_unavailable', 'the engine did not complete')],
+      });
+      expect(fixture.completed).toBe(false);
+      expect(fixture.reconciled).toEqual([]);
+      expect(fixture.results[0]).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
     }),
   );
 
@@ -465,12 +545,38 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
     );
   }
 
+  suite.effect(
+    'hands a worker the company its event acted in only when the event names one; other workers settle as before',
+    () =>
+      Effect.gen(function* originatorCompany() {
+        const [peopleWorker] = corePeopleSearchOutboxWorkers;
+        // The claim reads the company from the domain event itself.
+        const withCompany = yield* runEntry({ legalEntityId: companyId, selected: peopleWorker });
+        const claimSql = withCompany.statements.find(({ sql }) => sql.includes('skip locked'))?.sql ?? '';
+        expect(claimSql).toMatch(/"domain_events"\."legal_entity_id"/u);
+        expect(withCompany.claims.map((claim) => claim.originatorLegalEntityId)).toEqual([companyId]);
+        expect(withCompany.observed.map((context) => context.originatorLegalEntityId)).toEqual([companyId]);
+        expect([withCompany.completed, withCompany.failures]).toEqual([true, []]);
+        // A tenant-level event (no company): the claim and the handler context carry no company at all.
+        const tenantLevel = yield* runEntry({ selected: peopleWorker });
+        expect(tenantLevel.claims.map((claim) => Object.hasOwn(claim, 'originatorLegalEntityId'))).toEqual([false]);
+        expect(tenantLevel.observed.map((context) => Object.hasOwn(context, 'originatorLegalEntityId'))).toEqual([
+          false,
+        ]);
+        expect([tenantLevel.completed, tenantLevel.failures]).toEqual([true, []]);
+        // A worker that knows nothing of companies decodes and settles a message whose event names one, as before.
+        const system = yield* runEntry({ legalEntityId: companyId, selected: coreSystemOutboxWorkers[0] });
+        expect(system.claims.map((claim) => claim.originatorLegalEntityId)).toEqual([companyId]);
+        expect([system.completed, system.failures, system.reconciled.length]).toEqual([true, [], 1]);
+      }),
+  );
+
   for (const authority of ['expired', 'revision-changed', 'unavailable'] as const) {
     suite.effect(`rejects ${authority} composition observed between process admission and native claiming`, () =>
       Effect.gen(function* rejectChangedClaimAuthority() {
         const fixture = yield* runEntry({ authority });
         expect(fixture.outcome).toBe('failed');
-        expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+        expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
         expect(fixture.statements).toEqual([]);
         expect(fixture.reconciled).toEqual([]);
         expect(fixture.observed).toEqual([]);
@@ -483,7 +589,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       Effect.gen(function* rejectSqlAuthority() {
         const fixture = yield* runEntry({ selected: coreSystemOutboxWorkers[0], sqlAuthority });
         expect(fixture.outcome).toBe('failed');
-        expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+        expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
         expect(fixture.statements.some(({ sql }) => /rollback/iu.test(sql))).toBe(true);
         expect(fixture.statements.some(({ sql }) => sql.includes('skip locked'))).toBe(false);
         expect(fixture.claimed).toBe(false);
@@ -517,7 +623,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
         registrations: [replacement, ...workers.filter((worker) => worker !== coreSystemOutboxWorkers[0])],
       });
       expect(fixture.outcome).toBe('failed');
-      expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+      expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
       expect(fixture.statements).toEqual([]);
       expect(fixture.reconciled).toEqual([]);
       expect(fixture.observed).toEqual([]);

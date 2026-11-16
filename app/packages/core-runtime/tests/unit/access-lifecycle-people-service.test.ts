@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -14,7 +14,7 @@ import type { AccessTeamWithMembers } from '../../src/access/intent/teams.ts';
 import { administrationOf, makeAccessPeopleCommands } from '../../src/access/lifecycle/people-service.ts';
 import { isSoleAdministrator } from '../../src/access/lifecycle/owners.ts';
 import type { AssignRoleCommand, GrantDelegationCommand } from '../../src/access/lifecycle/people-service.ts';
-import { peopleRefusal } from '../../src/access/lifecycle/people-commands.ts';
+import { PeopleIntentWriteSchema, peopleRefusal } from '../../src/access/lifecycle/people-commands.ts';
 import type { PeopleCommandError, PeopleIntentWrite } from '../../src/access/lifecycle/people-commands.ts';
 import { CatalogSnapshotSchema } from '../../src/access/model.ts';
 import type { Assignment, Cell, Delegation } from '../../src/access/model.ts';
@@ -360,8 +360,8 @@ const delegatedBasis = (delegation: Delegation): AccessConfigureBasis => ({
 });
 
 const assignInB = (principalId: PrincipalId, n: number, role = roleB, revision = roleBRevision): AssignRoleCommand => ({
+  holder: { _tag: 'Principal', principalId },
   incarnationId: ids.incarnation(100 + n),
-  principalId,
   roleId: role.id,
   roleRevisionId: revision.id,
   scopeId: scopeB,
@@ -552,12 +552,15 @@ const peopleRows: readonly AccessMembership[] = [
   row(LEAVER, scopeA, 66),
   row(LEAVER, scopeB, 67),
 ];
+const [RecordMembership, EndMembership, RequireDirectoryMember, , EndAssignment, , EndDelegation] =
+  PeopleIntentWriteSchema.members;
+
 const leaverRow = (scopeId: AccessScopeId) =>
   peopleRows.find(
     (candidate) =>
       candidate.scopeId === scopeId &&
       candidate.kind === 'member' &&
-      candidate.holder._tag === 'Principal' &&
+      Predicate.isTagged(candidate.holder, 'Principal') &&
       candidate.holder.principalId === LEAVER,
   );
 
@@ -594,8 +597,8 @@ const leaverHolding = (n: number, scopeId: AccessScopeId) => ({
 
 const admitInto = (legalEntity: typeof companyA, principalId: PrincipalId = NEWCOMER) => ({
   companyMembershipId: Schema.decodeUnknownSync(AccessMembershipIdSchema)('40000000-0000-4000-8000-000000000002'),
+  holder: { _tag: 'Principal' as const, principalId },
   legalEntityId: legalEntity,
-  principalId,
   tenantMembershipId: Schema.decodeUnknownSync(AccessMembershipIdSchema)('40000000-0000-4000-8000-000000000001'),
 });
 
@@ -608,14 +611,17 @@ it.effect('admits through permanent authority over the company only, with the di
       memberships: peopleRows,
       written,
     }).admitMember(adminAScope, admitInto(companyA));
-    expect(admitted.membership).toEqual({ principalId: NEWCOMER, scopeId: scopeA, status: 'active' });
+    expect(admitted.membership).toEqual({
+      holder: { _tag: 'Principal', principalId: NEWCOMER },
+      scopeId: scopeA,
+      status: 'active',
+    });
     // A company administrator's admission writes the person's tenant row too, after the precondition.
-    expect(written.map((write) => write._tag)).toEqual([
-      'RequireDirectoryMember',
-      'RecordMembership',
-      'RecordMembership',
-    ]);
-    expect(written[0]).toEqual({ _tag: 'RequireDirectoryMember', legalEntityId: companyA, principalId: NEWCOMER });
+    expect(written).toHaveLength(3);
+    expect(written[0]).toEqual(
+      RequireDirectoryMember.make({ legalEntityId: companyA, principalId: NEWCOMER, principalKind: 'human' }),
+    );
+    expect(written.slice(1).every(Schema.is(RecordMembership))).toBe(true);
 
     // The administrator of company B does not reach A; a delegated manager never admits anybody.
     const elsewhere = yield* Effect.flip(
@@ -651,7 +657,7 @@ it.effect('refuses an admission the directory refutes inside the write transacti
     const refused = yield* Effect.flip(
       serviceOver([], {
         apply: (writes) =>
-          writes.some((write) => write._tag === 'RequireDirectoryMember' && departed.has(write.principalId))
+          writes.some((write) => Predicate.isTagged(write, 'RequireDirectoryMember') && departed.has(write.principalId))
             ? Effect.fail(peopleRefusal('people_directory_membership_missing', 'departed'))
             : Effect.void,
         memberships: peopleRows,
@@ -686,17 +692,27 @@ it.effect('ends exactly the closed scopes: one company, or the tenant and every 
     const teams = [teamIn(scopeA, 1), teamIn(scopeB, 2)];
     const fixture = { delegations: [managesA, managesB], memberships: peopleRows, teams };
     const reason = 'Moved to another employer';
+    const revokedMembership = (membershipId: AccessMembership['id'] | undefined) =>
+      EndMembership.make({
+        membershipId: Option.getOrThrow(Option.fromNullishOr(membershipId)),
+        reason,
+        status: 'revoked',
+      });
 
     const companyWrites: PeopleIntentWrite[] = [];
     const revisions: (string | undefined)[] = [];
     const companyService = serviceOver(holdings, { ...fixture, revisions, written: companyWrites });
     const planned = yield* companyService.read(ownerScope);
     const company = yield* companyService.endMembership(ownerScope, {
-      principalId: LEAVER,
+      holder: { _tag: 'Principal', principalId: LEAVER },
       reason,
       scopeId: scopeA,
     });
-    expect(company.membership).toEqual({ principalId: LEAVER, scopeId: scopeA, status: 'revoked' });
+    expect(company.membership).toEqual({
+      holder: { _tag: 'Principal', principalId: LEAVER },
+      scopeId: scopeA,
+      status: 'revoked',
+    });
     // The store compares the revision of the view this ending was decided on, under the tenant's lock.
     expect(revisions).toEqual([planned.revision]);
     // Company A only: its row with the reason, its managed delegation, assignment and team place; the
@@ -710,7 +726,7 @@ it.effect('ends exactly the closed scopes: one company, or the tenant and every 
 
     const tenantWrites: PeopleIntentWrite[] = [];
     yield* serviceOver(holdings, { ...fixture, written: tenantWrites }).endMembership(ownerScope, {
-      principalId: LEAVER,
+      holder: { _tag: 'Principal', principalId: LEAVER },
       reason,
       scopeId: tenantScope,
     });
@@ -719,14 +735,14 @@ it.effect('ends exactly the closed scopes: one company, or the tenant and every 
     expect(tenantWrites).toHaveLength(10);
     expect(tenantWrites).toEqual(
       expect.arrayContaining([
-        { _tag: 'EndMembership', membershipId: leaverRow(tenantScope)?.id, reason, status: 'revoked' },
-        { _tag: 'EndMembership', membershipId: leaverRow(scopeA)?.id, reason, status: 'revoked' },
-        { _tag: 'EndMembership', membershipId: leaverRow(scopeB)?.id, reason, status: 'revoked' },
-        { _tag: 'EndDelegation', delegationId: managesA.id },
-        { _tag: 'EndDelegation', delegationId: managesB.id },
-        { _tag: 'EndAssignment', incarnationId: ids.incarnation(31) },
-        { _tag: 'EndAssignment', incarnationId: ids.incarnation(32) },
-        { _tag: 'EndAssignment', incarnationId: ids.incarnation(33) },
+        revokedMembership(leaverRow(tenantScope)?.id),
+        revokedMembership(leaverRow(scopeA)?.id),
+        revokedMembership(leaverRow(scopeB)?.id),
+        EndDelegation.make({ delegationId: managesA.id }),
+        EndDelegation.make({ delegationId: managesB.id }),
+        EndAssignment.make({ incarnationId: ids.incarnation(31) }),
+        EndAssignment.make({ incarnationId: ids.incarnation(32) }),
+        EndAssignment.make({ incarnationId: ids.incarnation(33) }),
       ]),
     );
   }),
@@ -752,7 +768,10 @@ it.effect(
         scope: OperationalScope,
         principalId: PrincipalId,
         scopeId: AccessScopeId,
-      ) => Effect.flip(service.endMembership(scope, { principalId, reason: 'test', scopeId }));
+      ) =>
+        Effect.flip(
+          service.endMembership(scope, { holder: { _tag: 'Principal', principalId }, reason: 'test', scopeId }),
+        );
 
       expect((yield* end(asAdminA, adminAScope, NEWCOMER, scopeA)).code).toBe('people_membership_unknown');
       // A company administrator never reaches the tenant row (it closes every company) ...
@@ -763,11 +782,15 @@ it.effect(
       expect((yield* end(coAdmin, adminAScope, OWNER, scopeA)).code).toBe('people_authority_missing');
       // The owner ends the co-administrator; the company administrator ends a plain member.
       yield* serviceOver([], { memberships: coAdminRows }).endMembership(ownerScope, {
-        principalId: MANAGER,
+        holder: { _tag: 'Principal', principalId: MANAGER },
         reason: 'test',
         scopeId: scopeA,
       });
-      yield* asAdminA.endMembership(adminAScope, { principalId: LEAVER, reason: 'test', scopeId: scopeA });
+      yield* asAdminA.endMembership(adminAScope, {
+        holder: { _tag: 'Principal', principalId: LEAVER },
+        reason: 'test',
+        scopeId: scopeA,
+      });
 
       // While the leaver's own grants stand in a closed scope, the owner revokes them first (S3) ...
       const grantedA = makeDelegation({
@@ -783,7 +806,11 @@ it.effect(
       expect(live.code).toBe('people_granted_delegations_live');
       expect(live.scopeIds).toEqual([scopeA]);
       // ... while a grant in a company the ending leaves open does not block it.
-      yield* granting.endMembership(ownerScope, { principalId: LEAVER, reason: 'test', scopeId: scopeB });
+      yield* granting.endMembership(ownerScope, {
+        holder: { _tag: 'Principal', principalId: LEAVER },
+        reason: 'test',
+        scopeId: scopeB,
+      });
 
       // The sole owner leaving the tenant must transfer it first.
       const sole = yield* end(serviceOver([], { memberships: peopleRows }), ownerScope, OWNER, tenantScope);

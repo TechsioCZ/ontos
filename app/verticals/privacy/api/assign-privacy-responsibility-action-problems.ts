@@ -81,10 +81,12 @@ export const assignPrivacyResponsibilityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AssignPrivacyResponsibilityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AssignPrivacyResponsibilityActionForbiddenProblem'> =>
     AssignPrivacyResponsibilityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): AssignPrivacyResponsibilityActi
       ActionInvocationStateError: (failure) => assignPrivacyResponsibilityActionProblem.conflict(failure.code),
       ActionPayloadValidationError: assignPrivacyResponsibilityActionProblem.invalid,
       ActionPermissionCheckError: (failure) => assignPrivacyResponsibilityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => assignPrivacyResponsibilityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        assignPrivacyResponsibilityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => assignPrivacyResponsibilityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => assignPrivacyResponsibilityActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => assignPrivacyResponsibilityActionProblem.conflict(failure.code),

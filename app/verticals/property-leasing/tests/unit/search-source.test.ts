@@ -10,7 +10,7 @@ import { expect, it } from 'effect-rstest';
 import { occupancyState } from '../../src/database/schema.ts';
 import { defineRelations } from 'drizzle-orm';
 
-import { invalidSearchSource } from '../../src/search/projection.ts';
+import { invalidSearchSource } from '../../src/services/search-projection.ts';
 import { loadSearchSnapshot } from '../../src/services/search-source.ts';
 
 const occupancyRelations = defineRelations({ occupancyState });

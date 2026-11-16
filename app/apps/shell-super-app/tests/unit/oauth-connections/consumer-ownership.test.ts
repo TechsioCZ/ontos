@@ -39,6 +39,7 @@ import { ConnectionUnauthorized, ConnectionUnavailable } from '../../../api/oaut
 import type { GrantRow } from '../../../api/oauth-connections/types.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { agentConnectionStoreDouble, unusedPeopleCommandsLayer } from '../../support/agent-connection-store-double.ts';
 
 type OAuthAuthenticationObservation = Parameters<(typeof OAuthAuthenticationAudit)['Service']['record']>[0];
 const unexpectedAuthentication = () => Effect.die('MCP must not authenticate through a browser session');
@@ -102,6 +103,8 @@ const coreDatabase = Layer.effect(
   makeWithDefaults({ relations: coreRelations }).pipe(Effect.map((executor) => ({ executor }))),
 ).pipe(Layer.provide(scriptedDatabase));
 const unusedCollaborators = Layer.mergeAll(
+  agentConnectionStoreDouble().layer,
+  unusedPeopleCommandsLayer,
   Layer.unwrap(
     makeCompositionSnapshot([]).pipe(
       Effect.map((snapshot) => subjectInspectionFixture({ snapshot, subjects: [] }).layer),
@@ -311,10 +314,8 @@ it.effect('rejects a foreign retained draft before reading its company label or 
       }),
       Effect.flip,
     );
-    expect(failure).toMatchObject({
-      _tag: 'ConnectionUnavailable',
-      cause: 'Retained connection scope differs from original requester',
-    });
+    expect(failure).toBeInstanceOf(ConnectionUnavailable);
+    expect(failure).toMatchObject({ cause: 'Retained connection scope differs from original requester' });
   }).pipe(Effect.provideService(OAuthFlow, flow), Effect.provide(unusedCollaborators)),
 );
 

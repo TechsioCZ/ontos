@@ -38,6 +38,7 @@ export const CATALOG_TABLE_INVENTORY = [
   'catalog_media_assignment_sets',
   'catalog_media_assignments',
   'catalog_result_snapshots',
+  'catalog_source_correlations',
   'commercial_gtin_assignment_revisions',
   'commercial_gtin_assignments',
   'commercial_sku_assignment_revisions',
@@ -818,6 +819,54 @@ export const productVariants = catalogSchema.table.withRLS(
       sql`${table.lifecycleState} in ('WORK_IN_PROGRESS', 'ACTIVE', 'RETIRED')`,
     ),
     ...tenantRlsPolicies('catalog_product_variants_tenant', table.tenantId),
+  ],
+);
+
+/** Immutable source-to-owner identity captured in the native creation transaction. */
+export const catalogSourceCorrelations = catalogSchema.table.withRLS(
+  'catalog_source_correlations',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    issuerId: text('issuer_id').notNull(),
+    routeScope: text('route_scope').notNull(),
+    recordNamespace: text('record_namespace').notNull(),
+    entityKind: text('entity_kind').notNull(),
+    recordId: text('record_id').notNull(),
+    mappingRevision: text('mapping_revision').notNull(),
+    productId: uuid('product_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    intentFingerprint: text('intent_fingerprint').notNull(),
+    recordedAt: recordedAt(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.tenantId,
+        table.issuerId,
+        table.routeScope,
+        table.recordNamespace,
+        table.entityKind,
+        table.recordId,
+      ],
+      name: 'catalog_source_correlations_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.productId, table.variantId],
+      foreignColumns: [productVariants.tenantId, productVariants.productId, productVariants.variantId],
+      name: 'catalog_source_correlations_variant_fk',
+    }).onDelete('restrict'),
+    check('catalog_source_correlations_kind_ck', sql`${table.entityKind} in ('PRODUCT', 'VARIANT')`),
+    uniqueIndex('catalog_source_correlations_variant_source_uk')
+      .on(table.tenantId, table.issuerId, table.routeScope, table.recordNamespace, table.variantId)
+      .where(sql`${table.entityKind} = 'VARIANT'`),
+    check('catalog_source_correlations_fingerprint_ck', sql`${table.intentFingerprint} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'catalog_source_correlations_parts_ck',
+      sql`${table.issuerId} = btrim(${table.issuerId}) and length(${table.issuerId}) between 1 and 300 and ${table.routeScope} = btrim(${table.routeScope}) and length(${table.routeScope}) between 1 and 300 and ${table.recordNamespace} = btrim(${table.recordNamespace}) and length(${table.recordNamespace}) between 1 and 300 and ${table.recordId} = btrim(${table.recordId}) and length(${table.recordId}) between 1 and 300 and ${table.mappingRevision} = btrim(${table.mappingRevision}) and length(${table.mappingRevision}) between 1 and 300`,
+    ),
+    ...tenantRlsPolicies('catalog_source_correlations_tenant', table.tenantId),
   ],
 );
 
@@ -3956,6 +4005,7 @@ export const productConfigurationContinuityDecisions = catalogSchema.table.withR
 );
 
 const catalogDatabaseSchema = {
+  catalogSourceCorrelations,
   gatewayAssertionRedemptions,
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,
@@ -4040,6 +4090,7 @@ const catalogDatabaseSchema = {
 } as const;
 
 export const CATALOG_TABLES = [
+  catalogSourceCorrelations,
   gatewayAssertionRedemptions,
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,

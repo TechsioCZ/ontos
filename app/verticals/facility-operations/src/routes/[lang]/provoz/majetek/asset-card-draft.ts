@@ -1,5 +1,6 @@
 // The asset card's values: a new asset is submitted once, an edit of an existing one is sent on Uložit.
 import { Option } from 'effect';
+import type { Types } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
@@ -20,7 +21,7 @@ type CardFields = Pick<
   | 'responsible'
   | 'serialNumber'
 >;
-type MutableCardFields = { -readonly [Key in keyof CardFields]: CardFields[Key] };
+type MutableCardFields = Types.Mutable<CardFields>;
 type UpdateCommand = Extract<OpsCommand, { readonly _tag: 'AssetUpdate' }>;
 
 export interface AssetCardDraft {
@@ -173,7 +174,7 @@ export const assetCardUpdateCommandOf = (
   if (draft.category.trim() === '' || draft.name.trim() === '') {
     return Option.none();
   }
-  const command: { -readonly [Key in keyof UpdateCommand]: UpdateCommand[Key] } = {
+  const command: Types.Mutable<UpdateCommand> = {
     _tag: 'AssetUpdate',
     assetId: asset.id,
     ...cardFieldsOf(draft, placement),

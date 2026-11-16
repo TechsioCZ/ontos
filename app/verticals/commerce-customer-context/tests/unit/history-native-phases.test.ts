@@ -6,6 +6,7 @@ import { expect, it } from 'effect-rstest';
 import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { counterpartyOrderHistoryRead } from '../../src/api/counterparty-order-history.read.ts';
 import { customerHistoryPortsAfterCommit } from '../../src/history-production-services.ts';
+import { HistoryOwnerUnavailable } from '../../shared/domain/history-errors.ts';
 import { CustomerHistoryPortsService, unavailableCustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
@@ -159,12 +160,16 @@ it.effect('cannot reuse a loaded association for a different actor, company, ten
       { ...scope, tenantId: 'other-tenant' },
     ]) {
       const ports = yield* customerHistoryPortsAfterCommit(base, snapshot, changed);
-      expect((yield* ports.counterpartyProfiles.current(input).pipe(Effect.flip))._tag).toBe('HistoryOwnerUnavailable');
+      expect(
+        Schema.is(HistoryOwnerUnavailable)(yield* ports.counterpartyProfiles.current(input).pipe(Effect.flip)),
+      ).toBe(true);
     }
     expect(
-      (yield* current.counterpartyProfiles
-        .current({ ...input, profileRef: { ...input.profileRef, resourceId: 'unrelated-profile' } })
-        .pipe(Effect.flip))._tag,
-    ).toBe('HistoryOwnerUnavailable');
+      Schema.is(HistoryOwnerUnavailable)(
+        yield* current.counterpartyProfiles
+          .current({ ...input, profileRef: { ...input.profileRef, resourceId: 'unrelated-profile' } })
+          .pipe(Effect.flip),
+      ),
+    ).toBe(true);
   }),
 );

@@ -1,7 +1,7 @@
 // @rstest-environment node
 import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
-  ContextAccess,
   OAuthAuthenticationAudit,
   OAuthAuthenticationAuditUnavailable,
   OAuthConnectionCompanies,
@@ -36,6 +36,7 @@ import { makeCompositionSnapshot } from '../../fixtures/application-composition.
 import { grantRegistryFixture, retainedGrant } from '../oauth-connections/grant-registry-fixture.ts';
 import { administrationScopeLayer } from './administration-runtime.fixture.ts';
 import { subjectInspectionFixture } from './subject-inspection.fixture.ts';
+import { agentConnectionStoreDouble } from '../../support/agent-connection-store-double.ts';
 
 const principal: GrantAdminRequest['principal'] = {
   authBindingId: '00000000-0000-4000-8000-000000000007',
@@ -204,16 +205,13 @@ const fixture = (options: FixtureOptions = {}) =>
     });
     const dependencies = Layer.mergeAll(
       owners,
+      agentConnectionStoreDouble().layer,
       OAuthGrantOwnersLive.pipe(Layer.provide(owners)),
       Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
       administrationScopeLayer(options.request ?? request),
       inspection.layer,
-      Layer.succeed(ContextAccess, {
-        legalEntities: () => Effect.die('Owner company access must use subject inspection'),
-        modules: () => Effect.die('Module visibility must use subject inspection'),
-        resources: () => Effect.die('Unexpected resource check'),
-        tenants: () => Effect.die('Unexpected tenant check'),
-      }),
+      // Others' revocation notes are decided by the connected-apps administration right in Core's own read.
+      Layer.succeed(AccessDecisionGate, makeTestAccessDecision()),
       Layer.succeed(OAuthConnectionCompanies, {
         names: (_tenantId, ids) => Effect.succeed(new Map(ids.map((id) => [id, 'Company']))),
       }),

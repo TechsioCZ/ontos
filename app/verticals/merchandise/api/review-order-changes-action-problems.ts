@@ -28,6 +28,26 @@ type ProblemOf<Tag extends ReviewOrderChangesActionProblem['_tag']> = Extract<
   ReviewOrderChangesActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'merchandise_category_slug_taken'
+        | 'merchandise_lifecycle_conflict'
+        | 'merchandise_offered_price_changed'
+        | 'merchandise_stock_reconciliation_required'
+        | 'merchandise_tier_base_price_required'
+        | 'merchandise_variant_bulk_price_unsupported'
+        | 'merchandise_variant_sku_required'
+        | 'merchandise_revision_conflict';
+      readonly kind: 'conflict';
+    }
+  | { readonly code: 'merchandise_permission_denied' | 'merchandise_scope_mismatch'; readonly kind: 'forbidden' }
+  | { readonly code: 'merchandise_reference_ineligible'; readonly kind: 'ineligible' }
+  | { readonly code: 'merchandise_not_found'; readonly kind: 'notFound' }
+  | {
+      readonly code: 'merchandise_persistence_unavailable' | 'merchandise_reference_unavailable';
+      readonly kind: 'unavailable';
+    };
 
 const problemStatus = {
   authentication: 401,
@@ -42,6 +62,19 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const merchandiseLifecycleConflictProblemByCode = {
+  merchandise_category_slug_taken: { code: 'merchandise_category_slug_taken', kind: 'conflict' },
+  merchandise_lifecycle_conflict: { code: 'merchandise_lifecycle_conflict', kind: 'conflict' },
+  merchandise_offered_price_changed: { code: 'merchandise_offered_price_changed', kind: 'conflict' },
+  merchandise_stock_reconciliation_required: { code: 'merchandise_stock_reconciliation_required', kind: 'conflict' },
+  merchandise_tier_base_price_required: { code: 'merchandise_tier_base_price_required', kind: 'conflict' },
+  merchandise_variant_bulk_price_unsupported: { code: 'merchandise_variant_bulk_price_unsupported', kind: 'conflict' },
+  merchandise_variant_sku_required: { code: 'merchandise_variant_sku_required', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'MerchandiseLifecycleConflict' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const reviewOrderChangesActionProblem = {
   authentication: (): ProblemOf<'ReviewOrderChangesActionAuthenticationProblem'> =>
@@ -63,10 +96,12 @@ export const reviewOrderChangesActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReviewOrderChangesActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReviewOrderChangesActionForbiddenProblem'> =>
     ReviewOrderChangesActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -125,10 +160,23 @@ export const reviewOrderChangesActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): ReviewOrderChangesActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) => reviewOrderChangesActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'forbidden' as const }, (matched) => reviewOrderChangesActionProblem.forbidden(matched.code)),
+    Match.when({ kind: 'ineligible' as const }, (matched) => reviewOrderChangesActionProblem.ineligible(matched.code)),
+    Match.when({ kind: 'notFound' as const }, (matched) => reviewOrderChangesActionProblem.notFound(matched.code)),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      reviewOrderChangesActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): ReviewOrderChangesActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      MerchandiseLifecycleConflict: () => reviewOrderChangesActionProblem.conflict('merchandise_lifecycle_conflict'),
+      MerchandiseLifecycleConflict: (failure) =>
+        mapDomainIdentity(merchandiseLifecycleConflictProblemByCode[failure.code]),
       MerchandiseNotFound: () => reviewOrderChangesActionProblem.notFound('merchandise_not_found'),
       MerchandiseNotImplemented: (failure) => mapMerchandiseNotImplementedProblem(failure),
       MerchandisePermissionDenied: () => reviewOrderChangesActionProblem.forbidden('merchandise_permission_denied'),
@@ -176,7 +224,8 @@ const mapCoreProblem = (error: ActionCoreError): ReviewOrderChangesActionProblem
       ActionInvocationStateError: (failure) => reviewOrderChangesActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reviewOrderChangesActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reviewOrderChangesActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reviewOrderChangesActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reviewOrderChangesActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reviewOrderChangesActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reviewOrderChangesActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reviewOrderChangesActionProblem.conflict(failure.code),

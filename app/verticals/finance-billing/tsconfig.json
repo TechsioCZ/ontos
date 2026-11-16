@@ -23,6 +23,7 @@
     "vertical.registration.ts",
     "scripts",
     "tests",
+    "tests/fixtures/**/*.json",
     "drizzle.config.ts",
     "rstest.config.ts"
   ],
@@ -36,6 +37,9 @@
     },
     {
       "path": "../sales-pipeline"
+    },
+    {
+      "path": "../tax"
     }
   ]
 }

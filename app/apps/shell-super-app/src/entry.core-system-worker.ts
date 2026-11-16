@@ -1,5 +1,4 @@
-import { coreSearchIngestionRegistryLayer, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { coreSearchIngestionRegistryLayer } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   AccessProjectionWriterLive,
@@ -19,11 +18,13 @@ import {
 import {
   ActiveApplicationCompositionConfigLive,
   CorePersistenceLive,
-  DatabaseConfigLive,
-  defineOutboxWorkerEntry,
-  OutboxRepositoryLive,
-  CoreSearchWorkerSnapshotLive,
   CoreSearchProjectionStoreLive,
+  CoreSearchWorkerSnapshotLive,
+  DatabaseConfigLive,
+  defineDatabaseIdentityEnrollment,
+  defineOutboxWorkerEntry,
+  makeDatabaseIdentityEnrollmentLive,
+  OutboxRepositoryLive,
 } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';

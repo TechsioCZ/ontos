@@ -37,7 +37,56 @@ const ActionErrorSchema = Schema.Union([
   AssortmentPolicyStaleBasis,
 ]);
 
-export const handleCreateRule = Effect.fn('CreateRuleAction.handle')(function* createRule(
+type RuleCreationOutcome = Extract<
+  Effect.Success<ReturnType<AssortmentPolicyPersistence['createRule']>>,
+  { readonly created: boolean }
+>;
+
+export const recordRuleCreation = Effect.fn('CreateRuleAction.recordCreation')(function* recordCreation(
+  payload: CreateRulePayload,
+  outcome: RuleCreationOutcome,
+  context: Omit<ActionHandlerContext<typeof domainEvents>, 'services'>,
+) {
+  const ref = stableRuleRef(context.scope.tenantId, outcome.stableRuleId);
+  const revisionRef = ruleRevisionRef(
+    context.scope.tenantId,
+    outcome.initialRuleRevisionId,
+    outcome.initialRevisionNumber,
+  );
+  const auditEvidence = {
+    action: 'CREATE_RULE',
+    changed: outcome.created,
+    meaningFingerprint: outcome.meaningFingerprint,
+    operation: 'CREATE',
+    resourceId: ref.resourceId,
+    resourceType: ref.resourceType,
+  };
+  if (outcome.created) {
+    const eventPayload = yield* Schema.encodeEffect(CreateRuleCommerceAssortmentRuleCreatedV1OutboxPayloadSchema)({
+      change: 'RULE_CREATED' as const,
+      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION' as const,
+      slice: {
+        decisionPurpose: payload.purpose,
+        ruleRevisionRef: revisionRef,
+        selector: payload.selector,
+        stableRuleRef: ref,
+      },
+    }).pipe(Effect.orDie);
+    const event = yield* context.addDomainEvent({
+      eventType: 'commerce.assortment.rule-created.v1',
+      payloadJson: eventPayload,
+      producerModuleKey: ref.moduleId,
+      subjectModuleKey: ref.moduleId,
+      subjectResourceId: ref.resourceId,
+      subjectResourceType: ref.resourceType,
+    });
+    yield* context.addOutboxMessage(event, createCreateRuleCommerceAssortmentRuleCreatedV1OutboxMessage(eventPayload));
+  }
+  const result = { created: outcome.created, initialRuleRevisionRef: revisionRef, stableRuleRef: ref };
+  return { auditEvidence, result };
+});
+
+export const handleCreateRule = Effect.fn('CreateRuleAction.handle')(function* handle(
   payload: CreateRulePayload,
   context: ActionHandlerContext<typeof domainEvents, AssortmentPolicyPersistence>,
 ) {
@@ -63,42 +112,9 @@ export const handleCreateRule = Effect.fn('CreateRuleAction.handle')(function* c
           }),
         );
   }
-  const ref = stableRuleRef(context.scope.tenantId, outcome.stableRuleId);
-  const revisionRef = ruleRevisionRef(
-    context.scope.tenantId,
-    outcome.initialRuleRevisionId,
-    outcome.initialRevisionNumber,
-  );
-  yield* context.recordAuditEvidence({
-    action: 'CREATE_RULE',
-    changed: outcome.created,
-    meaningFingerprint: outcome.meaningFingerprint,
-    operation: 'CREATE',
-    resourceId: ref.resourceId,
-    resourceType: ref.resourceType,
-  });
-  if (outcome.created) {
-    const eventPayload = yield* Schema.encodeEffect(CreateRuleCommerceAssortmentRuleCreatedV1OutboxPayloadSchema)({
-      change: 'RULE_CREATED' as const,
-      kind: 'ASSORTMENT_DISCOVERY_PROJECTION_INVALIDATION' as const,
-      slice: {
-        decisionPurpose: payload.purpose,
-        ruleRevisionRef: revisionRef,
-        selector: payload.selector,
-        stableRuleRef: ref,
-      },
-    }).pipe(Effect.orDie);
-    const event = yield* context.addDomainEvent({
-      eventType: 'commerce.assortment.rule-created.v1',
-      payloadJson: eventPayload,
-      producerModuleKey: ref.moduleId,
-      subjectModuleKey: ref.moduleId,
-      subjectResourceId: ref.resourceId,
-      subjectResourceType: ref.resourceType,
-    });
-    yield* context.addOutboxMessage(event, createCreateRuleCommerceAssortmentRuleCreatedV1OutboxMessage(eventPayload));
-  }
-  return { created: outcome.created, initialRuleRevisionRef: revisionRef, stableRuleRef: ref };
+  const { auditEvidence, result } = yield* recordRuleCreation(payload, outcome, context);
+  yield* context.recordAuditEvidence(auditEvidence);
+  return result;
 });
 
 export const createRuleAction = defineAction(

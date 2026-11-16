@@ -1,7 +1,9 @@
 import { and, eq, isNull, or } from 'drizzle-orm';
 import { Effect, Option } from 'effect';
 
+import { CoreDatabase } from '../../db/client.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
 import type { DatabaseIdentityEnrollment } from '../../db/database-identities.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import { accessScopeFences, accessScopes } from '../../db/schema.ts';
@@ -96,6 +98,14 @@ export const makeAccessAuthorityCurrentness = (database: {
   );
   return Object.freeze({ read });
 };
+
+/** The runtime's persisted currentness: the enrolled Core database the surrounding layers provide. */
+export const AccessAuthorityCurrentnessLive = Effect.gen(function* accessAuthorityCurrentnessFromLayers() {
+  const [database, enrollment] = yield* Effect.all([CoreDatabase, DatabaseIdentityEnrollmentContext], {
+    concurrency: 2,
+  });
+  return makeAccessAuthorityCurrentness({ enrollment, executor: database.executor });
+});
 
 export const sameAuthorityRevision = (
   left: readonly AccessAuthorityRevision[],

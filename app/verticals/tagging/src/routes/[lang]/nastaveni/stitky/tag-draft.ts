@@ -1,6 +1,6 @@
 // The tag editor's form values: what the create dialog sends once and the edit panel sends on Save.
 import type { RevisionedSaveResult } from '@app/admin-ui';
-import { pendingProposalMessage } from '../../../../api/action-result.ts';
+import { pendingProposalMessage } from '../../../../tags/action-result.ts';
 import { Effect, Predicate, Schema } from 'effect';
 import type { TaggingCommand } from '../../../../../shared/actions/apply-command.ts';
 import { subjectKindValues } from '../../../../../shared/apis/records.ts';

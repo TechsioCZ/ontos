@@ -2,6 +2,7 @@ import { FinanceReferenceUnavailable } from './errors/finance-reference-unavaila
 import { FinancePersistenceUnavailable } from './errors/finance-persistence-unavailable.ts';
 import { FinanceNotFound } from './errors/finance-not-found.ts';
 import { FinanceConflict } from './errors/finance-conflict.ts';
+import { FinanceForbidden } from './errors/finance-forbidden.ts';
 import { FinanceRejected } from './errors/finance-rejected.ts';
 import { Schema } from 'effect';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
@@ -26,6 +27,7 @@ import {
   FinanceTextSchema,
   InvoiceDraftCommandFields,
   InvoiceLinesSchema,
+  LineVatFields,
   SourceOrderSchema,
   InvoiceSchema,
   MoneyMinorSchema,
@@ -57,7 +59,18 @@ const AnchorFields = {
 };
 
 export const FinanceCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateInvoiceDraft', { ...InvoiceDraftCommandFields, ...DraftExtras }),
+  /**
+   * Our own (outgoing) invoice takes the next number of the company's series, allocated by Finance from the complete
+   * ledger; `documentNumber` is only for a caller's own reference or a supplier's number, never a series guess.
+   * With `sourceOrder`, a draft for a billing part of an order (direction and document kind) that already has its
+   * invoice returns that invoice; one for another counterparty is refused (`source_order_invoice_other_counterparty`).
+   */
+  Schema.TaggedStruct('CreateInvoiceDraft', {
+    ...InvoiceDraftCommandFields,
+    ...DraftExtras,
+    documentNumber: Schema.optionalKey(InvoiceDraftCommandFields.documentNumber),
+    sourceOrder: Schema.optionalKey(SourceOrderSchema),
+  }),
   Schema.TaggedStruct('UpdateInvoiceDraft', {
     ...InvoiceDraftCommandFields,
     ...DraftExtras,
@@ -231,7 +244,9 @@ export const FinanceCommandSchema = Schema.Union([
     name: FinanceTextSchema,
     unit: Schema.optionalKey(FinanceTextSchema),
     unitPriceMinor: MoneyMinorSchema,
+    vatClassification: LineVatFields.vatClassification,
     vatRate: VatRateSchema,
+    vatTreatment: LineVatFields.vatTreatment,
   }),
   Schema.TaggedStruct('SetOpeningBalance', {
     actorLabel,
@@ -257,6 +272,7 @@ export const ApplyCommandResultSchema = Schema.Struct({
 export const FinanceErrorSchema = Schema.Union([
   FinanceRejected,
   FinanceConflict,
+  FinanceForbidden,
   FinanceNotFound,
   FinancePersistenceUnavailable,
   FinanceReferenceUnavailable,
@@ -266,6 +282,8 @@ export type FinanceError = typeof FinanceErrorSchema.Type;
 export { FinanceRejected } from './errors/finance-rejected.ts';
 
 export { FinanceConflict } from './errors/finance-conflict.ts';
+
+export { FinanceForbidden } from './errors/finance-forbidden.ts';
 
 export { FinanceNotFound } from './errors/finance-not-found.ts';
 

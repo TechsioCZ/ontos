@@ -18,7 +18,8 @@ const sourcesUnder = (directory: string): string[] =>
     if (entry.isDirectory()) {
       return SKIPPED.has(entry.name) || entry.name.startsWith('.') ? [] : sourcesUnder(relative);
     }
-    return SOURCE.test(entry.name) ? [relative] : [];
+    // Hidden files are never module sources; other tests write short-lived `.api-fixture-*` files into the workspace.
+    return SOURCE.test(entry.name) && !entry.name.startsWith('.') ? [relative] : [];
   });
 
 const isTest = (file: string) => /(?:^|\/)(?:tests?|e2e)\//u.test(file) || /\.test\.[cm]?[jt]sx?$/u.test(file);
@@ -53,6 +54,16 @@ const specifiersOf = (file: string) => {
 const importersOf = (pattern: RegExp) =>
   production.filter((file) => specifiersOf(file).some((specifier) => pattern.test(specifier)));
 
+it('keeps the operator programs and their privileged seed writer out of every unit and the Shell', () => {
+  // The agent-profile operator holds the privileged connection, and its seed writer writes with it: operator-only,
+  // run from scripts, never bundled into a unit, a vertical, a package or the Shell.
+  for (const pattern of [/agent-profile-operator(?:\.mts)?$/u, /agent-seed-identity(?:\.mts)?$/u]) {
+    const importers = importersOf(pattern);
+    expect(importers.length).toBeGreaterThan(0);
+    expect(importers.filter((file) => !file.startsWith('scripts/'))).toEqual([]);
+  }
+});
+
 it('lets only the delegated gateway client read an owner slot, and only the host fill one', () => {
   // The reader: a module's own credential, read by the delegated client with the calling module's app id.
   expect(importersOf(/owner-module-credential(?:\.ts)?$/u)).toEqual([
@@ -71,6 +82,45 @@ it('lets only the delegated gateway client read an owner slot, and only the host
   expect(
     Object.values(exported).filter((target) => JSON.stringify(target).includes('hosted-module-credential-store')),
   ).toEqual([]);
+});
+
+it('lets only the host programs reach a built bundle claim, and no host load an unclaimable bundle', () => {
+  // The claim export: defined by the build step, generated into each unit's entry, called by the host programs and,
+  // once per unit at build time, by the claim proof (a throwaway key, in a child process of its own).
+  const claimNames =
+    /\b(?:ontosClaimHostedModuleCredentials|claimModuleCredentials|BUNDLE_CLAIM_EXPORT|ENTRY_CLAIM_EXPORT)\b/u;
+  expect(production.filter((file) => claimNames.test(read(file))).toSorted()).toEqual([
+    'scripts/demo/serve-module.mts',
+    'scripts/zerops/hosted-credential-claim-proof.mts',
+    'scripts/zerops/hosted-credential-claim.mts',
+    'scripts/zerops/serve-units.mts',
+  ]);
+  expect(importersOf(/hosted-credential-claim(?:\.mts)?$/u).toSorted()).toEqual([
+    'scripts/demo/serve-module.mts',
+    'scripts/zerops/hosted-credential-claim-cli.mts',
+    'scripts/zerops/hosted-credential-claim-proof.mts',
+    'scripts/zerops/owner-entry.mts',
+    'scripts/zerops/serve-units.mts',
+  ]);
+  // The backend federation remote carries a copy no host claims: only its build configuration names it, no runtime.
+  // The gates' unit output cache names it too, only to require that a cached build still has the file; it never loads it.
+  expect(
+    production.filter(
+      (file) =>
+        read(file).includes('backendRemoteEntry') &&
+        !file.endsWith('/backend-federation.config.ts') &&
+        file !== 'scripts/zerops/hosted-credential-claim.mts' &&
+        file !== 'scripts/ci/unit-output-cache.mts',
+    ),
+  ).toEqual([]);
+});
+
+it('reads the Shell gateway address under one rule, in every client that presents a key there', () => {
+  // `ONTOS_SHELL_GATEWAY_BASE_URL` is read only through `shellGatewayBaseUrlConfig`: HTTPS, or plain HTTP to loopback.
+  const ownRule = /Config\.[A-Za-z]+\([^;]*?'ONTOS_SHELL_GATEWAY_BASE_URL'/su;
+  expect(production.filter((file) => ownRule.test(read(file))).toSorted()).toEqual([
+    'packages/shared-contracts/src/shell-gateway-url.ts',
+  ]);
 });
 
 /** A string constant: a literal, or one cast `as const`. */

@@ -26,9 +26,9 @@ const product = (id: string, overrides: Partial<EncodedProduct> = {}): EncodedPr
   name: `Produkt ${id}`,
   priceHistory: [],
   sku: `SKU-${id}`,
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: at,
-  vatRate: 21,
   ...overrides,
 });
 const variant = (overrides: Partial<EncodedVariant> = {}): EncodedVariant => ({

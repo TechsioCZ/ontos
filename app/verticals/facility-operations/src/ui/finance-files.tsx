@@ -8,8 +8,8 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { useEffect, useState } from 'react';
-import { readFinance } from '../api/finance-reads.ts';
-import type { FinanceFileView, FinanceInvoiceView, FinanceRecordsView } from '../api/finance-reads.ts';
+import { readFinance } from './finance-reads.ts';
+import type { FinanceFileView, FinanceInvoiceView, FinanceRecordsView } from './finance-reads.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { FileTypeIcon, formatBytes } from './documents-kit.tsx';
 

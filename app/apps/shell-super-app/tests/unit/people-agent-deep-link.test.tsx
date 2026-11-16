@@ -13,12 +13,13 @@ const { fixture } = rstest.hoisted(() => ({
       description: null,
       displayName: 'Asistent provozu',
       hasProfile: true,
-      modules: [],
       operators: [],
       operatorsRevision: 0,
       owner: null,
       principalId: '00000000-0000-4000-8000-000000000003',
+      roles: [],
       status: 'active',
+      usable: [],
       writePolicy: 'approval',
     },
     forbidden: false,
@@ -48,8 +49,8 @@ rstest.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
             audit: [],
             company: { legalEntityId: 'company', legalName: 'Firma' },
             members: [],
-            modules: [],
-            presets: [],
+            roles: [],
+            rolesRevision: 'r0',
           },
         },
 }));
@@ -74,13 +75,15 @@ it.live('opens the linked real agent editor in-place, without a workforce route 
   }),
 );
 
-it('shows an absent profile honestly instead of claiming a configured write policy', () => {
+it('shows an absent profile honestly and an agent without roles as having no rights', () => {
   fixture.agent.hasProfile = false;
   render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
   expect(screen.getByText('shell.agents.section.noProfile')).toBeTruthy();
-  expect(screen.getByText('shell.agents.section.noProfileDescription')).toBeTruthy();
   expect(screen.queryByText('shell.agents.connections.policy.approval')).toBeNull();
-  expect(screen.queryByText('shell.agents.section.noWrites')).toBeNull();
+  // Rights come only from roles: an agent with none says so, and nothing it could use is listed.
+  expect(screen.getByText('shell.agents.roles.badgeNone')).toBeTruthy();
+  expect(screen.getByText('shell.agents.roles.none')).toBeTruthy();
+  expect(screen.getByText('shell.agents.roles.usableNone')).toBeTruthy();
 });
 
 it.live('drops an old agent detail when the selected company no longer admits that principal', () =>

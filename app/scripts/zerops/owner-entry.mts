@@ -4,7 +4,9 @@
  * node`) into `<unit>/dist/zerops-entry.mjs`, which exports `start(port, configureServer)` instead of listening on
  * `PORT` at import; `configureServer` receives the unit's Node server before it listens.
  * The app host imports every owner's entry into one process; all of them resolve their packages through the one
- * installed workspace, so shared dependencies load once.
+ * installed workspace, so shared dependencies load once. When the unit's API bundle carries a credential store copy,
+ * the entry also re-exports that copy's claim, which the host calls before the unit serves
+ * (`hosted-credential-claim.mts`); the build fails if anything the unit serves carries a copy no host can claim.
  *
  *   node scripts/zerops/owner-entry.mts <unit directory> [...]
  */
@@ -14,6 +16,17 @@ import path from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Console, Effect, FileSystem, Layer, Schema } from 'effect';
 import { Argument, Command } from 'effect/cli';
+
+import {
+  API_BUNDLE,
+  bundleFormOf,
+  checkUnitClaims,
+  commonJsClaimShim,
+  commonJsEntryExports,
+  entryClaimExport,
+  exposeUnitClaims,
+} from './hosted-credential-claim.mts';
+import { proveUnitClaim } from './hosted-credential-claim-proof.mts';
 
 export class OwnerEntryError extends Schema.TaggedError<OwnerEntryError>()('OwnerEntryError', {
   reason: Schema.String,
@@ -37,6 +50,21 @@ const PORT = 'const port = process.env.PORT || 8080;';
 /** The unit's Node server; the host configures it (keep-alive) through `start(port, configureServer)` before it listens. */
 const CREATE_SERVER = 'const app = await createProdServer(prodServerOptions);';
 const RUN = '\nmain();';
+/** The generated entry ends its `main` right before calling it; `start` waits for the listen there. */
+const MAIN_END = /\n\}\nmain\(\);\s*$/u;
+/**
+ * The generated `main` calls `app.listen(...)` and returns without waiting for it. `start` resolves only once the
+ * server listens, and fails when listening fails (a taken port), so the host never reports a unit it is not serving.
+ * The error listener leaves once the server listens: later server errors stay the process's own, as before.
+ */
+const AWAIT_LISTENING = [
+  '    const listening = new Promise((listened, failed) => {',
+  '        const onListening = () => { app.off("error", onError); listened(); };',
+  '        const onError = (cause) => { app.off("listening", onListening); failed(cause); };',
+  '        app.once("listening", onListening);',
+  '        app.once("error", onError);',
+  '    });',
+].join('\n');
 
 const relativeImport = (distDirectory: string, absolute: string) => {
   const relative = path.relative(distDirectory, absolute);
@@ -57,7 +85,7 @@ export const ownerEntrySource = (
     !generated.includes(MAIN) ||
     !generated.includes(PORT) ||
     !generated.includes(CREATE_SERVER) ||
-    !generated.trimEnd().endsWith('main();')
+    !MAIN_END.test(generated)
   ) {
     return undefined;
   }
@@ -81,13 +109,34 @@ export const ownerEntrySource = (
           : 'export async function start(port, configureServer) {',
       )
       .replace(PORT, '')
-      .replace(CREATE_SERVER, `${CREATE_SERVER}\n    configureServer(app);`)
+      .replace(CREATE_SERVER, `${CREATE_SERVER}\n    configureServer(app);\n${AWAIT_LISTENING}`)
       // Owners answer only the host's loopback relay, never the container's private network.
       .replace('app.listen({', "app.listen({ host: '127.0.0.1',")
-      .replace(/\nmain\(\);\s*$/u, commonJs ? '\nmodule.exports = { start };\n' : '\n')
+      .replace(MAIN_END, `\n    await listening;\n}${commonJs ? '\nmodule.exports = { start };\n' : '\n'}`)
       .replace(RUN, '')
   );
 };
+
+const TopologySchema = Schema.Struct({
+  shell: Schema.Struct({ path: Schema.String }),
+  verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
+});
+
+/** The unit's topology app id, by its directory: the module its credential store copy is claimed for. */
+const appIdOf = Effect.fn('OwnerEntry.appIdOf')(function* appIdOf(unit: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const topology = yield* fs
+    .readFileString(path.join(workspaceRoot, 'topology', 'reference-topology.json'))
+    .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))));
+  const relative = path.relative(workspaceRoot, unit);
+  const vertical = topology.verticals.find((candidate) => candidate.path === relative);
+  if (vertical !== undefined) {
+    return vertical.id;
+  }
+  return relative === topology.shell.path
+    ? 'shell-super-app'
+    : yield* new OwnerEntryError({ reason: `${relative} is no topology unit` });
+});
 
 const writeOwnerEntry = Effect.fn('OwnerEntry.write')(function* writeOwnerEntry(unitDirectory: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -111,11 +160,24 @@ const writeOwnerEntry = Effect.fn('OwnerEntry.write')(function* writeOwnerEntry(
     return yield* new OwnerEntryError({ reason: `${unitDirectory}/.output/index.js has an unexpected shape` });
   }
   const entry = path.join(dist, 'zerops-entry.mjs');
+  const [carriesStore] = yield* exposeUnitClaims([unit]);
   if (isCommonJsEntry(generated)) {
-    yield* fs.writeFileString(path.join(dist, 'zerops-entry.cjs'), source);
-    yield* fs.writeFileString(entry, COMMONJS_SHIM);
+    yield* fs.writeFileString(
+      path.join(dist, 'zerops-entry.cjs'),
+      carriesStore ? source.replace('module.exports = { start };', commonJsEntryExports) : source,
+    );
+    yield* fs.writeFileString(entry, carriesStore ? commonJsClaimShim : COMMONJS_SHIM);
   } else {
-    yield* fs.writeFileString(entry, source);
+    yield* fs.writeFileString(entry, carriesStore ? `${source.trimEnd()}\n${entryClaimExport}\n` : source);
+  }
+  yield* checkUnitClaims([unit]).pipe(Effect.mapError((problem) => new OwnerEntryError({ reason: problem.reason })));
+  if (carriesStore) {
+    // The text is in place; prove the claim really works, as the owners process will use it, before the build passes.
+    yield* proveUnitClaim({
+      appId: yield* appIdOf(unit),
+      bundleForm: bundleFormOf(yield* fs.readFileString(path.join(unit, API_BUNDLE))),
+      entry,
+    }).pipe(Effect.mapError((problem) => new OwnerEntryError({ reason: problem.reason })));
   }
   return yield* Console.log(`wrote ${path.relative(workspaceRoot, entry)}`);
 });

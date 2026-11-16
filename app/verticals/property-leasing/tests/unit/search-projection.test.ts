@@ -12,10 +12,10 @@ import { expect, it } from 'effect-rstest';
 
 import { OccupancyStateSchema } from '../../shared/apis/records.ts';
 import { LeasesProviderResponseSchema } from '../../shared/apis/leases-search.ts';
-import { buildSearchDocuments, invalidSearchSource } from '../../src/search/projection.ts';
-import type { SearchSourceSnapshot } from '../../src/search/projection.ts';
-import { loadOwnerSearch } from '../../src/search/search-read.ts';
-import type { LeaseSearchCurrentState } from '../../src/search/search-read.ts';
+import { buildSearchDocuments, invalidSearchSource } from '../../src/services/search-projection.ts';
+import type { SearchSourceSnapshot } from '../../src/services/search-projection.ts';
+import { loadOwnerSearch } from '../../src/services/search-read.ts';
+import type { LeaseSearchCurrentState } from '../../src/services/search-read.ts';
 import { projectSearchSnapshot } from '../../src/services/search-projector.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';

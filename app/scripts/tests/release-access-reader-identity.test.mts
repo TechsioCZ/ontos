@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Effect } from 'effect';
+import { ConfigProvider, Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
@@ -36,7 +36,7 @@ for (const environment of [{ DATABASE_ADMIN_URL: adminUrl }, { DATABASE_URL: adm
         const failure = yield* loadReleaseAccessDatabaseConfiguration(ConfigProvider.fromUnknown(environment)).pipe(
           Effect.flip,
         );
-        expect(failure._tag).toBe('ReleaseAccessVerificationError');
+        expect(Predicate.isTagged(failure, 'ReleaseAccessVerificationError')).toBe(true);
         expect(failure.reason).toBe(
           'Release access verification requires the configured shared runtime database identity',
         );

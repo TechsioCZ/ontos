@@ -2,7 +2,7 @@
 // The client form as the user sees it: typing changes only the draft, and one Save button (or the create button)
 // sends it. Only the i18n runtime, the toaster and the browser runtime's clock are replaced.
 import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -190,7 +190,8 @@ describe('client form', () => {
 
       await clickButton(container, 'Uložit');
       expect(sent.length).toBe(1);
-      expect(sent[0]).toMatchObject({ _tag: 'CreateClient', kind: 'organization', name: 'Nová firma' });
+      expect(Predicate.isTagged(sent[0], 'CreateClient')).toBe(true);
+      expect(sent[0]).toMatchObject({ kind: 'organization', name: 'Nová firma' });
     }),
   );
 

@@ -60,7 +60,7 @@ export const documentsRead = defineRead(
       input: DocumentsProviderRequest,
       context: ReadFinishContext<undefined, StateRow | undefined>,
     ) {
-      const { revision, state } = yield* decodeFinanceState(context.loaded);
+      const { revision, state } = yield* decodeFinanceState(context.loaded, context.scope);
       const visible = projectFinanceRecords(state, revision, {}).state;
       const result = yield* loadCurrentSearchHits(
         context.scope,

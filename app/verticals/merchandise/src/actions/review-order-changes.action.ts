@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug review-order-changes
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { reviewOrderChangesDeclaration } from '../../shared/access-declarations.ts';
 import {
   ReviewOrderChangesPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,7 +14,14 @@ import { persistenceService } from '../services/persistence.service.ts';
 export { prepareApplyCommandServices } from './command-execution.ts';
 export const reviewOrderChangesAction = defineAction(
   {
-    accessDeclaration: reviewOrderChangesDeclaration,
+    accessDeclaration: {
+      key: 'demo.merchandise.order-changes.review',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order-changes', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.merchandise.review-order-changes.access.v1',

@@ -61,10 +61,12 @@ export const configurePaymentMethodEnablementActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConfigurePaymentMethodEnablementActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConfigurePaymentMethodEnablementActionForbiddenProblem'> =>
     ConfigurePaymentMethodEnablementActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): ConfigurePaymentMethodEnablemen
       ActionInvocationStateError: (failure) => configurePaymentMethodEnablementActionProblem.conflict(failure.code),
       ActionPayloadValidationError: configurePaymentMethodEnablementActionProblem.invalid,
       ActionPermissionCheckError: (failure) => configurePaymentMethodEnablementActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => configurePaymentMethodEnablementActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        configurePaymentMethodEnablementActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => configurePaymentMethodEnablementActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => configurePaymentMethodEnablementActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => configurePaymentMethodEnablementActionProblem.conflict(failure.code),

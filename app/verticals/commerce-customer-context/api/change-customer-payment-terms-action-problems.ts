@@ -139,7 +139,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeCustomerPaymentTermsActio
       ActionInvocationStateError: (failure) => changeCustomerPaymentTermsActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeCustomerPaymentTermsActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeCustomerPaymentTermsActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeCustomerPaymentTermsActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeCustomerPaymentTermsActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeCustomerPaymentTermsActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => changeCustomerPaymentTermsActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => changeCustomerPaymentTermsActionProblem.conflict(failure.code),

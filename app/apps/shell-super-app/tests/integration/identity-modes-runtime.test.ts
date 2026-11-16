@@ -1,6 +1,6 @@
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import { CoreDatabase } from '@app/core-runtime/db/client';
-import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -156,7 +156,7 @@ it.live.each([
       operationalScope,
       { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
     );
-    const fixtureAuthentication = yield* makeShellTestAuthentication({
+    const fixtureAuthentication = yield* shellTestAuthentication({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, baseConfiguration),
@@ -268,7 +268,7 @@ it.live.each([
       ...baseConfiguration,
       supportUserIds: [originalUserId],
     };
-    const authentication = yield* makeShellTestAuthentication({}).pipe(
+    const authentication = yield* shellTestAuthentication({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(CoreDatabase, { executor: coreDatabase }),

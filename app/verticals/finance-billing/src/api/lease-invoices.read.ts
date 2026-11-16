@@ -184,7 +184,7 @@ const handleLeaseInvoices = Effect.fn('LeaseInvoicesRead.handle')(function* hand
   context: ReadLoadContext<Services>,
 ) {
   const row = yield* context.services.loadStateRow().pipe(Effect.mapError((failure) => unavailable(failure.reason)));
-  const { revision, state } = yield* decodeFinanceState(row).pipe(
+  const { revision, state } = yield* decodeFinanceState(row, context.scope).pipe(
     Effect.mapError((failure) => unavailable(failure.reason)),
   );
   const page = yield* selectLeaseInvoicesPage(state, revision, context.scope, input);

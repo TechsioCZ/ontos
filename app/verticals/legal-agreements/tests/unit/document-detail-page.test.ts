@@ -10,8 +10,10 @@ import { RecordsPage, preloadPage } from '../../src/routes/[lang]/smlouvy/page.t
 
 const mocks = rstest.hoisted(() => ({ customer: rstest.fn(), customers: rstest.fn(), records: rstest.fn() }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
-rstest.mock('@app/party-registry/api/client', () => ({
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
   executeCounterpartyRead: mocks.customer,
+}));
+rstest.mock('../../src/routes/[lang]/smlouvy/party-customers.ts', () => ({
   listCustomers: mocks.customers,
 }));
 rstest.mock('../../src/routes/[lang]/smlouvy/rental-reference-access.ts', () => ({
