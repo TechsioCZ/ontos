@@ -35,8 +35,9 @@ import {
  * Cost guards that keep the Workers bill at the Workers Paid base price ($5 a month: 10M requests
  * and 30M CPU ms). That allowance covers the whole account, which also runs other projects'
  * Workers, so `check` measures account-wide usage but only ever acts on OntOS stage objects. The
- * cut-over provisions the guards; the hourly `stage-edge-cost-guard` workflow runs `check`, which
- * trips the kill switch once the billing cycle's usage crosses the threshold.
+ * cut-over provisions the guards; `check` trips the kill switch once the billing cycle's usage
+ * crosses the threshold. It has no workflow: the hourly one was disabled on 2026-10-30 and removed
+ * with the retired Cloudflare edge target, so `check` is run by hand while that target is retired.
  *
  * - Access: a reusable policy admitting anyone who signs in, a CI service token whose credentials
  *   stage-edge holds, and, only with STAGE_ACCESS_ENFORCE=true, an Access application on the Shell
