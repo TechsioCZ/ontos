@@ -177,7 +177,9 @@ export const listDeliveries = Effect.fn('EmailLedger.listDeliveries')(function* 
       ? { legalEntityId: query.scope.legalEntityId, tenantId: query.scope.tenantId }
       : { legalEntityId: AKROS_LEGAL_ENTITY_ID, tenantId: DEMO_TENANT_ID };
   const recipient = query.scope.kind === 'buyer' ? query.scope.recipient.trim().toLowerCase() : null;
-  // Unused lists become a value no subject id/number can have, so each query keeps one static shape.
+  // Unused lists become '' so each query keeps one static shape. An empty id or number never identifies a subject (''
+  // is the stored "number unknown"), so both are excluded below: an id-only query must not match every row whose
+  // number is unknown.
   const ids = query.subjectIds.length > 0 ? query.subjectIds : [''];
   const numbers = query.subjectNumbers.length > 0 ? query.subjectNumbers : [''];
   const rows = yield* inDeliveryScope(
@@ -189,7 +191,8 @@ export const listDeliveries = Effect.fn('EmailLedger.listDeliveries')(function* 
         case when sent_at is null then null else to_char(sent_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as "sentAt"
       from demo_email.deliveries
       where source = ${query.source}
-        and (subject_id in ${sql.in(ids)} or subject_number in ${sql.in(numbers)})
+        and ((subject_id <> '' and subject_id in ${sql.in(ids)})
+          or (subject_number <> '' and subject_number in ${sql.in(numbers)}))
         and tenant_id = ${scope.tenantId}::uuid and legal_entity_id = ${scope.legalEntityId}::uuid
         and (${recipient}::text is null or lower(recipient) = ${recipient}::text)`,
   );

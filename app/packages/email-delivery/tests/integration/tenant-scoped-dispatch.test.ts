@@ -381,7 +381,7 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
 
   test.effect("company receipts show only the company's own ledger rows", () =>
     Effect.gen(function* verifyTenantDispatch() {
-      const { scopeB } = yield* DeliveryTestFixture;
+      const { admin, scopeB } = yield* DeliveryTestFixture;
       const crypto = yield* Crypto.Crypto;
       const principalId = yield* crypto.randomUUIDv4();
       const receipts = yield* listDeliveries({
@@ -390,7 +390,22 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         subjectIds: ['a1', 'a2', 'b'],
         subjectNumbers: [],
       });
+      // B's `shared` row (and every other row whose invoice number is unknown) is not one of the requested subjects.
       expect(receipts.map((receipt) => [receipt.subjectId, receipt.status])).toEqual([['b', 'SENT']]);
+      // Asked for the subject both companies use, B sees exactly its own row, never A2's.
+      const shared = yield* listDeliveries({
+        scope: { kind: 'company', principalId, ...scopeB },
+        source: 'rent-reminder',
+        subjectIds: ['shared'],
+        subjectNumbers: [],
+      });
+      expect(shared.map((receipt) => [receipt.subjectId, receipt.status])).toEqual([['shared', 'SENT']]);
+      const [own] = yield* admin.unsafe<{ readonly created_at: string }>(
+        `select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at
+         from demo_email.deliveries where dedupe_key = 'rent-reminder:shared' and legal_entity_id = $1`,
+        [scopeB.legalEntityId],
+      );
+      expect(shared.map((receipt) => receipt.createdAt)).toEqual([own?.created_at]);
     }),
   );
 });
