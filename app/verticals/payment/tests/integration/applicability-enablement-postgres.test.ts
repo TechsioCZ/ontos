@@ -299,8 +299,9 @@ describe('#1147 A1 method enablement — native persistence', () => {
           ).pipe(Effect.forkChild);
 
           // PostgreSQL proves B waits on A's row lock before A commits.
-          expect(yield* awaitBlockedWaiter(admin, holderPid)).toBeGreaterThan(0);
-          yield* Deferred.succeed(release, true);
+          expect(
+            yield* awaitBlockedWaiter(admin, holderPid).pipe(Effect.ensuring(Deferred.succeed(release, true))),
+          ).toBeGreaterThan(0);
 
           const winner = yield* Fiber.join(first);
           expect([winner.changed, winner.record.revision]).toEqual([true, 2]);
@@ -345,8 +346,9 @@ describe('#1147 A1 method enablement — native persistence', () => {
         const second = yield* failureCodeOf(
           withApplicability(runtime, scope, (p) => p.configureEnablement(enableB)),
         ).pipe(Effect.forkChild);
-        expect(yield* awaitBlockedWaiter(admin, holderPid)).toBeGreaterThan(0);
-        yield* Deferred.succeed(release, true);
+        expect(
+          yield* awaitBlockedWaiter(admin, holderPid).pipe(Effect.ensuring(Deferred.succeed(release, true))),
+        ).toBeGreaterThan(0);
 
         expect((yield* Fiber.join(first)).record.revision).toBe(1);
         expect(yield* Fiber.join(second)).toBe('payment_method_enablement_revision_conflict');

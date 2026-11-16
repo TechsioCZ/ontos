@@ -1163,8 +1163,11 @@ describe('#1151 source ingress concurrency on native PostgreSQL', () => {
         // Delivery B of the identical occurrence races through the real handler.
         const second = yield* accept(database, scope, bankReceipt(payment.paymentId)).pipe(Effect.forkChild);
         // PostgreSQL proves B queues behind A's source authority lock (not merely slow) before A proceeds.
-        expect(yield* awaitQueuedLockWaiters(admin, { expected: 1, holderPid })).toBeGreaterThan(0);
-        yield* Deferred.succeed(release, true);
+        expect(
+          yield* awaitQueuedLockWaiters(admin, { expected: 1, holderPid }).pipe(
+            Effect.ensuring(Deferred.succeed(release, true)),
+          ),
+        ).toBeGreaterThan(0);
 
         const winner = yield* Fiber.join(first);
         const loser = yield* Fiber.join(second);

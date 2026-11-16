@@ -1268,7 +1268,11 @@ it.live('#1149 Proof expires while execution waits; replay and a refreshed Compo
         return { afterReplay, replay, replayAtR2, waited };
       }).pipe(Effect.provide(TestClock.layer()), Effect.forkChild);
       // ... and PostgreSQL proves it waits on the Payment row lock (not merely slow) ...
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid })).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       yield* Deferred.succeed(queued, true);
       yield* Fiber.join(holder);
       const { afterReplay, replay, replayAtR2, waited } = yield* Fiber.join(validating);
@@ -1300,10 +1304,17 @@ it.live('#1149 Refund races with prepaid proof issuance: refund first, issuance 
       const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       const refund = yield* startRefund(harness, payment, collected.operationId).pipe(Effect.forkChild);
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid })).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       const issuance = yield* failureCode(harness.issue(issuePayload(binding, 'race-a'))).pipe(Effect.forkChild);
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid })).toBe(2);
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid }).pipe(
+          Effect.ensuring(Deferred.succeed(release, true)),
+        ),
+      ).toBe(2);
       yield* Fiber.join(holder);
       expect((yield* Fiber.join(refund)).outcome).toBe('PENDING');
       // Issuance decided under the lock after the refund committed: no proof against stale full coverage.
@@ -1325,10 +1336,17 @@ it.live('#1149 Refund races with prepaid proof issuance: issuance first, the pro
       const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       const issuance = yield* harness.issue(issuePayload(binding, 'race-b')).pipe(Effect.forkChild);
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid })).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       const refund = yield* startRefund(harness, payment, collected.operationId).pipe(Effect.forkChild);
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid })).toBe(2);
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid }).pipe(
+          Effect.ensuring(Deferred.succeed(release, true)),
+        ),
+      ).toBe(2);
       yield* Fiber.join(holder);
       const issued = yield* Fiber.join(issuance);
       yield* Fiber.join(refund);
@@ -1356,10 +1374,17 @@ it.live('#1149 Refund races with prepaid proof validation: validation waits on t
       const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       const refund = yield* startRefund(harness, payment, collected.operationId).pipe(Effect.forkChild);
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid })).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       const validation = yield* validate.pipe(Effect.forkChild);
-      expect(yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid })).toBe(2);
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid }).pipe(
+          Effect.ensuring(Deferred.succeed(release, true)),
+        ),
+      ).toBe(2);
       yield* Fiber.join(holder);
       yield* Fiber.join(refund);
       expect(yield* Fiber.join(validation)).toMatchObject({
