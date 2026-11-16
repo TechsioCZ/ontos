@@ -4,7 +4,6 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { catalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
-import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
 import { activateLocalOverrideAction } from './src/actions/activate-local-override.action.ts';
 import { activatePackageDefinitionAction } from './src/actions/activate-package-definition.action.ts';
 import { activatePackageOptionAction } from './src/actions/activate-package-option.action.ts';
@@ -12,8 +11,10 @@ import { addProductCategoryAssignmentAction } from './src/actions/add-product-ca
 import { assertSizeEquivalenceAction } from './src/actions/assert-size-equivalence.action.ts';
 import { assignCatalogMediaAction } from './src/actions/assign-catalog-media.action.ts';
 import { assignSkuAction } from './src/actions/assign-sku.action.ts';
+import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
 import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
 import { bindInitialVariantSourceRecoveryRead } from './src/api/bind-initial-variant-source-recovery.read.ts';
+import { catalogSourceProductPageRead } from './src/api/catalog-source-product-page.read.ts';
 import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
 import { changeLocalOverrideAction } from './src/actions/change-local-override.action.ts';
 import { changeProductManufacturerAction } from './src/actions/change-product-manufacturer.action.ts';
@@ -23,6 +24,7 @@ import { confirmGtinAction } from './src/actions/confirm-gtin.action.ts';
 import { confirmVariantCombinationAction } from './src/actions/confirm-variant-combination.action.ts';
 import { correctGtinAction } from './src/actions/correct-gtin.action.ts';
 import { correctProductAction } from './src/actions/correct-product.action.ts';
+import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
 import { correctSkuAction } from './src/actions/correct-sku.action.ts';
 import { createAttributeDefinitionAction } from './src/actions/create-attribute-definition.action.ts';
 import { createBrandAction } from './src/actions/create-brand.action.ts';
@@ -31,11 +33,13 @@ import { createControlledAttributeValueAction } from './src/actions/create-contr
 import { createPackageDefinitionAction } from './src/actions/create-package-definition.action.ts';
 import { createProductAction } from './src/actions/create-product.action.ts';
 import { createProductCategoryAction } from './src/actions/create-product-category.action.ts';
+import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
 import { createProductRelationshipAction } from './src/actions/create-product-relationship.action.ts';
 import { createProductTypeAction } from './src/actions/create-product-type.action.ts';
 import { createProductUnitAction } from './src/actions/create-product-unit.action.ts';
 import { createSetCompositionAction } from './src/actions/create-set-composition.action.ts';
 import { createVariantAction } from './src/actions/create-variant.action.ts';
+import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { decideProductTypeUnnecessaryAction } from './src/actions/decide-product-type-unnecessary.action.ts';
 import { governProductAttributeApplicabilityAction } from './src/actions/govern-product-attribute-applicability.action.ts';
 import { governVariantAllowedValuesAction } from './src/actions/govern-variant-allowed-values.action.ts';
@@ -95,12 +99,9 @@ import { setProductTypeAction } from './src/actions/set-product-type.action.ts';
 import { setProductUnitTargetDivisibilityAction } from './src/actions/set-product-unit-target-divisibility.action.ts';
 import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
 import { setVariantLocalizedFactsAction } from './src/actions/set-variant-localized-facts.action.ts';
-import { updateProductAction } from './src/actions/update-product.action.ts';
-import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
-import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { setVariantLocalizedFactsRecoveryRead } from './src/api/set-variant-localized-facts-recovery.read.ts';
+import { updateProductAction } from './src/actions/update-product.action.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
-import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
 // </generated-module-registration-imports>
 
 export const catalogRegistration = defineVerticalRuntimeRegistration({
@@ -210,6 +211,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
       'brand-history': () => import('./src/api/brand-history-client.ts'),
       'catalog-document-current': () => import('./src/api/catalog-document-current-client.ts'),
       'catalog-media-current': () => import('./src/api/catalog-media-current-client.ts'),
+      'catalog-source-product-page': () => import('./src/api/catalog-source-product-page-client.ts'),
       'catalog-source-products': () => import('./src/api/catalog-source-products-client.ts'),
       'catalog-source-resolution': () => import('./src/api/catalog-source-resolution-client.ts'),
       'change-local-override-recovery': () => import('./src/api/change-local-override-recovery-client.ts'),
@@ -360,19 +362,20 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
   reads: [
     // <generated-module-registration-reads>
     assortmentProductClassificationV1Read,
-    correctProductRecoveryRead,
-    updateProductRecoveryRead,
-    setVariantLocalizedFactsRecoveryRead,
-    createVariantRecoveryRead,
-    createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
+    catalogSourceProductPageRead,
     catalogSourceProductsRead,
+    correctProductRecoveryRead,
+    createProductRecoveryRead,
+    createVariantRecoveryRead,
     manufacturerRelationCurrentRead,
     pricingPurposeEquivalenceRead,
     productVariantSnapshotRead,
     quantityBasisCompatibilityRead,
     quantityPreparationRead,
     selectionEvidenceRead,
+    setVariantLocalizedFactsRecoveryRead,
+    updateProductRecoveryRead,
     // </generated-module-registration-reads>
   ],
 });
