@@ -8,6 +8,7 @@ import {
 } from '@app/shared-contracts/symmy';
 import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symmy';
 import {
+  SymmyCustomerRowsSchema,
   SymmyInternalExecutionPlanSchema,
   SymmyPriceBatchSchema,
   SymmyPriceListRowsSchema,
@@ -15,6 +16,7 @@ import {
   SymmyStockRowsSchema,
 } from '@app/symmy-integration/symmy-internal-contracts';
 import type {
+  SymmyCustomerRows,
   SymmyPriceBatch,
   SymmyPriceListRows,
   SymmyProductRows,
@@ -56,6 +58,7 @@ import type {
   SymmyInternalWritePayloadSchema,
 } from './contract.ts';
 import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-contract.ts';
+import { mapSymmyCustomersBatchRequest } from './customers-batch-public-contract.ts';
 import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
@@ -131,6 +134,12 @@ interface ProductsSubmit {
   readonly products: SymmyProductRows;
   readonly route: 'productsBatch';
 }
+/** The public customers. The owner admission builds the plan from the route enrollment and its selling legal entity. */
+interface CustomersSubmit {
+  readonly customers: SymmyCustomerRows;
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: 'customersBatch';
+}
 type FixtureSubmit =
   | (InternalWritePayload & {
       readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
@@ -139,10 +148,11 @@ type FixtureSubmit =
         | {
             readonly route: Exclude<
               JobWrites,
-              SelectedWrites | 'priceListsBatchUpsert' | 'priceListPricesBatch' | 'productsBatch'
+              SelectedWrites | 'customersBatch' | 'priceListsBatchUpsert' | 'priceListPricesBatch' | 'productsBatch'
             >;
           }
       ))
+  | CustomersSubmit
   | PriceBatchSubmit
   | PriceListsSubmit
   | ProductsSubmit;
@@ -307,6 +317,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
   }
   if ('stock' in request) {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyStockRowsSchema))(request.stock).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
+    );
+    return encoded.includes(raw);
+  }
+  if ('customers' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerRowsSchema))(request.customers).pipe(
       Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
     );
     return encoded.includes(raw);
@@ -576,7 +592,11 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('customersBatch', ({ headers, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'customersBatch' },
+        {
+          customers: mapSymmyCustomersBatchRequest(payload),
+          idempotencyKey: headers['idempotency-key'],
+          route: 'customersBatch',
+        },
         request,
       ),
     )

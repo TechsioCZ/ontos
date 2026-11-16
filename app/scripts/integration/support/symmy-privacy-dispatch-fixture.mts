@@ -247,7 +247,7 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     });
   const template = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(yield* planFor('INTERNAL_TEMPLATE'));
   yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
-    values(${routeId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json({ ...template, sourceRouteId })}::jsonb,'v1','customersBatch','v1',${yield* json(policy)}::jsonb)`;
+    values(${routeId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json({ ...template, sourceRouteId })}::jsonb,'v1','productsBatch','v1',${yield* json(policy)}::jsonb)`;
   const environment = {
     APP_ENV_PATH: '/dev/null',
     DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
@@ -305,18 +305,17 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   });
   const client = yield* HttpClient.HttpClient;
   const submit = Effect.fn('PrivacyDispatchNative.submit')(function* submit(key: string) {
-    const plan = yield* planFor(key);
+    // The public products body: its name is the private intent the job retains until Privacy dispatches its erasure.
     const payload = {
-      contractVersion: 'INTERNAL_C14',
-      plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan),
+      products: [{ identifier: { type: 'sku', value: key }, name: privateIntentMarker, variants: [{}] }],
     };
-    const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
+    const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/products/batch`, {
       body: yield* HttpBody.json(payload),
       headers: { 'idempotency-key': key, 'x-api-key': Redacted.value(sourceKey.secret) },
     });
     if (response.status !== 202) {
       return yield* new PrivacyDispatchNativeFailure({
-        reason: `Actual source admission refused with ${response.status}`,
+        reason: `Actual source admission refused with ${response.status}: ${yield* response.text}`,
       });
     }
     return { payload, receipt: yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema))) };

@@ -173,7 +173,8 @@ const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[
  * route enrolls that read: the owner admission fences the first created list on it and ignores it on a replay.
  * The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
  * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
- * list each price group code names, read the same way.
+ * list each price group code names, read the same way. The customers carry nothing more: the route enrollment and
+ * the route scope the owner admission reads give it the source and the selling legal entity.
  */
 const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
   request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
@@ -181,6 +182,9 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
   admission: SymmyIngressAdmission,
   newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
 ) {
+  if ('customers' in request) {
+    return { customers: request.customers };
+  }
   if ('products' in request) {
     if (selected === undefined) {
       return yield* unavailable();
@@ -433,6 +437,7 @@ export const makeSymmyGovernedDispatch = (
       Object.hasOwn(SYMMY_FIXTURE_ROUTES, request.route) ||
       'priceLists' in request ||
       'priceBatch' in request ||
+      'customers' in request ||
       'products' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));

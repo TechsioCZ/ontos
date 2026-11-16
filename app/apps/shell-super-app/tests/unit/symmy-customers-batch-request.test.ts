@@ -10,6 +10,9 @@ const accepts = (body: Body) =>
 const person = { customerId: 'c-1', firstName: 'Jana', kind: 'PERSON', lastName: 'Nováková' };
 const organization = { businessName: 'Firma s.r.o.', customerId: 'c-2', kind: 'ORGANIZATION' };
 const postalAddress = { addressLine1: 'Ulice 1', city: 'Praha', countryCode: 'CZ', postalCode: '11000' };
+const emailContacts = (count: number) =>
+  Array.from({ length: count }, () => ({ preferred: false, type: 'EMAIL', value: 'a@b.cz' }));
+const withCustomerContacts = (count: number) => ({ ...person, contacts: emailContacts(count) });
 const withCustomer = (customer: Body) => ({ customers: [customer] });
 const withIdentifiers = (officialIdentifiers: Body) => withCustomer({ ...organization, officialIdentifiers });
 const withContacts = (contacts: Body) => withCustomer({ ...person, contacts });
@@ -64,6 +67,40 @@ describe('Symmy customers batch request: customers', () => {
     }
     expect(accepts({ contractVersion: 'INTERNAL_C14', customers: [person] })).toBe(false);
     expect(accepts({ customers: [person], fixtureId: 'x' })).toBe(false);
+  });
+});
+
+describe('Symmy customers batch request: what one plan holds', () => {
+  const address = { postalAddress, purposes: ['BILLING'] };
+  const withAddressCount = (count: number) => ({ ...person, addresses: Array.from({ length: count }, () => address) });
+
+  it('refuses names and labels the owners cannot store instead of failing the job later', () => {
+    expect(accepts(withCustomer({ ...person, firstName: '   ' }))).toBe(false);
+    expect(accepts(withCustomer({ ...person, lastName: '   ' }))).toBe(false);
+    expect(accepts(withCustomer({ ...organization, businessName: '   ' }))).toBe(false);
+    expect(accepts(withAddresses([{ ...address, label: '   ' }]))).toBe(false);
+  });
+
+  it('counts each address as a plan item of its own, next to the customers', () => {
+    // 16 plan items: five customers with two addresses (15 items) and one more customer.
+    expect(accepts({ customers: [...Array.from({ length: 5 }, () => withAddressCount(2)), person] })).toBe(true);
+    expect(accepts({ customers: [...Array.from({ length: 5 }, () => withAddressCount(2)), withAddressCount(1)] })).toBe(
+      false,
+    );
+    expect(accepts({ customers: Array.from({ length: 16 }, () => withAddressCount(1)) })).toBe(false);
+    expect(accepts({ customers: [withAddressCount(10), withAddressCount(4)] })).toBe(true);
+    expect(accepts({ customers: [withAddressCount(10), withAddressCount(5)] })).toBe(false);
+  });
+
+  it('counts each contact as a plan item of its own as well', () => {
+    expect(
+      accepts(withCustomer({ ...organization, addresses: withAddressCount(10).addresses, contacts: emailContacts(5) })),
+    ).toBe(true);
+    expect(
+      accepts(withCustomer({ ...organization, addresses: withAddressCount(10).addresses, contacts: emailContacts(6) })),
+    ).toBe(false);
+    expect(accepts(withCustomer({ ...organization, contacts: emailContacts(10) }))).toBe(true);
+    expect(accepts({ customers: [withCustomerContacts(10), withCustomerContacts(6)] })).toBe(false);
   });
 });
 

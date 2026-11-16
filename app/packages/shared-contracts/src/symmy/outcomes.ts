@@ -37,6 +37,7 @@ const unsupportedEffect = Schema.Struct({
       'DescriptiveHint',
       'ClassificationHint',
       'PriceHint',
+      'IdentifierHint',
     ]),
   ),
   owner: OntosModuleIdSchema,

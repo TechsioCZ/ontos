@@ -1,51 +1,44 @@
-import {
-  AddSavedAddressActionAuthenticationProblemSchema,
-  AddSavedAddressActionForbiddenProblemSchema,
-  AddSavedAddressPayloadSchema,
-} from '@app/commerce-customer-context/api/add-saved-address-action';
-import { executeAddSavedAddressWithAuthorization } from '@app/commerce-customer-context/api/add-saved-address-action/client';
-import type { UpdateSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/update-saved-address-action';
-import type { RemoveSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/remove-saved-address-action';
-import {
-  SavedAddressSourceReceiptRequestSchema,
-  SavedAddressSourceReceiptResponseSchema,
-} from '@app/commerce-customer-context/api/saved-address-source-receipt';
-import { executeSavedAddressSourceReceiptWithAuthorization } from '@app/commerce-customer-context/api/saved-address-source-receipt/client';
-import type { SavedAddressRefSchema } from '@app/commerce-customer-context/resources/saved-address';
+import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
+import { SavedAddressSourceReceiptResponseSchema } from '@app/commerce-customer-context/api/saved-address-source-receipt';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { PgClient } from '@effect/sql-pg';
 import { SourceProcessingContextSchema } from '@app/privacy/api';
-import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
 import {
   seedCommittedProfileSourceProcessingNativeFixture,
   seedSourceProcessingNativeFixture,
 } from '@app/privacy/testing/source-processing-native';
-import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { expect, it } from 'effect-rstest';
-import { Effect, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Duration, Effect, Order, Redacted, Schema } from 'effect';
+import { HttpClient } from 'effect/http';
 import { savedAddressWorkerRules, savedAddressRecoveryRules } from './support/symmy-c14-saved-address-rules.mts';
 import {
-  SavedAddressNativeInvocationSchema,
-  issueSavedAddressFixtureRecovery,
-} from './support/symmy-c14-saved-address-recovery.mts';
-import {
   customerFixtureServices as services,
-  customerIntakeCounts,
   makeSymmyC14CustomerFixture,
-  seedCustomerIntakeProtection,
   observeCustomerFixtureUntil as observeUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
-import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
+import { customerContexts } from './support/symmy-c14-customer-contexts.mts';
+import type { CustomerContextScope, CustomerExpectation } from './support/symmy-c14-customer-contexts.mts';
+import { addressRecordId, customerItemSource, customersBody } from './support/symmy-c14-customer-public.mts';
+import type { PublicAddress } from './support/symmy-c14-customer-public.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
-import { customerIntakeContext, customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
+import {
+  CustomerNativeProfileInvocationSchema,
+  issueCustomerProfileFixtureRecovery,
+} from './support/symmy-c14-customer-recovery.mts';
+import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   startProductOwner,
   startProductWorker,
 } from './support/symmy-c14-product-runtime.mts';
+
+type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
+type Contexts = readonly (typeof SourceProcessingContextSchema.Type)[];
+interface Worker {
+  readonly diagnostic: Effect.Effect<string>;
+}
 
 const nativeInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('NativeActionInvocationId'),
@@ -56,603 +49,434 @@ const effectSchema = Schema.Struct({
   effect_key: Schema.String,
   owner_invocation_id: Schema.OptionFromNullOr(nativeInvocationIdSchema),
   owner_receipt: Schema.Unknown,
+  record_id: Schema.String,
   state: Schema.String,
 });
-const addressOperation = {
-  AddSavedAddress: { effectKey: 'address-add', entrypointKey: 'commerce.customer-context.add-saved-address' },
-  RemoveSavedAddress: { effectKey: 'address-remove', entrypointKey: 'commerce.customer-context.remove-saved-address' },
-  UpdateSavedAddress: { effectKey: 'address-update', entrypointKey: 'commerce.customer-context.update-saved-address' },
-} as const;
+const profileEffectSchema = Schema.Struct({
+  effect_id: Schema.toEncoded(SymmyEffectIdSchema),
+  owner_receipt: Schema.Unknown,
+  state: Schema.String,
+});
+const profileReceiptSchema = Schema.Struct({
+  profileRef: Schema.Struct({ resourceId: Schema.String.pipe(Schema.brand('NewProfileResourceId')) }),
+});
+const jobStatusSchema = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      effects: Schema.Array(Schema.Struct({ status: Schema.String })),
+      outcome: Schema.String,
+    }),
+  ),
+  status: Schema.String,
+});
 const commerceModuleId = 'commerce.customer-context';
+const partyModuleId = 'party.registry';
+const partyApp = 'party-registry';
+const addAddressEntrypoint = 'commerce.customer-context.add-saved-address';
+const addContactEntrypoint = 'party.registry.add-contact-point';
+const contactWorkerRule = {
+  audience: partyApp,
+  declarationKey: 'party.registry.contact-point.add',
+  entrypointKey: addContactEntrypoint,
+  jobKey: customerWorkerKey,
+  legalEntityScope: 'optional',
+  schemaVersion: '1',
+  workerKey: customerWorkerKey,
+  workloadKey: 'party.registry.source-write',
+} as const;
+const contactRecoveryRule = {
+  allowHistoricalDeliveryRecovery: true,
+  audience: partyApp,
+  declarationKey: 'party.registry.party-source-effect-receipt.read',
+  entrypointKey: 'party.registry.api.party-source-effect-receipt',
+  jobKey: customerWorkerKey,
+  legalEntityScope: 'optional',
+  recoveryOf: { actionKey: addContactEntrypoint, jobKey: customerWorkerKey },
+  schemaVersion: '1',
+  workerKey: customerWorkerKey,
+  workloadKey: 'party.registry.source-read',
+} as const;
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
+const sortedStrings = (values: readonly string[]) => EffectArray.sort(values, Order.String);
+
+const billingContact = { preferred: true, type: 'EMAIL', value: 'internal.customer@example.test' } as const;
+const billingAddress: PublicAddress = {
+  label: 'INTERNAL_C14 billing address',
+  postalAddress: { addressLine1: '17 Internal Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
+  purposes: ['BILLING'],
+};
+const deliveryAddress: PublicAddress = {
+  postalAddress: { addressLine1: '18 Internal Street', city: 'Brno', countryCode: 'CZ', postalCode: '60200' },
+  purposes: ['DELIVERY'],
+};
+const existingKey = 'INTERNAL_C14_PUBLIC_ADDRESS_EXISTING_CUSTOMER';
+const resendKey = 'INTERNAL_C14_PUBLIC_ADDRESS_RESEND';
+const createdKey = 'INTERNAL_C14_PUBLIC_ADDRESS_NEW_CUSTOMER';
+const ambiguousKey = 'INTERNAL_C14_PUBLIC_ADDRESS_AMBIGUOUS_CUSTOMER';
+const ambiguousRecord = 'INTERNAL_C14_AMBIGUOUS_CUSTOMER';
+const siblingRecord = 'INTERNAL_C14_SIBLING_CUSTOMER';
+const createdRecord = 'INTERNAL_C14_NEW_CUSTOMER_WITH_ADDRESS';
+const person = (
+  customerId: string,
+  firstName: string,
+  addresses: readonly PublicAddress[],
+  contacts: readonly (typeof billingContact)[] = [],
+) => ({ addresses, contacts, customerId, firstName, kind: 'PERSON' as const, lastName: 'Customer' });
+const streetOf = (street: string) => ({ lifecycle: 'ACTIVE', revision: 1, street });
+const billingStreet = '17 Internal Street';
+const deliveryStreet = '18 Internal Street';
+
+const restartPrivacy = Effect.fn('SymmyC14PublicAddress.restartPrivacy')(function* restartPrivacy(
+  fixture: CustomerFixture,
+  contexts: Contexts,
+) {
+  const runtime = fixture.ownerRuntimes.get('privacy');
+  if (runtime === undefined) {
+    return yield* unavailable('The actual Privacy receiver is required for SavedAddress DATA processing');
+  }
+  yield* runtime.receiver.child.kill();
+  yield* runtime.receiver.child.exitCode;
+  const restarted = yield* startProductOwner({
+    artifacts: runtime.artifacts,
+    contract: runtime.contract,
+    environment: {
+      ...fixture.environment,
+      ONTOS_GATEWAY_MODULE_API_KEY: runtime.moduleKey,
+      ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
+      )(contexts),
+    },
+    port: runtime.port,
+    prefix: '/privacy-api',
+  });
+  fixture.ownerDiagnostics.set('privacy', restarted.diagnostic);
+  fixture.ownerRuntimes.set('privacy', { ...runtime, receiver: restarted });
+  return yield* Effect.void;
+});
+
+const effectRows = (fixture: CustomerFixture, jobId: string) =>
+  fixture.admin`select e.effect_id,e.effect_key,e.effect->'ref'->'occurrence'->'record'->>'sourceRecordId' as record_id,
+    e.owner_invocation_id,e.owner_receipt,e.state
+    from symmy_integration.job_effects e where e.job_id=${jobId} order by e.effect_key,record_id`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
+  );
+
+const dumpDiagnostics = (fixture: CustomerFixture, worker: Worker) =>
+  Effect.all([
+    worker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+    fixture.shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+    ...[...fixture.ownerDiagnostics].map(([appId, diagnostic]) =>
+      diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+    ),
+    fixture.admin`select action_key,status,count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} group by action_key,status`.pipe(
+      Effect.flatMap(Effect.logError),
+    ),
+  ]);
+
+const settle = (fixture: CustomerFixture, worker: Worker, jobId: string, count: number) =>
+  observeUntil(
+    effectRows(fixture, jobId),
+    (rows) => rows.length === count && rows.every(({ state }) => state === 'settled'),
+  ).pipe(Effect.tapError(() => dumpDiagnostics(fixture, worker)));
+
+const ownerCounts = (fixture: CustomerFixture) => fixture.admin`select
+  (select count(*)::integer from party.parties where tenant_id=${fixture.tenantId}) as parties,
+  (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${fixture.tenantId}) as profiles`;
+const savedAddresses = (fixture: CustomerFixture) =>
+  fixture.admin`select address_line_1 as street,lifecycle,revision from commerce_customer_context.saved_addresses
+    where tenant_id=${fixture.tenantId} order by address_line_1`;
+
+const jobStatus = (fixture: CustomerFixture, jobId: string) =>
+  Effect.gen(function* readJobStatus() {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(`${fixture.shell.baseUrl}/api/symmy/v1/jobs/${jobId}`, {
+      headers: { 'x-api-key': Redacted.value(fixture.providerKey.secret) },
+    });
+    return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobStatusSchema)));
+  });
+
+const contextScope = (fixture: CustomerFixture): CustomerContextScope => ({
+  integrationPrincipalId: fixture.integration.principalId,
+  partyId: fixture.partyReceipt.partyRef.resourceId,
+  profileId: fixture.profileReceipt.profileRef.resourceId,
+  source: fixture.sourceIdentity,
+  systemId: fixture.systemId,
+});
+
+/** The governance step between jobs: DATA policy for the profile the fixture job created and the plain intake policy. */
+const governExistingProfile = Effect.fn('SymmyC14PublicAddress.governExisting')(function* governExisting(
+  fixture: CustomerFixture,
+  expectations: readonly (readonly [string, readonly CustomerExpectation[]])[],
+) {
+  const all = expectations.flatMap(([key, customers]) => customerContexts(contextScope(fixture), key, customers));
+  const common = {
+    connections: fixture.isolated.connections,
+    controllerRef: 'internal:customer-conformance',
+    dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+    governancePrincipalId: fixture.governancePrincipalId,
+    legalEntityId: fixture.legalEntityId,
+    tenantId: fixture.tenantId,
+  };
+  // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
+  const source = yield* seedSourceProcessingNativeFixture({
+    ...common,
+    contexts: all.filter(({ request }) => request.target === null),
+    contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_SOURCE_INTAKE',
+    meaning:
+      'Independent current fixture policy allows the public customers to name their source records and create or match their Party and profile',
+  });
+  const data = yield* seedCommittedProfileSourceProcessingNativeFixture({
+    ...common,
+    contexts: all.filter(({ request }) => request.target !== null),
+    contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_SAVED_ADDRESS',
+    meaning:
+      'Independent current fixture policy allows the public customers to match the original source person and save Commerce-only addresses',
+    profileReceipt: fixture.proofTransport,
+  });
+  return [...fixture.privacy.contexts, ...source.contexts, ...data.contexts];
+});
+
+/** The governance step for a profile the job itself created: it exists only once the profile effect settled. */
+const governCreatedProfile = Effect.fn('SymmyC14PublicAddress.governCreated')(function* governCreated(
+  fixture: CustomerFixture,
+  profileEffect: { readonly effect_id: string; readonly owner_receipt: unknown },
+  addressSource: ReturnType<typeof customerItemSource>,
+) {
+  const profile = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(profileEffect.owner_receipt);
+  const [native] =
+    yield* fixture.admin`select a.action_invocation_id as "actionInvocationId",a.action_key as "actionKey",
+    a.auth_context_ref as "authContextRef",a.idempotency_key as "idempotencyKey",a.principal_id as "principalId",a.request_hash as "requestHash"
+    from core.action_invocations a join symmy_integration.job_effects e on e.tenant_id=a.tenant_id
+    and e.owner_invocation_id=a.action_invocation_id and e.owner_executor_principal_id=a.principal_id
+    and e.owner_auth_context_ref=a.auth_context_ref and e.owner_request_hash=a.request_hash and e.effect_id::text=a.idempotency_key
+    where a.tenant_id=${fixture.tenantId} and e.effect_id=${profileEffect.effect_id} and a.legal_entity_id=${fixture.legalEntityId} and a.status='succeeded'`;
+  const nativeProfile = yield* Schema.decodeUnknownEffect(CustomerNativeProfileInvocationSchema)(native);
+  const [requirement] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ key: Schema.String })]))(
+    (fixture.symmy.manifest.requirements?.operations ?? []).filter(
+      ({ entrypointKey, provider }) =>
+        entrypointKey === customerWorkerKey &&
+        provider.moduleId === commerceModuleId &&
+        provider.entrypointKey === 'commerce.customer-context.api.customer-profile-source' &&
+        provider.schemaVersion === '1',
+    ),
+  );
+  const transport = yield* issueCustomerProfileFixtureRecovery({
+    compositionRevision: fixture.snapshot.composition.revision,
+    deliveryId: nativeProfile.authContextRef.slice(`job:${customerWorkerKey}:run:`.length),
+    expectedReadPrincipalId: fixture.systemId,
+    legalEntityId: fixture.legalEntityId,
+    moduleApiKey: Redacted.make(fixture.moduleKey),
+    nativeAction: nativeProfile,
+    operationRequirementKey: requirement.key,
+    request: Schema.decodeUnknownSync(CustomerProfileSourceRequestSchema)({
+      effectId: profileEffect.effect_id,
+      issuer: fixture.sourceIdentity.issuer,
+      mappingRevision: internalCustomerSource.mappingVersion,
+      mode: 'MINIMAL_RECEIPT',
+      namespace: fixture.sourceIdentity.namespace,
+      recordType: fixture.sourceIdentity.recordType,
+      route: { id: fixture.sourceRouteId, revision: internalCustomerSource.routeRevision },
+    }),
+    shellGatewayBaseUrl: fixture.environment.ONTOS_SHELL_GATEWAY_BASE_URL,
+    tenantId: fixture.tenantId,
+  });
+  const target = { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: profile.profileRef.resourceId };
+  const data = yield* seedCommittedProfileSourceProcessingNativeFixture({
+    connections: fixture.isolated.connections,
+    contexts: ['saved-address-source.add', 'saved-address-source.receipt'].map((operation) => ({
+      authMethod: 'system' as const,
+      principalId: fixture.systemId,
+      request: { consumerModuleId: commerceModuleId, operation, source: addressSource, target },
+    })),
+    contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_NEW_CUSTOMER_ADDRESS',
+    controllerRef: 'internal:customer-conformance',
+    dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+    governancePrincipalId: fixture.governancePrincipalId,
+    legalEntityId: fixture.legalEntityId,
+    meaning: 'Independent current fixture policy allows the Commerce-only address of the profile this job created',
+    profileReceipt: transport,
+    tenantId: fixture.tenantId,
+  });
+  return { contexts: data.contexts, profileId: profile.profileRef.resourceId };
+});
+
 it.live(
-  'INTERNAL_C14 native SavedAddress Add, Update, Remove and read-only recovery obey current Privacy',
+  'INTERNAL_C14 public customers save Commerce-only addresses on an existing and on a created profile, never without their customer',
   () =>
     Effect.scoped(
-      Effect.gen(function* actualSavedAddressConformance() {
-        const {
-          admin,
-          environment,
-          flatSource,
-          governancePrincipalId,
-          integration,
-          isolated,
-          legalEntityId,
-          moduleKey,
-          ownerDiagnostics,
-          ownerRuntimes,
-          privacy,
-          profileReceipt,
-          proofTransport,
-          recordId,
-          shell,
-          snapshot,
-          sourceIdentity,
-          sourceRouteId,
-          submitFor,
-          submitResponse,
-          symmy,
-          systemId,
-          tenantId,
-          workerArtifact,
-        } = yield* makeSymmyC14CustomerFixture({
-          allowedOwnerOperations: Object.values(addressOperation).map(({ entrypointKey }) => ({
-            entrypointKey,
-            moduleId: commerceModuleId,
-            schemaVersion: '1',
-          })),
-          initializeScopes: ({
-            admin: scopeAdmin,
-            legalEntityId: scopeLegalEntityId,
-            principalId,
-            tenantId: scopeTenantId,
-          }) =>
+      Effect.gen(function* publicSavedAddressConformance() {
+        const fixture = yield* makeSymmyC14CustomerFixture({
+          allowedOwnerOperations: [
+            { entrypointKey: addAddressEntrypoint, moduleId: commerceModuleId, schemaVersion: '1' },
+            { entrypointKey: addContactEntrypoint, moduleId: partyModuleId, schemaVersion: '1' },
+          ],
+          initializeScopes: ({ admin, legalEntityId, principalId, tenantId }) =>
             testCoreDatabase.pipe(
-              Effect.provideService(PgClient.PgClient, scopeAdmin),
+              Effect.provideService(PgClient.PgClient, admin),
               Effect.flatMap((core) =>
-                writeTestTenantScopes(core, {
-                  legalEntityIds: [scopeLegalEntityId],
-                  principalId,
-                  tenantId: scopeTenantId,
-                }),
+                writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId, tenantId }),
               ),
             ),
           verifyPausedIntake: true,
-          workerRules: [...savedAddressWorkerRules, ...savedAddressRecoveryRules],
+          workerRules: [
+            ...savedAddressWorkerRules,
+            ...savedAddressRecoveryRules,
+            contactWorkerRule,
+            contactRecoveryRule,
+          ],
         });
-        const runPrefix = `job:${customerWorkerKey}:run:`;
-        // The profile is the actual owner-issued result from the preceding native job.
-        // This separate import therefore needs neither a guessed profile ID nor a guessed address ID.
-        const profile = { kind: 'RETAIL' as const, profileRef: profileReceipt.profileRef };
-        const unlinkedAliasOccurrenceId = yield* uuid;
-        const occurrences = [...(yield* Effect.replicateEffect(uuid, 7)), unlinkedAliasOccurrenceId];
-        const aliasRecordId = 'INTERNAL_C14_ADDRESS_ALIAS';
-        const unlinkedAliasRecordId = 'INTERNAL_C14_ADDRESS_INDEPENDENT_SOURCE';
-        const sourceFor = (index: number, nativeAddressId: string | null, sourceRecordId = recordId) => {
-          const source = {
-            effectId: 'INTERNAL_C14_ASSIGNED_AT_ADMISSION',
-            identity: { ...flatSource, occurrenceId: occurrences[index], recordId: sourceRecordId },
-            mappingRevision: internalCustomerSource.mappingVersion,
-            order: index + 1,
-            purposes: ['BILLING'] as const,
-            revision: `INTERNAL_C14_ADDRESS_REVISION_${index + 1}`,
-            routeRevision: internalCustomerSource.routeRevision,
-          };
-          return nativeAddressId === null ? source : { ...source, nativeAddressId };
-        };
+        const { admin, legalEntityId, recordId, sourceIdentity, submitFor, systemId, tenantId } = fixture;
         yield* admin`insert into commerce_customer_context.saved_address_source_routes
           (tenant_id,legal_entity_id,route_ref,route_revision,principal_id,issuer,namespace,record_type,mapping_revision,active)
-          values(${tenantId},${legalEntityId},${sourceRouteId},${internalCustomerSource.routeRevision},${systemId},
+          values(${tenantId},${legalEntityId},${sourceIdentity.routeRef},${internalCustomerSource.routeRevision},${systemId},
           ${sourceIdentity.issuer},${sourceIdentity.namespace},${sourceIdentity.recordType},${internalCustomerSource.mappingVersion},true)`;
-        const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
-          connections: isolated.connections,
-          contexts: [
-            ...occurrences.slice(0, 4).flatMap((addressOccurrenceId, index) =>
-              [
-                [
-                  'saved-address-source.add',
-                  'saved-address-source.update',
-                  'saved-address-source.remove',
-                  'saved-address-source.update',
-                ][index],
-                'saved-address-source.receipt',
-              ].map((operation) => ({
-                authMethod: 'system',
-                principalId: systemId,
-                request: {
-                  consumerModuleId: 'commerce.customer-context' as const,
-                  operation,
-                  source: { ...flatSource, occurrenceId: addressOccurrenceId },
-                  target: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: profile.profileRef.resourceId },
-                },
-              })),
-            ),
-            ...occurrences
-              .slice(0, 6)
-              .map((occurrenceId, index) =>
-                customerIntakeContext(
-                  integration.principalId,
-                  { ...flatSource, occurrenceId, recordId: index === 5 ? aliasRecordId : recordId },
-                  { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profile.profileRef.resourceId },
-                ),
-              ),
-          ],
-          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SAVED_ADDRESS_LIFECYCLE',
-          controllerRef: 'internal:customer-conformance',
-          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-          governancePrincipalId,
-          legalEntityId,
-          meaning:
-            'Independent current fixture policy allows only qualified SavedAddress native effects and minimal receipt recovery',
-          profileReceipt: proofTransport,
-          tenantId,
-        });
-        const unlinkedAlias = yield* seedSourceProcessingNativeFixture({
-          connections: isolated.connections,
-          contexts: [
-            customerIntakeContext(
-              integration.principalId,
-              { ...flatSource, occurrenceId: unlinkedAliasOccurrenceId, recordId: unlinkedAliasRecordId },
-              null,
-            ),
-          ],
-          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_INDEPENDENT_SOURCE_ENROLLMENT',
-          controllerRef: 'internal:customer-conformance',
-          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-          governancePrincipalId,
-          legalEntityId,
-          meaning: 'Independently enrolled source lacks a native subject association to the existing Retail profile',
-          tenantId,
-        });
-        const [unlinkedAliasContext] = unlinkedAlias.contexts;
-        if (unlinkedAliasContext === undefined) {
-          return yield* unavailable('The independently enrolled source context is required');
-        }
-        const privacyRuntime = ownerRuntimes.get('privacy');
-        if (privacyRuntime === undefined) {
-          return yield* unavailable('The actual Privacy receiver is required for SavedAddress DATA processing');
-        }
-        yield* privacyRuntime.receiver.child.kill();
-        yield* privacyRuntime.receiver.child.exitCode;
-        const restartedPrivacy = yield* startProductOwner({
-          artifacts: privacyRuntime.artifacts,
-          contract: privacyRuntime.contract,
-          environment: {
-            ...environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
-            ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-              Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-            )([
-              ...privacy.contexts,
-              ...dataPrivacy.contexts,
-              {
-                ...unlinkedAliasContext,
-                request: {
-                  ...unlinkedAliasContext.request,
-                  target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profile.profileRef.resourceId },
-                },
-                resourceRefs: [...unlinkedAliasContext.resourceRefs, profile.profileRef.resourceId],
-              },
-            ]),
-          },
-          port: privacyRuntime.port,
-          prefix: '/privacy-api',
-        });
-        ownerDiagnostics.set('privacy', restartedPrivacy.diagnostic);
-        const addressWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_NATIVE_WORKER',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
-        const addressPlan = (
-          tag: 'AddSavedAddress' | 'UpdateSavedAddress' | 'RemoveSavedAddress',
-          payload:
-            | typeof AddSavedAddressPayloadSchema.Encoded
-            | typeof UpdateSavedAddressPayloadSchema.Encoded
-            | typeof RemoveSavedAddressPayloadSchema.Encoded,
-          index: number,
-          target?: typeof SavedAddressRefSchema.Encoded,
-          sourceRecordId = recordId,
-        ) => {
-          const effect = {
-            effectKey: addressOperation[tag].effectKey,
-            intent: { _tag: tag, payload },
-            operation: {
-              entrypointKey: addressOperation[tag].entrypointKey,
-              moduleId: commerceModuleId,
-              schemaVersion: '1',
-            },
-          };
-          if (target !== undefined) {
-            Object.assign(effect, { originalTarget: target });
-          }
-          return Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
-            items: [
-              {
-                effects: [effect],
-                itemKey: 'customer',
-                source: {
-                  entityKind: sourceIdentity.recordType,
-                  issuerId: sourceIdentity.issuer,
-                  sourceNamespace: sourceIdentity.namespace,
-                  sourceRecordId,
-                },
-                sourceOccurrenceId: occurrences[index],
-              },
+        const customer = (addresses: readonly PublicAddress[], contacts: readonly (typeof billingContact)[] = []) =>
+          customersBody(person(recordId, 'Internal', addresses, contacts));
+        // Each request is one observation: its source occurrences derive from its Idempotency-Key, so Privacy is
+        // seeded for exactly the sources the owner will name. Each contact and address is a source record of its own.
+        const privacyContexts = yield* governExistingProfile(fixture, [
+          [existingKey, [{ addresses: [billingAddress], contacts: [billingContact], kind: 'existing', recordId }]],
+          [resendKey, [{ addresses: [billingAddress, deliveryAddress], kind: 'existing', recordId }]],
+          [createdKey, [{ addresses: [billingAddress], kind: 'created', recordId: createdRecord }]],
+          [
+            ambiguousKey,
+            [
+              { addresses: [billingAddress], kind: 'ambiguous', recordId: ambiguousRecord },
+              { addresses: [], kind: 'created', recordId: siblingRecord },
             ],
-          });
-        };
-        const effectRows = (jobId: string) =>
-          admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${jobId}`.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
-          );
-        const diagnostics = Effect.all([
-          addressWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-          shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-          ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-            diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-          ),
-          admin`select action_key,status,count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} group by action_key,status`.pipe(
-            Effect.flatMap(Effect.logError),
-          ),
+          ],
         ]);
-        const settle = (jobId: string) =>
-          observeUntil(
-            effectRows(jobId),
-            (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
-          ).pipe(Effect.tapError(() => diagnostics));
-        const submitAddress = (key: string, addressInput: typeof SymmyInternalExecutionPlanSchema.Type) =>
-          submitFor(key, addressInput).pipe(
-            Effect.tapError(() => diagnostics),
-            Effect.tapError(() => Effect.logError({ addressAdmissionKey: key })),
-          );
-        const addPayload = yield* Schema.decodeUnknownEffect(AddSavedAddressPayloadSchema)({
-          label: 'INTERNAL_C14 native billing address',
-          origin: {
-            kind: 'COMMERCE_ONLY',
-            postalAddress: {
-              addressLine1: '17 Internal Street',
-              city: 'Prague',
-              countryCode: 'CZ',
-              postalCode: '11000',
-            },
-          },
-          profile,
-          purposes: ['BILLING'],
-          reason: 'Qualified internal source explicitly imports its billing postal address',
-          source: sourceFor(0, null),
+        yield* restartPrivacy(fixture, privacyContexts);
+        const worker = yield* startProductWorker(fixture.workerArtifact, {
+          ...fixture.environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PUBLIC_ADDRESS_WORKER',
+          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
         });
-        const addPlan = yield* addressPlan(
-          'AddSavedAddress',
-          yield* Schema.encodeEffect(AddSavedAddressPayloadSchema)(addPayload),
-          0,
-        );
-        const addJob = yield* submitAddress('INTERNAL_C14_SAVED_ADDRESS_ADD', addPlan);
-        const [addEffect] = yield* settle(addJob.jobId).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.toType(effectSchema)]))),
-        );
-        const receipts = admin`select action_invocation_id as "actionInvocationId",action_key as "actionKey",recorded_auth_context_ref as "authContextRef",effect_id as "idempotencyKey",actor_principal_id as "principalId",request_hash as "requestHash",result,source from commerce_customer_context.saved_address_source_receipts where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} order by recorded_at`;
-        const addedRows = yield* receipts;
-        if (addedRows.length !== 1) {
-          yield* diagnostics;
-          yield* admin`select effect_key,state,outcome from symmy_integration.job_effects where job_id=${addJob.jobId}`.pipe(
-            Effect.flatMap(Effect.logError),
-          );
-        }
-        expect(addedRows).toHaveLength(1);
-        const [addedRow] = yield* Schema.decodeUnknownEffect(
-          Schema.Tuple([
-            Schema.Struct({
-              ...SavedAddressNativeInvocationSchema.fields,
-              result: Schema.Unknown,
-              source: Schema.Unknown,
-            }),
-          ]),
-        )(addedRows);
-        const nativeAdd = yield* Schema.decodeUnknownEffect(SavedAddressNativeInvocationSchema)(addedRow);
-        const addReceiptResponse = yield* Schema.decodeUnknownEffect(
-          SavedAddressSourceReceiptResponseSchema.members[3],
-        )({ _tag: 'RECEIPT', receipt: addedRow.result });
-        const { receipt: added } = addReceiptResponse;
-        expect(added).toMatchObject({ operation: 'ADD', outcome: 'ADDED', profile, revision: 1 });
-        expect(addedRow.result).toEqual(added);
-        expect(addedRow.idempotencyKey).toBe(addEffect.effect_id);
-        expect(JSON.stringify(addedRow.result)).not.toContain('Internal Street');
-        expect(JSON.stringify(addedRow.result)).not.toContain('native billing address');
-        const { savedAddressRef } = added;
-        const updatePlan = yield* addressPlan(
-          'UpdateSavedAddress',
-          {
-            expectedRevision: 1,
-            label: 'INTERNAL_C14 revised native billing address',
-            origin: {
-              kind: 'COMMERCE_ONLY',
-              postalAddress: {
-                addressLine1: '18 Internal Street',
-                city: 'Prague',
-                countryCode: 'CZ',
-                postalCode: '11000',
-              },
-            },
-            profile,
-            reason: 'Apply the next qualified source revision to the original native address',
-            savedAddressRef,
-            source: sourceFor(1, savedAddressRef.resourceId),
-          },
-          1,
-          savedAddressRef,
-        );
-        const updateJob = yield* submitAddress('INTERNAL_C14_SAVED_ADDRESS_UPDATE', updatePlan);
-        yield* settle(updateJob.jobId);
-        const removePlan = yield* addressPlan(
-          'RemoveSavedAddress',
-          {
-            expectedRevision: 2,
-            profile,
-            reason: 'Qualified source explicitly removes its original billing address',
-            savedAddressRef,
-            source: sourceFor(2, savedAddressRef.resourceId),
-          },
-          2,
-          savedAddressRef,
-        );
-        const removeJob = yield* submitAddress('INTERNAL_C14_SAVED_ADDRESS_REMOVE', removePlan);
-        yield* settle(removeJob.jobId);
-        const lifecycleRows = yield* receipts;
-        expect(lifecycleRows).toHaveLength(3);
-        const lifecycleReceipts = yield* Schema.decodeUnknownEffect(
-          Schema.Array(SavedAddressSourceReceiptResponseSchema.members[3]),
-        )(lifecycleRows.map((row) => ({ _tag: 'RECEIPT', receipt: row.result })));
-        expect(
-          lifecycleReceipts.map((result) => [
-            result.receipt.operation,
-            result.receipt.outcome,
-            result.receipt.revision,
-            result.receipt.savedAddressRef.resourceId,
-          ]),
-        ).toEqual([
-          ['ADD', 'ADDED', 1, savedAddressRef.resourceId],
-          ['UPDATE', 'UPDATED', 2, savedAddressRef.resourceId],
-          ['REMOVE', 'REMOVED', 3, savedAddressRef.resourceId],
-        ]);
-        expect(lifecycleRows.map(({ result }) => result)).toEqual(lifecycleReceipts.map(({ receipt }) => receipt));
-        expect(lifecycleRows.at(0)).toEqual(addedRow);
-        for (const [jobKey, replayPlan, original] of [
-          ['INTERNAL_C14_SAVED_ADDRESS_ADD', addPlan, addJob],
-          ['INTERNAL_C14_SAVED_ADDRESS_UPDATE', updatePlan, updateJob],
-          ['INTERNAL_C14_SAVED_ADDRESS_REMOVE', removePlan, removeJob],
-        ] as const) {
-          expect(yield* submitAddress(jobKey, replayPlan)).toEqual(original);
-        }
-        expect(yield* receipts).toEqual(lifecycleRows);
-        const [storedAddress] =
-          yield* admin`select saved_address_id,revision,lifecycle,address_line_1 as street from commerce_customer_context.saved_addresses where tenant_id=${tenantId}`;
-        expect(storedAddress).toEqual({
-          lifecycle: 'REMOVED',
-          revision: 3,
-          saved_address_id: savedAddressRef.resourceId,
-          street: '18 Internal Street',
-        });
-        const [nativeCounts] =
-          yield* admin`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and status='succeeded' and action_key in ('commerce.customer-context.add-saved-address','commerce.customer-context.update-saved-address','commerce.customer-context.remove-saved-address')`;
-        expect(nativeCounts).toEqual({ count: 3 });
-        const addDeliveryId = nativeAdd.authContextRef.slice(runPrefix.length);
-        yield* observeUntil(
-          admin<{
-            status: string;
-          }>`select status from core.outbox_deliveries where outbox_delivery_id=${addDeliveryId}`,
-          (rows) => rows.some(({ status }) => status === 'done'),
-        );
-        const [addressRecoveryRequirement] = yield* Schema.decodeUnknownEffect(
-          Schema.Tuple([Schema.Struct({ key: Schema.String })]),
-        )(
-          (symmy.manifest.requirements?.operations ?? []).filter(
-            (requirement) =>
-              requirement.entrypointKey === customerWorkerKey &&
-              requirement.provider.entrypointKey === 'commerce.customer-context.api.saved-address-source-receipt',
-          ),
-        );
-        const originalSource = yield* Schema.decodeUnknownEffect(AddSavedAddressPayloadSchema.fields.source)(
-          addedRow.source,
-        );
-        const receiptRequest = yield* Schema.decodeUnknownEffect(SavedAddressSourceReceiptRequestSchema)({
-          actionInvocationId: nativeAdd.actionInvocationId,
-          actionKey: nativeAdd.actionKey,
-          mode: 'RECEIPT',
-          profile,
-          requestHash: nativeAdd.requestHash,
-          source: originalSource,
-        });
-        const receiptTransport = yield* issueSavedAddressFixtureRecovery({
-          compositionRevision: snapshot.composition.revision,
-          deliveryId: addDeliveryId,
-          expectedReadPrincipalId: systemId,
-          legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
-          nativeAction: nativeAdd,
-          operationRequirementKey: addressRecoveryRequirement.key,
-          request: receiptRequest,
-          shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
-          tenantId,
-        });
-        const recovered = yield* executeSavedAddressSourceReceiptWithAuthorization(
-          receiptRequest,
-          Redacted.value(receiptTransport.authorization),
-          receiptTransport.requestCorrelation,
-          { baseUrl: receiptTransport.baseUrl, compositionRevision: receiptTransport.compositionRevision },
-        );
-        expect(recovered).toEqual(addReceiptResponse);
-        const unknownRequest = yield* Schema.decodeUnknownEffect(SavedAddressSourceReceiptRequestSchema)({
-          ...receiptRequest,
-          source: { ...originalSource, effectId: yield* uuid },
-        });
-        const unknownTransport = yield* issueSavedAddressFixtureRecovery({
-          compositionRevision: snapshot.composition.revision,
-          deliveryId: addDeliveryId,
-          expectedReadPrincipalId: systemId,
-          legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
-          nativeAction: nativeAdd,
-          operationRequirementKey: addressRecoveryRequirement.key,
-          request: unknownRequest,
-          shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
-          tenantId,
-        });
-        const unknownResult = yield* executeSavedAddressSourceReceiptWithAuthorization(
-          unknownRequest,
-          Redacted.value(unknownTransport.authorization),
-          unknownTransport.requestCorrelation,
-          { baseUrl: unknownTransport.baseUrl, compositionRevision: unknownTransport.compositionRevision },
-        );
-        expect(Schema.is(SavedAddressSourceReceiptResponseSchema.members[1])(unknownResult)).toBe(true);
-        expect(yield* receipts).toEqual(lifecycleRows);
-        const readOnlyWriteTransport = yield* issueSavedAddressFixtureRecovery({
-          compositionRevision: snapshot.composition.revision,
-          deliveryId: addDeliveryId,
-          expectedReadPrincipalId: systemId,
-          legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
-          nativeAction: nativeAdd,
-          operationRequirementKey: addressRecoveryRequirement.key,
-          request: receiptRequest,
-          shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
-          tenantId,
-        });
-        const forbiddenWriteKey = 'INTERNAL_C14_ADDRESS_RECOVERY_IS_READ_ONLY';
-        const forbiddenWrite = yield* executeAddSavedAddressWithAuthorization(
-          addPayload,
-          Redacted.value(readOnlyWriteTransport.authorization),
-          yield* uuid,
-          {
-            baseUrl: readOnlyWriteTransport.baseUrl,
-            compositionRevision: readOnlyWriteTransport.compositionRevision,
-            idempotencyKey: forbiddenWriteKey,
-          },
-        ).pipe(Effect.flip);
-        expect(
-          Schema.is(
-            Schema.Union([
-              AddSavedAddressActionAuthenticationProblemSchema,
-              AddSavedAddressActionForbiddenProblemSchema,
-            ]),
-          )(forbiddenWrite),
-        ).toBe(true);
-        const [forbiddenInvocation] =
-          yield* admin`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and idempotency_key=${forbiddenWriteKey}`;
-        expect(forbiddenInvocation).toEqual({ count: 0 });
-        yield* addressWorker.child.kill();
-        yield* addressWorker.child.exitCode;
-        const pendingPlan = yield* addressPlan(
-          'UpdateSavedAddress',
-          {
-            expectedRevision: 3,
-            label: 'INTERNAL_C14 admitted before withdrawal',
-            profile,
-            reason: 'Privacy authority was current before intake but will be withdrawn before dispatch',
-            savedAddressRef,
-            source: sourceFor(3, savedAddressRef.resourceId),
-          },
-          3,
-          savedAddressRef,
-        );
-        const deniedJob = yield* submitAddress('INTERNAL_C14_ADDRESS_BEFORE_PURPOSE_RETIREMENT', pendingPlan);
-        expect(yield* effectRows(deniedJob.jobId)).toMatchObject([{ state: 'planned' }]);
 
-        const [originalContext] = privacy.contexts;
-        if (originalContext === undefined) {
-          return yield* unavailable('The original governed source subject is required');
-        }
-        yield* seedCustomerIntakeProtection(admin, originalContext);
-        const admissionCounts = customerIntakeCounts(admin, tenantId);
-        const beforeDenied = yield* admissionCounts;
-        const deniedMarker = 'INTERNAL_C14_PROTECTED_INPUT_MUST_NOT_BE_STORED';
-        for (const { index, sourceRecordId, status } of [
-          { index: 4, sourceRecordId: recordId, status: 403 },
-          { index: 5, sourceRecordId: aliasRecordId, status: 403 },
-          { index: 6, sourceRecordId: recordId, status: 503 },
-          { index: 7, sourceRecordId: unlinkedAliasRecordId, status: 503 },
-        ]) {
-          const deniedPlan = yield* addressPlan(
-            'UpdateSavedAddress',
-            {
-              expectedRevision: 3,
-              label: deniedMarker,
-              profile,
-              reason: 'Pre-storage Privacy control',
-              savedAddressRef,
-              source: sourceFor(index, savedAddressRef.resourceId, sourceRecordId),
-            },
-            index,
-            savedAddressRef,
-            sourceRecordId,
-          );
-          const response = yield* submitResponse(`INTERNAL_C14_PRE_STORAGE_PRIVACY_${index}`, deniedPlan);
-          expect(response.status).toBe(status);
-          expect(yield* response.text).not.toContain(deniedMarker);
-        }
-        expect(yield* admissionCounts).toEqual(beforeDenied);
-        for (const diagnostic of ownerDiagnostics.values()) {
-          expect(yield* diagnostic).not.toContain(deniedMarker);
-        }
-        const retired = yield* retireSourceProcessingNativePurpose({
-          connections: isolated.connections,
-          governancePrincipalId,
-          legalEntityId,
-          ownedDatabase: isolated,
-          purpose: 'implementation-1096-registered-workload-gateway',
-          purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(dataPrivacy.purposeRef),
-          tenantId,
+        // Scenario 1: the customer exists, the same customer is sent with a new address and a contact.
+        const existing = yield* submitFor(existingKey, customer([billingAddress], [billingContact]));
+        expect(yield* submitFor(existingKey, customer([billingAddress], [billingContact]))).toEqual(existing);
+        const existingRows = yield* settle(fixture, worker, existing.jobId, 4);
+        expect(existingRows.map(({ effect_key }) => effect_key)).toEqual([
+          'address-add',
+          'contact-add',
+          'party-create',
+          'retail-profile',
+        ]);
+        const existingStatus = yield* jobStatus(fixture, existing.jobId);
+        expect(existingStatus.status).toBe('completed_all');
+        expect(existingStatus.items.map(({ outcome }) => outcome)).toEqual(['accepted', 'accepted', 'accepted']);
+        const [contacts] = yield* admin<{
+          count: number;
+        }>`select count(*)::integer as count from party.party_contact_points
+          where tenant_id=${tenantId} and party_id=${fixture.partyReceipt.partyRef.resourceId}`;
+        expect(contacts).toEqual({ count: 1 });
+        expect(yield* ownerCounts(fixture)).toEqual([{ parties: 1, profiles: 1 }]);
+        expect(yield* savedAddresses(fixture)).toEqual([streetOf(billingStreet)]);
+        const receipts = yield* admin`select result from commerce_customer_context.saved_address_source_receipts
+          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}`;
+        const [{ result: added }, ...otherReceipts] = yield* Schema.decodeUnknownEffect(
+          Schema.NonEmptyArray(Schema.Struct({ result: Schema.Unknown })),
+        )(receipts);
+        expect(otherReceipts).toHaveLength(0);
+        expect(Schema.is(SavedAddressSourceReceiptResponseSchema.members[3].fields.receipt)(added)).toBe(true);
+        expect(added).toMatchObject({
+          operation: 'ADD',
+          outcome: 'ADDED',
+          profile: { kind: 'RETAIL', profileRef: fixture.profileReceipt.profileRef },
         });
-        expect(retired).toMatchObject({ changed: true, lifecycle: 'RETIRED' });
-        const deniedTransport = yield* issueSavedAddressFixtureRecovery({
-          compositionRevision: snapshot.composition.revision,
-          deliveryId: addDeliveryId,
-          expectedReadPrincipalId: systemId,
-          legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
-          nativeAction: nativeAdd,
-          operationRequirementKey: addressRecoveryRequirement.key,
-          request: receiptRequest,
-          shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
-          tenantId,
-        });
-        const deniedReceipt = yield* executeSavedAddressSourceReceiptWithAuthorization(
-          receiptRequest,
-          Redacted.value(deniedTransport.authorization),
-          deniedTransport.requestCorrelation,
-          { baseUrl: deniedTransport.baseUrl, compositionRevision: deniedTransport.compositionRevision },
-        ).pipe(Effect.flip);
-        expect(deniedReceipt).toMatchObject({ status: 503 });
-        expect(yield* receipts).toEqual(lifecycleRows);
-        const resumedWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_WITHDRAWN_PRIVACY',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
-        const deniedRows = yield* observeUntil(
-          admin`select a.status from core.action_invocations a join symmy_integration.job_effects e on e.effect_id::text=a.idempotency_key
-          where e.job_id=${deniedJob.jobId} and a.tenant_id=${tenantId} and a.action_key='commerce.customer-context.update-saved-address'`,
-          (rows) => rows.some(({ status }) => status === 'received'),
-        ).pipe(Effect.tapError(() => diagnostics));
-        expect(deniedRows).toEqual([{ status: 'received' }]);
-        const commerceDiagnostic = ownerDiagnostics.get('commerce-customer-context');
-        if (commerceDiagnostic === undefined) {
-          return yield* unavailable('The actual Commerce source rejection evidence is required');
+        expect(JSON.stringify(added)).not.toContain('Internal Street');
+
+        // The same customer again with the same address and one more: nothing is duplicated, the new one is saved.
+        const resend = yield* submitFor(resendKey, customer([billingAddress, deliveryAddress]));
+        const resendRows = yield* settle(fixture, worker, resend.jobId, 4);
+        expect(resendRows.find(({ effect_key }) => effect_key === 'party-create')?.state).toBe('settled');
+        expect(yield* ownerCounts(fixture)).toEqual([{ parties: 1, profiles: 1 }]);
+        expect(yield* savedAddresses(fixture)).toEqual([streetOf(billingStreet), streetOf(deliveryStreet)]);
+        const resendStatus = yield* jobStatus(fixture, resend.jobId);
+        expect(resendStatus.status).toBe('completed_partial');
+        expect(sortedStrings(resendStatus.items.map(({ outcome }) => outcome))).toEqual([
+          'accepted',
+          'accepted',
+          'not_accepted',
+        ]);
+        // The address sent again is the same source record: the owner refuses it and the job goes on.
+        expect(
+          resendStatus.items.flatMap(({ effects, outcome }) => (outcome === 'not_accepted' ? effects : [])),
+        ).toEqual([{ status: 'conflict' }]);
+
+        // No address without its customer: a customer the Party owner cannot match or create (its name belongs to
+        // another Party) saves no address and gets no profile; the other customer of the same request is created.
+        const ambiguous = yield* submitFor(
+          ambiguousKey,
+          customersBody(person(ambiguousRecord, 'Internal', [billingAddress]), person(siblingRecord, 'Sibling', [])),
+        );
+        // ambiguous: party, profile, address; sibling: party, profile.
+        const ambiguousRows = yield* settle(fixture, worker, ambiguous.jobId, 5);
+        const ambiguousStatus = yield* jobStatus(fixture, ambiguous.jobId);
+        expect(ambiguousStatus.status).toBe('completed_partial');
+        expect(sortedStrings(ambiguousStatus.items.map(({ outcome }) => outcome))).toEqual([
+          'accepted',
+          'not_accepted',
+          'not_accepted',
+        ]);
+        const dependents = ambiguousStatus.items.flatMap(({ effects, outcome }) =>
+          outcome === 'not_accepted' ? effects.map(({ status }) => status) : [],
+        );
+        // The Party owner refuses the ambiguous name under this fixture policy; its dependents end unsupported.
+        expect(sortedStrings(dependents)).toEqual(['denied', 'unsupported', 'unsupported']);
+        expect(ambiguousRows.map(({ state }) => state)).toEqual(Array.from({ length: 5 }, () => 'settled'));
+        // The sibling is created, the ambiguous customer is not and neither is its address.
+        expect(yield* ownerCounts(fixture)).toEqual([{ parties: 2, profiles: 2 }]);
+        expect(yield* savedAddresses(fixture)).toEqual([streetOf(billingStreet), streetOf(deliveryStreet)]);
+
+        // Scenario 2: the customer does not exist. It is created, its profile is created, then its address is saved.
+        // The profile does not exist when Privacy is seeded, so the address waits (its effect is retried) until the
+        // profile the job created is governed, exactly as a real data source governance step would do between.
+        const created = yield* submitFor(createdKey, customersBody(person(createdRecord, 'Fresh', [billingAddress])));
+        const createdProfile = yield* observeUntil(
+          admin`select effect_id,owner_receipt,state from symmy_integration.job_effects
+            where job_id=${created.jobId} and effect_key='retail-profile'`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(profileEffectSchema))),
+          ),
+          (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
+        ).pipe(Effect.tapError(() => dumpDiagnostics(fixture, worker)));
+        const [profileEffect] = createdProfile;
+        if (profileEffect === undefined) {
+          return yield* unavailable('The new customer profile effect is required');
         }
-        yield* observeUntil(commerceDiagnostic, (message) => message.includes('saved_address_source_privacy_denied'));
-        expect(yield* receipts).toEqual(lifecycleRows);
-        const [preservedAddress] =
-          yield* admin`select saved_address_id,revision,lifecycle,address_line_1 as street from commerce_customer_context.saved_addresses where tenant_id=${tenantId}`;
-        expect(preservedAddress).toEqual(storedAddress);
-        const [afterDeniedWrites] =
-          yield* admin`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and status='succeeded' and action_key in ('commerce.customer-context.add-saved-address','commerce.customer-context.update-saved-address','commerce.customer-context.remove-saved-address')`;
-        expect(afterDeniedWrites).toEqual({ count: 3 });
-        const [siblings] = yield* admin`select
-          (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
-          (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`;
-        expect(siblings).toEqual({ parties: 1, profiles: 1 });
-        yield* resumedWorker.child.kill();
-        yield* resumedWorker.child.exitCode;
+        const governed = yield* governCreatedProfile(
+          fixture,
+          profileEffect,
+          customerItemSource(sourceIdentity, createdKey, 'address-0-0', addressRecordId(createdRecord, billingAddress)),
+        );
+        yield* restartPrivacy(fixture, [...privacyContexts, ...governed.contexts]);
+        // The address effect was refused while Privacy did not know the profile and is retried by the worker.
+        for (let attempt = 0; attempt < 240; attempt += 1) {
+          const rows = yield* effectRows(fixture, created.jobId);
+          if (rows.length === 3 && rows.every(({ state }) => state === 'settled')) {
+            break;
+          }
+          yield* Effect.sleep(Duration.millis(500));
+        }
+        const createdRows = yield* effectRows(fixture, created.jobId);
+        expect(createdRows.map(({ state }) => state)).toEqual(['settled', 'settled', 'settled']);
+        const createdStatus = yield* jobStatus(fixture, created.jobId);
+        expect(createdStatus.status).toBe('completed_all');
+        expect(createdStatus.items.map(({ outcome }) => outcome)).toEqual(['accepted', 'accepted']);
+        expect(yield* ownerCounts(fixture)).toEqual([{ parties: 3, profiles: 3 }]);
+        expect(yield* savedAddresses(fixture)).toEqual([
+          streetOf(billingStreet),
+          streetOf(billingStreet),
+          streetOf(deliveryStreet),
+        ]);
+        const [onNewProfile] = yield* admin<{
+          count: number;
+        }>`select count(*)::integer as count from commerce_customer_context.saved_addresses
+          where tenant_id=${tenantId} and customer_profile_id=${governed.profileId}`;
+        expect(onNewProfile).toEqual({ count: 1 });
+        yield* worker.child.kill();
+        yield* worker.child.exitCode;
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),

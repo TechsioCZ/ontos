@@ -23,6 +23,7 @@ import {
   SymmyInternalCustomersProjectionSchema,
   SymmyInternalProductsProjectionSchema,
 } from '../api/symmy/read-projection-contracts.ts';
+import { SymmyCustomersBatchRequestSchema } from '../api/symmy/customers-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
@@ -58,11 +59,10 @@ const customerGroupsBatchEndpoint = HttpApiEndpoint.post(
   SYMMY_ROUTES.customerGroupsBatch.path,
   symmyWriteOptions,
 );
-const customersBatchEndpoint = HttpApiEndpoint.post(
-  'customersBatch',
-  SYMMY_ROUTES.customersBatch.path,
-  symmySubmitOptions,
-);
+const customersBatchEndpoint = HttpApiEndpoint.post('customersBatch', SYMMY_ROUTES.customersBatch.path, {
+  ...symmySubmitOptions,
+  payload: SymmyCustomersBatchRequestSchema,
+});
 const inventoryStockBatchEndpoint = HttpApiEndpoint.post('inventoryStockBatch', SYMMY_ROUTES.inventoryStockBatch.path, {
   ...symmyWriteOptions,
   payload: SymmyStockBatchRequestSchema,

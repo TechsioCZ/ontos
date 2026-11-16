@@ -43,6 +43,8 @@ import {
 } from '../services/symmy-catalog-pricing-inventory-adapters.ts';
 import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-commerce-adapters.ts';
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
+import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
+import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema } from '../../shared/domain/symmy-price-list-batch.ts';
@@ -51,6 +53,7 @@ import { SymmyProductRowsSchema } from '../../shared/domain/symmy-product-batch.
 import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared/domain/symmy-product-batch.ts';
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
+import { buildSymmyCustomerPlan } from './symmy-customer-plan.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
@@ -74,6 +77,7 @@ export interface SymmyJobAdmissionRequest {
   readonly catalogHead?: number;
   readonly code?: string;
   readonly contractVersion?: 'INTERNAL_C14';
+  readonly customers?: SymmyCustomerRows;
   readonly fixtureId?: string;
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
@@ -281,6 +285,12 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
       Effect.map(Option.some),
     );
   }
+  if (input.customers !== undefined) {
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerRowsSchema))(input.customers).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
   if (input.products !== undefined) {
     // The price lists the price group codes name are facts read when the request arrived, not caller intent.
     return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyProductRowsSchema))(input.products).pipe(
@@ -457,13 +467,14 @@ const configuredEffectsAllowed = (routeKey: SymmyDurableRouteKey, plan: SymmyFix
 /** A request that brings its own plan or public rows to turn into one. A route without a template refuses it. */
 const carriesCallerPlan = (input: SymmyJobAdmissionRequest): boolean =>
   input.plan !== undefined ||
+  input.customers !== undefined ||
   input.priceLists !== undefined ||
   input.priceBatch !== undefined ||
   input.products !== undefined;
 
 /**
  * What a durable admission pins: the caller's internal plan, the route template, or the plan built from the public
- * price lists, price batch or products. They are admitted for the enrolled operations only, so a route that does not
+ * price lists, price batch, products or customers. They are admitted for the enrolled operations only, so a route that does not
  * enroll them yields no plan, nothing is pinned and no owner call is made.
  */
 const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(function* admissionPlanSource(
@@ -472,6 +483,19 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
   scope: OperationalScope,
   template: SymmyFixtureExecutionPlan,
 ) {
+  if (input.customers !== undefined) {
+    const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
+    return yield* buildSymmyCustomerPlan({
+      authority: { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision },
+      digest: hash,
+      idempotencyKey: input.idempotencyKey,
+      legalEntityId: scope.legalEntityId,
+      receivedAt: yield* DateTime.now,
+      rows: input.customers,
+      template,
+      tenantId: scope.tenantId,
+    });
+  }
   if (input.products !== undefined) {
     return input.priceGroupFacts === undefined
       ? Option.none<SymmyFixtureExecutionPlan>()

@@ -1,5 +1,4 @@
 import { CustomerProfileSourceItemSchema } from '@app/commerce-customer-context/api/customer-profile-source';
-import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
 import {
   EnsureRetailCustomerProfileActionAuthenticationProblemSchema,
   EnsureRetailCustomerProfileActionForbiddenProblemSchema,
@@ -25,7 +24,7 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import { Config, DateTime, Duration, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -39,7 +38,8 @@ import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './support/symmy-c14-customer-recovery.mts';
-import { makeSymmyC14CustomerRevisionPlan } from './support/symmy-c14-customer-revision-plan.mts';
+import { customerContexts, readbackContexts } from './support/symmy-c14-customer-contexts.mts';
+import { customerItemSource, customerOccurrenceId, customersBody } from './support/symmy-c14-customer-public.mts';
 import {
   customerFixtureWorkloads,
   customerIntakeContext,
@@ -103,6 +103,7 @@ const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const symmyAppId = 'symmy-integration';
 const commerceModuleId = 'commerce.customer-context';
 const partyModuleId = 'party.registry';
+const customerController = 'internal:customer-conformance';
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
 
 const observeUntil = <Value, Failure, Requirements>(
@@ -120,8 +121,141 @@ const observeUntil = <Value, Failure, Requirements>(
     return yield* unavailable('The actual customer owner dependency graph did not settle');
   });
 
+interface OwnerRuntime {
+  readonly artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
+  readonly contract: Effect.Success<ReturnType<typeof productComposition>>['contracts'][number];
+  readonly moduleKey: string;
+  readonly port: number;
+  readonly receiver: Effect.Success<ReturnType<typeof startProductOwner>>;
+}
+type OwnerPrefix = Parameters<typeof startProductOwner>[0]['prefix'];
+interface StartOwnerInput {
+  readonly appId: string;
+  readonly contracts: Effect.Success<ReturnType<typeof productComposition>>['contracts'];
+  readonly environment: Readonly<Record<string, string>>;
+  readonly moduleKeys: ReadonlyMap<string, string>;
+  readonly ownerDiagnostics: Map<string, Effect.Effect<string>>;
+  readonly ownerRuntimes: Map<string, OwnerRuntime>;
+  readonly ports: ReadonlyMap<string, number>;
+  readonly prefixes: Readonly<Record<string, OwnerPrefix>>;
+}
+
+/** Builds and starts one actual owner receiver with its own independent module credential. */
+const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner(input: StartOwnerInput) {
+  const { appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes } = input;
+  const contract = contracts.find(({ deployment }) => deployment.appId === appId);
+  const port = ports.get(appId);
+  const moduleKey = moduleKeys.get(appId);
+  const prefix = prefixes[appId];
+  if (contract === undefined || port === undefined || prefix === undefined) {
+    return yield* unavailable('The bounded receiver contract, port or prefix is missing');
+  }
+  if (moduleKey === undefined) {
+    return yield* unavailable('The actual independent module credential is missing');
+  }
+  const artifacts = yield* buildProductOwner(contract);
+  const receiver = yield* startProductOwner({
+    artifacts,
+    contract,
+    environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+    port,
+    prefix,
+  });
+  ownerDiagnostics.set(appId, receiver.diagnostic);
+  ownerRuntimes.set(appId, { artifacts, contract, moduleKey, port, receiver });
+  return yield* Effect.void;
+});
+
+interface ReadbackInput {
+  readonly admin: PgClient.PgClient;
+  readonly client: HttpClient.HttpClient;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly ownerDiagnostics: ReadonlyMap<string, Effect.Effect<string>>;
+  readonly partyRef: typeof PartyRefSchema.Type;
+  readonly profileResourceId: string;
+  readonly readRoute: typeof SymmyRouteExecutionConfigurationSchema.Type;
+  readonly readRouteId: string;
+  readonly recordId: string;
+  readonly shell: Effect.Success<ReturnType<typeof makeApiKeyGatewayNativeFixture>>;
+  readonly tenantId: string;
+}
+
+/** The customers GET exports the current owners under the reader authority, and refuses every wrong enrollment. */
+const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* readCustomers(input: ReadbackInput) {
+  const { admin, client, headers, ownerDiagnostics, partyRef, profileResourceId, readRoute, readRouteId } = input;
+  const { recordId, shell, tenantId } = input;
+  const readbackUrl = `${shell.baseUrl}/api/symmy/v1/admin/customers?contractVersion=INTERNAL_C14`;
+  const customerReadbackResponse = yield* client
+    .get(readbackUrl, { headers })
+    .pipe(
+      Effect.tap((response) =>
+        response.status === 200
+          ? Effect.void
+          : Effect.all([
+              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+              ),
+            ]),
+      ),
+    );
+  expect(customerReadbackResponse.status).toBe(200);
+  const readback = yield* customerReadbackResponse.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)),
+  );
+  expect(readback.customers).toHaveLength(1);
+  const exportedCustomer = readback.customers.at(0);
+  assert.isOk(exportedCustomer);
+  expect(exportedCustomer.source_record_id).toBe(recordId);
+  expect(exportedCustomer.id).not.toBe(recordId);
+  expect(exportedCustomer.partyRef).toEqual(partyRef);
+  expect(exportedCustomer.profile.profileRef.resourceId).toBe(profileResourceId);
+  assert.isOk(exportedCustomer.party);
+  expect(exportedCustomer.party.firstName).toBe('Internal');
+  expect(exportedCustomer.party.lastName).toBe('Customer');
+  yield* Effect.logInfo('INTERNAL_C14 customer GET exported current protected owners under explicit reader authority');
+  const wrongReadRoutes = yield* Effect.forEach(
+    [
+      { ...readRoute, sourceRouteId: yield* uuid },
+      {
+        ...readRoute,
+        items: readRoute.items.map((item) => ({
+          ...item,
+          source: { ...item.source, issuerId: 'INTERNAL_C14_UNENROLLED_ISSUER' },
+        })),
+      },
+      {
+        ...readRoute,
+        items: readRoute.items.map((item) => ({
+          ...item,
+          source: { ...item.source, sourceNamespace: 'INTERNAL_C14_UNENROLLED_NAMESPACE' },
+        })),
+      },
+    ],
+    (wrongRoute) => Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)(wrongRoute),
+  );
+  yield* Effect.forEach(
+    wrongReadRoutes,
+    (wrongRoute) =>
+      Effect.gen(function* rejectWrongCustomerProjectionAuthority() {
+        yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(wrongRoute)}::jsonb
+          where tenant_id=${tenantId} and route_id=${readRouteId}`;
+        const rejected = yield* client.get(readbackUrl, { headers });
+        expect(rejected.status).toBe(403);
+        const rejectedBody = yield* rejected.text;
+        expect(rejectedBody.includes('Internal')).toBe(false);
+        expect(rejectedBody.includes('"Customer"')).toBe(false);
+      }),
+    { discard: true },
+  );
+  yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb
+    where tenant_id=${tenantId} and route_id=${readRouteId}`;
+  return { party: exportedCustomer.party, sourceRecordId: exportedCustomer.source_record_id };
+});
+
 it.live(
-  'INTERNAL_C14 actual customer revisions and GET round-trip retain native targets under current Privacy',
+  'INTERNAL_C14 actual public customers create, match and read back their native targets under current Privacy',
   () =>
     Effect.scoped(
       Effect.gen(function* actualCustomerConformance() {
@@ -198,7 +332,8 @@ it.live(
 
         const sourceRouteId = yield* uuid;
         const routeId = yield* uuid;
-        const occurrenceId = yield* uuid;
+        // The owner derives the occurrence of a request from its Idempotency-Key, so Privacy is seeded for that one.
+        const occurrenceId = customerOccurrenceId('INTERNAL_C14_CUSTOMER_JOB', 'customer-0');
         const recordId = 'INTERNAL_C14_NAMED_PERSON';
         const observedAt = yield* DateTime.now;
         const plan = yield* makeSymmyC14CustomerPlan({
@@ -252,7 +387,7 @@ it.live(
             },
           ],
           contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_CONTRACT_FIXTURE',
-          controllerRef: 'internal:customer-conformance',
+          controllerRef: customerController,
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
           governancePrincipalId,
           legalEntityId,
@@ -422,48 +557,25 @@ it.live(
           'symmy-integration': '/symmy-integration-api',
         } as const;
         const ownerDiagnostics = new Map<string, Effect.Effect<string>>();
-        const ownerRuntimes = new Map<
-          string,
-          {
-            artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
-            contract: (typeof contracts)[number];
-            moduleKey: string;
-            port: number;
-            receiver: Effect.Success<ReturnType<typeof startProductOwner>>;
-          }
-        >();
-        for (const appId of appIds) {
-          const contract = contracts.find(({ deployment }) => deployment.appId === appId);
-          const port = ports.get(appId);
-          const moduleKey = moduleKeys.get(appId);
-          assert.isOk(contract);
-          assert.isTrue(port !== undefined);
-          if (port === undefined) {
-            return yield* unavailable('The bounded receiver port is missing');
-          }
-          if (moduleKey === undefined) {
-            return yield* unavailable('The actual independent module credential is missing');
-          }
-          const artifacts = yield* buildProductOwner(contract);
-          const receiver = yield* startProductOwner({
-            artifacts,
-            contract,
-            environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
-            port,
-            prefix: prefixes[appId],
-          });
-          ownerDiagnostics.set(appId, receiver.diagnostic);
-          ownerRuntimes.set(appId, { artifacts, contract, moduleKey, port, receiver });
-        }
+        const ownerRuntimes = new Map<string, OwnerRuntime>();
+        yield* Effect.forEach(
+          appIds,
+          (appId) =>
+            startOwner({ appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes }),
+          { discard: true },
+        );
         const client = yield* HttpClient.HttpClient;
         const headers = { 'idempotency-key': 'INTERNAL_C14_CUSTOMER_JOB', 'x-api-key': Redacted.value(key.secret) };
-        const submitFor = (idempotencyKey: string, submittedPlan = plan) =>
+        const customerBody = customersBody({
+          customerId: recordId,
+          firstName: 'Internal',
+          kind: 'PERSON',
+          lastName: 'Customer',
+        });
+        const submitFor = (idempotencyKey: string, body: ReturnType<typeof customersBody> = customerBody) =>
           Effect.gen(function* submitCustomer() {
             const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
-              body: yield* HttpBody.json({
-                contractVersion: 'INTERNAL_C14',
-                plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(submittedPlan),
-              }),
+              body: yield* HttpBody.json(body),
               headers: { ...headers, 'idempotency-key': idempotencyKey },
             });
             if (response.status !== 202) {
@@ -618,131 +730,45 @@ it.live(
             tenantId,
           });
         const proofTransport = yield* acquireReceiptTransport();
-        const revisionOccurrenceId = yield* uuid;
-        const revisedSource = { ...flatSource, occurrenceId: revisionOccurrenceId };
-        const readbackOccurrenceId = yield* uuid;
-        const readbackSource = { ...flatSource, occurrenceId: readbackOccurrenceId };
-        const partySourceReference = { occurrenceId, recordId, source: sourceIdentity };
+        const roundTripKey = 'INTERNAL_C14_CUSTOMER_GET_POST';
+        const beforeDisableKey = 'INTERNAL_C14_CUSTOMER_BEFORE_DISABLE';
+        const roundTripSource = customerItemSource(sourceIdentity, roundTripKey, 'customer-0', recordId);
+        const scope = {
+          integrationPrincipalId: integration.principalId,
+          partyId: partyReceipt.partyRef.resourceId,
+          profileId: profileReceipt.profileRef.resourceId,
+          source: sourceIdentity,
+          systemId,
+        };
+        // The same customer sent again (its GET source id is its customerId), and a request admitted before the
+        // integration principal is disabled: both name their own occurrences.
+        const roundTripContexts = [
+          ...customerContexts(scope, roundTripKey, [{ kind: 'existing', recordId }]),
+          ...customerContexts(scope, beforeDisableKey, [{ kind: 'existing', recordId }]),
+        ];
+        const readContexts = readbackContexts(scope, flatSource);
+        // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
+        const sourceReadback = yield* seedSourceProcessingNativeFixture({
+          connections: isolated.connections,
+          contexts: roundTripContexts.filter(({ request }) => request.target === null),
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_CUSTOMER_INTAKE',
+          controllerRef: customerController,
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId,
+          legalEntityId,
+          meaning: 'Independent current internal policy permits the same public customer to be named and matched again',
+          tenantId,
+        });
         const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           connections: isolated.connections,
-          contexts: [
-            ...[revisedSource, readbackSource].flatMap((source) => {
-              const target = { kind: 'PARTY' as const, resourceId: partyReceipt.partyRef.resourceId };
-              return [
-                customerIntakeContext(integration.principalId, source, target),
-                customerIntakeContext(integration.principalId, source, target, partySourceReference),
-              ];
-            }),
-            {
-              authMethod: 'api_key',
-              principalId: integration.principalId,
-              request: {
-                consumerModuleId: partyModuleId,
-                operation: 'PROFILE_EXPORT',
-                source: flatSource,
-                target: { kind: 'PARTY', resourceId: partyReceipt.partyRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'api_key',
-              principalId: integration.principalId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation: 'customer-profile-source.read',
-                source: revisedSource,
-                target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileReceipt.profileRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: partyModuleId,
-                operation: 'UPDATE',
-                source: readbackSource,
-                target: { kind: 'PARTY', resourceId: partyReceipt.partyRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation: 'PROFILE_CREATE',
-                partySourceReference,
-                source: readbackSource,
-                target: { kind: 'PARTY', resourceId: partyReceipt.partyRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation: 'customer-profile-source.write',
-                source: readbackSource,
-                target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileReceipt.profileRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: partyModuleId,
-                operation: 'UPDATE',
-                source: revisedSource,
-                target: { kind: 'PARTY', resourceId: partyReceipt.partyRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation: 'PROFILE_CREATE',
-                partySourceReference,
-                source: revisedSource,
-                target: { kind: 'PARTY', resourceId: partyReceipt.partyRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation: 'customer-profile-source.write',
-                source: revisedSource,
-                target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileReceipt.profileRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: partyModuleId,
-                operation: 'PROFILE_EXPORT',
-                source: flatSource,
-                target: { kind: 'PARTY', resourceId: partyReceipt.partyRef.resourceId },
-              },
-            },
-            {
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation: 'customer-profile-source.read',
-                source: flatSource,
-                target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileReceipt.profileRef.resourceId },
-              },
-            },
-          ],
-          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_CUSTOMER_REVISION_AND_READ_CONTRACT',
-          controllerRef: 'internal:customer-conformance',
+          contexts: [...roundTripContexts.filter(({ request }) => request.target !== null), ...readContexts],
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_CUSTOMER_MATCH_AND_READ_CONTRACT',
+          controllerRef: customerController,
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
           governancePrincipalId,
           legalEntityId,
           meaning:
-            'Independent current internal policy permits revising and reading only the original Party and Retail profile for this qualified source record',
+            'Independent current internal policy permits matching and reading only the original Party and Retail profile for this qualified source record',
           profileReceipt: proofTransport,
           tenantId,
         }).pipe(
@@ -797,7 +823,7 @@ it.live(
             ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-            )([...privacy.contexts, ...dataPrivacy.contexts]),
+            )([...privacy.contexts, ...sourceReadback.contexts, ...dataPrivacy.contexts]),
           },
           port: privacyRuntime.port,
           prefix: '/privacy-api',
@@ -807,184 +833,32 @@ it.live(
         yield* Effect.logInfo(
           'INTERNAL_C14 historical native receipt admitted separate DATA policies between independent jobs',
         );
-        const revisionPlan = yield* makeSymmyC14CustomerRevisionPlan({
-          admission: dataPrivacy.personAdmission,
-          legalEntityId,
-          observedAt: yield* DateTime.now,
-          occurrenceId: revisionOccurrenceId,
-          partySourceReference: dataPrivacy.profileReceipt.intent.partySourceReference ?? partySourceReference,
-          recordId,
-          revision: 2,
-          sourceRouteId,
-          tenantId,
-        });
-        const revisionJob = yield* submitFor('INTERNAL_C14_CUSTOMER_REVISION_2', revisionPlan);
-        const revisionWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_REVISION_2',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
-        const revisionEffects = yield* observeUntil(
-          admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${revisionJob.jobId}`.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
-          ),
-          (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
-        ).pipe(
-          Effect.tapError(() =>
-            Effect.all([
-              revisionWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
-              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-              ),
-            ]),
-          ),
-        );
-        expect(revisionEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
-        const revisedProfiles =
-          yield* admin`select p.party_id,cp.retail_customer_profile_id as customer_profile_id from party.parties p
-          join commerce_customer_context.retail_customer_profiles cp on cp.party_resource_id=p.party_id::text and cp.tenant_id=p.tenant_id
-          where p.tenant_id=${tenantId} and p.first_name='RevisedInternal'`;
-        expect(revisedProfiles).toEqual([
-          { customer_profile_id: profileReceipt.profileRef.resourceId, party_id: partyReceipt.partyRef.resourceId },
-        ]);
-        const revisedBindings =
-          yield* admin`select customer_profile_id,party_resource_id,source_occurrence_id,source_order,source_revision,
-          source_intent->'partySourceReference' as party_source_reference
-          from commerce_customer_context.customer_profile_source_bindings
-          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and issuer=${sourceIdentity.issuer}
-          and namespace=${sourceIdentity.namespace} and record_type=${sourceIdentity.recordType} and record_id=${recordId}`;
-        expect(revisedBindings).toEqual([
-          {
-            customer_profile_id: profileReceipt.profileRef.resourceId,
-            party_resource_id: partyReceipt.partyRef.resourceId,
-            party_source_reference: partySourceReference,
-            source_occurrence_id: revisionOccurrenceId,
-            source_order: 2,
-            source_revision: 'INTERNAL_C14_RECORD_REVISION_2',
-          },
-        ]);
-        const revisionWrites = yield* admin`select action_invocation_id from core.action_invocations
-          where tenant_id=${tenantId} and status='succeeded'
-          and action_key in ('party.registry.create-party','party.registry.update-party','commerce.customer-context.ensure-retail-customer-profile')`;
-        expect(revisionWrites).toHaveLength(4);
-        const revisionStatusResponse = yield* client.get(`${shell.baseUrl}/api/symmy/v1/jobs/${revisionJob.jobId}`, {
+        const exportedCustomer = yield* readCustomers({
+          admin,
+          client,
           headers,
-        });
-        expect(revisionStatusResponse.status).toBe(200);
-        const revisionStatus = yield* revisionStatusResponse.json.pipe(
-          Effect.flatMap(
-            Schema.decodeUnknownEffect(
-              Schema.Struct({ jobId: receiptSchema.fields.jobId, status: Schema.Literal('completed_all') }),
-            ),
-          ),
-        );
-        expect(revisionStatus.jobId).toBe(revisionJob.jobId);
-        yield* revisionWorker.child.kill();
-        yield* revisionWorker.child.exitCode;
-        const customerReadbackResponse = yield* client
-          .get(`${shell.baseUrl}/api/symmy/v1/admin/customers?contractVersion=INTERNAL_C14`, { headers })
-          .pipe(
-            Effect.tap((response) =>
-              response.status === 200
-                ? Effect.void
-                : Effect.all([
-                    shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-                    shell.issuerDiagnostics().pipe(Effect.flatMap(Effect.logError)),
-                    ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
-                      diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
-                    ),
-                  ]),
-            ),
-          );
-        expect(customerReadbackResponse.status).toBe(200);
-        const readback = yield* customerReadbackResponse.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)),
-        );
-        expect(readback.customers).toHaveLength(1);
-        const exportedCustomer = readback.customers.at(0);
-        assert.isOk(exportedCustomer);
-        expect(exportedCustomer.source_record_id).toBe(recordId);
-        expect(exportedCustomer.id).not.toBe(recordId);
-        expect(exportedCustomer.partyRef).toEqual(partyReceipt.partyRef);
-        expect(exportedCustomer.profile.profileRef.resourceId).toBe(profileReceipt.profileRef.resourceId);
-        assert.isOk(exportedCustomer.party);
-        expect(exportedCustomer.party.firstName).toBe('RevisedInternal');
-        expect(exportedCustomer.party.lastName).toBe('Customer');
-        yield* Effect.logInfo(
-          'INTERNAL_C14 customer GET exported current protected owners under explicit reader authority',
-        );
-        const wrongReadRoutes = yield* Effect.forEach(
-          [
-            { ...readRoute, sourceRouteId: yield* uuid },
-            {
-              ...readRoute,
-              items: readRoute.items.map((item) => ({
-                ...item,
-                source: { ...item.source, issuerId: 'INTERNAL_C14_UNENROLLED_ISSUER' },
-              })),
-            },
-            {
-              ...readRoute,
-              items: readRoute.items.map((item) => ({
-                ...item,
-                source: { ...item.source, sourceNamespace: 'INTERNAL_C14_UNENROLLED_NAMESPACE' },
-              })),
-            },
-          ],
-          (wrongRoute) => Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)(wrongRoute),
-        );
-        yield* Effect.forEach(
-          wrongReadRoutes,
-          (wrongRoute) =>
-            Effect.gen(function* rejectWrongCustomerProjectionAuthority() {
-              yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(wrongRoute)}::jsonb
-                where tenant_id=${tenantId} and route_id=${readRouteId}`;
-              const rejected = yield* client.get(
-                `${shell.baseUrl}/api/symmy/v1/admin/customers?contractVersion=INTERNAL_C14`,
-                { headers },
-              );
-              expect(rejected.status).toBe(403);
-              const rejectedBody = yield* rejected.text;
-              expect(rejectedBody.includes('RevisedInternal')).toBe(false);
-              expect(rejectedBody.includes('"Customer"')).toBe(false);
-            }),
-          { discard: true },
-        );
-        yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb
-          where tenant_id=${tenantId} and route_id=${readRouteId}`;
-        const currentTransport = yield* acquireReceiptTransport();
-        const currentReceipt = yield* executeCustomerProfileSourceWithAuthorization(
-          currentTransport.request,
-          Redacted.value(currentTransport.authorization),
-          currentTransport.requestCorrelation,
-          { baseUrl: currentTransport.baseUrl, compositionRevision: currentTransport.compositionRevision },
-        ).pipe(
-          Effect.flatMap((result) =>
-            Match.value(result).pipe(
-              Match.tag('MINIMAL_RECEIPT', (value) => Effect.succeed(value)),
-              Match.orElse(() =>
-                Effect.fail(unavailable('A fresh current Party admission is required for the readback update')),
-              ),
-            ),
-          ),
-        );
-        const roundTripPlan = yield* makeSymmyC14CustomerRevisionPlan({
-          admission: currentReceipt.currentAdmission,
-          legalEntityId,
-          observedAt: yield* DateTime.now,
-          occurrenceId: readbackOccurrenceId,
-          partySourceReference: currentReceipt.currentAdmission.sourceReference,
-          recordId: exportedCustomer.source_record_id,
-          revision: 3,
-          sourceRouteId,
+          ownerDiagnostics,
+          partyRef: partyReceipt.partyRef,
+          profileResourceId: profileReceipt.profileRef.resourceId,
+          readRoute,
+          readRouteId,
+          recordId,
+          shell,
           tenantId,
         });
-        const roundTripJob = yield* submitFor('INTERNAL_C14_CUSTOMER_GET_POST', roundTripPlan);
+        // The GET source id is the public customerId: sent back to POST it matches the same Party and profile.
+        const roundTripJob = yield* submitFor(
+          roundTripKey,
+          customersBody({
+            customerId: exportedCustomer.sourceRecordId,
+            firstName: exportedCustomer.party.firstName ?? '',
+            kind: 'PERSON',
+            lastName: exportedCustomer.party.lastName ?? '',
+          }),
+        );
         const roundTripWorker = yield* startProductWorker(workerArtifact, {
           ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_GET_POST',
+          ONTOS_C14_WORKER_CLAIM_OWNER: roundTripKey,
           ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
         });
         const roundTripEffects = yield* observeUntil(
@@ -1005,44 +879,38 @@ it.live(
           ),
         );
         expect(roundTripEffects.every(({ owner_invocation_id }) => Option.isSome(owner_invocation_id))).toBe(true);
-        const retainedNativeIds = [...completed, ...revisionEffects, ...roundTripEffects].map((effect) =>
+        const roundTripStatusResponse = yield* client.get(`${shell.baseUrl}/api/symmy/v1/jobs/${roundTripJob.jobId}`, {
+          headers,
+        });
+        expect(roundTripStatusResponse.status).toBe(200);
+        expect(yield* roundTripStatusResponse.json).toMatchObject({ status: 'completed_all' });
+        const [matched] = yield* admin<{ parties: number; profiles: number }>`select
+          (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
+          (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`;
+        // The same customer sent again matched its Party and profile: nothing was created a second time.
+        expect(matched).toEqual({ parties: 1, profiles: 1 });
+        const retainedNativeIds = [...completed, ...roundTripEffects].map((effect) =>
           Option.getOrThrow(effect.owner_invocation_id),
         );
-        expect(new Set(retainedNativeIds).size).toBe(6);
-        const [retainedNativeTuples] = yield* admin<{ count: number }>`select count(*)::integer as count
-          from core.action_invocations a join symmy_integration.job_effects e on e.tenant_id=a.tenant_id
-          and e.owner_invocation_id=a.action_invocation_id and e.owner_executor_principal_id=a.principal_id
-          and e.owner_auth_context_ref=a.auth_context_ref and e.owner_request_hash=a.request_hash and e.effect_id::text=a.idempotency_key
-          where a.tenant_id=${tenantId} and a.legal_entity_id=${legalEntityId} and a.principal_id=${systemId} and a.status='succeeded'
-          and e.job_id in (${accepted.jobId},${revisionJob.jobId},${roundTripJob.jobId})`;
-        expect(retainedNativeTuples).toEqual({ count: 6 });
-        const readbackBindings =
-          yield* admin`select b.customer_profile_id,b.party_resource_id,b.source_order,b.source_revision,b.source_occurrence_id,
-          b.source_intent->'partySourceReference' as party_source_reference,p.first_name
-          from commerce_customer_context.customer_profile_source_bindings b join party.parties p on p.tenant_id=b.tenant_id and p.party_id::text=b.party_resource_id
-          where b.tenant_id=${tenantId} and b.legal_entity_id=${legalEntityId} and b.issuer=${sourceIdentity.issuer}
-          and b.namespace=${sourceIdentity.namespace} and b.record_type=${sourceIdentity.recordType} and b.record_id=${exportedCustomer.source_record_id}`;
-        expect(readbackBindings).toEqual([
-          {
-            customer_profile_id: profileReceipt.profileRef.resourceId,
-            first_name: 'ReadbackInternal',
-            party_resource_id: partyReceipt.partyRef.resourceId,
-            party_source_reference: partySourceReference,
-            source_occurrence_id: readbackOccurrenceId,
-            source_order: 3,
-            source_revision: 'INTERNAL_C14_RECORD_REVISION_3',
-          },
-        ]);
-        const beforeDisableWrites = yield* admin`select action_invocation_id from core.action_invocations
-          where tenant_id=${tenantId} and status='succeeded'
-          and action_key in ('party.registry.create-party','party.registry.update-party','commerce.customer-context.ensure-retail-customer-profile')`;
-        expect(beforeDisableWrites).toHaveLength(6);
+        expect(new Set(retainedNativeIds).size).toBe(4);
+        const [allWrites] = yield* admin<{ party: number; profile: number }>`select
+          count(*) filter(where action_key='party.registry.create-party' and status='succeeded')::integer as party,
+          count(*) filter(where action_key='commerce.customer-context.ensure-retail-customer-profile' and status='succeeded')::integer as profile
+          from core.action_invocations where tenant_id=${tenantId}`;
+        expect(allWrites).toEqual({ party: 2, profile: 2 });
+        const [binding] = yield* admin<{
+          source_occurrence_id: string;
+          source_order: number;
+        }>`select source_occurrence_id,source_order
+          from commerce_customer_context.customer_profile_source_bindings
+          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and issuer=${sourceIdentity.issuer}
+          and namespace=${sourceIdentity.namespace} and record_type=${sourceIdentity.recordType} and record_id=${recordId}`;
+        // The source binding of the record moved to the newest observation, with a later order.
+        expect(binding?.source_occurrence_id).toBe(roundTripSource.occurrenceId);
+        expect(binding?.source_order).toBeGreaterThan(0);
         yield* roundTripWorker.child.kill();
         yield* roundTripWorker.child.exitCode;
-        yield* Effect.logInfo(
-          'INTERNAL_C14 customer GET source ID round-tripped through a fresh native source revision',
-        );
-        const admittedBeforeDisable = yield* submitFor('INTERNAL_C14_CUSTOMER_BEFORE_DISABLE');
+        const admittedBeforeDisable = yield* submitFor(beforeDisableKey);
         expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);
         yield* admin`update core.principals set status='disabled',disabled_at=current_timestamp where principal_id=${integration.principalId} and tenant_id=${tenantId}`;
         const disabledWorker = yield* startProductWorker(workerArtifact, {
@@ -1063,8 +931,8 @@ it.live(
         const [afterDisableWrites] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations
-          where tenant_id=${tenantId} and status='succeeded' and action_key in ('party.registry.create-party','party.registry.update-party','commerce.customer-context.ensure-retail-customer-profile')`;
-        expect(afterDisableWrites?.count).toBe(beforeDisableWrites.length);
+          where tenant_id=${tenantId} and status='succeeded' and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')`;
+        expect(afterDisableWrites?.count).toBe(4);
         yield* disabledWorker.child.kill();
         yield* disabledWorker.child.exitCode;
         return yield* Effect.void;
