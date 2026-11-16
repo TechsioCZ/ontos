@@ -12,6 +12,10 @@ if [[ "${1:-}" == --task ]]; then
       --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts
   fi
   if [[ "$task" == *#* ]]; then
+    if [[ "${task%#*}" == ./verticals/privacy ]]; then
+      exec mise exec -- pnpm --filter ./verticals/privacy run test:integration --pool.maxWorkers 1 \
+        --shard "${task##*#}" --exclude tests/integration/privacy-composition-drain.test.ts
+    fi
     exec mise exec -- pnpm --filter "${task%#*}" run test:integration --pool.maxWorkers 1 --shard "${task##*#}"
   fi
   if [[ "$task" == ./verticals/pricing ]]; then

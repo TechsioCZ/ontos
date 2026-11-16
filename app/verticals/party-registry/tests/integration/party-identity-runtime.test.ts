@@ -27,7 +27,7 @@ import {
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Config, Crypto, DateTime, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 
@@ -521,7 +521,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           // The previous worker-cycle scope has joined; no worker runs until all obsolete rows are gone.
           const resetDatabase = new URL(connections.admin.connectionString);
           expect(['127.0.0.1', 'localhost', '[::1]']).toContain(resetDatabase.hostname);
-          expect(resetDatabase.port).toBe('5433');
+          const worker = yield* Config.all({
+            container: Config.String('ONTOS_TEST_DB_CONTAINER').pipe(Config.withDefault('ontos-db')),
+            isolatedWorkers: Config.String('ONTOS_CI_ISOLATED_WORKERS').pipe(Config.withDefault('')),
+          });
+          if (worker.isolatedWorkers === '2') {
+            expect(['5541', '5542']).toContain(resetDatabase.port);
+            expect(worker.container).toBe(`ontos-ci-db-${Number(resetDatabase.port) - 5540}`);
+          } else {
+            expect(resetDatabase.port).toBe('5433');
+          }
           expect(resetDatabase.pathname).toBe('/ontos_ci');
           expect(resetDatabase.username).toBe('ontos_ci_admin');
           const canonicalControls = () =>

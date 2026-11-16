@@ -845,6 +845,16 @@ jobs:
           mise exec -- pnpm exec rstest --project integration
           scripts/integration/organization-source-customer-owner-conformance.test.mts --pool.maxWorkers 1
 
+      - name: Prove native Privacy composition drain without competing fixture processes
+        if: matrix.suite == 'bootstrap'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: >-
+          mise exec -- pnpm --filter ./verticals/privacy run test:integration
+          tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1
+
       - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
         if: matrix.suite == 'integration'
         working-directory: app
