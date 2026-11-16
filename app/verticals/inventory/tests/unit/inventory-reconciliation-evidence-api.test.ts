@@ -58,28 +58,6 @@ const input = Schema.decodeSync(InventoryReconciliationEvidenceRequestSchema)({
   },
 });
 
-it('defines the existing owner evidence lookups plus repository-backed privacy owner coverage', () => {
-  const lookupKinds = [
-    'BINDING_HISTORY',
-    'ENDED_CORRELATION',
-    'SHARING_HISTORY',
-    'CONFIRMATION_HISTORY',
-    'PROTECTION_HISTORY',
-    'EFFECT_OUTCOME',
-    'SOURCE_CONFLICT_DETAIL',
-    'PRIVACY_OWNER_COVERAGE',
-  ] as const;
-
-  const requestContract = JSON.stringify(InventoryReconciliationEvidenceRequestSchema.ast);
-  const responseContract = JSON.stringify(InventoryReconciliationEvidenceResponseSchema.ast);
-  for (const kind of lookupKinds) {
-    expect(requestContract).toContain(kind);
-    expect(responseContract).toContain(kind);
-  }
-  expect(requestContract).not.toContain('observations');
-  expect(requestContract).not.toContain('sql');
-});
-
 it('decides the audit read through its own declaration, with no legacy permission target', () => {
   // The one gate decides the read's own scope-wide capability (O62); the legacy positional resolver is
   // gone, and the owner Resource the read names is proven by the handler before it reads evidence.

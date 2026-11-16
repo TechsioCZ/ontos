@@ -16,6 +16,7 @@ import {
   Crypto,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -27,6 +28,7 @@ import {
   Predicate,
   Redacted,
   Ref,
+  Schedule,
   Schema,
   Stream,
 } from 'effect';
@@ -201,6 +203,13 @@ const finalizeOwnerExecution = Effect.fn('TerminalProtectionHealth.finalizeOwner
   },
 );
 const incrementCall = (count: number) => count + 1;
+
+// Postgres publishes the Item UPDATE's lock wait in pg_locks only once the waiting backend has
+// registered it, which is not bounded by a number of round trips. The wait therefore runs with a real
+// wall-clock deadline instead of a fixed attempt count that a loaded runner can exhaust while the
+// product code is behaving correctly.
+const nativeLockWaitPoll = Schedule.spaced(Duration.millis(20));
+const nativeLockWaitDeadline = Duration.seconds(30);
 
 const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function* makeScenario(
   scenarioAccess: { readonly access?: 'allowed' | 'denied' } = {},
@@ -976,8 +985,7 @@ it.live(
           .pipe(Effect.forkScoped);
         yield* Deferred.await(locked);
         const correcting = yield* scenario.correct({ key: 'reader-barrier' }).pipe(Effect.forkScoped);
-        let blocked = false;
-        for (let observation = 0; observation < 1000 && !blocked; observation += 1) {
+        const blocked = yield* Effect.gen(function* observeItemWriteWait() {
           const [state] = yield* scenario.admin.execute<{ readonly blocked: boolean }>(
             sql`select exists(
         select 1 from pg_locks where relation = 'inventory.stock_items'::regclass
@@ -985,8 +993,14 @@ it.live(
       ) as blocked`,
             'objects',
           );
-          blocked = state?.blocked;
-        }
+          if (state?.blocked === true) {
+            return true;
+          }
+          return yield* Effect.fail('native_lock_wait_unregistered' as const);
+        }).pipe(
+          Effect.retry(nativeLockWaitPoll),
+          Effect.timeoutOrElse({ duration: nativeLockWaitDeadline, orElse: () => Effect.succeed(false) }),
+        );
         expect(blocked).toBe(true);
         const duringBindings = yield* scenario.admin.select().from(inventoryCatalogToStockBindings);
         const duringItems = yield* scenario.admin.select().from(inventoryStockItems);

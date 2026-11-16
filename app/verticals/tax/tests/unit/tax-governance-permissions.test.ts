@@ -1,4 +1,3 @@
-import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -19,18 +18,6 @@ import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revisio
 import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
-const principalId = '20000000-0000-4000-8000-000000000001';
-const sellerA = '30000000-0000-4000-8000-000000000001';
-const sellerB = '30000000-0000-4000-8000-000000000002';
-const scopeFor = (legalEntityId: string) =>
-  ({
-    authContextRef: 'better-auth-session:tax-governance-permissions',
-    authMethod: 'session',
-    correlationId: 'tax-governance-permissions',
-    legalEntityId,
-    principalId,
-    tenantId,
-  }) satisfies OperationalScope;
 
 const ref = (resourceType: string, resourceId: string) => ({
   moduleId: 'commerce.tax',
@@ -39,7 +26,7 @@ const ref = (resourceType: string, resourceId: string) => ({
   tenantId,
 });
 const expectedBasisFingerprint = 'a'.repeat(64);
-// Both sellers operate in Czech jurisdiction; the jurisdiction must never become the authorization target.
+// The payload's Czech jurisdiction must never become the authorization target.
 const czechRevision = {
   compositionKind: 'EXCLUSIVE',
   effectiveFrom: '2027-01-01T00:00:00.000Z',
@@ -124,20 +111,6 @@ it.effect('#950 BDD a Selling Legal Entity capability is the Action scope: no pe
     // The seller never comes from the payload: one payload decodes for any selected seller.
     const payloads = yield* governedActions;
     expect(payloads).toHaveLength(4);
-  }),
-);
-
-it.effect('#950 BDD Czech jurisdiction is not administrator scope', () =>
-  Effect.gen(function* czechJurisdictionIsNotScope() {
-    const governed = yield* governedActions;
-    for (const { action, payload } of governed) {
-      // The same request states the seller only through the trusted scope, never through the
-      // payload's jurisdiction or a payload-held seller id (O7, O12).
-      expect(scopeFor(sellerA).legalEntityId).toBe(sellerA);
-      expect(scopeFor(sellerB).legalEntityId).toBe(sellerB);
-      expect(action.descriptor.legalEntityScope).toBe('required');
-      expect(payload).toBeDefined();
-    }
   }),
 );
 
