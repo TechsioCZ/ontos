@@ -203,7 +203,7 @@ const rowCount = (rows: readonly Row[]) => rows.length;
 class DatabaseRoleBoundaryFixture extends Context.Service<
   DatabaseRoleBoundaryFixture,
   Effect.Success<typeof openFixture>
->()('PartyDatabaseRoleBoundary.fixture') {}
+>()('@app/party-registry/tests/integration/database-role-boundary.test/DatabaseRoleBoundaryFixture') {}
 const roleBoundaryLayer = Layer.effect(DatabaseRoleBoundaryFixture, openFixture).pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );

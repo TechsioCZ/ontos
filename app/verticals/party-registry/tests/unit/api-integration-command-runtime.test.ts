@@ -536,6 +536,25 @@ const engagementRequest = (path: string, payload: EngagementTestPayload, token: 
   });
 };
 
+/**
+ * The three declared refusals the archive command must keep apart on the wire. They capture nothing
+ * from a test, so they live here and one bound service reads the case under test from a slot.
+ */
+const notFoundTransition = () => Effect.succeed({ _tag: 'not_found' as const });
+const unavailableTransition = () =>
+  Effect.fail(
+    new PartyPersistenceUnavailable({
+      code: 'party_persistence_unavailable',
+      reason: 'private database diagnostic',
+    }),
+  );
+const defectTransition = () => Effect.die('private unexpected diagnostic');
+const failureCases = [
+  { status: 404, tag: 'PartyCommandNotFoundProblem', transition: notFoundTransition },
+  { status: 503, tag: 'PartyCommandUnavailableProblem', transition: unavailableTransition },
+  { status: 500, tag: 'PartyCommandInternalProblem', transition: defectTransition },
+];
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect(
     'every registered command is mounted and rejects missing structural input or authentication before the lifecycle',
@@ -1493,23 +1512,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.gen(function* preserveDistinctFailureStatuses() {
         const assertion = yield* makeAssertion();
-        const notFoundTransition = () => Effect.succeed({ _tag: 'not_found' as const });
-        const unavailableTransition = () =>
-          Effect.fail(
-            new PartyPersistenceUnavailable({
-              code: 'party_persistence_unavailable',
-              reason: 'private database diagnostic',
-            }),
-          );
-        const defectTransition = () => Effect.die('private unexpected diagnostic');
-        const cases = [
-          { status: 404, tag: 'PartyCommandNotFoundProblem', transition: notFoundTransition },
-          { status: 503, tag: 'PartyCommandUnavailableProblem', transition: unavailableTransition },
-          { status: 500, tag: 'PartyCommandInternalProblem', transition: defectTransition },
-        ];
         // `bindActionTestServices` binds the transition at construction, so one bound service reads
         // the case under test from here instead of rebuilding the harness and web handler per case.
-        let transition: (typeof cases)[number]['transition'] = notFoundTransition;
+        let transition: (typeof failureCases)[number]['transition'] = notFoundTransition;
         const harness = yield* makeActionTestHarness({
           access: 'allowed',
           ownerRegistration: partyRegistryBackendRegistration,
@@ -1520,25 +1525,25 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ],
         });
         const app = yield* mountApp(harness, assertion.environment);
-        yield* forEachSequential(cases, (item) =>
+        yield* forEachSequential(failureCases, ({ status, tag, transition: caseTransition }) =>
           Effect.gen(function* verifySafeFailureResponse() {
-            transition = item.transition;
+            transition = caseTransition;
 
             const response = yield* handle(
               app,
               commandRequest('archive-party', archivePayload, assertion.token, {
-                'idempotency-key': `failure-${item.status}`,
+                'idempotency-key': `failure-${status}`,
               }),
             );
-            expect(response.status).toBe(item.status);
+            expect(response.status).toBe(status);
             expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
             const body = yield* Effect.promise(() => response.json());
-            expect(Predicate.isTagged(body, item.tag)).toBe(true);
-            expect(body.status).toBe(item.status);
+            expect(Predicate.isTagged(body, tag)).toBe(true);
+            expect(body.status).toBe(status);
             expect((yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).includes('private')).toBe(
               false,
             );
-            if (item.status === 503) {
+            if (status === 503) {
               expect(body.retryable).toBe(true);
             }
             // Cumulative over the shared harness: every case fails, so nothing may ever commit.

@@ -351,7 +351,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
 class PartyCorrectionReuseFixture extends Context.Service<
   PartyCorrectionReuseFixture,
   Effect.Success<typeof makeFixture>
->()('IdentifierCorrectionReuseTest.fixture') {}
+>()('@app/party-registry/tests/integration/official-identifier-correction-reuse.test/PartyCorrectionReuseFixture') {}
 const correctionReuseLayer = Layer.effect(PartyCorrectionReuseFixture, makeFixture).pipe(
   Layer.provideMerge(nativeServices),
 );

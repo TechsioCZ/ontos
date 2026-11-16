@@ -632,19 +632,19 @@ it.live('#1149 a different Attempt may be authorized only after every proof of t
       // reads expiry off the Effect clock, and PostgreSQL only stores the instants it is given.
       const { expiredA, validations } = yield* Effect.gen(function* pastExpiryOfA() {
         yield* TestClock.setTime(DateTime.toEpochMillis(proofA.proof.expiresAt) + 100);
-        const expiredA = yield* harness.validate({
+        const expiredProofA = yield* harness.validate({
           authorizationId: proofA.proof.authorizationId,
           binding: bindingA,
         });
         const proofB = yield* harness.issue(issuePayload(bindingB, 'key-B'));
-        const validations = yield* Effect.all(
+        const laterValidations = yield* Effect.all(
           [
             harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA }),
             harness.validate({ authorizationId: proofB.proof.authorizationId, binding: bindingB }),
           ],
           { concurrency: 1 },
         );
-        return { expiredA, validations };
+        return { expiredA: expiredProofA, validations: laterValidations };
       }).pipe(Effect.provide(TestClock.layer()));
       expect(expiredA.reasons).toEqual(['EXPIRED']);
       expect(validations.map(({ outcome }) => outcome)).toEqual(['NOT_VALID', 'VALID']);
