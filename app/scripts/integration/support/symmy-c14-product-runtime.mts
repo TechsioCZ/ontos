@@ -350,14 +350,6 @@ export const encodeProductComposition = (snapshot: ActiveApplicationCompositionS
 
 const workerChild = `${c14AppRoot}/scripts/integration/support/symmy-c14-product-worker-child.mts`;
 
-/**
- * The worker bundles one fixed source with `--packages=external`, so its bytes are decided entirely by
- * that source, the resolved worker-host alias and the defined build marker. It is therefore named after
- * the digest of exactly those three inputs and built once per distinct combination instead of once per
- * fixture, which lets the artifact outlive the per-call scope: a changed source, alias or marker yields
- * a different name rather than a stale artifact. Fixtures that miss together publish identical bytes,
- * and the rename is atomic, so a reader always sees a whole artifact.
- */
 export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker')(function* buildWorker(
   contract: OntosModuleDeploymentContract,
 ) {
@@ -367,20 +359,9 @@ export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker'
   const cache = `${directory}/node_modules/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
   const workerHost = createRequire(`${c14AppRoot}/package.json`).resolve('@app/symmy-integration/outbox-worker-host');
-  const digest = createHash('sha256')
-    .update(yield* fs.readFileString(workerChild))
-    .update('\u0000')
-    .update(workerHost)
-    .update('\u0000')
-    .update(contract.deployment.buildMarker)
-    .digest('hex')
-    .slice(0, 32);
-  const artifact = path.join(cache, `worker-${digest}.mjs`);
-  if (yield* fs.exists(artifact)) {
-    return artifact;
-  }
-  const staging = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-pending-' });
-  const pending = path.join(staging, 'worker.mjs');
+  // The alias bundles worker-host and its relative imports; rebuild them in each fixture's scope.
+  const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-' });
+  const artifact = path.join(temporary, 'worker.mjs');
   yield* command(
     [
       'esbuild',
@@ -388,11 +369,10 @@ export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker'
       ...bundleArguments,
       `--alias:@app/symmy-integration/outbox-worker-host=${workerHost}`,
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* sourceLiteral(contract.deployment.buildMarker)}`,
-      `--outfile=${pending}`,
+      `--outfile=${artifact}`,
     ],
     directory,
   );
-  yield* fs.rename(pending, artifact);
   return artifact;
 });
 
