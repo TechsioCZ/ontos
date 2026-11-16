@@ -19,7 +19,7 @@ export default defineConfig({
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
       root,
-      setupFiles: [new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname],
+      setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',
       tools: { swc },
     },

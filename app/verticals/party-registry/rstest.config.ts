@@ -42,7 +42,7 @@ export default defineConfig({
       name: 'integration',
       testEnvironment: 'node',
       setupFiles: [
-        new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname,
+        '../../scripts/ci/integration-worker-setup.mts',
         './tests/integration/application-composition.setup.ts',
       ],
       include: ['tests/integration/**/*.test.ts'],
@@ -55,7 +55,7 @@ export default defineConfig({
       name: 'integration-worker-cycle',
       testEnvironment: 'node',
       setupFiles: [
-        new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname,
+        '../../scripts/ci/integration-worker-setup.mts',
         './tests/integration/application-composition.setup.ts',
       ],
       include: [workerCycleIntegrationTest],
