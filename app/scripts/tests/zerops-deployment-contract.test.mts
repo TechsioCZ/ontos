@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -193,15 +194,12 @@ const secretHolderSetups = (unitId: string, setups: ReadonlySet<string>) =>
     ? [...ownerRuntimeSetups(unitId, setups), OUTBOX_WORKER_HOST.stageSetup]
     : ownerRuntimeSetups(unitId, setups);
 
-/** Every non-test source file under `verticals/`, skipping installed packages and test folders. */
+/** Committed production sources, never another test's transient generated runtime. */
 const verticalSourceFiles = (directory: string): readonly string[] =>
-  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      return entry.name === 'node_modules' || entry.name === 'tests' ? [] : verticalSourceFiles(entryPath);
-    }
-    return /\.m?ts$/u.test(entry.name) && !/\.test\./u.test(entry.name) ? [entryPath] : [];
-  });
+  execFileSync('/usr/bin/git', ['ls-files', '-z', '--', '.'], { cwd: directory, encoding: 'utf-8' })
+    .split('\0')
+    .filter((file) => /\.m?ts$/u.test(file) && !file.split('/').includes('tests') && !/\.test\./u.test(file))
+    .map((file) => path.join(directory, file));
 
 /** The vertical units whose production code calls another module through the delegated gateway client. */
 const delegatedCallerUnits = (): readonly string[] => {

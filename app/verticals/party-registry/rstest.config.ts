@@ -41,7 +41,10 @@ export default defineConfig({
     {
       name: 'integration',
       testEnvironment: 'node',
-      setupFiles: ['./tests/integration/application-composition.setup.ts'],
+      setupFiles: [
+        new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname,
+        './tests/integration/application-composition.setup.ts',
+      ],
       include: ['tests/integration/**/*.test.ts'],
       exclude: [workerCycleIntegrationTest],
       testTimeout: 30_000,
@@ -51,7 +54,10 @@ export default defineConfig({
       // must never run alongside the other integration files.
       name: 'integration-worker-cycle',
       testEnvironment: 'node',
-      setupFiles: ['./tests/integration/application-composition.setup.ts'],
+      setupFiles: [
+        new URL('../../scripts/ci/integration-worker-setup.mts', import.meta.url).pathname,
+        './tests/integration/application-composition.setup.ts',
+      ],
       include: [workerCycleIntegrationTest],
       testTimeout: 30_000,
     },
