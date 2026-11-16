@@ -69,6 +69,12 @@ const allowedOwnerOperations = [
     schemaVersion: '1',
   },
   { entrypointKey: 'party.registry.api.source-profile-export', moduleId: 'party.registry', schemaVersion: '1' },
+  { entrypointKey: 'party.registry.api.source-party-search', moduleId: 'party.registry', schemaVersion: '1' },
+  {
+    entrypointKey: 'commerce.customer-context.api.customer-profile-source-parties',
+    moduleId: 'commerce.customer-context',
+    schemaVersion: '1',
+  },
   {
     entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
     moduleId: 'pricing.price-group-catalog',
@@ -425,10 +431,25 @@ const FixtureModeSchema = Schema.Literals([
   'foreign_customer',
   'foreign_customer_subject',
   'party_unavailable',
+  'many_customers',
+  'no_customers',
+  'foreign_search_match',
+  'short_search',
   'empty_groups',
 ]);
 type FixtureMode = typeof FixtureModeSchema.Type;
 
+/** Every term matches the fixture Party; the modes answer a Party that is no candidate or one list too few. */
+const partySearchReply = (request: Request, mode: FixtureMode) =>
+  request.json().then((body: { readonly terms: readonly string[] }) => {
+    const matches = body.terms.map(() => [mode === 'foreign_search_match' ? productId : partyId]);
+    return Response.json({ matches: mode === 'short_search' ? matches.slice(1) : matches });
+  });
+const customerCandidate = (item: typeof CustomerProfileSourceItemSchema.Type) => ({
+  partyRef: item.partyRef,
+  partySourceReference: item.partySourceReference,
+  recordId: item.source.recordId,
+});
 /** The owner page answer for a source page; any other answer is returned as it is, for a malformed owner reply. */
 const customerPageReply = (decoded: CustomerProfileSourceResponse, shortCount: boolean) =>
   Response.json(
@@ -453,6 +474,31 @@ const fixtureIcoReply = (path: string, response?: Response | FixtureOwnerReplies
   }
   return undefined;
 };
+/** The owner answers of the search: the route's customers as candidates, and the Party owner's matches. */
+const searchOwnerReply = (pathname: string, request: Request, mode: FixtureMode) => {
+  if (pathname.endsWith('/reads/customer-profile-source-parties')) {
+    const listed = mode === 'no_customers' ? [] : [customer];
+    return Promise.resolve(
+      Response.json({
+        count: mode === 'many_customers' ? 501 : listed.length,
+        items: mode === 'many_customers' ? [] : listed.map(customerCandidate),
+      }),
+    );
+  }
+  return pathname.endsWith('/reads/source-party-search') ? partySearchReply(request, mode) : undefined;
+};
+/** The JSON body an owner request carried, whatever order the requests came in. */
+const bodyOf = (request: Request | undefined) =>
+  Effect.fromNullishOr(request).pipe(
+    Effect.orDie,
+    Effect.flatMap((present) => Effect.promise(() => present.clone().json())),
+  );
+const scopeWithout = (selected: SymmySourceReadScope, ...removed: readonly string[]): SymmySourceReadScope => ({
+  ...selected,
+  allowedOwnerOperations: selected.allowedOwnerOperations.filter(
+    ({ entrypointKey }) => !removed.includes(entrypointKey),
+  ),
+});
 const fixture = (
   mode: FixtureMode = 'current',
   recordKey = sourceCorrelation.recordKey,
@@ -541,6 +587,10 @@ const fixture = (
               ],
       });
       return Promise.resolve(Response.json(Schema.encodeSync(CatalogSourceProductPageResponseSchema)(decoded)));
+    }
+    const searchReply = searchOwnerReply(pathname, request, mode);
+    if (searchReply !== undefined) {
+      return searchReply;
     }
     if (pathname.endsWith('/reads/customer-profile-source-page')) {
       let item =
@@ -1538,19 +1588,156 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(Schema.is(SymmyUnavailableProblemSchema)(oversizedError)).toBe(true);
     }),
   );
-  it.effect('answers filter_not_supported for q before any owner is called', () =>
-    Effect.gen(function* customersSearchHeldBack() {
+  it.effect('searches the route customers first, then pages with the matched Parties and the owner total', () =>
+    Effect.gen(function* customersSearch() {
       const current = fixture();
-      const failure = yield* projectSymmySourceCustomers(
+      const result = yield* projectSymmySourceCustomers(
         scope,
-        { q: 'ada' },
+        { limit: 2, offset: 0, q: '  Ada   lovelace ' },
         current.admission,
         current.newRequestIdentifier,
-      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
-      expect(failure).toMatchObject({ reason: 'filter_not_supported', status: 422 });
-      expect(current.acquisitions).toHaveLength(0);
-      expect(current.requests).toHaveLength(0);
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(result).toMatchObject({ count: 1, limit: 2, offset: 0 });
+      expect(current.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
+        'customer-profile-source-parties',
+        'source-party-search',
+        'customer-profile-source-page',
+        'source-profile-export',
+        'customer-profile-ico',
+      ]);
+      const [parties, search, page] = current.requests;
+      expect(yield* bodyOf(parties)).toMatchObject({ limit: 500 });
+      expect(yield* bodyOf(search)).toEqual({
+        candidates: [{ partyRef, sourceReference: partySourceReference }],
+        includeOrganizationName: false,
+        includePersonProfile: true,
+        terms: ['Ada', 'lovelace'],
+      });
+      expect(yield* bodyOf(page)).toMatchObject({
+        limit: 2,
+        offset: 0,
+        search: {
+          terms: [
+            { partyIds: [partyId], term: 'Ada' },
+            { partyIds: [partyId], term: 'lovelace' },
+          ],
+        },
+      });
+      // A request without q never reads the candidates or searches Party.
+      const plain = fixture();
+      yield* projectSymmySourceCustomers(scope, {}, plain.admission, plain.newRequestIdentifier).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, plain.fakeFetch),
+      );
+      expect(plain.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
+        'customer-profile-source-page',
+        'source-profile-export',
+        'customer-profile-ico',
+      ]);
     }),
+  );
+  it.effect('searches only the fields the route may read and still pages by the customer key without candidates', () =>
+    Effect.gen(function* customersSearchScopes() {
+      const companyRead = fixture(
+        'current',
+        sourceCorrelation.recordKey,
+        companyPage(),
+        { ico: organizationIcoReply(), name: organizationNameReply() },
+        companyNameScope,
+      );
+      yield* projectSymmySourceCustomers(
+        companyNameScope,
+        { q: 'engines' },
+        companyRead.admission,
+        companyRead.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, companyRead.fakeFetch));
+      const search = yield* Effect.fromNullishOr(companyRead.requests[1]).pipe(Effect.orDie);
+      expect(yield* Effect.promise(() => search.clone().json())).toMatchObject({
+        includeOrganizationName: true,
+        includePersonProfile: true,
+        terms: ['engines'],
+      });
+      const none = fixture('no_customers');
+      const empty = yield* projectSymmySourceCustomers(
+        scope,
+        { q: 'anything' },
+        none.admission,
+        none.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, none.fakeFetch));
+      expect(empty.count).toBeGreaterThanOrEqual(0);
+      expect(none.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
+        'customer-profile-source-parties',
+        'customer-profile-source-page',
+        'source-profile-export',
+        'customer-profile-ico',
+      ]);
+      const page = yield* Effect.fromNullishOr(none.requests[1]).pipe(Effect.orDie);
+      expect(yield* Effect.promise(() => page.clone().json())).toMatchObject({
+        search: { terms: [{ partyIds: [], term: 'anything' }] },
+      });
+    }),
+  );
+  it.effect('refuses a search the route may not make with filter_not_supported before any owner is called', () =>
+    Effect.gen(function* customersSearchNotSupported() {
+      for (const selected of [
+        scopeWithout(scope, 'party.registry.api.source-profile-export'),
+        scopeWithout(scope, 'party.registry.api.source-party-search'),
+        scopeWithout(scope, 'commerce.customer-context.api.customer-profile-source-parties'),
+      ]) {
+        const current = fixture();
+        const failure = yield* projectSymmySourceCustomers(
+          selected,
+          { q: 'ada' },
+          current.admission,
+          current.newRequestIdentifier,
+        ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+        expect(failure).toMatchObject({ reason: 'filter_not_supported', status: 422 });
+        expect(current.acquisitions).toHaveLength(0);
+        expect(current.requests).toHaveLength(0);
+      }
+    }),
+  );
+  it.effect('refuses a search it cannot answer exactly with search_too_broad and never a partial answer', () =>
+    Effect.gen(function* customersSearchTooBroad() {
+      const manyTerms = Array.from({ length: 11 }, (_unused, index) => `term${index}`).join(' ');
+      const terms = fixture();
+      const tooManyTerms = yield* projectSymmySourceCustomers(
+        scope,
+        { q: manyTerms },
+        terms.admission,
+        terms.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, terms.fakeFetch));
+      expect(tooManyTerms).toMatchObject({ reason: 'search_too_broad', status: 422 });
+      expect(terms.requests).toHaveLength(0);
+      const many = fixture('many_customers');
+      const tooManyCustomers = yield* projectSymmySourceCustomers(
+        scope,
+        { q: 'ada' },
+        many.admission,
+        many.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, many.fakeFetch));
+      expect(tooManyCustomers).toMatchObject({ reason: 'search_too_broad', status: 422 });
+      expect(many.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
+        'customer-profile-source-parties',
+      ]);
+      expect(JSON.stringify(tooManyCustomers)).not.toContain('ada');
+    }),
+  );
+  it.effect(
+    'fails closed when the Party owner answers a Party that is not a candidate or the wrong number of terms',
+    () =>
+      Effect.gen(function* customersSearchInconsistent() {
+        for (const mode of ['foreign_search_match', 'short_search'] as const) {
+          const current = fixture(mode);
+          const failure = yield* projectSymmySourceCustomers(
+            scope,
+            { q: 'ada' },
+            current.admission,
+            current.newRequestIdentifier,
+          ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+          expect(Schema.is(SymmyUnavailableProblemSchema)(failure), mode).toBe(true);
+          expect(current.requests.some((request) => new URL(request.url).pathname.endsWith('/page'))).toBe(false);
+        }
+      }),
   );
   it.effect('refuses the customers read for a route that may not read the page entrypoint', () =>
     Effect.gen(function* customersPageNotAllowed() {

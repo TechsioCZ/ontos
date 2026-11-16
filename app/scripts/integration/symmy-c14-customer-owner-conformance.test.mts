@@ -102,6 +102,9 @@ const customerReadbackSchema = Schema.Struct({
   offset: Schema.Int,
 });
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
+const customerItemKey = 'customer-0';
+const privacyApiPrefix = '/privacy-api';
+const partyCreateEffectKey = 'party-create';
 const symmyAppId = 'symmy-integration';
 const commerceModuleId = 'commerce.customer-context';
 const partyModuleId = 'party.registry';
@@ -229,10 +232,6 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
   const withoutParty = yield* readPage('?fields=partyRef');
   expect(withoutParty.customers.map(({ sourceRecordId }) => sourceRecordId)).toEqual([recordId]);
   expect(withoutParty.customers[0]).not.toHaveProperty('party');
-  // `q` stays held back until an owner can search the customer key together with the Party names and contacts.
-  const searched = yield* client.get(`${readbackUrl}?q=Internal`, { headers });
-  expect(searched.status).toBe(422);
-  expect(yield* searched.json).toMatchObject({ reason: 'filter_not_supported' });
   for (const rejectedQuery of [
     `?afterRecordId=${recordId}`,
     `?code=${recordId}`,
@@ -279,6 +278,79 @@ const readCustomers = Effect.fn('SymmyC14Customer.readCustomers')(function* read
   yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb
     where tenant_id=${tenantId} and route_id=${readRouteId}`;
   return { party: exportedCustomer.party, sourceRecordId: exportedCustomer.sourceRecordId };
+});
+
+interface SearchInput {
+  readonly client: HttpClient.HttpClient;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly recordId: string;
+  readonly secondRecordId: string;
+  readonly shell: Effect.Success<ReturnType<typeof makeApiKeyGatewayNativeFixture>>;
+}
+type CustomerReadback = typeof customerReadbackSchema.Type;
+
+const readCustomerPage = Effect.fn('SymmyC14Customer.readCustomerPage')(function* readCustomerPage(
+  input: SearchInput,
+  query: string,
+) {
+  const response = yield* input.client.get(`${input.shell.baseUrl}/api/symmy/v1/admin/customers${query}`, {
+    headers: input.headers,
+  });
+  if (response.status !== 200) {
+    return yield* Effect.fail(unavailable(`The customers read answered ${response.status} for ${query}`));
+  }
+  const body: CustomerReadback = yield* response.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)),
+  );
+  return body;
+});
+const sourceKeysOf = (page: CustomerReadback) => page.customers.map(({ sourceRecordId }) => sourceRecordId);
+
+/** Paging and search over two customers: the filter runs before count, offset and limit, in source record order. */
+const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(function* searchTwoCustomers(
+  input: SearchInput,
+) {
+  const { client, headers, recordId, secondRecordId, shell } = input;
+  const read = (query: string) => readCustomerPage(input, query);
+  const all = yield* read('');
+  expect(all).toMatchObject({ count: 2, limit: 50, offset: 0 });
+  expect(sourceKeysOf(all)).toEqual([recordId, secondRecordId]);
+  const second = yield* read('?limit=1&offset=1');
+  expect(second).toMatchObject({ count: 2, limit: 1, offset: 1 });
+  expect(sourceKeysOf(second)).toEqual([secondRecordId]);
+  expect(yield* read('?offset=2')).toMatchObject({ count: 2, customers: [], offset: 2 });
+  // The search matches the customer key and the Party names and contacts, case-insensitively, term by term.
+  const cases: readonly (readonly [string, readonly string[]])[] = [
+    ['hopper', [secondRecordId]],
+    ['GRACE%20hopper', [secondRecordId]],
+    ['Internal%20Customer', [recordId]],
+    ['second_person', [secondRecordId]],
+    ['internal', [recordId, secondRecordId]],
+    ['internal%20hopper', [secondRecordId]],
+    ['hopper%20customer', []],
+    ['grace.hopper@example', [secondRecordId]],
+    ['EXAMPLE.test', [secondRecordId]],
+    ['_', [recordId, secondRecordId]],
+    ['%25', []],
+    ['a%25a', []],
+    ['nothing-like-this', []],
+  ];
+  for (const [q, expected] of cases) {
+    const found = yield* read(`?q=${q}`);
+    expect(sourceKeysOf(found), q).toEqual(expected);
+    expect(found.count, q).toBe(expected.length);
+  }
+  const pagedMatches = yield* read('?q=internal&limit=1&offset=1');
+  expect(pagedMatches).toMatchObject({ count: 2, limit: 1, offset: 1 });
+  expect(sourceKeysOf(pagedMatches)).toEqual([secondRecordId]);
+  expect(yield* read('?q=internal&offset=2')).toMatchObject({ count: 2, customers: [] });
+  const onlyParty = yield* read('?q=hopper&fields=partyRef');
+  expect(onlyParty.customers[0]).not.toHaveProperty('party');
+  // A search with more terms than the owners take is refused whole, never searched partly.
+  const manyTerms = Array.from({ length: 11 }, (_unused, index) => `t${index}`).join('%20');
+  const tooMany = yield* client.get(`${shell.baseUrl}/api/symmy/v1/admin/customers?q=${manyTerms}`, { headers });
+  expect(tooMany.status).toBe(422);
+  expect(yield* tooMany.json).toMatchObject({ reason: 'search_too_broad' });
 });
 
 it.live(
@@ -360,7 +432,7 @@ it.live(
         const sourceRouteId = yield* uuid;
         const routeId = yield* uuid;
         // The owner derives the occurrence of a request from its Idempotency-Key, so Privacy is seeded for that one.
-        const occurrenceId = customerOccurrenceId('INTERNAL_C14_CUSTOMER_JOB', 'customer-0');
+        const occurrenceId = customerOccurrenceId('INTERNAL_C14_CUSTOMER_JOB', customerItemKey);
         const recordId = 'INTERNAL_C14_NAMED_PERSON';
         const observedAt = yield* DateTime.now;
         const plan = yield* makeSymmyC14CustomerPlan({
@@ -518,6 +590,22 @@ it.live(
                   },
                 },
                 {
+                  effectKey: 'customer-source-parties',
+                  operation: {
+                    entrypointKey: 'commerce.customer-context.api.customer-profile-source-parties',
+                    moduleId: commerceModuleId,
+                    schemaVersion: '1',
+                  },
+                },
+                {
+                  effectKey: 'customer-party-search',
+                  operation: {
+                    entrypointKey: 'party.registry.api.source-party-search',
+                    moduleId: partyModuleId,
+                    schemaVersion: '1',
+                  },
+                },
+                {
                   effectKey: 'customer-party-export',
                   operation: {
                     entrypointKey: 'party.registry.api.source-profile-export',
@@ -580,7 +668,7 @@ it.live(
         const prefixes = {
           'commerce-customer-context': '/commerce-customer-context-api',
           'party-registry': '/party-registry-api',
-          privacy: '/privacy-api',
+          privacy: privacyApiPrefix,
           'symmy-integration': '/symmy-integration-api',
         } as const;
         const ownerDiagnostics = new Map<string, Effect.Effect<string>>();
@@ -663,8 +751,8 @@ it.live(
             ]),
           ),
         );
-        expect(completed.map(({ effect_key }) => effect_key)).toContain('party-create');
-        const partyEffect = completed.find(({ effect_key }) => effect_key === 'party-create');
+        expect(completed.map(({ effect_key }) => effect_key)).toContain(partyCreateEffectKey);
+        const partyEffect = completed.find(({ effect_key }) => effect_key === partyCreateEffectKey);
         const profileEffect = completed.find(({ effect_key }) => effect_key === 'retail-profile');
         assert.isOk(partyEffect);
         assert.isOk(profileEffect);
@@ -759,7 +847,7 @@ it.live(
         const proofTransport = yield* acquireReceiptTransport();
         const roundTripKey = 'INTERNAL_C14_CUSTOMER_GET_POST';
         const beforeDisableKey = 'INTERNAL_C14_CUSTOMER_BEFORE_DISABLE';
-        const roundTripSource = customerItemSource(sourceIdentity, roundTripKey, 'customer-0', recordId);
+        const roundTripSource = customerItemSource(sourceIdentity, roundTripKey, customerItemKey, recordId);
         const scope = {
           integrationPrincipalId: integration.principalId,
           partyId: partyReceipt.partyRef.resourceId,
@@ -853,7 +941,7 @@ it.live(
             )([...privacy.contexts, ...sourceReadback.contexts, ...dataPrivacy.contexts]),
           },
           port: privacyRuntime.port,
-          prefix: '/privacy-api',
+          prefix: privacyApiPrefix,
         });
         ownerDiagnostics.set('privacy', restartedPrivacy.diagnostic);
         ownerRuntimes.set('privacy', { ...privacyRuntime, receiver: restartedPrivacy });
@@ -937,6 +1025,169 @@ it.live(
         expect(binding?.source_order).toBeGreaterThan(0);
         yield* roundTripWorker.child.kill();
         yield* roundTripWorker.child.exitCode;
+        // A second customer, so that paging and search are exercised over more than one customer.
+        const secondRecordId = 'INTERNAL_C14_SECOND_PERSON';
+        const secondKey = 'INTERNAL_C14_CUSTOMER_SECOND';
+        const secondFlatSource = {
+          ...sourceIdentity,
+          occurrenceId: customerOccurrenceId(secondKey, customerItemKey),
+          recordId: secondRecordId,
+        };
+        const secondCreation = yield* seedSourceProcessingNativeFixture({
+          connections: isolated.connections,
+          contexts: customerContexts(scope, secondKey, [{ kind: 'created', recordId: secondRecordId }]),
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SECOND_CUSTOMER_CONTRACT',
+          controllerRef: customerController,
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId,
+          legalEntityId,
+          meaning:
+            'Independent current internal policy permits creating the second named person and its Retail profile',
+          tenantId,
+        });
+        const restartPrivacy = (contexts: readonly (typeof privacy.contexts)[number][]) =>
+          Effect.gen(function* restartPrivacyWith() {
+            const current = ownerRuntimes.get('privacy');
+            if (current === undefined) {
+              return yield* unavailable('The actual Privacy receiver is required for the second customer');
+            }
+            yield* current.receiver.child.kill();
+            yield* current.receiver.child.exitCode;
+            const restarted = yield* startProductOwner({
+              artifacts: current.artifacts,
+              contract: current.contract,
+              environment: {
+                ...environment,
+                ONTOS_GATEWAY_MODULE_API_KEY: current.moduleKey,
+                ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
+                  Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
+                )(contexts),
+              },
+              port: current.port,
+              prefix: privacyApiPrefix,
+            });
+            ownerDiagnostics.set('privacy', restarted.diagnostic);
+            ownerRuntimes.set('privacy', { ...current, receiver: restarted });
+            return yield* Effect.void;
+          });
+        // The first customer's binding moved to its newest observation, which the profile read now names.
+        const roundTripReadback = yield* seedCommittedProfileSourceProcessingNativeFixture({
+          connections: isolated.connections,
+          contexts: readbackContexts(scope, roundTripSource).filter(
+            ({ request }) => request.operation === 'customer-profile-source.read',
+          ),
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_ROUND_TRIP_READ_CONTRACT',
+          controllerRef: customerController,
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId,
+          legalEntityId,
+          meaning:
+            'Independent current internal policy permits reading the first Retail profile at its newest observation',
+          profileReceipt: yield* acquireReceiptTransport(),
+          tenantId,
+        });
+        const priorPrivacy = [
+          ...privacy.contexts,
+          ...sourceReadback.contexts,
+          ...dataPrivacy.contexts,
+          ...roundTripReadback.contexts,
+        ];
+        yield* restartPrivacy([...priorPrivacy, ...secondCreation.contexts]);
+        const secondAccepted = yield* submitFor(
+          secondKey,
+          customersBody({ customerId: secondRecordId, firstName: 'Grace', kind: 'PERSON', lastName: 'Hopper' }),
+        );
+        const secondWorker = yield* startProductWorker(workerArtifact, {
+          ...environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: secondKey,
+          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
+        });
+        const secondEffects = yield* observeUntil(
+          admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${secondAccepted.jobId}`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
+          ),
+          (rows) => rows.length === 2 && rows.every(({ state }) => state === 'settled'),
+        ).pipe(
+          Effect.tapError(() =>
+            Effect.all([
+              secondWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+              shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
+              ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+                diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+              ),
+            ]),
+          ),
+        );
+        const secondPartyEffect = secondEffects.find(({ effect_key }) => effect_key === partyCreateEffectKey);
+        const secondProfileEffect = secondEffects.find(({ effect_key }) => effect_key === 'retail-profile');
+        assert.isOk(secondPartyEffect);
+        assert.isOk(secondProfileEffect);
+        const secondParty = yield* Schema.decodeUnknownEffect(partyReceiptSchema)(secondPartyEffect.owner_receipt);
+        const secondProfile = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(
+          secondProfileEffect.owner_receipt,
+        );
+        expect(secondParty.partyRef.resourceId).not.toBe(partyReceipt.partyRef.resourceId);
+        const secondProfileRows =
+          yield* admin`select a.action_invocation_id as "actionInvocationId",a.action_key as "actionKey",
+          a.auth_context_ref as "authContextRef",a.idempotency_key as "idempotencyKey",a.principal_id as "principalId",a.request_hash as "requestHash"
+          from core.action_invocations a join symmy_integration.job_effects e on e.tenant_id=a.tenant_id
+          and e.owner_invocation_id=a.action_invocation_id and e.owner_executor_principal_id=a.principal_id
+          and e.owner_auth_context_ref=a.auth_context_ref and e.owner_request_hash=a.request_hash and e.effect_id::text=a.idempotency_key
+          where a.tenant_id=${tenantId} and e.effect_id=${secondProfileEffect.effect_id} and a.legal_entity_id=${legalEntityId} and a.status='succeeded'`;
+        const secondNative = yield* Schema.decodeUnknownEffect(CustomerNativeProfileInvocationSchema)(
+          secondProfileRows.at(0),
+        );
+        const secondDeliveryId = yield* Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(
+          secondNative.authContextRef.slice(`job:${customerWorkerKey}:run:`.length),
+        );
+        yield* observeUntil(
+          admin<{
+            status: string;
+          }>`select status from core.outbox_deliveries where outbox_delivery_id=${secondDeliveryId}`,
+          (rows) => rows.some(({ status }) => status === 'done'),
+        );
+        yield* secondWorker.child.kill();
+        yield* secondWorker.child.exitCode;
+        const secondTransport = yield* issueCustomerProfileFixtureRecovery({
+          compositionRevision: snapshot.composition.revision,
+          deliveryId: secondDeliveryId,
+          expectedReadPrincipalId: systemId,
+          legalEntityId,
+          moduleApiKey: Redacted.make(moduleKey),
+          nativeAction: secondNative,
+          operationRequirementKey: profileRecoveryRequirement.key,
+          request: {
+            effectId: secondProfileEffect.effect_id,
+            issuer: sourceIdentity.issuer,
+            mappingRevision: internalCustomerSource.mappingVersion,
+            mode: 'MINIMAL_RECEIPT',
+            namespace: sourceIdentity.namespace,
+            recordType: sourceIdentity.recordType,
+            route: { id: sourceRouteId, revision: internalCustomerSource.routeRevision },
+          },
+          shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
+          tenantId,
+        });
+        const secondReadback = yield* seedCommittedProfileSourceProcessingNativeFixture({
+          connections: isolated.connections,
+          contexts: readbackContexts(
+            { ...scope, partyId: secondParty.partyRef.resourceId, profileId: secondProfile.profileRef.resourceId },
+            secondFlatSource,
+          ),
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SECOND_CUSTOMER_READ_CONTRACT',
+          controllerRef: customerController,
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId,
+          legalEntityId,
+          meaning: 'Independent current internal policy permits reading only the second Party and Retail profile',
+          profileReceipt: secondTransport,
+          tenantId,
+        });
+        yield* restartPrivacy([...priorPrivacy, ...secondCreation.contexts, ...secondReadback.contexts]);
+        // The Party owner holds the contact of the second customer; the search reaches it through the same Privacy export.
+        yield* admin`insert into party.party_contact_points(tenant_id,party_id,contact_point_type,display_value,normalized_value,normalization_version,privacy_classification,valid_from,provenance_source,provenance_method,accepted_by_action_invocation_id,accepted_by_principal_id,policy_version)
+          values(${tenantId},${secondParty.partyRef.resourceId},'EMAIL','Grace.Hopper@Example.test','grace.hopper@example.test','email.v1','PERSONAL','2020-01-01T00:00:00Z','internal-fixture','DECLARATION',${Option.getOrThrow(secondPartyEffect.owner_invocation_id)},${systemId},'fixture')`;
+        yield* searchTwoCustomers({ client, headers, recordId, secondRecordId, shell });
         const admittedBeforeDisable = yield* submitFor(beforeDisableKey);
         expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);
         yield* admin`update core.principals set status='disabled',disabled_at=current_timestamp where principal_id=${integration.principalId} and tenant_id=${tenantId}`;
@@ -954,16 +1205,16 @@ it.live(
         const [afterDisable] = yield* admin<{ parties: number; profiles: number }>`select
           (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
           (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`;
-        expect(afterDisable).toEqual({ parties: 1, profiles: 1 });
+        expect(afterDisable).toEqual({ parties: 2, profiles: 2 });
         const [afterDisableWrites] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations
           where tenant_id=${tenantId} and status='succeeded' and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')`;
-        expect(afterDisableWrites?.count).toBe(4);
+        expect(afterDisableWrites?.count).toBe(6);
         yield* disabledWorker.child.kill();
         yield* disabledWorker.child.exitCode;
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
-  240_000,
+  480_000,
 );

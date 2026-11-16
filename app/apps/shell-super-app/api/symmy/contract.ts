@@ -22,7 +22,12 @@ const SymmyFixtureJobNotFoundProblemSchema = makeProblemDetailsSchema('SymmyFixt
 const SymmyFixtureIntentConflictProblemSchema = makeProblemDetailsSchema('SymmyFixtureIntentConflictProblem', 409);
 const SymmyIdempotencyRequiredProblemSchema = makeProblemDetailsSchema('SymmyIdempotencyRequiredProblem', 428);
 const SymmyUnsupportedProblemSchema = makeProblemDetailsSchema('SymmyUnsupportedProblem', 422, {
-  reason: Schema.Literals(['projection_not_configured', 'filter_not_supported', 'owner_field_not_supported']),
+  reason: Schema.Literals([
+    'projection_not_configured',
+    'filter_not_supported',
+    'owner_field_not_supported',
+    'search_too_broad',
+  ]),
 });
 export const SymmyUnavailableProblemSchema = makeRetryableProblemDetailsSchema('SymmyUnavailableProblem', 503);
 export const SymmyMethodNotAllowedProblemSchema = makeProblemDetailsSchema('SymmyMethodNotAllowedProblem', 405);

@@ -28,11 +28,15 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
     new Set([
       'reads/customer-profile-source',
       'reads/customer-profile-source-page',
+      'reads/customer-profile-source-parties',
       'reads/customer-profile-ico',
       'reads/organization-customer-profile-ico',
     ]),
   ],
-  ['party-registry', new Set(['reads/source-profile-export', 'reads/organization-business-name-export'])],
+  [
+    'party-registry',
+    new Set(['reads/source-profile-export', 'reads/organization-business-name-export', 'reads/source-party-search']),
+  ],
 ]);
 
 /** Only the issuer's release URL and this finite server-owned operation list reach the native relay. */
