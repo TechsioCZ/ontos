@@ -48,6 +48,7 @@ import {
   paymentTermFixtureDeployment,
 } from '../support/payment-term-owner-composition.fixture.ts';
 import {
+  awaitQueuedLockWaiters,
   failureCodeOf,
   inScope,
   makeTestScope,
@@ -110,22 +111,15 @@ const countRows = (client: PgClient.PgClient, scope: PaymentTestScope, table: st
     client.unsafe<{ readonly count: number }>(`select count(*)::integer as count from ${table}`),
   ).pipe(Effect.map((rows) => rows[0]?.count ?? -1));
 
-const awaitBlockedWaiter = (admin: PgClient.PgClient) => {
-  const waitingOnLocks = admin
-    .unsafe<{ readonly waiting: number }>(
-      `select count(*)::integer as waiting from pg_catalog.pg_stat_activity
-       where datname = current_database() and cardinality(pg_catalog.pg_blocking_pids(pid)) > 0
-         and wait_event_type = 'Lock' and query ilike '%"method_enablements"%'`,
-    )
-    .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
-  const poll = (remaining: number): Effect.Effect<number, Effect.Error<typeof waitingOnLocks>> =>
-    waitingOnLocks.pipe(
-      Effect.flatMap((waiting) =>
-        waiting > 0 || remaining === 0 ? Effect.succeed(waiting) : Effect.suspend(() => poll(remaining - 1)),
-      ),
-    );
-  return poll(5000);
-};
+/** Waits until PostgreSQL reports the second configuration queued on the enablement the holder locked. */
+const awaitBlockedWaiter = (admin: PgClient.PgClient, holderPid: number) =>
+  awaitQueuedLockWaiters(admin, { expected: 1, holderPid, statementLike: '%"method_enablements"%' });
+
+/** The backend of the transaction this effect runs in, published to the racers of its row lock. */
+const holderPidOf = (client: PgClient.PgClient) =>
+  client
+    .unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid')
+    .pipe(Effect.map((rows) => rows[0]?.pid ?? 0));
 
 const isEnablementFailure = Schema.is(Schema.Union([PaymentMethodEnablementConflict, PaymentUnavailable]));
 const isPaymentUnavailable = Schema.is(PaymentUnavailable);
@@ -286,25 +280,26 @@ describe('#1147 A1 method enablement — native persistence', () => {
             ],
             { concurrency: 1 },
           );
-          const changed = yield* Deferred.make<boolean>();
+          const changed = yield* Deferred.make<number>();
           const release = yield* Deferred.make<boolean>();
 
           // A changes the row and holds its lock (uncommitted) until released.
           const first = yield* withApplicability(runtime, scope, (p) =>
             Effect.gen(function* holdLock() {
               const outcome = yield* p.configureEnablement(disableA);
-              yield* Deferred.succeed(changed, true);
+              const backend = yield* holderPidOf(runtimeClient);
+              yield* Deferred.succeed(changed, backend);
               yield* Deferred.await(release);
               return outcome;
             }),
           ).pipe(Effect.forkChild);
-          yield* Deferred.await(changed);
+          const holderPid = yield* Deferred.await(changed);
           const second = yield* failureCodeOf(
             withApplicability(runtime, scope, (p) => p.configureEnablement(disableB)),
           ).pipe(Effect.forkChild);
 
           // PostgreSQL proves B waits on A's row lock before A commits.
-          expect(yield* awaitBlockedWaiter(admin)).toBeGreaterThan(0);
+          expect(yield* awaitBlockedWaiter(admin, holderPid)).toBeGreaterThan(0);
           yield* Deferred.succeed(release, true);
 
           const winner = yield* Fiber.join(first);
@@ -335,21 +330,22 @@ describe('#1147 A1 method enablement — native persistence', () => {
           ],
           { concurrency: 1 },
         );
-        const inserted = yield* Deferred.make<boolean>();
+        const inserted = yield* Deferred.make<number>();
         const release = yield* Deferred.make<boolean>();
         const first = yield* withApplicability(runtime, scope, (p) =>
           Effect.gen(function* holdInsert() {
             const outcome = yield* p.configureEnablement(enableA);
-            yield* Deferred.succeed(inserted, true);
+            const backend = yield* holderPidOf(runtimeClient);
+            yield* Deferred.succeed(inserted, backend);
             yield* Deferred.await(release);
             return outcome;
           }),
         ).pipe(Effect.forkChild);
-        yield* Deferred.await(inserted);
+        const holderPid = yield* Deferred.await(inserted);
         const second = yield* failureCodeOf(
           withApplicability(runtime, scope, (p) => p.configureEnablement(enableB)),
         ).pipe(Effect.forkChild);
-        expect(yield* awaitBlockedWaiter(admin)).toBeGreaterThan(0);
+        expect(yield* awaitBlockedWaiter(admin, holderPid)).toBeGreaterThan(0);
         yield* Deferred.succeed(release, true);
 
         expect((yield* Fiber.join(first)).record.revision).toBe(1);

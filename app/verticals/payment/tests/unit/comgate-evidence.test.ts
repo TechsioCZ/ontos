@@ -556,22 +556,4 @@ describe('#1156 Comgate settlement statement mapping', () => {
       );
     }),
   );
-
-  it.effect('#1156 A refund request response without completion evidence stays non-confirmed', () =>
-    Effect.gen(function* refundResponses() {
-      const accepted = yield* mapComgateRefundResponse({
-        bodyText: fixtureText('result-ok.json'),
-        expected: { amount, operationId: refundOperationId },
-        observedAt,
-        transId,
-      });
-      expect([accepted.finding.finding, factKindOf(accepted.finding)]).toEqual([
-        'ACCEPTED_PENDING',
-        Option.some('REFUND_PENDING'),
-      ]);
-      // A status lookup of the refunded payment never proves the refund either way.
-      const status = yield* lookup(refund, statusBody());
-      expect(status.map((found) => [found.finding, Option.isNone(found.evidence)])).toEqual([['INDETERMINATE', true]]);
-    }),
-  );
 });

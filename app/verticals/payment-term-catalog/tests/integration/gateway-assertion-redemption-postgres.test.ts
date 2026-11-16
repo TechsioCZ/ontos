@@ -81,13 +81,22 @@ const assertion = (jti: string, expiresAtEpochSeconds: number) => ({
   jti,
 });
 
+// One migrated database carries every proof in one deterministic sequence: the fresh journal and
+// empty identity table first, then durable replay, then expiry cleanup, and the destructive
+// storage-absence proof last. A fixture() per proof paid `create database` plus an owner migrator
+// process three times over for the same schema.
 it.layer(services, { excludeTestServices: true })('Payment Term Catalog durable gateway redemption', (suite) => {
   suite.effect(
-    '#1257 payment-term-catalog installs replay identity and exact pre-auth runtime grants through actual forward migrations',
+    '#1257 payment-term-catalog installs replay identity and exact pre-auth runtime grants through actual forward migrations, then rejects concurrent, cross-instance and expired redemptions and fails closed when durable storage is absent',
     () =>
       fixture().pipe(
         Effect.flatMap((test) =>
-          Effect.gen(function* migrateAndVerifyAuthority() {
+          Effect.gen(function* proveDurableRedemptionAuthority() {
+            const identities = 'select jti::text from payment_term_catalog.gateway_assertion_redemptions order by jti';
+            const replayJti = '11111111-1111-4111-8111-111111111111';
+            const expiredJti = '22222222-2222-4222-8222-222222222222';
+            const acceptedJti = '33333333-3333-4333-8333-333333333333';
+            const absentStorageJti = '44444444-4444-4444-8444-444444444444';
             const [before] = yield* test.admin.unsafe<{ readonly count: number }>(
               'select count(*)::integer as count from drizzle.__drizzle_migrations_payment_term_catalog',
             );
@@ -128,22 +137,13 @@ it.layer(services, { excludeTestServices: true })('Payment Term Catalog durable 
             expect(
               yield* test.runtime.unsafe('select jti from payment_term_catalog.gateway_assertion_redemptions'),
             ).toEqual([]);
-          }),
-        ),
-        Effect.scoped,
-      ),
-  );
 
-  suite.effect(
-    '#1257 payment-term-catalog atomically rejects concurrent and cross-instance replay while separating audience identities',
-    () =>
-      fixture().pipe(
-        Effect.flatMap((test) =>
-          Effect.gen(function* concurrentDurableReplay() {
+            // Durable atomic replay across concurrent callers and restarted instances, with
+            // audience identities kept separate.
             const first = yield* test.redemption;
             const second = yield* test.redemption;
             const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
-            const input = assertion('11111111-1111-4111-8111-111111111111', now + 300);
+            const input = assertion(replayJti, now + 300);
             const outcomes = yield* Effect.all(
               [first.consume(input).pipe(Effect.result), second.consume(input).pipe(Effect.result)],
               { concurrency: 2 },
@@ -165,24 +165,11 @@ it.layer(services, { excludeTestServices: true })('Payment Term Catalog durable 
               'select audience from payment_term_catalog.gateway_assertion_redemptions order by audience',
             );
             expect(rows).toHaveLength(2);
-          }),
-        ),
-        Effect.scoped,
-      ),
-  );
 
-  suite.effect(
-    '#1257 payment-term-catalog rejects expired input before cleanup and fails closed when durable storage is absent',
-    () =>
-      fixture().pipe(
-        Effect.flatMap((test) =>
-          Effect.gen(function* expiryAndUnavailableStorage() {
+            // Expired input is rejected before any cleanup runs; the next accepted redemption
+            // removes only the expired identity and leaves the live ones above untouched.
             const redemption = yield* test.redemption;
-            const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
-            const expired = assertion(
-              '22222222-2222-4222-8222-222222222222',
-              now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS - 1,
-            );
+            const expired = assertion(expiredJti, now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS - 1);
             yield* test.admin.unsafe(
               'insert into payment_term_catalog.gateway_assertion_redemptions(issuer,audience,jti,expires_at) values($1,$2,$3,$4)',
               [
@@ -197,17 +184,19 @@ it.layer(services, { excludeTestServices: true })('Payment Term Catalog durable 
             if (Result.isFailure(rejected)) {
               expect(Schema.is(GatewayAssertionReplayError)(rejected.failure)).toBe(true);
             }
-            expect(
-              yield* test.runtime.unsafe('select jti from payment_term_catalog.gateway_assertion_redemptions'),
-            ).toHaveLength(1);
-            yield* redemption.consume(assertion('33333333-3333-4333-8333-333333333333', now + 300));
-            expect(
-              yield* test.runtime.unsafe('select jti::text from payment_term_catalog.gateway_assertion_redemptions'),
-            ).toEqual([{ jti: '33333333-3333-4333-8333-333333333333' }]);
+            expect(yield* test.runtime.unsafe(identities)).toEqual([
+              { jti: replayJti },
+              { jti: replayJti },
+              { jti: expiredJti },
+            ]);
+            yield* redemption.consume(assertion(acceptedJti, now + 300));
+            expect(yield* test.runtime.unsafe(identities)).toEqual([
+              { jti: replayJti },
+              { jti: replayJti },
+              { jti: acceptedJti },
+            ]);
             yield* test.admin.unsafe('drop table payment_term_catalog.gateway_assertion_redemptions');
-            const unavailable = yield* redemption
-              .consume(assertion('44444444-4444-4444-8444-444444444444', now + 300))
-              .pipe(Effect.result);
+            const unavailable = yield* redemption.consume(assertion(absentStorageJti, now + 300)).pipe(Effect.result);
             expect(Result.isFailure(unavailable)).toBe(true);
             if (Result.isFailure(unavailable)) {
               expect(Schema.is(GatewayAssertionRedemptionUnavailableError)(unavailable.failure)).toBe(true);

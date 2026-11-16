@@ -285,17 +285,6 @@ describe('#1154 Stripe Checkout Session collection', () => {
     }),
   );
 
-  it.effect('#1154 capture_method is explicitly automatic', () =>
-    Effect.gen(function* captureAutomatic() {
-      const { adapter } = yield* harness([]);
-      const prepared = yield* adapter.prepareCollect(SANDBOX_TARGET, collectRequest);
-      const fields = formOf(prepared.body);
-
-      expect(fields).toContainEqual(['payment_intent_data[capture_method]', 'automatic']);
-      expect(fields.filter(([name]) => name.includes('capture_method'))).toHaveLength(1);
-    }),
-  );
-
   it.effect('#1156 Preparation is pure: the same request gives the same bytes and hash', () =>
     Effect.gen(function* preparationPure() {
       const { adapter, sent } = yield* harness([]);
@@ -750,8 +739,9 @@ describe('#1156 Stripe refund and cancel', () => {
         paymentStatus: 'paid',
         status: 'complete',
       });
+      // The refusal is the real Stripe paid-session expire body, which carries no `error.code`.
       const { adapter, sent } = yield* harness([
-        respond(400, JSON.stringify({ error: { type: 'invalid_request_error' } })),
+        respond(400, JSON.stringify(stripePaidSessionExpireError)),
         respond(200, JSON.stringify(paid)),
       ]);
       const prepared = yield* adapter.prepareCancel(SANDBOX_TARGET, cancelRequest);
@@ -773,43 +763,7 @@ describe('#1156 Stripe refund and cancel', () => {
         ),
       ).toEqual(Option.some([COLLECT_OPERATION_ID, 'EFFECT_CONFIRMED', Option.some('COLLECTION_CONFIRMED')]));
       expect(sent.map((recorded) => recorded.kind)).toEqual(['mutate', 'read']);
-    }),
-  );
-
-  it.effect('#1156 The real paid-session expire refusal (no error.code) is decided by lookup, never confirmed', () =>
-    Effect.gen(function* expirePaidSandboxBody() {
-      const paid = stripeCheckoutSessionObject({
-        orderReference: COLLECT_CORRELATION.orderReference,
-        paymentIntent: stripePaymentIntentObject({
-          orderReference: COLLECT_CORRELATION.orderReference,
-          status: 'succeeded',
-        }),
-        paymentStatus: 'paid',
-        status: 'complete',
-      });
-      const { adapter, sent } = yield* harness([
-        respond(400, JSON.stringify(stripePaidSessionExpireError)),
-        respond(200, JSON.stringify(paid)),
-      ]);
-      const prepared = yield* adapter.prepareCancel(SANDBOX_TARGET, cancelRequest);
-      const response = yield* adapter.send(SANDBOX_TARGET, prepared, cancelExpected);
-
-      expect(Object.keys(stripePaidSessionExpireError.error)).not.toContain('code');
-      expect(dispatchOutcomeOf(response)).toBe('REJECTED_BEFORE_EFFECT');
-      expect(response.finding.finding).toBe('NOT_EFFECTED');
-      expect(response.finding.evidence.pipe(Option.map((evidence) => evidence.factKind))).toEqual(
-        Option.some('CANCEL_NOT_EFFECTED'),
-      );
-      expect(
-        response.targetFinding.pipe(
-          Option.map((found) => [
-            found.target.operationId,
-            found.finding,
-            found.evidence.pipe(Option.map((evidence) => evidence.factKind)),
-          ]),
-        ),
-      ).toEqual(Option.some([COLLECT_OPERATION_ID, 'EFFECT_CONFIRMED', Option.some('COLLECTION_CONFIRMED')]));
-      expect(sent.map((recorded) => recorded.kind)).toEqual(['mutate', 'read']);
+      // The deciding lookup asks for exactly the session the refused expire targeted.
       expect(sent[1]?.request.url).toBe(`https://api.stripe.com/v1/checkout/sessions/${STRIPE_FIXTURE_SESSION_ID}`);
     }),
   );

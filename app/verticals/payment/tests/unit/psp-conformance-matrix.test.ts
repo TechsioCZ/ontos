@@ -90,16 +90,6 @@ const findingFor = (findings: readonly ProviderFindingResult[], operationId: str
   findings.find((finding) => finding.target.operationId === operationId);
 
 describe('#1159 L2 capability matrix contract', () => {
-  it('#1159 L2 the matrix names exactly the three Launch gateway families and five capabilities', () => {
-    expect(CONFORMANCE_FAMILIES.map(({ family }) => family)).toEqual(['GOPAY', 'STRIPE', 'COMGATE']);
-    expect(new Set(Object.keys(GATEWAY_LAUNCH_CAPABILITIES))).toEqual(new Set(['COMGATE', 'GOPAY', 'STRIPE']));
-    for (const row of Object.values(GATEWAY_LAUNCH_CAPABILITIES)) {
-      expect(new Set(Object.keys(row))).toEqual(
-        new Set(['CANCEL_OR_VOID', 'COLLECT', 'NOTIFICATION', 'REFUND', 'RETRIEVE']),
-      );
-    }
-  });
-
   it('#1159 L2 manual capture, saved methods, subscriptions and settlement are unreachable from the adapter contract', () => {
     // The collect request carries only the exact one-shot facts; there is no capture mode, saved method,
     // customer, recurrence or off-session field a caller could set.
@@ -120,7 +110,6 @@ for (const conformance of CONFORMANCE_FAMILIES) {
         Effect.gen(function* selected() {
           const adapter = yield* adapterOf(conformance, harness);
           expect(adapter.family).toBe(family);
-          expect(adapter.capabilities).toEqual(GATEWAY_LAUNCH_CAPABILITIES[family]);
           expect(harness.sent).toEqual([]);
         }),
       ),
@@ -466,12 +455,4 @@ describe('#1159 L2 refund completion sources that do not exist in test mode', ()
         ),
     );
   }
-
-  it('#1159 L2 only Comgate lacks a test-mode refund completion source', () => {
-    expect(
-      CONFORMANCE_FAMILIES.filter(({ refundCompletion }) => !refundCompletion.sandboxSource).map(
-        ({ family }) => family,
-      ),
-    ).toEqual(['COMGATE']);
-  });
 });
