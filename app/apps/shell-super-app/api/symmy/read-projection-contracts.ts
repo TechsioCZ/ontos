@@ -119,6 +119,7 @@ export const SymmyCustomerIcoProjectionSchema = Schema.Union([
 /** Native references are limited to the verified Commerce profile/subject and authorized Party projection. */
 export const SymmyInternalCustomersProjectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   customers: Schema.Array(
     Schema.Struct({
       business_name: Schema.optionalKey(OrganizationBusinessNameExportResponseSchema.members[1].fields.businessName),
@@ -131,7 +132,7 @@ export const SymmyInternalCustomersProjectionSchema = Schema.Struct({
     }),
   ),
   limit,
-  nextRecordId: Schema.optionalKey(sourceId),
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   projection: Schema.Literal('customers'),
   unsupported_fields: Schema.Array(Schema.Literals(['name', 'contacts', 'addresses', 'groups', 'ico'])),
 });

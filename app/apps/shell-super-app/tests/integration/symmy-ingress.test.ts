@@ -45,6 +45,7 @@ import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { SymmyPriceListsResponseSchema } from '../../api/symmy/price-lists-public-contract.ts';
 import {
+  SymmyInternalCustomersProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
   SymmyInternalProductsProjectionSchema,
 } from '../../api/symmy/read-projection-contracts.ts';
@@ -183,7 +184,69 @@ const publicProductsReadBody = {
     },
   ],
 };
+const customersTenantId = regionsMarketRef.tenantId;
+const customersPartyRef = {
+  moduleId: 'party.registry',
+  resourceId: '55555555-5555-4555-8555-555555555555',
+  resourceType: 'party.registry.party',
+  tenantId: customersTenantId,
+} as const;
+const customersProfile = {
+  profileRef: {
+    kind: 'RETAIL',
+    moduleId: 'commerce.customer-context',
+    resourceId: '66666666-6666-4666-8666-666666666666',
+    resourceType: 'commerce.customer-context.retail-customer-profile',
+    tenantId: customersTenantId,
+  },
+  revision: 1,
+  state: 'ACTIVE',
+  subject: {
+    kind: 'RETAIL',
+    partyRef: customersPartyRef,
+    sellingLegalEntityRef: {
+      moduleId: 'core.identity',
+      resourceId: '22222222-2222-4222-8222-222222222222',
+      resourceType: 'core.identity.legal-entity',
+      tenantId: customersTenantId,
+    },
+  },
+} as const;
+const customersProjection = Schema.decodeUnknownSync(SymmyInternalCustomersProjectionSchema)({
+  contractVersion: 'INTERNAL_C14',
+  count: 2,
+  customers: [
+    {
+      ico: { _tag: 'ABSENT' },
+      id: `~c14r1.${'c'.repeat(43)}`,
+      partyRef: customersPartyRef,
+      profile: customersProfile,
+      source_record_id: 'source-customer-a',
+    },
+  ],
+  limit: 50,
+  offset: 0,
+  projection: 'customers',
+  unsupported_fields: ['addresses', 'groups', 'name', 'contacts'],
+});
+const publicCustomersReadBody = {
+  count: 2,
+  customers: [
+    {
+      ico: { _tag: 'ABSENT' },
+      id: `~c14r1.${'c'.repeat(43)}`,
+      partyRef: customersPartyRef,
+      profile: customersProfile,
+      sourceRecordId: 'source-customer-a',
+    },
+  ],
+  limit: 50,
+  offset: 0,
+};
 const readFixture = (route: string, references: readonly string[]) => {
+  if (route === 'adminCustomers') {
+    return customersProjection;
+  }
   if (route === 'adminRegions') {
     return regionsProjection;
   }
@@ -208,6 +271,9 @@ const publicRegionsBody = {
   ],
 };
 const publicReadBody = (path: string, references: readonly string[]) => {
+  if (path === SYMMY_ROUTES.adminCustomers.path) {
+    return publicCustomersReadBody;
+  }
   if (path === SYMMY_ROUTES.adminRegions.path) {
     return publicRegionsBody;
   }
@@ -1702,7 +1768,7 @@ it.effect('uses each approved route’s declared success status for internal fix
     expect(server.authAttempts).toHaveLength(12);
     expect(server.assertions()).toBe(12);
     expect(forwarded).toEqual([
-      { query: {}, route: 'adminCustomers' },
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminCustomers' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
@@ -2148,6 +2214,130 @@ it.effect('serves the public regions body from its own query', () =>
 
     const reflected = yield* get(`?q=${validKey}`);
     expect(reflected.status).toBe(400);
+  }),
+);
+
+it.effect('serves the public customers body from its own query', () =>
+  Effect.gen(function* servesPublicCustomers() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(customersProjection),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const get = (query: string) =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.adminCustomers.path}${query}`, {
+          headers: { 'x-api-key': validKey },
+          method: 'GET',
+        }),
+      );
+    const rejected = [
+      'afterRecordId=a',
+      'code=a',
+      'sourceRecordId=a',
+      'contractVersion=INTERNAL_C14',
+      'priceLimit=1',
+      'priceOffset=0',
+      'order=name',
+      'unknown=1',
+      'limit=0',
+      'limit=101',
+      'limit=abc',
+      'offset=-1',
+      'offset=abc',
+      'q=',
+      'q=%20%20',
+      `q=${'a'.repeat(301)}`,
+      'fields=bogus',
+      'fields=',
+      'fields=party,',
+      'fields=%2Bparty',
+      'fields=party.firstName',
+      'fields=party,%20ico',
+      `fields=${'sourceRecordId,'.repeat(20)}`,
+    ];
+    for (const query of rejected) {
+      const response = yield* get(`?${query}`);
+      expect(response.status, query).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/problem+json');
+    }
+    expect(forwarded).toEqual([]);
+
+    const plain = yield* get('');
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get('cache-control')).toBe('no-store');
+    const plainBody = yield* Effect.promise(() => plain.text());
+    expect(JSON.parse(plainBody)).toEqual(publicCustomersReadBody);
+    for (const forbiddenKey of [
+      'contractVersion',
+      'projection',
+      'unsupported_fields',
+      'unsupportedFields',
+      'nextRecordId',
+      'source_record_id',
+      'business_name',
+    ]) {
+      expect(plainBody).not.toContain(forbiddenKey);
+    }
+    const paged = yield* get('?limit=1&offset=1&q=%20ada%20');
+    expect(paged.status).toBe(200);
+    for (const fields of ['id', 'sourceRecordId', 'partyRef', 'profile', 'party', 'businessName', 'ico']) {
+      expect((yield* get(`?fields=${fields}`)).status, fields).toBe(200);
+    }
+    expect((yield* get('?fields=ico,ico,party')).status).toBe(200);
+    expect(forwarded).toEqual([
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminCustomers' },
+      { query: { contractVersion: 'INTERNAL_C14', limit: 1, offset: 1, q: 'ada' }, route: 'adminCustomers' },
+      ...['id', 'sourceRecordId', 'partyRef', 'profile', 'party', 'businessName', 'ico'].map((name) => ({
+        query: { contractVersion: 'INTERNAL_C14', fields: [name] },
+        route: 'adminCustomers',
+      })),
+      { query: { contractVersion: 'INTERNAL_C14', fields: ['ico', 'ico', 'party'] }, route: 'adminCustomers' },
+    ]);
+
+    const reflected = yield* get(`?q=${validKey}`);
+    expect(reflected.status).toBe(400);
+  }),
+);
+
+it.effect('never answers the customers read with anything but the public body', () =>
+  Effect.gen(function* refusesNonCustomersProjection() {
+    const privateReference = 'private fixture reference';
+    for (const answer of [[privateReference], productsProjection]) {
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          start({
+            dispatch: {
+              apply: () => Effect.fail(symmyUnavailableProblem),
+              poll: () => Effect.fail(symmyUnavailableProblem),
+              read: () => Effect.succeed(answer),
+              submit: () => Effect.fail(symmyUnavailableProblem),
+            },
+          }),
+        ),
+        (fixture) => Effect.promise(fixture.dispose),
+      );
+      const response = yield* Effect.promise(() =>
+        server.request(SYMMY_ROUTES.adminCustomers.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
+      );
+      expect(response.status).toBe(503);
+      const body = yield* Effect.promise(() => response.text());
+      expect(body).not.toContain('references');
+      expect(body).not.toContain(privateReference);
+      expect(JSON.stringify(server.logs)).not.toContain(privateReference);
+    }
   }),
 );
 
@@ -3011,33 +3201,5 @@ it.effect('logs a correlated defect classification and sanitizes the gateway pro
     );
     expect(JSON.stringify(server.logs)).not.toContain(validKey);
     expect(JSON.stringify(server.logs)).not.toContain('sensitive-dispatch-details');
-  }),
-);
-
-it.effect('rejects malformed fixture outputs without classifying them as caller errors', () =>
-  Effect.gen(function* failsClosedOnInvalidOutput() {
-    const privateReference = 'private fixture reference';
-    const server = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        start({
-          dispatch: {
-            apply: () => Effect.fail(symmyUnavailableProblem),
-            poll: () => Effect.fail(symmyUnavailableProblem),
-            read: () => Effect.succeed([privateReference]),
-            submit: () => Effect.fail(symmyUnavailableProblem),
-          },
-        }),
-      ),
-      (fixture) => Effect.promise(fixture.dispose),
-    );
-    const response = yield* Effect.promise(() =>
-      server.request(SYMMY_ROUTES.adminCustomers.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
-    );
-    const body = yield* Effect.promise(() => response.text());
-    expect(response.status).toBe(500);
-    expect(response.headers.get('content-type')).toContain('application/problem+json');
-    expect(body).toContain('GatewayInternalProblem');
-    expect(body).not.toContain(privateReference);
-    expect(JSON.stringify(server.logs)).not.toContain(privateReference);
   }),
 );

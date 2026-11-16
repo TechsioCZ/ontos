@@ -1,10 +1,10 @@
 import { PaymentReconciliationGroup } from '@app/payment/payment-gateway-relay';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { OpenApi } from 'effect/http-api';
 import {
-  SymmyFixtureReadSchema,
+  SymmyCustomersReadQuerySchema,
   SymmyPriceListsReadQuerySchema,
   SymmyProductsReadQuerySchema,
   SymmyRegionsReadQuerySchema,
@@ -20,7 +20,7 @@ import { SymmyDefectBoundary } from '../api/symmy/defect-boundary.ts';
 import { PaymentNotificationBoundary } from '../api/payment-gateway/notification-boundary.ts';
 import { PaymentNotificationsGroup } from '../api/payment-gateway/notification-contract.ts';
 import { PaymentReconciliationBoundary } from '../api/payment-gateway/reconciliation-boundary.ts';
-import { SymmyInternalCustomersProjectionSchema } from '../api/symmy/read-projection-contracts.ts';
+import { SymmyCustomersResponseSchema } from '../api/symmy/customers-public-contract.ts';
 import { SymmyCustomersBatchRequestSchema } from '../api/symmy/customers-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
@@ -37,7 +37,8 @@ const nativeSymmyPath = (path: `/${string}`): `/${string}` =>
 
 const adminCustomersEndpoint = HttpApiEndpoint.get('adminCustomers', SYMMY_ROUTES.adminCustomers.path, {
   ...symmyReadOptions,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalCustomersProjectionSchema]),
+  query: SymmyCustomersReadQuerySchema,
+  success: SymmyCustomersResponseSchema,
 });
 const adminProductsEndpoint = HttpApiEndpoint.get('adminProducts', SYMMY_ROUTES.adminProducts.path, {
   ...symmyReadOptions,

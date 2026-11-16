@@ -35,12 +35,12 @@ import { ShellAuthenticationApi } from '../../shared/api.ts';
 
 import {
   symmyInvalidProblem,
+  isSymmyCustomerFieldName,
   isSymmyProductFieldName,
   isSymmyRegionFieldName,
   SymmyFixtureAdmissionSchema,
   SymmyFixtureItemResultsSchema,
   SymmyFixtureJobStatusSchema,
-  SymmyFixtureReadSchema,
   SymmyMethodNotAllowedProblemSchema,
   SymmySchemaError,
   symmyMethodNotAllowedProblem,
@@ -50,6 +50,7 @@ import {
   SymmyInternalReadQuerySchema,
 } from './contract.ts';
 import type {
+  SymmyCustomerFieldName,
   SymmyProductFieldName,
   SymmyRegionFieldName,
   SymmyClientIdempotencyKeySchema,
@@ -66,6 +67,7 @@ import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
 import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
 import { mapSymmyProductsBatchRequest } from './products-batch-public-contract.ts';
+import { mapSymmyCustomersProjection, SymmyCustomersResponseSchema } from './customers-public-contract.ts';
 import {
   mapSymmyProductsProjection,
   selectSymmyProductFields,
@@ -79,8 +81,8 @@ import {
   SymmyRegionsResponseSchema,
   SymmyRegionsSuccessSchema,
 } from './regions-public-contract.ts';
-import { SymmyInternalCustomersProjectionSchema } from './read-projection-contracts.ts';
 import type {
+  SymmyInternalCustomersProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
   SymmyInternalProductsProjectionSchema,
 } from './read-projection-contracts.ts';
@@ -99,8 +101,15 @@ type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }> | keyof typeof S
 type SelectedWrites = RouteKeyWith<{ readonly selector: 'code' }>;
 
 interface FixtureRead {
-  /** `q` is the free-text filter of the regions and products reads only. Every other read route rejects it at the decoder. */
-  readonly query?: typeof SymmyInternalReadQuerySchema.Type & { readonly q?: string };
+  /**
+   * `q` is the free-text filter of the regions, products and customers reads only, and `fields` is the part
+   * selection of the customers read: the customers read must not call the owners of an unselected part.
+   * Every other read route rejects both at the decoder.
+   */
+  readonly query?: typeof SymmyInternalReadQuerySchema.Type & {
+    readonly fields?: readonly SymmyCustomerFieldName[] | undefined;
+    readonly q?: string;
+  };
   readonly route: Reads;
 }
 interface RegionsRead extends FixtureRead {
@@ -451,17 +460,20 @@ const projectItems = <Items extends readonly SymmyItemOutcome[]>(items: Items) =
     outcome: summarizeSymmyItemOutcome(item),
   }))(items);
 
-const makeReadHandler = <Result>(success: Schema.Codec<Result, unknown>) =>
-  handle(success, (ingress, input: FixtureInput<FixtureRead>) =>
-    ingress.dispatch.read(input).pipe(
+const validateCustomersBody = Schema.decodeUnknownEffect(Schema.toType(SymmyCustomersResponseSchema));
+/** The customers read answers only the public body. Anything but a customers projection is unavailable, never an empty list. */
+const handleCustomersRead = handle(SymmyCustomersResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
+  ingress.dispatch
+    .read(input)
+    .pipe(
       Effect.flatMap((result) =>
-        Schema.decodeUnknownEffect(Schema.toType(success))('projection' in result ? result : { references: result }),
+        'projection' in result && result.projection === 'customers'
+          ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
+              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy customers response')),
+            )
+          : Effect.fail(symmyUnavailableProblem),
       ),
-      Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy fixture response')),
     ),
-  );
-const handleCustomersRead = makeReadHandler(
-  Schema.Union([SymmyFixtureReadSchema, SymmyInternalCustomersProjectionSchema]),
 );
 const validateProductsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyProductsResponseSchema));
 /** The products read answers only the public body. Anything but a products projection is unavailable, never an empty list. */
@@ -581,8 +593,15 @@ const stockRequest = (
 
 export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
   group
-    .handle('adminCustomers', ({ headers, query, request }) =>
-      handleCustomersRead(headers['x-api-key'], { query, route: 'adminCustomers' }, request),
+    .handle('adminCustomers', ({ headers, query: { fields, ...read }, request }) =>
+      handleCustomersRead(
+        headers['x-api-key'],
+        {
+          query: { ...read, contractVersion: 'INTERNAL_C14', fields: fields?.filter(isSymmyCustomerFieldName) },
+          route: 'adminCustomers',
+        },
+        request,
+      ),
     )
     .handle('adminProducts', ({ headers, query: { fields, ...read }, request }) =>
       handleProductsRead(

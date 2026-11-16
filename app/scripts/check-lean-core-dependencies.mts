@@ -678,7 +678,7 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
   })),
   ...[
     '/api/customer-profile-ico/client',
-    '/api/customer-profile-source/client',
+    '/api/customer-profile-source-page/client',
     '/api/organization-customer-profile-ico/client',
   ].map((suffix) => ({
     importer: 'apps/shell-super-app/api/symmy/source-read-projections.ts',

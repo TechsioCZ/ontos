@@ -839,20 +839,29 @@ const verifyOrganizationZeroLegacyIco = Effect.fn('OrganizationSourceCustomer.ic
   const company = yield* companyResponse.json;
   expect(Schema.is(companyProjectionIdentifiers)(company)).toBe(true);
   expect(company).toMatchObject({
-    contractVersion: 'INTERNAL_C14',
+    count: 1,
     customers: [
       {
-        business_name: { outcome: 'AVAILABLE', value: 'Internal organization customer seventeen' },
+        businessName: { outcome: 'AVAILABLE', value: 'Internal organization customer seventeen' },
         ico: { _tag: 'PRESENT', normalizedValue: '00000019' },
         partyRef: known.facts.partyRef,
         profile: { profileRef: { ...targets.profileRef, kind: 'COUNTERPARTY' } },
-        source_record_id: fixture.acceptedProfile.payload.source.recordId,
+        sourceRecordId: fixture.acceptedProfile.payload.source.recordId,
       },
     ],
-    projection: 'customers',
-    unsupported_fields: ['addresses', 'groups', 'contacts'],
+    limit: 50,
+    offset: 0,
   });
   const output = JSON.stringify(company);
+  for (const internalKey of [
+    'contractVersion',
+    'projection',
+    'unsupported_fields',
+    'source_record_id',
+    'business_name',
+  ]) {
+    expect(output).not.toContain(internalKey);
+  }
   expect(output).not.toContain('actorPrincipalId');
   expect(output).not.toContain('first_name');
   expect(output).not.toContain('last_name');
@@ -1157,9 +1166,9 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
     expect(company).toMatchObject({
       customers: [
         {
-          business_name: { outcome: 'AVAILABLE', value: updatedName },
+          businessName: { outcome: 'AVAILABLE', value: updatedName },
           ico: { _tag: 'PRESENT', normalizedValue: '00000019' },
-          source_record_id: fixture.acceptedProfile.payload.source.recordId,
+          sourceRecordId: fixture.acceptedProfile.payload.source.recordId,
         },
       ],
     });

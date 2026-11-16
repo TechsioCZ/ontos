@@ -192,6 +192,27 @@ export const SymmyProductsReadQuerySchema = Schema.Struct({
   offset: Schema.optionalKey(symmyReadOffsetSchema),
   q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
+/** The selectable item parts of `GET /admin/customers`. The first four are always returned. */
+const SymmyCustomerFieldNameSchema = Schema.Literals([
+  'businessName',
+  'ico',
+  'id',
+  'party',
+  'partyRef',
+  'profile',
+  'sourceRecordId',
+]);
+export type SymmyCustomerFieldName = typeof SymmyCustomerFieldNameSchema.Type;
+export const isSymmyCustomerFieldName = Schema.is(SymmyCustomerFieldNameSchema);
+/** The public `GET /admin/customers` query: paging, `q` and `fields` only. No cursor, `code` or `contractVersion`. */
+export const SymmyCustomersReadQuerySchema = Schema.Struct({
+  fields: Schema.optionalKey(
+    symmyFieldsQuerySchema(200, isSymmyCustomerFieldName, 'A comma-separated list of customer part names.'),
+  ),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+});
 export const SymmyFixtureIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/u)).pipe(
   Schema.brand('SymmyFixtureId'),
 );

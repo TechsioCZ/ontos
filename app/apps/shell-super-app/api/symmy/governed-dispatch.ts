@@ -353,7 +353,7 @@ export const makeSymmyGovernedDispatch = (
       yield* requireReadOperation(
         route,
         'commerce.customer-context',
-        'commerce.customer-context.api.customer-profile-source',
+        'commerce.customer-context.api.customer-profile-source-page',
       );
       return yield* projectSymmySourceCustomers(route, query, admission, newRequestIdentifier);
     }
