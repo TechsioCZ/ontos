@@ -1,5 +1,5 @@
-import { COUNTERPARTY_IDENTITIES_MAX_REFS } from '@app/party-registry/api/client';
-import type { CounterpartyIdentity } from '@app/party-registry/api/client';
+import { COUNTERPARTY_IDENTITIES_MAX_REFS } from '@app/party-registry/apis/counterparty-identities';
+import type { CounterpartyIdentity } from '@app/party-registry/apis/counterparty-identities';
 import { describe, expect, it } from 'effect-rstest';
 import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
 import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';

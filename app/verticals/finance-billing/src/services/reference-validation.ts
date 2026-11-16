@@ -2,11 +2,11 @@ import { ReadRuntime, agentActivityActorsRead, legalEntityDetailRead } from '@ap
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import {
-  COUNTERPARTY_IDENTITIES_MAX_REFS,
   executeCounterpartyIdentitiesWithAuthorization,
   executeCounterpartyReadWithAuthorization,
 } from '@app/party-registry/api/client';
-import type { CounterpartyIdentity } from '@app/party-registry/api/client';
+import { COUNTERPARTY_IDENTITIES_MAX_REFS } from '@app/party-registry/apis/counterparty-identities';
+import type { CounterpartyIdentity } from '@app/party-registry/apis/counterparty-identities';
 import { executeRecordsWithAuthorization as readAgreements } from '@app/legal-agreements/clients/records';
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
 import { executeRecordsWithAuthorization as readProperty } from '@app/property-portfolio/clients/records';

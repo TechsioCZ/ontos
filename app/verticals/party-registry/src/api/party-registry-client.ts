@@ -27,7 +27,6 @@ import { executePartyRelationshipDetail } from './party-relationship-detail-clie
 // Public response and problem schemas travel with the generated client aggregate. Consumers must
 // use this published client subpath; the owner API barrel remains private to the deployment.
 export {
-  COUNTERPARTY_IDENTITIES_MAX_REFS,
   CounterpartyReadResponseSchema,
   CounterpartyReadUnavailableProblemSchema,
   GuestPartyResolutionAuthenticationProblemSchema,
@@ -50,7 +49,7 @@ export {
   PartyContactPointDetailUnavailableProblemSchema,
   PartyDetailResponseSchema,
 } from '../../shared/api.ts';
-export type { CounterpartyIdentity, PartyDetailResponse } from '../../shared/api.ts';
+export type { PartyDetailResponse } from '../../shared/api.ts';
 
 export { executeAresLookupWithAuthorization, executeAresLookup } from './ares-lookup-client.ts';
 export type { AresLookupClientOptions } from './ares-lookup-client.ts';
