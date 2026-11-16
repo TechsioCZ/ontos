@@ -12,6 +12,7 @@ on:
     branches:
       - main
       - stage
+      - demo/sales-crm
     paths-ignore:
       - "docs/**"
       - CONTEXT-MAP.md

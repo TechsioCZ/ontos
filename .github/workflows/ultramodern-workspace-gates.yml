@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      # The demo trunk runs the same gates on every push, so it needs no pull request toward main to be checked.
+      - demo/sales-crm
     paths-ignore:
       - 'docs/**'
       - CONTEXT-MAP.md
