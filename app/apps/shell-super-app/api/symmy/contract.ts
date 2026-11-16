@@ -135,6 +135,18 @@ export const SymmyPriceListsReadQuerySchema = Schema.Struct({
   priceLimit: Schema.optionalKey(symmyReadLimitSchema),
   priceOffset: Schema.optionalKey(symmyReadOffsetSchema),
 });
+/** A comma-separated `fields` list decoded to its names; one name outside the route's own list gives 400. */
+const symmyFieldsQuerySchema = (maxLength: number, isName: (name: string) => boolean, description: string) =>
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maxLength)).pipe(
+    Schema.decodeTo(
+      Schema.Array(Schema.String),
+      SchemaTransformation.transform<readonly string[], string>({
+        decode: (value) => value.split(','),
+        encode: (names) => names.join(','),
+      }),
+    ),
+    Schema.check(Schema.makeFilter((names: readonly string[]) => names.every(isName), { description })),
+  );
 const SymmyRegionFieldNameSchema = Schema.Literals([
   'countryCodes',
   'currencyCode',
@@ -148,20 +160,33 @@ export const isSymmyRegionFieldName = Schema.is(SymmyRegionFieldNameSchema);
 /** The public `GET /admin/regions` query. `contractVersion` is never a parameter: the route sets it. */
 export const SymmyRegionsReadQuerySchema = Schema.Struct({
   fields: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
-      Schema.decodeTo(
-        Schema.Array(Schema.String),
-        SchemaTransformation.transform<readonly string[], string>({
-          decode: (value) => value.split(','),
-          encode: (names) => names.join(','),
-        }),
-      ),
-      Schema.check(
-        Schema.makeFilter((names: readonly string[]) => names.length > 0 && names.every(isSymmyRegionFieldName), {
-          description: 'A comma-separated list of region field names.',
-        }),
-      ),
-    ),
+    symmyFieldsQuerySchema(200, isSymmyRegionFieldName, 'A comma-separated list of region field names.'),
+  ),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+});
+/** The selectable item paths of `GET /admin/products`. `id` is always returned and is not selectable. */
+const SymmyProductFieldNameSchema = Schema.Literals([
+  'product',
+  'product.catalogReady',
+  'product.createdAt',
+  'product.description',
+  'product.lifecycle',
+  'product.name',
+  'product.productRef',
+  'product.revision',
+  'product.updatedAt',
+  'product.variants',
+  'sourceRecordId',
+  'variantSources',
+]);
+export type SymmyProductFieldName = typeof SymmyProductFieldNameSchema.Type;
+export const isSymmyProductFieldName = Schema.is(SymmyProductFieldNameSchema);
+/** The public `GET /admin/products` query: paging, `q` and `fields` only. No cursor, `code` or `contractVersion`. */
+export const SymmyProductsReadQuerySchema = Schema.Struct({
+  fields: Schema.optionalKey(
+    symmyFieldsQuerySchema(500, isSymmyProductFieldName, 'A comma-separated list of product field paths.'),
   ),
   limit: Schema.optionalKey(symmyReadLimitSchema),
   offset: Schema.optionalKey(symmyReadOffsetSchema),

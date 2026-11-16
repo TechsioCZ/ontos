@@ -16,7 +16,7 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'reads/symmy-route-context',
     ]),
   ],
-  ['catalog', new Set(['reads/catalog-source-products'])],
+  ['catalog', new Set(['reads/catalog-source-products', 'reads/catalog-source-product-page'])],
   [
     'price-group-catalog',
     new Set([

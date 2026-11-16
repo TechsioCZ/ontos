@@ -6,6 +6,7 @@ import { OpenApi } from 'effect/http-api';
 import {
   SymmyFixtureReadSchema,
   SymmyPriceListsReadQuerySchema,
+  SymmyProductsReadQuerySchema,
   SymmyRegionsReadQuerySchema,
   SymmySchemaError,
   symmyCodeParams,
@@ -19,15 +20,13 @@ import { SymmyDefectBoundary } from '../api/symmy/defect-boundary.ts';
 import { PaymentNotificationBoundary } from '../api/payment-gateway/notification-boundary.ts';
 import { PaymentNotificationsGroup } from '../api/payment-gateway/notification-contract.ts';
 import { PaymentReconciliationBoundary } from '../api/payment-gateway/reconciliation-boundary.ts';
-import {
-  SymmyInternalCustomersProjectionSchema,
-  SymmyInternalProductsProjectionSchema,
-} from '../api/symmy/read-projection-contracts.ts';
+import { SymmyInternalCustomersProjectionSchema } from '../api/symmy/read-projection-contracts.ts';
 import { SymmyCustomersBatchRequestSchema } from '../api/symmy/customers-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
 import { SymmyProductsBatchRequestSchema } from '../api/symmy/products-batch-request-contract.ts';
+import { SymmyProductsSuccessSchema } from '../api/symmy/products-public-contract.ts';
 import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
 import { SymmyStockBatchResponseSchema } from '../api/symmy/stock-batch-public-contract.ts';
 import { SymmyStockBatchRequestSchema } from '../api/symmy/stock-batch-request-contract.ts';
@@ -42,7 +41,8 @@ const adminCustomersEndpoint = HttpApiEndpoint.get('adminCustomers', SYMMY_ROUTE
 });
 const adminProductsEndpoint = HttpApiEndpoint.get('adminProducts', SYMMY_ROUTES.adminProducts.path, {
   ...symmyReadOptions,
-  success: Schema.Union([SymmyFixtureReadSchema, SymmyInternalProductsProjectionSchema]),
+  query: SymmyProductsReadQuerySchema,
+  success: SymmyProductsSuccessSchema,
 });
 const adminRegionsEndpoint = HttpApiEndpoint.get('adminRegions', SYMMY_ROUTES.adminRegions.path, {
   ...symmyReadOptions,

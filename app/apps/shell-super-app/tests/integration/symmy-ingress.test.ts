@@ -44,7 +44,10 @@ import type { SymmyIngressAdmission, SymmyIngressRequest } from '../../api/symmy
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import { SymmyPriceListsResponseSchema } from '../../api/symmy/price-lists-public-contract.ts';
-import { SymmyInternalPriceListsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import {
+  SymmyInternalPriceListsProjectionSchema,
+  SymmyInternalProductsProjectionSchema,
+} from '../../api/symmy/read-projection-contracts.ts';
 import { SymmyInternalRegionsProjectionSchema } from '../../api/symmy/regions-projection-contract.ts';
 
 const host = 'https://shell.example.test';
@@ -118,9 +121,74 @@ const publicPriceListsBody = {
     },
   ],
 };
+const productsRef = {
+  moduleId: 'commerce.catalog',
+  resourceId: '33333333-3333-4333-8333-333333333333',
+  resourceType: 'commerce.catalog.product',
+  tenantId: regionsMarketRef.tenantId,
+} as const;
+const productsVariantId = '44444444-4444-4444-8444-444444444444';
+const productsNative = {
+  catalogReady: false,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  lifecycle: 'DRAFT',
+  name: 'Native chair',
+  productRef: productsRef,
+  revision: 1,
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  variants: [
+    {
+      lifecycle: 'WORK_IN_PROGRESS',
+      productRef: productsRef,
+      variantId: productsVariantId,
+      variantRef: {
+        moduleId: 'commerce.catalog',
+        resourceId: productsVariantId,
+        resourceType: 'commerce.catalog.variant',
+        tenantId: regionsMarketRef.tenantId,
+      },
+    },
+  ],
+} as const;
+const productsProjection = Schema.decodeUnknownSync(SymmyInternalProductsProjectionSchema)({
+  contractVersion: 'INTERNAL_C14',
+  count: 2,
+  limit: 50,
+  offset: 0,
+  products: [
+    {
+      id: `~c14r1.${'p'.repeat(43)}`,
+      product: productsNative,
+      source_record_id: 'source-product-a',
+      variantSources: [
+        { id: `~c14r1.${'v'.repeat(43)}`, source_record_id: 'source-variant-a', variantId: productsVariantId },
+      ],
+    },
+  ],
+  projection: 'products',
+  unsupported_fields: ['tax', 'assortment', 'prices', 'stock'],
+});
+const publicProductsReadBody = {
+  count: 2,
+  limit: 50,
+  offset: 0,
+  products: [
+    {
+      id: `~c14r1.${'p'.repeat(43)}`,
+      product: productsNative,
+      sourceRecordId: 'source-product-a',
+      variantSources: [
+        { id: `~c14r1.${'v'.repeat(43)}`, sourceRecordId: 'source-variant-a', variantId: productsVariantId },
+      ],
+    },
+  ],
+};
 const readFixture = (route: string, references: readonly string[]) => {
   if (route === 'adminRegions') {
     return regionsProjection;
+  }
+  if (route === 'adminProducts') {
+    return productsProjection;
   }
   return route === 'priceLists' ? priceListsProjection : references;
 };
@@ -142,6 +210,9 @@ const publicRegionsBody = {
 const publicReadBody = (path: string, references: readonly string[]) => {
   if (path === SYMMY_ROUTES.adminRegions.path) {
     return publicRegionsBody;
+  }
+  if (path === SYMMY_ROUTES.adminProducts.path) {
+    return publicProductsReadBody;
   }
   return path === SYMMY_ROUTES.priceLists.path ? publicPriceListsBody : { references };
 };
@@ -777,7 +848,11 @@ it.effect('requires a replay key for versioned synchronous writes before any own
 
 const internalRoute = {
   allowedOwnerOperations: [
-    { entrypointKey: 'commerce.catalog.api.catalog-source-products', moduleId: 'commerce.catalog', schemaVersion: '1' },
+    {
+      entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
+      moduleId: 'commerce.catalog',
+      schemaVersion: '1',
+    },
   ],
   issuerId: 'internal-issuer',
   legalEntityId: '80000000-0000-4000-8000-000000000001',
@@ -1465,9 +1540,7 @@ it.effect('uses the authorized source Product read through the normal owner rele
     const ownerFetch: typeof fetch = async (input, init) => {
       const path = new URL(new Request(input, init).url).pathname;
       paths.push(path);
-      return Response.json(
-        path.endsWith('/reads/symmy-route-context') ? internalRoute : { items: [], outcome: 'NOT_FOUND' },
-      );
+      return Response.json(path.endsWith('/reads/symmy-route-context') ? internalRoute : { count: 0, items: [] });
     };
     const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
@@ -1488,22 +1561,17 @@ it.effect('uses the authorized source Product read through the normal owner rele
       (fixture) => Effect.promise(fixture.dispose),
     );
     const response = yield* Effect.promise(() =>
-      server.request(
-        `${SYMMY_ROUTES.adminProducts.path}?contractVersion=INTERNAL_C14&code=opaque-source-product&limit=2`,
-        { headers: { 'x-api-key': validKey }, method: 'GET' },
-      ),
+      server.request(`${SYMMY_ROUTES.adminProducts.path}?limit=2`, {
+        headers: { 'x-api-key': validKey },
+        method: 'GET',
+      }),
     );
     expect(response.status).toBe(200);
-    expect(yield* Effect.promise(() => response.json())).toMatchObject({
-      contractVersion: 'INTERNAL_C14',
-      limit: 2,
-      products: [],
-      projection: 'products',
-    });
+    expect(yield* Effect.promise(() => response.json())).toEqual({ count: 0, limit: 2, offset: 0, products: [] });
     expect(scopes).toEqual([{ audience: 'catalog' }]);
     expect(paths).toEqual([
       `${releasePath}/reads/symmy-route-context`,
-      '/module-api/catalog/fixture-build/catalog-api/reads/catalog-source-products',
+      '/module-api/catalog/fixture-build/catalog-api/reads/catalog-source-product-page',
     ]);
   }),
 );
@@ -1635,7 +1703,7 @@ it.effect('uses each approved route’s declared success status for internal fix
     expect(server.assertions()).toBe(12);
     expect(forwarded).toEqual([
       { query: {}, route: 'adminCustomers' },
-      { query: {}, route: 'adminProducts' },
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
       { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
       { fixtureId, route: 'customerGroupsBatch' },
@@ -2080,6 +2148,162 @@ it.effect('serves the public regions body from its own query', () =>
 
     const reflected = yield* get(`?q=${validKey}`);
     expect(reflected.status).toBe(400);
+  }),
+);
+
+it.effect('serves the public products body from its own query', () =>
+  Effect.gen(function* servesPublicProducts() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(productsProjection),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const get = (query: string) =>
+      Effect.promise(() =>
+        server.request(`${SYMMY_ROUTES.adminProducts.path}${query}`, {
+          headers: { 'x-api-key': validKey },
+          method: 'GET',
+        }),
+      );
+    const [product] = publicProductsReadBody.products;
+    const rejected = [
+      'afterRecordId=a',
+      'code=a',
+      'sourceRecordId=a',
+      'contractVersion=INTERNAL_C14',
+      'priceLimit=1',
+      'priceOffset=0',
+      'order=name',
+      'sales_channel_id=sc',
+      'price_list_id=pl',
+      'status=ACTIVE',
+      'id=a',
+      'created_at%5B%24gte%5D=2026-01-01',
+      'unknown=1',
+      'limit=0',
+      'limit=101',
+      'limit=abc',
+      'offset=-1',
+      'offset=abc',
+      'q=',
+      'q=%20%20',
+      `q=${'a'.repeat(201)}`,
+      'fields=nope',
+      'fields=id',
+      'fields=product.name,',
+      'fields=%2Bproduct.name',
+      'fields=-product.name',
+      'fields=variantSources.id',
+      'fields=product.variants.variantId',
+      'fields=product.name,%20sourceRecordId',
+      'fields=',
+      `fields=${'sourceRecordId,'.repeat(40)}`,
+    ];
+    for (const query of rejected) {
+      const response = yield* get(`?${query}`);
+      expect(response.status, query).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/problem+json');
+    }
+    expect(forwarded).toEqual([]);
+
+    const plain = yield* get('');
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get('cache-control')).toBe('no-store');
+    const plainBody = yield* Effect.promise(() => plain.text());
+    expect(JSON.parse(plainBody)).toEqual(publicProductsReadBody);
+    for (const forbiddenKey of [
+      'contractVersion',
+      'projection',
+      'unsupported_fields',
+      'unsupportedFields',
+      'nextRecordId',
+      'source_record_id',
+    ]) {
+      expect(plainBody).not.toContain(forbiddenKey);
+    }
+    const paged = yield* get('?limit=1&offset=1&q=%20chair%20');
+    expect(paged.status).toBe(200);
+    expect(forwarded).toEqual([
+      { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' },
+      { query: { contractVersion: 'INTERNAL_C14', limit: 1, offset: 1, q: 'chair' }, route: 'adminProducts' },
+    ]);
+
+    for (const fields of [
+      'sourceRecordId',
+      'product',
+      'product.productRef',
+      'product.revision',
+      'product.lifecycle',
+      'product.catalogReady',
+      'product.name',
+      'product.description',
+      'product.createdAt',
+      'product.updatedAt',
+      'product.variants',
+      'variantSources',
+    ]) {
+      expect((yield* get(`?fields=${fields}`)).status, fields).toBe(200);
+    }
+    const idOnly = yield* get('?fields=sourceRecordId');
+    expect(yield* Effect.promise(() => idOnly.json())).toEqual({
+      count: 2,
+      limit: 50,
+      offset: 0,
+      products: [{ id: product?.id, sourceRecordId: 'source-product-a' }],
+    });
+    const nested = yield* get('?fields=product.name,variantSources,product.name,product.description');
+    expect(yield* Effect.promise(() => nested.json())).toEqual({
+      count: 2,
+      limit: 50,
+      offset: 0,
+      products: [{ id: product?.id, product: { name: 'Native chair' }, variantSources: product?.variantSources }],
+    });
+    const parent = yield* get('?fields=product.name,product');
+    expect(yield* Effect.promise(() => parent.json())).toEqual({
+      count: 2,
+      limit: 50,
+      offset: 0,
+      products: [{ id: product?.id, product: productsNative }],
+    });
+    expect(forwarded.at(-1)).toEqual({ query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' });
+
+    const reflected = yield* get(`?q=${validKey}`);
+    expect(reflected.status).toBe(400);
+  }),
+);
+
+it.effect('never answers the products read with anything but the public body', () =>
+  Effect.gen(function* refusesNonProductsProjection() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          dispatch: {
+            apply: () => Effect.fail(symmyUnavailableProblem),
+            poll: () => Effect.fail(symmyUnavailableProblem),
+            read: () => Effect.succeed(['10000000-0000-4000-8000-000000000001']),
+            submit: () => Effect.fail(symmyUnavailableProblem),
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.adminProducts.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
+    );
+    expect(response.status).toBe(503);
+    expect(yield* Effect.promise(() => response.text())).not.toContain('references');
   }),
 );
 
@@ -2807,7 +3031,7 @@ it.effect('rejects malformed fixture outputs without classifying them as caller 
       (fixture) => Effect.promise(fixture.dispose),
     );
     const response = yield* Effect.promise(() =>
-      server.request(SYMMY_ROUTES.adminProducts.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
+      server.request(SYMMY_ROUTES.adminCustomers.path, { headers: { 'x-api-key': validKey }, method: 'GET' }),
     );
     const body = yield* Effect.promise(() => response.text());
     expect(response.status).toBe(500);

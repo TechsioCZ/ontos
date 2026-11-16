@@ -35,6 +35,7 @@ import { ShellAuthenticationApi } from '../../shared/api.ts';
 
 import {
   symmyInvalidProblem,
+  isSymmyProductFieldName,
   isSymmyRegionFieldName,
   SymmyFixtureAdmissionSchema,
   SymmyFixtureItemResultsSchema,
@@ -49,6 +50,7 @@ import {
   SymmyInternalReadQuerySchema,
 } from './contract.ts';
 import type {
+  SymmyProductFieldName,
   SymmyRegionFieldName,
   SymmyClientIdempotencyKeySchema,
   symmyFixtureIntentConflictProblem,
@@ -64,6 +66,12 @@ import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
 import { mapSymmyPriceListPricesBatchRequest } from './price-lists-prices-batch-public-contract.ts';
 import { mapSymmyProductsBatchRequest } from './products-batch-public-contract.ts';
+import {
+  mapSymmyProductsProjection,
+  selectSymmyProductFields,
+  SymmyProductsResponseSchema,
+  SymmyProductsSuccessSchema,
+} from './products-public-contract.ts';
 import { mapSymmyPriceListsProjection, SymmyPriceListsResponseSchema } from './price-lists-public-contract.ts';
 import {
   mapSymmyRegionsProjection,
@@ -71,11 +79,11 @@ import {
   SymmyRegionsResponseSchema,
   SymmyRegionsSuccessSchema,
 } from './regions-public-contract.ts';
-import {
+import { SymmyInternalCustomersProjectionSchema } from './read-projection-contracts.ts';
+import type {
+  SymmyInternalPriceListsProjectionSchema,
   SymmyInternalProductsProjectionSchema,
-  SymmyInternalCustomersProjectionSchema,
 } from './read-projection-contracts.ts';
-import type { SymmyInternalPriceListsProjectionSchema } from './read-projection-contracts.ts';
 
 import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
 
@@ -91,7 +99,7 @@ type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }> | keyof typeof S
 type SelectedWrites = RouteKeyWith<{ readonly selector: 'code' }>;
 
 interface FixtureRead {
-  /** `q` is the free-text filter of the regions read only. Every other read route rejects it at the decoder. */
+  /** `q` is the free-text filter of the regions and products reads only. Every other read route rejects it at the decoder. */
   readonly query?: typeof SymmyInternalReadQuerySchema.Type & { readonly q?: string };
   readonly route: Reads;
 }
@@ -99,6 +107,11 @@ interface RegionsRead extends FixtureRead {
   readonly fields: readonly SymmyRegionFieldName[] | undefined;
   readonly query: NonNullable<FixtureRead['query']>;
   readonly route: 'adminRegions';
+}
+interface ProductsRead extends FixtureRead {
+  readonly fields: readonly SymmyProductFieldName[] | undefined;
+  readonly query: NonNullable<FixtureRead['query']>;
+  readonly route: 'adminProducts';
 }
 interface FixturePoll {
   readonly id: typeof SymmyFixtureJobIdSchema.Type;
@@ -450,8 +463,23 @@ const makeReadHandler = <Result>(success: Schema.Codec<Result, unknown>) =>
 const handleCustomersRead = makeReadHandler(
   Schema.Union([SymmyFixtureReadSchema, SymmyInternalCustomersProjectionSchema]),
 );
-const handleProductsRead = makeReadHandler(
-  Schema.Union([SymmyFixtureReadSchema, SymmyInternalProductsProjectionSchema]),
+const validateProductsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyProductsResponseSchema));
+/** The products read answers only the public body. Anything but a products projection is unavailable, never an empty list. */
+const handleProductsRead = handle(SymmyProductsSuccessSchema, (ingress, input: FixtureInput<ProductsRead>) =>
+  ingress.dispatch
+    .read({ admission: input.admission, request: { query: input.request.query, route: 'adminProducts' } })
+    .pipe(
+      Effect.flatMap((result) =>
+        'projection' in result && result.projection === 'products'
+          ? validateProductsBody(mapSymmyProductsProjection(result)).pipe(
+              Effect.catchTag('SchemaError', () => Effect.die('Invalid Symmy products response')),
+            )
+          : Effect.fail(symmyUnavailableProblem),
+      ),
+      Effect.map((body) =>
+        input.request.fields === undefined ? body : selectSymmyProductFields(body, input.request.fields),
+      ),
+    ),
 );
 const validateRegionsBody = Schema.decodeUnknownEffect(Schema.toType(SymmyRegionsResponseSchema));
 /** The regions read answers only the public body. Anything but a regions projection is unavailable, never an empty list. */
@@ -556,8 +584,16 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('adminCustomers', ({ headers, query, request }) =>
       handleCustomersRead(headers['x-api-key'], { query, route: 'adminCustomers' }, request),
     )
-    .handle('adminProducts', ({ headers, query, request }) =>
-      handleProductsRead(headers['x-api-key'], { query, route: 'adminProducts' }, request),
+    .handle('adminProducts', ({ headers, query: { fields, ...read }, request }) =>
+      handleProductsRead(
+        headers['x-api-key'],
+        {
+          fields: fields?.filter(isSymmyProductFieldName),
+          query: { ...read, contractVersion: 'INTERNAL_C14' },
+          route: 'adminProducts',
+        },
+        request,
+      ),
     )
     .handle('adminRegions', ({ headers, query: { fields, ...read }, request }) =>
       handleRegionsRead(

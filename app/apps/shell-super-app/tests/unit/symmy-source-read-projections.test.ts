@@ -1,7 +1,7 @@
 import {
-  CatalogSourceProductsForbiddenProblemSchema,
-  CatalogSourceProductsResponseSchema,
-} from '@app/catalog/api/catalog-source-products';
+  CatalogSourceProductPageForbiddenProblemSchema,
+  CatalogSourceProductPageResponseSchema,
+} from '@app/catalog/api/catalog-source-product-page';
 import {
   CustomerProfileSourceItemSchema,
   CustomerProfileSourceResponseSchema,
@@ -52,7 +52,11 @@ const invocationId = '99999999-9999-4999-8999-999999999999';
 const at = '1970-01-01T00:00:00.000Z';
 const revision = 'a'.repeat(64);
 const allowedOwnerOperations = [
-  { entrypointKey: 'commerce.catalog.api.catalog-source-products', moduleId: 'commerce.catalog', schemaVersion: '1' },
+  {
+    entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
+    moduleId: 'commerce.catalog',
+    schemaVersion: '1',
+  },
   {
     entrypointKey: 'commerce.customer-context.api.customer-profile-source',
     moduleId: 'commerce.customer-context',
@@ -416,6 +420,7 @@ const FixtureModeSchema = Schema.Literals([
   'foreign_product',
   'forbidden',
   'absent_product',
+  'short_count',
   'foreign_customer',
   'foreign_customer_subject',
   'party_unavailable',
@@ -467,11 +472,11 @@ const fixture = (
     const request = new Request(input, init);
     requests.push(request);
     const { pathname } = new URL(request.url);
-    if (pathname.endsWith('/reads/catalog-source-products')) {
+    if (pathname.endsWith('/reads/catalog-source-product-page')) {
       if (mode === 'forbidden') {
-        const error = CatalogSourceProductsForbiddenProblemSchema.make({
+        const error = CatalogSourceProductPageForbiddenProblemSchema.make({
           detail: 'Owner denied',
-          status: CatalogSourceProductsForbiddenProblemSchema.fields.status.literal,
+          status: CatalogSourceProductPageForbiddenProblemSchema.fields.status.literal,
           title: 'Forbidden',
           type: 'https://ontos.dev/problems/catalog-denied',
         });
@@ -486,7 +491,8 @@ const fixture = (
         recordNamespace: selectedScope.sourceNamespace,
         routeScope: routeId,
       };
-      const decoded = Schema.decodeUnknownSync(CatalogSourceProductsResponseSchema)({
+      const decoded = Schema.decodeUnknownSync(CatalogSourceProductPageResponseSchema)({
+        count: mode === 'absent_product' || mode === 'short_count' ? 0 : 1,
         items:
           mode === 'absent_product'
             ? []
@@ -521,9 +527,8 @@ const fixture = (
                   variantSources: [{ source, variantId }],
                 },
               ],
-        outcome: mode === 'absent_product' ? 'NOT_FOUND' : 'FOUND',
       });
-      return Promise.resolve(Response.json(Schema.encodeSync(CatalogSourceProductsResponseSchema)(decoded)));
+      return Promise.resolve(Response.json(Schema.encodeSync(CatalogSourceProductPageResponseSchema)(decoded)));
     }
     if (pathname.endsWith('/reads/customer-profile-source')) {
       let item =
@@ -1428,20 +1433,9 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(current.requests).toHaveLength(0);
     }),
   );
-  it.effect('rejects incompatible Catalog cursor/filter and unconfigured customer identity before owner access', () =>
+  it.effect('rejects an unconfigured customer identity before owner access', () =>
     Effect.gen(function* unsupportedInputs() {
       const current = fixture();
-      const incompatible = Schema.decodeUnknownSync(SymmyInternalReadQuerySchema)({
-        afterRecordId: 'cursor-source-record',
-        code: 'product-record',
-      });
-      const invalid = yield* projectSymmySourceProducts(
-        scope,
-        incompatible,
-        current.admission,
-        current.newRequestIdentifier,
-      ).pipe(Effect.flip);
-      expect(invalid.status).toBe(400);
       const { sourceEntityKind, ...unconfigured } = scope;
       expect(sourceEntityKind).toBe('CUSTOMER');
       const unsupported = yield* projectSymmySourceCustomers(
@@ -1453,6 +1447,56 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(unsupported.status).toBe(422);
       expect(current.acquisitions).toHaveLength(0);
       expect(current.requests).toHaveLength(0);
+    }),
+  );
+  it.effect('pages Catalog products with offset, count and q and carries the owner total', () =>
+    Effect.gen(function* productsPage() {
+      const current = fixture();
+      const result = yield* projectSymmySourceProducts(
+        scope,
+        { limit: 2, offset: 0, q: 'native' },
+        current.admission,
+        current.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(result).toMatchObject({ contractVersion: 'INTERNAL_C14', count: 1, limit: 2, offset: 0 });
+      expect(result).not.toHaveProperty('nextRecordId');
+      const request = yield* Effect.fromNullishOr(current.requests[0]).pipe(Effect.orDie);
+      expect(yield* Effect.promise(() => request.clone().json())).toEqual({
+        issuerId: scope.issuerId,
+        limit: 2,
+        offset: 0,
+        recordNamespace: scope.sourceNamespace,
+        routeScope: routeId,
+        search: 'native',
+      });
+      const defaults = fixture();
+      const unpaged = yield* projectSymmySourceProducts(
+        { ...scope },
+        {},
+        defaults.admission,
+        defaults.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, defaults.fakeFetch));
+      expect(unpaged).toMatchObject({ limit: 50, offset: 0 });
+      const defaultRequest = yield* Effect.fromNullishOr(defaults.requests[0]).pipe(Effect.orDie);
+      expect(yield* Effect.promise(() => defaultRequest.clone().json())).toEqual({
+        issuerId: scope.issuerId,
+        limit: 50,
+        offset: 0,
+        recordNamespace: scope.sourceNamespace,
+        routeScope: routeId,
+      });
+    }),
+  );
+  it.effect('rejects an owner total below the offset plus the page as unavailable', () =>
+    Effect.gen(function* productsShortCount() {
+      const current = fixture('short_count');
+      const error = yield* projectSymmySourceProducts(
+        scope,
+        { limit: 1, offset: 0 },
+        current.admission,
+        current.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(Schema.is(SymmyUnavailableProblemSchema)(error)).toBe(true);
     }),
   );
   it.effect('rejects an unconfigured Price source before a requested Price page can look empty', () =>

@@ -1,6 +1,6 @@
-import { CatalogSourceProductsRequestSchema } from '@app/catalog/api/catalog-source-products';
-import type { CatalogSourceProductsResponse } from '@app/catalog/api/catalog-source-products';
-import { executeCatalogSourceProductsWithAuthorization } from '@app/catalog/api/catalog-source-products-client';
+import { CatalogSourceProductPageRequestSchema } from '@app/catalog/api/catalog-source-product-page';
+import type { CatalogSourceProductPageResponse } from '@app/catalog/api/catalog-source-product-page';
+import { executeCatalogSourceProductPageWithAuthorization } from '@app/catalog/api/catalog-source-product-page-client';
 import { CustomerProfileIcoRequestSchema } from '@app/commerce-customer-context/api/customer-profile-ico';
 import { executeCustomerProfileIcoWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-ico/client';
 import { OrganizationCustomerProfileIcoRequestSchema } from '@app/commerce-customer-context/api/organization-customer-profile-ico';
@@ -145,21 +145,21 @@ const cursorQueryIsInvalid = (query: ReadQuery): boolean =>
   query.priceLimit !== undefined ||
   query.priceOffset !== undefined ||
   (query.code !== undefined && query.afterRecordId !== undefined);
+/** The paging and `q` the products read takes. The route has no cursor and no single-record lookup. */
+type ProductsQuery = Pick<ReadQuery, 'limit' | 'offset'> & { readonly q?: string };
 const catalogItemsAreValid = (
-  result: CatalogSourceProductsResponse,
+  result: CatalogSourceProductPageResponse,
   scope: SymmySourceReadScope,
-  query: ReadQuery,
+  query: Required<Pick<ReadQuery, 'limit' | 'offset'>>,
 ): boolean =>
-  result.items.length <= (query.code === undefined ? (query.limit ?? 50) : 1) &&
-  (result.outcome !== 'NOT_FOUND' || (result.items.length === 0 && result.nextRecordId === undefined)) &&
+  result.items.length <= query.limit &&
+  result.count >= query.offset + result.items.length &&
   result.items.every(
     (item) =>
-      item.entityKind === 'PRODUCT' &&
       item.product.productRef.tenantId === scope.tenantId &&
       item.source.issuerId === scope.issuerId &&
       item.source.routeScope === (scope.sourceRouteId ?? scope.routeId) &&
       item.source.recordNamespace === scope.sourceNamespace &&
-      (query.code === undefined || item.source.recordId === query.code) &&
       item.variantSources.every(
         (variant) =>
           variant.source.issuerId === scope.issuerId &&
@@ -170,30 +170,24 @@ const catalogItemsAreValid = (
   );
 export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.products')(function* sourceProducts(
   scope: SymmySourceReadScope,
-  query: ReadQuery,
+  query: ProductsQuery,
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<SymmyInternalProductsProjection, SymmyIngressProblem> {
-  if (cursorQueryIsInvalid(query)) {
-    return yield* Effect.fail(symmyInvalidProblem);
-  }
-  yield* requireRouteRead(scope, 'commerce.catalog', 'commerce.catalog.api.catalog-source-products');
-  const qualifier = {
+  yield* requireRouteRead(scope, 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page');
+  const paging = { limit: query.limit ?? 50, offset: query.offset ?? 0 };
+  const page = {
     issuerId: scope.issuerId,
+    ...paging,
     recordNamespace: scope.sourceNamespace,
     routeScope: scope.sourceRouteId ?? scope.routeId,
   };
-  const listing = { ...qualifier, limit: query.limit ?? 50, operation: 'LIST' as const };
-  const listInput = query.afterRecordId === undefined ? listing : { ...listing, afterRecordId: query.afterRecordId };
-  const raw =
-    query.code === undefined
-      ? listInput
-      : { ...qualifier, entityKind: 'PRODUCT', operation: 'LOOKUP', recordId: query.code };
-  const payload = yield* Schema.decodeUnknownEffect(CatalogSourceProductsRequestSchema)(raw).pipe(
+  const raw = query.q === undefined ? page : { ...page, search: query.q };
+  const payload = yield* Schema.decodeUnknownEffect(CatalogSourceProductPageRequestSchema)(raw).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
   );
   const assertion = yield* acquireSymmyReadAssertion(admission, 'catalog');
-  const result = yield* executeCatalogSourceProductsWithAuthorization(
+  const result = yield* executeCatalogSourceProductPageWithAuthorization(
     payload,
     `Bearer ${Redacted.value(assertion.assertion)}`,
     yield* newRequestIdentifier,
@@ -202,12 +196,14 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
       compositionRevision: assertion.compositionRevision,
     },
   ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
-  if (!catalogItemsAreValid(result, scope, query)) {
+  if (!catalogItemsAreValid(result, scope, paging)) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
-  const projection: SymmyInternalProductsProjection = {
+  return {
     contractVersion: 'INTERNAL_C14',
-    limit: query.limit ?? 50,
+    count: result.count,
+    limit: paging.limit,
+    offset: paging.offset,
     products: result.items.map((item) => ({
       id: qualifySymmyReadId(scope, 'PRODUCT', item.source.recordId),
       product: item.product,
@@ -221,7 +217,6 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
     projection: 'products',
     unsupported_fields: ['tax', 'assortment', 'prices', 'stock'],
   };
-  return result.nextRecordId === undefined ? projection : { ...projection, nextRecordId: result.nextRecordId };
 });
 interface CustomerSourcePage {
   readonly items: readonly CustomerProfileSourceItem[];

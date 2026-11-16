@@ -358,7 +358,7 @@ export const makeSymmyGovernedDispatch = (
       return yield* projectSymmySourceCustomers(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'adminProducts') {
-      yield* requireReadOperation(route, 'commerce.catalog', 'commerce.catalog.api.catalog-source-products');
+      yield* requireReadOperation(route, 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page');
       return yield* projectSymmySourceProducts(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'priceLists') {

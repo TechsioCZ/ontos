@@ -57,8 +57,9 @@ export const qualifySymmyReadId = (
  */
 export const SymmyInternalProductsProjectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   limit,
-  nextRecordId: Schema.optionalKey(sourceId),
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   products: Schema.Array(
     Schema.Struct({
       id: SymmyQualifiedReadIdSchema,
