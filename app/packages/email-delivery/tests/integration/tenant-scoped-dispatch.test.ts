@@ -43,6 +43,8 @@ const SeedFinanceStateJsonSchema = Schema.fromJsonString(
   }),
 );
 
+const byCompany = (left: string, right: string) => left.localeCompare(right);
+
 const reminder = (id: string, recipient: string, text: string) => ({
   createdAt: '2026-10-22T06:00:00.000Z',
   deliveryMode: 'EMAIL',
@@ -99,6 +101,7 @@ const DeliveryTestLive = Layer.effectContext(
     const admin = yield* PgClient.makeClient({ url: Redacted.make(withDatabase(Redacted.value(adminUrl), database)) });
     const initialMigration = yield* migration('20261021222824_email-delivery');
     const tenantMigration = yield* migration('20261022052927_email-delivery-tenant-scope');
+    const companyKeyMigration = yield* migration('20261116002959_email-delivery-company-key');
     // Minimal owner tables with the same RLS shape as finance-billing's migration.
     yield* Effect.forEach(
       [
@@ -115,6 +118,7 @@ const DeliveryTestLive = Layer.effectContext(
         'grant select on all tables in schema core, finance_billing to ontos_runtime',
         ...initialMigration,
         ...tenantMigration,
+        ...companyKeyMigration,
         "update demo_email.settings set value = '2026-10-22T00:00:00.000Z' where key = 'enabled_since'",
       ],
       (statement) => admin.unsafe(statement),
@@ -133,8 +137,22 @@ const DeliveryTestLive = Layer.effectContext(
             reminder('a1-seeded', 'ucetni@demo.ontos', 'A1 seeded'),
           ],
         ],
-        [tenantA, entityA2, 'Firma A2 s.r.o.', [reminder('a2', 'eva@firma-a2.cz', 'A2-only text')]],
-        [tenantB, entityB, 'Firma B a.s.', [reminder('b', 'petr@firma-b.cz', 'B-only text')]],
+        [
+          tenantA,
+          entityA2,
+          'Firma A2 s.r.o.',
+          [
+            reminder('a2', 'eva@firma-a2.cz', 'A2-only text'),
+            // The same reminder id to the same person in two companies is two e-mails.
+            reminder('shared', 'spolecna@firma.cz', 'A2 shared text'),
+          ],
+        ],
+        [
+          tenantB,
+          entityB,
+          'Firma B a.s.',
+          [reminder('b', 'petr@firma-b.cz', 'B-only text'), reminder('shared', 'spolecna@firma.cz', 'B shared text')],
+        ],
       ] as const,
       ([tenant, entity, name, reminders]) =>
         Effect.gen(function* seedCompany() {
@@ -191,7 +209,7 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         readonly tenant_id: string;
       }>`select * from demo_email.pending_deliveries(10, ${workerTenantId}::uuid, ${workerEntityId}::uuid)`;
       expect(rows.map((row) => Object.keys(row).toSorted((left, right) => left.localeCompare(right)))).toEqual(
-        Array.from({ length: 6 }, () => ['delivery_id', 'legal_entity_id', 'tenant_id']),
+        Array.from({ length: 8 }, () => ['delivery_id', 'legal_entity_id', 'tenant_id']),
       );
       expect(rows.map((row) => row.delivery_id).toSorted((left, right) => left.localeCompare(right))).toEqual([
         'rent-reminder:a1',
@@ -200,6 +218,8 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         'rent-reminder:a1-seeded',
         'rent-reminder:a2',
         'rent-reminder:b',
+        'rent-reminder:shared',
+        'rent-reminder:shared',
       ]);
     }),
   );
@@ -232,12 +252,20 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
     Effect.gen(function* verifyTenantDispatch() {
       const { admin, scopeA1, scopeA2, scopeB } = yield* DeliveryTestFixture;
       const result = yield* dispatchEmailBatchWith(transport, {});
-      expect(result).toEqual({ configured: true, processed: 6, skipped: 3 });
+      expect(result).toEqual({ configured: true, processed: 8, skipped: 3 });
       expect(sent.map((email) => email.recipient).toSorted((left, right) => left.localeCompare(right))).toEqual([
         'eva@firma-a2.cz',
         'jana@firma-a.cz',
         'petr@firma-b.cz',
+        'spolecna@firma.cz',
+        'spolecna@firma.cz',
       ]);
+      expect(
+        sent
+          .filter((email) => email.recipient === 'spolecna@firma.cz')
+          .map((email) => email.text.split('\n')[0])
+          .toSorted((left, right) => (left ?? '').localeCompare(right ?? '')),
+      ).toEqual(['A2 shared text', 'B shared text']);
       for (const [recipient, own] of [
         ['jana@firma-a.cz', 'A1-only text'],
         ['eva@firma-a2.cz', 'A2-only text'],
@@ -255,7 +283,13 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         status: string;
         tenant_id: string;
       }>(
-        'select dedupe_key, tenant_id::text, legal_entity_id::text, status from demo_email.deliveries order by dedupe_key',
+        "select dedupe_key, tenant_id::text, legal_entity_id::text, status from demo_email.deliveries where dedupe_key <> 'rent-reminder:shared' order by dedupe_key",
+      );
+      const shared = yield* admin.unsafe<{ readonly legal_entity_id: string; readonly status: string }>(
+        "select legal_entity_id::text, status from demo_email.deliveries where dedupe_key = 'rent-reminder:shared'",
+      );
+      expect(shared.map((row) => `${row.legal_entity_id}:${row.status}`).toSorted(byCompany)).toEqual(
+        [`${scopeA2.legalEntityId}:SENT`, `${scopeB.legalEntityId}:SENT`].toSorted(byCompany),
       );
       expect(ledger).toEqual([
         {
@@ -307,7 +341,7 @@ it.layer(DeliveryTestLive, { excludeTestServices: true })('per-tenant dispatch u
         processed: 0,
         skipped: 0,
       });
-      expect(sent).toHaveLength(3);
+      expect(sent).toHaveLength(5);
     }),
   );
 

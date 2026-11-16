@@ -1,10 +1,12 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, pgPolicy, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { check, index, integer, pgPolicy, pgSchema, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * Platform-owned after-commit mail ledger; only migrations create or alter it. Rows carry recipient and subject, so
  * the runtime role sees only the rows of the tenant + legal entity installed in its transaction (FORCE RLS, migration).
  * The dispatcher learns which scopes have work from demo_email.pending_deliveries(), which returns ids only.
+ * A delivery is unique within its company: the same `dedupe_key` (one person's agenda batch, one reminder id) in two
+ * companies is two e-mails, so the key never suppresses another company's delivery.
  */
 export const emailSchema = pgSchema('demo_email');
 const scoped = sql`tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
@@ -13,7 +15,7 @@ export const emailDeliveries = emailSchema.table.withRLS(
   {
     attempts: integer('attempts').default(1).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    dedupeKey: text('dedupe_key').primaryKey(),
+    dedupeKey: text('dedupe_key').notNull(),
     emailSubject: text('email_subject').notNull(),
     errorTag: text('error_tag'),
     event: text('event').notNull(),
@@ -31,6 +33,7 @@ export const emailDeliveries = emailSchema.table.withRLS(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.dedupeKey], name: 'deliveries_pkey' }),
     check(
       'deliveries_source_check',
       sql`${table.source} in ('akros-order', 'facility-agenda', 'rent-reminder', 'storefront-inquiry', 'person-invitation')`,

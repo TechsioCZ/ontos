@@ -57,6 +57,11 @@ it('exports exactly the Core table inventory in PostgreSQL schema core', () => {
 it('keeps the mail ledger protected by tenant and legal entity row policies', () => {
   const config = getTableConfig(schemaExports.emailDeliveries);
   expect(config.enableRLS).toBe(true);
+  // A delivery key is unique within one company only: another company's row never suppresses its e-mail.
+  expect(config.primaryKeys.map((key) => key.columns.map((column) => column.name))).toEqual([
+    ['tenant_id', 'legal_entity_id', 'dedupe_key'],
+  ]);
+  expect(config.columns.find((column) => column.name === 'dedupe_key')?.primary).toBe(false);
   expect(config.policies.map(({ name }) => name).toSorted()).toEqual([
     'demo_email_deliveries_scope_insert',
     'demo_email_deliveries_scope_select',

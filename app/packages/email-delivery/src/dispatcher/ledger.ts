@@ -1,5 +1,6 @@
-// Delivery ledger for the demo e-mail dispatcher: one row per e-mail (primary key = dedupe_key). RLS scopes every row
-// to its tenant + legal entity: claim/finish/recoverInterrupted run inside inDeliveryScope.
+// Delivery ledger for the demo e-mail dispatcher: one row per e-mail of one company (primary key = tenant, legal entity,
+// dedupe_key), so the same key in another company is another e-mail. RLS scopes every row to its tenant + legal entity:
+// claim/finish/recoverInterrupted run inside inDeliveryScope and restate the scope in their predicates.
 import { PgClient } from '@effect/sql-pg';
 import { DateTime, Effect, Schema } from 'effect';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
@@ -56,25 +57,30 @@ export const claim = Effect.fn('EmailLedger.claim')(function* claimDelivery(
   const inserted = yield* sql<{ readonly dedupe_key: string }>`
       insert into demo_email.deliveries (dedupe_key, source, event, event_label, tenant_id, legal_entity_id, subject_id, subject_number, recipient, email_subject, status, attempts, event_at)
       values (${planned.dedupeKey}, ${planned.source}, ${planned.event}, ${planned.eventLabel}, ${planned.tenantId}::uuid, ${planned.legalEntityId}::uuid, ${planned.subjectId}, ${planned.subjectNumber}, ${planned.recipient}, ${planned.subject}, 'SENDING', 1, ${planned.eventAt}::timestamptz)
-      on conflict (dedupe_key) do nothing
+      on conflict (tenant_id, legal_entity_id, dedupe_key) do nothing
       returning dedupe_key`;
   if (inserted.length === 1) {
     return true;
   }
   yield* sql`
       update demo_email.deliveries set status = 'FAILED', error_tag = 'retry_window_expired', updated_at = now()
-      where dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
+      where tenant_id = ${planned.tenantId}::uuid and legal_entity_id = ${planned.legalEntityId}::uuid
+        and dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
         and created_at < now() - make_interval(hours => ${RETRY_WINDOW_HOURS})`;
   const retried = yield* sql<{ readonly dedupe_key: string }>`
       update demo_email.deliveries set status = 'SENDING', attempts = attempts + 1, updated_at = now()
-      where dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
+      where tenant_id = ${planned.tenantId}::uuid and legal_entity_id = ${planned.legalEntityId}::uuid
+        and dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
         and updated_at < now() - make_interval(secs => least(60, 10 * power(2, least(attempts - 1, 3))))
       returning dedupe_key`;
   return retried.length === 1;
 });
 
+/** The ledger identity of one delivery: its company and its key within that company. */
+export type DeliveryIdentity = Pick<PlannedEmail, 'dedupeKey' | 'legalEntityId' | 'tenantId'>;
+
 export const finish = Effect.fn('EmailLedger.finish')(function* finishDelivery(
-  dedupeKey: string,
+  delivery: DeliveryIdentity,
   outcome: DeliveryOutcome,
 ) {
   const sql = yield* PgClient.PgClient;
@@ -83,7 +89,8 @@ export const finish = Effect.fn('EmailLedger.finish')(function* finishDelivery(
   yield* sql`
       update demo_email.deliveries set status = ${outcome.status}, message_id = ${messageId}, error_tag = ${errorTag},
         sent_at = case when ${outcome.status}::text = 'SENT' then now() else sent_at end, updated_at = now()
-      where dedupe_key = ${dedupeKey} and status = 'SENDING'`;
+      where tenant_id = ${delivery.tenantId}::uuid and legal_entity_id = ${delivery.legalEntityId}::uuid
+        and dedupe_key = ${delivery.dedupeKey} and status = 'SENDING'`;
 });
 
 /** Settle an observed invalid reminder without rendering or sending, so old rows cannot block the due page. */
@@ -93,24 +100,26 @@ export const skipIneligibleRentReminder = Effect.fn('EmailLedger.skipIneligibleR
   if (input.invoiceDirection === 'OUTGOING') {
     return false;
   }
-  const dedupeKey = `rent-reminder:${input.reminder.id}`;
+  const delivery: DeliveryIdentity = {
+    dedupeKey: `rent-reminder:${input.reminder.id}`,
+    legalEntityId: input.legalEntityId,
+    tenantId: input.tenantId,
+  };
   const claimed = yield* claim({
-    dedupeKey,
+    ...delivery,
     event: 'PAYMENT_REMINDER',
     eventAt: input.reminder.createdAt,
     eventLabel: 'Upomínka k úhradě',
-    legalEntityId: input.legalEntityId,
     recipient: input.reminder.recipient.trim(),
     source: 'rent-reminder',
     subject: 'Upomínka nebyla odeslána',
     subjectId: input.reminder.id,
     subjectNumber: input.invoiceNumber ?? '',
-    tenantId: input.tenantId,
   });
   if (!claimed) {
     return false;
   }
-  yield* finish(dedupeKey, {
+  yield* finish(delivery, {
     errorTag: input.invoiceDirection === null ? 'reminder_invoice_missing' : 'reminder_invoice_not_outgoing',
     status: 'SKIPPED',
   });

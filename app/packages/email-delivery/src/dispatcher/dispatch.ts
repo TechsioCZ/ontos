@@ -4,6 +4,7 @@ import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
 import { claim, finish, readEnabledSince, recoverInterrupted, skipIneligibleRentReminder } from './ledger.ts';
+import type { DeliveryIdentity } from './ledger.ts';
 import {
   deliveryOutcomeOf,
   planAgendaEmails,
@@ -29,6 +30,13 @@ import {
 type OutgoingEmail = PlannedEmail & { readonly from: string };
 export const DISPATCH_BATCH_SIZE = 10;
 
+/**
+ * The provider-facing never-twice identity (Resend `Idempotency-Key`, SMTP `Message-ID` seed): the ledger identity, company
+ * included, so one person's same-keyed e-mails from two companies are never merged or dropped as duplicates downstream.
+ */
+export const deliveryIdempotencyKey = (planned: DeliveryIdentity): string =>
+  `${planned.tenantId}/${planned.legalEntityId}/${planned.dedupeKey}`;
+
 /** Called only after a ledger claim. Seeded fake recipients settle visibly as SKIPPED without touching the transport. */
 export const submitEmail = Effect.fn('EmailDispatch.submitEmail')(function* submitPlannedEmail(
   planned: OutgoingEmail,
@@ -44,7 +52,7 @@ export const submitEmail = Effect.fn('EmailDispatch.submitEmail')(function* subm
   return yield* service
     .send({
       html: Redacted.make(planned.html),
-      idempotencyKey: planned.dedupeKey,
+      idempotencyKey: deliveryIdempotencyKey(planned),
       subject: planned.subject,
       text: Redacted.make(planned.text),
       to: planned.recipient,
@@ -247,7 +255,7 @@ const dispatchClaimedEmail = Effect.fn('EmailDispatch.dispatchClaimedEmail')(fun
     return { processed: 0, skipped: 0 };
   }
   const outcome = yield* submitEmail(email, transport, environment);
-  yield* inDeliveryScope(scope, finish(email.dedupeKey, outcome));
+  yield* inDeliveryScope(scope, finish(email, outcome));
   return { processed: 1, skipped: outcome.status === 'SKIPPED' ? 1 : 0 };
 });
 
