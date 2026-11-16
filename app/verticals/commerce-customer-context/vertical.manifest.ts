@@ -19,7 +19,6 @@ import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY 
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 // <generated-module-manifest-imports>
-import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
 import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
@@ -79,6 +78,7 @@ import { CustomerArchiveApi } from './shared/apis/customer-archive.ts';
 import { CustomerGroupDefinitionSourceApi } from './shared/apis/customer-group-definition-source.ts';
 import { customerGroupDefinitionSourceRead } from './src/api/customer-group-definition-source.read.ts';
 import { CustomerGroupDetailApi } from './shared/apis/customer-group-detail.ts';
+import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { CustomerGroupHistoryApi } from './shared/apis/customer-group-history.ts';
 import { CustomerGroupMembersApi } from './shared/apis/customer-group-members.ts';
 import { customerGroupMembershipResourceDescriptor } from './shared/resources/customer-group-membership.ts';
@@ -101,6 +101,8 @@ import { CustomerProfileOrganizationIcoFactsApi } from './shared/apis/customer-p
 import { customerProfileOrganizationIcoFactsRead } from './src/api/customer-profile-organization-ico-facts.read.ts';
 import { CustomerProfileReadApi } from './shared/apis/customer-profile-read.ts';
 import { CustomerProfileSourceApi } from './shared/apis/customer-profile-source.ts';
+import { CustomerProfileSourcePageApi } from './shared/apis/customer-profile-source-page.ts';
+import { customerProfileSourcePageRead } from './src/api/customer-profile-source-page.read.ts';
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { CustomerProfileTradingGateApi } from './shared/apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './shared/apis/customer-record-visibility.ts';
@@ -217,6 +219,7 @@ import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-
 const createCounterpartyProfileEntrypoint = 'commerce.customer-context.create-counterparty-purchasing-profile';
 const organizationBusinessProviderEntrypoint = 'privacy.core.api.organization-business-applicability';
 const sourcePersonAdmissionProviderEntrypoint = 'party.registry.api.source-person-admission';
+const sourceCounterpartyAdmissionProviderEntrypoint = 'party.registry.api.source-counterparty-admission';
 const currentOrganizationProfileIcoEvidence =
   'commerce.customer-context.evidence.current-organization-profile-ico-facts';
 const organizationProfileIcoProviderEntrypoint = 'privacy.core.api.organization-profile-ico-applicability';
@@ -228,6 +231,7 @@ const completePartyIcoInventoryEvidence = 'commerce.customer-context.evidence.co
 const legacyIcoInventoryProviderEntrypoint = 'party.registry.api.legacy-ico-inventory';
 const organizationIcoMigrationWriteEntrypoint = 'commerce.customer-context.migrate-organization-customer-profile-ico';
 const customerProfileSourceEntrypoint = 'commerce.customer-context.api.customer-profile-source';
+const customerProfileSourcePageEntrypoint = 'commerce.customer-context.api.customer-profile-source-page';
 const profileIcoMigrationReadEntrypoint = 'commerce.customer-context.api.customer-profile-ico-migration';
 const profileIcoMigrationWriteEntrypoint = 'commerce.customer-context.migrate-customer-profile-ico';
 const partyRegistryModuleId = 'party.registry';
@@ -390,6 +394,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'customer-profile-organization-ico-facts': CustomerProfileOrganizationIcoFactsApi,
       'customer-profile-read': CustomerProfileReadApi,
       'customer-profile-source': CustomerProfileSourceApi,
+      'customer-profile-source-page': CustomerProfileSourcePageApi,
       'customer-profile-trading-gate': CustomerProfileTradingGateApi,
       'customer-record-visibility': CustomerRecordVisibilityApi,
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
@@ -449,31 +454,6 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       {
-        apiKey: 'customer-group-detail',
-        operationKey: 'customerGroupDetail.execute',
-        registration: customerGroupDetailRead,
-      },
-      {
-        apiKey: 'guest-payment-terms-resolution',
-        operationKey: 'guestPaymentTermsResolution.execute',
-        registration: guestPaymentTermsResolutionRead,
-      },
-      {
-        apiKey: 'payment-terms-resolution',
-        operationKey: 'paymentTermsResolution.execute',
-        registration: paymentTermsResolutionRead,
-      },
-      {
-        apiKey: 'migrate-organization-customer-profile-ico-action',
-        operationKey: 'migrateOrganizationCustomerProfileIcoAction.execute',
-        registration: migrateOrganizationCustomerProfileIcoAction,
-      },
-      {
-        apiKey: 'change-organization-customer-profile-ico-action',
-        operationKey: 'changeOrganizationCustomerProfileIcoAction.execute',
-        registration: changeOrganizationCustomerProfileIcoAction,
-      },
-      {
         apiKey: 'add-saved-address-action',
         operationKey: 'addSavedAddressAction.execute',
         registration: addSavedAddressAction,
@@ -504,6 +484,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: changeCustomerProfileIcoAction,
       },
       {
+        apiKey: 'change-organization-customer-profile-ico-action',
+        operationKey: 'changeOrganizationCustomerProfileIcoAction.execute',
+        registration: changeOrganizationCustomerProfileIcoAction,
+      },
+      {
         apiKey: 'create-counterparty-purchasing-profile-action',
         operationKey: 'createCounterpartyPurchasingProfileAction.execute',
         registration: createCounterpartyPurchasingProfileAction,
@@ -517,6 +502,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'customer-group-definition-source',
         operationKey: 'customerGroupDefinitionSource.execute',
         registration: customerGroupDefinitionSourceRead,
+      },
+      {
+        apiKey: 'customer-group-detail',
+        operationKey: 'customerGroupDetail.execute',
+        registration: customerGroupDetailRead,
       },
       {
         apiKey: 'customer-group-membership-source-receipt',
@@ -549,6 +539,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: customerProfileOrganizationIcoFactsRead,
       },
       {
+        apiKey: 'customer-profile-source-page',
+        operationKey: 'customerProfileSourcePage.execute',
+        registration: customerProfileSourcePageRead,
+      },
+      {
         apiKey: 'customer-profile-source',
         operationKey: 'customerProfileSource.execute',
         registration: customerProfileSourceRead,
@@ -562,6 +557,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'ensure-retail-customer-profile-action',
         operationKey: 'ensureRetailCustomerProfileAction.execute',
         registration: ensureRetailCustomerProfileAction,
+      },
+      {
+        apiKey: 'guest-payment-terms-resolution',
+        operationKey: 'guestPaymentTermsResolution.execute',
+        registration: guestPaymentTermsResolutionRead,
       },
       {
         apiKey: 'market-affected-use-assessment',
@@ -584,6 +584,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: migrateCustomerProfileIcoAction,
       },
       {
+        apiKey: 'migrate-organization-customer-profile-ico-action',
+        operationKey: 'migrateOrganizationCustomerProfileIcoAction.execute',
+        registration: migrateOrganizationCustomerProfileIcoAction,
+      },
+      {
         apiKey: 'organization-customer-profile-ico-migration',
         operationKey: 'organizationCustomerProfileIcoMigration.execute',
         registration: organizationCustomerProfileIcoMigrationRead,
@@ -597,6 +602,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'payment-term-affected-use-assessment',
         operationKey: 'paymentTermAffectedUseAssessment.execute',
         registration: paymentTermAffectedUseAssessmentRead,
+      },
+      {
+        apiKey: 'payment-terms-resolution',
+        operationKey: 'paymentTermsResolution.execute',
+        registration: paymentTermsResolutionRead,
       },
       {
         apiKey: 'pricing-purchase-context-verification',
@@ -1009,7 +1019,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         evidence: [exactSourceProfileAuthorityEvidence],
         key: 'commerce.customer-context.requirement.create-counterparty-profile-source-role',
         provider: {
-          entrypointKey: 'party.registry.api.source-counterparty-admission',
+          entrypointKey: sourceCounterpartyAdmissionProviderEntrypoint,
           moduleId: partyRegistryModuleId,
           schemaVersion: '1',
         },
@@ -1075,8 +1085,63 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         evidence: [exactSourceProfileAuthorityEvidence],
         key: 'commerce.customer-context.requirement.customer-profile-source-counterparty',
         provider: {
-          entrypointKey: 'party.registry.api.source-counterparty-admission',
+          entrypointKey: sourceCounterpartyAdmissionProviderEntrypoint,
           moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-privacy',
+        provider: {
+          entrypointKey: sourcePrivacyProviderEntrypoint,
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-party',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-counterparty',
+        provider: {
+          entrypointKey: sourceCounterpartyAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-counterparty-person',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProcessingCondition,
+        entrypointKey: customerProfileSourcePageEntrypoint,
+        evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
+        key: 'commerce.customer-context.requirement.customer-profile-source-page-organization',
+        provider: {
+          entrypointKey: organizationBusinessProviderEntrypoint,
+          moduleId: privacyModuleId,
           schemaVersion: '1',
         },
       },

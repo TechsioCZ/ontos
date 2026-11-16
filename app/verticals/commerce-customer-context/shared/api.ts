@@ -68,6 +68,7 @@ import { CustomerProfileIcoMigrationApi } from './apis/customer-profile-ico-migr
 import { CustomerProfileOrganizationIcoFactsApi } from './apis/customer-profile-organization-ico-facts.ts';
 import { CustomerProfileReadApi } from './apis/customer-profile-read.ts';
 import { CustomerProfileSourceApi } from './apis/customer-profile-source.ts';
+import { CustomerProfileSourcePageApi } from './apis/customer-profile-source-page.ts';
 import { CustomerProfileTradingGateApi } from './apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './apis/customer-record-visibility.ts';
 import { DecidePurchaseApprovalRequestActionApi } from './apis/decide-purchase-approval-request-action.ts';
@@ -249,6 +250,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof CustomerProfileIcoMigrationApi
   | typeof CustomerProfileReadApi
   | typeof CustomerProfileSourceApi
+  | typeof CustomerProfileSourcePageApi
   | typeof CustomerProfileTradingGateApi
   | typeof CustomerRecordVisibilityApi
   | typeof DecidePurchaseApprovalRequestActionApi
@@ -394,6 +396,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CustomerProfileOrganizationIcoFactsApi)
   .addHttpApi(CustomerProfileReadApi)
   .addHttpApi(CustomerProfileSourceApi)
+  .addHttpApi(CustomerProfileSourcePageApi)
   .addHttpApi(CustomerProfileTradingGateApi)
   .addHttpApi(CustomerRecordVisibilityApi)
   .addHttpApi(DecidePurchaseApprovalRequestActionApi)

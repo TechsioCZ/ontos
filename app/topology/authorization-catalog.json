@@ -8041,6 +8041,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-source-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-source-page",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-source-page",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.customer-profile-source.read",
             "kind": "read",
             "modes": [
