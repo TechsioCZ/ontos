@@ -136,6 +136,7 @@ const grantedRoutines = [
   'read_customer_profile_organization_ico_facts',
   'read_customer_profile_source',
   'read_customer_profile_source_page',
+  'read_customer_profile_source_parties',
   'read_effective_customer_group_memberships',
   'read_enrollment_invitation_claim',
   'read_guest_attribution',

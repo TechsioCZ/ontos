@@ -39,6 +39,7 @@ import { PartySourceEffectReceiptApi } from './apis/party-source-effect-receipt.
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 import { SourceCounterpartyAdmissionApi } from './apis/source-counterparty-admission.ts';
+import { SourcePartySearchApi } from './apis/source-party-search.ts';
 import { SourcePersonAdmissionApi } from './apis/source-person-admission.ts';
 import { SourceProfileExportApi } from './apis/source-profile-export.ts';
 // </generated-governed-http-api-imports>
@@ -141,6 +142,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(SourceCounterpartyAdmissionApi)
+  .addHttpApi(SourcePartySearchApi)
   .addHttpApi(SourcePersonAdmissionApi)
   .addHttpApi(SourceProfileExportApi)
   // </generated-governed-http-api-additions>

@@ -46,6 +46,8 @@
     "./apis/party-source-effect-receipt/client": "./src/api/party-source-effect-receipt-client.ts",
     "./apis/source-person-admission": "./shared/apis/source-person-admission.ts",
     "./apis/source-person-admission/client": "./src/api/source-person-admission-client.ts",
+    "./apis/source-party-search": "./shared/apis/source-party-search.ts",
+    "./apis/source-party-search/client": "./src/api/source-party-search-client.ts",
     "./apis/source-profile-export": "./shared/apis/source-profile-export.ts",
     "./apis/source-profile-export/client": "./src/api/source-profile-export-client.ts",
     "./apis/source-counterparty-admission": "./shared/apis/source-counterparty-admission.ts",

@@ -103,6 +103,8 @@ import { CustomerProfileReadApi } from './shared/apis/customer-profile-read.ts';
 import { CustomerProfileSourceApi } from './shared/apis/customer-profile-source.ts';
 import { CustomerProfileSourcePageApi } from './shared/apis/customer-profile-source-page.ts';
 import { customerProfileSourcePageRead } from './src/api/customer-profile-source-page.read.ts';
+import { CustomerProfileSourcePartiesApi } from './shared/apis/customer-profile-source-parties.ts';
+import { customerProfileSourcePartiesRead } from './src/api/customer-profile-source-parties.read.ts';
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { CustomerProfileTradingGateApi } from './shared/apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './shared/apis/customer-record-visibility.ts';
@@ -395,6 +397,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'customer-profile-read': CustomerProfileReadApi,
       'customer-profile-source': CustomerProfileSourceApi,
       'customer-profile-source-page': CustomerProfileSourcePageApi,
+      'customer-profile-source-parties': CustomerProfileSourcePartiesApi,
       'customer-profile-trading-gate': CustomerProfileTradingGateApi,
       'customer-record-visibility': CustomerRecordVisibilityApi,
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
@@ -542,6 +545,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'customer-profile-source-page',
         operationKey: 'customerProfileSourcePage.execute',
         registration: customerProfileSourcePageRead,
+      },
+      {
+        apiKey: 'customer-profile-source-parties',
+        operationKey: 'customerProfileSourceParties.execute',
+        registration: customerProfileSourcePartiesRead,
       },
       {
         apiKey: 'customer-profile-source',
