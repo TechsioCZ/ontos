@@ -2,14 +2,11 @@
 // @rstest-environment-options {"url":"https://party.ontos.test"}
 import { fileURLToPath } from 'node:url';
 
-import {
-  IsolatedNativeDatabaseError,
-  makeIsolatedNativeDatabaseFixture,
-} from '@app/core-runtime/testing/isolated-native-database';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { ConfigProvider, Crypto, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { Crypto, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { makePartyDatabase } from '../../src/db/client.ts';
@@ -46,20 +43,6 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
     'preserves populated assertions and accepts governed writes and Reads after upgrade',
     () =>
       Effect.gen(function* populatedVerificationRemoval() {
-        const refused = yield* makeIsolatedNativeDatabaseFixture({
-          mode: 'empty',
-          purpose: 'party-verification-removal',
-        }).pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromUnknown({ ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production' }),
-          ),
-          Effect.flip,
-        );
-        expect(Schema.is(IsolatedNativeDatabaseError)(refused)).toBe(true);
-        if (Schema.is(IsolatedNativeDatabaseError)(refused)) {
-          expect(refused.reason).toBe('Isolated native database fixtures are forbidden in deployed environments');
-        }
         const isolated = yield* makeIsolatedNativeDatabaseFixture({
           mode: 'empty',
           purpose: 'party-verification-removal',

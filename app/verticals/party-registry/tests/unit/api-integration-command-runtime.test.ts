@@ -1187,15 +1187,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect('the endpoint-owned mapper preserves representative Core failure semantics', () =>
     Effect.gen(function* mapRepresentativeActionFailures() {
       const assertion = yield* makeAssertion();
+      const initialFailure = new ActionPayloadValidationError({
+        code: 'action_payload_invalid',
+        reason: 'invalid payload fixture',
+      });
       const cases: readonly [failure: ActionCoreError, status: number, tag: string][] = [
-        [
-          new ActionPayloadValidationError({
-            code: 'action_payload_invalid',
-            reason: 'invalid payload fixture',
-          }),
-          400,
-          'PartyCommandInvalidRequestProblem',
-        ],
+        [initialFailure, 400, 'PartyCommandInvalidRequestProblem'],
         [
           new ActionPermissionDenied({
             code: 'action_permission_denied',
@@ -1287,29 +1284,25 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         ],
       ];
 
-      yield* forEachSequential(cases, ([failure, expectedStatus, expectedTag]) =>
+      let failure: ActionCoreError = initialFailure;
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
+      const failingRuntime: ActionRuntimeService = {
+        resolveActionCommit: harness.runtime.resolveActionCommit,
+        runAction: () => Effect.fail(failure),
+      };
+      const app = yield* mountApp(harness, assertion.environment, undefined, nonPersistingRedemption, failingRuntime);
+      yield* forEachSequential(cases, ([nextFailure, expectedStatus, expectedTag]) =>
         Effect.gen(function* verifyActionFailureMapping() {
-          const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
-          const failingRuntime: ActionRuntimeService = {
-            resolveActionCommit: harness.runtime.resolveActionCommit,
-            runAction: () => Effect.fail(failure),
-          };
-          const app = yield* mountApp(
-            harness,
-            assertion.environment,
-            undefined,
-            nonPersistingRedemption,
-            failingRuntime,
-          );
+          failure = nextFailure;
           const response = yield* handle(
             app,
             commandRequest('request-search-rebuild', {}, assertion.token, {
-              'idempotency-key': `mapping-${failure.code}`,
+              'idempotency-key': `mapping-${nextFailure.code}`,
             }),
           );
-          expect(response.status, failure.code).toBe(expectedStatus);
+          expect(response.status, nextFailure.code).toBe(expectedStatus);
           const body = yield* Effect.promise(() => response.json());
-          expect(Predicate.isTagged(body, expectedTag), failure.code).toBe(true);
+          expect(Predicate.isTagged(body, expectedTag), nextFailure.code).toBe(true);
         }),
       );
     }),
@@ -1500,43 +1493,37 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.gen(function* preserveDistinctFailureStatuses() {
         const assertion = yield* makeAssertion();
+        const notFoundTransition = () => Effect.succeed({ _tag: 'not_found' as const });
+        const unavailableTransition = () =>
+          Effect.fail(
+            new PartyPersistenceUnavailable({
+              code: 'party_persistence_unavailable',
+              reason: 'private database diagnostic',
+            }),
+          );
+        const defectTransition = () => Effect.die('private unexpected diagnostic');
         const cases = [
-          {
-            status: 404,
-            tag: 'PartyCommandNotFoundProblem',
-            service: bindActionTestServices(archivePartyAction, {
-              transition: () => Effect.succeed({ _tag: 'not_found' as const }),
-            }),
-          },
-          {
-            status: 503,
-            tag: 'PartyCommandUnavailableProblem',
-            service: bindActionTestServices(archivePartyAction, {
-              transition: () =>
-                Effect.fail(
-                  new PartyPersistenceUnavailable({
-                    code: 'party_persistence_unavailable',
-                    reason: 'private database diagnostic',
-                  }),
-                ),
-            }),
-          },
-          {
-            status: 500,
-            tag: 'PartyCommandInternalProblem',
-            service: bindActionTestServices(archivePartyAction, {
-              transition: () => Effect.die('private unexpected diagnostic'),
-            }),
-          },
+          { status: 404, tag: 'PartyCommandNotFoundProblem', transition: notFoundTransition },
+          { status: 503, tag: 'PartyCommandUnavailableProblem', transition: unavailableTransition },
+          { status: 500, tag: 'PartyCommandInternalProblem', transition: defectTransition },
         ];
+        // `bindActionTestServices` binds the transition at construction, so one bound service reads
+        // the case under test from here instead of rebuilding the harness and web handler per case.
+        let transition: () => Effect.Effect<{ readonly _tag: 'not_found' }, PartyPersistenceUnavailable> =
+          notFoundTransition;
+        const harness = yield* makeActionTestHarness({
+          access: 'allowed',
+          ownerRegistration: partyRegistryBackendRegistration,
+          services: [
+            bindActionTestServices(archivePartyAction, {
+              transition: () => Effect.suspend(transition),
+            }),
+          ],
+        });
+        const app = yield* mountApp(harness, assertion.environment);
         yield* forEachSequential(cases, (item) =>
           Effect.gen(function* verifySafeFailureResponse() {
-            const harness = yield* makeActionTestHarness({
-              access: 'allowed',
-              ownerRegistration: partyRegistryBackendRegistration,
-              services: [item.service],
-            });
-            const app = yield* mountApp(harness, assertion.environment);
+            transition = item.transition;
 
             const response = yield* handle(
               app,
@@ -1555,6 +1542,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             if (item.status === 503) {
               expect(body.retryable).toBe(true);
             }
+            // Cumulative over the shared harness: every case fails, so nothing may ever commit.
             expect(harness.snapshot().committed.length).toBe(0);
           }),
         );

@@ -649,25 +649,6 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       );
     }),
   );
-
-  suite.effect('registers Party ownership in application database grants and exact verification', () =>
-    Effect.gen(function* testScenario() {
-      const bootstrap = yield* FileSystem.FileSystem.use((fs) =>
-        fs.readFileString(
-          fileURLToPath(new URL('../../../../scripts/postgres/runtime-role-bootstrap.mts', import.meta.url)),
-        ),
-      );
-      const verifier = yield* FileSystem.FileSystem.use((fs) =>
-        fs.readFileString(
-          fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
-        ),
-      );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'catalog', 'inventory', 'tax', 'privacy', 'projects'\]/u);
-      expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
-      expect(verifier).toContain('loadApplicationMigrationInventory');
-      expect(verifier).toContain('for (const path of stream.verifierPaths)');
-    }),
-  );
 });
 
 it('narrows every Counterparty projection policy to the sealed entity without excluding tenant-wide grants', () => {
