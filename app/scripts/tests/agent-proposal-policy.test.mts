@@ -6,6 +6,7 @@ import { CatalogSnapshotEntrySchema } from '../../packages/core-runtime/src/acce
 import { ModuleKeySchema } from '../../packages/core-runtime/src/access/ids.ts';
 import { PROPOSAL_REVIEW_CAPABILITY, policyRoleCells, policyRoleKeys } from '../demo/access-policy.mts';
 import {
+  accountingHandoverIdentityKeys,
   crmDemoRoles,
   crmReadCapability,
   crmWriteCapability,
@@ -71,6 +72,7 @@ const namedCapabilityKeys = [
   'privacy.core.processing-purpose.create',
   'privacy.core.notice-version.create',
   ...taxAccountantKeys,
+  ...accountingHandoverIdentityKeys,
 ] as const;
 const catalog: readonly CatalogSnapshotEntry[] = [
   entry(PROPOSAL_REVIEW_CAPABILITY, { moduleKey: ModuleKeySchema.make('core.identity') }),

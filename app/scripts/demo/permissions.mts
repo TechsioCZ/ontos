@@ -264,12 +264,25 @@ const everything = {
   [workforceModule]: 'write',
 } as const satisfies Readonly<Record<string, ModuleAccess>>;
 
+/** Core's legal identity of the company, which the accounting handover file names as its issuer. */
+export const accountingHandoverIdentityKeys = [
+  'core.identity.legal-entity.read',
+  'core.identity.legal-entity.personal.read',
+] as const;
+
 export const demoRoles = {
   accountant: {
-    capabilityKeys: { [partyModule]: partyHumanReaderKeys, [taxModule]: taxAccountantKeys },
+    capabilityKeys: {
+      // The accounting handover names the company: Core's legal-entity read and its name field, read only.
+      'core.identity': accountingHandoverIdentityKeys,
+      [partyModule]: partyHumanReaderKeys,
+      [taxModule]: taxAccountantKeys,
+    },
     label: 'Účetní',
     modules: {
       [commerceModule]: 'read',
+      // The company's legal identity for the accounting handover, through the two explicit keys only.
+      'core.identity': 'read',
       // Rates and the seller's VAT regime with their histories, through the explicit tax keys only: read, never change.
       [taxModule]: 'read',
       // Invoice lines pick products; without this read the create form's product list fails to load.
@@ -284,7 +297,7 @@ export const demoRoles = {
       'work.tasks': 'write',
     },
     proposalReview: true,
-    restrictedModules: [partyModule, taxModule],
+    restrictedModules: ['core.identity', partyModule, taxModule],
   },
   headOfSales: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys },
