@@ -125,15 +125,14 @@ jobs:
           path: ${{ runner.temp }}/ci-changed-paths
           if-no-files-found: warn
           retention-days: 1
-      # The planner resolves the workspace package graph from package manifests, not from a linked
-      # node_modules, so it installs without lifecycle scripts and without exporting the mise environment
-      # (exactly as quality-audit.yml does) and reads the node_modules cache the install action restores.
+      # Every gate needs this install. Publish the complete workspace before fanning out, rather than
+      # making every first-wave job repeat the install while waiting for build shard 1 to save it.
       - name: Install the app workspace for code impact analysis
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
         uses: ./.github/actions/install-app
         with:
-          install-args: --ignore-scripts
           mise-env: 'false'
+          save-node-modules: ${{ github.ref != 'refs/heads/main' }}
       - name: Resolve affected packages and required matrices
         id: selection
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
@@ -150,8 +149,8 @@ jobs:
   # Node build shard's output archive, the Playwright Chromium build, and the apt packages of Chromium's
   # system libraries. An Actions cache is readable from the current branch or the default branch only, so
   # a merge group run (gh-readonly-queue/main/*) can read nothing a pull request saved, and the gate jobs
-  # never run on a proven push to main: this job publishes the shared caches. Build shard 1 also saves
-  # its complete installed workspace in a pull-request-scoped cache for the downstream integration wave.
+  # never run on a proven push to main: this job publishes the shared caches. ci-plan also saves its
+  # complete installed workspace before any downstream gate starts.
   # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
   warm-caches:
     name: Warm the gate caches on main
@@ -422,7 +421,7 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  # One gate id over three rows on one job key: the whole-workspace analyzers are the longest single
+  # One gate id over two rows on one job key: the whole-workspace analyzers are the longest single
   # branch of the run, and they are independent of each other. The row that carries the parallel group
   # also carries I18n Boundaries, in that order, because module contract generation creates and deletes
   # bundles inside the vertical source directories the i18n scanner walks.
@@ -435,7 +434,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        row: [boundaries, api, tooling]
+        row: [boundaries, api]
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -452,7 +451,7 @@ jobs:
           persist-credentials: false
 
       - name: Keep package manifests, lockfiles, and hook configs out of the repository root
-        if: matrix.row == 'tooling'
+        if: matrix.row == 'api'
         run: |
           stray="$(
             git ls-files -- ':(glob)**/package.json' ':(glob)**/package-lock.json' ':(glob)**/npm-shrinkwrap.json' \
@@ -473,7 +472,7 @@ jobs:
 
       # zerops.yaml still defines a cloudflared service, so this verifies live stage infrastructure.
       - name: Verify the pinned Cloudflare Tunnel binary
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'tooling' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
         working-directory: app
         timeout-minutes: 5
         run: |
@@ -498,11 +497,11 @@ jobs:
       # Keep the memory-heavy API analyzer outside this group, on its own row.
       - parallel:
           - name: Validate the root lefthook config
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'tooling' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
             run: app/node_modules/.bin/lefthook validate
 
           - name: Skills
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'tooling' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
             working-directory: app
             run: mise exec -- pnpm skills:check
 
@@ -669,6 +668,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
     env:
@@ -926,15 +926,15 @@ jobs:
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
-          ONTOS_CI_ISOLATED_WORKERS: '2'
+          ONTOS_CI_ISOLATED_WORKERS: '4'
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: |
           if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 2 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 4 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
           fi
           if [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 2 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 4 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
           fi
 
       - name: Prove native preproposal basis and genuine approval through registered owners
@@ -1040,8 +1040,6 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-        with:
-          save-node-modules: ${{ matrix.shard == 1 && github.ref != 'refs/heads/main' }}
 
       # The key covers this shard's unit sources and every shared package their builds read, so a commit
       # that touches none of them reuses the archive instead of rebuilding it. There are deliberately no

@@ -65,17 +65,25 @@ start_worker() {
     --exit-on-error --single-transaction <"$scratch/database.dump"
 }
 
-start_worker 1 &
-first=$!
-start_worker 2 &
-second=$!
+pids=()
+for worker in 1 2 3 4; do
+  start_worker "$worker" &
+  pids+=("$!")
+done
 failed=0
-wait "$first" || failed=1
-wait "$second" || failed=1
+for pid in "${pids[@]}"; do
+  wait "$pid" || failed=1
+done
 [[ "$failed" == 0 ]]
 
-# Assert the isolation that makes two workers safe, against the actual clusters.
-one="$(docker exec ontos-ci-db-1 psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
-two="$(docker exec ontos-ci-db-2 psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
-[[ -n "$one" && -n "$two" && "$one" != "$two" ]]
-echo 'Two independent PostgreSQL clusters and SpiceDB datastores are ready.'
+# Assert that every worker owns a different cluster, not just a different port.
+identifiers=()
+for worker in 1 2 3 4; do
+  identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
+  [[ -n "$identifier" ]]
+  for existing in "${identifiers[@]}"; do
+    [[ "$identifier" != "$existing" ]]
+  done
+  identifiers+=("$identifier")
+done
+echo 'Four independent PostgreSQL clusters and SpiceDB datastores are ready.'

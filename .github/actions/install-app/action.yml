@@ -13,8 +13,8 @@ inputs:
     default: "false"
   save-node-modules:
     description: >-
-      Save a missed complete installed workspace. One build shard saves the current pull-request cache so
-      downstream jobs do not relink it; warm-caches saves on main for future pull requests and merge groups.
+      Save a missed complete installed workspace. The planner saves it before downstream gates fan out;
+      warm-caches saves on main for future pull requests and merge groups.
       GitHub scopes pull-request caches to that pull request; they cannot replace main caches.
     default: "false"
   restore-typescript-build:
