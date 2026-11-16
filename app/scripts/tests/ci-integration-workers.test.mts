@@ -17,7 +17,7 @@ const decode = Schema.decodeUnknownResult(IntegrationWorkerSettingsSchema);
 const environment = {
   DATABASE_ADMIN_URL: 'postgresql://admin:admin@localhost:5433/ontos_ci',
   DATABASE_URL: 'postgresql://runtime:runtime@localhost:5433/ontos_ci',
-  ONTOS_CI_ISOLATED_WORKERS: '4',
+  ONTOS_CI_ISOLATED_WORKERS: '2',
   PARTY_REGISTRY_DATABASE_URL: 'postgresql://party:party@localhost:5433/ontos_ci',
   PARTY_REGISTRY_WORKER_DATABASE_URL: 'postgresql://worker:worker@localhost:5433/ontos_ci',
   SHELL_GATEWAY_ISSUER_DATABASE_URL: 'postgresql://issuer:issuer@localhost:5433/ontos_ci',
@@ -29,8 +29,8 @@ it('leaves ordinary local test configuration untouched', () => {
   ).toBeUndefined();
 });
 
-it('retargets every identity and child fixture to four distinct clusters and datastores', () => {
-  for (const worker of ['1', '2', '3', '4']) {
+it('retargets every identity and child fixture to two distinct clusters and datastores', () => {
+  for (const worker of ['1', '2']) {
     const current = Result.getOrThrow(
       decode({ ...environment, RSTEST_WORKER_ID: worker }).pipe(
         Result.map(integrationWorkerEnvironment),
@@ -62,20 +62,20 @@ it('refuses a missing or unprovisioned slot instead of sharing the source cluste
   for (const worker of [undefined, '0', '5', 'invalid']) {
     expect(Result.isFailure(decode({ ...environment, RSTEST_WORKER_ID: worker }))).toBe(true);
   }
-  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '2' }))).toBe(true);
+  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '4' }))).toBe(true);
   expect(Result.isFailure(decode({ ...environment, ONTOS_CI_WORKER_SLOT: '5', RSTEST_WORKER_ID: '1' }))).toBe(true);
 });
 
 it('keeps a single-worker package process in the scheduler-owned lane', () => {
   const current = Result.getOrThrow(
-    decode({ ...environment, ONTOS_CI_WORKER_SLOT: '3', RSTEST_WORKER_ID: '1' }).pipe(
+    decode({ ...environment, ONTOS_CI_WORKER_SLOT: '2', RSTEST_WORKER_ID: '1' }).pipe(
       Result.map(integrationWorkerEnvironment),
       Result.map(Option.getOrUndefined),
     ),
   );
-  expect(current?.ONTOS_TEST_DB_CONTAINER).toBe('ontos-ci-db-3');
-  expect(new URL(current?.DATABASE_ADMIN_URL ?? '').port).toBe('5543');
-  expect(current?.SPICEDB_ENDPOINT).toBe('localhost:55053');
+  expect(current?.ONTOS_TEST_DB_CONTAINER).toBe('ontos-ci-db-2');
+  expect(new URL(current?.DATABASE_ADMIN_URL ?? '').port).toBe('5542');
+  expect(current?.SPICEDB_ENDPOINT).toBe('localhost:55052');
 });
 
 it('launches package and root suites with the assigned lane and propagates failures', () => {
@@ -92,25 +92,25 @@ it('launches package and root suites with the assigned lane and propagates failu
   const launchEnvironment = {
     LAUNCH_OUTPUT: output,
     LAUNCH_STATUS: '0',
-    ONTOS_CI_WORKER_SLOT: '2',
+    ONTOS_CI_WORKER_SLOT: '1',
     PATH: `${directory}:/usr/bin:/bin`,
   };
   try {
     execFileSync('/bin/bash', [script, '--task', pricingSelector], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
-      '3',
+      '2',
       'exec -- pnpm --filter ./verticals/pricing run test:integration --pool.maxWorkers 1 --exclude tests/integration/market-revision-whole-current-pricing-postgres.test.ts',
     ]);
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
-      '3',
+      '2',
       'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
     });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
-      '3',
+      '2',
       'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 --shard 2/4',
     ]);
     expect(() =>
@@ -131,14 +131,14 @@ it('launches package and root suites with the assigned lane and propagates failu
 });
 
 it('recognizes only a provisioned worker container and port pair in isolated CI mode', () => {
-  for (const slot of [1, 2, 3, 4]) {
-    const endpoint = { container: `ontos-ci-db-${slot}`, isolatedWorkers: '4', port: 5540 + slot };
+  for (const slot of [1, 2]) {
+    const endpoint = { container: `ontos-ci-db-${slot}`, isolatedWorkers: '2', port: 5540 + slot };
     expect(isIntegrationWorkerEndpoint(endpoint)).toBe(true);
     expect(isIntegrationWorkerEndpoint({ ...endpoint, isolatedWorkers: '' })).toBe(false);
     expect(isIntegrationWorkerEndpoint({ ...endpoint, port: 5433 })).toBe(false);
     expect(isIntegrationWorkerEndpoint({ ...endpoint, container: 'unowned-cluster' })).toBe(false);
   }
-  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-5', isolatedWorkers: '4', port: 5545 })).toBe(false);
+  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-5', isolatedWorkers: '2', port: 5545 })).toBe(false);
 });
 
 it('partitions the two long direct-Rstest suites without duplicating compound package scripts', () => {
@@ -154,12 +154,13 @@ it('partitions the two long direct-Rstest suites without duplicating compound pa
         PACKAGE_FILTERS:
           '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
         PATH: `${directory}:/usr/bin:/bin`,
+        ROOT_RSTEST_SHARD: '1/2',
         ROOT_SUITE: 'true',
         TASK_OUTPUT: output,
       },
     });
     const tasks = readFileSync(output, 'utf-8').split('\0').filter(Boolean);
-    expect(tasks.filter((task) => task.startsWith('root:'))).toEqual(['root:1/4', 'root:2/4', 'root:3/4', 'root:4/4']);
+    expect(tasks.filter((task) => task.startsWith('root:'))).toEqual(['root:1/2']);
     const directScript = Schema.decodeUnknownSync(
       Schema.fromJsonString(
         Schema.Struct({

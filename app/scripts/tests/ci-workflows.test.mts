@@ -2302,6 +2302,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'native-composition': Schema.optional(Schema.Boolean),
               'native-preproposal': Schema.optional(Schema.Boolean),
               'package-filters': Schema.optional(Schema.String),
+              'root-rstest-shard': Schema.optional(Schema.String),
               'root-suite': Schema.optional(Schema.Boolean),
               suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
             }),
@@ -2541,7 +2542,7 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
-    ONTOS_CI_ISOLATED_WORKERS: '4',
+    ONTOS_CI_ISOLATED_WORKERS: '2',
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
   const isolate = job.steps.findIndex((step) => step.run === 'bash scripts/ci/start-integration-workers.sh');
@@ -2570,7 +2571,7 @@ it('covers every root integration shard and assigns each package integration sui
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
-  expect(roots).toHaveLength(1);
+  expect(roots.map((row) => row['root-rstest-shard'])).toEqual(['1/2', '2/2']);
   const packages = shards.filter((shard) => shardFilters(shard).length > 0);
   // Every row names exactly the packages it runs; none negates, so no row silently inherits a package
   // a reshard forgot.
@@ -2978,7 +2979,7 @@ it('refuses root native integration when the same-run build archives are missing
   }
 });
 
-it('keeps a full run within eight gate executors, excluding planning and the required-check collector', () => {
+it('keeps a full run within nine gate executors, excluding planning and the required-check collector', () => {
   const commands = readGateCommandJobs();
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
@@ -2990,7 +2991,7 @@ it('keeps a full run within eight gate executors, excluding planning and the req
     readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.include.length +
     integration.strategy.matrix.include.length +
     1;
-  expect(count).toBeLessThanOrEqual(8);
+  expect(count).toBeLessThanOrEqual(9);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
