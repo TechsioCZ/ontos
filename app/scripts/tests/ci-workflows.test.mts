@@ -1997,6 +1997,7 @@ it('builds Node artifacts in five pure shards that neither wait for each other n
 
 /** The per-shard archive cache: one key, no restore-keys, and the build runs only when it misses. */
 const SHARD_CACHE_KEY = `node-units-v1-$RUNNER_OS-$RUNNER_ARCH-${expression(MATRIX_SHARD)}-`;
+const ARTIFACTS_CACHE_STEP = 'artifacts-cache';
 const SHARD_CACHE_MISS = "steps.artifacts-cache.outputs.cache-hit != 'true'";
 
 it('reuses a build shard archive only on an exact key over its own inputs, and never a partial match', () => {
@@ -2007,11 +2008,11 @@ it('reuses a build shard archive only on an exact key over its own inputs, and n
     `bash scripts/ci/cache-entry-key.sh build-outputs "${SHARD_CACHE_KEY}" "\${units[@]}" >>"$GITHUB_OUTPUT"`,
   );
   expect(key?.env).toEqual({ SHARD_UNITS: expression('matrix.units') });
-  const restore = steps.find(({ id }) => id === 'artifacts-cache');
+  const restore = steps.find(({ id }) => id === ARTIFACTS_CACHE_STEP);
   expect(restore?.uses).toMatch(/^actions\/cache\/restore@[a-f0-9]{40}$/u);
   expect(restore?.with).toEqual({
     key: expression('steps.artifacts.outputs.key'),
-    path: `${RUNNER_TEMP_EXPRESSION}/units.tar.zst`,
+    path: `${RUNNER_TEMP_EXPRESSION}/units-${expression(MATRIX_SHARD)}.tar.zst`,
   });
   const stepIndex = (name: string) => steps.findIndex((step) => step.name === name);
   const save = stepIndex("Save this shard's built Node artifacts");
@@ -2020,7 +2021,7 @@ it('reuses a build shard archive only on an exact key over its own inputs, and n
   // Build, pack and save belong to the miss path only; the exact key is what makes that safe.
   const build = stepIndex("Build the shard's Node artifacts");
   const pack = stepIndex("Pack the shard's build outputs");
-  expect(steps.findIndex(({ id }) => id === 'artifacts-cache')).toBeLessThan(build);
+  expect(steps.findIndex(({ id }) => id === ARTIFACTS_CACHE_STEP)).toBeLessThan(build);
   expect(build).toBeLessThan(pack);
   expect(pack).toBeLessThan(save);
   for (const index of [build, pack, save]) {
@@ -2068,6 +2069,12 @@ it('warms every build shard archive on main, where the blocking gate can read it
       key: expression(`steps.node-shards.outputs.key-${shard}`),
       path: `${RUNNER_TEMP_EXPRESSION}/units-${shard}.tar.zst`,
     });
+    // actions/cache versions the path too: identical keys with different archive names cannot hit.
+    const gateRestore = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(
+      ({ id }) => id === ARTIFACTS_CACHE_STEP,
+    );
+    const gateCachePath = Schema.decodeUnknownSync(Schema.String)(gateRestore?.with?.path);
+    expect(gateCachePath.replace(expression(MATRIX_SHARD), String(shard))).toBe(save?.with?.path);
   }
   // Byte-identical keys and byte-identical archives: the same key script, the same build command and the
   // same pack pipeline as the shard job, with the shard number substituted for the matrix value.
@@ -2811,14 +2818,25 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
     for (const configuration of [
       LEFTHOOK_CONFIG,
       'app/.oxlintrc.json',
+      'app/oxfmt.config.ts',
       'app/packages/core-runtime/.prettierrc',
-      'app/rstest.config.ts',
-      'vitest.config.mts',
+      'app/tools/oxlint/effect-native/rules/no-native-timers.ts',
+      'app/patches/linter.patch',
+      'app/tsconfig.base.json',
+      'app/pnpm-lock.yaml',
+      'app/pnpm-workspace.yaml',
+      'app/.mise.toml',
     ]) {
       expect(sorted(selectFiles([configuration, CHANGED_SOURCE_PATH])), configuration).toEqual(sorted(tracked));
     }
-    // A path that merely sits below app/ is not a root configuration.
-    expect(selectFiles(['app/verticals/catalog/rstest.config.ts'])).toEqual([]);
+    // Test-runner configuration does not alter formatting or lint semantics.
+    for (const configuration of [
+      'app/rstest.config.ts',
+      'vitest.config.mts',
+      'app/verticals/catalog/rstest.config.ts',
+    ]) {
+      expect(selectFiles([configuration, CHANGED_SOURCE_PATH])).toEqual([CHANGED_SOURCE_PATH]);
+    }
     // The nightly cron keeps the whole-tree sweep.
     expect(sorted(selectFiles([CHANGED_SOURCE_PATH], { FULL_SWEEP: 'true' }))).toEqual(sorted(tracked));
     // An unavailable comparison sweeps everything rather than proving nothing.
