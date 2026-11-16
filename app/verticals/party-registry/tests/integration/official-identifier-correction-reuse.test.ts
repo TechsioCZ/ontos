@@ -348,9 +348,10 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
  * state checks to its own Party and keeps its own finalizers, and the declaration order is
  * load-bearing: the last test leaves `moduleAccess` revoked and `deniedAccess` entries set.
  */
-const PartyCorrectionReuseFixture = Context.Service<Effect.Success<typeof makeFixture>>(
-  'IdentifierCorrectionReuseTest.fixture',
-);
+class PartyCorrectionReuseFixture extends Context.Service<
+  PartyCorrectionReuseFixture,
+  Effect.Success<typeof makeFixture>
+>()('IdentifierCorrectionReuseTest.fixture') {}
 const correctionReuseLayer = Layer.effect(PartyCorrectionReuseFixture, makeFixture).pipe(
   Layer.provideMerge(nativeServices),
 );

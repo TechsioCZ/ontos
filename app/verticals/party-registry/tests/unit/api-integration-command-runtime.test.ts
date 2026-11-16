@@ -1509,8 +1509,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         ];
         // `bindActionTestServices` binds the transition at construction, so one bound service reads
         // the case under test from here instead of rebuilding the harness and web handler per case.
-        let transition: () => Effect.Effect<{ readonly _tag: 'not_found' }, PartyPersistenceUnavailable> =
-          notFoundTransition;
+        let transition: (typeof cases)[number]['transition'] = notFoundTransition;
         const harness = yield* makeActionTestHarness({
           access: 'allowed',
           ownerRegistration: partyRegistryBackendRegistration,

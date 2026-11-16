@@ -1,4 +1,9 @@
 import { fileURLToPath } from 'node:url';
+import {
+  MediaOrderingNativeFailure,
+  mediaOrderingFailure,
+  requireMediaOrderingCondition,
+} from '../support/media-ordering-native-failure.ts';
 import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import {
   ActiveApplicationCompositionSnapshotSchema,
@@ -86,16 +91,10 @@ const services = NodeServices.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
 );
-class MediaOrderingNativeFailure extends Schema.TaggedError<MediaOrderingNativeFailure>()(
-  'MediaOrderingNativeFailure',
-  { stage: Schema.String },
-) {}
-const fail = (stage: string) => new MediaOrderingNativeFailure({ stage });
 const IdentityProtectionMessageSchema = Schema.Literals([
   'catalog descriptive identity or revision is invalid',
   'catalog descriptive identity is immutable',
 ]);
-const requireCondition = (condition: boolean, stage: string) => (condition ? Effect.void : Effect.fail(fail(stage)));
 const PublicKeySchema = Schema.Struct({ crv: Schema.Literal('Ed25519'), kty: Schema.Literal('OKP'), x: Schema.String });
 const PublicKeysSchema = Schema.Struct({
   keys: Schema.Array(
@@ -119,7 +118,7 @@ const decodeOwnerSource = Effect.fn('MediaOrderingNative.decodeOwnerSource')(fun
   document: string,
 ) {
   const source = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MediaOwnerSourceSchema))(document);
-  yield* requireCondition(
+  yield* requireMediaOrderingCondition(
     source.contract.deployment.appId === 'catalog' &&
       source.contract.deployment.buildMarker === source.buildIdentity.buildMarker,
     'owner-source-identity',
@@ -222,7 +221,7 @@ const describeOwnerSource = Effect.fn('MediaOrderingNative.describeOwnerSource')
     [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
     { concurrency: 3 },
   );
-  yield* requireCondition(code === 0, 'owner-source-description');
+  yield* requireMediaOrderingCondition(code === 0, 'owner-source-description');
   const document = output.join('');
   yield* decodeOwnerSource(document);
   return document;
@@ -261,7 +260,7 @@ const bundleReceiver = Effect.fn('MediaOrderingNative.bundleReceiver')(function*
   const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stderr), Stream.runDrain(child.stdout)], {
     concurrency: 3,
   });
-  yield* requireCondition(code === 0, 'receiver-bundle');
+  yield* requireMediaOrderingCondition(code === 0, 'receiver-bundle');
   return { artifact, directory };
 });
 const describeReceiver = Effect.fn('MediaOrderingNative.describeReceiver')(function* describeReceiver(
@@ -280,17 +279,17 @@ const describeReceiver = Effect.fn('MediaOrderingNative.describeReceiver')(funct
     [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
     { concurrency: 3 },
   );
-  yield* requireCondition(code === 0, 'receiver-description');
+  yield* requireMediaOrderingCondition(code === 0, 'receiver-description');
   const actual = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MediaOrderingDescriptionSchema))(
     output.join(''),
   );
   const { requirements } = source.contract.manifest;
   if (requirements === undefined) {
-    return yield* fail('owner-source-requirements');
+    return yield* mediaOrderingFailure('owner-source-requirements');
   }
   const encodeRequirements = Schema.encodeEffect(Schema.fromJsonString(OntosModuleRequirementsSchema));
   const encodeOperations = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(OntosOperationContractSchema)));
-  return yield* requireCondition(
+  return yield* requireMediaOrderingCondition(
     actual.deployment.appId === source.contract.deployment.appId &&
       actual.deployment.buildMarker === source.buildIdentity.buildMarker &&
       actual.moduleId === source.contract.manifest.module.id &&
@@ -303,7 +302,7 @@ const describeReceiver = Effect.fn('MediaOrderingNative.describeReceiver')(funct
 const captureOwnedCertificate = Effect.fn('MediaOrderingNative.captureOwnedCertificate')(
   function* captureOwnedCertificate(isolated: Effect.Success<ReturnType<typeof makeIsolatedNativeDatabaseFixture>>) {
     const { admin, runtime } = isolated.connections;
-    yield* requireCondition(
+    yield* requireMediaOrderingCondition(
       /^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(admin.database) &&
         admin.database === runtime.database &&
         admin.host === runtime.host &&
@@ -327,7 +326,7 @@ const captureOwnedCertificate = Effect.fn('MediaOrderingNative.captureOwnedCerti
     }>`select current_database() as database_name, d.oid::int as database_oid, pg_get_userbyid(d.datdba) as database_owner,
       inet_server_addr()::text as server_address, inet_server_port() as server_port,
       session_user::text as session_role, current_user::text as effective_role from pg_database d where d.datname=current_database()`;
-    yield* requireCondition(
+    yield* requireMediaOrderingCondition(
       actual !== undefined &&
         actual.database_name === admin.database &&
         actual.database_owner === admin.user &&
@@ -336,7 +335,7 @@ const captureOwnedCertificate = Effect.fn('MediaOrderingNative.captureOwnedCerti
       'core-owned-identity',
     );
     if (actual === undefined) {
-      return yield* fail('core-owned-identity');
+      return yield* mediaOrderingFailure('core-owned-identity');
     }
     const certificate = yield* Schema.decodeUnknownEffect(MediaOwnedDatabaseCertificateSchema)({
       adminRole: admin.user,
@@ -361,7 +360,7 @@ const makeAuthority = Effect.fn('MediaOrderingNative.makeAuthority')(function* m
   buildMarker: string,
 ) {
   const generated = yield* Effect.tryPromise({
-    catch: () => fail('issuer-key'),
+    catch: () => mediaOrderingFailure('issuer-key'),
     try: async () => {
       const keys = await globalThis.crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
       if (!('privateKey' in keys)) {
@@ -372,7 +371,7 @@ const makeAuthority = Effect.fn('MediaOrderingNative.makeAuthority')(function* m
   });
   const kid = yield* nextId;
   const exported = yield* Effect.tryPromise({
-    catch: () => fail('issuer-public-key'),
+    catch: () => mediaOrderingFailure('issuer-public-key'),
     try: async () => await globalThis.crypto.subtle.exportKey('jwk', generated.publicKey),
   });
   const publicKey = yield* Schema.decodeUnknownEffect(PublicKeySchema)(exported);
@@ -409,7 +408,7 @@ const makeAuthority = Effect.fn('MediaOrderingNative.makeAuthority')(function* m
     ).toString('base64url');
     const content = `${header}.${payload}`;
     const signature = yield* Effect.tryPromise({
-      catch: () => fail('issuer-signature'),
+      catch: () => mediaOrderingFailure('issuer-signature'),
       try: async () =>
         await globalThis.crypto.subtle.sign('Ed25519', generated.privateKey, new TextEncoder().encode(content)),
     });
@@ -479,8 +478,8 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
     ),
     Stream.runForEach((response) => Queue.offer(responses, response)),
     Effect.andThen(Fiber.join(captureStderr)),
-    Effect.andThen(Queue.offer(responses, fail('receiver-eof'))),
-    Effect.catch(() => Queue.offer(responses, fail('receiver-protocol'))),
+    Effect.andThen(Queue.offer(responses, mediaOrderingFailure('receiver-eof'))),
+    Effect.catch(() => Queue.offer(responses, mediaOrderingFailure('receiver-protocol'))),
     Effect.forkScoped,
   );
   const receive = Queue.take(responses).pipe(
@@ -495,9 +494,9 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
   yield* send(bootstrap);
   const ready = yield* receive;
   if (ready.type !== 'BOOTED') {
-    return yield* fail('receiver-ready-order');
+    return yield* mediaOrderingFailure('receiver-ready-order');
   }
-  yield* requireCondition(
+  yield* requireMediaOrderingCondition(
     ready.buildMarker ===
       bootstrap.composition.composition.modules.find(({ deployment }) => deployment.appId === 'catalog')?.deployment
         .buildMarker && ready.compositionRevision === bootstrap.composition.composition.revision,
@@ -510,7 +509,7 @@ const startReceiver = Effect.fn('MediaOrderingNative.startReceiver')(function* s
       version: mediaOrderingProtocol,
     }).pipe(
       Effect.andThen(receive),
-      Effect.flatMap((response) => requireCondition(response.type === 'STOPPED', 'receiver-stop')),
+      Effect.flatMap((response) => requireMediaOrderingCondition(response.type === 'STOPPED', 'receiver-stop')),
     ),
   };
 });
@@ -547,7 +546,10 @@ class MediaOrderingOwnerBuild extends Context.Service<
 const MediaOrderingOwnerBuildLive = Layer.effect(
   MediaOrderingOwnerBuild,
   Effect.gen(function* observeMediaOrderingOwnerBuild() {
-    yield* requireCondition((yield* Config.String('APP_ENV_PATH')) === '/dev/null', 'closed-parent-environment');
+    yield* requireMediaOrderingCondition(
+      (yield* Config.String('APP_ENV_PATH')) === '/dev/null',
+      'closed-parent-environment',
+    );
     const ownerSourceDocument = yield* describeOwnerSource();
     const source = yield* decodeOwnerSource(ownerSourceDocument);
     const bundle = yield* bundleReceiver(source.buildIdentity);
@@ -777,7 +779,7 @@ const installRollbackFault = Effect.fn('MediaOrderingNative.installRollbackFault
   yield* guardMediaOwnedDatabase(native.bootstrap.database);
   const { client } = native.owned;
   const { tenantId } = native.fixture;
-  yield* requireCondition(
+  yield* requireMediaOrderingCondition(
     [assignmentId, tenantId].every((value) =>
       /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(value),
     ),
@@ -845,7 +847,7 @@ const verifyIdentityDispatch = Effect.fn('MediaOrderingNative.verifyIdentityDisp
     yield* client`select * from catalog.product_localized_facts where tenant_id=${tenantId} and product_id=${productId} order by locale`;
   const beforeVariantFacts =
     yield* client`select * from catalog.variant_localized_facts where tenant_id=${tenantId} and variant_id=${variantId} order by locale`;
-  const rollback = fail('identity-proof-rollback');
+  const rollback = mediaOrderingFailure('identity-proof-rollback');
   const probe = yield* client
     .withTransaction(
       Effect.gen(function* exerciseIdentityGuards() {
@@ -858,7 +860,7 @@ const verifyIdentityDispatch = Effect.fn('MediaOrderingNative.verifyIdentityDisp
           assignment_set_id: string;
         }>`select assignment_set_id from catalog.catalog_media_assignments where tenant_id=${tenantId} and assignment_id=${assignmentId}`;
         if (assignment === undefined) {
-          return yield* fail('identity-proof-assignment');
+          return yield* mediaOrderingFailure('identity-proof-assignment');
         }
         const setId = assignment.assignment_set_id;
         const cases = [

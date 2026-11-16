@@ -950,7 +950,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
   // observation makes, so a future-effective publication is read at an exact instant instead of
   // racing real time on a loaded worker. Requests outside an observation keep the live clock.
   const liveClock = yield* Clock.Clock;
-  let pinnedMillis: number | undefined;
+  let pinnedMillis: number | null = null;
   const servedMillis = () => pinnedMillis ?? liveClock.currentTimeMillisUnsafe();
   const servedClock: Clock.Clock = {
     currentTimeMillis: Effect.sync(servedMillis),
@@ -972,7 +972,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
       () => observation,
       () =>
         Effect.sync(() => {
-          pinnedMillis = undefined;
+          pinnedMillis = null;
         }),
     );
   const requestContext = Context.add(Context.makeUnsafe<unknown>(new Map()), Clock.Clock, servedClock);
