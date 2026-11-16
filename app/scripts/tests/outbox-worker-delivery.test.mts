@@ -126,7 +126,7 @@ const readWorkerOutput = (child: { readonly stdout: Readable }) =>
     // Accumulating to the first newline makes the returned value independent of that split, which
     // is what the JSON and pattern assertions on it depend on. `setEncoding` decodes at this I/O
     // boundary, so each chunk is text and a multi-byte character split across chunks stays intact.
-    child.stdout.setEncoding('utf8');
+    child.stdout.setEncoding('utf-8');
     let buffered = '';
     const onData = (chunk: string): void => {
       buffered += chunk;

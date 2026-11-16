@@ -69,7 +69,7 @@ const domainVocabulary = [
 
 // Listed as pairs rather than an object literal so a duplicated path shortens the staged record
 // without shortening this list, which the file-count assertion then reports.
-const staged: ReadonlyArray<readonly [string, string]> = [
+const staged: readonly (readonly [string, string])[] = [
   [source, 'export const check = (value: unknown) => value instanceof Error;\n'],
   ['apps/demo/src/services/factory.ts', constructorFactory],
   [serviceConsumer, constructorConsumer],
