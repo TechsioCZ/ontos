@@ -91,6 +91,7 @@ jobs:
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
+      integrationSetup: ${{ steps.selection.outputs.integrationSetup }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -568,10 +569,11 @@ jobs:
           fi
           git diff --exit-code HEAD
 
-  # Eight integration batches and four build shards use at most eighteen hosted slots:
-  # 2 source + format + static + 4 builds + 10 service rows = 18.
-  # Three unit rows replace completed build slots; repository tooling shares the typecheck runner.
-  service-integration:
+  # First wave: builds and genuine bootstrap/browser proofs. Second wave: twelve
+  # artifact-consuming rows, admitted after those runners and format/lint finish.
+  # Peak is max(4 builds + 2 setup + 2 source + static + format,
+  #             12 integration + 3 unit + 2 source + static) = 18.
+  service-integration-setup:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
@@ -583,8 +585,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
-    env:
+        include: ${{ fromJSON(needs.ci-plan.outputs.integrationSetup) }}
+    env: &integration-environment
       # Cache compiled code only; every fixture still starts fresh owners and databases.
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       RAYON_NUM_THREADS: '1'
@@ -609,7 +611,7 @@ jobs:
       SPICEDB_GRPC_PORT: '50051'
       SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
-    steps:
+    steps: &integration-steps
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -762,24 +764,12 @@ jobs:
         working-directory: app
         run: bash scripts/ci/start-integration-workers.sh
 
-      - name: Run source-only Core integration while the Node artifacts build
-        if: matrix.suite == 'integration' && contains(matrix.package-filters, '--filter ./packages/core-runtime')
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          INTEGRATION_PHASE: source
-          INTEGRATION_LANES: ${{ matrix.lanes }}
-          ONTOS_CI_ISOLATED_WORKERS: '4'
-          PACKAGE_FILTERS: ${{ matrix.package-filters }}
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: bash scripts/ci/run-integration-suites.sh
-
       # This acceptance uses only source, PostgreSQL and SpiceDB, not a single Node artifact.
       # It previously spent 289 seconds behind the build and another native test in root shard 6/16.
-      - name: Prove scoped owner migrations while the Node artifacts build
+      - name: Prove scoped owner migrations on a separate cluster
         id: scoped-migrations
         background: true
-        if: matrix.root-suite == true && matrix.root-rstest-shard == '3/8'
+        if: matrix.root-suite == true && matrix.root-rstest-shard == '4/12'
         working-directory: app
         env:
           APP_ENV_PATH: /dev/null
@@ -793,7 +783,7 @@ jobs:
       # Setup overlaps the builds. Artifact consumers still wait for this exact run's uploads;
       # the required gate independently requires the build jobs to finish successfully.
       - name: Wait for the same-run Node artifacts
-        if: matrix.suite != 'browser'
+        if: matrix.suite == 'bootstrap'
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
@@ -823,13 +813,6 @@ jobs:
         run: |
           mise exec -- pnpm active-composition:publish prove-build --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
           echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
-      - name: Materialize the native Customer Context worker artifact
-        if: matrix.root-suite == true
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-        run: mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker
-
       # The whole-topology Node artifact proof. It needs every build shard's outputs, so it used to run
       # inside the last build shard, which made the complete integration wave wait for it: shard 1 ended
       # at 6.0 min and the proving shard at 11.6. As a row of this matrix it starts with the wave instead,
@@ -948,6 +931,22 @@ jobs:
   # Release outputs embed this exact commit in their identities. Build them here;
   # source-content caching across commits hands native fixtures another release.
   # Dependency and incremental typecheck caches remain independent of releases.
+  service-integration:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build, service-integration-setup, format-and-lint]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.service-integration-setup.result == 'success' && needs.format-and-lint.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
+    env: *integration-environment
+    steps: *integration-steps
+
   node-artifact-build:
     name: Build node artifacts (${{ matrix.shard }}/4)
     needs: [ci-plan]

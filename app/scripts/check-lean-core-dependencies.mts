@@ -213,6 +213,7 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm',
   'drizzle-orm/effect-core',
   'drizzle-orm/effect-postgres',
+  'drizzle-orm/effect-postgres/migrator',
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',

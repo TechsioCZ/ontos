@@ -1,7 +1,7 @@
 import { Console, Config, Effect, FileSystem, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
-import { planCiChecks, withCiTopologyDependencies } from './ci-impact.mts';
+import { integrationPhases, planCiChecks, withCiTopologyDependencies } from './ci-impact.mts';
 import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
@@ -67,6 +67,7 @@ export const CiTopologySchema = Schema.Struct({
 
 export {
   filterPaths,
+  integrationPhases,
   matchingPackages,
   planCiChecks,
   unknownFilters,
@@ -178,9 +179,11 @@ const cli = Command.make(
         templates,
       });
       const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+      const phases = integrationPhases(plan.integration);
       const encoded = yield* Effect.all({
         expected: encode(plan.expected),
-        integration: encode(plan.integration),
+        integration: encode(phases.work),
+        integrationSetup: encode(phases.prerequisites),
         source: encode(plan.source),
         unit: encode(plan.unit),
       });

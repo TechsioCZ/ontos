@@ -1163,6 +1163,36 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       renewObservation,
       seal: () => runCompositionOperation(sealApplicationCompositionAuthority),
     });
+    const restoreCoreMigrationJournal = Effect.fn('IsolatedNativeDatabase.restoreCoreMigrationJournal')(
+      function* restoreCoreMigrationJournal() {
+        if (input.mode !== schemaOnly) {
+          return yield* unavailable('Migration receipt restoration requires a schema-only clone');
+        }
+        // Immutable migration metadata only. Business rows, authority and trust
+        // material remain local to the clone; the source is never mutated.
+        const migrations = yield* admin.executor.execute<{
+          readonly hash: string;
+          readonly name: string;
+          readonly version: string;
+        }>(
+          sql`select hash,name,created_at::text as version
+            from drizzle.__drizzle_migrations_core order by created_at,id`,
+          'objects',
+        );
+        if (migrations.length === 0) {
+          return yield* unavailable('The source has no committed Core migration receipts');
+        }
+        return yield* clone.executor
+          .execute(
+            sql`insert into drizzle.__drizzle_migrations_core (hash,name,created_at) values ${sql.join(
+              migrations.map((migration) => sql`(${migration.hash},${migration.name},${migration.version}::bigint)`),
+              sql`,`,
+            )}`,
+            'objects',
+          )
+          .pipe(Effect.asVoid);
+      },
+    );
     // Only this scope's new database is reachable; no administrative executor escapes.
     const fixture = {
       composition,
@@ -1170,6 +1200,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       migrateCoreSchema,
       prepareAssortmentAuthorizationRuntime,
       publishInitialComposition,
+      restoreCoreMigrationJournal,
     };
     const verifyOwnership = Effect.fn('IsolatedNativeDatabase.verifyOwnedFixture')(function* verifyOwnedFixture(
       expected: OwnedNativeDatabaseExpectation,
