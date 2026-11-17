@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Clock, Console, Effect, Schema, Semaphore, Stream } from 'effect';
+import { Clock, Console, Effect, Path, Schema, Semaphore, Stream } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -45,7 +45,8 @@ const cli = Command.make(
   },
   ({ concurrency }) =>
     Effect.gen(function* checkCommand() {
-      const root = new URL('..', import.meta.url).pathname;
+      const path = yield* Path.Path;
+      const root = yield* path.fromFileUrl(new URL('..', import.meta.url));
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const permits = yield* Semaphore.make(Math.max(1, concurrency));
       const failures: string[] = [];
