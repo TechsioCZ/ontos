@@ -216,8 +216,13 @@ it.live('executes the real planner: an unreadable comparison deploys every servi
 
 it.live("executes the real planner over this commit's reference graph: CI-only changes deploy nothing", () =>
   Effect.gen(function* ciOnly() {
+    // A test beside the delivery scripts is no delivery script: no service reads it.
     const { outputs, plan } = yield* planWith(
-      changing(['.github/workflows/ultramodern-workspace-gates.yml', 'app/scripts/tests/ci-workflows.test.mts']),
+      changing([
+        '.github/workflows/ultramodern-workspace-gates.yml',
+        'app/scripts/tests/ci-workflows.test.mts',
+        'app/scripts/zerops/app-boot-stages.test.mts',
+      ]),
     );
     expect(plan.full).toBe(false);
     expect(plan.services).toEqual([]);
