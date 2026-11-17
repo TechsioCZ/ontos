@@ -20,7 +20,7 @@ import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-ru
 import { NodeHttpServer } from '@effect/platform-node';
 import {
   Array as EffectArray,
-  Context,
+  Config,
   Duration,
   Effect,
   FileSystem,
@@ -33,7 +33,6 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { HttpServer } from 'effect/http';
 import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess } from 'effect/process';
 
@@ -65,34 +64,56 @@ const compositionFailure = (error: ActiveApplicationCompositionUnavailableError)
   return unavailable(`Genuine composition: ${error.reason}; ${Option.isSome(message) ? message.value.message : ''}`);
 };
 
-const allocateNativePort = Effect.gen(function* allocateNativePort() {
-  const server = Context.get(
-    yield* Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: 0 })),
-    HttpServer.HttpServer,
-  );
-  if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
-    return yield* unavailable('The native receiver requires a loopback TCP port');
-  }
-  return server.address.port;
-});
+/**
+ * Fixture ports come from a block below the kernel's ephemeral range (32768-60999 on Linux, 49152-65535
+ * on macOS), one block per scheduler lane, or block 0 outside the scheduler. A port taken from the
+ * ephemeral range and released before an owner child binds it can meanwhile become the local port of
+ * any outgoing connection on the runner, and the other lane opens many. Inside its block a lane runs one
+ * test process at a time, and that process never hands out a port twice.
+ */
+const fixturePortBase = 20_000;
+const fixturePortBlock = 2000;
+const FixturePortLane = Config.Int('ONTOS_CI_WORKER_SLOT').pipe(Config.withDefault(0));
+const handedOutPorts = new Set<number>();
+
+const bindFixturePort = (port: number) =>
+  Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })).pipe(Effect.as(port), Effect.option);
 
 /**
- * Allocates `count` loopback ports with every listener held open at once, so the operating system
- * cannot hand the same port to two of them, to another test worker or to an unrelated process. The
- * listeners are released together when this effect completes, immediately before the owner children
- * bind the ports. Allocating one port at a time cannot give that guarantee: the listener is already
- * closed when the number is returned, which is why no single-port form exists.
+ * Allocates `count` loopback ports with every listener held open at once, so no two of them, and no
+ * other fixture of this lane, can receive the same port. The listeners are released together when this
+ * effect completes, immediately before the owner children bind the ports.
  */
 export const nativePortList = (count: number) =>
-  Effect.scoped(Effect.all(Array.from({ length: count }, () => allocateNativePort)));
+  Effect.scoped(
+    Effect.gen(function* allocateFixturePorts() {
+      const start = fixturePortBase + (yield* FixturePortLane) * fixturePortBlock;
+      const candidates = Array.from({ length: fixturePortBlock }, (_, index) => start + index).filter(
+        (port) => !handedOutPorts.has(port),
+      );
+      const ports = yield* Effect.reduce(
+        candidates,
+        (): readonly number[] => [],
+        (bound, port) =>
+          bound.length === count
+            ? Effect.succeed(bound)
+            : bindFixturePort(port).pipe(
+                Effect.map(Option.match({ onNone: () => bound, onSome: (free) => [...bound, free] })),
+              ),
+      );
+      if (ports.length < count) {
+        return yield* unavailable(`Fixture port block ${start} has fewer than ${count} free ports`);
+      }
+      for (const port of ports) {
+        handedOutPorts.add(port);
+      }
+      return ports;
+    }),
+  );
 
 /** `nativePortList` for the fixtures that address their ports by owner appId. */
 export const nativePorts = (keys: readonly string[]) =>
-  Effect.scoped(
-    Effect.forEach(keys, (key) => allocateNativePort.pipe(Effect.map((port) => [key, port] as const)), {
-      concurrency: 1,
-    }).pipe(Effect.map((allocated) => new Map(allocated))),
-  );
+  nativePortList(keys.length).pipe(Effect.map((ports) => new Map(EffectArray.zip(keys, ports))));
 
 const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContract')(function* publishedContract(
   vertical: string,
