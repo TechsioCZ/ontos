@@ -2124,7 +2124,11 @@ const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: st
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
   try {
     const gh = path.join(directory, 'gh');
-    writeFileSync(gh, '#!/bin/sh\n[ "$1" = api ] && [ "$3" = --jq ] || exit 2\nprintf %s "$FAKE_JOBS" | jq -r "$4"\n');
+    // The first read fails the way a truncated API answer does; the wait must read the jobs again.
+    writeFileSync(
+      gh,
+      `#!/bin/sh\n[ "$1" = api ] && [ "$3" = --jq ] || exit 2\nif [ ! -e "${directory}/read" ]; then : >"${directory}/read"; echo 'unexpected end of JSON input' >&2; exit 1; fi\nprintf %s "$FAKE_JOBS" | jq -r "$4"\n`,
+    );
     chmodSync(gh, 0o755);
     execFileSync(
       '/bin/bash',

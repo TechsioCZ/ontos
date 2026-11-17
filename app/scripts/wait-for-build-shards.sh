@@ -29,8 +29,14 @@ filter='.jobs[] | select((.name | startswith(env.PREFIX)) and .name != env.OWN)
 url="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100"
 
 while :; do
-  # `filter=latest` lists the jobs of the newest attempt, including the ones a re-run kept.
-  jobs="$(PREFIX="$prefix" OWN="$own" UPLOAD="$upload_step" gh api "$url" --jq "$filter")"
+  # `filter=latest` lists the jobs of the newest attempt, including the ones a re-run kept. An
+  # unreadable answer, such as a truncated API response, says nothing about any shard, so the next
+  # poll reads the jobs again; the job's own timeout bounds the wait.
+  if ! jobs="$(PREFIX="$prefix" OWN="$own" UPLOAD="$upload_step" gh api "$url" --jq "$filter")"; then
+    echo "::warning title=Run jobs unreadable::Reading this run's jobs failed; polling again."
+    sleep "$interval"
+    continue
+  fi
   ended="$(printf '%s\n' "$jobs" | grep -v -E "^(success|uploaded|pending)${tab}" | grep -v '^$' || true)"
   if [ -n "$ended" ]; then
     summary="$(printf '%s' "$ended" | tr '\n' ',')"
