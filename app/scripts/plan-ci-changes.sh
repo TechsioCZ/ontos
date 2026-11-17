@@ -49,6 +49,6 @@ if [[ "$mode" == docs || "$mode" == proven ]]; then
     "format-and-lint":"skipped", "service-integration":"skipped",
     "node-artifact-build":"skipped"
   }' | sed 's/^/expected=/' >>"$GITHUB_OUTPUT"
-  printf 'source=[]\nsourceExtra=[]\nunit=[]\nunitAfterPreparation=[]\nintegration=[]\nintegrationSetup=[]\nintegrationTopology=[]\n' >>"$GITHUB_OUTPUT"
+  printf 'source=[]\nsourceExtra=[]\nunit=[]\nunitAfterPreparation=[]\nintegration=[]\nintegrationAfterContracts=[]\nintegrationAfterTooling=[]\nintegrationSetup=[]\nintegrationTopology=[]\n' >>"$GITHUB_OUTPUT"
 fi
 printf '%s\n' "$reason"

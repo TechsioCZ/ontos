@@ -9,6 +9,8 @@ jq -e '
   .["ci-plan"] as $plan |
   ($plan.outputs.expected | fromjson) as $expected |
   ($plan.outputs.unitAfterPreparation | fromjson) as $unitAfter |
+  ($plan.outputs.integrationAfterContracts | fromjson) as $afterContracts |
+  ($plan.outputs.integrationAfterTooling | fromjson) as $afterTooling |
   [
     "workspace-gate", "workspace-unit", "static-contracts", "format-and-lint",
     "service-integration", "node-artifact-build"
@@ -16,10 +18,14 @@ jq -e '
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and
-  (($needs | keys | sort) == (["workspace-source-extra", "workspace-unit-after-preparation", "queue-proof", "ci-plan", "node-artifact-build-remaining", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  (($needs | keys | sort) == (["workspace-source-extra", "workspace-unit-after-preparation", "service-integration-after-contracts", "service-integration-after-tooling", "queue-proof", "ci-plan", "node-artifact-build-remaining", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
   ($needs["workspace-source-extra"].result == $expected["workspace-gate"]) and
   (($unitAfter | type) == "array") and
   ($needs["workspace-unit-after-preparation"].result == (if ($unitAfter | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
+  (($afterContracts | type) == "array") and
+  (($afterTooling | type) == "array") and
+  ($needs["service-integration-after-contracts"].result == (if ($afterContracts | length) > 0 then $expected["service-integration"] else "skipped" end)) and
+  ($needs["service-integration-after-tooling"].result == (if ($afterTooling | length) > 0 then $expected["service-integration"] else "skipped" end)) and
   ($needs["node-artifact-build-remaining"].result == $expected["node-artifact-build"]) and
   ($needs["node-topology-proof"].result == $expected["service-integration"]) and
   ($needs["service-integration-setup"].result == $expected["service-integration"]) and

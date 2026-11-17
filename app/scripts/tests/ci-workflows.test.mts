@@ -20,7 +20,7 @@ import { parse } from 'yaml';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 
-import { CiTemplatesSchema, integrationPhases } from '../plan-ci-checks.mts';
+import { CiTemplatesSchema, integrationPhases, unitPhases } from '../plan-ci-checks.mts';
 
 const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
 const INTEGRATION_DATABASE_ARTIFACT = 'integration-database';
@@ -63,10 +63,13 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
 const SERVICE_SETUP_JOB = 'service-integration-setup';
+const STATIC_CONTRACTS_JOB = 'static-contracts';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const SOURCE_EXTRA_JOB = 'workspace-source-extra';
 const UNIT_AFTER_PREPARATION_JOB = 'workspace-unit-after-preparation';
+const INTEGRATION_AFTER_CONTRACTS_JOB = 'service-integration-after-contracts';
+const INTEGRATION_AFTER_TOOLING_JOB = 'service-integration-after-tooling';
 
 /** Expand only matrix references for the full-run contract tests; separately test the actual planner. */
 const readGateWorkflow = () => {
@@ -80,6 +83,8 @@ const readGateWorkflow = () => {
   const matrices = {
     ...templates,
     integration: phases.work,
+    integrationAfterContracts: phases.afterContracts,
+    integrationAfterTooling: phases.afterTooling,
     integrationSetup: phases.preparation,
     integrationTopology: phases.topology,
   };
@@ -87,6 +92,8 @@ const readGateWorkflow = () => {
     [WORKSPACE_GATE_JOB, 'source'],
     [WORKSPACE_UNIT_JOB, 'unit'],
     [SERVICE_INTEGRATION_JOB, 'integration'],
+    [INTEGRATION_AFTER_CONTRACTS_JOB, 'integrationAfterContracts'],
+    [INTEGRATION_AFTER_TOOLING_JOB, 'integrationAfterTooling'],
     [SERVICE_SETUP_JOB, 'integrationSetup'],
     [TOPOLOGY_PROOF_JOB, 'integrationTopology'],
   ] as const) {
@@ -1665,17 +1672,17 @@ const FORMAT_AND_LINT_JOB = 'format-and-lint';
 const ROOT_GATE_JOBS = [
   WORKSPACE_GATE_JOB,
   WORKSPACE_UNIT_JOB,
-  'static-contracts',
+  STATIC_CONTRACTS_JOB,
   FORMAT_AND_LINT_JOB,
   SERVICE_INTEGRATION_JOB,
   NODE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** What each gate job waits for. The bootstrap proof is a row of the suites, so it adds no `needs` edge. */
+/** Direct producer dependencies of the six public gate IDs. */
 const GATE_JOB_NEEDS = {
   [FORMAT_AND_LINT_JOB]: [CI_PLAN_JOB],
   [NODE_ARTIFACT_BUILD_JOB]: [CI_PLAN_JOB],
   [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, FORMAT_AND_LINT_JOB],
-  'static-contracts': [CI_PLAN_JOB],
+  [STATIC_CONTRACTS_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, REMAINING_NODE_BUILD_JOB],
 } satisfies Readonly<Record<string, readonly string[]>>;
@@ -1816,6 +1823,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_UNIT_JOB,
     UNIT_AFTER_PREPARATION_JOB,
     ...GATE_JOBS.slice(2),
+    INTEGRATION_AFTER_CONTRACTS_JOB,
+    INTEGRATION_AFTER_TOOLING_JOB,
     REMAINING_NODE_BUILD_JOB,
     TOPOLOGY_PROOF_JOB,
     SERVICE_SETUP_JOB,
@@ -1830,11 +1839,15 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
             GATE_JOBS.map((gate) => [gate, ['docs', 'proven'].includes(mode) ? 'skipped' : 'success']),
           ),
         ),
+        integrationAfterContracts: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
+        integrationAfterTooling: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
         mode,
         unitAfterPreparation: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
       },
       result: 'success',
     },
+    [INTEGRATION_AFTER_CONTRACTS_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [INTEGRATION_AFTER_TOOLING_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
     [REMAINING_NODE_BUILD_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
@@ -1857,6 +1870,28 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     >,
   ) => stepPasses(script, { NEEDS_JSON: JSON.stringify(value) });
   expect(passes(needs('full', passed))).toBe(true);
+  for (const [helper, output] of [
+    [INTEGRATION_AFTER_CONTRACTS_JOB, 'integrationAfterContracts'],
+    [INTEGRATION_AFTER_TOOLING_JOB, 'integrationAfterTooling'],
+  ] as const) {
+    expect(passes({ ...needs('full', passed), [helper]: { result: 'failure' } })).toBe(false);
+    expect(passes({ ...needs('full', passed), [helper]: { result: 'skipped' } })).toBe(false);
+    expect(passes(Object.fromEntries(Object.entries(needs('full', passed)).filter(([job]) => job !== helper)))).toBe(
+      false,
+    );
+    const valid = needs('full', passed);
+    for (const value of [undefined, '{}']) {
+      expect(
+        passes({
+          ...valid,
+          [CI_PLAN_JOB]: {
+            ...valid[CI_PLAN_JOB],
+            outputs: { ...valid[CI_PLAN_JOB].outputs, [output]: value },
+          },
+        }),
+      ).toBe(false);
+    }
+  }
   expect(passes({ ...needs('full', passed), [TOPOLOGY_PROOF_JOB]: { result: 'failure' } })).toBe(false);
   expect(
     passes(Object.fromEntries(Object.entries(needs('full', passed)).filter(([job]) => job !== TOPOLOGY_PROOF_JOB))),
@@ -1875,9 +1910,13 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     GATE_JOBS.map((gate) => [gate, gate === SERVICE_INTEGRATION_JOB ? 'skipped' : 'success']),
   );
   noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
+  noIntegration[CI_PLAN_JOB].outputs.integrationAfterContracts = '[]';
+  noIntegration[CI_PLAN_JOB].outputs.integrationAfterTooling = '[]';
   expect(
     passes({
       ...noIntegration,
+      [INTEGRATION_AFTER_CONTRACTS_JOB]: { result: 'skipped' },
+      [INTEGRATION_AFTER_TOOLING_JOB]: { result: 'skipped' },
       [SERVICE_INTEGRATION_JOB]: { result: 'skipped' },
       [SERVICE_SETUP_JOB]: { result: 'skipped' },
       [TOPOLOGY_PROOF_JOB]: { result: 'skipped' },
@@ -2146,7 +2185,7 @@ const GateCommandsWorkflowSchema = Schema.Struct({
       ),
       strategy: Schema.optional(Schema.Unknown),
     }),
-    'static-contracts': Schema.Struct({
+    [STATIC_CONTRACTS_JOB]: Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
           if: Schema.optional(Schema.String),
@@ -2210,7 +2249,7 @@ const gateCommands = () => {
 };
 
 it('verifies the exact Tunnel download and checksum before allowing a deployment', () => {
-  const step = readGateCommandJobs()['static-contracts'].steps.find(
+  const step = readGateCommandJobs()[STATIC_CONTRACTS_JOB].steps.find(
     ({ name }) => name === 'Verify the pinned Cloudflare Tunnel binary',
   );
   expect(step?.run).toContain('readFileSync("zerops.yaml", "utf8")');
@@ -2262,14 +2301,14 @@ it('keeps every check in the source, unit or format gates without repeating the 
   expect(commands.filter((command) => command.startsWith(SCRIPTS_TEST_COMMAND))).toEqual([SCRIPTS_TEST_COMMAND]);
   expect(commands.filter((command) => command === TYPECHECK_COMMAND)).toHaveLength(1);
   expect(commands).not.toContain('pnpm test:deployment-impact');
-  const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
+  const staticChecks = readGateCommandJobs()[STATIC_CONTRACTS_JOB].steps.flatMap(({ parallel, run }) =>
     parallel ? parallel.map((step) => step.run) : [run ?? ''],
   );
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
 it('runs every static contract check on exactly one row of the static contracts job', () => {
-  const job = readGateCommandJobs()['static-contracts'];
+  const job = readGateCommandJobs()[STATIC_CONTRACTS_JOB];
   const rows = job.strategy.matrix.row;
   expect(rows).toEqual(['contracts']);
   expect(
@@ -2422,6 +2461,8 @@ const IntegrationRunnerSchema = Schema.Struct({
 });
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
+    [INTEGRATION_AFTER_CONTRACTS_JOB]: IntegrationRunnerSchema,
+    [INTEGRATION_AFTER_TOOLING_JOB]: IntegrationRunnerSchema,
     [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema,
     [SERVICE_SETUP_JOB]: IntegrationRunnerSchema,
     [TOPOLOGY_PROOF_JOB]: IntegrationRunnerSchema,
@@ -2685,9 +2726,8 @@ it('covers every root integration shard and assigns each package integration sui
   expect(scripts['test:integration']).toBe(
     'rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1',
   );
-  const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_INTEGRATION_JOB
-  ];
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
+  const job = jobs[SERVICE_INTEGRATION_JOB];
   const run = job.steps.find(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
@@ -2720,7 +2760,9 @@ it('covers every root integration shard and assigns each package integration sui
   expect(commerceScripts['test:integration:native-preproposal']).toBe(
     'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
   );
-  const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
+  const shards = (
+    [SERVICE_INTEGRATION_JOB, INTEGRATION_AFTER_CONTRACTS_JOB, INTEGRATION_AFTER_TOOLING_JOB] as const
+  ).flatMap((name) => jobs[name].strategy.matrix.include.filter(({ suite }) => suite === 'integration'));
   const tasks = shards.flatMap((row) => row.tasks ?? []);
   expect(new Set(tasks).size).toBe(tasks.length);
   const rootFiles = readdirSync(new URL('../integration/', import.meta.url)).filter(
@@ -3144,49 +3186,62 @@ it('refuses root native integration when the same-run build archives are missing
   }
 });
 
-it('leaves two organization slots free in both dependency-bounded runner waves', () => {
-  const commands = readGateCommandJobs();
-  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
-  const builds = readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard.length;
-  const source = commands[WORKSPACE_GATE_JOB].strategy.matrix.include.length;
-  const staticRows = commands['static-contracts'].strategy.matrix.row.length;
-  const setup = jobs[SERVICE_SETUP_JOB];
-  const topology = jobs[TOPOLOGY_PROOF_JOB];
-  const work = jobs[SERVICE_INTEGRATION_JOB];
-  expect(
-    source + builds + staticRows + work.strategy.matrix.include.length + setup.strategy.matrix.include.length,
-  ).toBeLessThanOrEqual(18);
-  const units = commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length;
-  // Topology reuses source-contracts; the shorter third unit row reuses browser.
-  expect(
-    source + staticRows + units - 1 + work.strategy.matrix.include.length + setup.strategy.matrix.include.length,
-  ).toBeLessThanOrEqual(18);
-  expect(
-    source -
-      1 +
-      staticRows +
-      units -
-      1 +
-      work.strategy.matrix.include.length +
-      setup.strategy.matrix.include.length +
-      topology.strategy.matrix.include.length,
-  ).toBeLessThanOrEqual(18);
-  expect(
-    source - 1 + staticRows + units + work.strategy.matrix.include.length + topology.strategy.matrix.include.length,
-  ).toBeLessThanOrEqual(18);
-  expect(setup.needs).toEqual([CI_PLAN_JOB]);
-  expect(work.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);
+it('leaves two org slots free while completed checks hand their runners to selected work', () => {
+  const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+  );
+  const phases = integrationPhases(templates.integration);
+  const unit = unitPhases(templates.unit);
+  const builds = readArtifactBuildJobs();
+  const remaining = builds[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard.length;
+  const early = builds[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.shard.length;
+  const source = templates.source.length;
+  const staticRows = readGateCommandJobs()[STATIC_CONTRACTS_JOB].strategy.matrix.row.length;
+  expect(early + remaining + source + staticRows + phases.preparation.length + 1).toBeLessThanOrEqual(18);
+  // The early owners replace the five build runners and completed format runner, plus idle capacity.
+  expect(remaining + source + staticRows + phases.preparation.length + phases.work.length).toBeLessThanOrEqual(18);
+  // Every later replacement has no more rows than the checks whose completed slots it reuses.
+  // These inequalities hold independently of the order in which those checks finish.
+  expect(unit.work.length).toBeLessThanOrEqual(remaining);
+  expect(phases.afterContracts.length).toBeLessThanOrEqual(
+    templates.source.filter((row) => row['typescript-build'] !== true).length,
+  );
+  expect(phases.afterTooling.length).toBeLessThanOrEqual(
+    templates.source.filter((row) => row['typescript-build'] === true).length,
+  );
+  expect(phases.topology.length).toBeLessThanOrEqual(phases.preparation.length);
+  expect(unit.afterPreparation.length).toBeLessThanOrEqual(staticRows);
   const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
-  expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).toContain(SERVICE_SETUP_JOB);
-  expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).not.toContain(SOURCE_EXTRA_JOB);
-  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toContain(SOURCE_EXTRA_JOB);
-  expect(all[TOPOLOGY_PROOF_JOB]?.needs).not.toContain(SERVICE_SETUP_JOB);
-  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toContain(NODE_ARTIFACT_BUILD_JOB);
-  expect(all[TOPOLOGY_PROOF_JOB]?.needs).not.toContain(REMAINING_NODE_BUILD_JOB);
-  expect(all['static-contracts']?.needs).toEqual([CI_PLAN_JOB]);
-  expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.service-integration-setup.result == 'success'");
-  expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.ci-plan.outputs.unitAfterPreparation != '[]'");
+  expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).toEqual([
+    CI_PLAN_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
+    REMAINING_NODE_BUILD_JOB,
+    STATIC_CONTRACTS_JOB,
+  ]);
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_SETUP_JOB]);
+  expect(all[INTEGRATION_AFTER_CONTRACTS_JOB]?.needs).toEqual([
+    CI_PLAN_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
+    FORMAT_AND_LINT_JOB,
+    SOURCE_EXTRA_JOB,
+  ]);
+  expect(all[INTEGRATION_AFTER_TOOLING_JOB]?.needs).toEqual([
+    CI_PLAN_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
+    FORMAT_AND_LINT_JOB,
+    WORKSPACE_GATE_JOB,
+  ]);
+  for (const [job, predecessor, output] of [
+    [UNIT_AFTER_PREPARATION_JOB, STATIC_CONTRACTS_JOB, 'unitAfterPreparation'],
+    [INTEGRATION_AFTER_CONTRACTS_JOB, SOURCE_EXTRA_JOB, 'integrationAfterContracts'],
+    [INTEGRATION_AFTER_TOOLING_JOB, WORKSPACE_GATE_JOB, 'integrationAfterTooling'],
+  ] as const) {
+    expect(all[job]?.if).toContain(`needs.${predecessor}.result == 'success'`);
+    expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
+  }
+  expect(all[SERVICE_INTEGRATION_JOB]?.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);
   expect(all[SOURCE_EXTRA_JOB]?.needs).toEqual([CI_PLAN_JOB]);
+  expect(all[STATIC_CONTRACTS_JOB]?.needs).toEqual([CI_PLAN_JOB]);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
