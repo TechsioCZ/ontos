@@ -21,7 +21,7 @@
       "name": "Workspace Unit and Component Tests (2/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:unit --pool.maxWorkers 1\npnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:component --pool.maxWorkers 1\n"
+      "commands": "pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:unit --pool.maxWorkers 2\npnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:component --pool.maxWorkers 2\n"
     },
     {
       "name": "Workspace Unit and Component Tests (3/3)",
@@ -164,7 +164,6 @@
       "tasks": [
         "./apps/shell-super-app#3/8",
         "root:23/40",
-        "./verticals/commerce-customer-context#29/56",
         "./verticals/pricing#4/4",
         "root:10/40",
         "root:17/40",
@@ -214,6 +213,7 @@
       "tasks": [
         "./verticals/commerce-customer-context#41/56",
         "./verticals/privacy#5/8",
+        "./verticals/commerce-customer-context#29/56",
         "./verticals/inventory#2/4",
         "./verticals/commerce-customer-context#17/56",
         "./verticals/commerce-customer-context#23/56",
@@ -236,7 +236,7 @@
       "lanes": 2,
       "tasks": [
         "root:22/40",
-        "root:1/40",
+        "root:14/40",
         "./packages/core-runtime#4/4",
         "./verticals/payment#2/4",
         "./verticals/privacy#3/8",
@@ -309,9 +309,9 @@
       "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/payment --filter ./verticals/symmy-integration --filter ./verticals/price-group-catalog",
       "lanes": 2,
       "tasks": [
+        "root:1/40",
         "root:15/40",
         "./packages/core-runtime#3/4",
-        "root:14/40",
         "./verticals/commerce-customer-context#24/56",
         "./verticals/payment#4/4",
         "./verticals/commerce-customer-context#31/56",

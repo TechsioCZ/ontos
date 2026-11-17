@@ -392,8 +392,8 @@ jobs:
   # Module generation must finish before the i18n scanner walks generated directories.
   static-contracts:
     name: Static Contracts (${{ matrix.row }})
-    needs: [ci-plan, node-artifact-build-remaining]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -623,13 +623,13 @@ jobs:
 
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
-  # While builds finish: 12 owners + 3 builds + 2 source + browser = 18.
-  # Two unit rows and static replace the three builds. Topology replaces source-contracts,
+  # While builds finish: 12 owners + 2 builds + 2 source + browser + static = 18.
+  # Two unit rows replace the remaining builds. Topology replaces source-contracts,
   # and the last unit row replaces the finished browser runner.
   node-topology-proof:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build-remaining, workspace-source-extra]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.workspace-source-extra.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan, node-artifact-build, workspace-source-extra]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.workspace-source-extra.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -876,7 +876,7 @@ jobs:
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 8
+        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 7
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
       # proof row derives the whole Composition from every delivery unit.
@@ -1049,7 +1049,7 @@ jobs:
 
   # Release identities still come from this exact commit; only compiler caches cross commits.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/8)
+    name: Build node artifacts (${{ matrix.shard }}/7)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
@@ -1129,7 +1129,7 @@ jobs:
           retention-days: 1
 
   node-artifact-build-remaining:
-    name: Build node artifacts (${{ matrix.shard }}/8)
+    name: Build node artifacts (${{ matrix.shard }}/7)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
@@ -1137,11 +1137,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [2, 5, 8]
+        shard: [2, 5]
         include:
-          - { shard: 2, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry }
+          - { shard: 2, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry verticals/commerce-customer-context verticals/projects }
           - { shard: 5, units: verticals/catalog verticals/inventory verticals/assortment }
-          - { shard: 8, units: verticals/commerce-customer-context verticals/projects }
     env: *node-build-environment
     steps: *node-build-steps
 
