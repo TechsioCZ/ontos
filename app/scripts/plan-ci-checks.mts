@@ -1,7 +1,7 @@
 import { Console, Config, Effect, FileSystem, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
-import { integrationPhases, planCiChecks, withCiTopologyDependencies } from './ci-impact.mts';
+import { integrationPhases, planCiChecks, unitPhases, withCiTopologyDependencies } from './ci-impact.mts';
 import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
@@ -70,6 +70,7 @@ export const CiTopologySchema = Schema.Struct({
 export {
   filterPaths,
   integrationPhases,
+  unitPhases,
   matchingPackages,
   planCiChecks,
   unknownFilters,
@@ -182,6 +183,7 @@ const cli = Command.make(
       });
       const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
       const phases = integrationPhases(plan.integration);
+      const units = unitPhases(plan.unit);
       const encoded = yield* Effect.all({
         expected: encode(plan.expected),
         integration: encode(phases.work),
@@ -189,8 +191,8 @@ const cli = Command.make(
         integrationTopology: encode(phases.topology),
         source: encode(plan.source.filter((row) => row['typescript-build'] === true)),
         sourceExtra: encode(plan.source.filter((row) => row['typescript-build'] !== true)),
-        unit: encode(plan.unit.filter((row) => row['after-tooling'] !== true)),
-        unitAfterTooling: encode(plan.unit.filter((row) => row['after-tooling'] === true)),
+        unit: encode(units.work),
+        unitAfterTooling: encode(units.afterTooling),
       });
       const output = yield* Config.String('GITHUB_OUTPUT');
       const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);

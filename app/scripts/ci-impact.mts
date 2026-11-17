@@ -24,6 +24,15 @@ export const integrationPhases = (entries: readonly IntegrationEntry[]) => {
   };
 };
 
+/** A single selected deferred row must still leave the required unit gate runnable. */
+export const unitPhases = (entries: Templates['unit']) => {
+  const work = entries.filter((row) => row['after-tooling'] !== true);
+  return {
+    afterTooling: work.length === 0 ? [] : entries.filter((row) => row['after-tooling'] === true),
+    work: work.length === 0 ? entries : work,
+  };
+};
+
 /** Runtime federation references are consumer edges even when package manifests omit them. */
 export const withCiTopologyDependencies = (
   packages: readonly CiWorkspacePackage[],
