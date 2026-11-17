@@ -297,7 +297,9 @@ const readCustomerPage = Effect.fn('SymmyC14Customer.readCustomerPage')(function
     headers: input.headers,
   });
   if (response.status !== 200) {
-    return yield* Effect.fail(unavailable(`The customers read answered ${response.status} for ${query}`));
+    const problem = yield* response.text;
+    yield* input.shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError));
+    return yield* Effect.fail(unavailable(`The customers read answered ${response.status} for ${query}: ${problem}`));
   }
   const body: CustomerReadback = yield* response.json.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)),
@@ -311,7 +313,9 @@ const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(func
   input: SearchInput,
 ) {
   const { client, headers, recordId, secondRecordId, shell } = input;
-  const read = (query: string) => readCustomerPage(input, query);
+  // These reads assert keys and counts only, so they ask for the key alone: the Party, name and IČO owner reads per
+  // customer would add several owner calls to each request and push a loaded runner past the fixture's deadline.
+  const read = (query: string) => readCustomerPage(input, `${query}${query === '' ? '?' : '&'}fields=sourceRecordId`);
   const all = yield* read('');
   expect(all).toMatchObject({ count: 2, limit: 50, offset: 0 });
   expect(sourceKeysOf(all)).toEqual([recordId, secondRecordId]);
@@ -344,7 +348,7 @@ const searchTwoCustomers = Effect.fn('SymmyC14Customer.searchTwoCustomers')(func
   expect(pagedMatches).toMatchObject({ count: 2, limit: 1, offset: 1 });
   expect(sourceKeysOf(pagedMatches)).toEqual([secondRecordId]);
   expect(yield* read('?q=internal&offset=2')).toMatchObject({ count: 2, customers: [] });
-  const onlyParty = yield* read('?q=hopper&fields=partyRef');
+  const onlyParty = yield* readCustomerPage(input, '?q=hopper&fields=partyRef');
   expect(onlyParty.customers[0]).not.toHaveProperty('party');
   // A search with more terms than the owners take is refused whole, never searched partly.
   const manyTerms = Array.from({ length: 11 }, (_unused, index) => `t${index}`).join('%20');
