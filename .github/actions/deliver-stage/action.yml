@@ -122,6 +122,15 @@ runs:
         ZEROPS_TOKEN: ${{ inputs.zerops-token }}
       run: bash app/scripts/zerops/stage-push.sh start app
 
+    # Measurement only, in the background from the push on: where the new container's boot goes.
+    - name: Read the new app container's boot stages
+      id: boot-stages
+      if: inputs.app == 'true'
+      shell: bash
+      env:
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: bash app/scripts/zerops/app-boot-stages.sh start
+
     # The exact archive this push carries, under the name the next run's front path reads (units.tar.zst).
     - name: Name the pushed unit builds for the next push
       if: inputs.app == 'true' && inputs.keep-units == 'true'
@@ -332,15 +341,6 @@ runs:
       if: inputs.app == 'true'
       shell: bash
       run: bash app/scripts/zerops/stage-push.sh wait app
-
-    # Measurement only, in the background while the proofs run: where the new container's boot went.
-    - name: Read the new app container's boot stages
-      id: boot-stages
-      if: inputs.app == 'true'
-      shell: bash
-      env:
-        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
-      run: bash app/scripts/zerops/app-boot-stages.sh start
 
     # Every push this job started ends before the job does, even after a failed step, so the next run never pushes
     # over a Zerops process of this one.

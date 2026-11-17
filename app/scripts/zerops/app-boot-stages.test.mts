@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, FileSystem } from 'effect';
+import { Config, Effect, FileSystem, Schedule } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
@@ -15,7 +15,7 @@ const line = (time: string, host: string, message: string) =>
   `<134>1 2026-11-17T${time}Z ${host} zerops@zerops 689 - - ${message}`;
 /**
  * The old container keeps logging while the new one unpacks and boots; the old one's boot from an earlier deploy is
- * still among the newest lines.
+ * still among the newest lines. The first three lines are all the log holds when the push starts.
  */
 const RUNTIME_LOG = [
   line('17:01:10.000000', OLD, '[boot-timing] stage=host.migrator ms=40000 outcome=ok'),
@@ -31,17 +31,24 @@ const RUNTIME_LOG = [
   line('18:44:20.000000', NEW, '{"event":"runtime.summary"}'),
 ].join('\n');
 
-/** Stands in for npm (the zcli install) and zcli: `service log` prints $RUNTIME_LOG, or fails when ZCLI_FAILS is set. */
+/**
+ * Stands in for zcli: `service log` prints $BEFORE_LOG the first time (the push has just started: only the old
+ * container's boot) and $RUNTIME_LOG from then on; every call fails when ZCLI_FAILS is set.
+ */
 const fakeZcli = `#!/usr/bin/env bash
 [ -z "\${ZCLI_FAILS:-}" ] || exit 1
 case "$1" in
   login) [ "$2" = token ] ;;
-  service) printf '%s\\n' "$RUNTIME_LOG" ;;
+  service)
+    if [ -e "$RUNNER_TEMP/zcli-read" ]; then printf '%s\\n' "$RUNTIME_LOG"; else printf '%s\\n' "$BEFORE_LOG"; fi
+    touch "$RUNNER_TEMP/zcli-read"
+    ;;
   *) exit 2 ;;
 esac
 `;
+const BEFORE_LOG = RUNTIME_LOG.split('\n').slice(0, 3).join('\n');
 
-const readStages = (runtimeLog: string, extra: Readonly<Record<string, string>> = {}) =>
+const readStages = (extra: Readonly<Record<string, string>> = {}) =>
   Effect.gen(function* readBootStages() {
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped();
@@ -53,10 +60,11 @@ const readStages = (runtimeLog: string, extra: Readonly<Record<string, string>> 
     yield* fs.chmod(path.join(bin, 'zcli'), 0o700);
     const summary = path.join(directory, 'summary.md');
     const env = {
+      BEFORE_LOG,
       GITHUB_STEP_SUMMARY: summary,
       PATH: `${bin}:${yield* Config.String('PATH')}`,
       RUNNER_TEMP: directory,
-      RUNTIME_LOG: runtimeLog,
+      RUNTIME_LOG,
       ZEROPS_APP_SERVICE_ID: 'app-id',
       ZEROPS_PROJECT_ID: 'project-id',
       ZEROPS_TOKEN: 'token',
@@ -65,15 +73,20 @@ const readStages = (runtimeLog: string, extra: Readonly<Record<string, string>> 
     const run = (command: string) =>
       collectToolingProcess(ChildProcess.make('bash', [SCRIPT, command], { cwd: directory, env, extendEnv: true }));
     const started = yield* run('start');
-    // The start returns at once; the report waits for the background read.
+    // The start returns at once; the read goes on in the background until the new container has booted.
+    const done = path.join(directory, 'app-boot-stages/done');
+    yield* fs.exists(done).pipe(
+      Effect.flatMap((exists) => (exists ? Effect.void : Effect.fail('reading'))),
+      Effect.retry(Schedule.spaced('100 millis').pipe(Schedule.upTo('20 seconds'))),
+    );
     const report = yield* run('report');
     const summaryText = (yield* fs.exists(summary)) ? yield* fs.readFileString(summary) : '';
     return { report, started, summaryText };
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-it.live("reports only the boot of the container that started serving last, in the log's order", () =>
+it.live('reports the boot of the container that started serving after the push, in the log order', () =>
   Effect.gen(function* newestBoot() {
-    const { report, started, summaryText } = yield* readStages(RUNTIME_LOG);
+    const { report, started, summaryText } = yield* readStages();
     expect(started.status).toBe(0);
     expect(report.status).toBe(0);
     expect(report.stdout.trim().split('\n')).toEqual([
@@ -90,13 +103,17 @@ it.live("reports only the boot of the container that started serving last, in th
   }),
 );
 
-it.live('never fails the delivery: an unreadable log or a log without a finished boot is only reported', () =>
+it.live('never fails the delivery: an unreadable log or a boot that has not ended is only reported', () =>
   Effect.gen(function* measurementOnly() {
-    const unreadable = yield* readStages(RUNTIME_LOG, { ZCLI_FAILS: '1' });
+    const unreadable = yield* readStages({ ZCLI_FAILS: '1' });
     expect(unreadable.report.status).toBe(0);
     expect(unreadable.report.stdout).toContain('the app runtime log could not be read');
-    const unfinished = yield* readStages(line('18:42:11.000000', NEW, 'unpacked app release f927 in 31s'));
-    expect(unfinished.report.status).toBe(0);
-    expect(unfinished.report.stdout).toContain('no completed app container boot');
-  }),
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const unfinished = yield* collectToolingProcess(
+      ChildProcess.make('bash', [SCRIPT, 'report'], { env: { RUNNER_TEMP: directory }, extendEnv: true }),
+    );
+    expect(unfinished.status).toBe(0);
+    expect(unfinished.stdout).toContain('had not finished its boot');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
