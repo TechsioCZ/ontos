@@ -196,13 +196,21 @@ it('runs the whole application in the app container through native Node, from th
   // before that unchanged start command, on every container start (scripts/zerops/unpack-app-release.sh).
   expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['.zerops-release']);
   const buildCommands = serviceStrings(app, ['build', 'buildCommands']);
+  // One unit identity table per build, outside the checkout; the unit build and the host build both read it.
+  const digests = 'ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv';
+  const identities = buildCommands.indexOf(
+    'cd app && sh scripts/zerops/build-app.sh --digests-only /tmp/zerops-unit-digests.tsv',
+  );
   // The Outbox Worker host builds beside the pack (build-app.sh --outbox-host); app-release.test.mts runs both.
   expect(buildCommands.at(-1)).toBe(
-    "sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'",
+    `sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && ${digests} sh scripts/zerops/build-app.sh --outbox-host'`,
   );
   // The tree without its left-out packages is proven before the pack (prove-app-runtime.test.mts runs the proof).
   expect(buildCommands.at(-2)).toBe('cd app && node scripts/zerops/prove-app-runtime.mts');
-  expect(buildCommands.indexOf('cd app && sh scripts/zerops/build-app.sh')).toBeLessThan(buildCommands.length - 2);
+  const units = buildCommands.indexOf(`cd app && ${digests} sh scripts/zerops/build-app.sh`);
+  expect(identities).toBeGreaterThan(-1);
+  expect(units).toBeGreaterThan(identities);
+  expect(units).toBeLessThan(buildCommands.length - 2);
   expect(serviceStrings(app, ['build', 'prepareCommands'])[0]).toBe('sudo apk add --no-cache curl tar unzip zstd');
   expect(serviceStrings(app, ['run', 'prepareCommands'])).toStrictEqual([APP_RELEASE_TOOLS]);
   expect(serviceStrings(app, ['run', 'initCommands'])).toStrictEqual([APP_RELEASE_UNPACK]);

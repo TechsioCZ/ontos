@@ -11,8 +11,12 @@
  * 3. No file the app host or the migrator reaches (relative imports, `scripts/…` paths it starts, the public entries of
  *    the workspace packages it imports) imports a left-out package.
  * 4. Every served unit's dist/zerops-entry.mjs imports, its API bundle included, while the left-out store directories
- *    are moved to ASIDE (and always back): the entries resolve exactly as in the shipped tree. An entry that fails
- *    for any other reason (an environment this proof does not provide) is reported, not counted.
+ *    are moved to ASIDE (and always back): the entries resolve exactly as in the shipped tree. They load in the
+ *    processes the app host runs them in (app-host.mts startUnitProcess): the Shell alone, every owner together in
+ *    one, so a module the owners share loads once, as it does on stage. An entry that fails for any other reason (an
+ *    environment this proof does not provide) is reported, not counted.
+ *
+ * Check 3 reads only workspace sources, never a store directory, so it runs beside check 4.
  *
  *   node scripts/zerops/prove-app-runtime.mts
  */
@@ -21,11 +25,12 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Console, Data, Duration, Effect, FileSystem, Option, Schema, Stream } from 'effect';
+import { Console, Data, Duration, Effect, FileSystem, Match, Option, Schema, Stream } from 'effect';
 import { Command } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
-import { readHostedUnits, UNIT_ENTRY, workspaceRoot } from './hosted-units.mts';
+import { readHostedUnits, SHELL_ID, UNIT_ENTRY, workspaceRoot } from './hosted-units.mts';
+import type { HostedUnit } from './hosted-units.mts';
 
 export const EXCLUSION_LIST = 'scripts/zerops/app-runtime-excluded-packages.txt';
 const STORE = 'node_modules/.pnpm';
@@ -34,9 +39,9 @@ export const ASIDE = 'node_modules/.zerops-left-out';
 /** The app host and every process it starts by a workspace path. */
 export const RUNTIME_ENTRIES = ['scripts/zerops/app-host.mts', 'scripts/run-zerops-migrator.mjs'] as const;
 const WORKSPACE_PARENTS = ['apps', 'verticals', 'packages'] as const;
-const ENTRY_CONCURRENCY = 4;
 /** Runtime files read at once by check 3 (one by one it took 40 s of the Zerops build over ~5100 files). */
 const FILE_CONCURRENCY = 32;
+/** Each entry's own import; a process of n entries gets n budgets. */
 const ENTRY_BUDGET = Duration.minutes(2);
 const RESOLUTION_FAILURE =
   /ERR_RUNTIME_EXCLUDED|ERR_MODULE_NOT_FOUND|ERR_PACKAGE_PATH_NOT_EXPORTED|MODULE_NOT_FOUND|Cannot find (?:module|package)/u;
@@ -217,24 +222,37 @@ const ALTERNATIVES = new Map([
 ]);
 const SUFFIXES = ['.ts', '.mts', '.js', '.mjs', '/index.ts', '/index.js'];
 
+/**
+ * What each absolute specifier base resolved to in one walk. The answer depends on the base alone, and the walk asks
+ * for the same ones over and over (every file that imports a workspace package resolves all of its public entries).
+ */
+type Resolutions = Map<string, Option.Option<string>>;
+
 /** The first existing file a relative specifier names, the way the runtime's TypeScript stripping resolves it. */
-const resolveRelative = (from: string, specifier: string) =>
+const resolveRelative = (resolutions: Resolutions, from: string, specifier: string) =>
   Effect.gen(function* resolveRelativeProgram() {
     const fs = yield* FileSystem.FileSystem;
     const base = path.resolve(path.dirname(from), specifier);
+    const known = resolutions.get(base);
+    if (known !== undefined) {
+      return known;
+    }
     const extension = path.extname(base);
     const candidates = [
       base,
       ...(ALTERNATIVES.get(extension) ?? []).map((alternative) => `${base.slice(0, -extension.length)}${alternative}`),
       ...SUFFIXES.map((suffix) => `${base}${suffix}`),
     ];
+    let resolved = Option.none<string>();
     for (const candidate of candidates.filter((name) => SOURCE_FILE.test(name))) {
       const info = yield* fs.stat(candidate).pipe(Effect.option);
       if (Option.isSome(info) && info.value.type === 'File') {
-        return Option.some(candidate);
+        resolved = Option.some(candidate);
+        break;
       }
     }
-    return Option.none<string>();
+    resolutions.set(base, resolved);
+    return resolved;
   });
 
 /** The bare and relative specifiers, and the workspace paths, one source line names. */
@@ -254,6 +272,7 @@ const fileReferences = (
   file: string,
   packages: ReadonlyMap<string, WorkspacePackage>,
   patterns: readonly RegExp[],
+  resolutions: Resolutions,
 ) =>
   Effect.gen(function* fileReferencesProgram() {
     const fs = yield* FileSystem.FileSystem;
@@ -265,19 +284,21 @@ const fileReferences = (
       for (const specifier of references.specifiers) {
         const named = packageOf(specifier);
         if (Option.isNone(named)) {
-          next.push(specifier.startsWith('.') ? yield* resolveRelative(file, specifier) : Option.none());
+          next.push(specifier.startsWith('.') ? yield* resolveRelative(resolutions, file, specifier) : Option.none());
         } else {
           if (isExcludedName(patterns, named.value)) {
             violations.push(`${path.relative(root, file)}:${String(index + 1)} imports ${specifier}`);
           }
           const workspace = packages.get(named.value);
           for (const target of workspace?.targets ?? []) {
-            next.push(yield* resolveRelative(path.join(root, workspace?.directory ?? '.', MANIFEST), target));
+            next.push(
+              yield* resolveRelative(resolutions, path.join(root, workspace?.directory ?? '.', MANIFEST), target),
+            );
           }
         }
       }
       for (const relative of references.paths) {
-        next.push(yield* resolveRelative(path.join(root, MANIFEST), `./${relative}`));
+        next.push(yield* resolveRelative(resolutions, path.join(root, MANIFEST), `./${relative}`));
       }
     }
     return { next: next.flatMap(Option.toArray), violations };
@@ -294,6 +315,7 @@ export const workspaceImportViolations = (root: string, entries: readonly string
     );
     const seen = new Set<string>();
     const violations: string[] = [];
+    const resolutions: Resolutions = new Map();
     // Breadth first, one level at a time: the files of a level are read side by side, in the order a queue would
     // take them, so the reached set and the order of the findings are those of a one-by-one walk.
     let level = entries.map((entry) => path.join(root, entry));
@@ -305,46 +327,98 @@ export const workspaceImportViolations = (root: string, entries: readonly string
           fresh.push(file);
         }
       }
-      const found = yield* Effect.forEach(fresh, (file) => fileReferences(root, file, packages, patterns), {
-        concurrency: FILE_CONCURRENCY,
-      });
+      const found = yield* Effect.forEach(
+        fresh,
+        (file) => fileReferences(root, file, packages, patterns, resolutions),
+        { concurrency: FILE_CONCURRENCY },
+      );
       violations.push(...found.flatMap((references) => references.violations));
       level = found.flatMap((references) => references.next);
     }
     return { reached: seen.size, violations };
   });
 
-/** Check 4: one unit entry, imported in its own Node process behind the exclusion hook. */
-const importEntry = (root: string, entry: string) =>
+/**
+ * Check 4's importer: imports its entries one after another, in this order, in one process, and appends one line per
+ * entry to the results file as it ends: proven, failed (with the error as Node prints it) or over its own budget. An
+ * error thrown or rejected outside an import (a timer, a promise nobody awaits) is recorded against the entry being
+ * imported at the time. A process that ends early (an entry that exits it) leaves the rest without a line.
+ *
+ *   node --input-type=module --eval IMPORTER <results file> <budget ms> <entry URL>...
+ */
+const IMPORTER = [
+  "import { appendFileSync } from 'node:fs';",
+  "import { inspect } from 'node:util';",
+  'const [results, budget, ...entries] = process.argv.slice(1);',
+  "let current = '';",
+  'const record = (entry, outcome, reason) =>',
+  String.raw`  appendFileSync(results, JSON.stringify({ entry, outcome, reason }) + '\n');`,
+  "const late = (cause) => record(current, 'late', inspect(cause));",
+  "process.on('uncaughtException', late);",
+  "process.on('unhandledRejection', late);",
+  'for (const entry of entries) {',
+  '  current = entry;',
+  '  let timer;',
+  '  const [outcome, reason] = await Promise.race([',
+  "    import(entry).then(() => ['proven', ''], (cause) => ['failed', inspect(cause)]),",
+  "    new Promise((resolve) => { timer = setTimeout(() => resolve(['timeout', '']), Number(budget)); }),",
+  '  ]);',
+  '  clearTimeout(timer);',
+  '  record(entry, outcome, reason);',
+  '}',
+  'process.exit(0);',
+].join('\n');
+
+const ImportRecordSchema = Schema.fromJsonString(
+  Schema.Struct({
+    entry: Schema.String,
+    outcome: Schema.Literals(['proven', 'failed', 'timeout', 'late']),
+    reason: Schema.String,
+  }),
+);
+type ImportRecord = typeof ImportRecordSchema.Type;
+
+const NOT_STARTED = { status: -1, stderr: 'could not be started' };
+
+/** One importer process over <entries> (file URLs); its exit status, its stderr and the lines it recorded. */
+const importProcess = (root: string, entries: readonly string[]) =>
   Effect.scoped(
-    Effect.gen(function* importEntryProgram() {
+    Effect.gen(function* importProcessProgram() {
+      const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const handle = yield* spawner.spawn(
-        ChildProcess.make(
-          process.execPath,
-          [
-            '--input-type=module',
-            '--eval',
-            'await import(process.argv[1]); process.exit(0);',
-            pathToFileURL(entry).href,
-          ],
-          {
-            cwd: root,
-            env: { NODE_ENV: 'production' },
-            extendEnv: true,
-          },
-        ),
+      const results = yield* fs.makeTempFileScoped({ prefix: 'prove-app-runtime-' });
+      // Each entry has its own budget inside the process; this bounds a process that stops answering altogether.
+      const budget = Duration.times(ENTRY_BUDGET, entries.length);
+      const ended = yield* Effect.scoped(
+        Effect.gen(function* runImporter() {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make(
+              process.execPath,
+              ['--input-type=module', '--eval', IMPORTER, results, String(Duration.toMillis(ENTRY_BUDGET)), ...entries],
+              { cwd: root, env: { NODE_ENV: 'production' }, extendEnv: true, stdout: 'ignore' },
+            ),
+          );
+          const [status, stderr] = yield* Effect.all(
+            [handle.exitCode.pipe(Effect.map(Number)), handle.stderr.pipe(Stream.decodeText(), Stream.mkString)],
+            { concurrency: 'unbounded' },
+          );
+          return { status, stderr };
+        }),
+      ).pipe(
+        Effect.timeoutOrElse({
+          duration: budget,
+          orElse: () => Effect.succeed({ status: -1, stderr: `did not finish within ${Duration.format(budget)}` }),
+        }),
+        Effect.orElseSucceed(() => NOT_STARTED),
       );
-      const [status, stderr] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), handle.stderr.pipe(Stream.decodeText(), Stream.mkString)],
-        { concurrency: 'unbounded' },
-      );
-      return { status, stderr };
-    }),
-  ).pipe(
-    Effect.timeoutOrElse({
-      duration: ENTRY_BUDGET,
-      orElse: () => Effect.succeed({ status: -1, stderr: `did not finish within ${Duration.format(ENTRY_BUDGET)}` }),
+      const lines = (yield* fs.readFileString(results).pipe(Effect.orElseSucceed(() => '')))
+        .split('\n')
+        .filter((line) => line !== '');
+      const records: ImportRecord[] = [];
+      for (const line of lines) {
+        records.push(yield* Schema.decodeUnknownEffect(ImportRecordSchema)(line));
+      }
+      return { ...ended, records };
     }),
   );
 
@@ -352,12 +426,10 @@ interface EntryFinding {
   readonly failure: Option.Option<string>;
   readonly note: Option.Option<string>;
 }
-const PROVEN: EntryFinding = { failure: Option.none(), note: Option.none() };
 const counted = (message: string): EntryFinding => ({ failure: Option.some(message), note: Option.none() });
 const reported = (message: string): EntryFinding => ({ failure: Option.none(), note: Option.some(message) });
 
 const ERROR_LINE = /\bError\b(?: \[[A-Z_]+\])?: /u;
-const NOT_STARTED = { status: -1, stderr: 'could not be started' };
 
 /** The line that says why an import failed: the error's own message line, else any line naming the failure. */
 const failureReason = (stderr: string) => {
@@ -370,29 +442,81 @@ const failureReason = (stderr: string) => {
   return line.trim();
 };
 
-/** One entry's finding: proven, counted (missing, or a resolution failure) or only reported. */
-const proveEntry = (root: string, entry: string) =>
-  Effect.gen(function* proveEntryProgram() {
+/** A failure counts when it is a resolution failure; any other failure is only reported. */
+const classified = (name: string, reason: string): EntryFinding =>
+  RESOLUTION_FAILURE.test(reason)
+    ? counted(`${name}: ${failureReason(reason)}`)
+    : reported(`${name} (not counted): ${failureReason(reason)}`);
+
+const recordFinding = (name: string, record: ImportRecord): Option.Option<EntryFinding> =>
+  Match.value(record.outcome).pipe(
+    Match.when('proven', () => Option.none<EntryFinding>()),
+    Match.when('failed', () => Option.some(classified(name, record.reason))),
+    Match.when('timeout', () =>
+      Option.some(reported(`${name} (not counted): did not finish within ${Duration.format(ENTRY_BUDGET)}`)),
+    ),
+    Match.when('late', () => Option.some(classified(`${name} (while it imported)`, record.reason))),
+    Match.exhaustive,
+  );
+
+/**
+ * One unit process's entries, imported in order in one process as the app host loads them: the findings of each, and
+ * when an entry ends the process, that entry's exit as its finding and the entries after it in a new process.
+ */
+const proveProcess = (root: string, entries: readonly string[]) =>
+  Effect.gen(function* proveProcessProgram() {
     const fs = yield* FileSystem.FileSystem;
-    const name = path.relative(root, entry);
-    if (!(yield* fs.exists(entry).pipe(Effect.orElseSucceed(() => false)))) {
-      return counted(`${name} is missing`);
+    const findings: EntryFinding[] = [];
+    const present: string[] = [];
+    for (const entry of entries) {
+      if (yield* fs.exists(entry).pipe(Effect.orElseSucceed(() => false))) {
+        present.push(entry);
+      } else {
+        findings.push(counted(`${path.relative(root, entry)} is missing`));
+      }
     }
-    const { status, stderr } = yield* importEntry(root, entry).pipe(Effect.orElseSucceed(() => NOT_STARTED));
-    if (status === 0) {
-      return PROVEN;
+    const nameOf = new Map(present.map((entry) => [pathToFileURL(entry).href, path.relative(root, entry)]));
+    let pending = [...nameOf.keys()];
+    while (pending.length > 0) {
+      const { records, status, stderr } = yield* importProcess(root, pending);
+      const ended = new Set<string>();
+      for (const record of records) {
+        const finding = recordFinding(nameOf.get(record.entry) ?? record.entry, record);
+        if (Option.isSome(finding)) {
+          findings.push(finding.value);
+        }
+        if (record.outcome !== 'late') {
+          ended.add(record.entry);
+        }
+      }
+      const stopped = pending.findIndex((entry) => !ended.has(entry));
+      if (stopped === -1) {
+        break;
+      }
+      const name = nameOf.get(pending[stopped] ?? '') ?? '';
+      findings.push(
+        classified(name, stderr.trim() === '' ? `ended the process (exit status ${String(status)})` : stderr),
+      );
+      pending = pending.slice(stopped + 1);
     }
-    return RESOLUTION_FAILURE.test(stderr)
-      ? counted(`${name}: ${failureReason(stderr)}`)
-      : reported(`${name} (not counted): ${failureReason(stderr)}`);
+    return findings;
   });
 
-/** Check 4 over every entry: resolution failures count, any other failure is only reported. */
-export const entryImportFindings = (root: string, entries: readonly string[]) =>
+/** The app host's unit processes (app-host.mts startUnitProcess): the Shell alone, then every owner together. */
+export const unitProcesses = (units: readonly HostedUnit[]): readonly (readonly HostedUnit[])[] =>
+  [units.filter(({ id }) => id === SHELL_ID), units.filter(({ id }) => id !== SHELL_ID)].filter(
+    (group) => group.length > 0,
+  );
+
+/**
+ * Check 4 over every unit process (each its entries, in load order), the processes side by side: resolution failures
+ * count, any other failure is only reported.
+ */
+export const entryImportFindings = (root: string, processes: readonly (readonly string[])[]) =>
   Effect.gen(function* entryImportFindingsProgram() {
-    const results = yield* Effect.forEach(entries, (entry) => proveEntry(root, entry), {
-      concurrency: ENTRY_CONCURRENCY,
-    });
+    const results = (yield* Effect.forEach(processes, (entries) => proveProcess(root, entries), {
+      concurrency: 'unbounded',
+    })).flat();
     return {
       failures: results.flatMap(({ failure }) => Option.toArray(failure)),
       notes: results.flatMap(({ note }) => Option.toArray(note)),
@@ -432,17 +556,25 @@ export const proveAppRuntime = (root: string) =>
     const fs = yield* FileSystem.FileSystem;
     const names = parseExclusions(yield* fs.readFileString(path.join(root, EXCLUSION_LIST)));
     const excluded = yield* excludedStoreDirectories(root, names);
+    // Checks 1 and 2 read the store's links, so they end before check 4 moves the left-out directories aside.
     const [storesTook, stores] = yield* Effect.timed(storeLinkViolations(root, excluded));
     const [importersTook, importers] = yield* Effect.timed(importerLinkViolations(root, excluded));
-    const [workspaceTook, workspace] = yield* Effect.timed(workspaceImportViolations(root, RUNTIME_ENTRIES, names));
-    const entries = (yield* readHostedUnits).map(({ directory }) => path.join(root, directory, UNIT_ENTRY));
-    // The entries import from the tree as it ships: the left-out store directories are moved away meanwhile.
-    const [importsTook, imports] = yield* Effect.timed(
-      withLeftOutAside(root, excluded, entryImportFindings(root, entries)),
+    const processes = unitProcesses(yield* readHostedUnits).map((units) =>
+      units.map(({ directory }) => path.join(root, directory, UNIT_ENTRY)),
     );
-    // Where the build's time goes, check by check, and on what machine: the entries import ENTRY_CONCURRENCY at once.
+    const entries = processes.flat().length;
+    // The entries import from the tree as it ships: the left-out store directories are moved away meanwhile. Check 3
+    // reads workspace sources only (it never follows a path into node_modules), so it runs beside them.
+    const [[workspaceTook, workspace], [importsTook, imports]] = yield* Effect.all(
+      [
+        Effect.timed(workspaceImportViolations(root, RUNTIME_ENTRIES, names)),
+        Effect.timed(withLeftOutAside(root, excluded, entryImportFindings(root, processes))),
+      ],
+      { concurrency: 'unbounded' },
+    );
+    // Where the build's time goes, check by check, and on what machine.
     yield* Console.log(
-      `app runtime checks took: store links ${secondsOf(storesTook)}, workspace links ${secondsOf(importersTook)}, runtime files ${secondsOf(workspaceTook)}, unit entries ${secondsOf(importsTook)} (${String(ENTRY_CONCURRENCY)} at once on ${String(availableParallelism())} cores, ${String(Math.round(totalmem() / 2 ** 30))} GiB)`,
+      `app runtime checks took: store links ${secondsOf(storesTook)}, workspace links ${secondsOf(importersTook)}, runtime files ${secondsOf(workspaceTook)} beside unit entries ${secondsOf(importsTook)} (${String(entries)} in ${String(processes.length)} processes as the app host runs them, on ${String(availableParallelism())} cores, ${String(Math.round(totalmem() / 2 ** 30))} GiB)`,
     );
     yield* report('kept packages that depend on a left-out package', stores);
     yield* report('workspace packages that need a left-out package at runtime', importers);
@@ -456,7 +588,7 @@ export const proveAppRuntime = (root: string) =>
       });
     }
     return yield* Console.log(
-      `app runtime proven without ${String(excluded.size)} left-out store directories: links intact, ${String(workspace.reached)} host and migrator files, ${String(entries.length)} unit entries imported`,
+      `app runtime proven without ${String(excluded.size)} left-out store directories: links intact, ${String(workspace.reached)} host and migrator files, ${String(entries)} unit entries imported`,
     );
   });
 

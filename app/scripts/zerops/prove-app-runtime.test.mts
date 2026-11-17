@@ -14,6 +14,7 @@ import {
   parseExclusions,
   storeDirectoryPattern,
   storeLinkViolations,
+  unitProcesses,
   withLeftOutAside,
   workspaceImportViolations,
 } from './prove-app-runtime.mts';
@@ -113,17 +114,22 @@ it.live('follows the host into helpers, started scripts and workspace packages, 
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+const entryOf = (root: string, unit: string) => path.join(root, `verticals/${unit}/dist/zerops-entry.mjs`);
+const MISSING_OXLINT = "Cannot find package 'oxlint'";
+const hostedUnit = (id: string, directory: string) => ({ browser: true, directory, id, port: 1 });
+
 it.live('counts an entry that needs a left-out package or is missing, reports others, and restores the store', () =>
   Effect.gen(function* entryCheck() {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* workspace;
     const excluded = yield* excludedStoreDirectories(root, LEFT_OUT);
-    const entries = ['a', 'b', 'c', 'd'].map((unit) => path.join(root, `verticals/${unit}/dist/zerops-entry.mjs`));
-    const { failures, notes } = yield* withLeftOutAside(root, excluded, entryImportFindings(root, entries));
+    // Two processes, as the app host runs them: one alone, the rest together and in this order.
+    const processes = [[entryOf(root, 'a')], ['b', 'c', 'd'].map((unit) => entryOf(root, unit))];
+    const { failures, notes } = yield* withLeftOutAside(root, excluded, entryImportFindings(root, processes));
     expect(failures).toHaveLength(2);
-    expect(failures[0]).toContain('verticals/b/dist/zerops-entry.mjs: ');
-    expect(failures[0]).toContain("Cannot find package 'oxlint'");
-    expect(failures[1]).toBe('verticals/d/dist/zerops-entry.mjs is missing');
+    expect(failures).toContain('verticals/d/dist/zerops-entry.mjs is missing');
+    const missingPackage = failures.find((failure) => failure.startsWith('verticals/b/dist/zerops-entry.mjs: '));
+    expect(missingPackage).toContain(MISSING_OXLINT);
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain('verticals/c/dist/zerops-entry.mjs (not counted): ');
     expect(notes[0]).toContain('needs DATABASE_URL');
@@ -131,9 +137,43 @@ it.live('counts an entry that needs a left-out package or is missing, reports ot
     expect(yield* fs.exists(path.join(root, STORE, OXLINT_STORE, 'node_modules/oxlint/index.js'))).toBe(true);
     expect(yield* fs.exists(path.join(root, ASIDE))).toBe(false);
     // With the store complete, the same entry imports.
-    expect((yield* entryImportFindings(root, entries.slice(1, 2))).failures).toEqual([]);
+    expect((yield* entryImportFindings(root, [[entryOf(root, 'b')]])).failures).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.live('proves the entries after one that ends its process, and counts a left-out import that fires later', () =>
+  Effect.gen(function* sharedProcess() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* workspace;
+    const excluded = yield* excludedStoreDirectories(root, LEFT_OUT);
+    const write = (unit: string, text: string) =>
+      fs
+        .makeDirectory(path.dirname(entryOf(root, unit)), { recursive: true })
+        .pipe(Effect.andThen(fs.writeFileString(entryOf(root, unit), text)));
+    yield* write('exits', 'process.exit(3);\n');
+    // Its import resolves at once; the left-out package is imported afterwards, while the next entry imports.
+    yield* write('later', "void import('oxlint');\nexport const start = 1;\n");
+    yield* write('slow', 'await new Promise((resolve) => setTimeout(resolve, 300));\nexport const start = 1;\n');
+    const processes = [['exits', 'later', 'slow', 'b', 'a'].map((unit) => entryOf(root, unit))];
+    const { failures, notes } = yield* withLeftOutAside(root, excluded, entryImportFindings(root, processes));
+    // The entry that ended the process is reported; every entry after it was still imported, in a new process.
+    expect(notes).toEqual(['verticals/exits/dist/zerops-entry.mjs (not counted): ended the process (exit status 3)']);
+    expect(failures).toHaveLength(2);
+    // Recorded against the entry that was importing when it fired: `later` itself or `slow` after it.
+    expect(failures[0]).toMatch(/^verticals\/(?:later|slow)\/dist\/zerops-entry\.mjs \(while it imported\): /u);
+    expect(failures[0]).toContain(MISSING_OXLINT);
+    expect(failures[1]).toContain('verticals/b/dist/zerops-entry.mjs: ');
+    expect(failures[1]).toContain(MISSING_OXLINT);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it('groups the units as the app host runs them: the Shell alone, every owner together in load order', () => {
+  const shell = hostedUnit('shell-super-app', 'apps/shell-super-app');
+  const crm = hostedUnit('crm', 'verticals/crm');
+  const tax = hostedUnit('tax', 'verticals/tax');
+  expect(unitProcesses([shell, crm, tax])).toEqual([[shell], [crm, tax]]);
+  expect(unitProcesses([crm])).toEqual([[crm]]);
+});
 
 it.live('restores the left-out store directories when the proof inside fails', () =>
   Effect.gen(function* restoreOnFailure() {

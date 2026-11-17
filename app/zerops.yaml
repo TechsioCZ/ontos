@@ -162,7 +162,10 @@ zerops:
         - if [ -f app/.zerops-prebuilt.tar.zst ]; then zstd -dc app/.zerops-prebuilt.tar.zst | tar -x -C app && rm app/.zerops-prebuilt.tar.zst; fi
         - cd app && pnpm install --frozen-lockfile
         - cd app && node scripts/verify-zerops-workspace-install.mts
-        - cd app && sh scripts/zerops/build-app.sh
+        # The unit identity table once per build (15-17 s on this 2-core container), outside the checkout, whose Git tree
+        # must stay clean. The unit build and the Outbox Worker host build beside the pack below both read it.
+        - cd app && sh scripts/zerops/build-app.sh --digests-only /tmp/zerops-unit-digests.tsv
+        - cd app && ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv sh scripts/zerops/build-app.sh
         - mkdir -p 'app/.zerops/bun' && cp -a "$HOME/.local/bun-1.4.4/bin" 'app/.zerops/bun/'
         # The app host records its boots in .zerops/state (scripts/zerops/app-host.mts, HOST_BOOT_RECORD). It ships with an
         # empty record, so the running container never has to create the directory.
@@ -172,7 +175,7 @@ zerops:
         - cd app && node scripts/zerops/prove-app-runtime.mts
         # Compressed archives of the runtime tree, not the tree file by file (858.8 MiB moved in 176 s, 2026-11-15). The
         # Outbox Worker host builds while the rest of the tree packs; its runtime is packed on its own once built.
-        - sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && sh scripts/zerops/build-app.sh --outbox-host'
+        - sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv sh scripts/zerops/build-app.sh --outbox-host'
       # The runtime tree (scripts/zerops/app-runtime-paths.txt) as two archives (the tree, the Outbox Worker host) with
       # their digests and the unpack step; run.initCommands unpacks both to app/ before the start command.
       deployFiles:
