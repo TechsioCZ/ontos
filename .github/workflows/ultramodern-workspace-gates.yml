@@ -89,6 +89,8 @@ jobs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
+      sourceExtra: ${{ steps.selection.outputs.sourceExtra }}
+      unitAfterTooling: ${{ steps.selection.outputs.unitAfterTooling }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
       integrationSetup: ${{ steps.selection.outputs.integrationSetup }}
@@ -242,13 +244,13 @@ jobs:
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
+    env: &source-check-environment
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.source) }}
-    steps:
+    steps: &source-check-steps
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -292,19 +294,32 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
+  workspace-source-extra:
+    name: ${{ matrix.name }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: *source-check-environment
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.sourceExtra) }}
+    steps: *source-check-steps
+
   workspace-unit:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, node-artifact-build-remaining]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
+    env: &unit-check-environment
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.unit) }}
-    steps:
+    steps: &unit-check-steps
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -358,6 +373,19 @@ jobs:
             echo "::error title=Gate command failed::$command"
           done
           [[ ${#failed[@]} -eq 0 ]]
+
+  workspace-unit-after-tooling:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, workspace-gate]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.workspace-gate.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterTooling != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: *unit-check-environment
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterTooling) }}
+    steps: *unit-check-steps
 
   # The API analyzer follows source/generation checks on their runner, freeing a third unit runner.
   # Module generation must finish before the i18n scanner walks generated directories.
@@ -511,6 +539,14 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      - name: Check OntOS APIs and generator behavior
+        id: generator-checks
+        background: true
+        working-directory: app
+        run: |
+          mise exec -- pnpm api:check:ontos
+          mise exec -- pnpm test:generation
+
       - name: Format and Lint the run's changed files through the pre-commit hook
         env:
           FULL_SWEEP: ${{ github.event_name == 'schedule' }}
@@ -578,10 +614,14 @@ jobs:
           mise exec -- pnpm lint:repository-policy
           mise exec -- pnpm --filter ./packages/shared-contracts test:types
 
+      - name: Wait for API and generator checks
+        wait: generator-checks
+
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
   # While builds finish: 11 owners + 4 builds + 2 source + browser = 18.
   # After builds: 11 owners + 2 unit + 2 source + static + topology + browser = 18.
+  # The third unit row replaces the tooling runner only after that runner finishes.
   node-topology-proof:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build-remaining]
@@ -1329,7 +1369,9 @@ jobs:
         queue-proof,
         ci-plan,
         workspace-gate,
+        workspace-source-extra,
         workspace-unit,
+        workspace-unit-after-tooling,
         static-contracts,
         format-and-lint,
         service-integration,

@@ -65,6 +65,8 @@ const SERVICE_INTEGRATION_JOB = 'service-integration';
 const SERVICE_SETUP_JOB = 'service-integration-setup';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
+const SOURCE_EXTRA_JOB = 'workspace-source-extra';
+const UNIT_AFTER_TOOLING_JOB = 'workspace-unit-after-tooling';
 
 /** Expand only matrix references for the full-run contract tests; separately test the actual planner. */
 const readGateWorkflow = () => {
@@ -1809,7 +1811,11 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(gates.needs).toEqual([
     QUEUE_PROOF_JOB,
     CI_PLAN_JOB,
-    ...GATE_JOBS,
+    WORKSPACE_GATE_JOB,
+    SOURCE_EXTRA_JOB,
+    WORKSPACE_UNIT_JOB,
+    UNIT_AFTER_TOOLING_JOB,
+    ...GATE_JOBS.slice(2),
     REMAINING_NODE_BUILD_JOB,
     TOPOLOGY_PROOF_JOB,
     SERVICE_SETUP_JOB,
@@ -1825,13 +1831,16 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
           ),
         ),
         mode,
+        unitAfterTooling: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
       },
       result: 'success',
     },
     [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
     [REMAINING_NODE_BUILD_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [SOURCE_EXTRA_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [UNIT_AFTER_TOOLING_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
   });
   const passed = GATE_JOBS.map(() => 'success');
@@ -2217,7 +2226,15 @@ it('keeps every check in the source, unit or format gates without repeating the 
     readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
       ({ name }) => name === 'Check lint rules and shared contract types',
     )?.run ?? '';
+  const apiAndGeneration =
+    readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
+      ({ name }) => name === 'Check OntOS APIs and generator behavior',
+    )?.run ?? '';
   const commands = [
+    ...apiAndGeneration
+      .trim()
+      .split('\n')
+      .map((command) => command.replace(/^mise exec -- /u, '')),
     ...gateCommands().flat(),
     ...ruleChecks
       .trim()
@@ -3134,13 +3151,19 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
   expect(
     source +
       staticRows +
-      commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
+      commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length -
+      1 +
       work.strategy.matrix.include.length +
       topology.strategy.matrix.include.length +
       setup.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
   expect(setup.needs).toEqual([CI_PLAN_JOB]);
   expect(work.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);
+  const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
+  expect(all[UNIT_AFTER_TOOLING_JOB]?.needs).toContain(WORKSPACE_GATE_JOB);
+  expect(all[UNIT_AFTER_TOOLING_JOB]?.if).toContain("needs.workspace-gate.result == 'success'");
+  expect(all[UNIT_AFTER_TOOLING_JOB]?.if).toContain("needs.ci-plan.outputs.unitAfterTooling != '[]'");
+  expect(all[SOURCE_EXTRA_JOB]?.needs).toEqual([CI_PLAN_JOB]);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
