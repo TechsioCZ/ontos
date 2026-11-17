@@ -351,6 +351,8 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       ownedDatabase: isolated,
       productionGate: true,
       relaySource: { registeredWorkloads: workerRules, sourceAppId: symmyApp },
+      // The company read composes several owner reads, each behind its own gateway assertion.
+      requestDeadlineSeconds: 60,
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = randomUUID();
