@@ -898,11 +898,14 @@ export interface CatalogHead {
   readonly taxRates: CompanyTaxRates | undefined;
 }
 
-/** Omitted preferences stay omitted in import snapshots and in uninitialised working sets. */
+/** Empty preferences stay omitted in import snapshots and in uninitialised working sets. */
 const withStorefrontSettings = (
   state: MerchandiseState,
   settings: StorefrontCatalogSettings | undefined,
-): MerchandiseState => (settings === undefined ? state : { ...state, storefrontCatalogSettings: settings });
+): MerchandiseState =>
+  settings === undefined || Object.keys(settings).length === 0
+    ? state
+    : { ...state, storefrontCatalogSettings: settings };
 
 /**
  * A company whose head row was never written: no products, orders or AI changes yet. Reads answer it at revision 0;
