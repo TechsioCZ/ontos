@@ -34,6 +34,8 @@ export const ASIDE = 'node_modules/.zerops-left-out';
 export const RUNTIME_ENTRIES = ['scripts/zerops/app-host.mts', 'scripts/run-zerops-migrator.mjs'] as const;
 const WORKSPACE_PARENTS = ['apps', 'verticals', 'packages'] as const;
 const ENTRY_CONCURRENCY = 4;
+/** Runtime files read at once by check 3 (one by one it took 40 s of the Zerops build over ~5100 files). */
+const FILE_CONCURRENCY = 32;
 const ENTRY_BUDGET = Duration.minutes(2);
 const RESOLUTION_FAILURE =
   /ERR_RUNTIME_EXCLUDED|ERR_MODULE_NOT_FOUND|ERR_PACKAGE_PATH_NOT_EXPORTED|MODULE_NOT_FOUND|Cannot find (?:module|package)/u;
@@ -290,16 +292,23 @@ export const workspaceImportViolations = (root: string, entries: readonly string
       ),
     );
     const seen = new Set<string>();
-    const queue = entries.map((entry) => path.join(root, entry));
     const violations: string[] = [];
-    while (queue.length > 0) {
-      const file = queue.shift() ?? '';
-      if (!seen.has(file) && !file.includes(`${path.sep}node_modules${path.sep}`) && !file.endsWith('.d.ts')) {
-        seen.add(file);
-        const found = yield* fileReferences(root, file, packages, patterns);
-        violations.push(...found.violations);
-        queue.push(...found.next);
+    // Breadth first, one level at a time: the files of a level are read side by side, in the order a queue would
+    // take them, so the reached set and the order of the findings are those of a one-by-one walk.
+    let level = entries.map((entry) => path.join(root, entry));
+    while (level.length > 0) {
+      const fresh: string[] = [];
+      for (const file of level) {
+        if (!seen.has(file) && !file.includes(`${path.sep}node_modules${path.sep}`) && !file.endsWith('.d.ts')) {
+          seen.add(file);
+          fresh.push(file);
+        }
       }
+      const found = yield* Effect.forEach(fresh, (file) => fileReferences(root, file, packages, patterns), {
+        concurrency: FILE_CONCURRENCY,
+      });
+      violations.push(...found.flatMap((references) => references.violations));
+      level = found.flatMap((references) => references.next);
     }
     return { reached: seen.size, violations };
   });
