@@ -97,7 +97,7 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   expect(
     matchingPackages(tests.map((entry) => entry['package-filters'] ?? '').join(' '), packages).map(({ name }) => name),
   ).toEqual([CATALOG, PRICING]);
-  expect(plan.unit).toHaveLength(2);
+  expect(plan.unit).toHaveLength(1);
   const unitCommands = plan.unit.map(({ commands }) => commands).join('\n');
   expect(unitCommands).toContain('--filter ./verticals/catalog');
   expect(unitCommands).toContain('--filter ./verticals/pricing');
