@@ -3038,8 +3038,8 @@ it('leaves two organization slots free while running the complete gate matrices'
   ].strategy.matrix.include.length;
   const source = commands[WORKSPACE_GATE_JOB].strategy.matrix.include.length;
   const unit = commands[WORKSPACE_UNIT_JOB];
-  // Static contracts and format/lint each own one runner.
-  const startup = source + builds + services + 2;
+  // Format/lint owns one runner; static contracts owns its matrix.
+  const startup = source + builds + services + commands['static-contracts'].strategy.matrix.row.length + 1;
   expect(startup).toBeLessThanOrEqual(18);
   const dependencies = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs[WORKSPACE_UNIT_JOB];
   expect(dependencies?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
