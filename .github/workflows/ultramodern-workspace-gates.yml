@@ -48,7 +48,7 @@ defaults:
 # Native fixtures start many short-lived Node owners and migration tools. Reuse
 # V8's compiled code within this runner, never database state or test results.
 env:
-  NODE_COMPILE_CACHE: ${{ runner.temp }}/node-compile-cache
+  NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
 
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
