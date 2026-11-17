@@ -56,6 +56,7 @@ const ANOTHER_DIRECTORY = 'verticals/another';
 const CUSTOMER_CONTEXT = '@app/commerce-customer-context';
 const SHELL = '@app/shell-super-app';
 const CATALOG_DIRECTORY = 'verticals/catalog';
+const PRICING_DIRECTORY = 'verticals/pricing';
 const PRIVACY_DIRECTORY = 'verticals/privacy';
 const PRIVACY = '@app/privacy';
 const SHELL_DIRECTORY = 'apps/shell-super-app';
@@ -72,7 +73,7 @@ const REQUIRED_GATES = [
 ];
 const packages = [
   { dependencies: [], directory: CATALOG_DIRECTORY, name: CATALOG },
-  { dependencies: [CATALOG], directory: 'verticals/pricing', name: PRICING },
+  { dependencies: [CATALOG], directory: PRICING_DIRECTORY, name: PRICING },
   { dependencies: [], directory: PRIVACY_DIRECTORY, name: PRIVACY },
   { dependencies: [], directory: SHELL_DIRECTORY, name: SHELL },
   { dependencies: [], directory: 'verticals/party-registry', name: '@app/party-registry' },
@@ -110,7 +111,11 @@ it('preserves the authored worker budget when affected selection narrows package
     templates,
   });
   expect(plan.mode).toBe('affected');
-  expect(plan.unit).toEqual([pricing]);
+  expect(plan.unit).toHaveLength(1);
+  const [selected] = plan.unit;
+  expect(selectedDirectories(selected?.commands.split('\n')[0] ?? '')).toEqual([PRICING_DIRECTORY]);
+  const flags = /--(?:workspace-concurrency=\d+|pool\.maxWorkers \d+)/gu;
+  expect(selected?.commands.match(flags)).toEqual(pricing?.commands.match(flags));
 });
 
 it('does not start an integration row after its selected tasks move to another row', () => {
@@ -298,7 +303,7 @@ it('selects browser checks and all root integration shards when they consume a c
 it('follows topology-only Shell and vertical remote references to browser tests', () => {
   const verticals = [
     { id: 'catalog', package: CATALOG, path: CATALOG_DIRECTORY },
-    { id: 'pricing', package: PRICING, path: 'verticals/pricing' },
+    { id: 'pricing', package: PRICING, path: PRICING_DIRECTORY },
     { id: 'privacy', package: PRIVACY, path: PRIVACY_DIRECTORY },
   ];
   const shell = { id: 'shell-super-app', package: SHELL, path: SHELL_DIRECTORY };
