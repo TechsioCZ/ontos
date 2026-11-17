@@ -82,26 +82,8 @@ export const nativePorts = (keys: readonly string[]) =>
 const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContract')(function* publishedContract(
   vertical: string,
 ) {
-  // Only the canonical CLI's published DTO crosses into Rstest. Opaque owner registration values
-  // stay in the native runtime that created them.
-  const generator = yield* ChildProcess.make(
-    'mise',
-    ['exec', '--', 'node', 'scripts/generate-ontos-module-contract.mts', '--vertical', vertical, '--target', 'dist'],
-    { cwd: c14AppRoot, stderr: 'pipe', stdout: 'pipe' },
-  );
-  const [exit, errors, output] = yield* Effect.all(
-    [
-      generator.exitCode,
-      generator.stderr.pipe(Stream.decodeText(), Stream.runCollect),
-      generator.stdout.pipe(Stream.decodeText(), Stream.runCollect),
-    ],
-    { concurrency: 3 },
-  );
-  if (Number(exit) !== 0) {
-    return yield* unavailable(
-      `Actual ${vertical} metadata generation failed: ${redactedDiagnostic(errors.join('') + output.join(''))}`,
-    );
-  }
+  // The same-commit build already ran the canonical emitter. Read its immutable
+  // published DTO; fixture setup must not rebuild or overwrite shared artifacts.
   const fs = yield* FileSystem.FileSystem;
   const document = yield* fs.readFileString(
     `${c14AppRoot}/verticals/${vertical}/dist/public/.well-known/ontos-module-manifest.json`,

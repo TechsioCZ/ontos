@@ -1392,12 +1392,6 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   const replacements = yield* Effect.all(
     modules.map((owner) =>
       Effect.gen(function* nativeContract() {
-        const generator = yield* openNativeChild({
-          args: ['scripts/generate-ontos-module-contract.mts', '--vertical', owner.appId, '--target', 'dist'],
-          environment: { APP_ENV_PATH: '/dev/null' },
-          stage: `module-contract:${owner.appId}`,
-        });
-        yield* generator.exit;
         const contract = yield* Schema.decodeUnknownEffect(contractJson)(
           yield* io(
             'actual-owner-contract',

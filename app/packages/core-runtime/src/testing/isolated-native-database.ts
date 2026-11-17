@@ -2,6 +2,7 @@ import { asc, eq, sql } from 'drizzle-orm';
 import {
   Clock,
   Config,
+  Console,
   Crypto,
   DateTime,
   Effect,
@@ -476,22 +477,24 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         'objects',
       )
       .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
-    yield* Effect.forEach(
-      tables,
-      Effect.fn('IsolatedNativeDatabase.assertEmpty')(function* assertEmpty(table) {
-        const [row] = yield* clone.executor
-          .execute<{ readonly populated: boolean }>(
-            sql`select exists(select 1 from ${sql.identifier(table.schemaname)}.${sql.identifier(table.tablename)} limit 1) as populated`,
-            'objects',
-          )
-          .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
-        if (row?.populated !== false) {
-          return yield* unavailable('Schema-only clone contains source data');
-        }
-        return yield* Effect.void;
-      }),
-      { concurrency: 1 },
-    );
+    if (tables.length > 0) {
+      // Inspect every table, in one round trip rather than one per migrated table.
+      const rows = yield* clone.executor
+        .execute<{ readonly populated: boolean }>(
+          sql.join(
+            tables.map(
+              (table) =>
+                sql`select exists(select 1 from ${sql.identifier(table.schemaname)}.${sql.identifier(table.tablename)} limit 1) as populated`,
+            ),
+            sql` union all `,
+          ),
+          'objects',
+        )
+        .pipe(Effect.mapError((cause) => unavailable(undefined, cause)));
+      if (rows.length !== tables.length || rows.some(({ populated }) => populated)) {
+        return yield* unavailable('Schema-only clone contains source data');
+      }
+    }
     const emptyVerified = yield* Clock.monotonicTimeNanos;
     if (
       input.mode === schemaOnly &&
@@ -544,7 +547,8 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         )
         .pipe(Effect.mapError((cause) => unavailable('Unable to initialize isolated trust configuration', cause)));
     }
-    yield* Effect.logInfo({
+    // Native receiver stdout is a JSON protocol, not a diagnostic stream.
+    yield* Console.error('Native database clone:', {
       emptyVerificationSeconds: Number(emptyVerified - schemaPrepared) / 1e9,
       event: 'native-fixture-database-prepared',
       mode: input.mode,

@@ -10,7 +10,9 @@ set -euo pipefail
 
 prefix="${1:?the job name prefix of the build shards of the target is required}"
 count="${2:?the shard count of the target is required}"
-own="${3:?the job name of this shard is required}"
+own="${3:-}"
+expected="$count"
+[[ -z "$own" ]] || expected="$((count - 1))"
 interval="${WAIT_FOR_BUILD_SHARDS_INTERVAL:-5}"
 tab="$(printf '\t')"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
@@ -35,7 +37,7 @@ while :; do
     exit 1
   fi
   succeeded="$(printf '%s\n' "$jobs" | grep -c -E "^(success|uploaded)${tab}" || true)"
-  if [ "$succeeded" -eq "$((count - 1))" ]; then
+  if [ "$succeeded" -eq "$expected" ]; then
     echo "Every other shard of $prefix uploaded its outputs."
     exit 0
   fi

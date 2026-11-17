@@ -1621,6 +1621,8 @@ const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
 /** The integration matrix row that proves the stage-shaped deployment bootstrap from a scratch cluster. */
 const BOOTSTRAP_SUITE = 'bootstrap';
 const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
+const NON_BOOTSTRAP_CONDITION = "matrix.suite != 'bootstrap'";
+const BOOTSTRAP_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
 const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 /**
  * Every row that reads built Node artifacts: the suites and the whole-topology proof. The browser row
@@ -1649,7 +1651,7 @@ const ROOT_GATE_JOBS = [
 const GATE_JOB_NEEDS = {
   [FORMAT_AND_LINT_JOB]: [CI_PLAN_JOB],
   [NODE_ARTIFACT_BUILD_JOB]: [CI_PLAN_JOB],
-  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB],
+  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB],
   'static-contracts': [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB],
@@ -2016,7 +2018,7 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
 });
 
 /** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
-const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: string }[]) => {
+const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: string }[], own = 'Build x (1/3)') => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
   try {
     const gh = path.join(directory, 'gh');
@@ -2024,7 +2026,7 @@ const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: st
     chmodSync(gh, 0o755);
     execFileSync(
       '/bin/bash',
-      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', '3', 'Build x (1/3)'],
+      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', own ? '3' : '2', own],
       {
         env: {
           FAKE_JOBS: JSON.stringify({ jobs }),
@@ -2056,6 +2058,8 @@ it('waits for the other build shards of its own target and fails when one does n
     { conclusion: 'failure', name: 'Static Contracts' },
   ];
   expect(waitForBuildShards([...others, ...unrelated])).toBe(true);
+  expect(waitForBuildShards(others, '')).toBe(true);
+  expect(waitForBuildShards([{ ...others[0], conclusion: 'failure' }, others[1]], '')).toBe(false);
   // Another proving shard of the target is still running its proof, but its outputs are uploaded.
   const proving = {
     conclusion: null,
@@ -2192,7 +2196,12 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
 it('runs every static contract check on exactly one row of the static contracts job', () => {
   const job = readGateCommandJobs()['static-contracts'];
   const rows = job.strategy.matrix.row;
-  expect(rows).toEqual(['contracts', 'api']);
+  expect(rows).toEqual(['contracts']);
+  expect(
+    gateCommands()
+      .flat()
+      .filter((command) => command.endsWith(' pnpm api:check')),
+  ).toEqual(['NODE_OPTIONS=--max-old-space-size=6144 pnpm api:check']);
   // Every check, including each member of the parallel group, names exactly one row. A check with no
   // row condition would run on all of them, and one naming a row that does not exist would never run.
   const shared = new Set(['Harden Runner', 'Checkout', INSTALL_APP_STEP]);
@@ -2429,7 +2438,17 @@ it('supplies same-run built Composition to selected native owner integration sha
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
-  const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
+  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 2");
+  const workers = steps.findIndex(({ run }) => run === 'bash scripts/ci/start-integration-workers.sh');
+  const sourceProof = steps.findIndex(
+    ({ run }) => run === 'bash scripts/ci/run-integration-suites.sh --task whole:migrations',
+  );
+  expect(workers).toBeGreaterThan(-1);
+  expect(workers < sourceProof && sourceProof < wait && wait < download).toBe(true);
+  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '2/4'");
+  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '2/4')).toHaveLength(1);
+  expect(steps[wait]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
@@ -2475,16 +2494,18 @@ it('proves the built topology of every delivery unit in one row of the integrati
       `${steps[index]?.name ?? ''}: ${NODE_PROOF_CONDITION}`,
     );
   }
-  // It reads every shard's artifacts, and runs on the PostgreSQL this job starts and migrates on
-  // every row: its complete handler layers acquire real pools.
+  // Bootstrap migrates through the assembled stage entry point, not the source command.
   expect(steps[named(BACKEND_ARTIFACT_DOWNLOAD_STEP)]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(named(BACKEND_ARTIFACT_DOWNLOAD_STEP)).toBeLessThan(indexes[0] ?? -1);
   const migrations = named('Apply and verify Core, Auth, and Contacts migrations, plus Party Registry');
-  expect(steps[migrations]?.if).toBeUndefined();
+  expect(steps[migrations]?.if).toBe(NON_BOOTSTRAP_CONDITION);
+  const bootstrap = named(BOOTSTRAP_MIGRATOR_STEP);
+  expect(steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(bootstrap).toBeLessThan(indexes[0] ?? -1);
   expect(migrations).toBeLessThan(indexes[0] ?? -1);
   expect(steps[named('Start fresh PostgreSQL and SpiceDB services')]?.if).toBeUndefined();
   // The suites never run on this row, and its steps never run on a suite row.
-  const tests = steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  const tests = steps.find(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
 });
 
@@ -2552,7 +2573,7 @@ it('covers every root integration shard and assigns each package integration sui
   const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
   ];
-  const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  const run = job.steps.find(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
@@ -2561,20 +2582,19 @@ it('covers every root integration shard and assigns each package integration sui
   });
   const isolate = job.steps.findIndex((step) => step.run === 'bash scripts/ci/start-integration-workers.sh');
   expect(isolate).toBeGreaterThan(-1);
-  expect(isolate).toBeLessThan(job.steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined));
+  expect(isolate).toBeLessThan(job.steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined));
   expect(job.steps[isolate]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.run?.trim()).toBe('bash scripts/ci/run-integration-suites.sh');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(nativeShards).toHaveLength(1);
   expect(nativeShards[0]?.suite).toBe('integration');
-  const nativeSteps = job.steps.filter(({ if: condition }) => condition === 'matrix.native-preproposal == true');
-  expect(nativeSteps).toHaveLength(1);
-  expect(nativeSteps[0]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  expect(nativeSteps[0]?.run).toBe(
-    'mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal',
+  expect(run?.env?.NATIVE_PREPROPOSAL).toBe(expression('matrix.native-preproposal'));
+  const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  expect(scheduler).toContain('tasks+=("whole:preproposal")');
+  expect(scheduler).toContain(
+    'exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal',
   );
-  expect(nativeSteps[0]?.['timeout-minutes']).toBe(20);
   const commerceScripts = Schema.decodeUnknownSync(RootScriptsSchema)(
     JSON.parse(
       readFileSync(new URL('../../verticals/commerce-customer-context/package.json', import.meta.url), 'utf-8'),
@@ -2794,7 +2814,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   const order = [
     'Start fresh PostgreSQL and SpiceDB services',
     'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
-    'Run the assembled stage migrator artifact against the fresh database',
+    BOOTSTRAP_MIGRATOR_STEP,
     'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
     AUDIT_STEP,
     'Build and run the Outbox Worker host artifact against the fresh database',
@@ -2805,7 +2825,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   // runtime-role drop in particular would leave an ordinary row with no login for its own suites.
   const bootstrapOnly = [
     'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
-    'Run the assembled stage migrator artifact against the fresh database',
+    BOOTSTRAP_MIGRATOR_STEP,
     AUDIT_STEP,
     'Build and run the Outbox Worker host artifact against the fresh database',
   ];
@@ -2816,7 +2836,7 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   // Bootstrap's assembled migrator already applies and verifies every owner. Other rows
   // prepare their own database once. Scoped-owner tests separately prove replay convergence.
   const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
-  expect(migrations?.if).toBe("matrix.suite != 'bootstrap'");
+  expect(migrations?.if).toBe(NON_BOOTSTRAP_CONDITION);
   expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
   // Bootstrap and federation share this row, so it restores the same-run Node artifacts too.
   for (const name of [BACKEND_ARTIFACT_DOWNLOAD_STEP, 'Unpack the Node artifacts for native owner fixtures']) {
@@ -2840,8 +2860,11 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     const proof = integration.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
     expect(provision).toBeGreaterThanOrEqual(0);
     expect(provision).toBeLessThan(proof);
-    // Every row provisions the identities, so the proof row needs no migration of its own.
-    expect(integration.steps[provision]?.if).toBeUndefined();
+    expect(integration.steps[provision]?.if).toBe(NON_BOOTSTRAP_CONDITION);
+    const bootstrap = integration.steps.findIndex(({ name }) => name === BOOTSTRAP_MIGRATOR_STEP);
+    expect(integration.steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
+    expect(bootstrap).toBeGreaterThanOrEqual(0);
+    expect(bootstrap).toBeLessThan(proof);
     expect(integration.steps[proof]?.if).toBe(NODE_PROOF_CONDITION);
     for (const identity of DATABASE_IDENTITIES) {
       const connection = yield* loadDatabaseConfig({ environment, envPath: '/dev/null', identity });
@@ -2944,7 +2967,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
-  const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < worker && worker < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
@@ -3058,6 +3081,6 @@ it('runs excluded whole-owner scenarios exactly once in isolated integration lan
     expect(job.steps.some(({ run }) => run?.includes(file) === true)).toBe(false);
     expect(scheduler).toContain(file);
   }
-  const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  const run = job.steps.find(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(run?.env?.WHOLE_OWNER_PROOFS).toBe(expression('matrix.whole-owner-proofs'));
 });

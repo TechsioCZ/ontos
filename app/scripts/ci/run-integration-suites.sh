@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Four runner-local lanes, each owning one whole cluster and one SpiceDB datastore.
+# Runner-local lanes, each owning one whole cluster and one SpiceDB datastore.
 # Package processes keep their own working directory and Rstest configuration.
 set -euo pipefail
 
@@ -7,6 +7,9 @@ if [[ "${1:-}" == --task ]]; then
   task="${2:?}"
   [[ "${ONTOS_CI_WORKER_SLOT:?}" =~ ^[0-3]$ ]] || exit 2
   export ONTOS_CI_WORKER_SLOT="$((ONTOS_CI_WORKER_SLOT + 1))"
+  if [[ "${ONTOS_CI_ISOLATED_WORKERS:-}" == 4 ]]; then
+    bash scripts/ci/reset-integration-database.sh "$ONTOS_CI_WORKER_SLOT"
+  fi
   started=$SECONDS
   echo "Suite start: slot=$ONTOS_CI_WORKER_SLOT task=$task"
   status=0
@@ -19,6 +22,9 @@ fi
 if [[ "${1:-}" == --execute ]]; then
   task="${2:?}"
   case "$task" in
+    whole:migrations)
+      exec mise exec -- pnpm exec rstest --project integration \
+        scripts/integration/scoped-owner-migrations.test.mts --pool.maxWorkers 1 ;;
     whole:organization)
       exec mise exec -- pnpm exec rstest --project integration \
         scripts/integration/organization-source-customer-owner-conformance.test.mts --pool.maxWorkers 1 ;;
@@ -28,10 +34,13 @@ if [[ "${1:-}" == --execute ]]; then
     whole:pricing)
       exec mise exec -- pnpm --filter ./verticals/pricing run test:integration \
         tests/integration/market-revision-whole-current-pricing-postgres.test.ts --pool.maxWorkers 1 ;;
+    whole:preproposal)
+      exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal ;;
   esac
   if [[ "$task" == root:* ]]; then
     exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}" \
-      --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts
+      --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts \
+      --exclude scripts/integration/scoped-owner-migrations.test.mts
   fi
   if [[ "$task" == *#* ]]; then
     if [[ "${task%#*}" == ./verticals/privacy ]]; then
@@ -52,6 +61,9 @@ if [[ "${1:-}" == --execute ]]; then
 fi
 
 tasks=()
+if [[ "${NATIVE_PREPROPOSAL:-}" == true ]]; then
+  tasks+=("whole:preproposal")
+fi
 if [[ -n "${WHOLE_OWNER_PROOFS:-}" ]]; then
   read -ra proofs <<<"$WHOLE_OWNER_PROOFS"
   for proof in "${proofs[@]}"; do
@@ -86,9 +98,22 @@ for ((index = 0; index < ${#filters[@]}; index += 2)); do
       ;;
   esac
 done
+phase="${INTEGRATION_PHASE:-built}"
+[[ "$phase" == source || "$phase" == built ]] || exit 2
+if [[ ${#tasks[@]} -eq 0 && "$phase" == built ]]; then
+  exit 2
+fi
+selected=()
+for task in "${tasks[@]}"; do
+  if [[ "$task" == ./packages/core-runtime#* ]]; then
+    [[ "$phase" != source ]] || selected+=("$task")
+  else
+    [[ "$phase" != built ]] || selected+=("$task")
+  fi
+done
+tasks=("${selected[@]}")
 if [[ ${#tasks[@]} -eq 0 ]]; then
-  # Affected selection can retain this row solely for the standalone native proof.
-  [[ "${NATIVE_PREPROPOSAL:-}" == true ]] || exit 2
+  # Affected selection can leave either phase with no selected work.
   exit 0
 fi
 if [[ "${1:-}" == --list ]]; then
@@ -98,10 +123,12 @@ fi
 # /proc/stat includes PostgreSQL, SpiceDB and all native child processes, unlike time(1).
 # Idle core-seconds distinguishes blocked lanes from CPU saturation in the next CI run.
 read -ra cpu_before < /proc/stat
+lanes="${INTEGRATION_LANES:-4}"
+[[ "$lanes" == 2 || "$lanes" == 4 ]] || exit 2
 started=$SECONDS
 status=0
 printf '%s\0' "${tasks[@]}" |
-  xargs -0 --max-procs=4 --max-args=1 --process-slot-var=ONTOS_CI_WORKER_SLOT \
+  xargs -0 --max-procs="$lanes" --max-args=1 --process-slot-var=ONTOS_CI_WORKER_SLOT \
     bash scripts/ci/run-integration-suites.sh --task || status=$?
 read -ra cpu_after < /proc/stat
 total=0

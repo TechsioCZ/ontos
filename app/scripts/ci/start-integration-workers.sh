@@ -101,5 +101,10 @@ for worker in 1 2 3 4; do
     echo "::error::Integration worker $worker did not preserve the source database privileges."
     exit 1
   fi
+  docker exec -i "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+    -v source="$POSTGRES_DB" -v baseline="${POSTGRES_DB}_baseline" <<'SQL'
+ALTER DATABASE :"source" RENAME TO :"baseline";
+ALTER DATABASE :"baseline" IS_TEMPLATE true ALLOW_CONNECTIONS false;
+SQL
 done
 echo 'Four independent PostgreSQL clusters and SpiceDB datastores are ready.'

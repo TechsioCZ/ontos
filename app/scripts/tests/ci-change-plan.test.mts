@@ -82,6 +82,7 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
     'Deployment Bootstrap and Node Federation Proof',
     'Customer Context and Native Approval Integration',
     'Shell and Privacy Integration',
+    'Core and Party Registry Integration',
     'Commerce Owners and Federation Integration',
   ]);
   const tests = plan.integration.filter(({ suite }) => suite === 'integration');
@@ -286,7 +287,7 @@ it('widens unknown, duplicate or mismatched topology relationships to the comple
   }
 });
 
-it('selects the complete customer-context suite once, with its standalone native proof', () => {
+it('selects the complete customer-context suite once and retains its independently scheduled native proof', () => {
   const plan = planCiChecks({
     changedPaths: ['app/verticals/commerce-customer-context/src/service.ts'],
     packages,
@@ -296,7 +297,7 @@ it('selects the complete customer-context suite once, with its standalone native
     (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
   );
   expect(selected).toHaveLength(1);
-  expect(selected[0]?.['native-preproposal']).toBe(true);
+  expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(1);
 });
 
 it('widens changed shared infrastructure, unknown paths and package metadata to the complete suite', () => {
