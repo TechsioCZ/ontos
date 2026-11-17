@@ -7,7 +7,7 @@ if [[ "${1:-}" == --task ]]; then
   task="${2:?}"
   [[ "${ONTOS_CI_WORKER_SLOT:?}" =~ ^[0-3]$ ]] || exit 2
   export ONTOS_CI_WORKER_SLOT="$((ONTOS_CI_WORKER_SLOT + 1))"
-  if [[ "${ONTOS_CI_ISOLATED_WORKERS:-}" == 4 ]]; then
+  if [[ -n "${ONTOS_CI_ISOLATED_WORKERS:-}" ]]; then
     bash scripts/ci/reset-integration-database.sh "$ONTOS_CI_WORKER_SLOT"
   fi
   started=$SECONDS
@@ -143,7 +143,7 @@ fi
 # Idle core-seconds distinguishes blocked lanes from CPU saturation in the next CI run.
 read -ra cpu_before < /proc/stat
 lanes="${INTEGRATION_LANES:-4}"
-[[ "$lanes" == 2 || "$lanes" == 4 ]] || exit 2
+[[ "$lanes" == 2 || "$lanes" == 3 || "$lanes" == 4 ]] || exit 2
 started=$SECONDS
 status=0
 # The whole pricing proof starts several native owners inside its unchanged 30s

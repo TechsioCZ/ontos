@@ -570,6 +570,14 @@ jobs:
           fi
           git diff --exit-code HEAD
 
+      - name: Check lint rules and shared contract types
+        working-directory: app
+        run: |
+          mise exec -- pnpm typecheck:lint-rules
+          mise exec -- pnpm test:lint-rules
+          mise exec -- pnpm lint:repository-policy
+          mise exec -- pnpm --filter ./packages/shared-contracts test:types
+
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
   # After the first build: 10 tests + 3 remaining builds + 2 source + static + topology + browser = 18.
@@ -795,6 +803,7 @@ jobs:
         if: matrix.suite == 'integration'
         working-directory: app
         env:
+          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '3' }}
           INTEGRATION_DATABASE_ARCHIVE: ${{ runner.temp }}/integration-database
         run: bash scripts/ci/start-integration-workers.sh
 
@@ -898,7 +907,7 @@ jobs:
           NATIVE_PREPROPOSAL_CASE: ${{ matrix.preproposal-case }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
-          ONTOS_CI_ISOLATED_WORKERS: '4'
+          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '3' }}
           INTEGRATION_LANES: ${{ matrix.lanes }}
           WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.

@@ -1,3 +1,5 @@
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { migrate } from 'drizzle-orm/effect-postgres/migrator';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type { Issue } from 'effect/SchemaIssue';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
@@ -500,65 +502,45 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   owner: 'ccc' | 'party',
   before: boolean,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
-  const migrationCommand = 'node_modules/drizzle-kit/bin.cjs';
+  const client = yield* PgClient.make({ url: bootstrap.database.adminUrl }).pipe(Effect.provide(Reactivity.layer));
+  const database = yield* makeWithDefaults({}).pipe(Effect.provideService(PgClient.PgClient, client));
   if (owner === 'party') {
-    // Follow Party's source-owned db:migrate gateway: prepare Contacts, migrate Contacts, then Party.
-    const steps = [
-      ['scripts/prepare-contacts-migration.mts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.contacts.config.ts'],
-      [migrationCommand, 'migrate', '--config', 'drizzle.config.ts'],
-    ];
-    for (const args of steps) {
-      const child = yield* ChildProcess.make(process.execPath, args, {
-        cwd: directory,
-        env: {
-          APP_ENV_PATH: '/dev/null',
-          DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-        },
-        extendEnv: true,
-        stderr: 'pipe',
-        stdin: 'ignore',
-        stdout: 'pipe',
-      });
-      const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-        concurrency: 3,
-      });
-      yield* requireCondition(code === 0, 'owned-party-migration');
-    }
-    return;
-  }
-  const history = path.join(directory, 'drizzle');
-  const temporary = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-1248-migration-' });
-  const configuration = path.join(temporary, 'drizzle.config.mjs');
-  yield* fs.writeFileString(
-    configuration,
-    "export default { dialect:'postgresql', out:process.env.ONTOS_1248_HISTORY, dbCredentials:{url:process.env.DATABASE_ADMIN_URL}, migrations:{schema:'drizzle',table:process.env.ONTOS_1248_JOURNAL} };\n",
-  );
-  const child = yield* ChildProcess.make(
-    process.execPath,
-    [path.join(directory, migrationCommand), 'migrate', '--config', configuration],
-    {
+    // Keep the real legacy Contacts journal preparation; only the repeated CLI driver is removed.
+    const preparation = yield* ChildProcess.make(process.execPath, ['scripts/prepare-contacts-migration.mts'], {
       cwd: directory,
-      env: {
-        APP_ENV_PATH: '/dev/null',
-        DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-        ONTOS_1248_HISTORY: history,
-        ONTOS_1248_JOURNAL:
-          owner === 'ccc' ? '__drizzle_migrations_commerce_customer_context' : '__drizzle_migrations_party',
-      },
+      env: { APP_ENV_PATH: '/dev/null', DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl) },
       extendEnv: true,
       stderr: 'pipe',
       stdin: 'ignore',
       stdout: 'pipe',
-    },
-  );
-  const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-    concurrency: 3,
-  });
-  yield* requireCondition(code === 0, 'owned-migration');
+    });
+    const [code] = yield* Effect.all(
+      [preparation.exitCode, Stream.runDrain(preparation.stdout), Stream.runDrain(preparation.stderr)],
+      { concurrency: 3 },
+    );
+    yield* requireCondition(code === 0, 'owned-party-migration');
+  }
+  const histories =
+    owner === 'party'
+      ? [
+          { folder: 'drizzle-contacts', journal: '__drizzle_migrations_contacts' },
+          { folder: 'drizzle', journal: '__drizzle_migrations_party' },
+        ]
+      : [{ folder: 'drizzle', journal: '__drizzle_migrations_commerce_customer_context' }];
+  for (const history of histories) {
+    const migration = yield* Effect.try({
+      catch: () => failure('owned-migration'),
+      try: () =>
+        migrate(database, {
+          migrationsFolder: path.join(directory, history.folder),
+          migrationsSchema: 'drizzle',
+          migrationsTable: history.journal,
+        }),
+    });
+    yield* migration;
+  }
   if (before) {
     yield* installResolverFixture(bootstrap, 'historical');
   }
