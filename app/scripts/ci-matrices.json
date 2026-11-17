@@ -1,9 +1,25 @@
 {
   "source": [
     {
-      "name": "Source, Tooling, and Generation Gates",
+      "name": "Workspace Typecheck and Lint Rules",
       "typescript-build": true,
-      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\npnpm test:deployment-impact\npnpm test:generation\n"
+      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\n"
+    },
+    {
+      "name": "Source and Generation Gates",
+      "commands": "pnpm api:check:ontos\npnpm test:generation\n"
+    },
+    {
+      "name": "Module and Deployment Contracts",
+      "commands": "node scripts/generate-outbox-worker-deployment.mjs\npnpm module-entrypoints:check\nnode scripts/plan-deployment-impact.mts --outbox-worker-mode host\n"
+    },
+    {
+      "name": "Repository Tooling (1/2)",
+      "commands": "pnpm test:scripts --shard 1/2\n"
+    },
+    {
+      "name": "Repository Tooling (2/2)",
+      "commands": "pnpm test:scripts --shard 2/2\n"
     }
   ],
   "unit": [

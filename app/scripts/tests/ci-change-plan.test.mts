@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,17 +53,18 @@ const packages = [
   { dependencies: [], directory: 'verticals/commerce-customer-context', name: CUSTOMER_CONTEXT },
 ];
 
+const PACKAGE_MANIFEST = 'package.json';
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const ManifestNameFromJson = Schema.fromJsonString(Schema.Struct({ name: Schema.String }));
 /** Every pnpm workspace member the planner can see, read from disk rather than restated here. */
 const workspacePackages = ['apps', 'packages', 'verticals'].flatMap((area) =>
   readdirSync(path.join(appRoot, area), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(path.join(appRoot, area, entry.name, 'package.json')))
+    .filter((entry) => entry.isDirectory() && existsSync(path.join(appRoot, area, entry.name, PACKAGE_MANIFEST)))
     .map((entry) => ({
       dependencies: [],
       directory: `${area}/${entry.name}`,
       name: Schema.decodeUnknownSync(ManifestNameFromJson)(
-        readFileSync(path.join(appRoot, area, entry.name, 'package.json'), 'utf-8'),
+        readFileSync(path.join(appRoot, area, entry.name, PACKAGE_MANIFEST), 'utf-8'),
       ).name,
     })),
 );
@@ -417,3 +418,80 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
     }
   }),
 );
+
+const decode = (value: string) =>
+  Object.fromEntries(
+    value
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const separator = line.indexOf('=');
+        const key = line.slice(0, separator);
+        const encoded = line.slice(separator + 1);
+        return [
+          key,
+          key === 'mode' ? encoded : Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(encoded),
+        ];
+      }),
+  );
+it('plans with no installed dependencies using the same tested impact algorithm', () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-without-deps-'));
+  const app = fileURLToPath(new URL('../..', import.meta.url));
+  const copy = (file: string) => {
+    const target = path.join(fixture, file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, readFileSync(path.join(app, file)));
+  };
+  try {
+    for (const file of [
+      PACKAGE_MANIFEST,
+      'topology/ownership.json',
+      'topology/reference-topology.json',
+      'scripts/ci-matrices.json',
+      'scripts/ci-impact.mts',
+      'scripts/workspace-consumer-closure.mts',
+      'scripts/plan-ci-without-install.sh',
+    ]) {
+      copy(file);
+    }
+    for (const area of ['apps', 'packages', 'verticals']) {
+      for (const entry of readdirSync(path.join(app, area))) {
+        const file = `${area}/${entry}/package.json`;
+        if (existsSync(path.join(app, file))) {
+          copy(file);
+        }
+      }
+    }
+    expect(existsSync(path.join(fixture, 'node_modules'))).toBe(false);
+    for (const changed of [CATALOG_SOURCE, 'app/scripts/check.mts']) {
+      const paths = path.join(fixture, 'paths');
+      const output = path.join(fixture, 'output');
+      const summary = path.join(fixture, 'summary');
+      writeFileSync(paths, `${changed}\0`);
+      writeFileSync(output, '');
+      execFileSync('/bin/bash', ['scripts/plan-ci-without-install.sh', paths], {
+        cwd: fixture,
+        env: {
+          BOOTSTRAP_MODE: 'affected',
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        },
+      });
+      const native = readFileSync(output, 'utf-8');
+      writeFileSync(output, '');
+      execFileSync(process.execPath, ['scripts/plan-ci-checks.mts', '--paths-file', paths], {
+        cwd: app,
+        env: {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        },
+      });
+      const installed = readFileSync(output, 'utf-8');
+      expect(decode(native)).toEqual(decode(installed));
+    }
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
+});

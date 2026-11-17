@@ -99,7 +99,7 @@ jobs:
       - name: Checkout the exact comparison history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           persist-credentials: false
       - name: Classify the complete diff without app dependencies
         id: changes
@@ -125,14 +125,11 @@ jobs:
           path: ${{ runner.temp }}/ci-changed-paths
           if-no-files-found: warn
           retention-days: 1
-      # Every gate needs this install. Publish the complete workspace before fanning out, rather than
-      # making every first-wave job repeat the install while waiting for build shard 1 to save it.
-      - name: Install the app workspace for code impact analysis
+      - name: Select the preinstalled Node runtime for dependency-free planning
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
-        uses: ./.github/actions/install-app
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          mise-env: 'false'
-          save-node-modules: ${{ github.ref != 'refs/heads/main' }}
+          node-version: '24'
       - name: Resolve affected packages and required matrices
         id: selection
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
@@ -140,17 +137,15 @@ jobs:
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
         run: |
-          args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
-          [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
-          mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
+          bash scripts/plan-ci-without-install.sh "$RUNNER_TEMP/ci-changed-paths"
 
   # The default-branch producer of the caches the gates restore, where every pull request and merge
   # group can read them: the pnpm store, the installed node_modules, the TS-Go typecheck build,
   # the Playwright Chromium build, and the apt packages of Chromium's
   # system libraries. An Actions cache is readable from the current branch or the default branch only, so
   # a merge group run (gh-readonly-queue/main/*) can read nothing a pull request saved, and the gate jobs
-  # never run on a proven push to main: this job publishes the shared caches. ci-plan also saves its
-  # complete installed workspace before any downstream gate starts.
+  # never run on a proven push to main: this job publishes the shared caches. The planner reads
+  # authored JSON without installing this workspace.
   # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
   warm-caches:
     name: Warm the gate caches on main
@@ -265,6 +260,7 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
+          save-node-modules: ${{ matrix.typescript-build == true && github.ref != 'refs/heads/main' }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -280,9 +276,11 @@ jobs:
           while IFS= read -r command; do
             [[ -n "$command" ]] || continue
             echo "::group::$command"
+            started=$SECONDS
             if ! mise exec -- bash -c "$command"; then
               failed+=("$command")
             fi
+            printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"
             echo '::endgroup::'
           done <<<"$COMMANDS"
           for command in "${failed[@]}"; do
@@ -343,9 +341,11 @@ jobs:
           while IFS= read -r command; do
             [[ -n "$command" ]] || continue
             echo "::group::$command"
+            started=$SECONDS
             if ! mise exec -- bash -c "$command"; then
               failed+=("$command")
             fi
+            printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"
             echo '::endgroup::'
           done <<<"$COMMANDS"
           for command in "${failed[@]}"; do
@@ -353,8 +353,8 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  # Share one install. Keep the memory-heavy API analyzer after the parallel group;
-  # module generation must finish before the i18n scanner walks generated directories.
+  # Keep the memory-heavy API analyzer on its own runner, not serially after database analysis.
+  # Module generation must finish before the i18n scanner walks generated directories.
   static-contracts:
     name: Static Contracts (${{ matrix.row }})
     needs: [ci-plan]
@@ -364,7 +364,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        row: [contracts]
+        row: [contracts, api]
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -424,7 +424,7 @@ jobs:
           )
 
       # Share one install across independent checks and retain a log for each check.
-      # Keep the memory-heavy API analyzer outside this group.
+      # The memory-heavy API analyzer has its own matrix row.
       - parallel:
           - name: Validate the root lefthook config
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
@@ -469,7 +469,7 @@ jobs:
         run: mise exec -- pnpm i18n:boundaries
 
       - name: API Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
         working-directory: app
         env:
           # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
@@ -559,18 +559,16 @@ jobs:
             # A path the diff deleted, or that this commit does not track, has nothing to check.
             git ls-files -z -- "${paths[@]}" >"$files"
           fi
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
-            <"$files"
+          if [[ "$sweep" == all ]]; then
+            # Directory arguments keep one linter process and one program per tsconfig, not one per
+            # Lefthook argument chunk. Use the same formatter, configuration and rules as the hook.
+            mise exec --cd app -- pnpm format:check
+            mise exec --cd app -- pnpm lint
+          else
+            mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
+              <"$files"
+          fi
           git diff --exit-code HEAD
-
-      # Balance the eight executors: source checks already carry typecheck and API rules,
-      # while this runner would otherwise be idle after the hook completes.
-      - name: Test repository tooling against the unchanged checkout
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: http://localhost:8080
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: mise exec -- pnpm test:scripts
 
   # Four service runners: bootstrap and whole-owner proofs, two integration batches, and browsers.
   # Each integration runner owns two PostgreSQL clusters and SpiceDB datastores.
@@ -955,8 +953,14 @@ jobs:
       matrix:
         shard: [1, 2]
         include:
-          - { shard: 1, units: verticals/catalog verticals/tax verticals/commerce-cart verticals/commerce-customer-context verticals/storefront-registry verticals/commerce-order verticals/assortment verticals/privacy verticals/price-group-catalog verticals/inventory }
-          - { shard: 2, units: apps/shell-super-app verticals/promotion verticals/payment verticals/party-registry verticals/availability verticals/symmy-integration verticals/commerce-market-catalog verticals/pricing verticals/payment-term-catalog verticals/projects }
+          - {
+              shard: 1,
+              units: verticals/commerce-customer-context verticals/assortment verticals/party-registry verticals/inventory verticals/symmy-integration apps/shell-super-app verticals/payment verticals/commerce-cart verticals/availability verticals/projects,
+            }
+          - {
+              shard: 2,
+              units: verticals/catalog verticals/privacy verticals/commerce-order verticals/tax verticals/storefront-registry verticals/price-group-catalog verticals/commerce-market-catalog verticals/pricing verticals/payment-term-catalog verticals/promotion,
+            }
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -974,8 +978,6 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-        with:
-          restore-typescript-build: 'true'
 
       - name: Restore the server and browser compiler caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -991,7 +993,9 @@ jobs:
         env:
           SHARD_UNITS: ${{ matrix.units }}
           NODE_OPTIONS: --max-old-space-size=2048
-          ONTOS_CI_TYPECHECK_SEPARATE: "1"
+          ONTOS_CI_TYPECHECK_SEPARATE: '1'
+          # Separates tracing, package assembly and copying in the timestamped CI log.
+          DEBUG: nde
         run: |
           read -ra units <<<"$SHARD_UNITS"
           filters=()
