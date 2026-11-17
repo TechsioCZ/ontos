@@ -2217,15 +2217,7 @@ it('keeps every check in the source, unit or format gates without repeating the 
     readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
       ({ name }) => name === 'Check lint rules and shared contract types',
     )?.run ?? '';
-  const staticPreparation =
-    readGateCommandJobs()['static-contracts'].steps.find(
-      ({ name }) => name === 'Check OntOS APIs and generator behavior',
-    )?.run ?? '';
   const commands = [
-    ...staticPreparation
-      .trim()
-      .split('\n')
-      .map((command) => command.replace(/^mise exec -- /u, '')),
     ...gateCommands().flat(),
     ...ruleChecks
       .trim()

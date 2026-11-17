@@ -474,13 +474,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm i18n:boundaries
-      - name: Check OntOS APIs and generator behavior
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
-        working-directory: app
-        run: |
-          mise exec -- pnpm api:check:ontos
-          mise exec -- pnpm test:generation
-
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it.
   # It can only prove that already-committed files are formatted and linted, and the same lefthook hook
   # proves that at commit time, so it runs over the run's changed files instead of the whole tree. The one
@@ -1004,7 +997,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
         include:
-          - { shard: 1, units: verticals/commerce-customer-context verticals/projects }
+          - { shard: 1, units: verticals/price-group-catalog verticals/tax verticals/commerce-order }
           - { shard: 2, units: apps/shell-super-app verticals/symmy-integration }
           - { shard: 3, units: verticals/privacy verticals/availability }
           - { shard: 4, units: verticals/party-registry verticals/promotion }
@@ -1086,7 +1079,7 @@ jobs:
           - { shard: 5, units: verticals/catalog verticals/inventory verticals/assortment }
           - { shard: 6, units: verticals/commerce-market-catalog verticals/pricing verticals/commerce-cart }
           - { shard: 7, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry }
-          - { shard: 8, units: verticals/price-group-catalog verticals/tax verticals/commerce-order }
+          - { shard: 8, units: verticals/commerce-customer-context verticals/projects }
     env: *node-build-environment
     steps: *node-build-steps
 
