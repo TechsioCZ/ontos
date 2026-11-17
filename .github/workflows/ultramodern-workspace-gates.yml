@@ -474,6 +474,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm i18n:boundaries
+      - name: Check OntOS APIs and generator behavior
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
+        working-directory: app
+        run: |
+          mise exec -- pnpm api:check:ontos
+          mise exec -- pnpm test:generation
+
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it.
   # It can only prove that already-committed files are formatted and linted, and the same lefthook hook
   # proves that at commit time, so it runs over the run's changed files instead of the whole tree. The one
@@ -803,7 +810,7 @@ jobs:
         if: matrix.suite == 'integration'
         working-directory: app
         env:
-          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '3' }}
+          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '2' }}
           INTEGRATION_DATABASE_ARCHIVE: ${{ runner.temp }}/integration-database
         run: bash scripts/ci/start-integration-workers.sh
 
@@ -907,7 +914,7 @@ jobs:
           NATIVE_PREPROPOSAL_CASE: ${{ matrix.preproposal-case }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
-          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '3' }}
+          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '2' }}
           INTEGRATION_LANES: ${{ matrix.lanes }}
           WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.

@@ -14,7 +14,7 @@ export const isIntegrationWorkerEndpoint = (input: {
   readonly isolatedWorkers: string;
   readonly port: number;
 }) =>
-  ['3', '4'].includes(input.isolatedWorkers) &&
+  ['2', '3', '4'].includes(input.isolatedWorkers) &&
   workerSlots
     .filter((worker) => Number(worker) <= Number(input.isolatedWorkers))
     .some((worker) => input.container === `ontos-ci-db-${worker}` && input.port === 5540 + Number(worker));
@@ -23,7 +23,7 @@ export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({
     DATABASE_ADMIN_URL: LocalDatabaseUrl,
     DATABASE_URL: LocalDatabaseUrl,
-    ONTOS_CI_ISOLATED_WORKERS: Schema.Literals(['3', '4']),
+    ONTOS_CI_ISOLATED_WORKERS: Schema.Literals(['2', '3', '4']),
     ONTOS_CI_WORKER_SLOT: Schema.optionalKey(WorkerSlotSchema),
     PARTY_REGISTRY_DATABASE_URL: LocalDatabaseUrl,
     PARTY_REGISTRY_WORKER_DATABASE_URL: LocalDatabaseUrl,

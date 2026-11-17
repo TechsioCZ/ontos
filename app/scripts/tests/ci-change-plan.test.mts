@@ -134,12 +134,9 @@ it('retains the native preproposal proof for each runtime owner even without ord
     expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
     if (owner === PRICING) {
       expect(plan.affectedPackages).toEqual([PRICING]);
-      expect(
-        matchingPackages(
-          plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters'] ?? '',
-          packages,
-        ).every(({ name }) => name === PRICING),
-      ).toBe(true);
+      expect(['', '--filter ./verticals/pricing']).toContain(
+        plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters'],
+      );
       expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['root-suite']).toBe(false);
     }
   }

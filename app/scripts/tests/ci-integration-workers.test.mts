@@ -66,7 +66,7 @@ it('refuses a missing or unprovisioned slot instead of sharing the source cluste
   for (const worker of [undefined, '0', '5', 'invalid']) {
     expect(Result.isFailure(decode({ ...environment, RSTEST_WORKER_ID: worker }))).toBe(true);
   }
-  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '2' }))).toBe(true);
+  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '1' }))).toBe(true);
   expect(Result.isFailure(decode({ ...environment, ONTOS_CI_WORKER_SLOT: '5', RSTEST_WORKER_ID: '1' }))).toBe(true);
 });
 
