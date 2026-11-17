@@ -76,6 +76,7 @@ type WithoutSourceProvenance<Command> = Command extends unknown
   ? Omit<Command, 'requestCorrelationId' | 'sourceEvidence'>
   : never;
 type LegacyRevisePricePersistenceCommand = WithoutSourceProvenance<RevisePricePersistenceCommand>;
+type ValueOnlyRevision = Extract<LegacyRevisePricePersistenceCommand, { readonly intent: 'VALUE_ONLY_CURRENT' }>;
 type TestPricePersistence = ExactPriceLookupPersistence &
   PriceActionResultLookupPersistence &
   Omit<PricePersistence, 'revise'> & {
@@ -423,6 +424,7 @@ const enrichRevisionCommand = (
     } else if (revisionCommand.intent === 'VALUE_ONLY_CURRENT') {
       ownerBusinessEffectiveAt =
         revisionCommand.acknowledgement?.intendedEffectivePeriod.effectiveFrom ??
+        revisionCommand.effectiveFrom ??
         revisionCommand.trustedOperationAt.toISOString();
     }
     return {
@@ -2149,6 +2151,111 @@ it.live('retains a deliberate gap around a finite scheduled Price interval', () 
         });
       }
       return null;
+    }),
+  ),
+);
+
+it.live('starts a value-only revision at the effective time its source asserts, never after the operation', () =>
+  Effect.scoped(
+    Effect.gen(function* assertedEffectiveTime() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      yield* cleanupPricingFacts(admin);
+      yield* Effect.addFinalizer(() => cleanupPricingFacts(admin).pipe(Effect.orDie));
+
+      const assertedPriceId = 'e7560000-0000-4000-8000-000000000070';
+      const ref = priceRef(assertedPriceId);
+      yield* withPersistence(runtime, (persistence) =>
+        persistence.define(
+          command('e7560000-0000-4000-8000-000000000071', assertedPriceId, {
+            identityKey: {
+              ...identityKey,
+              commercialScope: { ...identityKey.commercialScope, marketId: 'asserted-effective-time' },
+            },
+          }),
+        ),
+      );
+      const readCurrent = (at: string) =>
+        withPersistence(runtime, (persistence) => persistence.readSchedule(ref, instant(at))).pipe(
+          Effect.flatMap((schedule) =>
+            schedule.outcome === 'PRICE_SCHEDULE_CURRENT' && schedule.schedule.current !== undefined
+              ? Effect.succeed({
+                  current: schedule.schedule.current,
+                  scheduleRevision: schedule.schedule.scheduleRevision,
+                })
+              : Effect.die('Expected the Price to be Current'),
+          ),
+        );
+      const edit = (
+        invocation: string,
+        current: Effect.Success<ReturnType<typeof readCurrent>>,
+        trustedOperationAt: string,
+      ): ValueOnlyRevision => ({
+        actingPrincipalId: principalId,
+        actionInvocationId: invocation,
+        expectedCurrent: {
+          effectivePeriod: current.current.effectivePeriod,
+          priceRef: ref,
+          revision: current.current.definition.revision.revision,
+          revisionId: current.current.definition.revision.revisionId,
+          scheduleRevision: current.scheduleRevision,
+        },
+        intent: 'VALUE_ONLY_CURRENT',
+        monetaryAmount: { amount: '200', currencyCode: 'CZK' },
+        priceRef: ref,
+        reason: 'Take the value at the effective time its source asserts.',
+        trustedOperationAt: instant(trustedOperationAt),
+      });
+      const assertedAt = (
+        invocation: string,
+        current: Effect.Success<ReturnType<typeof readCurrent>>,
+        effectiveFrom: string,
+      ): ValueOnlyRevision => ({
+        ...edit(invocation, current, '2026-09-27T12:00:00.000Z'),
+        effectiveFrom,
+      });
+
+      // The Price started at 10:00. An asserted time after the operation, or before that start, crosses a boundary.
+      const initial = yield* readCurrent('2026-09-27T11:00:00.000Z');
+      for (const [invocation, effectiveFrom] of [
+        ['e7560000-0000-4000-8000-000000000072', '2026-09-27T12:30:00.000Z'],
+        ['e7560000-0000-4000-8000-000000000073', '2026-09-27T09:00:00.000Z'],
+      ] as const) {
+        expect(
+          yield* withPersistence(runtime, (persistence) =>
+            persistence.revise(assertedAt(invocation, initial, effectiveFrom)),
+          ),
+        ).toEqual({ outcome: 'CONFLICT', reason: 'BOUNDARY_CROSSED' });
+      }
+
+      // An asserted time between the Current start and the operation starts the new value there, and splits the
+      // Current period at that time instead of at the operation time.
+      expect(
+        yield* withPersistence(runtime, (persistence) =>
+          persistence.revise(assertedAt('e7560000-0000-4000-8000-000000000074', initial, '2026-09-27T11:30:00.000Z')),
+        ),
+      ).toMatchObject({
+        outcome: 'REVISED',
+        revision: {
+          definition: { revision: { effectiveFrom: '2026-09-27T11:30:00.000Z', revision: 2 } },
+          effectivePeriod: { effectiveFrom: '2026-09-27T11:30:00.000Z', effectiveTo: null },
+        },
+      });
+      const revised = yield* readCurrent('2026-09-27T12:00:00.000Z');
+      expect(revised.current.definition.revision.revision).toBe(2);
+      expect(revised.scheduleRevision).toBe(initial.scheduleRevision + 1);
+      expect((yield* readCurrent('2026-09-27T11:15:00.000Z')).current.definition.revision.revision).toBe(1);
+
+      // Without an asserted time the value still starts at the operation time.
+      expect(
+        yield* withPersistence(runtime, (persistence) =>
+          persistence.revise(edit('e7560000-0000-4000-8000-000000000075', revised, '2026-09-27T13:00:00.000Z')),
+        ),
+      ).toMatchObject({
+        outcome: 'REVISED',
+        revision: { effectivePeriod: { effectiveFrom: '2026-09-27T13:00:00.000Z' } },
+      });
     }),
   ),
 );

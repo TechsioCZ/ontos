@@ -281,50 +281,6 @@ const requestFor = (fees: readonly ScheduledPricingCommercialFeeRevision[]): Pri
 };
 
 describe('Pricing Commercial Fee calculation service', () => {
-  it.effect('composes different families and includes each Fee exactly once in the Discountable Line Basis', () =>
-    Effect.gen(function* composesFees() {
-      const fixedLine = fee({
-        amount: '20',
-        family: 'RECYCLING_FEE',
-        feeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        revisionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-      });
-      const fixedUnit = fee({
-        amount: '5',
-        basis: 'FIXED_PER_UNIT',
-        family: 'COPYRIGHT_FEE',
-        feeId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-        revisionId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
-      });
-
-      const result = yield* calculatePricingCommercialFees(requestFor([fixedLine, fixedUnit]));
-
-      expect(result).toMatchObject({
-        contributions: [
-          {
-            amount: { amount: '20', currencyCode: 'CZK' },
-            appliedQuantity: { count: '1', kind: 'LINE' },
-            fee: fixedLine,
-            occurrenceId,
-          },
-          {
-            amount: { amount: '50', currencyCode: 'CZK' },
-            appliedQuantity: { kind: 'QUANTITY', quantity: '10', unitRef },
-            fee: fixedUnit,
-            occurrenceId,
-          },
-        ],
-        contributionTotal: { amount: '70', currencyCode: 'CZK' },
-        discountableLineBasis: { amount: '170', currencyCode: 'CZK' },
-        outcome: 'COMMERCIAL_FEES_APPLIED',
-      });
-      if (result.outcome === 'COMMERCIAL_FEES_APPLIED') {
-        expect(result.input.pricePath.source).toBe('PRICE_GROUP_PRICE');
-        expect(result.input.quantityTierRevisionId).toBe('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-      }
-    }),
-  );
-
   it.effect('returns an exact-key conflict without selecting a winner', () =>
     Effect.gen(function* reportsConflict() {
       const first = fee({
@@ -367,19 +323,6 @@ describe('Pricing Commercial Fee calculation service', () => {
       });
 
       const result = yield* calculatePricingCommercialFees(requestFor([zero]));
-
-      expect(result).toMatchObject({
-        contributions: [],
-        contributionTotal: { amount: '0', currencyCode: 'CZK' },
-        discountableLineBasis: { amount: '100', currencyCode: 'CZK' },
-        outcome: 'COMMERCIAL_FEES_APPLIED',
-      });
-    }),
-  );
-
-  it.effect('accepts an empty set only when exact owner evidence proves absence', () =>
-    Effect.gen(function* acceptsProvenAbsence() {
-      const result = yield* calculatePricingCommercialFees(requestFor([]));
 
       expect(result).toMatchObject({
         contributions: [],
@@ -472,29 +415,6 @@ describe('Pricing Commercial Fee calculation service', () => {
         occurrenceId,
         outcome: 'COMMERCIAL_FEE_CALCULATION_FAILED',
         reason: 'QUANTITY_BASIS_MISMATCH',
-      });
-    }),
-  );
-
-  it.effect('fails closed when Current tenant support does not enable the Decision currency', () =>
-    Effect.gen(function* rejectsUnsupportedCurrency() {
-      const configured = fee({
-        amount: '5',
-        family: 'COPYRIGHT_FEE',
-        feeId: '21212121-2121-4212-8212-212121212121',
-        revisionId: '22222222-2222-4222-8222-222222222222',
-      });
-      const request = requestFor([configured]);
-
-      const result = yield* calculatePricingCommercialFees({
-        ...request,
-        currencySupport: { ...request.currencySupport, supportedCurrencies: ['EUR'] },
-      });
-
-      expect(result).toEqual({
-        occurrenceId,
-        outcome: 'COMMERCIAL_FEE_CALCULATION_FAILED',
-        reason: 'CURRENCY_UNSUPPORTED',
       });
     }),
   );

@@ -25,8 +25,8 @@ const InputSchema = Schema.Struct({
 export type InternalCustomerPlanInput = typeof InputSchema.Type;
 const partyEffectKey = 'party-create';
 
-/** One explicit source record, with separate canonical Party and Commerce effects. */
-export const makeSymmyC14CustomerPlan = (input: InternalCustomerPlanInput) => {
+/** One explicit source record, with separate canonical Party and Commerce effects, as the encoded plan data. */
+export const symmyC14CustomerPlanData = (input: InternalCustomerPlanInput) => {
   const observedAt = DateTime.formatIso(input.observedAt);
   const source = {
     issuer: internalCustomerSource.issuerId,
@@ -39,7 +39,7 @@ export const makeSymmyC14CustomerPlan = (input: InternalCustomerPlanInput) => {
     recordId: input.recordId,
     source,
   };
-  return Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+  return {
     items: [
       {
         effects: [
@@ -128,5 +128,9 @@ export const makeSymmyC14CustomerPlan = (input: InternalCustomerPlanInput) => {
         sourceOccurrenceId: input.occurrenceId,
       },
     ],
-  });
+  };
 };
+
+/** The same plan decoded through the plan schema. */
+export const makeSymmyC14CustomerPlan = (input: InternalCustomerPlanInput) =>
+  Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)(symmyC14CustomerPlanData(input));

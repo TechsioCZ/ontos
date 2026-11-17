@@ -61,7 +61,6 @@ export const MUST_MIGRATE_TESTS = [
   'verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts',
   'verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts',
   'verticals/party-registry/tests/integration/official-identifier-original-input-migration.test.ts',
-  'verticals/party-registry/tests/integration/organization-migration-fixture.test.ts',
   'verticals/party-registry/tests/integration/verification-removal-migration.test.ts',
 ];
 

@@ -111,6 +111,7 @@ export default defineConfig({
       exclude: operatorTests,
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
+      setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
     },
     {
       ...integration,

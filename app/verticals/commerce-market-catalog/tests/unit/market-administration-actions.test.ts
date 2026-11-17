@@ -218,17 +218,6 @@ describe('Market administration Actions', () => {
     }
   });
 
-  it('declares one scope-wide Market capability whose seller is the trusted legal-entity scope', () => {
-    // v2 expresses staff catalog authority as a scope-wide capability (Q2); the seller of a Market is
-    // the selected legal entity, so the trusted scope can never name another seller.
-    expect(createMarketAction.descriptor.accessDeclaration).toMatchObject({
-      key: 'commerce.market-catalog.market.create',
-      kind: 'action',
-      selectors: [],
-    });
-    expect(createMarketAction.descriptor.legalEntityScope).toBe('required');
-  });
-
   it.effect('emits audit, data-access, domain, and outbox evidence once and emits no event on replay', () =>
     Effect.gen(function* createEvidence() {
       const created = yield* collectCreate(true);

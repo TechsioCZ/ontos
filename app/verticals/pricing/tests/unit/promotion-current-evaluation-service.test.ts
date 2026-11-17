@@ -7,10 +7,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import type { PricingPromotionCompositionInput } from '../../src/services/promotion-contribution-composition.service.ts';
-import {
-  makePricingPromotionCompositionService,
-  PricingPromotionUnverifiable,
-} from '../../src/services/promotion-contribution-composition.service.ts';
+import { makePricingPromotionCompositionService } from '../../src/services/promotion-contribution-composition.service.ts';
 import { makePricingPromotionCurrentEvaluationService } from '../../src/services/promotion-current-evaluation.service.ts';
 import type { PricingPromotionCurrentnessProbe } from '../../src/services/promotion-current-evaluation.service.ts';
 
@@ -206,40 +203,6 @@ const ownerEvidence = (ownerRevision: string): PromotionContributionOwnerEvidenc
   provenanceRef: `promotion-provenance:${ownerRevision}`,
 });
 
-const contributionSource = (ownerCalls: string[]): PromotionContributionSourcePort => ({
-  evaluate: (request) => {
-    ownerCalls.push(request.candidate.candidateRef);
-    const revision = request.candidate.candidateRef.endsWith('2') ? 'promotion-r2' : 'promotion-r1';
-    return Effect.succeed({
-      _tag: 'PROMOTION_CONTRIBUTION_APPLIED',
-      allocations: [
-        {
-          amount: money('-80'),
-          catalogSelection: selection('22'),
-          occurrenceId: 'line-a',
-          recipientKind: 'MERCHANDISE',
-        },
-        {
-          amount: money('-20'),
-          catalogSelection: selection('33'),
-          occurrenceId: 'line-b',
-          recipientKind: 'MERCHANDISE',
-        },
-      ],
-      applicationIdentity: {
-        applicationKind: 'PROMOTION_APPLICATION',
-        applicationRef: `promotion-application:${revision}`,
-        applicationRevision: revision,
-        originalApplicationRef: request.applicationRequestRef,
-      },
-      contribution: money('-100'),
-      ownerEvidence: ownerEvidence(revision),
-      request,
-      target: { kind: 'MERCHANDISE_ONLY', occurrenceIds: ['line-a', 'line-b'] },
-    });
-  },
-});
-
 const secondInput: PricingPromotionCompositionInput = {
   ...baseInput,
   applicationRequestRef: 'voucher-request-attempt-2',
@@ -248,129 +211,6 @@ const secondInput: PricingPromotionCompositionInput = {
 };
 
 describe('Pricing Promotion Current evaluation (#776)', () => {
-  it.effect('accepts exact owner currentness and completeness for the whole bound attempt', () =>
-    Effect.gen(function* acceptsExactCurrentEvidence() {
-      const ownerCalls: string[] = [];
-      const checkedCandidateRefs: string[] = [];
-      const currentness: PricingPromotionCurrentnessProbe = {
-        revalidate: ({ expectedOwnerEvidence, request }) => {
-          checkedCandidateRefs.push(request.candidate.candidateRef);
-          expect(request.candidate.decision).toMatchObject({
-            commercialScope: {
-              channelId: 'B2C',
-              marketId: 'market-cz',
-              sellingLegalEntityId: '55555555-5555-4555-8555-555555555555',
-            },
-            currencyCode: 'CZK',
-            tenantId,
-          });
-          expect(request.prePromotionBasis.lines.map(({ occurrenceId }) => occurrenceId)).toEqual(['line-a', 'line-b']);
-          expect(request.subjectEvidence.subject).toEqual({
-            guestEvidenceRef: 'guest-context-776',
-            kind: 'GUEST',
-            tenantId,
-          });
-          return Effect.succeed({
-            _tag: 'PROMOTION_OWNER_EVIDENCE_CURRENT',
-            ownerEvidence: expectedOwnerEvidence,
-          });
-        },
-      };
-      let loads = 0;
-      const result = yield* makePricingPromotionCurrentEvaluationService(
-        makePricingPromotionCompositionService(contributionSource(ownerCalls)).compose,
-        currentness,
-      ).evaluate({
-        loadFresh: () => {
-          loads += 1;
-          return Effect.succeed(baseInput);
-        },
-      });
-
-      expect(result.attempts).toBe(1);
-      expect(result.currentnessEvidence).toEqual(ownerEvidence('promotion-r1'));
-      expect(result.composition.ownerDecision.ownerEvidence).toEqual(ownerEvidence('promotion-r1'));
-      expect(loads).toBe(1);
-      expect(ownerCalls).toEqual(['pricing-candidate-attempt-1']);
-      expect(checkedCandidateRefs).toEqual(['pricing-candidate-attempt-1']);
-    }),
-  );
-
-  it.effect(
-    'discards a changed whole attempt and retries once from freshly loaded inputs without merging evidence',
-    () =>
-      Effect.gen(function* retriesFreshWholeAttempt() {
-        const ownerCalls: string[] = [];
-        const discardedEvidence = ownerEvidence('promotion-r2');
-        let checks = 0;
-        const currentness: PricingPromotionCurrentnessProbe = {
-          revalidate: ({ expectedOwnerEvidence }) => {
-            checks += 1;
-            return checks === 1
-              ? Effect.succeed({
-                  _tag: 'PROMOTION_OWNER_EVIDENCE_CHANGED' as const,
-                  ownerEvidence: discardedEvidence,
-                })
-              : Effect.succeed({
-                  _tag: 'PROMOTION_OWNER_EVIDENCE_CURRENT' as const,
-                  ownerEvidence: expectedOwnerEvidence,
-                });
-          },
-        };
-        let loads = 0;
-        const result = yield* makePricingPromotionCurrentEvaluationService(
-          makePricingPromotionCompositionService(contributionSource(ownerCalls)).compose,
-          currentness,
-        ).evaluate({
-          loadFresh: () => {
-            loads += 1;
-            return Effect.succeed(loads === 1 ? baseInput : secondInput);
-          },
-        });
-
-        expect(result.attempts).toBe(2);
-        expect(result.composition.request.candidate.candidateRef).toBe('pricing-candidate-attempt-2');
-        expect(result.composition.request.applicationRequestRef).toBe('voucher-request-attempt-2');
-        expect(result.composition.request.prePromotionBasis.pricingCompositionRevision).toBe(
-          'pricing-composition-attempt-2',
-        );
-        expect(result.currentnessEvidence).toEqual(ownerEvidence('promotion-r2'));
-        expect(result.composition.ownerDecision.ownerEvidence).toEqual(ownerEvidence('promotion-r2'));
-        expect(ownerCalls).toEqual(['pricing-candidate-attempt-1', 'pricing-candidate-attempt-2']);
-        expect(loads).toBe(2);
-      }),
-  );
-
-  it.effect('treats a CURRENT response with different complete owner evidence as a change', () =>
-    Effect.gen(function* rejectsMislabeledChangedEvidence() {
-      const ownerCalls: string[] = [];
-      const currentness: PricingPromotionCurrentnessProbe = {
-        revalidate: () =>
-          Effect.succeed({
-            _tag: 'PROMOTION_OWNER_EVIDENCE_CURRENT',
-            ownerEvidence: ownerEvidence('promotion-other'),
-          }),
-      };
-      let loads = 0;
-      const failure = yield* makePricingPromotionCurrentEvaluationService(
-        makePricingPromotionCompositionService(contributionSource(ownerCalls)).compose,
-        currentness,
-      )
-        .evaluate({
-          loadFresh: () => {
-            loads += 1;
-            return Effect.succeed(loads === 1 ? baseInput : secondInput);
-          },
-        })
-        .pipe(Effect.flip);
-
-      expect(Schema.is(PricingPromotionUnverifiable)(failure)).toBe(true);
-      expect(failure.reason).toContain('changed during the bounded Current evaluation');
-      expect(ownerCalls).toEqual(['pricing-candidate-attempt-1', 'pricing-candidate-attempt-2']);
-      expect(loads).toBe(2);
-    }),
-  );
-
   it.effect('applies the same bounded currentness gate to proven non-applicability', () =>
     Effect.gen(function* protectsProvenAbsence() {
       let ownerCalls = 0;

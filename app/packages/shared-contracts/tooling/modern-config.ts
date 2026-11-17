@@ -77,12 +77,17 @@ export const createWorkspaceModernConfig = ({
     overrideBrowserslist: BROWSER_TARGETS,
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
     // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
-    // `pnpm typecheck` owns type diagnostics. A CI unit build that has already run its own TS-Go reference
-    // build (`ultramodern typecheck --build`, which fails on a transitive type error) sets
-    // ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1 instead of checking the same graph twice.
+    // `pnpm typecheck` owns type diagnostics. A build whose TS-Go check already ran elsewhere skips the
+    // second one: a unit build after its own `ultramodern typecheck --build` sets
+    // ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1, and a CI build under the required workspace typecheck job
+    // sets ONTOS_CI_TYPECHECK_SEPARATE=1, which also drops JavaScript source maps nobody reads there.
     disableTsChecker:
       readBuildEnvironmentValue('NODE_ENV') === 'development' ||
-      readBuildEnvironmentValue('ULTRAMODERN_DISABLE_BUILD_TS_CHECKER') === '1',
+      readBuildEnvironmentValue('ULTRAMODERN_DISABLE_BUILD_TS_CHECKER') === '1' ||
+      readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1',
+    ...(readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1'
+      ? { sourceMap: { js: false as const } }
+      : undefined),
   },
   server: {
     publicDir: ['./.dev-public'],
@@ -93,5 +98,7 @@ export const createWorkspaceModernConfig = ({
       ULTRAMODERN_SHELL_ORIGIN: readBuildEnvironmentValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
     },
   },
-  tools: browserTargetTools,
+  tools: {
+    ...browserTargetTools,
+  } satisfies AppUserConfig['tools'],
 });

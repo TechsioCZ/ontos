@@ -79,6 +79,7 @@ const oldClockDefinition = (current: string): string => {
 const ClockMigrationStateSchema = Schema.Literals(['CURRENT', 'OLD_CLOCK']);
 type ClockMigrationState = typeof ClockMigrationStateSchema.Type;
 
+// Every scenario owns a database and access scope; cases share only immutable source migrations.
 // Finite TEST owner windows leave scheduling headroom; every expiry check still crosses the stored boundary.
 export const initialObservationSeconds = 5;
 export const extendedObservationSeconds = 15;

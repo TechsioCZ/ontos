@@ -292,23 +292,38 @@ it.live('detects a sequence privilege outside the manifest', () =>
   ),
 );
 
-for (const scope of ['', 'in schema core']) {
-  for (const object of ['tables', 'sequences']) {
-    for (const grantee of ['party_registry_runtime', 'public']) {
-      it.live(`rejects undeclared default ${object} grants ${scope || 'globally'} to ${grantee}`, () =>
-        rolledBack((session) =>
-          Effect.gen(function* defaultPrivilegeDrift() {
-            const entry = entryWith(({ identity }) => identity.role === 'party_registry_runtime');
+/**
+ * The whole scope x object x grantee matrix shares one `rolledBack` bootstrap, which is the expensive
+ * part. `alter default privileges` is transactional, so each variant runs behind its own savepoint and
+ * the rollback to it is what keeps the next variant from passing on the previous variant's leftover
+ * default grant. The variant is named in every assertion so a failure stays attributable.
+ */
+it.live('rejects every undeclared default privilege grant, across scope, object and grantee', () =>
+  rolledBack((session) =>
+    Effect.gen(function* defaultPrivilegeDrift() {
+      const entry = entryWith(({ identity }) => identity.role === 'party_registry_runtime');
+      for (const scope of ['', 'in schema core']) {
+        for (const object of ['tables', 'sequences']) {
+          for (const grantee of ['party_registry_runtime', 'public']) {
+            const variant = `default ${object} grants ${scope || 'globally'} to ${grantee}`;
+            yield* session.unsafe('savepoint default_privilege_variant');
             yield* session.unsafe(`alter default privileges ${scope} grant select on ${object} to ${grantee}`);
             // Reconciliation must not bless a latent grant merely because no table exists yet.
             yield* grantExplicitRole(session, entry);
-            expect(yield* assertionFailure(session, entry)).toContain('has default privileges outside its manifest');
-          }),
-        ),
-      );
-    }
-  }
-}
+            const reason = yield* assertionFailure(session, entry).pipe(
+              // Reconciliation accepting the drift fails this effect rather than the expectation, and
+              // the merged test's own name no longer says which variant was accepted, so name it here.
+              Effect.mapError(() => new Error(`Reconciliation accepted ${variant}`)),
+            );
+            expect(reason, variant).toContain('has default privileges outside its manifest');
+            yield* session.unsafe('rollback to savepoint default_privilege_variant');
+            yield* session.unsafe('release savepoint default_privilege_variant');
+          }
+        }
+      }
+    }),
+  ),
+);
 
 it.live('rejects ordinary default grants made by a different object creator', () =>
   rolledBack((session) =>

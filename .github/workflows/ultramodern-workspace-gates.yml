@@ -104,6 +104,7 @@ jobs:
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
       seed-key: ${{ steps.seed-key.outputs.key }}
       browser: ${{ steps.selection.outputs.browser || steps.changes.outputs.browser }}
+      lint-shards: ${{ steps.lint-shards.outputs.shards || '[1,2,3]' }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -154,9 +155,25 @@ jobs:
         env:
           REASON: ${{ steps.changes.outputs.reason }}
         run: printf '## CI selection\n\n%s\n\nNo app dependencies, builds or services are needed.\n' "$REASON" >> "$GITHUB_STEP_SUMMARY"
+      # $RUNNER_TEMP is job-local and format-and-lint checks out at depth 1, so it can neither read this list nor
+      # recompute the diff. The list is empty whenever the comparison is unavailable (full, docs and proven modes),
+      # so an empty file is a valid result.
+      - name: Publish the exact changed-path list
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-changed-paths
+          path: ${{ runner.temp }}/ci-changed-paths
+          if-no-files-found: warn
+          retention-days: 1
+      # Every gate installs the workspace. This one complete install publishes the installed tree (and, on the
+      # trunks, the pnpm store) before the gates fan out, so they restore it instead of relinking it. This job runs
+      # once per run, so no two jobs race to save.
       - name: Install the app workspace for code impact analysis
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
         uses: ./.github/actions/install-app
+        with:
+          save-store: 'true'
+          save-node-modules: 'true'
       - name: Resolve affected packages and required matrices
         id: selection
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
@@ -171,95 +188,37 @@ jobs:
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
           mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
-
-  # The only job that saves the caches the gates restore, on main, where every pull request and merge
-  # group can read them: the pnpm store, the TS-Go typecheck build, the Playwright Chromium build, and
-  # the apt packages of Chromium's system libraries.
-  # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
-  warm-caches:
-    name: Warm the gate caches on main
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        id: install
-        uses: ./.github/actions/install-app
-        with:
-          restore-typescript-build: 'true'
-          save-store: 'true'
-
-      - name: Typecheck the workspace incrementally
-        working-directory: app
-        run: mise exec -- pnpm typecheck
-
-      - name: Save the TS-Go typecheck build
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: app/node_modules/.cache/tsgo
-          key: ${{ steps.install.outputs.typescript-build-key }}
-
-      - name: Restore the Playwright Chromium build
-        id: playwright-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
-
-      - name: Download the Playwright Chromium build
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: app
-        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install chromium
-
-      - name: Save the Playwright Chromium build
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
-
-      # Chromium's system libraries come from apt, whose mirror can serve them at 100 kB/s; their downloaded
-      # packages are cached per runner image. apt reuses a cached package only when it matches the index.
-      - name: Name the Chromium system-library package cache
-        id: chromium-debs
-        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ hashFiles('app/pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
-
-      - name: Check for the Chromium system-library packages
-        id: chromium-debs-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/playwright-apt-debs
-          key: ${{ steps.chromium-debs.outputs.key }}
-          lookup-only: true
-
-      - name: Download the Chromium system-library packages
-        if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
-        working-directory: app
+      # A narrowed (affected) run lints only its changed files, on one runner (shard 0), through the same hook. The one
+      # real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
+      # configuration, which changes the result for files nobody touched: such a change, an empty or oversized list and
+      # every complete run keep the three whole-tree shards.
+      - name: Choose the format and lint shards
+        id: lint-shards
+        if: steps.selection.outputs.mode != ''
+        env:
+          CHANGED_PATHS: ${{ runner.temp }}/ci-changed-paths
+          PLAN_MODE: ${{ steps.selection.outputs.mode }}
         run: |
-          mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
-          mkdir -p ~/.cache/playwright-apt-debs
-          # The marker keeps the cache saveable on an image that already has every library.
-          touch ~/.cache/playwright-apt-debs/.downloaded
-          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
-          echo "Cached $(find ~/.cache/playwright-apt-debs -name '*.deb' | wc -l) packages."
-
-      - name: Save the Chromium system-library packages
-        if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/playwright-apt-debs
-          key: ${{ steps.chromium-debs.outputs.key }}
+          shards='[1,2,3]'
+          if [[ "$PLAN_MODE" == affected && -s "$CHANGED_PATHS" ]]; then
+            shards='[0]'
+            count=0
+            while IFS= read -r -d '' path; do
+              count=$((count + 1))
+              if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|oxfmt|lefthook|tsgolint)[^/]*$ ||
+                "$path" =~ (^|/)tsconfig[^/]*\.json$ || "$path" == app/tools/oxlint/* || "$path" == app/patches/* ||
+                "$path" == app/package.json || "$path" == app/pnpm-lock.yaml || "$path" == app/pnpm-workspace.yaml ||
+                "$path" == app/.mise.toml ]]; then
+                echo "::notice title=Tool configuration changed::$path changes how unchanged files lint; every tracked file is linted."
+                shards='[1,2,3]'
+                break
+              fi
+            done <"$CHANGED_PATHS"
+            if ((count > 2000)); then
+              shards='[1,2,3]'
+            fi
+          fi
+          echo "shards=$shards" >>"$GITHUB_OUTPUT"
 
   # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
   # the units build in shards on parallel runners. A build shard only builds, packs and uploads: test jobs that read
@@ -492,6 +451,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the app workspace
+        id: install
         uses: ./.github/actions/install-app
         with:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
@@ -510,9 +470,11 @@ jobs:
           while IFS= read -r command; do
             [[ -n "$command" ]] || continue
             echo "::group::$command"
+            started=$SECONDS
             if ! mise exec -- bash -c "$command"; then
               failed+=("$command")
             fi
+            printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"
             echo '::endgroup::'
           done <<<"$COMMANDS"
           for command in "${failed[@]}"; do
@@ -521,6 +483,17 @@ jobs:
           [[ ${#failed[@]} -eq 0 ]]
 
   # Unit rows whose suites read no build output start right after planning, beside the build shards.
+
+      # The trunk's own TS-Go typecheck build, which the next runs on this branch restore by prefix. A cache is readable
+      # from its own ref and the default branch only, so main's warmed build never matches the demo lockfile. Saved only
+      # after the row passed, under this commit's key, which no other job writes.
+      - name: Save the TS-Go typecheck build of the demo trunk
+        if: success() && matrix.typescript-build == true && github.ref == 'refs/heads/demo/sales-crm'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/node_modules/.cache/tsgo
+          key: ${{ steps.install.outputs.typescript-build-key }}
+
   workspace-unit:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -573,9 +546,11 @@ jobs:
           while IFS= read -r command; do
             [[ -n "$command" ]] || continue
             echo "::group::$command"
+            started=$SECONDS
             if ! mise exec -- bash -c "$command"; then
               failed+=("$command")
             fi
+            printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"
             echo '::endgroup::'
           done <<<"$COMMANDS"
           for command in "${failed[@]}"; do
@@ -640,9 +615,11 @@ jobs:
           while IFS= read -r command; do
             [[ -n "$command" ]] || continue
             echo "::group::$command"
+            started=$SECONDS
             if ! mise exec -- bash -c "$command"; then
               failed+=("$command")
             fi
+            printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"
             echo '::endgroup::'
           done <<<"$COMMANDS"
           for command in "${failed[@]}"; do
@@ -773,7 +750,7 @@ jobs:
   # Every diagnostic class still runs: formatting, every lint rule including the type-aware ones, and the Shell UI
   # candidate check, over every file.
   format-and-lint:
-    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/3)
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard == 0 && 'changed files' || format('{0}/3', matrix.shard) }})
     # Lint needs source only; it never holds a runner waiting for build jobs.
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
@@ -782,7 +759,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # [0] on a narrowed run without tool configuration changes: the changed files only. [1, 2, 3] otherwise.
+        shard: ${{ fromJSON(needs.ci-plan.outputs.lint-shards) }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -799,6 +777,7 @@ jobs:
         uses: ./.github/actions/install-app
 
       - name: Format and Lint the shard's files through the pre-commit hook
+        if: matrix.shard != 0
         env:
           SHARD: ${{ matrix.shard }}
           SHARDS: 3
@@ -815,6 +794,36 @@ jobs:
           done >"$RUNNER_TEMP/shard-files"
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
             <"$RUNNER_TEMP/shard-files"
+          git diff --exit-code HEAD
+
+      # A missing artifact fails this step, which is the point: without the list this row proves nothing.
+      - name: Download the exact changed-path list
+        if: matrix.shard == 0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-changed-paths
+          path: ${{ runner.temp }}/ci-plan
+
+      # ci-plan chose this row only for a narrowed run whose non-empty list changes no tool configuration.
+      - name: Format and Lint the run's changed files through the pre-commit hook
+        if: matrix.shard == 0
+        run: |
+          changed="$RUNNER_TEMP/ci-plan/ci-changed-paths"
+          # A changed path is a literal file name, never a pathspec pattern.
+          export GIT_LITERAL_PATHSPECS=1
+          if [[ ! -s "$changed" ]]; then
+            echo "::error title=No changed-path list::The changed-files row has no changed paths, so it would prove nothing."
+            exit 1
+          fi
+          paths=()
+          while IFS= read -r -d '' path; do
+            paths+=("$path")
+          done <"$changed"
+          # A path the diff deleted has nothing to check.
+          git ls-files -z -- "${paths[@]}" >"$RUNNER_TEMP/changed-files"
+          echo "Linting $(tr -cd '\0' <"$RUNNER_TEMP/changed-files" | wc -c) changed tracked files."
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
+            <"$RUNNER_TEMP/changed-files"
           git diff --exit-code HEAD
 
   # Suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host artifacts
@@ -1078,6 +1087,20 @@ jobs:
         working-directory: app
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
+      # Schema-only native fixtures otherwise dump and restore the job database's schema once each. The database is now
+      # prepared (restored seed or fresh migration, both verified), so its schema is captured once here as an immutable
+      # template owned by the job's administrator; the fixtures create their databases from it. It holds no rows,
+      # journals or sealing keys, roles are cluster-wide, and every fixture still verifies empty tables and creates its
+      # own trust entropy (core-runtime isolated-native-database.ts). The archive stays on this runner.
+      - name: Capture the prepared schema as the native fixtures' template
+        if: matrix.suite == 'integration'
+        working-directory: app
+        run: |
+          archive="$RUNNER_TEMP/integration-schema-source.dump"
+          docker exec ontos-db pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format=custom >"$archive"
+          bash scripts/ci/prepare-schema-template.sh ontos-db "$archive"
+          rm -f -- "$archive"
+
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         if: matrix.suite == 'integration'
         working-directory: app
@@ -1085,6 +1108,8 @@ jobs:
         # dotenv discovery is closed, so no workspace .env file can leak into an owned test database.
         env:
           APP_ENV_PATH: /dev/null
+          ONTOS_TEST_SCHEMA_TEMPLATE: ontos_ci_schema_template
+          ONTOS_TEST_SCHEMA_TEMPLATE_SOURCE: ontos_ci
           MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres
           MIGRATION_EQUIVALENCE_TEST_SANDBOX: owned-postgres18
           SPICEDB_DATABASE_PASSWORD: spicedb
@@ -1365,7 +1390,7 @@ jobs:
         uses: ./.github/actions/install-app
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
-      # Only warm-caches on main saves it, so parallel jobs never race to save.
+      # main's cache warmer saves it for main's lockfile; the demo trunk saves its own below, from its one browser row.
       - name: Restore the Playwright Chromium build
         id: playwright-cache
         if: matrix.suite == 'browser'
@@ -1457,6 +1482,17 @@ jobs:
 
       - name: Wait for the Chromium install
         wait: chromium-install
+
+      # A cache is readable from its own ref and the default branch only, and main's entry is keyed by main's lockfile,
+      # so the demo trunk keeps its own Chromium build. Saved once installed, before the tests can fail.
+      - name: Save the Playwright Chromium build of the demo trunk
+        if: >-
+          success() && matrix.suite == 'browser' && steps.playwright-cache.outputs.cache-hit != 'true' &&
+          github.ref == 'refs/heads/demo/sales-crm'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
       - name: Run parallel authenticated browser tests without retries
         if: matrix.suite == 'browser'

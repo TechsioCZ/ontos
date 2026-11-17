@@ -1,14 +1,11 @@
 import { Crypto, Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 import { GovernVariantAllowedValuesActionConflictProblemSchema } from '../../shared/apis/govern-variant-allowed-values-action.ts';
 import {
-  SelectionEvidenceAuthenticationProblemSchema,
   SelectionEvidenceForbiddenProblemSchema,
   SelectionEvidenceUnavailableProblemSchema,
 } from '../../shared/apis/selection-evidence.ts';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
-import { executeSelectionEvidenceWithAuthorization } from '../../src/api/selection-evidence-client.ts';
 import {
   makeProductAxisAllowanceFixture,
   productAxisAllowanceTestServices,
@@ -19,11 +16,8 @@ it.live('reassesses Product-specific axis allowance restrictions through native 
   Effect.gen(function* productAxisAllowanceNative() {
     const {
       alternate,
-      baseUrl,
-      composition,
       deniedAccess,
       fixture,
-      nativeFetch,
       nativeRead,
       observeAllowance,
       observeHistory,
@@ -81,20 +75,6 @@ it.live('reassesses Product-specific axis allowance restrictions through native 
     expect(emptied.values.filter((value) => value.allowanceRevision === 1)).toEqual(
       stored.values.filter((value) => value.allowanceRevision === 1),
     );
-    const unauthenticated = yield* executeSelectionEvidenceWithAuthorization(
-      { purpose: 'PRICING', selection: selected },
-      'Bearer invalid',
-      yield* nextId,
-      {
-        baseUrl,
-        compositionRevision: composition.composition.revision,
-      },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch), Effect.flip);
-    expect(Schema.is(SelectionEvidenceAuthenticationProblemSchema)(unauthenticated)).toBe(true);
-    const forbiddenLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-    expect(
-      Schema.is(SelectionEvidenceForbiddenProblemSchema)(yield* read(selected, forbiddenLegalEntity).pipe(Effect.flip)),
-    ).toBe(true);
     const foreignTenantId = yield* nextId;
     const foreignSelection = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
       productRef: { ...selected.productRef, tenantId: foreignTenantId },

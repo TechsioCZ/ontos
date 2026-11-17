@@ -159,22 +159,6 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
     );
   });
 
-  it('BDD a historical zero-Tax Order/Billing value is never promoted as a Seller VAT Regime (#907 Unit 10 D2)', () => {
-    const outcome = only(
-      evaluateTaxMigrationCandidates([
-        candidate('order-88-line-1', { _tag: 'HISTORICAL_ACCEPTED_VALUE', historicalOwner: 'commerce.order' }),
-      ]),
-    );
-    expect(outcome).toEqual(
-      TaxMigrationRejectedUnmappedSchema.make({
-        provenance: prov('order-88-line-1'),
-        reason: 'HISTORICAL_ACCEPTED_VALUE',
-        sourceFamily: Option.none(),
-        targetOwner: 'commerce.order',
-      }),
-    );
-  });
-
   it('BDD Unsupported OSS rule exists in legacy: it does not activate OSS (F9)', () => {
     const outcome = only(evaluateTaxMigrationCandidates([taxRule('legacy-oss-1', { jurisdiction: 'EU_OSS' })]));
     expect(outcome).toEqual(

@@ -12,7 +12,7 @@ import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { ConfigProvider, Deferred, Duration, Effect, Fiber, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Deferred, Duration, Effect, Fiber, Layer, Redacted, Schedule, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -160,6 +160,27 @@ const fixture = Effect.gen(function* nativeRaceFixture() {
   };
 });
 
+// Postgres publishes the lock wait in pg_blocking_pids only once the waiting backend has registered
+// it, which is not bounded by a number of round trips. The wait therefore runs on the live clock with
+// a real wall-clock deadline instead of a fixed attempt count that a loaded runner can exhaust while
+// the product code is behaving correctly.
+const nativeLockWaitPoll = Schedule.spaced(Duration.millis(20));
+const nativeLockWaitDeadline = Duration.seconds(30);
+const awaitNativeLockWait = (state: Effect.Success<typeof fixture>, blockerPid: number, blockedPid: number) =>
+  Effect.gen(function* observeNativeLockWait() {
+    const observed = yield* state.admin<{
+      blocked: boolean;
+    }>`select ${blockerPid}::integer=any(pg_blocking_pids(${blockedPid}::integer)) as blocked`;
+    if (observed[0]?.blocked) {
+      return true;
+    }
+    return yield* Effect.fail('native_lock_wait_unregistered' as const);
+  }).pipe(
+    Effect.retry(nativeLockWaitPoll),
+    Effect.timeoutOrElse({ duration: nativeLockWaitDeadline, orElse: () => Effect.succeed(false) }),
+    TestClock.withLive,
+  );
+
 for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
   it.effect(`serializes native ${order} with an independently blocked connection`, () =>
     Effect.gen(function* verifyRace() {
@@ -210,21 +231,10 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
         ),
       );
       const secondPid = yield* Deferred.await(secondReady);
-      yield* Effect.gen(function* observeBlocking() {
-        let blocked = false;
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          const observed = yield* state.admin<{
-            blocked: boolean;
-          }>`select ${firstPid}::integer=any(pg_blocking_pids(${secondPid}::integer)) as blocked`;
-          if (observed[0]?.blocked) {
-            blocked = true;
-            break;
-          }
-          yield* TestClock.adjust(Duration.millis(1));
-        }
-        expect(blocked).toBe(true);
-      }).pipe(Effect.ensuring(Deferred.succeed(releaseFirst, true)));
-      yield* Deferred.succeed(releaseFirst, true);
+      const blocked = yield* awaitNativeLockWait(state, firstPid, secondPid).pipe(
+        Effect.ensuring(Deferred.succeed(releaseFirst, true)),
+      );
+      expect(blocked).toBe(true);
       const [firstResult, secondResult] = yield* Effect.all([Fiber.join(firstFiber), Fiber.join(secondFiber)], {
         concurrency: 2,
       });

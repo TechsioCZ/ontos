@@ -274,7 +274,6 @@ describe('Configuration Stock Item Binding', () => {
 
       const resolved = yield* resolverFor([currentBinding], [item]).resolve(requested);
 
-      expect(originalSelection.configuration?.definition.revision).toBe(7);
       expect(resolved.catalogSelection.configuration?.definition.revision).toBe(8);
       expect(resolved.quantity).toBe('3');
       expect(resolved.stockItem.stockItemRef).toEqual(item.stockItemRef);

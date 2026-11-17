@@ -112,3 +112,9 @@ export {
   executePriceGroupResultLookupWithAuthorization,
 } from './price-group-result-lookup-client.ts';
 export type { PriceGroupResultLookupClientOptions } from './price-group-result-lookup-client.ts';
+
+export {
+  executePriceGroupCatalogHead,
+  executePriceGroupCatalogHeadWithAuthorization,
+} from './price-group-catalog-head-client.ts';
+export type { PriceGroupCatalogHeadClientOptions } from './price-group-catalog-head-client.ts';

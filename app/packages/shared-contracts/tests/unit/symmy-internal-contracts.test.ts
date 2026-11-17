@@ -66,7 +66,7 @@ it('lists exactly the approved internal methods, paths, response modes and path 
     ['POST', '/api/symmy/v1/customers/batch', 'durable_job', 202, undefined],
     ['POST', '/api/symmy/v1/inventory/stock/batch', 'item_results', 200, undefined],
     ['POST', '/api/symmy/v1/price-lists/batch-upsert', 'durable_job', 202, undefined],
-    ['POST', '/api/symmy/v1/price-lists/{code}/prices/batch', 'durable_job', 202, 'code'],
+    ['POST', '/api/symmy/v1/price-lists/prices/batch', 'durable_job', 202, undefined],
     ['POST', '/api/symmy/v1/products/batch', 'durable_job', 202, undefined],
   ];
   expect(routes).toHaveLength(expected.length);

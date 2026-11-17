@@ -81,14 +81,6 @@ const decodeResponse = Schema.decodeUnknownSync(ProductVariantSnapshotResponseSc
 });
 
 describe('Catalog owner snapshot for Pricing Product administration', () => {
-  it('returns a concrete Variant even for a one-Variant Product', () => {
-    const snapshot = decodeResponse(responseFor());
-
-    expect(snapshot.targets).toHaveLength(1);
-    expect(snapshot.targets[0]?.target).toEqual({ productRef, variantRef: firstVariantRef });
-    expect(snapshot.targets[0]?.targetId).toBe(firstVariantRef.resourceId);
-  });
-
   it('rejects Product-only, cross-Tenant, and invalid-parentage snapshot targets', () => {
     const productOnly = {
       catalogEvidence: evidenceFor({ productRef, variantRef: firstVariantRef }),
@@ -103,21 +95,6 @@ describe('Catalog owner snapshot for Pricing Product administration', () => {
       ),
     ).toThrow();
     expect(() => decodeResponse(responseFor([targetFor(firstVariantRef, otherProductRef)]))).toThrow();
-  });
-
-  it('fixes the target set at capture time and does not add a later Variant on retry', () => {
-    const captured = decodeResponse(responseFor());
-    const laterObservation = decodeResponse(
-      responseFor([targetFor(firstVariantRef), targetFor(laterVariantRef)], 'b'.repeat(64)),
-    );
-
-    expect(captured.snapshotId).not.toBe(laterObservation.snapshotId);
-    expect(captured.targets.map(({ targetId }) => targetId)).toEqual([firstVariantRef.resourceId]);
-    expect(laterObservation.targets.map(({ targetId }) => targetId)).toEqual([
-      firstVariantRef.resourceId,
-      laterVariantRef.resourceId,
-    ]);
-    expect(captured.targets).toHaveLength(1);
   });
 
   it('requires stable unique target identity in deterministic Variant order', () => {

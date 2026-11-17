@@ -18,8 +18,9 @@ import {
   symmyUnsupportedProblem,
   SymmyInternalPlanPayloadSchema,
 } from './contract.ts';
-import type { SymmyInternalReadQuerySchema } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
+import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
+import { readSymmyProductPriceGroupFacts } from './product-batch-facts.ts';
 import {
   acquireSymmyReadAssertion,
   mapSymmyOwnerReadProblem,
@@ -77,13 +78,12 @@ type QualifiedSourceSelector = Extract<SymmyDecodedSourceSelector, { readonly _t
 const verifyQualifiedSource = Effect.fn('SymmyGovernedDispatch.verifyQualifiedSource')(function* verifyQualified(
   selector: QualifiedSourceSelector,
   route: typeof SymmyRouteContextResponseSchema.Type,
-  kind: 'PRICE_GROUP' | 'CUSTOMER_GROUP',
 ) {
   const enrolled = route.selector;
   if (enrolled === undefined || enrolled.target === undefined) {
     return yield* unavailable();
   }
-  if (enrolled.kind !== kind) {
+  if (enrolled.kind !== 'CUSTOMER_GROUP') {
     return yield* Effect.fail(forbidden);
   }
   yield* verifySymmySourceSelector(
@@ -103,29 +103,16 @@ const verifyQualifiedSource = Effect.fn('SymmyGovernedDispatch.verifyQualifiedSo
 const verifySelectedSource = (
   selector: SymmyDecodedSourceSelector,
   route: typeof SymmyRouteContextResponseSchema.Type,
-  kind: 'PRICE_GROUP' | 'CUSTOMER_GROUP',
 ) =>
   Match.value(selector).pipe(
     Match.tag('Legacy', ({ code }) => Effect.succeed(code)),
-    Match.tag('Qualified', (qualified) => verifyQualifiedSource(qualified, route, kind)),
+    Match.tag('Qualified', (qualified) => verifyQualifiedSource(qualified, route)),
     Match.exhaustive,
   );
 
-const priceListSourceQuery = Effect.fn('SymmyGovernedDispatch.priceListSourceQuery')(function* normalize(
-  query: typeof SymmyInternalReadQuerySchema.Type,
-) {
-  if (query.sourceRecordId !== undefined && query.code !== undefined) {
-    return yield* Effect.fail(symmyInvalidProblem);
-  }
-  if (query.sourceRecordId === undefined && query.code?.startsWith('~c14s1.') === true) {
-    return yield* Effect.fail(symmyUnsupportedProblem('filter_not_supported'));
-  }
-  const { sourceRecordId, ...otherQuery } = query;
-  return sourceRecordId === undefined ? otherQuery : { ...otherQuery, code: sourceRecordId };
-});
-
 const resolveRelayBase = (path: string) => resolveSymmyOwnerReleaseBase(path, symmyAudience);
 
+const priceGroupModule = 'pricing.price-group-catalog';
 const requireReadOperation = (
   route: typeof SymmyRouteContextResponseSchema.Type,
   moduleId: string,
@@ -170,6 +157,69 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
   return { route, scoped: Option.none<SymmyOwnerAssertion>() };
 });
 
+/** The stock route sends only its rows; the group route sends a fixture identity or a versioned plan. */
+const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[0]['request']) => {
+  if ('stock' in request) {
+    return { stock: request.stock };
+  }
+  return 'fixtureId' in request
+    ? { fixtureId: request.fixtureId }
+    : { contractVersion: request.contractVersion, plan: request.plan };
+};
+
+/**
+ * What a durable job carries besides its key and route. The price lists carry nothing more: the adapter reads the
+ * catalog head right before each create. The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
+ * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
+ * list each price group code names, read the same way. The customers carry nothing more: the route enrollment and
+ * the route scope the owner admission reads give it the source and the selling legal entity.
+ */
+const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
+  request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
+  selected: { readonly route: typeof SymmyRouteContextResponseSchema.Type } | undefined,
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
+) {
+  if ('customers' in request) {
+    return { customers: request.customers };
+  }
+  if ('products' in request) {
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    return {
+      priceGroupFacts: yield* readSymmyProductPriceGroupFacts(
+        { admission, products: request.products, routeScope: selected.route },
+        newRequestIdentifier,
+      ),
+      products: request.products,
+    };
+  }
+  if ('priceBatch' in request) {
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    // The owner price reads need a read scope, which only the price list read route proves. The prices route
+    // borrows it, exactly as GET /price-lists reads the same schedule and source prices.
+    const priceReadScope = acquireScopedRouteContext(admission, { routeKey: 'priceLists' }, newRequestIdentifier).pipe(
+      Effect.map(({ route }) => route),
+    );
+    return {
+      priceBatch: request.priceBatch,
+      reviseFacts: yield* readSymmyPriceBatchFacts(
+        { admission, batch: request.priceBatch, priceReadScope, routeScope: selected.route },
+        newRequestIdentifier,
+      ),
+    };
+  }
+  if ('priceLists' in request) {
+    return { priceLists: request.priceLists };
+  }
+  return 'fixtureId' in request
+    ? { fixtureId: request.fixtureId }
+    : { contractVersion: request.contractVersion, plan: request.plan };
+});
+
 const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* routeContext(
   admission: SymmyIngressAdmission,
   request: Exclude<
@@ -191,13 +241,7 @@ const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* r
   const prepared = yield* acquireScopedRouteContext(admission, input, newRequestIdentifier);
   const selectedCode =
     selector !== undefined && 'code' in request
-      ? Option.some(
-          yield* verifySelectedSource(
-            selector,
-            prepared.route,
-            request.route === 'priceListPricesBatch' ? 'PRICE_GROUP' : 'CUSTOMER_GROUP',
-          ),
-        )
+      ? Option.some(yield* verifySelectedSource(selector, prepared.route))
       : Option.none<string>();
   return { ...prepared, selectedCode };
 });
@@ -217,10 +261,7 @@ export const makeSymmyGovernedDispatch = (
     const scoped = Option.isSome(prepared.scoped)
       ? prepared.scoped.value
       : yield* acquireSymmyReadAssertion(admission, symmyAudience, prepared.route.legalEntityId);
-    const source =
-      'fixtureId' in request
-        ? { fixtureId: request.fixtureId }
-        : { contractVersion: request.contractVersion, plan: request.plan };
+    const source = syncAdmissionSource(request);
     const payload = yield* Schema.decodeUnknownEffect(AdmitSymmySyncPayloadSchema)({
       ...source,
       idempotencyKey: request.idempotencyKey ?? (yield* newRequestIdentifier),
@@ -288,7 +329,7 @@ export const makeSymmyGovernedDispatch = (
     request,
   }: Parameters<SymmyIngressDispatch['read']>[0]) {
     const query = request.query ?? {};
-    if (request.route !== 'priceLists' && query.sourceRecordId !== undefined) {
+    if (query.sourceRecordId !== undefined) {
       return yield* Effect.fail(symmyInvalidProblem);
     }
     if (query.contractVersion !== 'INTERNAL_C14') {
@@ -299,27 +340,22 @@ export const makeSymmyGovernedDispatch = (
       yield* requireReadOperation(
         route,
         'commerce.customer-context',
-        'commerce.customer-context.api.customer-profile-source',
+        'commerce.customer-context.api.customer-profile-source-page',
       );
       return yield* projectSymmySourceCustomers(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'adminProducts') {
-      yield* requireReadOperation(route, 'commerce.catalog', 'commerce.catalog.api.catalog-source-products');
+      yield* requireReadOperation(route, 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page');
       return yield* projectSymmySourceProducts(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'priceLists') {
       yield* requireReadOperation(
         route,
-        'pricing.price-group-catalog',
+        priceGroupModule,
         'pricing.price-group-catalog.api.price-group-source-associations',
       );
-      yield* requireReadOperation(
-        route,
-        'pricing.price-group-catalog',
-        'pricing.price-group-catalog.api.price-group-definition',
-      );
-      const sourceQuery = yield* priceListSourceQuery(query);
-      return yield* projectSymmySourcePriceLists(route, sourceQuery, admission, newRequestIdentifier);
+      yield* requireReadOperation(route, priceGroupModule, 'pricing.price-group-catalog.api.price-group-definition');
+      return yield* projectSymmySourcePriceLists(route, query, admission, newRequestIdentifier);
     }
     if (request.route === 'adminRegions') {
       if (projectRegions === undefined) {
@@ -356,7 +392,7 @@ export const makeSymmyGovernedDispatch = (
         {
           compositionRevision: admission.compositionRevision,
           configuration,
-          page: { limit: query.limit ?? 50, offset: query.offset ?? 0 },
+          page: { limit: query.limit ?? 50, offset: query.offset ?? 0, q: query.q },
           scope,
         },
         ({ audience, legalEntityId }) => acquireSymmyReadAssertion(admission, audience, legalEntityId),
@@ -386,6 +422,10 @@ export const makeSymmyGovernedDispatch = (
   }: Parameters<SymmyIngressDispatch['submit']>[0]) {
     const needsRoute =
       Object.hasOwn(SYMMY_FIXTURE_ROUTES, request.route) ||
+      'priceLists' in request ||
+      'priceBatch' in request ||
+      'customers' in request ||
+      'products' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;
@@ -403,9 +443,7 @@ export const makeSymmyGovernedDispatch = (
     const transportKey = yield* newRequestIdentifier;
     const { idempotencyKey, route } = request;
     const basePayload = {
-      ...('fixtureId' in request
-        ? { fixtureId: request.fixtureId }
-        : { contractVersion: request.contractVersion, plan: request.plan }),
+      ...(yield* submitSource(request, selected, admission, newRequestIdentifier)),
       idempotencyKey,
       routeKey: route,
     };

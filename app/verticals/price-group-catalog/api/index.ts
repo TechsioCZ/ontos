@@ -59,6 +59,7 @@ import {
 // <generated-governed-http-handler-imports>
 import { createPriceGroupActionApiLive } from './create-price-group-action-server.ts';
 import { createPriceGroupDefinitionRevisionActionApiLive } from './create-price-group-definition-revision-action-server.ts';
+import { priceGroupCatalogHeadReadApiLive } from './price-group-catalog-head-read-server.ts';
 import { priceGroupDefinitionReadApiLive } from './price-group-definition-read-server.ts';
 import { priceGroupResultLookupReadApiLive } from './price-group-result-lookup-read-server.ts';
 import { priceGroupSourceAssociationsReadApiLive } from './price-group-source-associations-read-server.ts';
@@ -139,6 +140,11 @@ const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const priceGroupCatalogOwnerOperations = [
+  {
+    capabilityKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
+    operation: 'read',
+    operationKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
+  },
   {
     capabilityKey: 'pricing.price-group-catalog.price-group-source-associations.read',
     operation: 'read',
@@ -313,6 +319,7 @@ export const makePriceGroupCatalogApiRuntime = (
     // <generated-governed-http-handler-layers>
     createPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPriceGroupDefinitionRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    priceGroupCatalogHeadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     priceGroupDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     priceGroupResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     priceGroupSourceAssociationsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

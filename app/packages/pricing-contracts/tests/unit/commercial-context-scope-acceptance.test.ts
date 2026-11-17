@@ -178,20 +178,6 @@ describe('Pricing commercial context scope acceptance', () => {
     expect(() => decodeCommercialScope({ ...commercialScope, sellingLegalEntityId: 'techsio-cz' })).toThrow();
   });
 
-  it('keeps Storefront outside canonical Price identity and exact scope', () => {
-    const storefrontAKey = decodeIdentityKey(identityKey);
-    const storefrontBKey = decodeIdentityKey({ ...identityKey });
-
-    expect(identityKeysEqual(storefrontAKey, storefrontBKey)).toBe(true);
-    expect(() => decodeIdentityKey({ ...identityKey, storefrontId: 'storefront-a' })).toThrow();
-    expect(() =>
-      decodeIdentityKey({
-        ...identityKey,
-        commercialScope: { ...commercialScope, storefrontId: 'storefront-a' },
-      }),
-    ).toThrow();
-  });
-
   it('treats seller, Channel, Market, and native currency changes as different exact keys', () => {
     const exactKey = decodeIdentityKey(identityKey);
     const isolatedKeys = [

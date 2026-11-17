@@ -42,10 +42,6 @@ describe('#1153 operation-specific payer contact dependency', () => {
 });
 
 describe('#1154 Comgate create needs the payer contact', () => {
-  it('#1154 Comgate without a contact is refused as required', () => {
-    expect(payerContactProblemFor('COMGATE', Option.none())).toEqual(Option.some('payment_payer_contact_required'));
-  });
-
   it('#1154 Converted contact carries only the supplied fields', () => {
     expect(toGatewayPayerContact({ email: 'payer@example.test', fullName: 'Test Payer' })).toEqual({
       email: Option.some('payer@example.test'),

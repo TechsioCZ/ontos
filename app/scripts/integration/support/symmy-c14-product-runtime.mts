@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -56,18 +57,34 @@ const compositionFailure = (error: ActiveApplicationCompositionUnavailableError)
   return unavailable(`Genuine composition: ${error.reason}; ${Option.isSome(message) ? message.value.message : ''}`);
 };
 
-export const nativePort = Effect.scoped(
-  Effect.gen(function* nativePort() {
-    const server = Context.get(
-      yield* Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: 0 })),
-      HttpServer.HttpServer,
-    );
-    if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
-      return yield* unavailable('The native receiver requires a loopback TCP port');
-    }
-    return server.address.port;
-  }),
-);
+const allocateNativePort = Effect.gen(function* allocateNativePort() {
+  const server = Context.get(
+    yield* Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: 0 })),
+    HttpServer.HttpServer,
+  );
+  if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
+    return yield* unavailable('The native receiver requires a loopback TCP port');
+  }
+  return server.address.port;
+});
+
+/**
+ * Allocates `count` loopback ports with every listener held open at once, so the operating system
+ * cannot hand the same port to two of them, to another test worker or to an unrelated process. The
+ * listeners are released together when this effect completes, immediately before the owner children
+ * bind the ports. Allocating one port at a time cannot give that guarantee: the listener is already
+ * closed when the number is returned, which is why no single-port form exists.
+ */
+export const nativePortList = (count: number) =>
+  Effect.scoped(Effect.all(Array.from({ length: count }, () => allocateNativePort)));
+
+/** `nativePortList` for the fixtures that address their ports by owner appId. */
+export const nativePorts = (keys: readonly string[]) =>
+  Effect.scoped(
+    Effect.forEach(keys, (key) => allocateNativePort.pipe(Effect.map((port) => [key, port] as const)), {
+      concurrency: 1,
+    }).pipe(Effect.map((allocated) => new Map(allocated))),
+  );
 
 const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContract')(function* publishedContract(
   vertical: string,
@@ -174,6 +191,43 @@ const command = Effect.fn('SymmyC14ProductFixture.command')(function* command(ar
   return yield* Effect.void;
 });
 
+const receiverChild = `${c14AppRoot}/scripts/integration/support/symmy-c14-product-owner-child.mts`;
+
+/**
+ * The owner receiver bundles one fixed source with `--packages=external`, so every import in it stays
+ * external and the artifact changes only when that source changes. It is therefore built once per
+ * owner package and reused: the artifact is named after the source digest inside the owning package's
+ * build cache, which keys it by appId through the directory and by content through the digest, and
+ * lets it outlive the per-call scope. The owner's build marker joins the digest because the cwd of
+ * this bundle is the owning package, so its resolved esbuild belongs to that package's installed
+ * build: a rebuilt package publishes a new marker and therefore a new artifact name. Test processes
+ * that miss together publish identical bytes, and the rename is atomic, so a reader always sees a
+ * whole artifact.
+ */
+const receiverArtifactFor = Effect.fn('SymmyC14ProductFixture.receiverArtifact')(function* receiverArtifact(input: {
+  readonly buildMarker: string;
+  readonly cache: string;
+  readonly directory: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const digest = createHash('sha256')
+    .update(yield* fs.readFileString(receiverChild))
+    .update('\u0000')
+    .update(input.buildMarker)
+    .digest('hex')
+    .slice(0, 32);
+  const artifact = path.join(input.cache, `receiver-${digest}.mjs`);
+  if (yield* fs.exists(artifact)) {
+    return artifact;
+  }
+  const staging = yield* fs.makeTempDirectoryScoped({ directory: input.cache, prefix: 'receiver-pending-' });
+  const pending = path.join(staging, 'receiver.mjs');
+  yield* command(['esbuild', receiverChild, ...bundleArguments, `--outfile=${pending}`], input.directory);
+  yield* fs.rename(pending, artifact);
+  return artifact;
+});
+
 export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(function* buildOwner(
   contract: OntosModuleDeploymentContract,
 ) {
@@ -184,9 +238,18 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
   // a kept unit's outputs are never written.
   const cache = `${directory}/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
+  const identity = createHash('sha256').update(contract.deployment.buildMarker).digest('hex').slice(0, 32);
+  const publishedOwner = path.join(cache, `owner-${identity}.mjs`);
+  const receiverArtifact = yield* receiverArtifactFor({
+    buildMarker: contract.deployment.buildMarker,
+    cache,
+    directory,
+  });
+  if (yield* fs.exists(publishedOwner)) {
+    return { ownerArtifact: publishedOwner, receiverArtifact };
+  }
   const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'owner-' });
   const ownerArtifact = path.join(temporary, 'owner.mjs');
-  const receiverArtifact = path.join(temporary, 'receiver.mjs');
   const entry = path.join(temporary, 'owner-entry.ts');
   const api = path.relative(temporary, path.join(directory, 'api/index.ts'));
   const marker = path.relative(temporary, path.join(directory, 'shared/ultramodern-build.ts'));
@@ -195,6 +258,7 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
     entry,
     `export { default as assembly } from ${yield* sourceLiteral(api)};\nexport { ultramodernApiMarker as marker } from ${yield* sourceLiteral(marker)};\n`,
   );
+
   yield* command(
     [
       'esbuild',
@@ -205,16 +269,8 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
     ],
     directory,
   );
-  yield* command(
-    [
-      'esbuild',
-      `${c14AppRoot}/scripts/integration/support/symmy-c14-product-owner-child.mts`,
-      ...bundleArguments,
-      `--outfile=${receiverArtifact}`,
-    ],
-    directory,
-  );
-  return { ownerArtifact, receiverArtifact };
+  yield* fs.rename(ownerArtifact, publishedOwner);
+  return { ownerArtifact: publishedOwner, receiverArtifact };
 });
 
 /**
@@ -338,27 +394,41 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
 export const encodeProductComposition = (snapshot: ActiveApplicationCompositionSnapshot) =>
   Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot);
 
+const workerChild = `${c14AppRoot}/scripts/integration/support/symmy-c14-product-worker-child.mts`;
+
 export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker')(function* buildWorker(
   contract: OntosModuleDeploymentContract,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const cache = `${c14AppRoot}/verticals/symmy-integration/node_modules/.cache/INTERNAL_C14_PRODUCT`;
+  const path = yield* Path.Path;
+  const directory = `${c14AppRoot}/verticals/symmy-integration`;
+  const cache = `${directory}/node_modules/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
-  const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-' });
-  const artifact = `${temporary}/worker.mjs`;
   const workerHost = createRequire(`${c14AppRoot}/package.json`).resolve('@app/symmy-integration/outbox-worker-host');
+  const identity = createHash('sha256')
+    .update(yield* fs.readFileString(workerChild))
+    .update(contract.deployment.buildMarker)
+    .digest('hex')
+    .slice(0, 32);
+  const publishedWorker = path.join(cache, `worker-${identity}.mjs`);
+  if (yield* fs.exists(publishedWorker)) {
+    return publishedWorker;
+  }
+  const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-' });
+  const artifact = path.join(temporary, 'worker.mjs');
   yield* command(
     [
       'esbuild',
-      `${c14AppRoot}/scripts/integration/support/symmy-c14-product-worker-child.mts`,
+      workerChild,
       ...bundleArguments,
       `--alias:@app/symmy-integration/outbox-worker-host=${workerHost}`,
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* sourceLiteral(contract.deployment.buildMarker)}`,
       `--outfile=${artifact}`,
     ],
-    `${c14AppRoot}/verticals/symmy-integration`,
+    directory,
   );
-  return artifact;
+  yield* fs.rename(artifact, publishedWorker);
+  return publishedWorker;
 });
 
 /** The Symmy Outbox Worker child; its module key, if any, is handed over on its private channel. */

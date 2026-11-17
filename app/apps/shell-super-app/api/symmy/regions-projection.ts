@@ -108,7 +108,7 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
   input: {
     readonly compositionRevision: string;
     readonly configuration: SymmyRegionsProjectionConfiguration;
-    readonly page: { readonly limit: number; readonly offset: number };
+    readonly page: { readonly limit: number; readonly offset: number; readonly q?: string | undefined };
     readonly scope: SymmyRegionsProjectionScope;
   },
   acquire: AcquireSymmyRegionOwnerAssertion,
@@ -128,7 +128,7 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
   if (route === undefined) {
     return yield* fail('source_scope_mismatch');
   }
-  const { limit, offset } = input.page;
+  const { limit, offset, q } = input.page;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) {
     return yield* fail('configuration_invalid');
   }
@@ -234,13 +234,23 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
     },
     { concurrency: 1 },
   );
+  // The search runs after every Market, currency and mapping check, so a broken mapping fails for any q.
+  const needle = q?.toLowerCase();
+  const searched =
+    needle === undefined
+      ? regions
+      : regions.filter((region) =>
+          [region.source_record_id, region.market_code, region.currency_code].some((value) =>
+            value.toLowerCase().includes(needle),
+          ),
+        );
   const result: SymmyInternalRegionsProjection = {
     contractVersion: 'INTERNAL_C14',
-    count: regions.length,
+    count: searched.length,
     limit,
     offset,
     projection: 'regions',
-    regions: regions.slice(offset, offset + limit),
+    regions: searched.slice(offset, offset + limit),
     unsupported_fields: ['name', 'tax_rate', 'tax_included', 'payment_providers'],
   };
   return result;

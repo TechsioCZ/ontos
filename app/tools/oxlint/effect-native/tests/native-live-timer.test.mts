@@ -1222,6 +1222,21 @@ describe('keeps an orthogonal literal layer timeout compatible with explicit rea
       source: layerTimeoutSource('{ excludeTestServices: false, timeout: 600_000 }'),
     },
     {
+      expected: 0,
+      name: 'layer-real-concurrent',
+      source: layerTimeoutSource('{ excludeTestServices: true, concurrent: true, timeout: 600_000 }'),
+    },
+    {
+      expected: 0,
+      name: 'layer-real-sequential',
+      source: layerTimeoutSource('{ excludeTestServices: true, concurrent: false }'),
+    },
+    {
+      expected: 1,
+      name: 'layer-concurrent-unknown-value',
+      source: layerTimeoutSource('{ excludeTestServices: true, concurrent: enabled }'),
+    },
+    {
       expected: 1,
       name: 'layer-timeout-unknown-option',
       source: layerTimeoutSource('{ excludeTestServices: true, timeout: 600_000, other: true }'),

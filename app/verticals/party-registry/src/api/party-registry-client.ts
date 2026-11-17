@@ -397,3 +397,6 @@ export {
   executeOrganizationBusinessNameExportWithAuthorization,
 } from './organization-business-name-export-client.ts';
 export type { OrganizationBusinessNameExportClientOptions } from './organization-business-name-export-client.ts';
+
+export { executeSourcePartySearch, executeSourcePartySearchWithAuthorization } from './source-party-search-client.ts';
+export type { SourcePartySearchClientOptions } from './source-party-search-client.ts';

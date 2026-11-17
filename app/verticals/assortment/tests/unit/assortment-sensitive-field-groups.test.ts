@@ -124,7 +124,7 @@ const assortmentActionGroups = [
 ] as const;
 
 describe('commerce.assortment sensitive field groups', () => {
-  it('declares no field_read group over a required wire field (O17, O74)', () => {
+  it('declares no field_read group over a required wire field (O17, O58, O74)', () => {
     // The customer-subject and policy-detail paths the A1 review named are required by the shared wire
     // contracts, so the whole sensitive read is the gate. This guard fails the moment a declared group
     // governs a required path, or a path the schema does not carry.
@@ -132,6 +132,7 @@ describe('commerce.assortment sensitive field groups', () => {
       for (const group of read.descriptor.accessFieldGroups ?? []) {
         expect(group.kind).toBe('field_read');
         for (const field of group.fields) {
+          expect(schemaHasPath(schema, field.split('.')), `${read.descriptor.readKey}: ${field}`).toBe(true);
           expect(terminalOptionality(schema, field.split('.')), `${read.descriptor.readKey}: ${field}`).toBe(true);
         }
       }
@@ -156,17 +157,6 @@ describe('commerce.assortment sensitive field groups', () => {
       selectors: [],
     });
     expect(group?.key).not.toBe(decisionExplanationRead.descriptor.accessDeclaration?.key);
-  });
-
-  it('names result paths the read response schema really carries and can redact (O58)', () => {
-    for (const { read, schema } of assortmentReads) {
-      for (const group of read.descriptor.accessFieldGroups ?? []) {
-        for (const field of group.fields) {
-          expect(schemaHasPath(schema, field.split('.')), `${read.descriptor.readKey}: ${field}`).toBe(true);
-          expect(terminalOptionality(schema, field.split('.')), `${read.descriptor.readKey}: ${field}`).toBe(true);
-        }
-      }
-    }
   });
 
   it('declares exactly the reviewed Action field_write group keys with their own class (O19, O58)', () => {

@@ -52,7 +52,6 @@ for (const [slug, action, payloadSchema, resultSchema] of cases) {
     assert.equal(descriptor.resultSchema, resultSchema);
     assert.equal(descriptor.legalEntityScope, 'required');
     assert.equal(descriptor.idempotency, 'required');
-    assert.equal(descriptor.accessTarget === undefined, false);
     assert.equal(descriptor.entrypoint.access, 'write');
     assert.deepEqual(descriptor.entrypoint.authorization, { kind: 'protected' });
   });

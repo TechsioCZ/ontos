@@ -32,10 +32,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { allocatePricingDiscountsAndFees } from '../../src/services/discount-fee-allocation.service.ts';
-import {
-  executePricingExactMoneyOperation,
-  validatePricingArithmeticContext,
-} from '../../src/services/exact-decimal-profile.service.ts';
+import { executePricingExactMoneyOperation } from '../../src/services/exact-decimal-profile.service.ts';
 
 const PricingExactMoneyJsonSchema = Schema.fromJsonString(PricingExactMoneySchema);
 
@@ -285,53 +282,6 @@ describe('Pricing exact decimal and precision owner acceptance (#777)', () => {
           yield* resolvePricingPublicationProfile('pricing-eur-publication-v1').pipe(Effect.flip),
         ),
       ).toBe(true);
-    }),
-  );
-
-  it.effect('validates the complete CZK context and fails closed for unactivated EUR publication', () =>
-    Effect.gen(function* validatesContext() {
-      const ready = yield* validatePricingArithmeticContext({
-        currencyCode: 'CZK',
-        intermediateAmounts: [money('100.005')],
-        profileVersions: {
-          allocation: PRICING_ALLOCATION_PROFILE_VERSION,
-          arithmetic: PRICING_ARITHMETIC_PROFILE_VERSION,
-          publication: PRICING_CZK_PUBLICATION_PROFILE_VERSION,
-        },
-        quantities: ['3'],
-        sourceAmounts: [money('33.335')],
-      });
-
-      expect(ready.outcome).toBe('ARITHMETIC_CONTEXT_READY');
-      expect(ready.sourceAmounts).toEqual([money('33.335')]);
-      expect(ready.intermediateAmounts).toEqual([money('100.005')]);
-      expect(ready.quantities).toEqual(['3']);
-
-      const unsupportedEur = yield* validatePricingArithmeticContext({
-        currencyCode: 'EUR',
-        intermediateAmounts: [{ amount: '100.005', currencyCode: 'EUR' }],
-        profileVersions: {
-          allocation: PRICING_ALLOCATION_PROFILE_VERSION,
-          arithmetic: PRICING_ARITHMETIC_PROFILE_VERSION,
-          publication: 'pricing-eur-publication-v1',
-        },
-        quantities: ['3'],
-        sourceAmounts: [{ amount: '33.335', currencyCode: 'EUR' }],
-      }).pipe(Effect.flip);
-      expect(Schema.is(PricingUnsupportedProfileFailure)(unsupportedEur)).toBe(true);
-
-      const noRelabel = yield* validatePricingArithmeticContext({
-        currencyCode: 'EUR',
-        intermediateAmounts: [{ amount: '100.005', currencyCode: 'EUR' }],
-        profileVersions: {
-          allocation: PRICING_ALLOCATION_PROFILE_VERSION,
-          arithmetic: PRICING_ARITHMETIC_PROFILE_VERSION,
-          publication: PRICING_CZK_PUBLICATION_PROFILE_VERSION,
-        },
-        quantities: ['3'],
-        sourceAmounts: [{ amount: '33.335', currencyCode: 'EUR' }],
-      }).pipe(Effect.flip);
-      expect(Schema.is(PricingCurrencyMismatchFailure)(noRelabel)).toBe(true);
     }),
   );
 

@@ -1,0 +1,74 @@
+diff --git a/dist/utils.mjs b/dist/utils.mjs
+--- a/dist/utils.mjs
++++ b/dist/utils.mjs
+@@ -15,18 +15,21 @@
+ const writePackage = async (options)=>{
+     const { pkg, version, projectDir, _pkgPath, transformPackageJson, packageJsonCache } = options;
+     const pkgPath = _pkgPath || pkg.name;
+-    for (const src of pkg.versions[version].files)if (src.includes("node_modules")) {
+-        const { subpath } = (0, __WEBPACK_EXTERNAL_MODULE_mlly__.parseNodeModulePath)(src);
+-        const dest = __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].join(projectDir, "node_modules", pkgPath, subpath);
+-        const dirname = __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].dirname(dest);
+-        await __WEBPACK_EXTERNAL_MODULE_fs_extra_ce68a66b__["default"].ensureDir(dirname);
+-        await __WEBPACK_EXTERNAL_MODULE_fs_extra_ce68a66b__["default"].copyFile(src, dest);
+-    } else {
+-        const subpath = __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].relative(pkg.versions[version].path, src);
+-        const dest = __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].join(projectDir, "node_modules", pkgPath, subpath);
+-        const dirname = __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].dirname(dest);
+-        await __WEBPACK_EXTERNAL_MODULE_fs_extra_ce68a66b__["default"].ensureDir(dirname);
+-        await __WEBPACK_EXTERNAL_MODULE_fs_extra_ce68a66b__["default"].copyFile(src, dest);
++    // Whole-package files and individually traced files overlap. Copy each destination only once,
++    // preserving the original last-write order when two physical paths name the same destination.
++    const copies = new Map();
++    for (const src of pkg.versions[version].files) {
++        const subpath = src.includes("node_modules")
++            ? (0, __WEBPACK_EXTERNAL_MODULE_mlly__.parseNodeModulePath)(src).subpath
++            : __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].relative(pkg.versions[version].path, src);
++        copies.set(__WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].join(projectDir, "node_modules", pkgPath, subpath), src);
++    }
++    const directories = new Set([...copies.keys()].map(dest => __WEBPACK_EXTERNAL_MODULE_node_path_c5b9b54f__["default"].dirname(dest)));
++    await Promise.all([...directories].map(directory => __WEBPACK_EXTERNAL_MODULE_fs_extra_ce68a66b__["default"].ensureDir(directory)));
++    const entries = [...copies];
++    // Bounded I/O, rather than a serialized copy/mkdir pair for every file of a large package.
++    for (let offset = 0; offset < entries.length; offset += 16) {
++        await Promise.all(entries.slice(offset, offset + 16).map(([dest, src]) => __WEBPACK_EXTERNAL_MODULE_fs_extra_ce68a66b__["default"].copyFile(src, dest)));
+     }
+     let { pkgJSON } = pkg.versions[version];
+     applyPublicCondition(pkgJSON);
+diff --git a/dist/utils.js b/dist/utils.js
+--- a/dist/utils.js
++++ b/dist/utils.js
+@@ -66,18 +66,21 @@
+ const writePackage = async (options)=>{
+     const { pkg, version, projectDir, _pkgPath, transformPackageJson, packageJsonCache } = options;
+     const pkgPath = _pkgPath || pkg.name;
+-    for (const src of pkg.versions[version].files)if (src.includes("node_modules")) {
+-        const { subpath } = (0, external_mlly_namespaceObject.parseNodeModulePath)(src);
+-        const dest = external_node_path_default().join(projectDir, "node_modules", pkgPath, subpath);
+-        const dirname = external_node_path_default().dirname(dest);
+-        await external_fs_extra_default().ensureDir(dirname);
+-        await external_fs_extra_default().copyFile(src, dest);
+-    } else {
+-        const subpath = external_node_path_default().relative(pkg.versions[version].path, src);
+-        const dest = external_node_path_default().join(projectDir, "node_modules", pkgPath, subpath);
+-        const dirname = external_node_path_default().dirname(dest);
+-        await external_fs_extra_default().ensureDir(dirname);
+-        await external_fs_extra_default().copyFile(src, dest);
++    // Whole-package files and individually traced files overlap. Copy each destination only once,
++    // preserving the original last-write order when two physical paths name the same destination.
++    const copies = new Map();
++    for (const src of pkg.versions[version].files) {
++        const subpath = src.includes("node_modules")
++            ? (0, external_mlly_namespaceObject.parseNodeModulePath)(src).subpath
++            : external_node_path_default().relative(pkg.versions[version].path, src);
++        copies.set(external_node_path_default().join(projectDir, "node_modules", pkgPath, subpath), src);
++    }
++    const directories = new Set([...copies.keys()].map(dest => external_node_path_default().dirname(dest)));
++    await Promise.all([...directories].map(directory => external_fs_extra_default().ensureDir(directory)));
++    const entries = [...copies];
++    // Bounded I/O, rather than a serialized copy/mkdir pair for every file of a large package.
++    for (let offset = 0; offset < entries.length; offset += 16) {
++        await Promise.all(entries.slice(offset, offset + 16).map(([dest, src]) => external_fs_extra_default().copyFile(src, dest)));
+     }
+     let { pkgJSON } = pkg.versions[version];
+     applyPublicCondition(pkgJSON);

@@ -87,8 +87,6 @@ const instantAsDate = (instant: string | DateTime.Utc): Date => DateTime.toDateU
 const JsonCodec = Schema.fromJsonString(Schema.Any);
 const encodeJson = <Value>(value: Value): string => Result.getOrThrow(Schema.encodeResult(JsonCodec)(value));
 
-export { endedPartyFactTransition } from '../../shared/domain/fact-lifecycle.ts';
-
 const unavailable = (cause?: unknown) => {
   const error = new PartyPersistenceUnavailable({
     code: 'party_persistence_unavailable',

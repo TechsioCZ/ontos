@@ -46,6 +46,7 @@ const commercePricingSourceWrite = 'commerce.pricing.source-write';
 const integrationSymmyAdmitSymmySync = 'integration.symmy.admit-symmy-sync';
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
 const partyRegistry = 'party-registry';
+const partyRegistryAddContactPoint = 'party.registry.add-contact-point';
 const partyRegistrySourceWrite = 'party.registry.source-write';
 const priceGroupCatalog = 'price-group-catalog';
 const pricingPriceGroupCatalogApiPriceGroupResultLookup = 'pricing.price-group-catalog.api.price-group-result-lookup';
@@ -293,6 +294,30 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: commerceCustomerContextSourceRead,
   },
+  // origin/main 62c31ce2a: symmy-c14-saved-address-owner-conformance.test.mts — INTERNAL_C14 public customers save Commerce-only addresses on an existing and on a created profile, never without their customer
+  {
+    audience: partyRegistry,
+    declarationKey: 'party.registry.contact-point.add',
+    entrypointKey: partyRegistryAddContactPoint,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceWrite,
+  },
+  // origin/main 62c31ce2a: symmy-c14-saved-address-owner-conformance.test.mts — INTERNAL_C14 public customers save Commerce-only addresses on an existing and on a created profile, never without their customer
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: 'party.registry.party-source-effect-receipt.read',
+    entrypointKey: 'party.registry.api.party-source-effect-receipt',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryAddContactPoint, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: 'party.registry.source-read',
+  },
   // origin/main 5608aae1d: symmy-c14-sync-authority.mts — INTERNAL_C14 actual synchronous Group and Stock routes persist native effects and recover exact receipts without jobs
   {
     audience: commerceCustomerContext,
@@ -428,6 +453,17 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: commerceCatalogSymmyProductRead,
   },
+  // origin/main 2a7ebb965: symmy-c14-product-owner-conformance.test.mts — INTERNAL_C14 actual Shell and durable worker create one Catalog Product with two Variants and recover the original committed effect
+  {
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.catalog-source-product-page.read',
+    entrypointKey: 'commerce.catalog.api.catalog-source-product-page',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCatalogSymmyProductRead,
+  },
   // origin/main 5608aae1d: symmy-c14-product-owner-conformance.test.mts — INTERNAL_C14 actual Shell and durable worker create one Catalog Product with two Variants and recover the original committed effect
   {
     allowHistoricalDeliveryRecovery: true,
@@ -522,6 +558,28 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     audience: priceGroupCatalog,
     declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
     entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: pricingPriceGroupCatalogSourceRead,
+  },
+  // origin/main 682da68ad: symmy-c14-pricing-routes-runtime.mts — INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority
+  {
+    audience: 'pricing',
+    declarationKey: 'commerce.pricing.price.read-definition',
+    entrypointKey: 'commerce.pricing.api.price-definition',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commercePricingSourceRead,
+  },
+  // origin/main b0bc9604c: symmy-c14-pricing-routes-runtime.mts — INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority
+  {
+    audience: priceGroupCatalog,
+    declarationKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
+    entrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'forbidden',
     schemaVersion: '1',

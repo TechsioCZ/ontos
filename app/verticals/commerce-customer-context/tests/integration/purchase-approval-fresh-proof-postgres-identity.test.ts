@@ -16,7 +16,7 @@ import {
 } from './purchase-approval-fresh-proof-postgres.fixture.ts';
 
 // These native clone/migration scenarios measured 31–32s with 20–31 assertions completed under shard load.
-it.live(
+it.live.concurrent(
   'commits distinct immutable same-Attempt proofs after expiry and refuses expired intent replay',
   () =>
     Effect.scoped(
@@ -64,7 +64,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'rejects proof-changing writer frames after actual Current resolution without new effects or history',
   () =>
     Effect.scoped(
@@ -184,7 +184,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'retains native proof identity and idempotency UNIQUE guards and rolls back actual collisions',
   () =>
     Effect.scoped(
@@ -251,7 +251,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'keeps unavailable, changed, foreign and unresolved final bindings proof-free',
   () =>
     Effect.scoped(
@@ -287,7 +287,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'serializes distinct and same fresh intents without changing request revision or historical proof bytes',
   () =>
     Effect.scoped(

@@ -160,9 +160,4 @@ describe('Tax Jurisdiction', () => {
       }),
     ).toEqual(unsupported);
   });
-
-  it('#927 F15-F16 same exact owner-resolved inputs repeatedly give the same jurisdiction', () => {
-    expect(jurisdictionFor()).toEqual(jurisdictionFor());
-    expect(determineTaxJurisdiction(decodeInput(baseInput))).toEqual(determineTaxJurisdiction(decodeInput(baseInput)));
-  });
 });

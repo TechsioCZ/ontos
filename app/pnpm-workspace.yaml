@@ -202,12 +202,20 @@ patchedDependencies:
   # MODERN_SERVER_RENDER_RESOURCES=lazy defers owner page resources until rendering, never for BFF/static requests.
   # MODERN_SERVER_IMMUTABLE_ASSETS=true caches bounded positive metadata in immutable production containers.
   '@bleedingdev/modern-js-server-core@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-server-core@3.11.3-ultramodern.1.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils (ULTRAMODERN_SKIP_SERVER_TYPECHECK=1
-  # skips the BFF server declaration emit and TS-Go check in deploy builds; CI gates typecheck every unit)
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils
+  # Compile each BFF server closure once from the TS 7 module graph, with an rspack build cache and incremental tsgo.
+  # ULTRAMODERN_SKIP_SERVER_TYPECHECK=1 (deploy builds) or ONTOS_CI_TYPECHECK_SEPARATE=1 (CI, also drops source maps)
+  # skips the server declaration emit and TS-Go check; CI gates typecheck every unit.
   '@bleedingdev/modern-js-server-utils@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-server-utils@3.11.3-ultramodern.1.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
   # compiler-prepare accepts the reviewed @effect/tsgo 0.69.0 tsrs contract (tsrs 0.25.0, Oxlint 1.91-1.93; adds win32-arm64).
   '@bleedingdev/modern-js-ultramodern-create@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-ultramodern-create@3.11.3-ultramodern.1.patch
+  # upstream: https://github.com/ultramodernjs/ultramodern.js
+  '@bleedingdev/modern-js-app-tools@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-app-tools@3.11.3-ultramodern.1.patch
+  # upstream: https://github.com/ultramodernjs/ultramodern.js
+  '@bleedingdev/modern-js-plugin-bff@3.11.3-ultramodern.1': patches/@bleedingdev__modern-js-plugin-bff@3.11.3-ultramodern.1.patch
+  # upstream: https://github.com/web-infra-dev/nde/tree/main
+  ndepe@0.1.13: patches/ndepe@0.1.13.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380 (optional policy/role fields)

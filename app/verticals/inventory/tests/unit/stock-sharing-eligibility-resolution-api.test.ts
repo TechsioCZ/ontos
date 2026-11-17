@@ -4,7 +4,7 @@ import {
   allowOwnerAuthorizationOverlay,
   defineDatabaseIdentityEnrollment,
 } from '@app/core-runtime';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { mapStockSharingEligibilityResolutionDomainError } from '../../api/stock-sharing-eligibility-resolution-read-server.ts';
@@ -21,10 +21,6 @@ import {
 } from '../../shared/domain/stock-sharing-eligibility.ts';
 import type { StockSharingEligibilityPersistence } from '../../shared/domain/stock-sharing-eligibility.ts';
 import { StockSharingEligibilityUnavailable } from '../../shared/domain/stock-sharing-eligibility-unavailable.ts';
-import {
-  executeStockSharingEligibilityResolution,
-  executeStockSharingEligibilityResolutionWithAuthorization,
-} from '../../src/api/stock-sharing-eligibility-resolution-client.ts';
 import { stockSharingEligibilityResolutionRead } from '../../src/api/stock-sharing-eligibility-resolution.read.ts';
 import { makeStockSharingEligibilityEvaluator } from '../../src/services/stock-sharing-eligibility-service.ts';
 import {
@@ -159,8 +155,6 @@ it('declares an exact Position-scoped governed Read with typed decision output',
   expect(stockSharingEligibilityResolutionRead.descriptor.evidencePolicy.captureMode).toBe('metadata_only');
 
   expect(Schema.is(StockSharingEligibilityResolutionResponseSchema)({ decision })).toBe(true);
-  expect(Predicate.isFunction(executeStockSharingEligibilityResolution)).toBe(true);
-  expect(Predicate.isFunction(executeStockSharingEligibilityResolutionWithAuthorization)).toBe(true);
 });
 
 it('refuses a Position from another Tenant in the declared request contract', () => {

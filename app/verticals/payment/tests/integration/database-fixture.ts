@@ -9,7 +9,7 @@ import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-c
 import type { PgClient } from '@effect/sql-pg';
 import { randomUUID } from 'node:crypto';
 
-import { Effect, Option, Predicate, Result, Schema } from 'effect';
+import { Duration, Effect, Option, Predicate, Result, Schedule, Schema } from 'effect';
 import { expect } from 'effect-rstest';
 
 import type { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -208,6 +208,59 @@ export const collectInput = Effect.fn('PaymentDatabaseFixture.collectInput')(fun
 export const failureCodeOf = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
   Effect.flip(operation).pipe(
     Effect.map((failure) => (Predicate.hasProperty(failure, 'code') ? failure.code : 'unknown')),
+  );
+
+/** The lock wait one race needs PostgreSQL to publish before the holder may release. */
+export interface QueuedLockWaiters {
+  /** How many backends must be queued behind the holder. */
+  readonly expected: number;
+  /** The backend holding the lock, read as `select pg_backend_pid()` inside its own transaction. */
+  readonly holderPid: number;
+  /** Optional `ilike` pattern on the queued statement, for holders whose chain carries other waiters. */
+  readonly statementLike?: string;
+}
+
+/**
+ * PostgreSQL publishes a lock wait in `pg_blocking_pids` only once the waiting backend has registered
+ * it, which no number of round trips bounds. The wait therefore runs on the live clock against a real
+ * deadline: a loaded runner no longer turns a correct lock into a failed assertion, and a lock that
+ * never materializes fails loudly instead of returning a count the caller then asserts on.
+ */
+const LOCK_WAIT_POLL = Schedule.spaced(Duration.millis(20));
+const LOCK_WAIT_DEADLINE = Duration.seconds(30);
+
+/**
+ * Waits until PostgreSQL itself reports `expected` backends queued (directly or transitively) behind
+ * `holderPid` and answers with the observed count. Queued row-lock waiters form a chain: a later
+ * waiter is blocked by an earlier one, never by the holder directly, so the chain is walked.
+ */
+export const awaitQueuedLockWaiters = (admin: PgClient.PgClient, waiters: QueuedLockWaiters) =>
+  Effect.gen(function* observeQueuedLockWaiters() {
+    const rows = yield* admin.unsafe<{ readonly waiting: number }>(
+      `with recursive blocked(pid) as (
+         select activity.pid from pg_catalog.pg_stat_activity as activity
+         where $1::integer = any(pg_catalog.pg_blocking_pids(activity.pid))
+         union
+         select activity.pid from pg_catalog.pg_stat_activity as activity
+         join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
+       )
+       select count(*)::integer as waiting
+       from blocked
+       join pg_catalog.pg_stat_activity as waiter on waiter.pid = blocked.pid
+       where $2::text is null or waiter.query ilike $2::text`,
+      [waiters.holderPid, waiters.statementLike ?? null],
+    );
+    const waiting = rows[0]?.waiting ?? 0;
+    return waiting >= waiters.expected ? waiting : yield* Effect.fail('payment_lock_wait_unregistered' as const);
+  }).pipe(
+    Effect.retry(LOCK_WAIT_POLL),
+    Effect.timeoutOrElse({
+      duration: LOCK_WAIT_DEADLINE,
+      orElse: () =>
+        Effect.die(
+          `PostgreSQL never queued ${waiters.expected} backend(s) behind backend ${waiters.holderPid} within 30 seconds`,
+        ),
+    }),
   );
 
 export { coreRelations as paymentTestRelations } from '../../../../packages/core-runtime/src/db/schema.ts';

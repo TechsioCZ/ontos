@@ -1,5 +1,6 @@
 import { ProductSchema, ProductUuidSchema } from '@app/catalog/domain/product';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
+import { PriceGroupSourceAssociationSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceGroupSourcePricesResponseSchema } from '@app/pricing/apis/price-group-source-prices';
 import { CustomerProfileSourceItemSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { SourceProfileExportResponseSchema } from '@app/party-registry/apis/source-profile-export';
@@ -56,8 +57,9 @@ export const qualifySymmyReadId = (
  */
 export const SymmyInternalProductsProjectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   limit,
-  nextRecordId: Schema.optionalKey(sourceId),
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   products: Schema.Array(
     Schema.Struct({
       id: SymmyQualifiedReadIdSchema,
@@ -97,6 +99,7 @@ export const SymmyInternalPriceListsProjectionSchema = Schema.Struct({
       ends_at: Schema.optionalKey(PricingInstantSchema),
       id: Schema.toEncoded(SymmyEncodedSourceCodeSchema),
       name: Schema.String,
+      priceGroupRef: PriceGroupSourceAssociationSchema.fields.priceGroupRef,
       prices: Schema.optionalKey(PriceGroupSourcePricesResponseSchema),
       source_record_id: sourceId,
       starts_at: PricingInstantSchema,
@@ -116,6 +119,7 @@ export const SymmyCustomerIcoProjectionSchema = Schema.Union([
 /** Native references are limited to the verified Commerce profile/subject and authorized Party projection. */
 export const SymmyInternalCustomersProjectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   customers: Schema.Array(
     Schema.Struct({
       business_name: Schema.optionalKey(OrganizationBusinessNameExportResponseSchema.members[1].fields.businessName),
@@ -128,7 +132,7 @@ export const SymmyInternalCustomersProjectionSchema = Schema.Struct({
     }),
   ),
   limit,
-  nextRecordId: Schema.optionalKey(sourceId),
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   projection: Schema.Literal('customers'),
   unsupported_fields: Schema.Array(Schema.Literals(['name', 'contacts', 'addresses', 'groups', 'ico'])),
 });

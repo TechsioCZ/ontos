@@ -184,19 +184,22 @@ const broadPath = (changedPath: string) =>
       changedPath,
     ));
 
-const filterPaths = (filters: string) =>
+/** Every literal workspace selector a `--filter` list names, with its exclusion sense. */
+export const filterPaths = (filters: string) =>
   [...filters.matchAll(/--filter\s+['"]?(?<exclude>!)?(?<path>\.\/[a-z0-9/-]+|\.)['"]?/gu)].map(({ groups }) => ({
     exclude: groups?.exclude === '!',
     path: groups?.path?.replace(/^\.\//u, ''),
   }));
 
-const unknownFilters = (command: string) =>
+/** True when a command carries a package selector this planner cannot resolve to a workspace directory. */
+export const unknownFilters = (command: string) =>
   command.includes('--filter=') ||
   [...command.matchAll(/--filter\s+(?<selector>\S+)/gu)].some(
     ({ groups }) => !/^['"]?!?(?:\.\/[a-z0-9/-]+|\.)['"]?$/u.test(groups?.selector ?? ''),
   );
 
-const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage[]) => {
+/** The workspace packages a `--filter` list selects, excluding the repository root. */
+export const matchingPackages = (filters: string, packages: readonly CiWorkspacePackage[]) => {
   const selectors = filterPaths(filters);
   const included = selectors.filter(({ exclude }) => !exclude);
   const excluded = selectors.filter(({ exclude }) => exclude);

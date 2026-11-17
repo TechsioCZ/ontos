@@ -4,6 +4,7 @@ import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contrac
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { AdmitSymmyJobPayloadSchema } from '../domain/symmy-job-admission.ts';
 import { SymmyPinnedJobPlanSchema } from '../domain/symmy-job-execution.ts';
+import { SymmyStockRowsSchema } from '../domain/symmy-stock-batch.ts';
 
 export const AdmitSymmySyncPayloadSchema = Schema.Struct({
   contractVersion: AdmitSymmyJobPayloadSchema.fields.contractVersion,
@@ -11,12 +12,17 @@ export const AdmitSymmySyncPayloadSchema = Schema.Struct({
   idempotencyKey: AdmitSymmyJobPayloadSchema.fields.idempotencyKey,
   plan: AdmitSymmyJobPayloadSchema.fields.plan,
   routeKey: Schema.Literals(['customerGroupsBatch', 'inventoryStockBatch']),
+  /** The public stock rows. The route enrollment, not the caller, supplies every other stock fact. */
+  stock: Schema.optionalKey(SymmyStockRowsSchema),
 }).check(
   Schema.makeFilter(
-    ({ contractVersion, fixtureId, plan }) =>
-      (fixtureId !== undefined && contractVersion === undefined && plan === undefined) ||
-      (fixtureId === undefined && contractVersion === 'INTERNAL_C14' && plan !== undefined) ||
-      'Choose exactly one versioned internal plan or registered fixture',
+    ({ contractVersion, fixtureId, plan, routeKey, stock }) =>
+      (routeKey === 'inventoryStockBatch'
+        ? stock !== undefined && fixtureId === undefined && contractVersion === undefined && plan === undefined
+        : stock === undefined &&
+          ((fixtureId !== undefined && contractVersion === undefined && plan === undefined) ||
+            (fixtureId === undefined && contractVersion === 'INTERNAL_C14' && plan !== undefined))) ||
+      'Choose exactly one versioned internal plan or registered fixture, and send stock rows only to the stock route',
   ),
 );
 export type AdmitSymmySyncPayload = typeof AdmitSymmySyncPayloadSchema.Type;

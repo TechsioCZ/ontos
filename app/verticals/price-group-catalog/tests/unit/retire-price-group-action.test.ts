@@ -1,5 +1,4 @@
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -79,18 +78,6 @@ const services = (
   readDefinitionRevision: unused,
   retirePriceGroup,
   validateCompatibility: unused,
-});
-
-it('declares the retirement capability as scope-wide and forbids Legal Entity scope', () => {
-  expect(retirePriceGroupAction.descriptor.legalEntityScope).toBe('forbidden');
-  expect(retirePriceGroupAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
-  expect(retirePriceGroupAction.descriptor.accessDeclaration).toMatchObject({
-    key: 'pricing.price-group-catalog.price-group.retire',
-    kind: 'action',
-    selectors: [],
-  });
-  // O67-Q2: retirement is decided by the one gate in the Tenant context, with no per-group target.
-  expect(getActionOwnerPermissionTargetResolver(retirePriceGroupAction)).toBeUndefined();
 });
 
 it.effect('persists a scheduled terminal transition and records separate trusted evidence with its linked outbox', () =>

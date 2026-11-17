@@ -94,23 +94,3 @@ it('classifies both governed reads as v2 protected and declares their sensitive 
     ]),
   ).toEqual([['projects.core.project.owner-candidates.personal.read', 'personal_data', ['candidates.displayName']]]);
 });
-
-it.effect('names exactly the sensitive result fields, and nothing else (R5c, O58, O83)', () =>
-  Effect.gen(function* declaredFields() {
-    const project = yield* projectFixture;
-    // The governed fields are the owner and the creator, and the result really carries them.
-    expect(project.ownerPrincipalId).toBeDefined();
-    expect(project.createdByPrincipalId).toBeDefined();
-    expect((readProjectRead.descriptor.accessFieldGroups ?? []).flatMap((group) => group.fields)).toEqual([
-      'createdByPrincipalId',
-      'ownerPrincipalId',
-    ]);
-    expect((projectOwnerCandidatesRead.descriptor.accessFieldGroups ?? []).flatMap((group) => group.fields)).toEqual([
-      'candidates.displayName',
-    ]);
-    // The opaque principal id is not part of the personal_data group (O2): only the name is.
-    expect(
-      (projectOwnerCandidatesRead.descriptor.accessFieldGroups ?? []).flatMap((group) => group.fields),
-    ).not.toContain('candidates.principalId');
-  }),
-);

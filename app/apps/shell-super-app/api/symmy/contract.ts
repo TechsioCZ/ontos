@@ -9,7 +9,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
-import { Schema } from 'effect';
+import { Schema, SchemaTransformation } from 'effect';
 import { HttpApiMiddleware } from 'effect/http-api';
 
 import {
@@ -22,7 +22,12 @@ const SymmyFixtureJobNotFoundProblemSchema = makeProblemDetailsSchema('SymmyFixt
 const SymmyFixtureIntentConflictProblemSchema = makeProblemDetailsSchema('SymmyFixtureIntentConflictProblem', 409);
 const SymmyIdempotencyRequiredProblemSchema = makeProblemDetailsSchema('SymmyIdempotencyRequiredProblem', 428);
 const SymmyUnsupportedProblemSchema = makeProblemDetailsSchema('SymmyUnsupportedProblem', 422, {
-  reason: Schema.Literals(['projection_not_configured', 'filter_not_supported', 'owner_field_not_supported']),
+  reason: Schema.Literals([
+    'projection_not_configured',
+    'filter_not_supported',
+    'owner_field_not_supported',
+    'search_too_broad',
+  ]),
 });
 export const SymmyUnavailableProblemSchema = makeRetryableProblemDetailsSchema('SymmyUnavailableProblem', 503);
 export const SymmyMethodNotAllowedProblemSchema = makeProblemDetailsSchema('SymmyMethodNotAllowedProblem', 405);
@@ -107,6 +112,12 @@ const submitHeaders = Schema.Struct({
   'idempotency-key': SymmyClientIdempotencyKeySchema,
 });
 const query = Schema.Struct({}).check(Schema.isMaxProperties(0));
+/** Paging fields shared by every read route, so each route's own query schema pages the same way. */
+export const symmyReadLimitSchema = Schema.NumberFromString.check(
+  Schema.isInt(),
+  Schema.isBetween({ maximum: 100, minimum: 1 }),
+);
+export const symmyReadOffsetSchema = Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 export const SymmyInternalReadQuerySchema = Schema.Struct({
   afterRecordId: Schema.optionalKey(Schema.toEncoded(SymmySourceRecordKeySchema.fields.sourceRecordId)),
   code: Schema.optionalKey(
@@ -116,15 +127,96 @@ export const SymmyInternalReadQuerySchema = Schema.Struct({
     ]),
   ),
   contractVersion: Schema.optionalKey(Schema.Literal('INTERNAL_C14')),
-  limit: Schema.optionalKey(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
-  ),
-  offset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
-  priceLimit: Schema.optionalKey(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
-  ),
-  priceOffset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  priceLimit: Schema.optionalKey(symmyReadLimitSchema),
+  priceOffset: Schema.optionalKey(symmyReadOffsetSchema),
   sourceRecordId: Schema.optionalKey(Schema.toEncoded(SymmySourceRecordKeySchema.fields.sourceRecordId)),
+});
+/** The public `GET /price-lists` query. Neither `code` nor `contractVersion` is a parameter. */
+export const SymmyPriceListsReadQuerySchema = Schema.Struct({
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  priceLimit: Schema.optionalKey(symmyReadLimitSchema),
+  priceOffset: Schema.optionalKey(symmyReadOffsetSchema),
+});
+/** A comma-separated `fields` list decoded to its names; one name outside the route's own list gives 400. */
+const symmyFieldsQuerySchema = (maxLength: number, isName: (name: string) => boolean, description: string) =>
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maxLength)).pipe(
+    Schema.decodeTo(
+      Schema.Array(Schema.String),
+      SchemaTransformation.transform<readonly string[], string>({
+        decode: (value) => value.split(','),
+        encode: (names) => names.join(','),
+      }),
+    ),
+    Schema.check(Schema.makeFilter((names: readonly string[]) => names.every(isName), { description })),
+  );
+const SymmyRegionFieldNameSchema = Schema.Literals([
+  'countryCodes',
+  'currencyCode',
+  'id',
+  'marketCode',
+  'marketRef',
+  'sourceRecordId',
+]);
+export type SymmyRegionFieldName = typeof SymmyRegionFieldNameSchema.Type;
+export const isSymmyRegionFieldName = Schema.is(SymmyRegionFieldNameSchema);
+/** The public `GET /admin/regions` query. `contractVersion` is never a parameter: the route sets it. */
+export const SymmyRegionsReadQuerySchema = Schema.Struct({
+  fields: Schema.optionalKey(
+    symmyFieldsQuerySchema(200, isSymmyRegionFieldName, 'A comma-separated list of region field names.'),
+  ),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+});
+/** The selectable item paths of `GET /admin/products`. `id` is always returned and is not selectable. */
+const SymmyProductFieldNameSchema = Schema.Literals([
+  'product',
+  'product.catalogReady',
+  'product.createdAt',
+  'product.description',
+  'product.lifecycle',
+  'product.name',
+  'product.productRef',
+  'product.revision',
+  'product.updatedAt',
+  'product.variants',
+  'sourceRecordId',
+  'variantSources',
+]);
+export type SymmyProductFieldName = typeof SymmyProductFieldNameSchema.Type;
+export const isSymmyProductFieldName = Schema.is(SymmyProductFieldNameSchema);
+/** The public `GET /admin/products` query: paging, `q` and `fields` only. No cursor, `code` or `contractVersion`. */
+export const SymmyProductsReadQuerySchema = Schema.Struct({
+  fields: Schema.optionalKey(
+    symmyFieldsQuerySchema(500, isSymmyProductFieldName, 'A comma-separated list of product field paths.'),
+  ),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+});
+/** The selectable item parts of `GET /admin/customers`. The first four are always returned. */
+const SymmyCustomerFieldNameSchema = Schema.Literals([
+  'businessName',
+  'ico',
+  'id',
+  'party',
+  'partyRef',
+  'profile',
+  'sourceRecordId',
+]);
+export type SymmyCustomerFieldName = typeof SymmyCustomerFieldNameSchema.Type;
+export const isSymmyCustomerFieldName = Schema.is(SymmyCustomerFieldNameSchema);
+/** The public `GET /admin/customers` query: paging, `q` and `fields` only. No cursor, `code` or `contractVersion`. */
+export const SymmyCustomersReadQuerySchema = Schema.Struct({
+  fields: Schema.optionalKey(
+    symmyFieldsQuerySchema(200, isSymmyCustomerFieldName, 'A comma-separated list of customer part names.'),
+  ),
+  limit: Schema.optionalKey(symmyReadLimitSchema),
+  offset: Schema.optionalKey(symmyReadOffsetSchema),
+  q: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
 });
 export const SymmyFixtureIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/u)).pipe(
   Schema.brand('SymmyFixtureId'),
@@ -153,13 +245,13 @@ export const SymmyFixtureReadSchema = Schema.Struct({ references: Schema.Array(S
 export const SymmyFixtureItemResultsSchema = Schema.Struct({ items: fixtureItems });
 export const SymmyFixtureAdmissionSchema = Schema.Struct({
   jobId: SymmyFixtureJobIdSchema,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 export const SymmyFixtureJobStatusSchema = Schema.Union([
   Schema.Struct({
     items: Schema.optionalKey(Schema.Array(fixtureItemResult)),
     jobId: SymmyFixtureJobIdSchema,
-    status: Schema.Literals(['admitted', 'running', 'blocked']),
+    status: Schema.Literals(['queued', 'running', 'blocked']),
   }),
   Schema.Struct({
     items: fixtureItems,

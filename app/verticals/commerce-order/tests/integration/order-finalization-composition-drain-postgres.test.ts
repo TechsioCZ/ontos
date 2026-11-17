@@ -27,6 +27,7 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import {
   Array as EffectArray,
+  Context,
   Crypto,
   Deferred,
   Effect,
@@ -210,14 +211,40 @@ const makeOrderDrainSnapshot = Effect.fn('OrderFinalizationDrainTests.sourceSnap
   });
 });
 
+/**
+ * The authored SOURCE metadata and the work the Order Action collected. Both are pure products of
+ * the genuine registration and manifest — per-event JSON-schema encoding, digests, canonicalisation
+ * and the in-memory revalidation Action — so the suite derives them once and every case publishes
+ * them into its own database. Each case closes admission and drains its composition, so the
+ * composition itself stays private to a case.
+ */
+const openAuthoredWork = Effect.gen(function* openAuthoredOrderDrainWork() {
+  const snapshot = yield* makeOrderDrainSnapshot();
+  // Persist exactly what the registered Order Action collected, as Core's Action repository does.
+  // Only the original revision is this database's release; the harness admits its actual owner composition.
+  const {
+    committed: [committed],
+  } = yield* runOrderRevalidation('PROOFS_PENDING');
+  const collected = committed?.evidence.outboxMessages[0];
+  const event = collected === undefined ? undefined : committed?.evidence.domainEvents[collected.domainEventIndex];
+  if (collected === undefined || event === undefined) {
+    return yield* new OrderDrainSetupFailed({ reason: 'The Order Action collected no finalization work' });
+  }
+  return { collected, event, snapshot };
+});
+
+const OrderDrainAuthoredWork = Context.Service<Effect.Success<typeof openAuthoredWork>>(
+  'OrderFinalizationDrain.authoredWork',
+);
+
 const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixture() {
+  const { collected, event, snapshot } = yield* OrderDrainAuthoredWork;
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1257-approval-fresh-proof',
     sourceConnections: yield* loadDatabaseConnectionPair(),
   });
   yield* isolated.migrateCoreSchema();
-  const snapshot = yield* makeOrderDrainSnapshot();
   yield* isolated.publishInitialComposition(snapshot);
   const { revision } = snapshot.composition;
   const admin = yield* PgClient.makeClient({ url: Redacted.make(isolated.connections.admin.connectionString) });
@@ -234,16 +261,6 @@ const fixture = Effect.fn('OrderFinalizationDrainTests.fixture')(function* fixtu
     "insert into core.action_invocations(action_invocation_id,tenant_id,action_key,status,request_hash) values($1,$2,'commerce.order.drain-fixture','succeeded',$3)",
     [invocationId, orderTenantId, 'd'.repeat(64)],
   );
-  // Persist exactly what the registered Order Action collected, as Core's Action repository does.
-  // Only the original revision is this database's release; the harness admits its actual owner composition.
-  const {
-    committed: [committed],
-  } = yield* runOrderRevalidation('PROOFS_PENDING');
-  const collected = committed?.evidence.outboxMessages[0];
-  const event = collected === undefined ? undefined : committed?.evidence.domainEvents[collected.domainEventIndex];
-  if (collected === undefined || event === undefined) {
-    return yield* new OrderDrainSetupFailed({ reason: 'The Order Action collected no finalization work' });
-  }
   // Preparation work is collected by the same enqueue helper; only its stage and intent differ.
   const proofWork = { collected, event };
   const preparationWork = {
@@ -382,40 +399,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(Reactivity.layer),
 );
-const nativeTest = (
-  name: string,
-  body: (
-    test: Effect.Success<ReturnType<typeof fixture>>,
-  ) => Effect.Effect<void, unknown, ChildProcessSpawner.ChildProcessSpawner | Scope.Scope>,
-) => it.live(name, () => fixture().pipe(Effect.flatMap(body), Effect.scoped, Effect.provide(services)));
-
-nativeTest('holds composition publication until tracked Order finalization work is delivered', (test) =>
-  Effect.gen(function* trackedOrderWork() {
-    const id = yield* test.accept();
-    const workId = `outbox:${id}:commerce.order`;
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
-      { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId },
-    ]);
-    yield* test.composition.closeAdmission();
-    // A buyer Action that would enqueue more work after admission closes rolls back whole.
-    const refused = yield* test.accept().pipe(Effect.result);
-    expect(Result.isFailure(refused)).toBe(true);
-    if (Result.isFailure(refused)) {
-      expect(Option.map(findPostgresFailure(refused.failure), ({ code }) => code)).toEqual(Option.some('55000'));
-    }
-    expect(yield* test.eventCount).toBe(1);
-    expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
-    expect(yield* test.composition.observe()).toMatchObject({
-      durableWorkAdmission: 'closed',
-      pendingDurableWork: [{ workId }],
-      phase: 'active',
-    });
-    expect(yield* test.deliver).toMatchObject({ claimed: 1, dead: 0, succeeded: 1 });
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
-    yield* test.composition.drain();
-    expect((yield* test.composition.observe()).phase).toBe('draining');
-  }),
-);
+const drainLayer = Layer.effect(OrderDrainAuthoredWork, openAuthoredWork).pipe(Layer.provideMerge(services));
 
 const ownerTransport = (
   observedAfterCompletion: OrderPreparationWorkObservation | typeof failedOrderProofWork,
@@ -444,74 +428,111 @@ const ownerTransport = (
   );
 };
 
-nativeTest('acknowledges an expired preparation delivery done so composition drain completes', (test) =>
-  Effect.gen(function* expiredPreparationWork() {
-    ownerTransport(failedOrderPreparationWork);
-    const id = yield* test.accept(test.preparationWork);
-    const workId = `outbox:${id}:commerce.order`;
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
-      { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId },
-    ]);
-    yield* test.composition.closeAdmission();
-    expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
-    expect(yield* test.deliverPreparation(() => Effect.succeed(expiredOrderQuotation))).toMatchObject({
-      claimed: 1,
-      dead: 0,
-      succeeded: 1,
-    });
-    expect(owners.complete).toHaveBeenCalledOnce();
-    // The delegation acts for the invocation that enqueued the delivered work, not for the worker.
-    expect(owners.issueGateway).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subject: {
-          _tag: 'Originator',
-          actionInvocationId: test.invocationId,
-          compositionRevision: test.revision,
-          tenantId: orderTenantId,
-        },
-      }),
-      expect.anything(),
-    );
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
-    yield* test.composition.drain();
-    expect((yield* test.composition.observe()).phase).toBe('draining');
-  }),
-);
+it.layer(drainLayer, { excludeTestServices: true, timeout: 120_000 })((suite) => {
+  const nativeTest = (
+    name: string,
+    body: (
+      test: Effect.Success<ReturnType<typeof fixture>>,
+    ) => Effect.Effect<void, unknown, ChildProcessSpawner.ChildProcessSpawner | Scope.Scope>,
+  ) => suite.effect(name, () => fixture().pipe(Effect.flatMap(body), Effect.scoped));
 
-nativeTest('keeps preparation debt pending while Pricing cannot prove expiry', (test) =>
-  Effect.gen(function* unprovenPreparationWork() {
-    ownerTransport(pendingOrderPreparationWork);
-    const id = yield* test.accept(test.preparationWork);
-    yield* test.composition.closeAdmission();
-    expect(yield* test.deliverPreparation(() => Effect.fail(pricingTransportFailure()))).toMatchObject({
-      claimed: 1,
-      dead: 0,
-      succeeded: 0,
-    });
-    expect(owners.complete).not.toHaveBeenCalled();
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
-      { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId: `outbox:${id}:commerce.order` },
-    ]);
-    expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
-  }),
-);
+  nativeTest('holds composition publication until tracked Order finalization work is delivered', (test) =>
+    Effect.gen(function* trackedOrderWork() {
+      const id = yield* test.accept();
+      const workId = `outbox:${id}:commerce.order`;
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
+        { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId },
+      ]);
+      yield* test.composition.closeAdmission();
+      // A buyer Action that would enqueue more work after admission closes rolls back whole.
+      const refused = yield* test.accept().pipe(Effect.result);
+      expect(Result.isFailure(refused)).toBe(true);
+      if (Result.isFailure(refused)) {
+        expect(Option.map(findPostgresFailure(refused.failure), ({ code }) => code)).toEqual(Option.some('55000'));
+      }
+      expect(yield* test.eventCount).toBe(1);
+      expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
+      expect(yield* test.composition.observe()).toMatchObject({
+        durableWorkAdmission: 'closed',
+        pendingDurableWork: [{ workId }],
+        phase: 'active',
+      });
+      expect(yield* test.deliver).toMatchObject({ claimed: 1, dead: 0, succeeded: 1 });
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
+      yield* test.composition.drain();
+      expect((yield* test.composition.observe()).phase).toBe('draining');
+    }),
+  );
 
-nativeTest('acknowledges an expired proof delivery without a Confirmation so composition drain completes', (test) =>
-  Effect.gen(function* expiredProofWork() {
-    ownerTransport(failedOrderProofWork, pendingOrderProofWork);
-    const id = yield* test.accept(test.expiredProofWork);
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
-      { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId: `outbox:${id}:commerce.order` },
-    ]);
-    yield* test.composition.closeAdmission();
-    expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
-    expect(yield* test.deliverExpiredProof).toMatchObject({ claimed: 1, dead: 0, succeeded: 1 });
-    expect(owners.complete).toHaveBeenCalledOnce();
-    expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
-    yield* test.composition.drain();
-    expect((yield* test.composition.observe()).phase).toBe('draining');
-  }),
-);
+  nativeTest('acknowledges an expired preparation delivery done so composition drain completes', (test) =>
+    Effect.gen(function* expiredPreparationWork() {
+      ownerTransport(failedOrderPreparationWork);
+      const id = yield* test.accept(test.preparationWork);
+      const workId = `outbox:${id}:commerce.order`;
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
+        { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId },
+      ]);
+      yield* test.composition.closeAdmission();
+      expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
+      expect(yield* test.deliverPreparation(() => Effect.succeed(expiredOrderQuotation))).toMatchObject({
+        claimed: 1,
+        dead: 0,
+        succeeded: 1,
+      });
+      expect(owners.complete).toHaveBeenCalledOnce();
+      // The delegation acts for the invocation that enqueued the delivered work, not for the worker.
+      expect(owners.issueGateway).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: {
+            _tag: 'Originator',
+            actionInvocationId: test.invocationId,
+            compositionRevision: test.revision,
+            tenantId: orderTenantId,
+          },
+        }),
+        expect.anything(),
+      );
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
+      yield* test.composition.drain();
+      expect((yield* test.composition.observe()).phase).toBe('draining');
+    }),
+  );
+
+  nativeTest('keeps preparation debt pending while Pricing cannot prove expiry', (test) =>
+    Effect.gen(function* unprovenPreparationWork() {
+      ownerTransport(pendingOrderPreparationWork);
+      const id = yield* test.accept(test.preparationWork);
+      yield* test.composition.closeAdmission();
+      expect(yield* test.deliverPreparation(() => Effect.fail(pricingTransportFailure()))).toMatchObject({
+        claimed: 1,
+        dead: 0,
+        succeeded: 0,
+      });
+      expect(owners.complete).not.toHaveBeenCalled();
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
+        { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId: `outbox:${id}:commerce.order` },
+      ]);
+      expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
+    }),
+  );
+
+  nativeTest('acknowledges an expired proof delivery without a Confirmation so composition drain completes', (test) =>
+    Effect.gen(function* expiredProofWork() {
+      ownerTransport(failedOrderProofWork, pendingOrderProofWork);
+      const id = yield* test.accept(test.expiredProofWork);
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([
+        { originalRevision: test.revision, ownerModuleKey: 'commerce.order', workId: `outbox:${id}:commerce.order` },
+      ]);
+      yield* test.composition.closeAdmission();
+      expect(Exit.isFailure(yield* test.composition.drain().pipe(Effect.exit))).toBe(true);
+      expect(yield* test.deliverExpiredProof).toMatchObject({ claimed: 1, dead: 0, succeeded: 1 });
+      expect(owners.complete).toHaveBeenCalledOnce();
+      expect((yield* test.composition.observe()).pendingDurableWork).toEqual([]);
+      yield* test.composition.drain();
+      expect((yield* test.composition.observe()).phase).toBe('draining');
+    }),
+  );
+});
 
 // With `isolate: false` one module registry is shared by every file a worker runs, so these
 // replacements outlive this file and would leak into whatever runs next. Remove them and drop the

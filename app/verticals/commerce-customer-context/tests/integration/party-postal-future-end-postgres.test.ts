@@ -1068,7 +1068,13 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
   expect(evidence.invocations.some(({ status }) => status === 'succeeded')).toBe(true);
 });
 
-it.layer(postalFixtureLayer, { excludeTestServices: true, timeout: 30_000 })((testIt) => {
+// The layer budget was equal to the budget of just one of the operations it awaits, so it timed out
+// inside a merge-queue run (job 132460997289) and passed on the rerun. `preparePostalFutureEnd`
+// awaits, in sequence: the isolated schema-only clone, which bounds itself at 30 s inside
+// `makeIsolatedNativeDatabaseFixture`; a `mise exec -- pnpm --filter @app/party-registry exec node`
+// child that resolves the workspace filter and rebuilds the owner schema; then the admin PgClient
+// layer, the physical-identity proof and the per-identity URL retargeting. 30 s + 30 s + 15 s.
+it.layer(postalFixtureLayer, { excludeTestServices: true, timeout: 75_000 })((testIt) => {
   testIt.effect(
     'real Party whole future End remains usable through registered native CCC Add and Update until its exclusive end',
     postalFutureEnd,

@@ -46,8 +46,10 @@ import {
 } from '@app/inventory/api/client';
 import { InventorySourceImportActionInvocationIdSchema } from '@app/inventory/source-import-outcome';
 import type { InventorySourceImportOutcome } from '@app/inventory/source-import-outcome';
+import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';
 import {
   executeCreatePriceGroupWithAuthorization,
+  executePriceGroupCatalogHeadWithAuthorization,
   executePriceGroupSourceAssociationsWithAuthorization,
   executeCreatePriceGroupDefinitionRevisionWithAuthorization,
   executePriceGroupResultLookupWithAuthorization,
@@ -60,7 +62,7 @@ import {
 } from '@app/pricing/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
 
 import {
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -264,6 +266,12 @@ export const materializeSymmyCatalogPricingInventorySourceOccurrence = (
         ? intent
         : { ...intent, payload: { ...intent.payload, sourceCorrelation: { ...source, sourceOccurrenceId } } };
     }),
+    Match.tag('PriceGroupCreateAtCatalogHead', (intent) => {
+      const source = intent.payload.sourceCorrelation;
+      return source === undefined || source.sourceOccurrenceId !== undefined
+        ? intent
+        : { ...intent, payload: { ...intent.payload, sourceCorrelation: { ...source, sourceOccurrenceId } } };
+    }),
     Match.tag('PriceGroupRevise', (intent) => {
       const source = intent.payload.sourceCorrelation;
       return source === undefined || source.sourceOccurrenceId !== undefined
@@ -294,6 +302,7 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
         payload.variantRef.tenantId === tenantId &&
         qualifiedSource(input, payload.sourceCorrelation),
       CatalogCreateVariantFromProductEffect: () => false,
+      CatalogProductDependentEffect: () => false,
       CatalogSetVariantLocalizedFacts: ({ payload }) =>
         entityKind === 'VARIANT' && expectedTarget(payload.variantRef) && payload.productRef.tenantId === tenantId,
       CatalogUpdateProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
@@ -306,6 +315,7 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
       PriceDefineFromGroupEffect: () => false,
       PriceGroupCreate: ({ payload }) =>
         target === undefined && priceGroupSourceMatches(input, payload.sourceCorrelation),
+      PriceGroupCreateAtCatalogHead: () => false,
       PriceGroupRevise: ({ payload }) =>
         expectedTarget(payload.expectedCurrent.priceGroupRef) &&
         priceGroupSourceMatches(input, payload.sourceCorrelation),
@@ -551,6 +561,148 @@ const hasDeclaredParentDependency = (
       : dependency.itemKey === reference.itemKey && dependency.effectKey === reference.effectKey,
   );
 
+interface ProductEffectReference {
+  readonly effectKey: string;
+  readonly itemKey: string;
+}
+
+/**
+ * The receipt of the Product create effect a dependent effect names: the parent must be this job's settled Product
+ * create, declared in the dependent's own dependencies, and its receipt must belong to the route's tenant.
+ */
+const requireCreatedProductParent = Effect.fn('SymmyOwnerAdapters.requireCreatedProductParent')(function* createdParent(
+  input: SymmyEffectAdapterInput,
+  reference: ProductEffectReference,
+) {
+  const parents = input.dependencies.filter(
+    (dependency) => dependency.itemKey === reference.itemKey && dependency.effect.effectKey === reference.effectKey,
+  );
+  const [parent] = parents;
+  if (
+    parents.length !== 1 ||
+    parent === undefined ||
+    parent.state !== 'settled' ||
+    Option.isNone(parent.outcome) ||
+    parent.effect.ref.operation.moduleId !== catalogModuleId ||
+    parent.effect.ref.operation.entrypointKey !== 'commerce.catalog.create-product'
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  if (
+    !Schema.is(settledParentOutcomeSchema)(parent.outcome.value.status) ||
+    !hasDeclaredParentDependency(input.effect, parent.effect.itemId, reference)
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[0])(
+    Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
+  ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+  if (receipt.productRef.tenantId !== input.effect.ref.occurrence.record.route.tenantId) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  return receipt;
+});
+
+type ProductDependentIntent = Extract<
+  SymmyCatalogPricingInventoryIntent,
+  { readonly _tag: 'CatalogProductDependentEffect' }
+>;
+type ProductCreatedReceipt = Extract<SymmyCatalogPricingInventoryReceipt, { readonly _tag: 'ProductCreated' }>;
+
+/**
+ * The Variant a text or a price of the Product is about: the further Variant its `variantParent` create effect
+ * settled on (the owner's own answer, so a replayed source record keeps its Variant) or, without one, the initial
+ * Variant of the Product the create receipt names.
+ */
+const requireCreatedVariant = Effect.fn('SymmyOwnerAdapters.requireCreatedVariant')(function* createdVariant(
+  input: SymmyEffectAdapterInput,
+  intent: ProductDependentIntent,
+  product: ProductCreatedReceipt,
+) {
+  const reference = intent.variantParent;
+  if (reference === undefined) {
+    return product.initialVariantRef;
+  }
+  const parents = input.dependencies.filter(
+    (dependency) => dependency.itemKey === reference.itemKey && dependency.effect.effectKey === reference.effectKey,
+  );
+  const [parent] = parents;
+  if (
+    parents.length !== 1 ||
+    parent === undefined ||
+    parent.state !== 'settled' ||
+    Option.isNone(parent.outcome) ||
+    !Schema.is(settledParentOutcomeSchema)(parent.outcome.value.status) ||
+    parent.effect.ref.operation.moduleId !== catalogModuleId ||
+    parent.effect.ref.operation.entrypointKey !== 'commerce.catalog.create-variant' ||
+    !hasDeclaredParentDependency(input.effect, parent.effect.itemId, reference)
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[1])(
+    Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
+  ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+  if (!sameRef(receipt.productRef, product.productRef) || receipt.variantRef.tenantId !== product.productRef.tenantId) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  return receipt.variantRef;
+});
+
+/**
+ * The plain intent a command on the Product of this job becomes once the receipts of its create effects exist.
+ * The Product update takes the Product as its owner target, a text takes its Variant and a price keeps the planned
+ * Price ref and names the Variant.
+ */
+const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentIntent')(function* dependentIntent(
+  input: SymmyEffectAdapterInput,
+  intent: ProductDependentIntent,
+  product: ProductCreatedReceipt,
+) {
+  const { originalTarget: target } = input.effect.ref;
+  const { productRef } = product;
+  return yield* Match.value(intent.request).pipe(
+    Match.tag('UpdateProduct', ({ payload }) =>
+      target === undefined
+        ? Effect.succeed({
+            intent: { _tag: 'CatalogUpdateProduct', payload: { ...payload, productRef } },
+            target: productRef,
+          })
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.tag('SetVariantLocalizedFacts', ({ payload }) =>
+      target === undefined
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.map((variantRef) => ({
+              intent: { _tag: 'CatalogSetVariantLocalizedFacts', payload: { ...payload, productRef, variantRef } },
+              target: variantRef,
+            })),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.tag('DefinePrice', ({ payload }) =>
+      target !== undefined &&
+      sameRef(target, payload.priceRef) &&
+      input.canExecuteNewEffects &&
+      priceSourceMatches(input, payload.sourceAssertion) &&
+      input.legalEntityId === payload.identityKey.commercialScope.sellingLegalEntityId
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.map((variantRef) => ({
+              intent: {
+                _tag: 'PriceDefine',
+                payload: {
+                  ...payload,
+                  identityKey: { ...payload.identityKey, catalogSelection: { productRef, variantRef } },
+                },
+              },
+              target,
+            })),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.exhaustive,
+  );
+});
+
 const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDependency')(function* resolveDependency(
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
@@ -590,34 +742,7 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
         ) {
           return yield* symmyJobWorkerInvalid();
         }
-        const parents = input.dependencies.filter(
-          (dependency) =>
-            dependency.itemKey === intent.parent.itemKey && dependency.effect.effectKey === intent.parent.effectKey,
-        );
-        const [parent] = parents;
-        if (
-          parents.length !== 1 ||
-          parent === undefined ||
-          parent.state !== 'settled' ||
-          Option.isNone(parent.outcome) ||
-          parent.effect.ref.operation.moduleId !== catalogModuleId ||
-          parent.effect.ref.operation.entrypointKey !== 'commerce.catalog.create-product'
-        ) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        if (!Schema.is(settledParentOutcomeSchema)(parent.outcome.value.status)) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        const declared = hasDeclaredParentDependency(input.effect, parent.effect.itemId, intent.parent);
-        if (!declared) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[0])(
-          Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
-        ).pipe(Effect.mapError(symmyJobWorkerInvalid));
-        if (receipt.productRef.tenantId !== input.effect.ref.occurrence.record.route.tenantId) {
-          return yield* symmyJobWorkerInvalid();
-        }
+        const receipt = yield* requireCreatedProductParent(input, intent.parent);
         const bound = yield* readCatalogSourceProduct(input, intent.productSource, contract, crypto);
         if (
           !sameRef(bound.product.productRef, receipt.productRef) ||
@@ -635,6 +760,25 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
           ...input.effect,
           intent: { _tag: 'CatalogCreateVariant', payload, productSource: intent.productSource },
           ref: { ...input.effect.ref, originalTarget: receipt.productRef },
+        }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        yield* input.recordResolvedEffect(resolved);
+        return { ...input, effect: resolved };
+      }),
+    ),
+    Match.tag(
+      'CatalogProductDependentEffect',
+      Effect.fn('SymmyOwnerAdapters.resolveProductDependent')(function* resolveProductDependent(
+        intent: ProductDependentIntent,
+      ) {
+        if (input.originalExecutorPrincipalId !== undefined || input.originalInvocationId !== undefined) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const receipt = yield* requireCreatedProductParent(input, intent.parent);
+        const dependent = yield* productDependentIntent(input, intent, receipt);
+        const resolved = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+          ...input.effect,
+          intent: dependent.intent,
+          ref: { ...input.effect.ref, originalTarget: dependent.target },
         }).pipe(Effect.mapError(symmyJobWorkerInvalid));
         yield* input.recordResolvedEffect(resolved);
         return { ...input, effect: resolved };
@@ -750,12 +894,14 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
         CatalogCreateProduct: () => Option.none(),
         CatalogCreateVariant: ({ productSource }) => Option.some(productSource),
         CatalogCreateVariantFromProductEffect: () => Option.none(),
+        CatalogProductDependentEffect: () => Option.none(),
         CatalogSetVariantLocalizedFacts: () => Option.some(occurrenceSource),
         CatalogUpdateProduct: () => Option.some(occurrenceSource),
         InventoryImport: () => Option.none(),
         PriceDefine: () => Option.none(),
         PriceDefineFromGroupEffect: () => Option.none(),
         PriceGroupCreate: () => Option.none(),
+        PriceGroupCreateAtCatalogHead: () => Option.none(),
         PriceGroupRevise: () => Option.none(),
         PriceRevise: () => Option.none(),
       }),
@@ -892,6 +1038,7 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return createdSourceOutcome(input, invocationId, result.businessOriginalCreateInvocationId);
       }),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.recoverVariantLocalizedFacts')(
         function* recoverVariantLocalizedFacts() {
           const result = yield* executeSetVariantLocalizedFactsRecoveryWithAuthorization(
@@ -972,6 +1119,7 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           result.receipt.businessOriginalInvocationId ?? result.receipt.actionInvocationId,
         );
       }),
+      PriceGroupCreateAtCatalogHead: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupRevise: Effect.fn('SymmyOwnerAdapters.PriceGroupRevise')(function* PriceGroupRevise() {
         const result = yield* executePriceGroupResultLookupWithAuthorization(
           { actionInvocationId: invocationId },
@@ -1022,6 +1170,7 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
       CatalogCreateProduct: () => catalog,
       CatalogCreateVariant: () => catalog,
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: () => catalog,
       CatalogUpdateProduct: () => catalog,
       InventoryImport: ({ payload }) => {
@@ -1037,6 +1186,7 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
       PriceDefine: () => price,
       PriceDefineFromGroupEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupCreate: () => group,
+      PriceGroupCreateAtCatalogHead: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupRevise: () => group,
       PriceRevise: () => price,
     }),
@@ -1181,6 +1331,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
         },
       ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.setVariantLocalizedFacts')(
         function* setVariantLocalizedFacts({ payload }) {
           const result = yield* executeSetVariantLocalizedFactsWithAuthorization(
@@ -1265,6 +1416,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
         const recoveryWire = yield* freshRecoveryGateway(input, intent, contract, crypto, currentInvocationId);
         return yield* recoveryOutcome(input, intent, recoveryWire, currentInvocationId, contract, crypto);
       }),
+      PriceGroupCreateAtCatalogHead: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupRevise: Effect.fn('SymmyOwnerAdapters.PriceGroupRevise')(function* PriceGroupRevise(intent) {
         const result = yield* executeCreatePriceGroupDefinitionRevisionWithAuthorization(
           intent.payload,
@@ -1331,6 +1483,7 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
         ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogSetVariantLocalizedFacts: ({ payload }) =>
         setVariantLocalizedFactsRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
@@ -1355,6 +1508,7 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
         prepareCreatePriceGroupOriginalRequestIdentity(payload, tenantPrincipal).pipe(
           Effect.map((identity) => identity.requestHash),
         ),
+      PriceGroupCreateAtCatalogHead: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupRevise: ({ payload }) =>
         prepareCreatePriceGroupDefinitionRevisionOriginalRequestIdentity(payload, tenantPrincipal).pipe(
           Effect.map((identity) => identity.requestHash),
@@ -1373,98 +1527,131 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
 });
 
 const listPriceWriteTag = Schema.Literals(['PriceDefine', 'PriceRevise']);
-const verifySelectedPriceGroup = Effect.fn('SymmyOwnerAdapters.verifySelectedPriceGroup')(function* selectedGroup(
+
+/** The price list a price of the batch route is written to. The body names it, the route enrollment never does. */
+const requestedPriceGroup = (requestIntent: SymmyCatalogPricingInventoryIntent) =>
+  Match.value(requestIntent).pipe(
+    Match.tag('PriceDefine', ({ payload }) => {
+      const selector = payload.identityKey.priceGroupSelector;
+      return selector.kind === 'PRICE_GROUP' ? Option.some(selector.priceGroupRef) : Option.none();
+    }),
+    Match.tag('PriceRevise', ({ priceGroupRef }) => Option.fromNullishOr(priceGroupRef)),
+    Match.orElse(() => Option.none()),
+  );
+
+/** The price list the owner holds the price in now, or none when the price is not current in any list. */
+const readCurrentPriceGroup = Effect.fn('SymmyOwnerAdapters.readCurrentPriceGroup')(function* readCurrentGroup(
   input: SymmyEffectAdapterInput,
-  requestIntent: SymmyCatalogPricingInventoryIntent,
+  priceRef: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'PriceRevise' }>['payload']['priceRef'],
   contract: AdapterContract,
   crypto: Crypto.Crypto,
 ) {
-  if (input.selector === undefined || !Schema.is(listPriceWriteTag)(requestIntent._tag)) {
-    return true;
-  }
-  const { selector } = input;
-  if (
-    !Schema.is(Schema.Literal('PRICE_GROUP'))(selector.kind) ||
-    selector.source.entityKind !== 'PRICE_GROUP' ||
-    selector.target === undefined ||
-    selector.target.moduleId !== priceGroupModuleId ||
-    selector.source.route.tenantId !== input.effect.ref.occurrence.record.route.tenantId
-  ) {
-    return false;
-  }
-  const selected = yield* Match.value(requestIntent).pipe(
-    Match.tag('PriceDefine', ({ payload }) => Effect.succeed(Option.some(payload.identityKey.priceGroupSelector))),
-    Match.tag(
-      'PriceRevise',
-      Effect.fn('SymmyOwnerAdapters.readSelectedPriceGroup')(function* readCurrentGroup({
-        payload,
-      }: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'PriceRevise' }>) {
-        const wire = yield* freshGateway(
-          input,
-          {
-            ...contract,
-            recoveryDeclarationKey: 'commerce.pricing.price.read-definition',
-            recoveryEntrypointKey: 'commerce.pricing.api.price-definition',
-          },
-          true,
-          crypto,
-        );
-        const result = yield* executePriceDefinitionWithAuthorization(
-          { priceRef: payload.priceRef },
-          wire.credential,
-          wire.requestCorrelation,
-          wire.options,
-        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        return Match.value(result).pipe(
-          Match.when({ outcome: 'PRICE_DEFINITION_CURRENT' }, ({ definition }) =>
-            Option.some(definition.identityKey.priceGroupSelector),
-          ),
-          Match.orElse(() => Option.none()),
-        );
-      }),
-    ),
-    Match.orElse(() => Effect.fail(symmyJobWorkerInvalid())),
+  const wire = yield* freshGateway(
+    input,
+    {
+      ...contract,
+      recoveryDeclarationKey: 'commerce.pricing.price.read-definition',
+      recoveryEntrypointKey: 'commerce.pricing.api.price-definition',
+    },
+    true,
+    crypto,
   );
-  if (Option.isNone(selected)) {
-    return false;
-  }
-  const requestedTarget = Match.value(selected.value).pipe(
-    Match.when({ kind: 'PRICE_GROUP' }, ({ priceGroupRef }) => Option.some(priceGroupRef)),
+  const result = yield* executePriceDefinitionWithAuthorization(
+    { priceRef },
+    wire.credential,
+    wire.requestCorrelation,
+    wire.options,
+  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  return Match.value(result).pipe(
+    Match.when({ outcome: 'PRICE_DEFINITION_CURRENT' }, ({ definition }) => {
+      const selector = definition.identityKey.priceGroupSelector;
+      return selector.kind === 'PRICE_GROUP' ? Option.some(selector.priceGroupRef) : Option.none();
+    }),
     Match.orElse(() => Option.none()),
   );
-  if (Option.isNone(requestedTarget) || !sameRef(requestedTarget.value, selector.target)) {
-    return false;
-  }
+});
+
+const sourceAssociationPageSize = 100;
+/**
+ * Whether Price Group Catalog holds the group as a list this route's source created: an association with the
+ * issuer, namespace and source route of the price. The pages are read in order until the group is found.
+ */
+const sourceCreatedPriceGroup = Effect.fn('SymmyOwnerAdapters.sourceCreatedPriceGroup')(function* sourceCreatedGroup(
+  input: SymmyEffectAdapterInput,
+  priceGroupRef: Parameters<typeof sameRef>[0],
+  contract: AdapterContract,
+  crypto: Crypto.Crypto,
+) {
+  const { record } = input.effect.ref.occurrence;
   const groupContract = {
     ...contract,
     audience: priceGroupAudience,
     recoveryDeclarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
     recoveryEntrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
   };
-  const wire = yield* freshGateway(input, groupContract, true, crypto);
-  const { source } = selector;
-  const result = yield* executePriceGroupSourceAssociationsWithAuthorization(
-    {
-      issuer: source.issuerId,
-      limit: 2,
-      namespace: source.sourceNamespace,
-      offset: 0,
-      recordKey: source.sourceRecordId,
-      routeId: source.route.integrationRouteId,
-    },
-    wire.credential,
-    wire.requestCorrelation,
-    wire.options,
-  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-  const [association] = result.associations;
-  return (
-    result.count === 1 &&
-    result.associations.length === 1 &&
-    association !== undefined &&
-    sameRef(association.priceGroupRef, selector.target)
+  const readPage = Effect.fn('SymmyOwnerAdapters.readSourceAssociations')(function* readAssociations(offset: number) {
+    const wire = yield* freshGateway(input, groupContract, true, crypto);
+    const page = yield* executePriceGroupSourceAssociationsWithAuthorization(
+      {
+        issuer: record.issuerId,
+        limit: sourceAssociationPageSize,
+        namespace: record.sourceNamespace,
+        offset,
+        routeId: record.route.integrationRouteId,
+      },
+      wire.credential,
+      wire.requestCorrelation,
+      wire.options,
+    ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+    const next = offset + page.associations.length;
+    return [
+      [page],
+      page.associations.length === 0 || next >= page.count ? Option.none<number>() : Option.some(next),
+    ] as const;
+  });
+  const found = yield* Stream.paginate(0, readPage).pipe(
+    Stream.filter(({ associations }) =>
+      associations.some((association) => sameRef(association.priceGroupRef, priceGroupRef)),
+    ),
+    Stream.runHead,
   );
+  return Option.isSome(found);
 });
 
+/**
+ * A price of the batch route is written only to the list its body named, and only when that list was created
+ * by this route's own source. A REVISE additionally needs the price to be current in that same list.
+ */
+const verifyBatchPriceGroup = Effect.fn('SymmyOwnerAdapters.verifyBatchPriceGroup')(function* batchPriceGroup(
+  input: SymmyEffectAdapterInput,
+  requestIntent: SymmyCatalogPricingInventoryIntent,
+  contract: AdapterContract,
+  crypto: Crypto.Crypto,
+) {
+  if (input.routeKey !== 'priceListPricesBatch' || !Schema.is(listPriceWriteTag)(requestIntent._tag)) {
+    return true;
+  }
+  const requested = requestedPriceGroup(requestIntent);
+  if (Option.isNone(requested) || requested.value.tenantId !== input.effect.ref.occurrence.record.route.tenantId) {
+    return false;
+  }
+  const revised = Match.value(requestIntent).pipe(
+    Match.tag('PriceRevise', ({ payload }) => Option.some(payload.priceRef)),
+    Match.orElse(() => Option.none()),
+  );
+  if (Option.isSome(revised)) {
+    const current = yield* readCurrentPriceGroup(input, revised.value, contract, crypto);
+    if (Option.isNone(current) || !sameRef(current.value, requested.value)) {
+      return false;
+    }
+  }
+  return yield* sourceCreatedPriceGroup(input, requested.value, contract, crypto);
+});
+
+type PriceGroupAtHeadIntent = Extract<
+  SymmyCatalogPricingInventoryIntent,
+  { readonly _tag: 'PriceGroupCreateAtCatalogHead' }
+>;
 type PriceFromGroupIntent = Extract<
   SymmyCatalogPricingInventoryIntent,
   { readonly _tag: 'PriceDefineFromGroupEffect' }
@@ -1486,9 +1673,13 @@ const requireCreatedGroupDependency = Effect.fn('SymmyOwnerAdapters.requireCreat
     ) {
       return yield* symmyJobWorkerInvalid();
     }
-    const parentIntent = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema.members[5])(
-      parent.effect.intent,
-    ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+    // The admitted parent is a create whose fence the adapter resolved when it ran, or one that never needed it.
+    const parentIntent = yield* Schema.decodeUnknownEffect(
+      Schema.Union([
+        SymmyCatalogPricingInventoryIntentSchema.members[5],
+        SymmyCatalogPricingInventoryIntentSchema.members[14],
+      ]),
+    )(parent.effect.intent).pipe(Effect.mapError(symmyJobWorkerInvalid));
     const receipt = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema.members[2])(
       Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(parent.ownerReceipt))),
     ).pipe(Effect.mapError(symmyJobWorkerInvalid));
@@ -1557,6 +1748,36 @@ const readCreatedPriceGroup = Effect.fn('SymmyOwnerAdapters.readCreatedPriceGrou
   return receipt.priceGroupRef;
 });
 
+/**
+ * Reads the tenant catalog head right before a Price Group is created, so the fence of every create is the head
+ * the create actually meets, whichever lists before it were created, existed already or ended otherwise.
+ */
+const readCatalogHead = Effect.fn('SymmyOwnerAdapters.readCatalogHead')(function* readHead(
+  input: SymmyEffectAdapterInput,
+  contract: AdapterContract,
+  crypto: Crypto.Crypto,
+) {
+  const wire = yield* freshGateway(
+    input,
+    {
+      ...contract,
+      audience: priceGroupAudience,
+      moduleId: priceGroupModuleId,
+      recoveryDeclarationKey: 'pricing.price-group-catalog.price-group-catalog-head.read',
+      recoveryEntrypointKey: 'pricing.price-group-catalog.api.price-group-catalog-head',
+    },
+    true,
+    crypto,
+  );
+  const head = yield* executePriceGroupCatalogHeadWithAuthorization(
+    {},
+    wire.credential,
+    wire.requestCorrelation,
+    wire.options,
+  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  return head.catalogRevision;
+});
+
 const resolveGroupDependency = Effect.fn('SymmyOwnerAdapters.resolveGroupDependency')(function* resolveGroup(
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
@@ -1566,6 +1787,30 @@ const resolveGroupDependency = Effect.fn('SymmyOwnerAdapters.resolveGroupDepende
     input.effect.intent,
   ).pipe(Effect.mapError(symmyJobWorkerInvalid));
   return yield* Match.value(requestIntent).pipe(
+    Match.tag(
+      'PriceGroupCreateAtCatalogHead',
+      Effect.fn('SymmyOwnerAdapters.resolveCatalogHead')(function* materializeFence(intent: PriceGroupAtHeadIntent) {
+        // A resolved fence is recorded before the owner call and a resumed effect carries it, so only a new one resolves.
+        if (
+          input.originalExecutorPrincipalId !== undefined ||
+          input.originalInvocationId !== undefined ||
+          !input.canExecuteNewEffects ||
+          input.effect.ref.originalTarget !== undefined
+        ) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const payload = yield* Schema.decodeUnknownEffect(CreatePriceGroupPayloadSchema)({
+          ...intent.payload,
+          expectedCatalogRevision: yield* readCatalogHead(input, contract, crypto),
+        }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        const effect = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+          ...input.effect,
+          intent: { _tag: 'PriceGroupCreate', payload },
+        }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        yield* input.recordResolvedEffect(effect);
+        return { ...input, effect };
+      }),
+    ),
     Match.tag(
       'PriceDefineFromGroupEffect',
       Effect.fn('SymmyOwnerAdapters.resolvePriceGroupParent')(function* materializePrice(intent: PriceFromGroupIntent) {
@@ -1614,21 +1859,11 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   contract: AdapterContract,
   crypto: Crypto.Crypto,
 ) {
-  if (
-    input.selector !== undefined ||
-    (input.routeKey !== 'priceListsBatchUpsert' && input.routeKey !== 'priceListPricesBatch') ||
-    !Schema.is(listPriceWriteTag)(intent._tag)
-  ) {
+  if (input.routeKey !== 'priceListsBatchUpsert' || !Schema.is(listPriceWriteTag)(intent._tag)) {
     return true;
   }
-  const requestedGroup = Match.value(intent).pipe(
-    Match.tag('PriceDefine', ({ payload }) => {
-      const selector = payload.identityKey.priceGroupSelector;
-      return selector.kind === 'PRICE_GROUP' ? Option.some(selector.priceGroupRef) : Option.none();
-    }),
-    Match.orElse(() => Option.none()),
-  );
-  if (input.routeKey !== 'priceListsBatchUpsert' || Option.isNone(requestedGroup)) {
+  const requestedGroup = requestedPriceGroup(intent);
+  if (Option.isNone(requestedGroup)) {
     return false;
   }
   // Fresh dependency resolution checked the named parent receipt and current owner source binding.
@@ -1646,6 +1881,20 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   const priceGroupRef = yield* readCreatedPriceGroup(input, dependency.value, contract, crypto);
   return sameRef(priceGroupRef, requestedGroup.value);
 });
+
+const isPriceRevise = Schema.is(Schema.TaggedStruct('PriceRevise', {}));
+const heldPriceReviseCode = Schema.Literals([
+  'price_schedule_absent',
+  'price_schedule_acknowledgement_required',
+  'revise_price_source_held',
+]);
+/**
+ * The owner refuses a revision as a problem, not as a result: a price it does not hold, a change that needs an
+ * acknowledgement it cannot be given, or held source evidence leaves the item unresolved with nothing written, and
+ * any other refusal makes the revision invalid. Neither is retried.
+ */
+const priceReviseRefusalStatus = (error: typeof problemStatus.Type): 'invalid' | 'unresolved' =>
+  Schema.is(Schema.Struct({ code: heldPriceReviseCode }))(error) ? 'unresolved' : 'invalid';
 
 const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(function* commandFailure(
   input: SymmyEffectAdapterInput,
@@ -1665,6 +1914,9 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   if (Schema.is(problemStatus)(error) && error.status === 409) {
     return safeOutcome(input, 'conflict');
   }
+  if (Schema.is(problemStatus)(error) && (error.status === 404 || error.status === 422) && isPriceRevise(intent)) {
+    return safeOutcome(input, priceReviseRefusalStatus(error));
+  }
   return yield* symmyJobWorkerUnavailable(error);
 });
 
@@ -1679,9 +1931,9 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
     if (!input.canExecuteNewEffects) {
       return yield* symmyJobWorkerInvalid();
     }
-    const selectedGroupMatches = yield* verifySelectedPriceGroup(input, intent, contract, crypto);
+    const batchGroupMatches = yield* verifyBatchPriceGroup(input, intent, contract, crypto);
     if (
-      !selectedGroupMatches ||
+      !batchGroupMatches ||
       !(yield* verifyPriceListDependency(input, originalInput.effect, intent, contract, crypto))
     ) {
       return safeOutcome(input, 'unresolved');
