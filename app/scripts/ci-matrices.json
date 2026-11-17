@@ -199,7 +199,6 @@
       "tasks": [
         "whole:privacy",
         "root:13/23",
-        "./verticals/party-registry#4/4",
         "./verticals/party-registry#2/4",
         "./apps/shell-super-app#4/8",
         "./verticals/catalog#4/4",
@@ -223,6 +222,7 @@
       "lanes": 2,
       "tasks": [
         "whole:migrations",
+        "./verticals/party-registry#4/4",
         "./verticals/catalog#1/4",
         "./verticals/pricing#4/4",
         "./verticals/privacy#1/8",
