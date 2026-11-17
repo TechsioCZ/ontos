@@ -381,6 +381,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+          WAIT_FOR_ARTIFACT_PATTERN: node-units-*
         run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11
 
       - name: Download the same-run Node artifacts for unit contract fixtures
@@ -800,6 +801,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+          WAIT_FOR_ARTIFACT_PATTERN: node-units-*
         run: |
           bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
@@ -981,6 +983,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+          WAIT_FOR_ARTIFACT_PATTERN: integration-database
           WAIT_FOR_BUILD_UPLOAD_STEP: Upload the migrated integration database
         run: bash scripts/wait-for-build-shards.sh 'Prepare integration database' 1
 
@@ -1007,6 +1010,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+          WAIT_FOR_ARTIFACT_PATTERN: node-units-*
         run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
@@ -1358,6 +1362,7 @@ jobs:
         timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
+          WAIT_FOR_ARTIFACT_PATTERN: cloudflare-units-*
         run: bash scripts/wait-for-build-shards.sh 'Build cloudflare artifacts (' 5 'Build cloudflare artifacts (${{ matrix.shard }}/5)'
 
       - name: Download every shard's Cloudflare build outputs

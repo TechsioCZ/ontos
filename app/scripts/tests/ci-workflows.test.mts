@@ -2137,15 +2137,54 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
   expect(warm.steps.some(({ run }) => (run ?? '').includes(TYPECHECK_COMMAND))).toBe(true);
 });
 
-/** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
-const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: string }[], own = 'Build x (1/3)') => {
+/** The shard a test wait runs on, in a three-shard target named `Build x (`. */
+const WAITING_SHARD = 'Build x (1/3)';
+/** One answer of the run's artifacts API: these names, an expired artifact under the pattern and an unrelated one. */
+const artifactListing = (names: readonly string[]) =>
+  JSON.stringify({
+    artifacts: [
+      ...names.map((name) => ({ expired: false, name })),
+      { expired: true, name: 'x-9' },
+      { expired: false, name: 'unrelated' },
+    ],
+  });
+
+/**
+ * Runs the shard wait with a `gh` that answers the jobs API with these jobs, and the artifacts API with
+ * these artifact names in turn, as `gh api --jq` would. Expired and unrelated artifacts never count.
+ */
+const waitForBuildShards = (
+  jobs: readonly { conclusion: string | null; name: string }[],
+  own = WAITING_SHARD,
+  listings: readonly (readonly string[])[] = [own ? ['x-1', 'x-2', 'x-3'] : ['x-2', 'x-3']],
+  timeout = 10_000,
+) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
   try {
     const gh = path.join(directory, 'gh');
-    // The first read fails the way a truncated API answer does; the wait must read the jobs again.
+    for (const [index, names] of listings.entries()) {
+      writeFileSync(path.join(directory, `artifacts-${String(index)}.json`), artifactListing(names));
+    }
+    writeFileSync(path.join(directory, 'artifacts-last.json'), artifactListing(listings.at(-1) ?? []));
+    // The first jobs read fails the way a truncated API answer does; the wait must read the jobs again.
     writeFileSync(
       gh,
-      `#!/bin/sh\n[ "$1" = api ] && [ "$3" = --jq ] || exit 2\nif [ ! -e "${directory}/read" ]; then : >"${directory}/read"; echo 'unexpected end of JSON input' >&2; exit 1; fi\nprintf %s "$FAKE_JOBS" | jq -r "$4"\n`,
+      [
+        '#!/bin/sh',
+        '[ "$1" = api ] && [ "$3" = --jq ] || exit 2',
+        'case "$2" in',
+        String.raw`*/artifacts\?*)`,
+        `  n="$(cat "${directory}/artifact-reads" 2>/dev/null || echo 0)"`,
+        `  echo "$((n + 1))" >"${directory}/artifact-reads"`,
+        `  file="${directory}/artifacts-$n.json"`,
+        `  [ -e "$file" ] || file="${directory}/artifacts-last.json"`,
+        '  jq -r "$4" "$file" ;;',
+        '*)',
+        `  if [ ! -e "${directory}/read" ]; then : >"${directory}/read"; echo 'unexpected end of JSON input' >&2; exit 1; fi`,
+        '  printf %s "$FAKE_JOBS" | jq -r "$4" ;;',
+        'esac',
+        '',
+      ].join('\n'),
     );
     chmodSync(gh, 0o755);
     execFileSync(
@@ -2157,10 +2196,11 @@ const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: st
           GITHUB_REPOSITORY: 'owner/repository',
           GITHUB_RUN_ID: '1',
           PATH: `${directory}:${STEP_PATH}`,
+          WAIT_FOR_ARTIFACT_PATTERN: 'x-*',
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10_000,
+        timeout,
       },
     );
     return true;
@@ -2178,7 +2218,7 @@ it('waits for the other build shards of its own target and fails when one does n
     { conclusion: 'success', name: last },
   ];
   const unrelated = [
-    { conclusion: null, name: 'Build x (1/3)' },
+    { conclusion: null, name: WAITING_SHARD },
     { conclusion: 'failure', name: 'Static Contracts' },
   ];
   expect(waitForBuildShards([...others, ...unrelated])).toBe(true);
@@ -2202,6 +2242,54 @@ it('waits for the other build shards of its own target and fails when one does n
     const unpublished = { conclusion, name: last, steps: [{ conclusion: 'failure', name: UPLOAD_STEP }] };
     expect(waitForBuildShards([others[0], unpublished, ...unrelated])).toBe(false);
   }
+});
+
+// Run 44176588644: the last shard's upload step had just succeeded, the download listed the run's artifacts
+// a moment later without that shard's, and the bootstrap went on without two delivery units.
+it('ends the wait only once the run lists every shard artifact the next download reads', () => {
+  const uploaded = [
+    { conclusion: 'success', name: 'Build x (2/3)' },
+    { conclusion: 'success', name: 'Build x (3/3)' },
+  ];
+  expect(
+    waitForBuildShards(uploaded, WAITING_SHARD, [
+      ['x-1', 'x-2'],
+      ['x-1', 'x-2', 'x-3'],
+    ]),
+  ).toBe(true);
+  expect(waitForBuildShards(uploaded, WAITING_SHARD, [['x-1', 'x-2']], 2000)).toBe(false);
+  // An expired artifact under the pattern never stands in for a missing one.
+  expect(waitForBuildShards(uploaded, '', [['x-2']], 2000)).toBe(false);
+});
+
+it('makes every shard wait name the artifacts its next download reads', () => {
+  const WaitingStepSchema = Schema.Struct({
+    env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    run: Schema.optional(Schema.String),
+    uses: Schema.optional(Schema.String),
+    with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  });
+  const { jobs } = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(Schema.String, Schema.Struct({ steps: Schema.optional(Schema.Array(WaitingStepSchema)) })),
+    }),
+  )(readGateWorkflow());
+  let waits = 0;
+  for (const [job, { steps = [] }] of Object.entries(jobs)) {
+    for (const [index, step] of steps.entries()) {
+      if (step.run?.includes('scripts/wait-for-build-shards.sh') !== true) {
+        continue;
+      }
+      waits += 1;
+      // The bootstrap prefetch downloads in the same step; every other wait is followed by a download step.
+      const inline = /gh run download .* --pattern '(?<pattern>[^']+)'/u.exec(step.run)?.groups?.pattern;
+      const next = steps.slice(index + 1).find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+      const downloaded = inline ?? next?.with?.pattern ?? next?.with?.name;
+      expect(downloaded, job).toBeDefined();
+      expect(step.env?.WAIT_FOR_ARTIFACT_PATTERN, job).toBe(downloaded);
+    }
+  }
+  expect(waits).toBeGreaterThanOrEqual(5);
 });
 
 const CommandMatrixJobSchema = Schema.Struct({
@@ -2751,13 +2839,15 @@ it('prefetches only this run and propagates a failed shard or artifact download'
   const script = steps.find(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID)?.run ?? 'exit 0';
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-bootstrap-download-'));
   try {
-    // The jobs API answers with every shard's state; the download records its arguments.
+    // The jobs API answers with every shard's state and the artifacts API lists all 11 shard artifacts;
+    // the download records its arguments.
     const executable = path.join(directory, 'gh');
     writeFileSync(
       executable,
       [
         '#!/bin/bash',
         'if [ "$1" = api ]; then',
+        String.raw`  case "$2" in */artifacts\?*) echo 11; exit 0 ;; esac`,
         String.raw`  for shard in $(seq 1 11); do printf "%s\tBuild node artifacts (%s/11)\n" "$SHARD_STATE" "$shard"; done`,
         '  exit 0',
         'fi',
@@ -2774,6 +2864,7 @@ it('prefetches only this run and propagates a failed shard or artifact download'
       GITHUB_RUN_ID: '12345',
       PATH: `${directory}:${STEP_PATH}`,
       RUNNER_TEMP: directory,
+      WAIT_FOR_ARTIFACT_PATTERN: NODE_BUILD_ARTIFACT_PATTERN,
     };
     expect(stepPasses(script, { ...environment, GH_EXIT: '0', SHARD_STATE: 'failure' })).toBe(false);
     expect(existsSync(argumentsFile)).toBe(false);
