@@ -916,7 +916,6 @@ jobs:
           path: ${{ runner.temp }}/native-composition-units
 
       - name: Wait for the prefetched bootstrap Node artifacts
-        if: matrix.suite == 'bootstrap'
         wait: bootstrap-node-artifacts
 
       - name: Unpack the Node artifacts for native owner fixtures
