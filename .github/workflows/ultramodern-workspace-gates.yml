@@ -639,9 +639,9 @@ jobs:
 
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
-  # While builds finish: 12 owners + 2 builds + 2 source + browser + static = 18.
-  # Topology and the first unit row replace the remaining builds. Short owner rows replace
-  # source checks; the other unit rows replace browser and static contracts.
+  # While builds finish: 11 owners + 2 builds + 2 source + browser + static = 17.
+  # Two unit rows and topology use the two finished build slots and the idle slot.
+  # Short owner rows replace source checks; short unit rows replace browser and static.
   node-topology-proof:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, node-artifact-build-remaining]
@@ -694,6 +694,16 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+
+      # Bootstrap already waits for every build. Start its network transfer before the independent
+      # fresh-database proofs, rather than adding storage-service latency after those proofs.
+      - name: Prefetch the same-run bootstrap Node artifacts
+        id: bootstrap-node-artifacts
+        if: matrix.suite == 'bootstrap'
+        background: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.
@@ -888,7 +898,7 @@ jobs:
       # Setup overlaps the builds. Artifact consumers still wait for this exact run's uploads;
       # the required gate independently requires the build jobs to finish successfully.
       - name: Wait for the same-run Node artifacts
-        if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
+        if: matrix.suite == 'integration'
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
@@ -899,11 +909,15 @@ jobs:
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
       # Bootstrap also proves federation, so both backend rows read these exact outputs.
       - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'
+        if: matrix.suite == 'integration'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: node-units-*
           path: ${{ runner.temp }}/native-composition-units
+
+      - name: Wait for the prefetched bootstrap Node artifacts
+        if: matrix.suite == 'bootstrap'
+        wait: bootstrap-node-artifacts
 
       - name: Unpack the Node artifacts for native owner fixtures
         if: matrix.suite == 'bootstrap' || matrix.suite == 'integration'

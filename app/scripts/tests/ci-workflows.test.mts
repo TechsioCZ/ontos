@@ -24,6 +24,7 @@ import { CiTemplatesSchema, integrationPhases, unitPhases } from '../plan-ci-che
 
 const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
 const INTEGRATION_DATABASE_ARTIFACT = 'integration-database';
+const BOOTSTRAP_ARTIFACT_STEP_ID = 'bootstrap-node-artifacts';
 const BROWSER_TEST_COMMAND = 'mise exec -- pnpm --filter @app/shell-super-app test:e2e';
 const BASELINE_CAPTURE_JOB = 'capture-application-baseline';
 const DEPLOY_PLAN_JOB = 'deploy-plan';
@@ -1663,6 +1664,7 @@ const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
  */
 const BACKEND_ARTIFACT_CONDITION = "matrix.suite == 'bootstrap' || matrix.suite == 'integration'";
 const BACKEND_ARTIFACT_DOWNLOAD_STEP = 'Download the same-run Node artifacts for native owner fixtures';
+const BACKEND_ARTIFACT_UNPACK_STEP = 'Unpack the Node artifacts for native owner fixtures';
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
 /** The integration matrix row that proves the built topology of every delivery unit. */
 const NODE_PROOF_SUITE = BOOTSTRAP_SUITE;
@@ -2605,7 +2607,7 @@ it('supplies same-run built Composition to selected native owner integration sha
     integration.strategy.matrix.include.flatMap((row) => row.tasks ?? []).filter((task) => task === 'whole:migrations'),
   ).toHaveLength(1);
   expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(false);
-  expect(steps[wait]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[wait]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
@@ -2616,9 +2618,8 @@ it('supplies same-run built Composition to selected native owner integration sha
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
-  for (const index of [download, unpack]) {
-    expect(steps[index]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  }
+  expect(steps[download]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(steps[derive]?.if).toBe('matrix.native-composition == true');
   expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(1);
 });
@@ -2652,8 +2653,7 @@ it('proves the built topology of every delivery unit in one row of the integrati
     );
   }
   // Bootstrap migrates through the assembled stage entry point, not the source command.
-  expect(steps[named(BACKEND_ARTIFACT_DOWNLOAD_STEP)]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  expect(named(BACKEND_ARTIFACT_DOWNLOAD_STEP)).toBeLessThan(indexes[0] ?? -1);
+  expect(named(BACKEND_ARTIFACT_UNPACK_STEP)).toBeLessThan(indexes[0] ?? -1);
   const migrations = named('Apply and verify Core, Auth, and Contacts migrations, plus Party Registry');
   expect(steps[migrations]?.if).toBe(NON_BOOTSTRAP_CONDITION);
   const bootstrap = named(BOOTSTRAP_MIGRATOR_STEP);
@@ -2664,6 +2664,65 @@ it('proves the built topology of every delivery unit in one row of the integrati
   // The suites never run on this row, and its steps never run on a suite row.
   const tests = steps.find(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+});
+
+it('overlaps bootstrap artifact transfer with the independent fresh-database proofs', () => {
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    TOPOLOGY_PROOF_JOB
+  ];
+  const named = (name: string) => steps.findIndex((step) => step.name === name);
+  const prefetch = steps.findIndex(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID);
+  const fetched = steps.findIndex(({ wait }) => wait === BOOTSTRAP_ARTIFACT_STEP_ID);
+  const unpack = named(BACKEND_ARTIFACT_UNPACK_STEP);
+  expect(prefetch).toBeGreaterThan(-1);
+  expect(steps[prefetch]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(steps[prefetch]?.background).toBe(true);
+  expect(steps[prefetch]?.run).toBe(
+    'gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern \'node-units-*\' --dir "$RUNNER_TEMP/native-composition-units"',
+  );
+  expect(prefetch).toBeLessThan(named(BOOTSTRAP_MIGRATOR_STEP));
+  expect(steps[fetched]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(fetched).toBeGreaterThan(prefetch);
+  expect(fetched).toBeLessThan(unpack);
+});
+
+it('prefetches only this run and propagates a failed artifact download', () => {
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    TOPOLOGY_PROOF_JOB
+  ];
+  const script = steps.find(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID)?.run ?? 'exit 0';
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-bootstrap-download-'));
+  try {
+    const executable = path.join(directory, 'gh');
+    writeFileSync(executable, '#!/bin/bash\nprintf "%s\\\\n" "$@" > "$GH_ARGUMENTS"\nexit "$GH_EXIT"\n');
+    chmodSync(executable, 0o755);
+    const argumentsFile = path.join(directory, 'arguments');
+    for (const exitCode of ['0', '9']) {
+      expect(
+        stepPasses(script, {
+          GH_ARGUMENTS: argumentsFile,
+          GH_EXIT: exitCode,
+          GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+          GITHUB_RUN_ID: '12345',
+          PATH: `${directory}:${STEP_PATH}`,
+          RUNNER_TEMP: directory,
+        }),
+      ).toBe(exitCode === '0');
+      expect(readFileSync(argumentsFile, 'utf-8').trimEnd().split('\n')).toEqual([
+        'run',
+        'download',
+        '12345',
+        '--repo',
+        'TechsioCZ/ontos',
+        '--pattern',
+        'node-units-*',
+        '--dir',
+        path.join(directory, 'native-composition-units'),
+      ]);
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 it('exports the publisher output path to native tests only after the readonly build proof succeeds', () => {
@@ -3011,10 +3070,9 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
   const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
   expect(migrations?.if).toBe(NON_BOOTSTRAP_CONDITION);
   expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
-  // Bootstrap and federation share this row, so it restores the same-run Node artifacts too.
-  for (const name of [BACKEND_ARTIFACT_DOWNLOAD_STEP, 'Unpack the Node artifacts for native owner fixtures']) {
-    expect(steps.find((candidate) => candidate.name === name)?.if, name).toBe(BACKEND_ARTIFACT_CONDITION);
-  }
+  expect(steps.find(({ id }) => id === BOOTSTRAP_ARTIFACT_STEP_ID)?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP)?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_UNPACK_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
 });
 
 it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
@@ -3153,9 +3211,8 @@ it('restores same-run Node artifacts for every backend integration fixture and e
     pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
-  for (const index of [download, unpack]) {
-    expect(steps[index]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  }
+  expect(steps[download]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(preproposal).toHaveLength(2);
   expect(preproposal[0]?.suite).toBe('integration');
@@ -3200,10 +3257,11 @@ it('leaves two org slots free while completed checks hand their runners to selec
   const staticRows = readGateCommandJobs()[STATIC_CONTRACTS_JOB].strategy.matrix.row.length;
   expect(early + remaining + source + staticRows + phases.preparation.length + 1).toBeLessThanOrEqual(18);
   // The early owners replace the five build runners and completed format runner, plus idle capacity.
-  expect(remaining + source + staticRows + phases.preparation.length + phases.work.length).toBeLessThanOrEqual(18);
+  const admitted = remaining + source + staticRows + phases.preparation.length + phases.work.length;
+  expect(admitted).toBeLessThanOrEqual(18);
   // Every later replacement has no more rows than the checks whose completed slots it reuses.
   // These inequalities hold independently of the order in which those checks finish.
-  expect(unit.work.length + phases.topology.length).toBeLessThanOrEqual(remaining);
+  expect(unit.work.length + phases.topology.length).toBeLessThanOrEqual(remaining + 18 - admitted);
   expect(phases.afterContracts.length).toBeLessThanOrEqual(
     templates.source.filter((row) => row['typescript-build'] !== true).length,
   );
