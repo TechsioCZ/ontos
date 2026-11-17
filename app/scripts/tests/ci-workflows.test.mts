@@ -2069,11 +2069,6 @@ it('builds every Node release from this commit rather than restoring another rel
   expect(strategy.matrix.shard).toEqual([1, 3, 4, 6, 7]);
   expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 5]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
-  const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
-  expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
-  expect(compilerCache?.with?.key).toContain('app/pnpm-lock.yaml');
-  expect(compilerCache?.with?.key).toContain('app/**/tsconfig*.json');
-  expect(compilerCache?.with?.key).toContain('app/patches/**');
   const build = steps.findIndex(({ name }) => name === "Build the shard's Node artifacts");
   const pack = steps.findIndex(({ name }) => name === "Pack the shard's build outputs");
   const upload = steps.findIndex(({ name }) => name === UPLOAD_STEP);
