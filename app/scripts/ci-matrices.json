@@ -135,7 +135,6 @@
       "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./packages/core-runtime --filter ./verticals/payment --filter ./apps/shell-super-app --filter ./verticals/catalog --filter ./verticals/symmy-integration --filter ./verticals/commerce-customer-context --filter ./verticals/payment-term-catalog --filter ./verticals/storefront-registry",
       "lanes": 2,
       "tasks": [
-        "root:13/40",
         "root:9/40",
         "./packages/core-runtime#1/4",
         "./verticals/commerce-market-catalog#1/4",
@@ -191,6 +190,7 @@
       "tasks": [
         "./apps/shell-super-app#2/8",
         "root:7/40",
+        "./verticals/commerce-customer-context#29/56",
         "./verticals/party-registry#2/4",
         "./apps/shell-super-app#1/8",
         "./verticals/pricing#1/4",
@@ -213,7 +213,6 @@
       "tasks": [
         "./verticals/commerce-customer-context#41/56",
         "./verticals/privacy#5/8",
-        "./verticals/commerce-customer-context#29/56",
         "./verticals/inventory#2/4",
         "./verticals/commerce-customer-context#17/56",
         "./verticals/commerce-customer-context#23/56",
@@ -236,6 +235,7 @@
       "lanes": 2,
       "tasks": [
         "root:22/40",
+        "root:13/40",
         "root:14/40",
         "./packages/core-runtime#4/4",
         "./verticals/payment#2/4",
@@ -285,7 +285,6 @@
       "lanes": 2,
       "tasks": [
         "whole:migrations",
-        "root:11/40",
         "./verticals/commerce-customer-context#4/56",
         "./verticals/privacy#1/8",
         "root:6/40",
@@ -334,6 +333,7 @@
       "lanes": 2,
       "tasks": [
         "./verticals/commerce-customer-context#34/56",
+        "root:11/40",
         "./verticals/catalog#1/4",
         "root:2/40",
         "./verticals/party-registry#3/4",
