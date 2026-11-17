@@ -19,13 +19,14 @@ inputs:
   n1:
     description: Push the N1 storefront ('true' or 'false').
     required: true
-  units:
-    description: The directory holding the unit builds (units.tar.zst archives at any depth) the app push carries.
+  dists:
+    description: >-
+      The unit builds the app push carries, laid out as <unit dir>/dist; the Zerops build builds every other unit.
     default: ''
   keep-units:
     description: >-
-      Upload those unit builds as this run's zerops-units-0, so the next push that changes no unit reuses them
-      ('true' when they came from an earlier run).
+      Upload the packed unit builds as this run's zerops-units-0, so the next push lends them unit by unit ('true'
+      when no build matrix of this run uploaded its own).
     default: 'false'
   upload-warmup:
     description: Share one warmed connection with the first upload of each service ('true' or 'false').
@@ -94,19 +95,15 @@ runs:
         fi
 
     # The units travel as one zstd archive inside the push (pack-prebuilt-units.sh: a long window over the units'
-    # shared code, checked with the Zerops build's own plain decode); the Zerops build unpacks it and keeps every unit
-    # whose digest it carries, so Zerops only installs the workspace.
+    # shared code, checked with the Zerops build's own plain decode); the Zerops build unpacks it, keeps every unit
+    # whose digest it carries and builds the rest.
     - name: Pack the unit builds for the push
       if: inputs.app == 'true'
       shell: bash
       env:
-        UNITS: ${{ inputs.units }}
+        DISTS: ${{ inputs.dists }}
       run: |
-        mkdir -p "$RUNNER_TEMP/dists"
-        mapfile -t archives < <(find "$UNITS" -type f -name units.tar.zst | LC_ALL=C sort)
-        test "${#archives[@]}" -gt 0
-        for archive in "${archives[@]}"; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
-        sh app/scripts/zerops/pack-prebuilt-units.sh "$RUNNER_TEMP/dists" app/.zerops-prebuilt.tar.zst
+        sh app/scripts/zerops/pack-prebuilt-units.sh "$DISTS" app/.zerops-prebuilt.tar.zst
         # The push ships this checkout: anything else in it would make every release identity `workspace` on Zerops.
         dirty="$(git status --porcelain --untracked-files=all | grep -vxF '?? app/.zerops-prebuilt.tar.zst' || true)"
         if [ -n "$dirty" ]; then
@@ -125,23 +122,15 @@ runs:
         ZEROPS_TOKEN: ${{ inputs.zerops-token }}
       run: bash app/scripts/zerops/stage-push.sh start app
 
-    # Flattened to one archive per directory, so the artifact keeps one level however often it is handed on.
-    - name: Name the reused unit builds for the next push
+    # The exact archive this push carries, under the name the next run's front path reads (units.tar.zst).
+    - name: Name the pushed unit builds for the next push
       if: inputs.app == 'true' && inputs.keep-units == 'true'
       shell: bash
-      env:
-        UNITS: ${{ inputs.units }}
       run: |
-        keep="$RUNNER_TEMP/units-keep"
-        rm -rf "$keep"
-        index=0
-        while IFS= read -r archive; do
-          mkdir -p "$keep/$index"
-          cp "$archive" "$keep/$index/units.tar.zst"
-          index=$((index + 1))
-        done < <(find "$UNITS" -type f -name units.tar.zst | LC_ALL=C sort)
+        mkdir -p "$RUNNER_TEMP/units-keep"
+        cp app/.zerops-prebuilt.tar.zst "$RUNNER_TEMP/units-keep/units.tar.zst"
 
-    - name: Keep the reused unit builds for the next push
+    - name: Keep the pushed unit builds for the next push
       if: inputs.app == 'true' && inputs.keep-units == 'true'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:

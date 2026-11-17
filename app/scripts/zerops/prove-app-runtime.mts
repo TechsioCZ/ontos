@@ -411,6 +411,8 @@ export const withLeftOutAside = <A, E, R>(
     );
   });
 
+const secondsOf = (took: Duration.Duration) => `${(Duration.toMillis(took) / 1000).toFixed(1)}s`;
+
 const report = (title: string, lines: readonly string[]) =>
   lines.length === 0 ? Effect.void : Console.error([`${title}:`, ...lines.map((line) => `  ${line}`)].join('\n'));
 
@@ -420,12 +422,18 @@ export const proveAppRuntime = (root: string) =>
     const fs = yield* FileSystem.FileSystem;
     const names = parseExclusions(yield* fs.readFileString(path.join(root, EXCLUSION_LIST)));
     const excluded = yield* excludedStoreDirectories(root, names);
-    const stores = yield* storeLinkViolations(root, excluded);
-    const importers = yield* importerLinkViolations(root, excluded);
-    const workspace = yield* workspaceImportViolations(root, RUNTIME_ENTRIES, names);
+    const [storesTook, stores] = yield* Effect.timed(storeLinkViolations(root, excluded));
+    const [importersTook, importers] = yield* Effect.timed(importerLinkViolations(root, excluded));
+    const [workspaceTook, workspace] = yield* Effect.timed(workspaceImportViolations(root, RUNTIME_ENTRIES, names));
     const entries = (yield* readHostedUnits).map(({ directory }) => path.join(root, directory, UNIT_ENTRY));
     // The entries import from the tree as it ships: the left-out store directories are moved away meanwhile.
-    const imports = yield* withLeftOutAside(root, excluded, entryImportFindings(root, entries));
+    const [importsTook, imports] = yield* Effect.timed(
+      withLeftOutAside(root, excluded, entryImportFindings(root, entries)),
+    );
+    // Where the build's time goes, check by check.
+    yield* Console.log(
+      `app runtime checks took: store links ${secondsOf(storesTook)}, workspace links ${secondsOf(importersTook)}, runtime files ${secondsOf(workspaceTook)}, unit entries ${secondsOf(importsTook)}`,
+    );
     yield* report('kept packages that depend on a left-out package', stores);
     yield* report('workspace packages that need a left-out package at runtime', importers);
     yield* report('runtime files that import a left-out package', workspace.violations);

@@ -20,6 +20,10 @@ const NOT_REUSED = "steps.reuse.outputs.reused != 'true'";
 const REUSE_STEP = "Reuse the shard's unchanged units";
 const IDENTITY_STEP = 'Write the unit identities and shard lists';
 const BUILD_STEP = "Build the shard's units";
+const UNITS_ARCHIVE = 'units.tar.zst';
+const BUILD_FALSE = 'build=false';
+const TAKE_STEP = "Take this commit's units from the earlier builds by identity";
+const DECIDE_STEP = 'Decide where the units come from';
 
 const StepSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
@@ -51,6 +55,8 @@ const stepRun = (job: typeof JobSchema.Type, name: string) =>
     }
     return step.run;
   });
+
+const front = (job: typeof JobSchema.Type, name: string) => job.steps.find((candidate) => candidate.name === name);
 
 /** Runs a script the way GitHub runs a `run:` step: bash, errexit and pipefail, in the given directory. */
 const runStep = (cwd: string, script: string, env: Readonly<Record<string, string>>) =>
@@ -95,7 +101,7 @@ const fixture = (cached: Readonly<Record<string, string>>) =>
       yield* fs.writeFileString(path.join(cache, unit, 'index.js.map'), '{}');
       yield* fs.writeFileString(path.join(cache, unit, '.zerops-build-digest'), `${digest}\n`);
     }
-    const archive = path.join(root, 'units.tar.zst');
+    const archive = path.join(root, UNITS_ARCHIVE);
     return { app, archive, cache, identities, root };
   });
 
@@ -334,28 +340,56 @@ it.effect('reuses only by identity, builds whenever any unit is unproven, and re
     expect(deliver.env?.SHARDS).toBe(build.env?.SHARDS);
     expect(yield* stepRun(deliver, IDENTITY_STEP)).toContain('sh scripts/zerops/build-app.sh --digests-only');
     // The front path never runs for rebuild_units, and only its proof lets this job deliver without the matrix.
-    const front = (name: string) => deliver.steps.find((candidate) => candidate.name === name);
-    expect(front('Find the newest earlier unit builds of this branch')?.if).toBe(
+    expect(front(deliver, 'Find the newest earlier unit builds of this branch')?.if).toBe(
       "steps.plan.outputs.app == 'true' && inputs.rebuild_units != true",
     );
-    expect(yield* stepRun(deliver, 'Prove every unit of the earlier builds by identity')).toContain(
-      'reuse-shard-units.sh prove-archives',
-    );
-    const decide = yield* stepRun(deliver, 'Decide where the units come from');
-    expect(decide).toContain('if [ "$APP" = true ] && [ "$ALL_REUSED" != true ]; then');
-    expect(front('Decide where the units come from')?.env?.ALL_REUSED).toBe(
-      `\${{ steps.earlier-proof.outputs.all_reused }}`,
-    );
+    const take = yield* stepRun(deliver, TAKE_STEP);
+    expect(take).toContain('reuse-shard-units.sh take-units');
+    expect(take).toContain('scripts/zerops/zerops-unit-build-seconds.mts');
+    expect(front(deliver, TAKE_STEP)?.if).toBe("steps.plan.outputs.app == 'true' && inputs.rebuild_units != true");
+    expect(front(deliver, DECIDE_STEP)?.env).toMatchObject({
+      APP: `\${{ steps.plan.outputs.app }}`,
+      TAKEN: `\${{ steps.taken.outcome }}`,
+      ZEROPS_SECONDS: `\${{ steps.taken.outputs.seconds }}`,
+    });
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live('runs the decision: the Zerops build builds the missing units only within its budget', () =>
+  Effect.gen(function* decide() {
+    const fs = yield* FileSystem.FileSystem;
+    const { deliver } = yield* workflow;
+    const script = yield* stepRun(deliver, DECIDE_STEP);
+    const budget = String(front(deliver, DECIDE_STEP)?.env?.ZEROPS_BUILD_BUDGET_SECONDS);
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: 'decide-units-' });
+    const decision = (env: Readonly<Record<string, string>>) =>
+      Effect.gen(function* runDecision() {
+        const output = path.join(root, `${String(Math.random())}.out`);
+        const result = yield* runStep(root, script, {
+          ...env,
+          GITHUB_OUTPUT: output,
+          ZEROPS_BUILD_BUDGET_SECONDS: budget,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        return (yield* fs.readFileString(output)).trim();
+      });
+    expect(yield* decision({ APP: 'false', TAKEN: 'skipped', ZEROPS_SECONDS: '' })).toBe(BUILD_FALSE);
+    expect(yield* decision({ APP: 'true', TAKEN: 'success', ZEROPS_SECONDS: '0' })).toBe(BUILD_FALSE);
+    expect(yield* decision({ APP: 'true', TAKEN: 'success', ZEROPS_SECONDS: budget })).toBe(BUILD_FALSE);
+    expect(yield* decision({ APP: 'true', TAKEN: 'success', ZEROPS_SECONDS: String(Number(budget) + 1) })).toBe(
+      'build=true',
+    );
+    expect(yield* decision({ APP: 'true', TAKEN: 'failure', ZEROPS_SECONDS: '' })).toBe('build=true');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 const SHELL = 'shell-super-app';
 const BRANCH = 'demo/sales-crm';
-const PROVE_ARCHIVES = 'prove-archives';
+const TAKE_UNITS = 'take-units';
 interface EarlierScenario {
+  readonly missing: readonly string[];
   readonly name: string;
   readonly shards: readonly (readonly string[])[];
-  readonly status: number;
   readonly units: Readonly<Record<string, string>>;
 }
 
@@ -374,62 +408,114 @@ const earlierArchives = (units: Readonly<Record<string, string>>, shards: readon
     for (const [shard, members] of shards.entries()) {
       const directory = path.join(archives, `zerops-units-${String(shard)}`);
       yield* fs.makeDirectory(directory, { recursive: true });
-      const packed = yield* runReuse(app, ['pack', path.join(directory, 'units.tar.zst'), ...members]);
+      const packed = yield* runReuse(app, ['pack', path.join(directory, UNITS_ARCHIVE), ...members]);
       expect(packed.status, packed.stderr).toBe(0);
     }
-    return { app, archives, identities };
+    return { app, archives, identities, root };
   });
 
 const EARLIER_SCENARIOS: readonly EarlierScenario[] = [
   {
+    missing: [],
     name: 'every unit, once, with this commit identity',
     shards: [[SHELL], ['crm', 'tax']],
-    status: 0,
     units: { crm: DIGEST, [SHELL]: OTHER, tax: DIGEST },
   },
   {
+    missing: ['tax'],
     name: 'a unit built for other inputs',
     shards: [[SHELL], ['crm', 'tax']],
-    status: NEEDS_BUILD,
     units: { crm: DIGEST, [SHELL]: OTHER, tax: OTHER },
   },
   {
+    missing: ['tax'],
     name: 'a unit missing from every archive',
     shards: [[SHELL], ['crm']],
-    status: NEEDS_BUILD,
     units: { crm: DIGEST, [SHELL]: OTHER },
   },
   {
+    missing: ['crm'],
     name: 'a unit in two archives',
     shards: [
       [SHELL, 'crm'],
       ['crm', 'tax'],
     ],
-    status: NEEDS_BUILD,
     units: { crm: DIGEST, [SHELL]: OTHER, tax: DIGEST },
   },
 ];
 
+/** Runs take-units over the earlier archives; returns the units laid out and the units written as missing. */
+const takeUnits = (app: string, identities: string, archives: string) =>
+  Effect.gen(function* runTakeUnits() {
+    const fs = yield* FileSystem.FileSystem;
+    const out = yield* fs.makeTempDirectoryScoped({ prefix: 'take-units-' });
+    const dists = path.join(out, 'dists');
+    const missingFile = path.join(out, 'missing.txt');
+    const result = yield* runReuse(app, [TAKE_UNITS, identities, archives, dists, missingFile]);
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    const taken = [];
+    for (const unit of [SHELL, 'crm', 'tax']) {
+      const dir = unit === SHELL ? `apps/${SHELL}` : `verticals/${unit}`;
+      if (yield* fs.exists(path.join(dists, dir, 'dist/zerops-entry.mjs'))) {
+        taken.push(unit);
+      }
+    }
+    const missing = (yield* fs.readFileString(missingFile)).split('\n').filter((line) => line.length > 0);
+    return { missing, result, taken };
+  });
+
 for (const scenario of EARLIER_SCENARIOS) {
-  it.live(`proves earlier unit builds only for ${scenario.name}`, () =>
-    Effect.gen(function* proveEarlier() {
+  it.live(`lends earlier unit builds unit by unit for ${scenario.name}`, () =>
+    Effect.gen(function* takeEarlier() {
       const { app, archives, identities } = yield* earlierArchives(scenario.units, scenario.shards);
-      const result = yield* runReuse(app, [PROVE_ARCHIVES, identities, archives]);
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(scenario.status);
+      const { missing, taken } = yield* takeUnits(app, identities, archives);
+      expect(missing).toEqual(scenario.missing);
+      expect(taken.toSorted()).toEqual(
+        [SHELL, 'crm', 'tax'].filter((unit) => !scenario.missing.includes(unit)).toSorted(),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
 
-it.live('proves nothing when there are no earlier archives or one is unreadable', () =>
+it.live('lends units from the packed archive an earlier delivery pushed, which has no directory entries', () =>
+  Effect.gen(function* takePushed() {
+    const fs = yield* FileSystem.FileSystem;
+    const { app, archives, identities, root } = yield* earlierArchives(
+      { crm: DIGEST, [SHELL]: OTHER, tax: DIGEST },
+      [],
+    );
+    const pushed = path.join(archives, 'zerops-units-0');
+    yield* fs.makeDirectory(pushed, { recursive: true });
+    const dists = path.join(root, 'laid-out');
+    for (const dir of [`apps/${SHELL}/dist`, 'verticals/crm/dist']) {
+      yield* fs.makeDirectory(path.dirname(path.join(dists, dir)), { recursive: true });
+      yield* fs.copy(path.join(app, dir), path.join(dists, dir));
+    }
+    const packed = yield* collectToolingProcess(
+      ChildProcess.make('sh', [
+        path.join(APP, 'scripts/zerops/pack-prebuilt-units.sh'),
+        dists,
+        path.join(pushed, UNITS_ARCHIVE),
+      ]),
+    );
+    expect(packed.status, packed.stderr).toBe(0);
+    const { missing, taken } = yield* takeUnits(app, identities, archives);
+    expect(missing).toEqual(['tax']);
+    expect(taken.toSorted()).toEqual(['crm', SHELL]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live('lends nothing when there are no earlier archives or one is unreadable', () =>
   Effect.gen(function* noEarlier() {
     const fs = yield* FileSystem.FileSystem;
     const { app, identities, root } = yield* fixture({});
     const empty = path.join(root, 'none');
-    yield* fs.makeDirectory(empty);
-    expect((yield* runReuse(app, [PROVE_ARCHIVES, identities, empty])).status).toBe(NEEDS_BUILD);
-    yield* fs.makeDirectory(path.join(empty, 'zerops-units-0'));
+    expect((yield* takeUnits(app, identities, empty)).missing).toEqual([SHELL, 'crm', 'tax']);
+    yield* fs.makeDirectory(path.join(empty, 'zerops-units-0'), { recursive: true });
     yield* fs.writeFileString(path.join(empty, 'zerops-units-0/units.tar.zst'), 'not an archive');
-    expect((yield* runReuse(app, [PROVE_ARCHIVES, identities, empty])).status).toBe(NEEDS_BUILD);
+    const unreadable = yield* takeUnits(app, identities, empty);
+    expect(unreadable.missing).toEqual([SHELL, 'crm', 'tax']);
+    expect(unreadable.result.stdout).toContain('is unreadable');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
