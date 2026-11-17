@@ -1,5 +1,6 @@
 import { AddSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/add-saved-address-action';
-import { AddContactPointPayloadSchema, CreatePartyPayloadSchema } from '@app/party-registry/api';
+import { AddContactPointPayloadSchema } from '@app/party-registry/actions/add-contact-point';
+import { CreatePartyPayloadSchema } from '@app/party-registry/actions/create-party';
 import { OfficialIdentifierInputSchema } from '@app/party-registry/domain/identifier-contracts';
 import { SymmyCustomerPlanSizeSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Result, Schema } from 'effect';

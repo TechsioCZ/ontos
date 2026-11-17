@@ -172,6 +172,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'source-counterparty-admission': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'source-party-search': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'source-person-admission': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'source-profile-export': OntosMcpHidden,

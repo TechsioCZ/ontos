@@ -50,14 +50,23 @@ const buildGatewayComposition = makeApplicationCompositionSnapshotFixture(fixtur
 
 // The verifier reloads and revalidates the composition authority on every verify call, so the
 // uncached fixture re-decoded, re-hashed and revalidated all four deployment contracts on each of
-// them. Effect.cached builds the snapshot on its first yield in this file and hands every later
-// load the same validated value; its one-hour validity window covers the frozen test clock, and the
-// deliberately distinct snapshots below stay unmemoized.
-let memoizedGatewayComposition: typeof buildGatewayComposition | undefined;
+// them. A built snapshot is handed to every later load while its one-hour lease covers the test
+// clock; the reference forwarding tests move the clock past it, so a load there builds and keeps a
+// fresh snapshot. The deliberately distinct snapshots below stay unmemoized.
+let memoizedGatewayComposition: Effect.Success<typeof buildGatewayComposition> | undefined;
 const gatewayComposition = Effect.gen(function* loadGatewayComposition() {
-  const memoized = memoizedGatewayComposition ?? (yield* Effect.cached(buildGatewayComposition));
-  memoizedGatewayComposition = memoized;
-  return yield* memoized;
+  const now = yield* Clock.currentTimeMillis;
+  const memoized = memoizedGatewayComposition;
+  if (
+    memoized !== undefined &&
+    DateTime.toEpochMillis(memoized.observedAt) <= now &&
+    now < DateTime.toEpochMillis(memoized.validUntil)
+  ) {
+    return memoized;
+  }
+  const built = yield* buildGatewayComposition;
+  memoizedGatewayComposition = built;
+  return built;
 });
 
 const currentTimeSeconds = 1_700_000_001;

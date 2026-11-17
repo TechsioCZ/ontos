@@ -40,6 +40,8 @@
     "./testing/organization-migration-native": "./tests/support/organization-migration.fixture.ts",
     "./domain/identifier-contracts": "./shared/domain/identifier-contracts.ts",
     "./apis/legacy-ico-inventory": "./shared/apis/legacy-ico-inventory.ts",
+    "./actions/add-contact-point": "./shared/actions/add-contact-point.ts",
+    "./actions/create-party": "./shared/actions/create-party.ts",
     "./actions/fence-legacy-ico-authority": "./shared/actions/fence-legacy-ico-authority.ts",
     "./apis/legacy-ico-inventory/client": "./src/api/legacy-ico-inventory-client.ts",
     "./apis/counterparty-identities": "./shared/apis/counterparty-identities.ts",

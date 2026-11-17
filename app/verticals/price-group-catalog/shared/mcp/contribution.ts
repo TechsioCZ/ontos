@@ -33,6 +33,8 @@ export const priceGroupCatalogMcpContribution = defineOntosMcpContribution({
     en: 'Price group catalog',
   },
   reads: {
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'price-group-catalog-head': OntosMcpHidden,
     'price-group-definition': {
       title: {
         cs: 'Definice cenové skupiny',

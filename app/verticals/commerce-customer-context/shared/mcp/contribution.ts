@@ -537,6 +537,10 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
     },
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'customer-profile-source': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-profile-source-page': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-profile-source-parties': OntosMcpHidden,
     'customer-profile-trading-gate': {
       title: {
         cs: 'Smí zákazník nakupovat',

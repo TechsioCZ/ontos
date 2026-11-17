@@ -274,6 +274,8 @@ const customerContextReadsAfterReview = [
   'commerce.customer-context.customer-profile-ico-migration.read',
   'commerce.customer-context.customer-profile-ico.read',
   'commerce.customer-context.customer-profile-organization-ico-facts.read',
+  'commerce.customer-context.customer-profile-source-page.read',
+  'commerce.customer-context.customer-profile-source-parties.read',
   'commerce.customer-context.customer-profile-source.read',
   'commerce.customer-context.organization-customer-profile-ico-migration.read',
   'commerce.customer-context.organization-customer-profile-ico.read',
