@@ -174,13 +174,22 @@ export const planCiChecks = (input: {
       'package-filters': filters,
       'root-suite': rootSuite,
     };
-    if (entry.tasks === undefined) {return [narrowed];}
+    if (entry.tasks === undefined) {
+      return [narrowed];
+    }
     const tasks = entry.tasks.filter((task) => {
-      if (task.startsWith('root:')) {return rootSuite;}
-      if (task.startsWith('whole:preproposal-')) {return proofAffected;}
-      if (task === 'whole:party-worker')
-        {return selected.some(({ directory }) => directory === 'verticals/party-registry');}
-      if (task.startsWith('whole:')) {return true;}
+      if (task.startsWith('root:')) {
+        return rootSuite;
+      }
+      if (task.startsWith('whole:preproposal-')) {
+        return proofAffected;
+      }
+      if (task === 'whole:party-worker') {
+        return selected.some(({ directory }) => directory === 'verticals/party-registry');
+      }
+      if (task.startsWith('whole:')) {
+        return true;
+      }
       return selected.some(({ directory }) => task === `./${directory}` || task.startsWith(`./${directory}#`));
     });
     return [{ ...narrowed, tasks }];
