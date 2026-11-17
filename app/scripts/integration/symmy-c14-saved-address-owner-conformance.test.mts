@@ -506,5 +506,6 @@ it.live(
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
-  240_000,
+  // 2.5 min on an idle runner, over 4 min when it shares the job with the Privacy composition suites.
+  420_000,
 );
