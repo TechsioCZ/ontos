@@ -114,7 +114,8 @@
         "./verticals/commerce-customer-context#21/56",
         "./verticals/symmy-integration#4/4",
         "./verticals/commerce-customer-context#16/56",
-        "./verticals/symmy-integration#3/4"
+        "./verticals/symmy-integration#3/4",
+        "root:13/40"
       ],
       "root-rstest-shard": "3/11",
       "native-preproposal": true,
@@ -161,7 +162,7 @@
       "name": "Owner Integration (5/11)",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/party-registry --filter ./verticals/pricing --filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/inventory --filter ./verticals/payment-term-catalog",
+      "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/party-registry --filter ./verticals/pricing --filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/inventory --filter ./verticals/payment-term-catalog --filter ./verticals/payment",
       "lanes": 2,
       "tasks": [
         "whole:pricing",
@@ -179,7 +180,8 @@
         "./verticals/commerce-customer-context#42/56",
         "./verticals/payment-term-catalog#3/3",
         "./verticals/commerce-customer-context#13/56",
-        "./verticals/commerce-customer-context#38/56"
+        "./verticals/commerce-customer-context#38/56",
+        "./verticals/payment#3/4"
       ],
       "root-rstest-shard": "5/11",
       "whole-owner-proofs": "pricing"
@@ -264,13 +266,11 @@
       "name": "Owner Integration (9/11)",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/payment --filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/assortment --filter ./verticals/commerce-market-catalog --filter ./verticals/payment-term-catalog",
+      "package-filters": "--filter ./apps/shell-super-app --filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/assortment --filter ./verticals/commerce-market-catalog --filter ./verticals/payment-term-catalog",
       "lanes": 2,
       "tasks": [
         "./apps/shell-super-app#2/8",
         "root:7/40",
-        "root:13/40",
-        "./verticals/payment#3/4",
         "./packages/core-runtime#4/4",
         "./apps/shell-super-app#8/8",
         "./verticals/commerce-customer-context#17/56",
