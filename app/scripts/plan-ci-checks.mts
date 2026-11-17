@@ -13,7 +13,7 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
-  lanes: Schema.optionalKey(Schema.Literals([2, 4])),
+  lanes: Schema.optionalKey(Schema.Literals([2, 3, 4])),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'native-preproposal': Schema.optionalKey(Schema.Boolean),

@@ -2368,7 +2368,7 @@ const IntegrationRunnerSchema = Schema.Struct({
     matrix: Schema.Struct({
       include: Schema.Array(
         Schema.Struct({
-          lanes: Schema.optional(Schema.Literals([2, 4])),
+          lanes: Schema.optional(Schema.Literals([2, 3, 4])),
           name: Schema.String,
           'native-composition': Schema.optional(Schema.Boolean),
           'native-preproposal': Schema.optional(Schema.Boolean),
@@ -2662,7 +2662,7 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
-    ONTOS_CI_ISOLATED_WORKERS: '4',
+    ONTOS_CI_ISOLATED_WORKERS: expression("matrix.root-rstest-shard == '10/10' && '4' || '3'"),
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
   const isolate = job.steps.findIndex((step) => step.run === START_INTEGRATION_WORKERS);

@@ -12,6 +12,8 @@ umask 077
 : "${SPICEDB_PRESHARED_KEY:?}"
 : "${INTEGRATION_DATABASE_ARCHIVE:?}"
 : "${GITHUB_SHA:?}"
+: "${ONTOS_CI_ISOLATED_WORKERS:?}"
+[[ "$ONTOS_CI_ISOLATED_WORKERS" == 3 || "$ONTOS_CI_ISOLATED_WORKERS" == 4 ]]
 [[ "$POSTGRES_USER" =~ ^[a-z_][a-z0-9_]*$ ]]
 [[ "$POSTGRES_DB" =~ ^[a-z_][a-z0-9_]*$ ]]
 for file in roles.sql database.dump database.acl manifest.json checksums.sha256; do
@@ -78,7 +80,7 @@ start_worker() {
 }
 
 pids=()
-for worker in 1 2 3 4; do
+for ((worker = 1; worker <= ONTOS_CI_ISOLATED_WORKERS; worker++)); do
   start_worker "$worker" &
   pids+=("$!")
 done
@@ -92,7 +94,7 @@ done
 identifiers=()
 acl_query="$(cat scripts/ci/integration-database-acl.sql)"
 source_acl="$(cat "$INTEGRATION_DATABASE_ARCHIVE/database.acl")"
-for worker in 1 2 3 4; do
+for ((worker = 1; worker <= ONTOS_CI_ISOLATED_WORKERS; worker++)); do
   identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
   [[ -n "$identifier" ]]
   for existing in "${identifiers[@]}"; do
@@ -110,4 +112,4 @@ ALTER DATABASE :"source" RENAME TO :"baseline";
 ALTER DATABASE :"baseline" IS_TEMPLATE true ALLOW_CONNECTIONS false;
 SQL
 done
-echo 'Four independent PostgreSQL clusters and SpiceDB datastores are ready.'
+echo "$ONTOS_CI_ISOLATED_WORKERS independent PostgreSQL clusters and SpiceDB datastores are ready."

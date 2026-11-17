@@ -14,20 +14,28 @@ export const isIntegrationWorkerEndpoint = (input: {
   readonly isolatedWorkers: string;
   readonly port: number;
 }) =>
-  input.isolatedWorkers === '4' &&
-  workerSlots.some((worker) => input.container === `ontos-ci-db-${worker}` && input.port === 5540 + Number(worker));
+  ['3', '4'].includes(input.isolatedWorkers) &&
+  workerSlots
+    .filter((worker) => Number(worker) <= Number(input.isolatedWorkers))
+    .some((worker) => input.container === `ontos-ci-db-${worker}` && input.port === 5540 + Number(worker));
 export const IntegrationWorkerSettingsSchema = Schema.Union([
   Schema.Struct({ ONTOS_CI_ISOLATED_WORKERS: Schema.optionalKey(Schema.Undefined) }),
   Schema.Struct({
     DATABASE_ADMIN_URL: LocalDatabaseUrl,
     DATABASE_URL: LocalDatabaseUrl,
-    ONTOS_CI_ISOLATED_WORKERS: Schema.Literal('4'),
+    ONTOS_CI_ISOLATED_WORKERS: Schema.Literals(['3', '4']),
     ONTOS_CI_WORKER_SLOT: Schema.optionalKey(WorkerSlotSchema),
     PARTY_REGISTRY_DATABASE_URL: LocalDatabaseUrl,
     PARTY_REGISTRY_WORKER_DATABASE_URL: LocalDatabaseUrl,
     RSTEST_WORKER_ID: WorkerSlotSchema,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: LocalDatabaseUrl,
-  }),
+  }).check(
+    Schema.makeFilter((settings) =>
+      Number(settings.ONTOS_CI_WORKER_SLOT ?? settings.RSTEST_WORKER_ID) <= Number(settings.ONTOS_CI_ISOLATED_WORKERS)
+        ? undefined
+        : 'CI integration worker slot is not provisioned',
+    ),
+  ),
 ]);
 type IntegrationWorkerSettings = typeof IntegrationWorkerSettingsSchema.Type;
 
