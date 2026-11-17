@@ -314,6 +314,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: &unit-check-environment
+      RAYON_NUM_THREADS: '1'
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     strategy:
       fail-fast: false
@@ -376,8 +377,8 @@ jobs:
 
   workspace-unit-after-preparation:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, service-integration-setup]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && (needs.service-integration-setup.result == 'success' || needs.service-integration-setup.result == 'skipped') && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterPreparation != '[]' }}
+    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, service-integration-setup, workspace-source-extra]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.workspace-source-extra.result == 'success' && (needs.service-integration-setup.result == 'success' || needs.service-integration-setup.result == 'skipped') && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterPreparation != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
@@ -619,13 +620,13 @@ jobs:
 
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
-  # While builds finish: 11 owners + 4 builds + 2 source + browser = 18.
-  # After builds: 11 owners + 2 unit + 2 source + static + topology + browser = 18.
-  # The third unit row replaces the database/browser runner only after preparation finishes.
+  # While builds finish: 12 owners + 3 builds + 2 source + browser = 18.
+  # Two unit rows and static replace the three builds. Topology replaces browser,
+  # and the last unit row replaces the finished source-contract runner.
   node-topology-proof:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build-remaining]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan, node-artifact-build-remaining, service-integration-setup]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.service-integration-setup.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1035,12 +1036,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 7]
         include:
           - { shard: 1, units: verticals/price-group-catalog verticals/tax verticals/commerce-order }
           - { shard: 2, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry }
           - { shard: 3, units: verticals/privacy verticals/availability }
           - { shard: 4, units: verticals/party-registry verticals/promotion }
+          - { shard: 7, units: apps/shell-super-app verticals/symmy-integration }
     env: &node-build-environment
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
@@ -1114,11 +1116,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [5, 6, 7, 8]
+        shard: [5, 6, 8]
         include:
           - { shard: 5, units: verticals/catalog verticals/inventory verticals/assortment }
           - { shard: 6, units: verticals/commerce-market-catalog verticals/pricing verticals/commerce-cart }
-          - { shard: 7, units: apps/shell-super-app verticals/symmy-integration }
           - { shard: 8, units: verticals/commerce-customer-context verticals/projects }
     env: *node-build-environment
     steps: *node-build-steps
