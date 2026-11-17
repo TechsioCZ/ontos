@@ -35,7 +35,8 @@ const phases = integrationPhases(plan.integration);
 appendFileSync(process.env.GITHUB_OUTPUT, Object.entries({
   mode: plan.mode, expected: JSON.stringify(plan.expected), source: JSON.stringify(plan.source),
   unit: JSON.stringify(plan.unit), integration: JSON.stringify(phases.work),
-  integrationSetup: JSON.stringify(phases.prerequisites),
+  integrationSetup: JSON.stringify(phases.preparation),
+  integrationTopology: JSON.stringify(phases.topology),
 }).map(([key, value]) => `${key}=${value}\n`).join(''));
 appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## CI selection\n\n${plan.reason}\n\nAffected packages: ${plan.affectedPackages.join(', ')}\n`);
 JS

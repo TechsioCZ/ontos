@@ -25,7 +25,7 @@ const IntegrationEntrySchema = Schema.Struct({
   'root-suite': Schema.optionalKey(Schema.Boolean),
   'whole-owner-proofs': Schema.optionalKey(Schema.String),
   // The bootstrap row proves deployment and federation independently of package selection.
-  suite: Schema.Literals(['bootstrap', 'integration', 'browser']),
+  suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' &&
@@ -183,7 +183,8 @@ const cli = Command.make(
       const encoded = yield* Effect.all({
         expected: encode(plan.expected),
         integration: encode(phases.work),
-        integrationSetup: encode(phases.prerequisites),
+        integrationSetup: encode(phases.preparation),
+        integrationTopology: encode(phases.topology),
         source: encode(plan.source),
         unit: encode(plan.unit),
       });

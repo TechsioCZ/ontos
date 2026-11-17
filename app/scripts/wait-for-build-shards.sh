@@ -22,6 +22,7 @@ tab="$(printf '\t')"
 # `uploaded` once its own upload step succeeded, so two proving shards of one target (which keep
 # running after their upload) do not wait for each other.
 upload_step="Upload the shard's build outputs"
+upload_step="${WAIT_FOR_BUILD_UPLOAD_STEP:-$upload_step}"
 filter='.jobs[] | select((.name | startswith(env.PREFIX)) and .name != env.OWN)
   | (if .conclusion == null and any(.steps[]?; .name == env.UPLOAD and .conclusion == "success")
      then "uploaded" else (.conclusion // "pending") end) + "\t" + .name'

@@ -564,7 +564,8 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       template: creation.useTemplate,
       trustSeconds: Number((yield* Clock.monotonicTimeNanos) - emptyVerified) / 1e9,
     });
-    const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
+    const retainedOriginalEnabled =
+      (input.mode === 'empty' || input.mode === schemaOnly) && input.purpose === retainedPrivacyPurpose;
     const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
     const replacementEnabled = supportsOwnedReplacement(input);
     const retainedReplacementRevision = yield* Ref.make<string | null>(null);

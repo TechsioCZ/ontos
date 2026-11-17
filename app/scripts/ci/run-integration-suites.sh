@@ -136,7 +136,17 @@ lanes="${INTEGRATION_LANES:-4}"
 [[ "$lanes" == 2 || "$lanes" == 4 ]] || exit 2
 started=$SECONDS
 status=0
-printf '%s\0' "${tasks[@]}" |
+# The whole pricing proof starts several native owners inside its unchanged 30s
+# test deadline. Give that CPU-bound proof the runner before starting other lanes.
+parallel_tasks=()
+for task in "${tasks[@]}"; do
+  if [[ "$task" == whole:pricing ]]; then
+    ONTOS_CI_WORKER_SLOT=0 bash scripts/ci/run-integration-suites.sh --task "$task" || status=$?
+  else
+    parallel_tasks+=("$task")
+  fi
+done
+printf '%s\0' "${parallel_tasks[@]}" |
   xargs -0 --max-procs="$lanes" --max-args=1 --process-slot-var=ONTOS_CI_WORKER_SLOT \
     bash scripts/ci/run-integration-suites.sh --task || status=$?
 read -ra cpu_after < /proc/stat

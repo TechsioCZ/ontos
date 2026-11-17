@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -265,4 +265,33 @@ it('schedules every real root file once without starting empty tail shards', () 
     ),
   ).toEqual(Array.from({ length: files.length }, (_, index) => index + 1));
   expect(new Set(tasks).size).toBe(tasks.length);
+});
+
+it('refuses a missing database archive before starting any service', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'ontos-archive-boundary-'));
+  const invoked = path.join(directory, 'docker-invoked');
+  const docker = path.join(directory, 'docker');
+  writeFileSync(docker, '#!/bin/sh\ntouch "$DOCKER_INVOKED"\n');
+  chmodSync(docker, 0o755);
+  try {
+    expect(() =>
+      execFileSync('/bin/bash', [fileURLToPath(new URL('../ci/start-integration-workers.sh', import.meta.url))], {
+        env: {
+          DOCKER_INVOKED: invoked,
+          GITHUB_SHA: 'a'.repeat(40),
+          INTEGRATION_DATABASE_ARCHIVE: directory,
+          PATH: `${directory}:${testPath}`,
+          POSTGRES_DB: 'ontos_ci',
+          POSTGRES_PASSWORD: 'test',
+          POSTGRES_USER: 'ci_admin',
+          RUNNER_TEMP: directory,
+          SPICEDB_PRESHARED_KEY: 'test',
+        },
+        stdio: 'pipe',
+      }),
+    ).toThrow();
+    expect(existsSync(invoked)).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });

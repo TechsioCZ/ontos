@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run from app/, after the job's source database has been migrated and verified.
+# Run from app/, with this run's migrated and verified database archive.
 # Separate clusters, not merely separate databases: bootstrap proofs and role-boundary
 # tests issue ALTER ROLE, which is cluster-global. SpiceDB has a separate datastore too.
 set -euo pipefail
@@ -10,20 +10,29 @@ umask 077
 : "${POSTGRES_PASSWORD:?}"
 : "${POSTGRES_DB:?}"
 : "${SPICEDB_PRESHARED_KEY:?}"
+: "${INTEGRATION_DATABASE_ARCHIVE:?}"
+: "${GITHUB_SHA:?}"
 [[ "$POSTGRES_USER" =~ ^[a-z_][a-z0-9_]*$ ]]
 [[ "$POSTGRES_DB" =~ ^[a-z_][a-z0-9_]*$ ]]
+for file in roles.sql database.dump database.acl manifest.json checksums.sha256; do
+  [[ -s "$INTEGRATION_DATABASE_ARCHIVE/$file" ]] || {
+    echo "::error::The same-run integration database archive is missing $file."
+    exit 1
+  }
+done
+(
+  cd "$INTEGRATION_DATABASE_ARCHIVE"
+  sha256sum --check checksums.sha256 >/dev/null
+)
+jq -e --arg revision "$GITHUB_SHA" --arg database "$POSTGRES_DB" --arg user "$POSTGRES_USER" \
+  '.revision == $revision and .database == $database and .user == $user' \
+  "$INTEGRATION_DATABASE_ARCHIVE/manifest.json" >/dev/null
 
 scratch="$(mktemp -d "$RUNNER_TEMP/integration-workers.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 docker compose config --format json >"$scratch/compose.json"
 postgres_image="$(jq -er '.services["ontos-db"].image' "$scratch/compose.json")"
 spicedb_image="$(jq -er '.services["ontos-spicedb"].image' "$scratch/compose.json")"
-
-# Never print the dump: it carries the role passwords that the restored runtime URLs use.
-docker exec ontos-db pg_dumpall --username "$POSTGRES_USER" --roles-only \
-  | sed "/^CREATE ROLE $POSTGRES_USER;$/d" >"$scratch/roles.sql"
-docker exec ontos-db pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-  --format=custom >"$scratch/database.dump"
 
 start_worker() {
   local worker="$1" database="ontos-ci-db-$1" spice="ontos-ci-spicedb-$1"
@@ -60,12 +69,12 @@ start_worker() {
   # The initdb-created administrator already exists; its ALTER ROLE from the dump
   # remains. All other login roles, role memberships, ownership and grants are restored.
   docker exec --interactive "$database" psql --username "$POSTGRES_USER" --dbname postgres \
-    --set ON_ERROR_STOP=1 <"$scratch/roles.sql" >/dev/null
+    --set ON_ERROR_STOP=1 <"$INTEGRATION_DATABASE_ARCHIVE/roles.sql" >/dev/null
   # Restoring into an existing database copies its contents, not its database-level ACL. Let the
   # archive create the database too, including the source's REVOKE TEMPORARY FROM PUBLIC.
   docker exec --interactive "$database" pg_restore --username "$POSTGRES_USER" --dbname postgres \
-    --create --exit-on-error <"$scratch/database.dump"
-  bash scripts/ci/prepare-schema-template.sh "$database" "$scratch/database.dump"
+    --create --exit-on-error <"$INTEGRATION_DATABASE_ARCHIVE/database.dump"
+  bash scripts/ci/prepare-schema-template.sh "$database" "$INTEGRATION_DATABASE_ARCHIVE/database.dump"
 }
 
 pids=()
@@ -81,14 +90,8 @@ done
 
 # Assert that every worker owns a different cluster, not just a different port.
 identifiers=()
-acl_query="select coalesce(grantor_role.rolname, 'PUBLIC'), coalesce(grantee_role.rolname, 'PUBLIC'),
-  acl.privilege_type, acl.is_grantable
-  from pg_database d
-  cross join lateral aclexplode(coalesce(d.datacl, acldefault('d', d.datdba))) acl
-  left join pg_roles grantor_role on grantor_role.oid = acl.grantor
-  left join pg_roles grantee_role on grantee_role.oid = acl.grantee
-  where d.datname = '$POSTGRES_DB' order by 1, 2, 3, 4"
-source_acl="$(docker exec ontos-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$acl_query")"
+acl_query="$(cat scripts/ci/integration-database-acl.sql)"
+source_acl="$(cat "$INTEGRATION_DATABASE_ARCHIVE/database.acl")"
 for worker in 1 2 3 4; do
   identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
   [[ -n "$identifier" ]]

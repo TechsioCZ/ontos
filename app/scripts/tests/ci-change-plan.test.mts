@@ -10,6 +10,7 @@ import { expect, it } from 'effect-rstest';
 import {
   CiTemplatesSchema,
   filterPaths,
+  integrationPhases,
   matchingPackages,
   planCiChecks,
   unknownFilters,
@@ -20,6 +21,14 @@ import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
 );
+
+it('prepares the database even when browser tests are not selected, without adding unrelated browser work', () => {
+  const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
+  expect(phases.preparation).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
+  expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
+  expect(phases.work).toEqual(templates.integration.filter(({ suite }) => suite === 'integration'));
+  expect(integrationPhases([])).toEqual({ preparation: [], topology: [], work: [] });
+});
 const CATALOG = '@app/catalog';
 const PRICING = '@app/pricing';
 const CATALOG_SOURCE = 'app/verticals/catalog/src/service.ts';
@@ -229,7 +238,7 @@ it('selects browser checks and all root integration shards when they consume a c
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
   expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(
-    Array.from({ length: 12 }, (_, index) => `${index + 1}/12`),
+    Array.from({ length: 10 }, (_, index) => `${index + 1}/10`),
   );
   const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
   expect(filters).toContain('--filter ./apps/shell-super-app');
@@ -300,7 +309,7 @@ it('selects both disjoint customer-context partitions and retains its independen
   const selected = plan.integration.filter((entry) =>
     (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
   );
-  expect(selected.map((entry) => entry['package-partition'])).toEqual(['1/3', '2/3', '3/3']);
+  expect(selected.map((entry) => entry['package-partition'])).toEqual(['1/2', '2/2']);
   expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(2);
 });
 
