@@ -2027,8 +2027,8 @@ it('builds Node artifacts on four independent runners without waiting for or pro
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
   const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  expect(strategy.matrix.shard).toEqual([1, 2, 3, 4]);
-  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([5, 6, 7, 8]);
+  expect(strategy.matrix.shard).toEqual([1, 2, 3, 4, 7]);
+  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([5, 6, 8]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
   expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
@@ -3148,27 +3148,25 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
   expect(
     source + builds + work.strategy.matrix.include.length + setup.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
+  const units = commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length;
+  // Topology reuses the completed browser slot; the last unit row then reuses source-contracts.
   expect(
     source +
       staticRows +
-      commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length -
+      units -
       1 +
       work.strategy.matrix.include.length +
-      topology.strategy.matrix.include.length +
-      setup.strategy.matrix.include.length,
+      Math.max(topology.strategy.matrix.include.length, setup.strategy.matrix.include.length),
   ).toBeLessThanOrEqual(18);
-  // Once preparation has finished, the third unit row replaces that runner.
   expect(
-    source +
-      staticRows +
-      commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
-      work.strategy.matrix.include.length +
-      topology.strategy.matrix.include.length,
+    source - 1 + staticRows + units + work.strategy.matrix.include.length + topology.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
   expect(setup.needs).toEqual([CI_PLAN_JOB]);
   expect(work.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);
   const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
   expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).toContain(SERVICE_SETUP_JOB);
+  expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).toContain(SOURCE_EXTRA_JOB);
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toContain(SERVICE_SETUP_JOB);
   expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.service-integration-setup.result == 'success'");
   expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.ci-plan.outputs.unitAfterPreparation != '[]'");
   expect(all[SOURCE_EXTRA_JOB]?.needs).toEqual([CI_PLAN_JOB]);
