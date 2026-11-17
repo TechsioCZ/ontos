@@ -213,7 +213,7 @@ const rstestEnvironmentEvidence = (
   const configurations = projects?.type === 'ArrayExpression' ? [] : [config];
   if (projects?.type === 'ArrayExpression') {
     for (const element of projects.elements) {
-      // An inline project may arrive wrapped, as in `defineProject({ ... })` or `{ ... } satisfies T`.
+      // An inline project may arrive wrapped, as in `defineInlineProject({ ... })` or `{ ... } satisfies T`.
       const project =
         element?.type === 'SpreadElement' ? undefined : objectExpression(element ?? undefined, facts.variables);
       if (project !== undefined) {
