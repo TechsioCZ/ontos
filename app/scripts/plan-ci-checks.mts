@@ -6,7 +6,7 @@ import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const CommandEntrySchema = Schema.Struct({
-  'after-check': Schema.optionalKey(Schema.Literals(['lint', 'source', 'topology'])),
+  'after-check': Schema.optionalKey(Schema.Literals(['database', 'lint', 'topology'])),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -14,19 +14,27 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
-  // Early rows install and restore their clusters while the builds run.
-  early: Schema.optionalKey(Schema.Boolean),
   lanes: Schema.optionalKey(Schema.Literals([2, 4])),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
+  // A row with a shard builds those delivery units and uploads them as node-units-<shard> before its own tests.
+  shard: Schema.optionalKey(Schema.Int),
   tasks: Schema.optionalKey(Schema.Array(Schema.String)),
+  units: Schema.optionalKey(Schema.String),
   // The bootstrap row proves deployment and federation independently of package selection.
   suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
 }).check(
   Schema.makeFilter((entry) =>
     entry.suite === 'integration' && (entry.tasks === undefined || entry.tasks.length === 0)
       ? 'Integration templates must list the tasks they run'
+      : undefined,
+  ),
+  // Every owner row builds and uploads its shard of the delivery units before its own tasks.
+  Schema.makeFilter((entry) =>
+    (entry.suite === 'integration') !== (entry.shard !== undefined && entry.units !== undefined) ||
+    (entry.shard === undefined) !== (entry.units === undefined)
+      ? 'Every owner row, and only an owner row, names both its build shard and its units'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
@@ -67,6 +75,7 @@ export const CiTopologySchema = Schema.Struct({
 });
 
 export {
+  buildJobPrefix,
   ciPlanOutputs,
   filterPaths,
   integrationPhases,
