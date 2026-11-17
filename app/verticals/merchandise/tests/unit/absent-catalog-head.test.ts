@@ -65,7 +65,7 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
             }
             if (sql.startsWith('select') && sql.includes(headTable)) {
               // Values mode follows SELECT order: aiChanges, bootstrapCheckpoint, homepageFeaturedProductIds, revision,
-              // taxRates.
+              // storefrontCatalogSettings, taxRates.
               return Effect.succeed(
                 head === undefined
                   ? []
@@ -75,6 +75,7 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
                         bootstrapCheckpoint: head.checkpoint,
                         homepageFeaturedProductIds: [],
                         revision: head.revision,
+                        storefrontCatalogSettings: {},
                         taxRates: null,
                       },
                     ],
@@ -101,7 +102,7 @@ it.effect('creates a missing head at revision 0 inside the write, then holds its
   Effect.gen(function* firstWrite() {
     const { db, head, statements } = yield* harness();
     const locked = yield* db.transaction((tx) => lockHeadForWrite(tx, store));
-    expect(locked).toEqual(EMPTY_CATALOG_HEAD);
+    expect(locked).toEqual({ ...EMPTY_CATALOG_HEAD, storefrontCatalogSettings: {} });
     expect(head()).toEqual({ checkpoint: null, revision: 0 });
     expect(headInserts(statements)).toHaveLength(1);
     expect(headInserts(statements)[0]).toContain('on conflict ("tenant_id","legal_entity_id") do nothing');

@@ -26,6 +26,10 @@ type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
 
 const isPayload = Schema.is(MerchandiseCommandPayloadSchema);
 
+it('keeps human-only storefront listing configuration out of agent tools', () => {
+  expect(merchandiseMcpContribution.commands.ConfigureStorefrontCatalog).toBe('hidden');
+});
+
 it('accepts a CreateOrder command with a caller-supplied order id', () => {
   expect(
     isPayload({
@@ -158,6 +162,7 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
                 bootstrapCheckpoint: null,
                 homepageFeaturedProductIds: ['private-product-id'],
                 revision: 7,
+                storefrontCatalogSettings: {},
                 taxRates: null,
               },
             ]);

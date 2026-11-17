@@ -1,7 +1,7 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { EmptyState, PageHeader, SectionCard, Toaster, useRecordDraft } from '@app/admin-ui';
-import { ActionProposalAcceptedSchema } from '@app/merchandise/apis/manage-catalog-action';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { mainSourceProductsOnlyFor } from '@app/merchandise/domain/merchandise-model';
 import type { StorefrontCatalogSettings } from '@app/merchandise/domain/merchandise-model';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';

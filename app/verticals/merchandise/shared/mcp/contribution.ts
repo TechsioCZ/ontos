@@ -45,6 +45,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canManageMarkets',
       title: { cs: 'Nastavit sortiment a ceník trhu', en: 'Configure a market offer and price list' },
     },
+    ConfigureStorefrontCatalog: 'hidden',
     CreateCategory: {
       agentProposalOnly: true,
       liveRight: 'canManageCatalog',
