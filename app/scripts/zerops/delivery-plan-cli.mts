@@ -82,18 +82,6 @@ const git = (args: readonly string[]) =>
     }
     return stdout;
   }).pipe(Effect.scoped);
-// A function expression, not a generic arrow: tests compile this module with SWC, which refuses `<A,>(…) =>` in .mts.
-const readCommitted = function readCommitted<A>(
-  repository: string,
-  revision: string,
-  filename: string,
-  schema: Schema.Codec<A>,
-) {
-  return git(['-C', repository, 'show', `${revision}:${filename}`]).pipe(
-    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
-  );
-};
-
 const workspaceNames = (dependencies: Readonly<Record<string, string>>) =>
   Object.entries(dependencies)
     .filter(([, range]) => range.startsWith('workspace:'))
@@ -115,43 +103,12 @@ const workspacePackage = (directory: string, manifest: typeof Manifest.Type) => 
     .filter(([, range]) => range.startsWith('workspace:'))
     .map(([name]) => name),
 });
-/** The committed workspace of one revision; `repository` is any directory inside the repository (default: here). */
-export const readWorkspace = (revision: string, repository = '.') =>
-  Effect.gen(function* readWorkspaceInputs() {
-    const listing = yield* git(['-C', repository, 'ls-tree', '-rz', '--full-tree', revision]);
-    const entries = listing
-      .split('\0')
-      .filter((value) => value.length > 0)
-      .map((row) => {
-        const separator = row.indexOf('\t');
-        return { identity: row.slice(0, separator), path: row.slice(separator + 1) };
-      });
-    const manifests = entries.filter((entry) =>
-      /^app\/(?:(?:apps|verticals|packages)\/[^/]+|akros-storefront|n1-storefront)\/package\.json$/u.test(entry.path),
+/** The committed text of each of <entries> (blobs), by path, read in one `git cat-file --batch`. */
+const readBlobs = (entries: readonly GitEntry[], repository: string) =>
+  Effect.gen(function* readCommittedBlobs() {
+    const request = new TextEncoder().encode(
+      entries.map((entry) => `${entry.identity.split(' ')[2] ?? ''}\n`).join(''),
     );
-    const packages = [];
-    for (const entry of manifests) {
-      const manifest = yield* readCommitted(repository, revision, entry.path, Manifest);
-      packages.push(workspacePackage(path.posix.dirname(entry.path), manifest));
-    }
-    const intent = yield* readCommitted(repository, revision, 'app/topology/application-release-intent.json', Intent);
-    const topology = yield* readCommitted(repository, revision, 'app/topology/reference-topology.json', Topology);
-    const units = [{ directory: `app/${topology.shell.path}`, id: 'shell-super-app' }];
-    for (const module of intent.modules) {
-      const owner = topology.verticals.find((entry) => entry.id === module.appId);
-      if (owner === undefined) {
-        return yield* new DeliveryInputInvalid({ reason: `Missing topology owner ${module.appId}` });
-      }
-      units.push({ directory: `app/${owner.path}`, id: module.appId });
-    }
-    return { entries, packages, units };
-  });
-
-/** The committed text of every reference source, read in one `git cat-file --batch`. */
-export const readSources = (entries: readonly GitEntry[], repository = '.') =>
-  Effect.gen(function* readReferenceSources() {
-    const wanted = entries.filter((entry) => isReferenceSource(entry.path) && entry.identity.includes(' blob '));
-    const request = new TextEncoder().encode(wanted.map((entry) => `${entry.identity.split(' ')[2] ?? ''}\n`).join(''));
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const handle = yield* spawner.spawn(
       ChildProcess.make('git', ['-C', repository, 'cat-file', '--batch'], { stdin: { stream: Stream.make(request) } }),
@@ -165,19 +122,78 @@ export const readSources = (entries: readonly GitEntry[], repository = '.') =>
     }
     const output = Buffer.concat([...chunks]);
     const decoder = new TextDecoder();
-    const sources = new Map<string, string>();
+    const texts = new Map<string, string>();
     let offset = 0;
-    for (const entry of wanted) {
+    for (const entry of entries) {
       const end = output.indexOf(0x0a, offset);
       const size = Number(output.subarray(offset, end).toString('latin1').split(' ')[2]);
       if (end === -1 || !Number.isSafeInteger(size)) {
         return yield* new DeliveryInputInvalid({ reason: `Unreadable blob for ${entry.path}` });
       }
-      sources.set(entry.path, decoder.decode(output.subarray(end + 1, end + 1 + size)));
+      texts.set(entry.path, decoder.decode(output.subarray(end + 1, end + 1 + size)));
       offset = end + 1 + size + 1;
     }
-    return sources;
+    return texts;
   }).pipe(Effect.scoped);
+
+const INTENT_FILE = 'app/topology/application-release-intent.json';
+const TOPOLOGY_FILE = 'app/topology/reference-topology.json';
+const WORKSPACE_MANIFEST =
+  /^app\/(?:(?:apps|verticals|packages)\/[^/]+|akros-storefront|n1-storefront)\/package\.json$/u;
+
+/**
+ * The committed workspace of one revision; `repository` is any directory inside the repository (default: here). The
+ * manifests and the topology are read in one `git cat-file --batch`, not one `git show` each (56 processes took 4-6 s
+ * on a laptop and most of the 15-17 s identity step of the 2-core Zerops build).
+ */
+export const readWorkspace = (revision: string, repository = '.') =>
+  Effect.gen(function* readWorkspaceInputs() {
+    const listing = yield* git(['-C', repository, 'ls-tree', '-rz', '--full-tree', revision]);
+    const entries = listing
+      .split('\0')
+      .filter((value) => value.length > 0)
+      .map((row) => {
+        const separator = row.indexOf('\t');
+        return { identity: row.slice(0, separator), path: row.slice(separator + 1) };
+      });
+    const manifests = entries.filter((entry) => WORKSPACE_MANIFEST.test(entry.path));
+    const topologyEntries: GitEntry[] = [];
+    for (const filename of [INTENT_FILE, TOPOLOGY_FILE]) {
+      const entry = entries.find((candidate) => candidate.path === filename);
+      if (entry === undefined) {
+        return yield* new DeliveryInputInvalid({ reason: `${filename} is not committed at ${revision}` });
+      }
+      topologyEntries.push(entry);
+    }
+    const texts = yield* readBlobs([...manifests, ...topologyEntries], repository);
+    // A function expression, not a generic arrow: tests compile this module with SWC, which refuses `<A,>(…) =>` in .mts.
+    const decode = function decode<A>(filename: string, schema: Schema.Codec<A>) {
+      return Schema.decodeEffect(Schema.fromJsonString(schema))(texts.get(filename) ?? '');
+    };
+    const packages = [];
+    for (const entry of manifests) {
+      const manifest = yield* decode(entry.path, Manifest);
+      packages.push(workspacePackage(path.posix.dirname(entry.path), manifest));
+    }
+    const intent = yield* decode(INTENT_FILE, Intent);
+    const topology = yield* decode(TOPOLOGY_FILE, Topology);
+    const units = [{ directory: `app/${topology.shell.path}`, id: 'shell-super-app' }];
+    for (const module of intent.modules) {
+      const owner = topology.verticals.find((entry) => entry.id === module.appId);
+      if (owner === undefined) {
+        return yield* new DeliveryInputInvalid({ reason: `Missing topology owner ${module.appId}` });
+      }
+      units.push({ directory: `app/${owner.path}`, id: module.appId });
+    }
+    return { entries, packages, units };
+  });
+
+/** The committed text of every reference source, read in one `git cat-file --batch`. */
+export const readSources = (entries: readonly GitEntry[], repository = '.') =>
+  readBlobs(
+    entries.filter((entry) => isReferenceSource(entry.path) && entry.identity.includes(' blob ')),
+    repository,
+  );
 
 /** The environment build children inherit, NUL-separated so values may hold newlines. */
 const inheritedEnvironment = Effect.gen(function* readEnvironment() {

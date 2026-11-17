@@ -541,8 +541,18 @@ const buildScriptFiles = (directory: string, graph: UnitInputGraph) =>
       .filter((candidate) => graph.tracked.has(candidate));
   });
 
-const exclusionReason = (filepath: string, closure: readonly string[], graph: UnitInputGraph) => {
-  const inClosure = closure.some((root) => inside(filepath, root));
+/** Whether a directory of <roots> contains <filepath>, by its ancestors: every unit asks this of every tracked file. */
+const insideAny = (filepath: string, roots: ReadonlySet<string>): boolean => {
+  for (let slash = filepath.indexOf('/'); slash !== -1; slash = filepath.indexOf('/', slash + 1)) {
+    if (roots.has(filepath.slice(0, slash))) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: UnitInputGraph) => {
+  const inClosure = insideAny(filepath, closure);
   if (isTestInput(filepath)) {
     return 'test' as const;
   }
@@ -590,8 +600,9 @@ export const unitInputs = (directory: string, graph: UnitInputGraph) =>
     };
     const excluded: ExcludedInput[] = [];
     current = '(closure or root input)';
+    const closureRoots = new Set(closure);
     for (const entry of graph.workspace.entries) {
-      const reason = exclusionReason(entry.path, closure, graph);
+      const reason = exclusionReason(entry.path, closureRoots, graph);
       if (reason === 'input') {
         add(entry.path);
       } else {

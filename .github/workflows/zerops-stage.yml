@@ -61,6 +61,10 @@ env:
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.web-revolution.cz
   STAGE_SHOP_URL: https://ontos-stage-shop.web-revolution.cz
   STAGE_N1_URL: https://ontos-stage-n1.web-revolution.cz
+  # pnpm-workspace.yaml's clone-or-copy copies on the runners' ext4, which has no reflinks: the planner install spent
+  # 15 s copying 1331 packages out of the store. Each job restores its own store and no job here saves it, so links
+  # into it are safe; the Zerops app build links the same way (app/zerops.yaml).
+  PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
 
 jobs:
   # Created at push time and holding the only runner the delivery needs: plan, push, verify.
