@@ -13,6 +13,7 @@ export default defineConfig({
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
       root: new URL('.', import.meta.url).pathname,
+      setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',
       testTimeout: 30_000,
       tools: { swc },
@@ -23,6 +24,9 @@ export default defineConfig({
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,
       testEnvironment: 'node',
+      // Slowest unit test measured 313 ms in gates runs 43616061381 and 43844802542; budget is the
+      // 2400 ms floor these configs share, not the silent 5000 ms Rstest default.
+      testTimeout: 2400,
       tools: { swc },
     },
   ],

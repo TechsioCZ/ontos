@@ -350,22 +350,6 @@ describe('Pricing Quotation issuance', () => {
     }),
   );
 
-  it.effect('rejects material evidence captured after the trusted issuance instant', () =>
-    Effect.gen(function* rejectsFutureEvidence() {
-      const request = yield* readyRequest();
-      const trustedOperationTime = request.currentResult.commercialTotal.decision.operationTime;
-      const futureEvidence = makeQuotationMaterialEvidence(
-        request.currentResult.commercialTotal,
-        '2026-09-28T12:00:00.001Z',
-      );
-      const failure = yield* makePricingQuotationIssuanceService(ownerBoundary, trustedTimeAt(trustedOperationTime))
-        .issue({ ...request, materialEvidence: futureEvidence })
-        .pipe(Effect.flip);
-
-      expect(failure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
-    }),
-  );
-
   it.effect('issues at the evidence validation instant that follows the evaluated operation instant', () =>
     Effect.gen(function* issuesAtValidationInstant() {
       const request = yield* readyRequest();
@@ -401,9 +385,21 @@ describe('Pricing Quotation issuance', () => {
       })
         .issue(request)
         .pipe(Effect.flip);
+      const derivedIssuanceFailure = yield* makePricingQuotationIssuanceService(
+        ownerBoundary,
+        trustedTimeAt(commercialTotal.decision.operationTime),
+      )
+        .issue({
+          ...request,
+          materialEvidence: makeQuotationMaterialEvidence(commercialTotal, '2026-09-28T12:00:00.001Z'),
+        })
+        .pipe(Effect.flip);
 
       expect(lateFailure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
       expect(earlyFailure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
+      expect(derivedIssuanceFailure).toEqual(
+        new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }),
+      );
     }),
   );
 

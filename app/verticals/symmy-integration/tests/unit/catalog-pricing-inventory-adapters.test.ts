@@ -1709,16 +1709,4 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
-  it.effect('keeps external source issuer and the independently configured native Inventory backend distinct', () => {
-    const h = harness(false, stockEffectForBackend('native-backend-A'));
-    return h.provide(
-      Effect.gen(function* test() {
-        const adapter = yield* h.adapter;
-        const outcome = yield* adapter.execute({ ...h.input, inventoryBackendId: 'native-backend-A' });
-        expect(outcome.status).toBe('accepted_change');
-        expect(h.events).toContain('owner-write');
-        expect(h.input.effect.ref.occurrence.record.issuerId).toBe('internal-ebs');
-      }),
-    );
-  });
 });

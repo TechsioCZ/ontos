@@ -39,7 +39,7 @@ import { startInternalSyncRetryTransport } from './support/symmy-c14-sync-retry-
 import {
   SymmyC14ProductFixtureUnavailable,
   buildProductOwner,
-  nativePort,
+  nativePortList,
   productComposition,
   startProductOwner,
 } from './support/symmy-c14-product-runtime.mts';
@@ -117,11 +117,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* actualSyncConformance() {
-        const ports = new Set<number>();
-        while (ports.size < 6) {
-          ports.add(yield* nativePort);
-        }
-        const [catalogPort, commercePort, inventoryPort, symmyPort, retryPort, stockBarrierPort] = [...ports];
+        const [catalogPort, commercePort, inventoryPort, symmyPort, retryPort, stockBarrierPort] =
+          yield* nativePortList(6);
         assert.isDefined(catalogPort);
         assert.isDefined(commercePort);
         assert.isDefined(inventoryPort);

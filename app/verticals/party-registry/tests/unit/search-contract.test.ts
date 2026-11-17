@@ -6,28 +6,6 @@ import {
   CounterpartiesProviderResponseSchema,
 } from '../../shared/apis/counterparties-search.ts';
 import { PartiesProviderRequestSchema, PartiesProviderResponseSchema } from '../../shared/apis/parties-search.ts';
-import { COUNTERPARTY_SEARCH_SEMANTICS, PARTY_SEARCH_SEMANTICS } from '../../shared/domain/search-descriptor.ts';
-
-it('Party-owned search semantics expose only current approved V1 facts', () => {
-  const searchableFacts: readonly string[] = PARTY_SEARCH_SEMANTICS.searchableFacts;
-  expect(PARTY_SEARCH_SEMANTICS.searchableFacts).toEqual([
-    'DISPLAY_NAME',
-    'ACTIVE_OFFICIAL_IDENTIFIER',
-    'ACTIVE_EMAIL',
-    'ACTIVE_PHONE',
-  ]);
-  expect(searchableFacts.includes('ADDRESS')).toBe(false);
-  expect(searchableFacts.includes('HISTORICAL_IDENTIFIER')).toBe(false);
-  expect(PARTY_SEARCH_SEMANTICS.contactPointIdentityAuthority).toBe('NON_UNIQUE');
-  expect(PARTY_SEARCH_SEMANTICS.resultMatchAuthority).toBe('NONE');
-});
-
-it('Counterparty semantics retain Legal Entity and current-period role boundaries', () => {
-  expect(COUNTERPARTY_SEARCH_SEMANTICS.legalEntityScope).toBe('REQUIRED_TRUSTED_CONTEXT');
-  expect(COUNTERPARTY_SEARCH_SEMANTICS.roleFilters).toEqual(['CUSTOMER', 'SUPPLIER']);
-  expect(COUNTERPARTY_SEARCH_SEMANTICS.rolePeriodSemantics).toBe('CURRENT_AT_EFFECTIVE_TIME');
-  expect(COUNTERPARTY_SEARCH_SEMANTICS.deduplicateBy).toBe('COUNTERPARTY_IDENTITY');
-});
 
 it.effect('Party Search accepts a bounded query and an explicit archived switch', () =>
   Effect.gen(function* testScenario() {

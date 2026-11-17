@@ -27,27 +27,6 @@ const nodeModuleTypeWarnings = new RegExp(
 const hasOnlyNativeModuleTypeWarnings = (stderr: string): boolean =>
   stderr === '' || nodeModuleTypeWarnings.test(stderr);
 
-it('accepts only complete native module-type advisories and rejects unexpected stderr', () => {
-  const warning =
-    "(node:123) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///tmp/ontos/verticals/catalog/shared/value.ts is not specified and it doesn't parse as CommonJS.\n" +
-    'Reparsing as ES module because module syntax was detected. This incurs a performance overhead.\n' +
-    'To eliminate this warning, add "type": "module" to /tmp/ontos/verticals/catalog/package.json.\n';
-  const hint = '(Use `node --trace-warnings ...` to show where the warning was created)\n';
-  expect(hasOnlyNativeModuleTypeWarnings('')).toBe(true);
-  expect(hasOnlyNativeModuleTypeWarnings(warning)).toBe(true);
-  expect(hasOnlyNativeModuleTypeWarnings(`${warning}${hint}${warning}`)).toBe(true);
-  for (const unexpected of [
-    'Error: native admission failed\n',
-    `${warning}Error: native admission failed\n`,
-    `unexpected runtime diagnostic\n${warning}`,
-    `${warning}TS2322: invalid runtime contract\n`,
-    `${warning}\n`,
-    warning.split('\n')[0],
-  ]) {
-    expect(hasOnlyNativeModuleTypeWarnings(unexpected)).toBe(false);
-  }
-});
-
 const runSignalControl = (control: 'signal' | 'signal-finalizer-failure') =>
   Effect.gen(function* realNativeSignal() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

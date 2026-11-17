@@ -27,7 +27,7 @@ import {
   buildProductOwner,
   buildProductWorker,
   encodeProductComposition,
-  nativePort,
+  nativePortList,
   productComposition,
   startProductOwner,
   startProductWorker,
@@ -58,19 +58,17 @@ const encodePolicies = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Sy
 /** Starts genuine owner HTTP runtimes with platform-provisioned module keys; no owner business rows are seeded. */
 export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingRoutes.fixture')(
   function* makeFixture() {
-    const symmyPort = yield* nativePort;
-    let groupPort = yield* nativePort;
-    while (groupPort === symmyPort) {
-      groupPort = yield* nativePort;
-    }
-    const catalogPort = yield* nativePort;
-    const pricingPort = yield* nativePort;
-    const pricingTransportPort = yield* nativePort;
+    const [symmyPort, groupPort, catalogPort, pricingPort, pricingTransportPort, marketPort] = yield* nativePortList(6);
+    assert.isDefined(symmyPort);
+    assert.isDefined(groupPort);
+    assert.isDefined(catalogPort);
+    assert.isDefined(pricingPort);
+    assert.isDefined(pricingTransportPort);
+    assert.isDefined(marketPort);
     const priceBarrier = yield* installInternalC14PriceDispatchBarrier({
       port: pricingTransportPort,
       targetOrigin: `http://127.0.0.1:${pricingPort}`,
     });
-    const marketPort = yield* nativePort;
     const { contracts, snapshot } = yield* productComposition({
       catalog: `http://127.0.0.1:${catalogPort}/`,
       [marketApp]: `http://127.0.0.1:${marketPort}/`,

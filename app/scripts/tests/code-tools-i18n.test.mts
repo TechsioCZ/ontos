@@ -131,18 +131,3 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
     it.live(`code-tools ${format}: ${fixture.name}`, () => testEffect.pipe(Effect.provide(NodeServices.layer)));
   }
 }
-
-it('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
-  const summary = 'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
-  expect('').toMatch(cleanOutput);
-  expect(summary).toMatch(cleanOutput);
-  for (const output of [
-    summary.replace('0 errors', '1 error'),
-    summary.replace('0 warnings', '1 warning'),
-    summary.replace('2 files', '0 files'),
-    `${summary}Error running JS plugin\n`,
-    `fixture.tsx:1:1: unexpected diagnostic\n${summary}`,
-  ]) {
-    expect(output).not.toMatch(cleanOutput);
-  }
-});

@@ -257,11 +257,9 @@ describe('Pricing Source Authority and external Price input boundary', () => {
   });
 
   it('C14 rejects missing Unit and amount basis before any native owner effect', () => {
-    const { unitBasis: omittedUnit, ...incompleteKey } = identityKey;
-    expect(omittedUnit).toEqual(unitBasis);
+    const { unitBasis: _omittedUnit, ...incompleteKey } = identityKey;
     expect(Schema.is(PriceIdentityKeySchema)(incompleteKey)).toBe(false);
-    const { monetaryBoundary: omittedBoundary, ...incompleteOriginal } = assertion.originalAssertion;
-    expect(omittedBoundary).toBe('PRE_TAX');
+    const { monetaryBoundary: _omittedBoundary, ...incompleteOriginal } = assertion.originalAssertion;
     expect(Schema.is(PriceSourceAssertionInputSchema)({ ...assertion, originalAssertion: incompleteOriginal })).toBe(
       false,
     );

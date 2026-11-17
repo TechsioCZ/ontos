@@ -15,6 +15,7 @@ import {
   ReadRuntime,
   loadDatabaseConnectionPair,
   makeActiveApplicationCompositionLayer,
+  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
@@ -35,6 +36,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
+import { TestClock } from 'effect/testing';
 import { exportJWK, generateKeyPair, importJWK, SignJWT } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -236,32 +238,90 @@ type ReadFailure =
   | PriceGroupExpectedCurrentConflict
   | PriceGroupPersistenceUnavailable;
 
-const priceGroupCompositionSnapshot = makeApplicationCompositionSnapshotFixture(
-  [ultramodernApiMarker.appId],
-  ultramodernApiMarker.buildMarker,
+const gatewayKeyId = 'price-group-read-http-test';
+
+/**
+ * Produce an expensive deployment-wide constant once and hand every later caller the same value.
+ * Rstest runs the files of one project in separate workers, so this shares nothing across runs.
+ */
+const sharedSetup = <A, E, R>(build: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> => {
+  let prepared: { readonly value: A } | undefined;
+  return Effect.suspend(() =>
+    prepared === undefined
+      ? build.pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              prepared = { value };
+            }),
+          ),
+        )
+      : Effect.succeed(prepared.value),
+  );
+};
+
+/**
+ * The fixture Composition and the Ed25519 gateway key are constants of this proof, but the fixture
+ * constructor is uncached: it re-encoded every module contract, re-digested and re-canonicalized the
+ * Composition and re-decoded the whole snapshot for each of the ten assertions, and again inside the
+ * Composition service on every authenticated request. Both are now built once per file.
+ */
+const priceGroupComposition = sharedSetup(
+  makeApplicationCompositionSnapshotFixture([ultramodernApiMarker.appId], ultramodernApiMarker.buildMarker).pipe(
+    Effect.map(({ composition }) => composition),
+  ),
 );
+
+/**
+ * One key for the file. Each mounted runtime is configured with this key's public JWK, and replay
+ * protection is untouched because every assertion still signs a fresh jti.
+ */
+const priceGroupGatewaySigner = sharedSetup(
+  Effect.gen(function* buildPriceGroupGatewaySigner() {
+    const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
+    const publicJwks = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+      keys: [
+        {
+          ...(yield* Effect.promise(() => exportJWK(publicKey))),
+          alg: 'EdDSA',
+          kid: gatewayKeyId,
+          use: 'sig',
+        },
+      ],
+    });
+    return { privateKey, publicJwks };
+  }),
+);
+
+/**
+ * Validity is never shared: each observation dates the shared Composition on its own caller's clock,
+ * exactly as the previous per-call fixture did, so a mounted runtime always verifies against a
+ * snapshot that is current for the request it is serving.
+ */
+const priceGroupCompositionSnapshot = Effect.gen(function* observePriceGroupCompositionSnapshot() {
+  const composition = yield* priceGroupComposition;
+  const observedAt = yield* DateTime.now;
+  return yield* validateActiveApplicationCompositionSnapshot({
+    composition,
+    observedAt,
+    validUntil: DateTime.add(observedAt, { hours: 1 }),
+  });
+});
 
 const makeAssertion = (
   audience = 'price-group-catalog',
   releaseClaims: Readonly<{ compositionRevision?: string; targetBuildMarker?: string }> = {},
 ) =>
   Effect.gen(function* signPriceGroupReadAssertion() {
-    const snapshot = yield* priceGroupCompositionSnapshot;
-    const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
-    const publicJwk = {
-      ...(yield* Effect.promise(() => exportJWK(publicKey))),
-      alg: 'EdDSA',
-      kid: 'price-group-read-http-test',
-      use: 'sig',
-    };
+    const composition = yield* priceGroupComposition;
+    const { privateKey, publicJwks } = yield* priceGroupGatewaySigner;
     const token = yield* Effect.promise(() =>
       new SignJWT({
-        compositionRevision: releaseClaims.compositionRevision ?? snapshot.composition.revision,
+        compositionRevision: releaseClaims.compositionRevision ?? composition.revision,
         principal,
         targetBuildMarker: releaseClaims.targetBuildMarker ?? ultramodernApiMarker.buildMarker,
         ver: 1,
       })
-        .setProtectedHeader({ alg: 'EdDSA', kid: 'price-group-read-http-test', typ: 'JWT' })
+        .setProtectedHeader({ alg: 'EdDSA', kid: gatewayKeyId, typ: 'JWT' })
         .setIssuer(issuer)
         .setAudience(audience)
         .setSubject(principal.principalId)
@@ -273,9 +333,7 @@ const makeAssertion = (
     return {
       environment: {
         ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_PUBLIC_JWKS: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-          keys: [publicJwk],
-        }),
+        ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
       },
       token,
     };
@@ -488,6 +546,18 @@ const expectSanitized = (problem: typeof ProblemDetailsSchema.Type, secrets: rea
 };
 
 describe('Price Group governed Read HTTP integration', () => {
+  it.effect('refreshes snapshot validity after the shared composition outlives its original observation', () =>
+    Effect.gen(function* refreshSnapshotValidity() {
+      const first = yield* priceGroupCompositionSnapshot;
+      yield* TestClock.adjust('2 hours');
+      const second = yield* priceGroupCompositionSnapshot;
+
+      expect(second.composition).toEqual(first.composition);
+      expect(DateTime.toEpochMillis(second.observedAt) - DateTime.toEpochMillis(first.observedAt)).toBe(7_200_000);
+      expect(DateTime.toEpochMillis(second.validUntil) - DateTime.toEpochMillis(second.observedAt)).toBe(3_600_000);
+    }),
+  );
+
   it.effect('decodes the payload closed and ignores browser transport headers', () =>
     Effect.gen(function* decodeClosedPayload() {
       const assertion = yield* makeAssertion();

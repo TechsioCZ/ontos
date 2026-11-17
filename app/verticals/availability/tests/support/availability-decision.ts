@@ -153,4 +153,4 @@ const rawStockInput = {
 const position = Schema.decodeUnknownSync(AvailabilityInventoryPositionEvidenceSchema)(rawPosition);
 const stockInput = Schema.decodeUnknownSync(AvailabilityStockInputSchema)(rawStockInput);
 
-export { subject, stockInput, position, configuration };
+export { configuration, configurationRef, operationTime, position, stockInput, subject, tenantId, unitRef };

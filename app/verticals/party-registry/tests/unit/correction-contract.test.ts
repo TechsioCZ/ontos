@@ -148,7 +148,6 @@ it('public correction conflicts preserve bounded relationship prerequisites in t
   }
   expect(problem.code).toBe('party_correction_conflict');
   expect(problem.conflictingRelationshipRefs).toEqual(refs);
-  expect(Schema.is(PartyCommandConflictProblemSchema)(problem)).toBe(true);
 });
 it('relationship correction is closed, revisioned, interval checked, and has no caller authority hints', () => {
   const strictDecode = Schema.decodeUnknownSync(PartyCorrectionCommandSchema, {

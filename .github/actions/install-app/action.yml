@@ -1,28 +1,29 @@
 name: Install the app workspace
-description: Install the app/.mise.toml toolchain and the frozen app/ dependency graph from a lockfile-keyed pnpm store.
+description: Install the app/.mise.toml toolchain and the frozen app/ dependency graph, from a cached installed workspace or a lockfile-keyed pnpm store.
 
 inputs:
   install-args:
     description: Extra `pnpm install` arguments.
-    default: ""
+    default: ''
   mise-env:
     description: Export the app/.mise.toml environment.
-    default: "true"
+    default: 'true'
   save-store:
     description: >-
       Save a missed pnpm store on main or the sales demo branch. Exactly one job of a workflow sets this, so
       parallel jobs never race to save.
-    default: "false"
+    default: 'false'
+  save-node-modules:
+    description: >-
+      Save a missed complete installed workspace. The gates' planner saves it before the gates fan out, so the
+      jobs after it restore the finished tree instead of relinking it. A cache is readable from its own ref and
+      the default branch only. Only an install without `install-args` may be published.
+    default: 'false'
   restore-typescript-build:
     description: >-
       Restore the newest TS-Go typecheck build (app/node_modules/.cache/tsgo) saved for this toolchain and
       lockfile. TS-Go rechecks every file whose content changed, so a stale build only costs time.
-    default: "false"
-  typescript-build-unit:
-    description: >-
-      The delivery unit whose own reference build the TS-Go typecheck build is, keyed apart from main's
-      whole-workspace build. Its restore falls back to that whole-workspace build. Empty for the workspace.
-    default: ""
+    default: 'false'
 
 outputs:
   typescript-build-key:
@@ -39,8 +40,78 @@ runs:
         env: ${{ inputs.mise-env }}
         minimum_release_age: 24h
 
+    # The installed tree, not just the store pnpm installs it from. A store restore followed by
+    # `pnpm install --frozen-lockfile` downloads nothing on a hit and still spends ~30 s linking 1461
+    # packages into node_modules, in every job that installs; restoring the finished tree spends that once.
+    #
+    # The key is exact and carries NO prefix restore-keys: a half-restored dependency graph is a wrong
+    # answer, so a changed input must miss and install. It covers the pinned toolchain (app/.mise.toml),
+    # the resolution (app/pnpm-lock.yaml), the workspace settings that decide the SHAPE of the tree
+    # (app/pnpm-workspace.yaml: packageImportMethod, enableGlobalVirtualStore, patchedDependencies), the
+    # patches themselves, and every workspace manifest. The manifests are in the key so that the one thing
+    # skipping the install would otherwise stop checking still gets checked: `--frozen-lockfile` fails when
+    # a manifest asks for a dependency the lockfile does not lock, and a manifest change that leaves the
+    # lockfile alone (5 of the last 120 commits on main) is exactly when that install must really run.
+    #
+    # The store is deliberately NOT in this entry. app/pnpm-workspace.yaml pins
+    # `packageImportMethod: clone-or-copy` and `enableGlobalVirtualStore: false`, so app/node_modules/.pnpm
+    # holds real files and the only symlinks are relative ones inside it - verified: zero dangling links and
+    # zero link targets outside app/. Adding the 619 MB store would roughly double a ~0.6 GB entry and spend
+    # the saved time restoring it again. A tree that is somehow not self-contained must not become a
+    # confusing module-resolution failure later: the next step turns it into a clean miss, and the save
+    # below refuses to publish such a tree at all.
+    #
+    # Only a complete install is ever published (see the save below), so a job that installs with
+    # `install-args` (a filtered or script-free install, such as zerops-stage.yml's) never restores this
+    # entry: it would get a different tree from the one its arguments ask for.
+    - name: Restore the installed workspace
+      id: workspace
+      if: inputs.install-args == ''
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          app/node_modules
+          !app/node_modules/.cache
+          app/apps/*/node_modules
+          app/packages/*/node_modules
+          app/verticals/*/node_modules
+        key: pnpm-workspace-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/package.json', 'app/*/*/package.json', 'app/patches/**', '!app/node_modules/**') }}
+
+    # A restored tree is used only if it resolves: the virtual store and pnpm's own state file are present
+    # and no dependency link of the root or of a workspace package dangles. Anything else is removed and
+    # installed from the store below, so a bad entry costs one install instead of failing 34 jobs with a
+    # module-resolution error.
+    - name: Verify the restored workspace resolves
+      id: restored
+      shell: bash
+      working-directory: app
+      env:
+        RESTORED: ${{ steps.workspace.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        usable=false
+        if [[ "$RESTORED" == 'true' && -d node_modules/.pnpm && -f node_modules/.modules.yaml ]]; then
+          farms=(node_modules)
+          for farm in apps/*/node_modules packages/*/node_modules verticals/*/node_modules; do
+            [[ -d "$farm" ]] && farms+=("$farm")
+          done
+          # With -L, `-type l` matches only the links that do not resolve.
+          dangling="$(find -L "${farms[@]}" -maxdepth 1 -type l -print | wc -l | tr -d ' ')"
+          if [[ "$dangling" == '0' ]]; then
+            usable=true
+          else
+            echo "::warning::$dangling dependency links of the restored app/ workspace do not resolve."
+          fi
+        fi
+        if [[ "$RESTORED" == 'true' && "$usable" != 'true' ]]; then
+          echo '::warning::Installing instead of using the restored workspace.'
+          rm -rf node_modules apps/*/node_modules packages/*/node_modules verticals/*/node_modules
+        fi
+        echo "usable=$usable" >>"$GITHUB_OUTPUT"
+
     - name: Locate the pnpm store
       id: store
+      if: steps.restored.outputs.usable != 'true'
       shell: bash
       working-directory: app
       run: echo "path=$(mise exec -- pnpm store path)" >> "$GITHUB_OUTPUT"
@@ -51,6 +122,7 @@ runs:
     # leaves `cache-hit` empty, so the save below still stores the complete store under the exact key.
     - name: Restore the pnpm store
       id: restore
+      if: steps.restored.outputs.usable != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.store.outputs.path }}
@@ -58,42 +130,78 @@ runs:
         restore-keys: pnpm-store-${{ runner.os }}-
 
     - name: Install dependencies from the frozen lockfile
+      if: steps.restored.outputs.usable != 'true'
       shell: bash
       working-directory: app
       run: mise exec -- pnpm install --frozen-lockfile ${{ inputs.install-args }}
 
     - name: Save the pnpm store
       if: >-
-        inputs.save-store == 'true' && steps.restore.outputs.cache-hit != 'true' &&
+        inputs.save-store == 'true' && steps.restored.outputs.usable != 'true' &&
+        steps.restore.outputs.cache-hit != 'true' &&
         (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/demo/sales-crm')
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.store.outputs.path }}
         key: ${{ steps.restore.outputs.cache-primary-key }}
 
+    # Only a complete install may be published: an entry saved from a run that passed `install-args`
+    # (`--ignore-scripts`, for example) would hand an incomplete tree to every job that restores it.
+    # The tree must also be self-contained, because nothing outside app/ is in the entry.
+    - name: Check that the installed workspace may be published
+      id: publishable
+      if: >-
+        inputs.save-node-modules == 'true' &&
+        steps.restored.outputs.usable != 'true'
+      shell: bash
+      working-directory: app
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      run: |
+        set -euo pipefail
+        if [[ -n "${INSTALL_ARGS// /}" ]]; then
+          echo "::error::save-node-modules needs a complete install; this job installed with $INSTALL_ARGS."
+          exit 1
+        fi
+        if [[ ! -d node_modules/.pnpm ]]; then
+          echo '::error::There is no installed app/ workspace to save.'
+          exit 1
+        fi
+        farms=(node_modules)
+        for farm in apps/*/node_modules packages/*/node_modules verticals/*/node_modules; do
+          [[ -d "$farm" ]] && farms+=("$farm")
+        done
+        dangling="$(find -L "${farms[@]}" -maxdepth 1 -type l -print | wc -l | tr -d ' ')"
+        outside="$(find "${farms[@]}" -type l -print0 | xargs -0 -r readlink -f -- | grep -cv "^$PWD/" || true)"
+        if [[ "$dangling" != '0' || "$outside" != '0' ]]; then
+          echo "::error::The installed workspace is not self-contained ($dangling dangling, $outside outside app/); it cannot be cached without the pnpm store."
+          exit 1
+        fi
+        echo 'The installed workspace is complete and self-contained.'
+
+    # The same condition as the check above, not its outcome: a composite action stops at the failing step, so
+    # reaching this one means the check passed, and an unsupported `outcome` could silently never save anything.
+    - name: Save the installed workspace
+      if: >-
+        inputs.save-node-modules == 'true' &&
+        steps.restored.outputs.usable != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          app/node_modules
+          !app/node_modules/.cache
+          app/apps/*/node_modules
+          app/packages/*/node_modules
+          app/verticals/*/node_modules
+        key: ${{ steps.workspace.outputs.cache-primary-key }}
+
     # Restored after the install, which creates app/node_modules. The key names this commit, so the
-    # restore takes the newest build saved for this toolchain and lockfile; a unit's own build comes first.
+    # restore takes the newest build saved for this toolchain and lockfile. app/node_modules/.cache is
+    # left out of the installed-workspace entry above, so this build stays keyed and saved on its own.
     - name: Name the TS-Go typecheck build
       id: typescript-build
       shell: bash
-      env:
-        TOOLCHAIN: ${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}
-        UNIT: ${{ inputs.typescript-build-unit }}
-      run: |
-        workspace="tsgo-$TOOLCHAIN-"
-        prefix="$workspace"
-        if [[ -n "$UNIT" ]]; then
-          prefix="tsgo-unit-$UNIT-$TOOLCHAIN-"
-        fi
-        {
-          echo "key=$prefix$GITHUB_SHA"
-          echo 'restore-keys<<RESTORE_KEYS'
-          printf '%s\n' "$prefix"
-          if [[ "$prefix" != "$workspace" ]]; then
-            printf '%s\n' "$workspace"
-          fi
-          echo 'RESTORE_KEYS'
-        } >>"$GITHUB_OUTPUT"
+      run: echo "key=tsgo-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
     - name: Restore the TS-Go typecheck build
       if: inputs.restore-typescript-build == 'true'
@@ -101,4 +209,4 @@ runs:
       with:
         path: app/node_modules/.cache/tsgo
         key: ${{ steps.typescript-build.outputs.key }}
-        restore-keys: ${{ steps.typescript-build.outputs.restore-keys }}
+        restore-keys: tsgo-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}-

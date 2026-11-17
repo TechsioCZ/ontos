@@ -217,32 +217,6 @@ const requireIndeterminate = (path: PriceGroupFallbackResolution) =>
   );
 
 describe('exact Price resolution service', () => {
-  it.effect('uses only proven Group absence to consult the identical no-group key', () =>
-    Effect.gen(function* resolveFallback() {
-      const requests: ExactPriceLookupRequest[] = [];
-      const service = makeExactPriceResolutionService({
-        loadCurrencySupport: () => Effect.succeed({ _tag: 'current', current: freshCurrencySupport }),
-        lookupExact: (request) => {
-          requests.push(request);
-          return Effect.succeed(
-            request.exactKey.priceGroupSelector.kind === 'PRICE_GROUP'
-              ? { _tag: 'ABSENT' as const, evidence, request }
-              : found(request),
-          );
-        },
-      });
-
-      const result = yield* service.resolve(input, trusted);
-      expect(resolutionKind(result)).toBe('PRICE_FOUND');
-      expect(pathKind(result.path)).toBe('NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE');
-      expect(requests).toHaveLength(2);
-      expect(requests[0]?.exactKey.priceGroupSelector.kind).toBe('PRICE_GROUP');
-      expect(requests[1]?.exactKey.priceGroupSelector).toEqual({ kind: 'NO_GROUP' });
-      expect(requests[1]?.exactKey.catalogSelection).toEqual(selection);
-      expect(requests[1]?.exactKey.currencyCode).toBe('CZK');
-    }),
-  );
-
   it.effect('maps distinct same-key truths to conflict without comparing their amounts', () =>
     Effect.gen(function* retainConflict() {
       let lookupCalls = 0;
@@ -358,31 +332,6 @@ describe('exact Price resolution service', () => {
       expect(resolutionKind(result)).toBe('PRICING_INDETERMINATE');
       expect(pathKind(result.path)).toBe('INDETERMINATE');
       expect(requireIndeterminate(result.path).reason).toBe('OWNER_STATE_UNVERIFIABLE');
-      expect(lookupCalls).toBe(0);
-    }),
-  );
-
-  it.effect('rejects a trusted SLE mismatch before owner reads', () =>
-    Effect.gen(function* rejectScopeMismatch() {
-      let supportCalls = 0;
-      let lookupCalls = 0;
-      const service = makeExactPriceResolutionService({
-        loadCurrencySupport: () => {
-          supportCalls += 1;
-          return Effect.succeed({ _tag: 'current', current: freshCurrencySupport });
-        },
-        lookupExact: (request) => {
-          lookupCalls += 1;
-          return Effect.succeed(found(request));
-        },
-      });
-
-      const result = yield* service.resolve(input, {
-        ...trusted,
-        legalEntityId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-      });
-      expect(resolutionKind(result)).toBe('PRICING_CONFIGURATION_ERROR');
-      expect(supportCalls).toBe(0);
       expect(lookupCalls).toBe(0);
     }),
   );

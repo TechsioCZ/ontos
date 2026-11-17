@@ -25,6 +25,13 @@
   execution-status label without explicit product-owner/HITL instruction.
 - The `new-engine` repository is legacy. Use it only as optional historical or contextual reference;
   do not treat its code, architecture, or documentation as current guidance or a source of truth.
+  The one exception is the next rule.
+- For UI work with `@techsio/ui-kit` (components, tokens, theming, Storybook, Figma, and the UX
+  guidelines for copy, formatting, alignment, states and feedback placement), install and follow the
+  `techsio-ui-kit-ai` agent plugin from
+  [`new-engine/libs/ui/agent-plugin`](https://github.com/TechsioCZ/new-engine/tree/master/libs/ui/agent-plugin).
+  It is current guidance and works in Codex, Claude Code and GitHub Copilot; start with its
+  `ui-component-usage` skill.
 - For documentation authority and reading routes, follow [`docs/README.md`](docs/README.md). Do not
   treat completed specifications or historical evidence as current guidance unless the task asks
   for provenance.

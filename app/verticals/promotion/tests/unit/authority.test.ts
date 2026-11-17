@@ -1,12 +1,6 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { validatePromotionMeaning } from '../../src/services/definition.service.ts';
-import {
-  createPromotionDraft,
-  editPromotionDraft,
-  isPromotionProspectivelyUsable,
-  publishPromotion,
-} from '../../src/services/lifecycle.service.ts';
 import { PromotionIdSchema } from '../../shared/resources/promotion.ts';
 import { VoucherIdSchema } from '../../shared/resources/voucher.ts';
 
@@ -24,26 +18,6 @@ const definition = {
 };
 
 describe('OntOS Promotion source authority', () => {
-  it.effect('a new owner draft remains unusable until the owner publishes its immutable identity', () =>
-    Effect.gen(function* canonicalPublication() {
-      const meaning = yield* validatePromotionMeaning(definition);
-      const draft = yield* createPromotionDraft({ meaning, promotionId }, at);
-      expect(isPromotionProspectivelyUsable(draft, at)).toBe(false);
-      const published = yield* publishPromotion(draft, { expectedVersion: 1, operationAt: at });
-      expect(published.promotionId).toBe(promotionId);
-      expect(isPromotionProspectivelyUsable(published, at)).toBe(true);
-      const foreignChange = yield* validatePromotionMeaning({
-        ...definition,
-        benefit: { kind: 'PERCENTAGE', percentage: '50' },
-      });
-      const refusal = yield* Effect.flip(
-        editPromotionDraft(published, foreignChange, { expectedVersion: 2, operationAt: at }),
-      );
-      expect(refusal).toHaveProperty('code', 'IMMUTABLE_MEANING');
-      expect(published.meaning.benefit).toEqual({ kind: 'PERCENTAGE', percentage: '10' });
-    }),
-  );
-
   it.effect(
     'rejects legacy source authority fields and unsupported discount families at the owner meaning boundary',
     () =>

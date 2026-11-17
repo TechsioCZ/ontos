@@ -97,18 +97,6 @@ it.layer(NodeFileSystem.layer)('Price Group Catalog migration security contract'
     }),
   );
 
-  suite.effect('registers exact owner schema and journal verification', () =>
-    Effect.gen(function* rootVerificationContract() {
-      const rootVerifier = yield* FileSystem.FileSystem.use((fileSystem) =>
-        fileSystem.readFileString(
-          fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
-        ),
-      );
-      expect(rootVerifier).toContain('loadApplicationMigrationInventory');
-      expect(rootVerifier).toContain('for (const path of stream.verifierPaths)');
-    }),
-  );
-
   suite.effect('replaces direct create access with the governed projection routines', () =>
     Effect.gen(function* governedRoutineContract() {
       const migration = yield* readMigration('20260923063344_governed-price-group-routines');

@@ -59,7 +59,7 @@ import {
   buildProductOwner,
   buildProductWorker,
   encodeProductComposition,
-  nativePort,
+  nativePorts,
   productComposition,
   startProductOwner,
   startProductWorker,
@@ -119,14 +119,7 @@ export const OrganizationSourceEffectObservationSchema = Schema.Struct({
 /** Configuration only: every Party, Counterparty and Profile is produced by the accepted native DAG. */
 export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('OrganizationSourceCustomerOwner.fixture')(
   function* fixture() {
-    const ports = new Map<string, number>();
-    for (const app of appIds) {
-      let port = yield* nativePort;
-      while ([...ports.values()].includes(port)) {
-        port = yield* nativePort;
-      }
-      ports.set(app, port);
-    }
+    const ports = yield* nativePorts(appIds);
     const { contracts, snapshot } = yield* productComposition(
       Object.fromEntries([...ports].map(([app, port]) => [app, `http://127.0.0.1:${port}/`])),
     );

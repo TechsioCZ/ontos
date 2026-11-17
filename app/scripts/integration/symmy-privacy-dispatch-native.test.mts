@@ -7,7 +7,7 @@ import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-j
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import { Duration, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { Cause, Duration, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -518,6 +518,21 @@ it.live(
       }),
     ).pipe(
       Effect.provide(services),
+      // The wrapper below promises bounded diagnostic evidence, but its Redacted field printed
+      // `[Error: <redacted>]` and nothing else (job 132776672011), and that failure came out of
+      // makePrivacyDispatchNativeFixture, which runs before this test's diagnostic finalizer is even
+      // registered. Report the failing error type, message and source location before wrapping.
+      // Credential values are Redacted at their own boundary and stay hidden here.
+      Effect.tapCause((failure) =>
+        Effect.logError({
+          errors: Cause.prettyErrors(failure).map(({ message, name, stack }) => ({
+            location: stack?.match(/(?:symmy-[a-z0-9-]+|support\/[a-z0-9-]+)(?:\.test)?\.mts:\d+:\d+/u)?.[0],
+            message,
+            type: name,
+          })),
+          stage: 'native-privacy-dispatch-cause',
+        }),
+      ),
       Effect.mapError((cause) =>
         Schema.is(PrivacyDispatchNativeFailure)(cause)
           ? cause

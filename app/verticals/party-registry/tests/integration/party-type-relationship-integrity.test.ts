@@ -1,8 +1,8 @@
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { NodeCrypto } from '@effect/platform-node';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Result, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { makeTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyCorrectionCommandSchema, PartyCorrectionConflict } from '../../shared/domain/correction-contracts.ts';
@@ -152,7 +152,19 @@ const seed = (admin: PartyAdmin, ids: FixtureIds) =>
     ]);
   });
 
-// The race below waits on the live clock, so the test stays a live registration and builds Node Crypto in its scope.
+/** Reports the PostgreSQL backend serving `transaction`, so a blocker can be named by pid. */
+const backendPid = Effect.fnUntraced(function* backendPid(transaction: PartyTransaction) {
+  const [identity] = yield* transaction.execute<{ readonly pid: number }>(
+    sql`select pg_backend_pid() as pid`,
+    'objects',
+  );
+  assert.isOk(identity);
+  return identity.pid;
+});
+
+// Both services under test read their `now` from the Effect clock and write it into real rows whose
+// validity starts in 2020, so the test stays a live registration and builds Node Crypto in its scope.
+// The races below are synchronized on the real blocking chain, never on elapsed time.
 const buildNodeCrypto = Layer.build(NodeCrypto.layer).pipe(
   Effect.map((context) => Context.get(context, Crypto.Crypto)),
 );
@@ -191,12 +203,35 @@ it.live('Party Type correction and relationship creation serialize in either ord
           return yield* operation(transaction);
         }),
       );
+    /**
+     * Waits until some backend of this database is blocked, directly or transitively, by `holder`.
+     * Following real blocker descendants is the only way to observe that the forked request has
+     * reached the row lock the assertions depend on; elapsed time cannot establish that state.
+     */
+    const waitForBlockedBy = Effect.fnUntraced(function* waitForBlockedBy(holder: number) {
+      for (let attempt = 0; attempt < 1000; attempt += 1) {
+        const waiters = yield* clients.admin<{ readonly pid: number }>`
+          with recursive waiting(pid) as (
+            select pid from pg_stat_activity
+            where datname = current_database() and ${holder}::integer = any(pg_blocking_pids(pid))
+            union
+            select activity.pid from pg_stat_activity activity
+            inner join waiting blocker on blocker.pid = any(pg_blocking_pids(activity.pid))
+            where activity.datname = current_database()
+          ) select pid from waiting order by pid limit 1`;
+        if (waiters.length > 0) {
+          return;
+        }
+        yield* Effect.yieldNow;
+      }
+      return yield* Effect.die('The concurrent Party Type correction and relationship creation never blocked');
+    });
     // Corrections are append-only evidence. Random fixture identities isolate repeated runs
     // without weakening that production invariant through trigger-bypassing cleanup.
     yield* seed(admin, ids);
     const correctionCommand = makeCorrectionCommand(personId, assertionId);
     const relationshipPayload = makeRelationshipPayload(tenantId, personId, organizationId);
-    const correctionFirstLocked = yield* Deferred.make<null>();
+    const correctionFirstLocked = yield* Deferred.make<number>();
     const releaseCorrectionFirst = yield* Deferred.make<null>();
     const correctionFirst = yield* runScoped((transaction) =>
       Effect.gen(function* correctionFirstTransaction() {
@@ -207,7 +242,7 @@ it.live('Party Type correction and relationship creation serialize in either ord
           .from(parties)
           .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, personId)))
           .for('update');
-        yield* Deferred.succeed(correctionFirstLocked, null);
+        yield* Deferred.succeed(correctionFirstLocked, yield* backendPid(transaction));
         yield* Deferred.await(releaseCorrectionFirst);
         return yield* correctPartyFactRecord(transaction, tenantId, correctionCommand, {
           actionInvocationId: correctionInvocationId,
@@ -215,11 +250,11 @@ it.live('Party Type correction and relationship creation serialize in either ord
         });
       }),
     ).pipe(Effect.result, Effect.forkChild);
-    yield* Deferred.await(correctionFirstLocked);
+    const correctionHolder = yield* Deferred.await(correctionFirstLocked);
     const relationAfterCorrectionFiber = yield* runScoped((transaction) =>
       createPartyRelationshipRecord(transaction, tenantId, principalId, relationshipInvocationId, relationshipPayload),
     ).pipe(Effect.result, Effect.forkChild);
-    yield* Effect.sleep('20 millis');
+    yield* waitForBlockedBy(correctionHolder);
     yield* Deferred.succeed(releaseCorrectionFirst, null);
     const correctionFirstResult = yield* Fiber.join(correctionFirst);
     const relationAfterCorrection = yield* Fiber.join(relationAfterCorrectionFiber);
@@ -236,7 +271,7 @@ it.live('Party Type correction and relationship creation serialize in either ord
 
     const secondCorrectionCommand = makeCorrectionCommand(secondPersonId.toUpperCase(), secondAssertionId);
     const secondRelationshipPayload = makeRelationshipPayload(tenantId, secondPersonId, secondOrganizationId);
-    const relationshipCreated = yield* Deferred.make<null>();
+    const relationshipCreated = yield* Deferred.make<number>();
     const releaseRelationshipFirst = yield* Deferred.make<null>();
     const relationshipFirst = yield* runScoped((transaction) =>
       Effect.gen(function* relationshipFirstTransaction() {
@@ -247,19 +282,19 @@ it.live('Party Type correction and relationship creation serialize in either ord
           secondRelationshipInvocationId,
           secondRelationshipPayload,
         );
-        yield* Deferred.succeed(relationshipCreated, null);
+        yield* Deferred.succeed(relationshipCreated, yield* backendPid(transaction));
         yield* Deferred.await(releaseRelationshipFirst);
         return created;
       }),
     ).pipe(Effect.result, Effect.forkChild);
-    yield* Deferred.await(relationshipCreated);
+    const relationshipHolder = yield* Deferred.await(relationshipCreated);
     const correctionAfterRelationshipFiber = yield* runScoped((transaction) =>
       correctPartyFactRecord(transaction, tenantId, secondCorrectionCommand, {
         actionInvocationId: secondCorrectionInvocationId,
         principalId,
       }),
     ).pipe(Effect.result, Effect.forkChild);
-    yield* Effect.sleep('20 millis');
+    yield* waitForBlockedBy(relationshipHolder);
     yield* Deferred.succeed(releaseRelationshipFirst, null);
     const relationshipFirstResult = yield* Fiber.join(relationshipFirst);
     const correctionAfterRelationship = yield* Fiber.join(correctionAfterRelationshipFiber);

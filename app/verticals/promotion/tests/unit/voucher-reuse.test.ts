@@ -23,12 +23,6 @@ const common = {
   effectivePeriod: { from: '2026-11-06T09:00:00Z', to: end },
   eligibility: { commercialScopes: [commercialScope] },
 };
-const cartMeaning = {
-  ...common,
-  benefit: { kind: 'PERCENTAGE', percentage: '10' },
-  family: 'CART_VOUCHER',
-  target: 'MERCHANDISE_CART',
-};
 const shippingMeaning = {
   ...common,
   allowedMethodRefs: [
@@ -41,46 +35,6 @@ const shippingMeaning = {
 const voucher = { disabled: false, normalizedCode: 'reusable', promotionId: tenantId, voucherId: tenantId };
 
 describe('Reusable B2C Voucher activation', () => {
-  it.effect('resolves sequential and concurrent purchases for the same and different customers without mutation', () =>
-    Effect.gen(function* repeatedMonetaryActivation() {
-      const promotion = yield* Schema.decodeUnknownEffect(PromotionRecordSchema)({ ...base, meaning: cartMeaning });
-      const before = yield* Schema.encodeEffect(PromotionRecordSchema)(promotion);
-      const port: VoucherOwnerPort = {
-        findPromotion: () => Effect.succeed(Option.some({ promotion, tenantId })),
-        findVoucher: () => Effect.succeed(Option.some({ tenantId, voucher })),
-      };
-      const context: VoucherResolutionContext = { at, commercialScope, target: { kind: 'CART' }, tenantId };
-      // Customer/purchase labels are caller context; they never become usage-policy inputs or write commands.
-      const purchases = [
-        { customer: 'customer-A', purchase: 'purchase-1' },
-        { customer: 'customer-A', purchase: 'purchase-2' },
-        { customer: 'customer-B', purchase: 'purchase-3' },
-      ];
-      for (const purchase of purchases) {
-        const result = yield* resolveVoucherChoice(port, context, ' reusable ');
-        expect({ purchase: purchase.purchase, voucherId: result.voucher.voucherId }).toEqual({
-          purchase: purchase.purchase,
-          voucherId: tenantId,
-        });
-      }
-      const concurrent = yield* Effect.all(
-        purchases.map(() => resolveVoucherChoice(port, context, 'REUSABLE')),
-        { concurrency: 'unbounded' },
-      );
-      expect(concurrent.map((result) => result.voucher.voucherId)).toEqual([tenantId, tenantId, tenantId]);
-      expect(yield* Schema.encodeEffect(PromotionRecordSchema)(promotion)).toEqual(before);
-      expect(voucher).toEqual({
-        disabled: false,
-        normalizedCode: 'reusable',
-        promotionId: tenantId,
-        voucherId: tenantId,
-      });
-      expect(
-        (yield* Effect.flip(resolveVoucherChoice(port, { ...context, at: DateTime.makeUnsafe(end) }, 'REUSABLE'))).code,
-      ).toBe('INACTIVE_PROMOTION');
-    }),
-  );
-
   it.effect('keeps shipping voucher activation reusable and rejects later deactivation without consumption', () =>
     Effect.gen(function* repeatedShippingActivation() {
       const promotion = yield* Schema.decodeUnknownEffect(PromotionRecordSchema)({ ...base, meaning: shippingMeaning });

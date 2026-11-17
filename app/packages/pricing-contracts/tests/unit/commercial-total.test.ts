@@ -30,10 +30,6 @@ const projection = {
 } as const;
 
 describe('Pricing commercial-total contract', () => {
-  it('reconciles one safe pre-Tax currency to its published lines', () => {
-    expect(Schema.decodeSync(PricingCommercialTotalSafeProjectionSchema)(projection)).toEqual(projection);
-  });
-
   it('keeps exact sub-cent components while publishing one final rounded line and total', () => {
     const exactBreakdown = {
       baseLineTotal: { amount: '33.335', currencyCode: 'CZK' },

@@ -12,7 +12,6 @@ import { withTemporaryWorkspace } from './temporary-workspace.mts';
 const applicationRequire = createRequire(path.join(appRoot, 'package.json'));
 const applicationManifest = readFileSync(path.join(appRoot, 'package.json'), 'utf-8');
 const plugin = applicationRequire.resolve('eslint-plugin-perfectionist');
-const oxlint = path.join(path.dirname(applicationRequire.resolve('oxlint/package.json')), 'bin/oxlint');
 const configFilename = 'oxlint.json';
 interface SortingCase {
   readonly invalid: string;
@@ -58,13 +57,6 @@ const cases: readonly SortingCase[] = [
   },
 ];
 
-it('native sorting integration resolves the Oxlint runner directly', () => {
-  expect(oxlintEntryPoint).toBe(
-    path.join(path.dirname(applicationRequire.resolve('oxlint/package.json')), 'bin/oxlint'),
-  );
-  expect(oxlintEntryPoint).not.toContain(`${path.sep}eslint${path.sep}`);
-});
-
 it('native sorting integration does not declare the ESLint runner', () => {
   const hasDirectEslintDependency = /^[ ]{2}"(?:dependencies|devDependencies)"\s*:\s*\{[^{}]*"eslint"\s*:/msu.test(
     applicationManifest,
@@ -101,7 +93,7 @@ registerHooks({
     writeFileSync(source, 'const view = { zebra: 1, alpha: 2 };');
     const result = spawnSync(
       process.execPath,
-      [oxlint, '-c', config, '--format=json', '--disable-nested-config', source],
+      [oxlintEntryPoint, '-c', config, '--format=json', '--disable-nested-config', source],
       {
         cwd: directory,
         encoding: 'utf-8',

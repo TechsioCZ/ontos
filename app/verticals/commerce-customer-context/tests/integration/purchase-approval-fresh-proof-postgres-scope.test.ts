@@ -13,7 +13,7 @@ import { assert, expect, it } from 'effect-rstest';
 import { extendedObservationSeconds, scenario, services } from './purchase-approval-fresh-proof-postgres.fixture.ts';
 
 for (const scope of ['TENANT', 'STOREFRONT'] as const) {
-  it.live(`rejects wrong ${scope} scope before Current authority and preserves existing P1`, () =>
+  it.live.concurrent(`rejects wrong ${scope} scope before Current authority and preserves existing P1`, () =>
     Effect.scoped(
       Effect.gen(function* wrongRegisteredScope() {
         const test = yield* scenario();
@@ -53,7 +53,7 @@ for (const scope of ['TENANT', 'STOREFRONT'] as const) {
   );
 }
 
-it.live(
+it.live.concurrent(
   'rolls back a genuinely inserted fresh owner proof when its enclosing transaction fails',
   () =>
     Effect.scoped(
@@ -113,7 +113,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'reads exact fresh P2 and retained expired P1 through governed buyer evidence without renewing history',
   () =>
     Effect.scoped(
@@ -229,7 +229,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'recovers exact original buyer intents after losing proof refs, including expired P1, without new effects',
   () =>
     Effect.scoped(

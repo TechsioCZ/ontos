@@ -3,7 +3,7 @@ import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { PaymentTermCanonicalSemanticsSchema } from '../../shared/domain/payment-term.ts';
-import type { PaymentTermDefinition } from '../../shared/domain/payment-term.ts';
+import type { PaymentTermAffectedUseDisposition, PaymentTermDefinition } from '../../shared/domain/payment-term.ts';
 import {
   PaymentTermAffectedUseAssessmentRejected,
   PaymentTermAffectedUseAssessmentUnavailable,
@@ -601,37 +601,48 @@ it.effect('requires a server-owned gateway credential for production affected-us
   }),
 );
 
-it.effect('fails closed when affected-use or migration authority rejects caller claims', () =>
-  Effect.gen(function* rejectsForgedEvidence() {
+it.effect.each([
+  {
+    disposition: {
+      kind: 'EXPLICIT_MIGRATION',
+      migrationReference: 'caller-invented:migration',
+    } satisfies PaymentTermAffectedUseDisposition,
+    governanceFailure: new PaymentTermAffectedUseAssessmentRejected({
+      code: 'payment_term_affected_use_assessment_rejected',
+      reason: 'Evidence is forged, stale, or does not cover this Payment Term',
+    }),
+    isTypedFailure: Schema.is(PaymentTermAffectedUseAssessmentRejected),
+    label: 'a rejected caller-invented migration claim',
+  },
+  {
+    disposition: { kind: 'REJECT_IF_IN_USE' } satisfies PaymentTermAffectedUseDisposition,
+    governanceFailure: new PaymentTermAffectedUseAssessmentUnavailable({
+      code: 'payment_term_affected_use_assessment_unavailable',
+      reason: 'Authoritative open-purchase evidence is unavailable',
+    }),
+    isTypedFailure: Schema.is(PaymentTermAffectedUseAssessmentUnavailable),
+    label: 'unavailable authoritative affected-use evidence',
+  },
+])('$label fails closed and prevents every retirement write', ({ disposition, governanceFailure, isTypedFailure }) =>
+  Effect.gen(function* refusedRetirementGovernance() {
     let retireCalls = 0;
     const counters = { audits: 0, events: 0, outboxes: 0, reads: 0 };
     const failure = yield* handleRetirePaymentTerm(
-      {
-        ...retirementPayload,
-        affectedUseDisposition: {
-          kind: 'EXPLICIT_MIGRATION',
-          migrationReference: 'caller-invented:migration',
-        },
-      },
+      { ...retirementPayload, affectedUseDisposition: disposition },
       context(
         services({
           retire: () => {
             retireCalls += 1;
             return Effect.succeed({ _tag: 'retired', definition: retired });
           },
-          verifyRetirementGovernance: () =>
-            Effect.fail(
-              new PaymentTermAffectedUseAssessmentRejected({
-                code: 'payment_term_affected_use_assessment_rejected',
-                reason: 'Evidence is forged, stale, or does not cover this Payment Term',
-              }),
-            ),
+          verifyRetirementGovernance: () => Effect.fail(governanceFailure),
         }),
         counters,
       ),
     ).pipe(Effect.flip);
 
-    expect(Schema.is(PaymentTermAffectedUseAssessmentRejected)(failure)).toBe(true);
+    // The caller sees the authority's own typed refusal, never a write or an effect.
+    expect(isTypedFailure(failure)).toBe(true);
     expect(retireCalls).toBe(0);
     expect(counters).toEqual({ audits: 0, events: 0, outboxes: 0, reads: 0 });
   }),
@@ -1073,34 +1084,5 @@ it.effect('Current returns a proven equivalent requested alias without requiring
     expect(result.referenceOutcomes).toEqual([
       { definition: aliasDefinition, kind: 'USABLE', requestedPaymentTermRef: aliasRef },
     ]);
-  }),
-);
-
-it.effect('unavailable authoritative affected-use evidence prevents every retirement write and effect', () =>
-  Effect.gen(function* unavailableRetirementAuthority() {
-    let retireCalls = 0;
-    const counters = { audits: 0, events: 0, outboxes: 0, reads: 0 };
-    const failure = yield* handleRetirePaymentTerm(
-      retirementPayload,
-      context(
-        services({
-          retire: () => {
-            retireCalls += 1;
-            return Effect.succeed({ _tag: 'retired', definition: retired });
-          },
-          verifyRetirementGovernance: () =>
-            Effect.fail(
-              new PaymentTermAffectedUseAssessmentUnavailable({
-                code: 'payment_term_affected_use_assessment_unavailable',
-                reason: 'Authoritative open-purchase evidence is unavailable',
-              }),
-            ),
-        }),
-        counters,
-      ),
-    ).pipe(Effect.flip);
-    expect(Schema.is(PaymentTermAffectedUseAssessmentUnavailable)(failure)).toBe(true);
-    expect(retireCalls).toBe(0);
-    expect(counters).toEqual({ audits: 0, events: 0, outboxes: 0, reads: 0 });
   }),
 );

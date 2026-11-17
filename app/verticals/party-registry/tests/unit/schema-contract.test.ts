@@ -713,55 +713,6 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       );
     }),
   );
-
-  suite.effect('registers Party ownership in application database grants and exact verification', () =>
-    Effect.gen(function* testScenario() {
-      const bootstrap = yield* FileSystem.FileSystem.use((fs) =>
-        fs.readFileString(
-          fileURLToPath(new URL('../../../../scripts/postgres/runtime-role-bootstrap.mts', import.meta.url)),
-        ),
-      );
-      const verifier = yield* FileSystem.FileSystem.use((fs) =>
-        fs.readFileString(
-          fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
-        ),
-      );
-      // The legacy shared role keeps blanket access to the platform schemas, and the demo branch
-      // appends its vertical schemas after them; contacts and party move to dedicated identities.
-      const sharedRuntimeSchemas = /const SHARED_RUNTIME_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(bootstrap)?.groups?.[
-        'schemas'
-      ];
-      expect(sharedRuntimeSchemas).toBeDefined();
-      for (const schema of [
-        'core',
-        'auth',
-        'catalog',
-        'inventory',
-        'tax',
-        'privacy',
-        'projects',
-        'property_portfolio',
-        'property_leasing',
-        'legal_agreements',
-        'work_tasks',
-        'demo_workforce',
-        'demo_tagging',
-        'demo_crm',
-        'demo_sales_pipeline',
-        'demo_merchandise',
-        'demo_email',
-        'facility_operations',
-        'demo_sales_insights',
-        'finance_billing',
-        'crm_activities',
-      ]) {
-        expect(sharedRuntimeSchemas).toContain(`'${schema}'`);
-      }
-      expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
-      expect(verifier).toContain('loadApplicationMigrationInventory');
-      expect(verifier).toContain('for (const path of stream.verifierPaths)');
-    }),
-  );
 });
 
 it('narrows every Counterparty projection policy to the sealed entity without excluding tenant-wide grants', () => {

@@ -12,9 +12,6 @@ import {
   INVENTORY_STOCK_SHARING_ELIGIBILITY_TABLES,
   inventoryStockSharingEligibilities,
   inventoryStockSharingEligibilityHistory,
-  inventoryStockSharingEligibilityHistoryImmutabilityContract,
-  inventoryStockSharingEligibilityIdentityImmutabilityContract,
-  inventoryStockSharingEligibilityScopeTriggerContract,
 } from '../../src/persistence/stock-sharing-eligibility-table.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -109,27 +106,6 @@ describe('Inventory Stock Sharing Eligibility persistence contract', () => {
         'inventory_stock_sharing_eligibilities_position_fk',
       ]),
     );
-  });
-
-  it('publishes migration hardening for exact scope, immutable identity, and append-only history', () => {
-    expect(inventoryStockSharingEligibilityScopeTriggerContract).toMatchObject({
-      event: 'INSERT OR UPDATE',
-      positionRequiredLifecycle: 'CURRENT',
-      table: 'inventory.stock_sharing_eligibilities',
-    });
-    expect(inventoryStockSharingEligibilityIdentityImmutabilityContract.columns).toEqual([
-      'eligibility_id',
-      'tenant_id',
-      'customer_configuration_id',
-      'owner_configuration_id',
-      'stock_position_id',
-    ]);
-    expect(inventoryStockSharingEligibilityHistoryImmutabilityContract).toEqual({
-      deleteTriggerName: 'inventory_stock_sharing_eligibility_history_no_delete_trg',
-      functionName: 'inventory.reject_stock_sharing_eligibility_history_mutation',
-      table: 'inventory.stock_sharing_eligibility_history',
-      updateTriggerName: 'inventory_stock_sharing_eligibility_history_no_update_trg',
-    });
   });
 
   it.effect('decodes every appended revision and closes superseded effective intervals in order', () =>

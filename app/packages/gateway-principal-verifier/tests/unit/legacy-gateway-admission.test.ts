@@ -33,7 +33,22 @@ type FixturePrincipal = TrustedPrincipalContext & {
 };
 
 const GATEWAY_FIXTURE_BUILD_MARKER = 'gateway-test-release';
-const gatewayComposition = makeApplicationCompositionSnapshotFixture(['party-registry'], GATEWAY_FIXTURE_BUILD_MARKER);
+const buildGatewayComposition = makeApplicationCompositionSnapshotFixture(
+  ['party-registry'],
+  GATEWAY_FIXTURE_BUILD_MARKER,
+);
+
+// The verifier reloads and revalidates the composition authority on every verify call, so the
+// uncached fixture re-decoded, re-hashed and revalidated the deployment contract on each of them.
+// Effect.cached builds the snapshot on its first yield in this file and hands every later load the
+// same validated value; no test here moves the clock, and its one-hour validity window covers the
+// frozen test clock.
+let memoizedGatewayComposition: typeof buildGatewayComposition | undefined;
+const gatewayComposition = Effect.gen(function* loadGatewayComposition() {
+  const memoized = memoizedGatewayComposition ?? (yield* Effect.cached(buildGatewayComposition));
+  memoizedGatewayComposition = memoized;
+  return yield* memoized;
+});
 
 const currentTimeSeconds = 1_700_000_001;
 const issuer = 'https://shell.ontos.test';

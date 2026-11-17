@@ -59,7 +59,7 @@ import {
   buildProductOwner,
   buildProductWorker,
   encodeProductComposition,
-  nativePort,
+  nativePortList,
   productComposition,
   startProductOwner,
   startProductWorker,
@@ -297,19 +297,11 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* actualProductConformance() {
-        const catalogPort = yield* nativePort;
-        let symmyPort = yield* nativePort;
-        while (symmyPort === catalogPort) {
-          symmyPort = yield* nativePort;
-        }
-        let marketPort = yield* nativePort;
-        while (marketPort === catalogPort || marketPort === symmyPort) {
-          marketPort = yield* nativePort;
-        }
-        let pricingPort = yield* nativePort;
-        while ([catalogPort, symmyPort, marketPort].includes(pricingPort)) {
-          pricingPort = yield* nativePort;
-        }
+        const [catalogPort, symmyPort, marketPort, pricingPort] = yield* nativePortList(4);
+        assert.isDefined(catalogPort);
+        assert.isDefined(symmyPort);
+        assert.isDefined(marketPort);
+        assert.isDefined(pricingPort);
         const { contracts, snapshot } = yield* productComposition({
           catalog: `http://127.0.0.1:${catalogPort}/`,
           'commerce-market-catalog': `http://127.0.0.1:${marketPort}/`,

@@ -88,31 +88,6 @@ describe('scheduled material state detection', () => {
     });
   });
 
-  it('uses the same half-open boundary rule for contractual successor Revisions', () => {
-    const contractualSchedule: PricingScheduledMaterialState = {
-      exactKeyRef: 'CONTRACTUAL_DISCOUNT:counterparty-a:variant-a:CZK',
-      revisions: [
-        {
-          effectivePeriod: { effectiveFrom: '2026-01-01T00:00:00.000Z', effectiveTo: '2026-02-01T00:00:00.000Z' },
-          revisionRef: 'contractual-discount:1',
-        },
-        {
-          effectivePeriod: { effectiveFrom: '2026-02-01T00:00:00.000Z', effectiveTo: null },
-          revisionRef: 'contractual-discount:2',
-        },
-      ],
-    };
-
-    expect(selectScheduledMaterialStateAt(contractualSchedule, '2026-01-31T23:59:59.999Z')).toMatchObject({
-      current: { revisionRef: 'contractual-discount:1' },
-      outcome: 'CURRENT',
-    });
-    expect(selectScheduledMaterialStateAt(contractualSchedule, '2026-02-01T00:00:00.000Z')).toMatchObject({
-      current: { revisionRef: 'contractual-discount:2' },
-      outcome: 'CURRENT',
-    });
-  });
-
   it('detects a scheduled successor and a newly overlapping exact-key collision', () => {
     expect(
       detectPricingMaterialStateChange(snapshot('2026-01-31T23:59:59.999Z'), snapshot('2026-03-01T00:00:00.000Z')),

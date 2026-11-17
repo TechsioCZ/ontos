@@ -69,19 +69,19 @@ it.effect('uses the same exact SpiceDB image for development, migration and serv
 it.effect('uses the same immutable PostgreSQL image for development, CI and datastore tooling', () =>
   Effect.gen(function* postgresImageParity() {
     const fs = yield* FileSystem.FileSystem;
+    // CI is covered through docker-compose.yml: the gates workflow declares no PostgreSQL service of its
+    // own any more, every job that needs a cluster starts this same Compose file, so pinning the image
+    // here and asserting the workflow cannot name a different one is the same guarantee.
+    const workflow = yield* fs.readFileString(path.join(root, '../.github/workflows/ultramodern-workspace-gates.yml'));
+    expect(workflow.match(/postgres:\d+\.\d+-alpine@sha256:[a-f0-9]{64}/gu)).toBeNull();
     const images = yield* Effect.all(
-      [
-        'docker-compose.yml',
-        'zerops.yaml',
-        'scripts/run-zerops-spicedb.sh',
-        '../.github/workflows/ultramodern-workspace-gates.yml',
-      ].map((file) =>
+      ['docker-compose.yml', 'zerops.yaml', 'scripts/run-zerops-spicedb.sh'].map((file) =>
         fs
           .readFileString(path.join(root, file))
           .pipe(Effect.map((source) => source.match(/postgres:\d+\.\d+-alpine@sha256:[a-f0-9]{64}/gu) ?? [])),
       ),
     );
-    expect(images.map((matches) => matches.length)).toEqual([1, 1, 1, 1]);
+    expect(images.map((matches) => matches.length)).toEqual([1, 1, 1]);
     expect(new Set(images.flat()).size).toBe(1);
   }).pipe(Effect.provide(NodeServices.layer)),
 );

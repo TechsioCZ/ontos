@@ -331,6 +331,19 @@ describe('Issue #762 exact Price Group fallback runtime acceptance', () => {
     }),
   );
 
+  it.effect('rejects a well-formed lookup response echoed for a different exact key', () =>
+    Effect.gen(function* rejectMismatchedOwnerResponse() {
+      const { lookup, requests } = lookupPort((request) =>
+        found({ ...request, exactKey: { ...request.exactKey, currencyCode: 'EUR' } }, '100'),
+      );
+
+      const result = yield* makePriceGroupFallbackResolver(lookup).resolve(assignedInput);
+
+      expect(requireIndeterminate(result).reason).toBe('OWNER_STATE_UNVERIFIABLE');
+      expect(requests).toHaveLength(1);
+    }),
+  );
+
   it.effect(
     'never looks up a fallback for retired/broken, inconsistent, unavailable, or unverifiable owner state',
     () =>

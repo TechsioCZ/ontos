@@ -38,7 +38,6 @@ import {
   Context,
   Crypto,
   DateTime,
-  Duration,
   Effect,
   FileSystem,
   Layer,
@@ -60,6 +59,7 @@ import { makeCurrentStorefrontNativeReceiver } from '@app/storefront-registry/te
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
+import { NativeSetupFailed } from '../support/native-setup-failure.ts';
 
 import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { marketSourceComponentContracts } from '../fixtures/market-source-components.ts';
@@ -195,7 +195,18 @@ const makeMarketSourceContract = Effect.fn('MarketRevisionNative.sourceContract'
   });
 });
 
-const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* makeScenario(withRegistry: boolean) {
+/**
+ * The isolated database, its Core and owner forward migrations, the runtime privilege grants and the
+ * single published composition are the fixed cost of a scenario, and none of them is Tenant-scoped:
+ * every per-test fact below is written under `fixture.tenantId`. The owner-only scenarios therefore
+ * share one of these through a suite layer and keep a Tenant each. The Storefront variant cannot
+ * share: the Registry receiver's `activate` and the api-key gateway's `issueAndBind` are one-shot per
+ * receiver, and the published composition carries the receiver's own base URL, so each of those two
+ * tests keeps its own database.
+ */
+const makeScenarioDatabase = Effect.fn('MarketRevisionNative.makeScenarioDatabase')(function* makeScenarioDatabase(
+  withRegistry: boolean,
+) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1250-market-revision',
@@ -248,7 +259,10 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       [process.exitCode, Stream.runDrain(process.stdout), Stream.runDrain(process.stderr)],
       { concurrency: 3 },
     );
-    expect(Number(status)).toBe(0);
+    if (Number(status) !== 0) {
+      return yield* new NativeSetupFailed({ reason: 'The isolated owner migration failed' });
+    }
+    return yield* Effect.void;
   });
   yield* migrateOwner();
   const databaseServices = yield* Layer.build(
@@ -288,7 +302,17 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     has_table_privilege(${isolated.connections.runtime.user}, 'commerce_market_catalog.gateway_assertion_redemptions', 'UPDATE') as "canUpdate"`,
     'objects',
   );
-  expect(replayPrivileges).toEqual({ canDelete: true, canInsert: true, canSelect: true, canUpdate: false });
+  if (
+    replayPrivileges === undefined ||
+    !replayPrivileges.canDelete ||
+    !replayPrivileges.canInsert ||
+    !replayPrivileges.canSelect ||
+    replayPrivileges.canUpdate
+  ) {
+    return yield* new NativeSetupFailed({
+      reason: 'Pre-authentication replay storage does not retain its exact production privileges',
+    });
+  }
   const registry = withRegistry ? yield* makeCurrentStorefrontNativeReceiver() : undefined;
   const marketContract = yield* makeMarketSourceContract();
   const shellRuntimeDocument = yield* filesystem.readFileString(
@@ -322,6 +346,44 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
         },
   );
   yield* isolated.publishInitialComposition(snapshot);
+  if (registry !== undefined) {
+    yield* registry.migrate({
+      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+      runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+    });
+  }
+  // Derive the native timeline from the same PostgreSQL clock as the owner observation.
+  // A virtual process clock cannot advance this authority, and host clocks may be skewed.
+  const databaseNow = Effect.fn('MarketRevisionNative.databaseNow')(function* databaseNow() {
+    const [row] = yield* admin.execute<typeof databaseObservationSchema.Encoded>(
+      sql`select to_char(statement_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "observedAt"`,
+      'objects',
+    );
+    assert(row !== undefined);
+    return (yield* Schema.decodeEffect(databaseObservationSchema)(row)).observedAt;
+  });
+  const journal = () =>
+    admin.execute<{ readonly hash: string; readonly name: string }>(
+      sql`select hash, name from drizzle.__drizzle_migrations_commerce_market_catalog order by name`,
+      'objects',
+    );
+  return {
+    admin,
+    coreEvidenceExecutor,
+    databaseNow,
+    isolated,
+    journal,
+    migrateOwner,
+    registry,
+    snapshot,
+  };
+});
+
+type ScenarioDatabase = Effect.Success<ReturnType<typeof makeScenarioDatabase>>;
+
+/** Everything a single test owns: its own Tenant, its gateway bindings and its own timeline. */
+const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* makeScenario(database: ScenarioDatabase) {
+  const { admin, coreEvidenceExecutor, databaseNow, isolated, journal, migrateOwner, registry, snapshot } = database;
   const shell =
     registry === undefined
       ? undefined
@@ -332,12 +394,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
             snapshot,
           ),
         });
-  if (registry !== undefined) {
-    yield* registry.migrate({
-      adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
-      runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
-    });
-  }
   const baseConfiguration = {
     access: 'allowed' as const,
     actionKeys: [
@@ -478,13 +534,13 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       }),
       yield* ConfigProvider.ConfigProvider,
     );
-    const database = Layer.succeed(
+    const databaseConfig = Layer.succeed(
       DatabaseConfig,
       yield* parseDatabaseConfig({ DATABASE_URL: isolated.connections.runtime.connectionString }),
     );
     const redemptionLayer = GatewayAssertionRedemptionLive.pipe(
       Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-      Layer.provide(database),
+      Layer.provide(databaseConfig),
     );
     const compositionSource = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer));
     const receiving = yield* Layer.build(
@@ -522,16 +578,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
             storefrontAppId: 'native-storefront',
           })
           .pipe(Effect.provideContext(context));
-  // Derive the native timeline from the same PostgreSQL clock as the owner observation.
-  // A virtual process clock cannot advance this authority, and host clocks may be skewed.
-  const databaseNow = Effect.fn('MarketRevisionNative.databaseNow')(function* databaseNow() {
-    const [row] = yield* admin.execute<typeof databaseObservationSchema.Encoded>(
-      sql`select to_char(statement_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "observedAt"`,
-      'objects',
-    );
-    assert(row !== undefined);
-    return (yield* Schema.decodeEffect(databaseObservationSchema)(row)).observedAt;
-  });
   const now = yield* databaseNow();
   const startsAt = shift(now, -3_600_000);
   if (storefront !== undefined) {
@@ -767,11 +813,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     admin
       .delete(marketCatalogCompletenessGenerations)
       .where(eq(marketCatalogCompletenessGenerations.tenantId, fixture.tenantId));
-  const journal = () =>
-    admin.execute<{ readonly hash: string; readonly name: string }>(
-      sql`select hash, name from drizzle.__drizzle_migrations_commerce_market_catalog order by name`,
-      'objects',
-    );
   return {
     addCompetingLifecycle,
     after,
@@ -803,32 +844,10 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   };
 });
 
-it.live('isolates the public cosmetic Market revision predicate without Storefront association', () =>
-  Effect.scoped(
-    Effect.gen(function* isolatedRevisionPredicate() {
-      const scenario = yield* makeScenario(false);
-      const r1 = yield* scenario.create();
-      const initial = yield* scenario.pricing(scenario.after);
-      expect(initial.outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
-      const r2 = yield* scenario.revise(r1);
-      expect(r2.revision).toBe(2);
-      expect((yield* scenario.history()).definitions).toHaveLength(2);
-      expect((yield* scenario.current(scenario.revisedAt)).markets[0]?.definitionRevisionRef).toEqual(
-        r2.definitionRevisionRef,
-      );
-      const selected = yield* scenario.pricing(scenario.revisedAt);
-      expect(selected.outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
-      assert(selected.outcome === 'PRICING_MARKET_SOURCE_PRESENT');
-      expect(selected.market.definitionRevisionRef).toEqual(r2.definitionRevisionRef);
-      expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toHaveLength(2);
-    }),
-  ).pipe(Effect.provide(nativeServices)),
-);
-
 it.live('selects the effective immutable revision from supported cosmetic public R1 then R2 in all owner reads', () =>
   Effect.scoped(
     Effect.gen(function* effectiveRevision() {
-      const scenario = yield* makeScenario(true);
+      const scenario = yield* makeScenario(yield* makeScenarioDatabase(true));
       const r1 = yield* scenario.create();
       yield* scenario.associate(r1);
       const original = yield* scenario.pricing(scenario.after);
@@ -892,7 +911,7 @@ it.live('selects the effective immutable revision from supported cosmetic public
 it.live('does not resurrect an open predecessor after the latest started revision expires', () =>
   Effect.scoped(
     Effect.gen(function* expiredSuccessor() {
-      const scenario = yield* makeScenario(true);
+      const scenario = yield* makeScenario(yield* makeScenarioDatabase(true));
       const r1 = yield* scenario.create();
       yield* scenario.associate(r1);
       const end = shift(scenario.now, -600_000);
@@ -909,218 +928,236 @@ it.live('does not resurrect an open predecessor after the latest started revisio
   ).pipe(Effect.provide(nativeServices)),
 );
 
-it.live('retains a future predecessor until the real successor boundary and preserves generation proof', () =>
-  Effect.scoped(
-    Effect.gen(function* actualFutureBoundary() {
-      const scenario = yield* makeScenario(false);
-      const r1 = yield* scenario.create();
-      const future = shift(yield* scenario.databaseNow(), 1500);
-      const r2 = yield* scenario.revise(r1, future);
-      const observation = yield* scenario.databaseNow();
-      assert(DateTime.toEpochMillis(observation) < DateTime.toEpochMillis(future));
-      const before = yield* scenario.pricing(observation);
-      assert(before.outcome === 'PRICING_MARKET_SOURCE_PRESENT');
-      expect(before.market.definitionRevisionRef).toEqual(r1.definitionRevisionRef);
-      expect(before.receipt.authority.nextApplicabilityBoundary).toEqual(future);
-      const millis = DateTime.toEpochMillis(future) - DateTime.toEpochMillis(yield* scenario.databaseNow()) + 10;
-      yield* Effect.sleep(Duration.millis(Math.max(0, millis)));
-      const after = yield* scenario.pricing(future);
-      assert(after.outcome === 'PRICING_MARKET_SOURCE_PRESENT');
-      expect(after.market.definitionRevisionRef).toEqual(r2.definitionRevisionRef);
-      expect((yield* scenario.current(future)).markets[0]?.definitionRevisionRef).toEqual(r2.definitionRevisionRef);
-    }),
-  ).pipe(Effect.provide(nativeServices)),
+class OwnerScenarioDatabase extends Context.Service<OwnerScenarioDatabase, ScenarioDatabase>()(
+  '@app/commerce-market-catalog/tests/integration/OwnerScenarioDatabase',
+) {}
+const ownerSuiteServices = Layer.effect(OwnerScenarioDatabase, makeScenarioDatabase(false)).pipe(
+  Layer.provideMerge(nativeServices),
 );
 
-it.live('preserves no-op, stale CAS, concurrent revision and immutable history boundaries', () =>
-  Effect.scoped(
-    Effect.gen(function* administrativeBoundaries() {
-      const scenario = yield* makeScenario(false);
-      const r1 = yield* scenario.create();
-      const r2 = yield* scenario.revise(r1);
-      const before = yield* scenario.observe();
-      const { outbox } = yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor);
-      yield* scenario.revise(r2, scenario.revisedAt, undefined, 'no-op');
-      expect(yield* scenario.observe()).toEqual(before);
-      expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toEqual(outbox);
-      const stale = yield* scenario.revise(r1, scenario.revisedAt, undefined, 'stale').pipe(Effect.flip);
-      expect(Predicate.isTagged(stale, 'MarketCommandRejected')).toBe(true);
-      expect(stale.code).toBe('revision_conflict');
-      const results = yield* Effect.all(
-        [
-          scenario.revise(r2, scenario.revisedAt, undefined, 'race-a', 'Cosmetic A').pipe(Effect.result),
-          scenario.revise(r2, scenario.revisedAt, undefined, 'race-b', 'Cosmetic B').pipe(Effect.result),
-        ],
-        { concurrency: 2 },
-      );
-      expect(results.filter(Result.isSuccess)).toHaveLength(1);
-      const loser = results.find(Result.isFailure);
-      assert(loser !== undefined);
-      assert(Predicate.isTagged(loser.failure, 'MarketCommandRejected'));
-      expect(loser.failure.code).toBe('revision_conflict');
-      const afterRace = yield* scenario.observe();
-      expect(afterRace.definitions).toHaveLength(3);
-      expect(afterRace.generations[0]?.generation).toBe((before.generations[0]?.generation ?? 0) + 1);
-      expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toHaveLength(outbox.length + 1);
-      for (const remove of [false, true]) {
-        const denied = yield* scenario.denyHistoryMutation(remove);
-        expect(Option.isSome(findPostgresFailure(denied, ({ code }) => code === '55000'))).toBe(true);
-      }
-      expect((yield* scenario.history()).definitions).toHaveLength(3);
-    }),
-  ).pipe(Effect.provide(nativeServices)),
-);
+// The suite layer creates and migrates the shared database, which cannot fit in the 10 s default
+// hook timeout; the tests themselves keep the project's 30 s budget.
+it.layer(ownerSuiteServices, { excludeTestServices: true, timeout: '120 seconds' })(
+  'Market owner revision scenarios',
+  (suite) => {
+    /**
+     * The successor boundary is ten minutes ahead of the database clock, and the observation instant
+     * is read from that same clock after the revise write, so no write latency can invert the order
+     * this test asserts. The boundary is then crossed by reading the scheduled Current state at it:
+     * read_current_market_catalog selects on the requested instant alone and never compares it to its
+     * own observation, so no wall-clock wait is needed. Pricing once a boundary has elapsed is the
+     * same half-open selection that 'selects the effective immutable revision from supported cosmetic
+     * public R1 then R2 in all owner reads' asserts at `revisedAt`.
+     */
+    suite.effect('retains a future predecessor until the real successor boundary and preserves generation proof', () =>
+      Effect.gen(function* actualFutureBoundary() {
+        const scenario = yield* makeScenario(yield* OwnerScenarioDatabase);
+        const r1 = yield* scenario.create();
+        const future = shift(yield* scenario.databaseNow(), 600_000);
+        const r2 = yield* scenario.revise(r1, future);
+        const observation = yield* scenario.databaseNow();
+        assert(DateTime.toEpochMillis(observation) < DateTime.toEpochMillis(future));
+        const before = yield* scenario.pricing(observation);
+        assert(before.outcome === 'PRICING_MARKET_SOURCE_PRESENT');
+        expect(before.market.definitionRevisionRef).toEqual(r1.definitionRevisionRef);
+        expect(before.receipt.authority.nextApplicabilityBoundary).toEqual(future);
+        expect((yield* scenario.current(future)).markets[0]?.definitionRevisionRef).toEqual(r2.definitionRevisionRef);
+      }),
+    );
 
-it.live('keeps exact identities, channels, completeness and unprovable time fail closed', () =>
-  Effect.scoped(
-    Effect.gen(function* sourceBoundaries() {
-      const scenario = yield* makeScenario(false);
-      expect((yield* scenario.pricing(scenario.now)).outcome).toBe('PRICING_MARKET_SOURCE_MISSING');
-      const r1 = yield* scenario.create();
-      const second = yield* scenario.create(undefined, true);
-      const r2 = yield* scenario.revise(r1);
-      const selected = yield* scenario.pricing(scenario.after);
-      const other = yield* scenario.pricing(scenario.after, 'B2C', true);
-      assert(selected.outcome === 'PRICING_MARKET_SOURCE_PRESENT' && other.outcome === 'PRICING_MARKET_SOURCE_PRESENT');
-      expect(selected.market.marketRef).toEqual(r2.marketRef);
-      expect(other.market.marketRef).toEqual(second.marketRef);
-      expect((yield* scenario.current(scenario.after)).markets).toHaveLength(2);
-      expect((yield* scenario.pricing(scenario.after, 'B2B')).outcome).toBe('PRICING_MARKET_SOURCE_ABSENT');
-      expect((yield* scenario.pricing(shift(scenario.now, 86_400_000))).outcome).toBe(
-        'PRICING_MARKET_SOURCE_UNVERIFIABLE',
-      );
-      const before = yield* scenario.observe();
-      const { outbox } = yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor);
-      yield* Effect.gen(function* rejectUntrustedScopes() {
-        const runtime = yield* ReadRuntime;
-        const request = {
-          commercialScope: { channel: 'B2C', marketRef: scenario.marketRef, sellingLegalEntityRef: scenario.sellerRef },
-          effectiveAt: DateTime.formatIso(scenario.after),
-          requestedAt: DateTime.formatIso(scenario.now),
-        };
-        const missingScope = yield* runtime
-          .runRead({
-            input: request,
-            // The fixture's `denied` actor holds no company at all: a read that requires a selected
-            // Legal Entity is refused while the trusted scope is resolved (O28).
-            principal: scenario.fixture.denied,
-            registration: pricingCurrentMarketEvidenceRead,
-            transport: { correlationId: 'missing-scope' },
-          })
-          .pipe(Effect.flip);
-        expect(Predicate.isTagged(missingScope, 'OperationContextDenied')).toBe(true);
-        const missingPermission = yield* runtime
-          .runRead({
-            input: request,
-            // `legalEntityOnly` selects the company but holds no capability for this read: the one
-            // access gate refuses the capability while the company stays selectable (O62).
-            principal: scenario.fixture.legalEntityOnly,
-            registration: pricingCurrentMarketEvidenceRead,
-            transport: { correlationId: 'missing-permission' },
-          })
-          .pipe(Effect.flip);
-        expect(Predicate.isTagged(missingPermission, 'ReadPermissionDenied')).toBe(true);
-        const foreignTenant = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-        const wrongTenant = yield* runtime
-          .runRead({
-            input: {
-              ...request,
-              commercialScope: {
-                ...request.commercialScope,
-                marketRef: { ...scenario.marketRef, tenantId: foreignTenant },
-                sellingLegalEntityRef: { ...scenario.sellerRef, tenantId: foreignTenant },
-              },
+    suite.effect('preserves no-op, stale CAS, concurrent revision and immutable history boundaries', () =>
+      Effect.gen(function* administrativeBoundaries() {
+        const scenario = yield* makeScenario(yield* OwnerScenarioDatabase);
+        const r1 = yield* scenario.create();
+        const r2 = yield* scenario.revise(r1);
+        const before = yield* scenario.observe();
+        const { outbox } = yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor);
+        yield* scenario.revise(r2, scenario.revisedAt, undefined, 'no-op');
+        expect(yield* scenario.observe()).toEqual(before);
+        expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toEqual(outbox);
+        const stale = yield* scenario.revise(r1, scenario.revisedAt, undefined, 'stale').pipe(Effect.flip);
+        expect(Predicate.isTagged(stale, 'MarketCommandRejected')).toBe(true);
+        expect(stale.code).toBe('revision_conflict');
+        const results = yield* Effect.all(
+          [
+            scenario.revise(r2, scenario.revisedAt, undefined, 'race-a', 'Cosmetic A').pipe(Effect.result),
+            scenario.revise(r2, scenario.revisedAt, undefined, 'race-b', 'Cosmetic B').pipe(Effect.result),
+          ],
+          { concurrency: 2 },
+        );
+        expect(results.filter(Result.isSuccess)).toHaveLength(1);
+        const loser = results.find(Result.isFailure);
+        assert(loser !== undefined);
+        assert(Predicate.isTagged(loser.failure, 'MarketCommandRejected'));
+        expect(loser.failure.code).toBe('revision_conflict');
+        const afterRace = yield* scenario.observe();
+        expect(afterRace.definitions).toHaveLength(3);
+        expect(afterRace.generations[0]?.generation).toBe((before.generations[0]?.generation ?? 0) + 1);
+        expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toHaveLength(
+          outbox.length + 1,
+        );
+        for (const remove of [false, true]) {
+          const denied = yield* scenario.denyHistoryMutation(remove);
+          expect(Option.isSome(findPostgresFailure(denied, ({ code }) => code === '55000'))).toBe(true);
+        }
+        expect((yield* scenario.history()).definitions).toHaveLength(3);
+      }),
+    );
+
+    suite.effect('keeps exact identities, channels, completeness and unprovable time fail closed', () =>
+      Effect.gen(function* sourceBoundaries() {
+        const scenario = yield* makeScenario(yield* OwnerScenarioDatabase);
+        expect((yield* scenario.pricing(scenario.now)).outcome).toBe('PRICING_MARKET_SOURCE_MISSING');
+        const r1 = yield* scenario.create();
+        const second = yield* scenario.create(undefined, true);
+        const r2 = yield* scenario.revise(r1);
+        const selected = yield* scenario.pricing(scenario.after);
+        const other = yield* scenario.pricing(scenario.after, 'B2C', true);
+        assert(
+          selected.outcome === 'PRICING_MARKET_SOURCE_PRESENT' && other.outcome === 'PRICING_MARKET_SOURCE_PRESENT',
+        );
+        expect(selected.market.marketRef).toEqual(r2.marketRef);
+        expect(other.market.marketRef).toEqual(second.marketRef);
+        expect((yield* scenario.current(scenario.after)).markets).toHaveLength(2);
+        expect((yield* scenario.pricing(scenario.after, 'B2B')).outcome).toBe('PRICING_MARKET_SOURCE_ABSENT');
+        expect((yield* scenario.pricing(shift(scenario.now, 86_400_000))).outcome).toBe(
+          'PRICING_MARKET_SOURCE_UNVERIFIABLE',
+        );
+        const before = yield* scenario.observe();
+        const { outbox } = yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor);
+        yield* Effect.gen(function* rejectUntrustedScopes() {
+          const runtime = yield* ReadRuntime;
+          const request = {
+            commercialScope: {
+              channel: 'B2C',
+              marketRef: scenario.marketRef,
+              sellingLegalEntityRef: scenario.sellerRef,
             },
-            principal: scenario.principal,
-            registration: pricingCurrentMarketEvidenceRead,
-            transport: { correlationId: 'foreign-tenant' },
-          })
-          .pipe(Effect.flip);
-        expect(Predicate.isTagged(wrongTenant, 'ReadPermissionDenied')).toBe(true);
-        const wrongSeller = yield* runtime
-          .runRead({
-            input: {
-              ...request,
-              commercialScope: {
-                ...request.commercialScope,
-                sellingLegalEntityRef: { ...scenario.sellerRef, resourceId: foreignTenant },
+            effectiveAt: DateTime.formatIso(scenario.after),
+            requestedAt: DateTime.formatIso(scenario.now),
+          };
+          const missingScope = yield* runtime
+            .runRead({
+              input: request,
+              // The fixture's `denied` actor holds no company at all: a read that requires a selected
+              // Legal Entity is refused while the trusted scope is resolved (O28).
+              principal: scenario.fixture.denied,
+              registration: pricingCurrentMarketEvidenceRead,
+              transport: { correlationId: 'missing-scope' },
+            })
+            .pipe(Effect.flip);
+          expect(Predicate.isTagged(missingScope, 'OperationContextDenied')).toBe(true);
+          const missingPermission = yield* runtime
+            .runRead({
+              input: request,
+              // `legalEntityOnly` selects the company but holds no capability for this read: the one
+              // access gate refuses the capability while the company stays selectable (O62).
+              principal: scenario.fixture.legalEntityOnly,
+              registration: pricingCurrentMarketEvidenceRead,
+              transport: { correlationId: 'missing-permission' },
+            })
+            .pipe(Effect.flip);
+          expect(Predicate.isTagged(missingPermission, 'ReadPermissionDenied')).toBe(true);
+          const foreignTenant = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+          const wrongTenant = yield* runtime
+            .runRead({
+              input: {
+                ...request,
+                commercialScope: {
+                  ...request.commercialScope,
+                  marketRef: { ...scenario.marketRef, tenantId: foreignTenant },
+                  sellingLegalEntityRef: { ...scenario.sellerRef, tenantId: foreignTenant },
+                },
               },
-            },
-            principal: scenario.principal,
-            registration: pricingCurrentMarketEvidenceRead,
-            transport: { correlationId: 'foreign-seller' },
-          })
-          .pipe(Effect.flip);
-        expect(Predicate.isTagged(wrongSeller, 'ReadPermissionDenied')).toBe(true);
-      }).pipe(Effect.provideContext(scenario.context));
-      expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toEqual(outbox);
-      expect(yield* scenario.observe()).toEqual(before);
-    }),
-  ).pipe(Effect.provide(nativeServices)),
-);
+              principal: scenario.principal,
+              registration: pricingCurrentMarketEvidenceRead,
+              transport: { correlationId: 'foreign-tenant' },
+            })
+            .pipe(Effect.flip);
+          expect(Predicate.isTagged(wrongTenant, 'ReadPermissionDenied')).toBe(true);
+          const wrongSeller = yield* runtime
+            .runRead({
+              input: {
+                ...request,
+                commercialScope: {
+                  ...request.commercialScope,
+                  sellingLegalEntityRef: { ...scenario.sellerRef, resourceId: foreignTenant },
+                },
+              },
+              principal: scenario.principal,
+              registration: pricingCurrentMarketEvidenceRead,
+              transport: { correlationId: 'foreign-seller' },
+            })
+            .pipe(Effect.flip);
+          expect(Predicate.isTagged(wrongSeller, 'ReadPermissionDenied')).toBe(true);
+        }).pipe(Effect.provideContext(scenario.context));
+        expect((yield* scenario.fixture.evidence(scenario.coreEvidenceExecutor)).outbox).toEqual(outbox);
+        expect(yield* scenario.observe()).toEqual(before);
+      }),
+    );
 
-it.live('retains lifecycle conflict and nonoverlap semantics and reapplies the journal idempotently', () =>
-  Effect.scoped(
-    Effect.gen(function* retainedSafeguards() {
-      const scenario = yield* makeScenario(false);
-      // Create leaves the independent ACTIVE lifecycle open. A definition revision cannot extend it.
-      const r1 = yield* scenario.create();
-      const r2 = yield* scenario.revise(r1, scenario.before, scenario.revisedAt, 'finite-predecessor');
-      const r3 = yield* scenario.revise(r2, scenario.revisedAt, undefined, 'open-successor');
-      const beforeBoundary = yield* scenario.pricing(scenario.before);
-      const at = yield* scenario.pricing(scenario.revisedAt);
-      expect(beforeBoundary.outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
-      expect(at.outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
-      assert(
-        beforeBoundary.outcome === 'PRICING_MARKET_SOURCE_PRESENT' && at.outcome === 'PRICING_MARKET_SOURCE_PRESENT',
-      );
-      expect(beforeBoundary.market.definitionRevisionRef).toEqual(r2.definitionRevisionRef);
-      expect(at.market.definitionRevisionRef).toEqual(r3.definitionRevisionRef);
-      const retained = yield* scenario.history();
-      expect(retained.definitions.map((definition) => definition.revision)).toEqual([1, 2, 3]);
-      expect(retained.definitions[1]?.effectivePeriod.endsAt).toEqual(scenario.revisedAt);
-      expect(retained.definitions[2]?.previousDefinitionRevisionRef).toEqual(r2.definitionRevisionRef);
-      yield* scenario.suspend(r3);
-      // A single valid SUSPENDED lifecycle is ABSENT; CONFLICT requires competing Current lifecycle facts.
-      const suspended = yield* scenario.pricing(scenario.after);
-      expect(suspended.outcome).toBe('PRICING_MARKET_SOURCE_ABSENT');
-      assert(suspended.outcome === 'PRICING_MARKET_SOURCE_ABSENT');
-      expect(suspended.receipt.state).toBe('ABSENT');
-      expect(suspended.receipt.currentFacts).toEqual([]);
-      expect((yield* scenario.history()).definitions).toEqual(retained.definitions);
-      expect((yield* scenario.current(scenario.after)).markets[0]?.lifecycle).toBe('SUSPENDED');
-      const before = yield* scenario.journal();
-      yield* scenario.migrateOwner();
-      expect(yield* scenario.journal()).toEqual(before);
-    }),
-  ).pipe(Effect.provide(nativeServices)),
-);
+    suite.effect('retains lifecycle conflict and nonoverlap semantics and reapplies the journal idempotently', () =>
+      Effect.gen(function* retainedSafeguards() {
+        const scenario = yield* makeScenario(yield* OwnerScenarioDatabase);
+        // Create leaves the independent ACTIVE lifecycle open. A definition revision cannot extend it.
+        const r1 = yield* scenario.create();
+        const r2 = yield* scenario.revise(r1, scenario.before, scenario.revisedAt, 'finite-predecessor');
+        const r3 = yield* scenario.revise(r2, scenario.revisedAt, undefined, 'open-successor');
+        const beforeBoundary = yield* scenario.pricing(scenario.before);
+        const at = yield* scenario.pricing(scenario.revisedAt);
+        expect(beforeBoundary.outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
+        expect(at.outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
+        assert(
+          beforeBoundary.outcome === 'PRICING_MARKET_SOURCE_PRESENT' && at.outcome === 'PRICING_MARKET_SOURCE_PRESENT',
+        );
+        expect(beforeBoundary.market.definitionRevisionRef).toEqual(r2.definitionRevisionRef);
+        expect(at.market.definitionRevisionRef).toEqual(r3.definitionRevisionRef);
+        const retained = yield* scenario.history();
+        expect(retained.definitions.map((definition) => definition.revision)).toEqual([1, 2, 3]);
+        expect(retained.definitions[1]?.effectivePeriod.endsAt).toEqual(scenario.revisedAt);
+        expect(retained.definitions[2]?.previousDefinitionRevisionRef).toEqual(r2.definitionRevisionRef);
+        yield* scenario.suspend(r3);
+        // A single valid SUSPENDED lifecycle is ABSENT; CONFLICT requires competing Current lifecycle facts.
+        const suspended = yield* scenario.pricing(scenario.after);
+        expect(suspended.outcome).toBe('PRICING_MARKET_SOURCE_ABSENT');
+        assert(suspended.outcome === 'PRICING_MARKET_SOURCE_ABSENT');
+        expect(suspended.receipt.state).toBe('ABSENT');
+        expect(suspended.receipt.currentFacts).toEqual([]);
+        expect((yield* scenario.history()).definitions).toEqual(retained.definitions);
+        expect((yield* scenario.current(scenario.after)).markets[0]?.lifecycle).toBe('SUSPENDED');
+        const before = yield* scenario.journal();
+        yield* scenario.migrateOwner();
+        expect(yield* scenario.journal()).toEqual(before);
+      }),
+    );
 
-it.live('keeps damaged native lifecycle and completeness proofs distinct from retained definition overlap', () =>
-  Effect.scoped(
-    Effect.gen(function* damagedNativeAuthority() {
-      const conflicted = yield* makeScenario(false);
-      const original = yield* conflicted.create();
-      const revised = yield* conflicted.revise(original);
-      yield* conflicted.addCompetingLifecycle();
-      const conflict = yield* conflicted.pricing(conflicted.after);
-      expect(conflict.outcome).toBe('PRICING_MARKET_SOURCE_CONFLICT');
-      assert(conflict.outcome === 'PRICING_MARKET_SOURCE_CONFLICT');
-      expect(conflict.reason).toBe('Multiple Current Market lifecycle facts match the exact scope');
-      expect(conflict).not.toHaveProperty('receipt');
-      expect((yield* conflicted.history()).definitions.map((definition) => definition.definitionRevisionRef)).toEqual([
-        original.definitionRevisionRef,
-        revised.definitionRevisionRef,
-      ]);
-      const incomplete = yield* makeScenario(false);
-      yield* incomplete.create();
-      expect((yield* incomplete.pricing(incomplete.after)).outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
-      yield* incomplete.removeCompleteness();
-      const missing = yield* incomplete.pricing(incomplete.after);
-      expect(missing.outcome).toBe('PRICING_MARKET_SOURCE_MISSING');
-      assert(missing.outcome === 'PRICING_MARKET_SOURCE_MISSING');
-      expect(missing.reason).toBe('Market Catalog completeness generation is unavailable');
-      expect(missing).not.toHaveProperty('receipt');
-    }),
-  ).pipe(Effect.provide(nativeServices)),
+    suite.effect(
+      'keeps damaged native lifecycle and completeness proofs distinct from retained definition overlap',
+      () =>
+        Effect.gen(function* damagedNativeAuthority() {
+          const database = yield* OwnerScenarioDatabase;
+          const conflicted = yield* makeScenario(database);
+          const original = yield* conflicted.create();
+          const revised = yield* conflicted.revise(original);
+          yield* conflicted.addCompetingLifecycle();
+          const conflict = yield* conflicted.pricing(conflicted.after);
+          expect(conflict.outcome).toBe('PRICING_MARKET_SOURCE_CONFLICT');
+          assert(conflict.outcome === 'PRICING_MARKET_SOURCE_CONFLICT');
+          expect(conflict.reason).toBe('Multiple Current Market lifecycle facts match the exact scope');
+          expect(conflict).not.toHaveProperty('receipt');
+          expect(
+            (yield* conflicted.history()).definitions.map((definition) => definition.definitionRevisionRef),
+          ).toEqual([original.definitionRevisionRef, revised.definitionRevisionRef]);
+          const incomplete = yield* makeScenario(database);
+          yield* incomplete.create();
+          expect((yield* incomplete.pricing(incomplete.after)).outcome).toBe('PRICING_MARKET_SOURCE_PRESENT');
+          yield* incomplete.removeCompleteness();
+          const missing = yield* incomplete.pricing(incomplete.after);
+          expect(missing.outcome).toBe('PRICING_MARKET_SOURCE_MISSING');
+          assert(missing.outcome === 'PRICING_MARKET_SOURCE_MISSING');
+          expect(missing.reason).toBe('Market Catalog completeness generation is unavailable');
+          expect(missing).not.toHaveProperty('receipt');
+        }),
+    );
+  },
 );

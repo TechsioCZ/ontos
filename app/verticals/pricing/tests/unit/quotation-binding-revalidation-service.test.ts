@@ -295,6 +295,23 @@ describe('Pricing Quotation owner-confirmed evidence transition #785', () => {
           decodeBinding({ ...binding, subject: { ...binding.subject, guestEvidenceRef: 'guest-evidence:other' } }),
           'AUTHORITY_CONTEXT_CHANGED',
         ],
+        [
+          decodeBinding({
+            ...binding,
+            subject: {
+              kind: 'AUTHENTICATED',
+              purchaseContext: binding.subject.purchaseContext,
+              subjectEvidenceRef: 'subject-evidence:785',
+              subjectRef: {
+                moduleId: 'commerce-customer-context',
+                resourceId: 'profile:785',
+                resourceType: 'commerce.customer-context.retail-customer-profile',
+                tenantId: binding.tenantId,
+              },
+            },
+          }),
+          'AUTHORITY_CONTEXT_CHANGED',
+        ],
       ];
       let ownerCalls = 0;
       const mustNotCallOwner: PricingQuotationOwnerTransitionVerifierService['verifyTransition'] = () => {

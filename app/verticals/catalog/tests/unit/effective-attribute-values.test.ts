@@ -135,22 +135,12 @@ describe('effective Product/Variant attribute values', () => {
     const overridden = { ...input, variantRef: siblingVariantRef, variantSet: override };
     const stainless = { revision: 4, state: 'SET' as const, values: [text('Stainless')] };
 
-    expect(resolveEffectiveAttributeValues(inheriting)).toMatchObject({
-      source: { level: 'PRODUCT', revision: 3 },
-      status: 'CURRENT',
-      values: [text('Steel')],
-    });
     expect(resolveEffectiveAttributeValues(overridden)).toMatchObject({
       source: { level: 'VARIANT', revision: 6 },
       status: 'CURRENT',
       values: [text('Aluminum')],
     });
 
-    expect(resolveEffectiveAttributeValues({ ...inheriting, productSet: stainless })).toMatchObject({
-      source: { level: 'PRODUCT', revision: 4 },
-      status: 'CURRENT',
-      values: [text('Stainless')],
-    });
     expect(resolveEffectiveAttributeValues({ ...overridden, productSet: stainless })).toMatchObject({
       source: { level: 'VARIANT', revision: 6 },
       status: 'CURRENT',

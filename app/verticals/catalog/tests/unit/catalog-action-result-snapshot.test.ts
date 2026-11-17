@@ -3,10 +3,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { catalogResultSnapshots } from '../../src/database/schema.ts';
-import {
-  captureCatalogActionResult,
-  catalogActionResultSnapshotForScope,
-} from '../../src/persistence/catalog-action-result-snapshot.ts';
+import { catalogActionResultSnapshotForScope } from '../../src/persistence/catalog-action-result-snapshot.ts';
 import { CatalogPersistenceConflict, CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';
 
 /* oxlint-disable anti-slop/no-object-parameters, sonarjs/no-nested-functions -- Typed JSONB test codec and narrowly mocked Drizzle query builders require these shapes. owner: Catalog #478; remove with a shared transaction fixture. expires: 2027-03-31. */
@@ -75,25 +72,6 @@ const transaction = (
 };
 
 describe('Catalog Action result snapshot', () => {
-  it.effect('captures a different Action result through the same transaction-bound port', () =>
-    Effect.gen(function* capturesGenericResult() {
-      const tx = transaction();
-      const otherIdentity = { ...identity, actionKey: 'commerce.catalog.assign-sku', schemaVersion: 2 };
-      const otherCodec = {
-        decode: Schema.decodeUnknownEffect(Schema.Struct({ sku: Schema.String })),
-        encode: Schema.encodeEffect(Schema.Struct({ sku: Schema.String })),
-      };
-      // @ts-expect-error Focused mock implements only the snapshot query chains.
-      yield* captureCatalogActionResult(tx, scope, otherIdentity, otherCodec, { sku: 'SKU-1' });
-      expect(tx.rows).toEqual([
-        expect.objectContaining({
-          actionKey: otherIdentity.actionKey,
-          encodedResult: { sku: 'SKU-1' },
-          schemaVersion: 2,
-        }),
-      ]);
-    }),
-  );
   it.effect('writes the typed result in the supplied scoped transaction', () =>
     Effect.gen(function* writesSnapshot() {
       const tx = transaction();

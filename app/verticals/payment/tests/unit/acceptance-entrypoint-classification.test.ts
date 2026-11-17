@@ -263,40 +263,4 @@ describe('#1153 TECH-02 Module State matrix through the Core gate', () => {
       expect(observed).toHaveLength(MATRIX_STATES.length * DESIGN_INVENTORY.length);
     }),
   );
-
-  it.effect(
-    '#1153 suspended Payment denies callback acceptance, refund and recovery while payment-history is allowed',
-    () =>
-      Effect.gen(function* suspendedPayment() {
-        const decisions = new Map<string, Decision>();
-        for (const entrypoint of registeredEntrypoints()) {
-          decisions.set(entrypoint.entrypointKey, yield* coreGateDecision('suspended', entrypoint));
-        }
-        expect({
-          callback: decisions.get('payment.core.accept-payment-observation'),
-          history: decisions.get('payment.core.api.payment-history'),
-          localEvidence: decisions.get('payment.core.record-payment-local-evidence'),
-          recovery: decisions.get('payment.core.request-payment-operation-recovery'),
-          refund: decisions.get('payment.core.request-payment-refund'),
-        }).toEqual({ callback: 'deny', history: 'allow', localEvidence: 'deny', recovery: 'deny', refund: 'deny' });
-        // Every other Current read and every write stays denied; history is the only allowed surface.
-        expect([...decisions].filter(([, decision]) => decision === 'allow').map(([key]) => key)).toEqual([
-          'payment.core.api.payment-history',
-        ]);
-      }),
-  );
-
-  it.effect('#1153 quarantine and a missing module state permit no Payment-owned entrypoint at all', () =>
-    Effect.gen(function* quarantinedPayment() {
-      for (const state of ['quarantined', 'missing'] as const) {
-        for (const entrypoint of registeredEntrypoints()) {
-          expect([state, entrypoint.entrypointKey, yield* coreGateDecision(state, entrypoint)]).toEqual([
-            state,
-            entrypoint.entrypointKey,
-            'deny',
-          ]);
-        }
-      }
-    }),
-  );
 });

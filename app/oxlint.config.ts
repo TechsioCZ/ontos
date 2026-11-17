@@ -260,7 +260,8 @@ export default defineConfig({
     denyWarnings: true,
     reportUnusedDisableDirectives: 'error',
     typeAware: true,
-    typeCheck: true,
+    // Compiler diagnostics run once in the required workspace typecheck; keep every typed lint rule.
+    typeCheck: false,
   },
   overrides: [
     {

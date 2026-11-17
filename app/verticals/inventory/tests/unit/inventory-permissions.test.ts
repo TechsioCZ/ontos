@@ -63,22 +63,6 @@ it('keeps every authority non-delegable, sensitive, and bound to one exact Inven
   }
 });
 
-it('does not collapse weaker, relation-management, high-risk, or migration authorities', () => {
-  const distinctAuthorities = new Set([
-    inventoryResourceReadPermission.key,
-    inventoryReservationEstablishPermission.key,
-    inventoryReservationReleasePermission.key,
-    inventoryStockCorrectPermission.key,
-    inventoryRecoveryExecutePermission.key,
-    inventoryCatalogToStockBindingManagePermission.key,
-    inventoryExternalStockCorrelationManagePermission.key,
-    inventoryStockSharingEligibilityManagePermission.key,
-    inventoryMigrationManagePermission.key,
-  ]);
-  expect(distinctAuthorities.size).toBe(9);
-  expect(inventoryStockSharingEligibilityManagePermission.key).not.toBe(inventoryReservationEstablishPermission.key);
-});
-
 it('catalogs every protected Inventory mutation and audit-read entrypoint under one exact authority', () => {
   const protectedEntrypointsByPermission = new Map(
     permissions

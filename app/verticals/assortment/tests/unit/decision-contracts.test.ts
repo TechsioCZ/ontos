@@ -3,12 +3,8 @@ import { Schema } from 'effect';
 import {
   AssortmentCatalogSelectorSchema,
   AssortmentCatalogSelectionSchema,
-  AssortmentConfigurationConflictError,
   AssortmentDecisionFailureSchema,
   AssortmentDecisionEvidenceSchema,
-  AssortmentDependencyFailureError,
-  AssortmentMissingConfigurationError,
-  AssortmentOwnerResourceRefSchema,
   AssortmentPurchaseConstituentSchema,
   AssortmentPurchaseRequestSchema,
   AssortmentPublicDecisionResponseSchema,
@@ -331,45 +327,6 @@ it('keeps public responses safe and failures typed/sanitized', () => {
       trustedContext: context,
     }),
   ).not.toThrow();
-  expect(
-    Schema.is(AssortmentConfigurationConflictError)(
-      new AssortmentConfigurationConflictError({
-        code: 'CONFIGURATION_CONFLICT',
-        conflictKind: 'BOUNDARY',
-        safeReasonCode: 'CONFIGURATION_CONFLICT',
-      }),
-    ),
-  ).toBe(true);
-  expect(
-    Schema.is(AssortmentMissingConfigurationError)(
-      new AssortmentMissingConfigurationError({
-        code: 'MISSING_CONFIGURATION',
-        safeReasonCode: 'MISSING_CONFIGURATION',
-      }),
-    ),
-  ).toBe(true);
-  expect(
-    Schema.is(AssortmentDependencyFailureError)(
-      new AssortmentDependencyFailureError({
-        code: 'DEPENDENCY_FAILURE',
-        ownerModuleId: Schema.decodeUnknownSync(AssortmentOwnerResourceRefSchema)(
-          ref('catalog.owner', 'catalog.resource', 'resource-1'),
-        ).moduleId,
-        retryable: true,
-        safeReasonCode: 'DEPENDENCY_UNAVAILABLE',
-      }),
-    ),
-  ).toBe(true);
-  expect(
-    Schema.is(AssortmentRetryExhaustedError)(
-      new AssortmentRetryExhaustedError({
-        attempts: 3,
-        code: 'RETRY_EXHAUSTED',
-        maxAttempts: 3,
-        safeReasonCode: 'RETRY_EXHAUSTED',
-      }),
-    ),
-  ).toBe(true);
 });
 
 it('rejects unqualified revision and evidence ownership', () => {

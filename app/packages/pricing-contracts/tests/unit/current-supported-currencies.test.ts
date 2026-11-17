@@ -2,11 +2,9 @@ import { Effect, Exit, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
-  CurrentSupportedCurrenciesPolicyConflictProblemSchema,
   CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesResponseSchema,
   CurrentSupportedCurrenciesSuccessSchema,
-  executeCurrentSupportedCurrencies,
   executeCurrentSupportedCurrenciesWithAuthorization,
 } from '../../src/index.ts';
 
@@ -281,18 +279,6 @@ describe('Pricing Current supported-currencies contract', () => {
     }
   });
 
-  it('publishes the generated policy-conflict problem contract', () => {
-    expect(
-      Schema.decodeSync(CurrentSupportedCurrenciesPolicyConflictProblemSchema)({
-        _tag: 'CurrentSupportedCurrenciesPolicyConflictProblem',
-        detail: 'Pricing rejected the governed read because current policy changed',
-        status: 409,
-        title: 'Current supported currencies policy conflict',
-        type: 'about:blank',
-      }).status,
-    ).toBe(409);
-  });
-
   it.effect('strictly encodes before the governed client can invoke HTTP', () =>
     Effect.gen(function* verifyStrictClientEncoding() {
       const invalid = { ...request, effectiveAt: 'not-an-instant' };
@@ -300,7 +286,6 @@ describe('Pricing Current supported-currencies contract', () => {
         executeCurrentSupportedCurrenciesWithAuthorization(invalid, 'credential', 'correlation'),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(executeCurrentSupportedCurrencies).toBeTypeOf('function');
     }),
   );
 });

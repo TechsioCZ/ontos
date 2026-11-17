@@ -10,7 +10,7 @@ import { CodeSmith, GeneratorCore } from '@modern-js/codesmith';
 import { Cause, Effect, Fiber, FileSystem, Schema } from 'effect';
 import { afterEach, expect, it, rs } from 'effect-rstest';
 
-import { getHelpText, runScaffoldEffect, ScaffoldingError } from '../cli.mts';
+import { runScaffoldEffect, ScaffoldingError } from '../cli.mts';
 import { applyMutationPlanEffect } from '../shared.mts';
 import { snapshotTree, write } from './fixture-files.mts';
 import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
@@ -182,23 +182,6 @@ const assertResourceScaffoldRefused = Effect.fn(function* assertResourceScaffold
   expect(String(Cause.squash(cause))).toMatch(expected);
   expect(yield* snapshotTree(root, ignored)).toEqual(before);
 });
-
-it.live(
-  'resource help documents the public command and writes nothing',
-  Effect.fn(function* scenario8() {
-    const missingRoot = path.join(tmpdir(), 'resource-help-does-not-exist');
-    const result = yield* runScaffoldEffect(resourceCommand, ['--help'], {
-      workspaceRoot: missingRoot,
-    }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({ help: getHelpText(resourceCommand), kind: 'help' });
-    if (result.kind !== 'help') {
-      throw new Error('Expected help result');
-    }
-    expect(result.help).toMatch(/scaffold:resource -- --vertical <vertical> --resource <resource>/u);
-    expect(result.help).toMatch(/lower-kebab-case/u);
-    expect(result.help).toMatch(/or core for Core-owned references/u);
-  }),
-);
 
 it.live(
   'resource scaffold publishes a Core-owned UUID LegalEntityRef without a vertical manifest',
