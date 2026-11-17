@@ -1462,18 +1462,7 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
   if (shell === undefined) {
     return yield* safeFailure('shell-composition-marker');
   }
-  const shellGenerator = yield* openNativeChild({
-    args: [
-      'scripts/generate-ontos-shell-runtime-contract.mts',
-      '--shell-directory',
-      `${applicationRoot}${shell.owner}`,
-      '--target',
-      'dist',
-    ],
-    environment: { APP_ENV_PATH: '/dev/null' },
-    stage: 'shell-runtime-contract',
-  });
-  yield* shellGenerator.exit;
+  // The same-run Shell artifact already carries this canonical document.
   const shellRuntime = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
     yield* io(
       'actual-shell-contract',
