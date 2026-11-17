@@ -596,6 +596,9 @@ importers:
       '@app/catalog':
         specifier: workspace:*
         version: link:../../verticals/catalog
+      '@app/catalog-selection-contracts':
+        specifier: workspace:*
+        version: link:../../packages/catalog-selection-contracts
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../../verticals/commerce-customer-context
@@ -608,6 +611,9 @@ importers:
       '@app/email-delivery':
         specifier: workspace:*
         version: link:../../packages/email-delivery
+      '@app/inventory':
+        specifier: workspace:*
+        version: link:../../verticals/inventory
       '@app/party-registry':
         specifier: workspace:*
         version: link:../../verticals/party-registry
@@ -620,6 +626,9 @@ importers:
       '@app/price-group-catalog':
         specifier: workspace:*
         version: link:../../verticals/price-group-catalog
+      '@app/price-group-catalog-contracts':
+        specifier: workspace:*
+        version: link:../../packages/price-group-catalog-contracts
       '@app/pricing':
         specifier: workspace:*
         version: link:../../verticals/pricing

@@ -17,7 +17,9 @@ export default defineConfig({
       root: new URL('.', import.meta.url).pathname,
       setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',
-      testTimeout: 30_000,
+      // The real-owner Market suites take about 20 s on an idle runner (23 s on main), so 30 s left no margin
+      // for a loaded one.
+      testTimeout: 60_000,
       tools: { swc },
     },
     {

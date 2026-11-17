@@ -65,7 +65,7 @@ import {
 } from '@app/party-registry/apis/party-source-effect-receipt';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { Effect, Match, Option, Result, Schema } from 'effect';
+import { Effect, Match, Option, Result, Schema, Struct } from 'effect';
 import { describe, expect, it, rs } from 'effect-rstest';
 
 import {
@@ -1213,6 +1213,137 @@ describe('finite Saved Address owner dispatch', () => {
   );
 });
 
+const commerceOnlyPostalAddress = {
+  addressLine1: 'Fixture Street 1',
+  city: 'Prague',
+  countryCode: 'CZ',
+  postalCode: '11000',
+};
+const profileAddressEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...effect,
+  dependsOn: [{ effectKey: 'ensure-profile', itemKey: 'customer-1' }],
+  effectKey: 'address-add',
+  intent: {
+    _tag: 'AddSavedRetailAddressFromProfileEffect',
+    fromProfileEffect: { effectKey: 'ensure-profile', itemKey: 'customer-1' },
+    payload: {
+      postalAddress: commerceOnlyPostalAddress,
+      purposes: ['DELIVERY'],
+      reason: 'Explicit qualified delivery address',
+      source: addressSource,
+    },
+  },
+  ref: { ...effect.ref, operation: savedAddressEffect.ref.operation },
+});
+const profileParent = (
+  status: 'accepted_change' | 'accepted_no_change' | 'conflict',
+): SymmyEffectAdapterInput['dependencies'][number] => ({
+  effect: retailDependencyEffect,
+  itemKey: 'customer-1',
+  outcome: Option.some({ effectId: effect.ref.effectId, owner: 'commerce.customer-context', status }),
+  ownerReceipt: Option.some(
+    Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
+      _tag: 'RetailProfileEnsured',
+      partyRef: canonicalPartyRef,
+      profileRef: profile,
+    }),
+  ),
+  state: 'settled',
+  version: 1,
+});
+describe('Commerce-only Saved Address resolved from its profile effect', () => {
+  it.effect('persists the AddSavedAddress it resolved from the profile receipt before the native write', () =>
+    Effect.gen(function* resolvedAddress() {
+      reset();
+      calls.address.mockReturnValue(
+        Effect.succeed(
+          Schema.decodeUnknownSync(AddSavedAddressResultSchema)({
+            address: {
+              lifecycle: 'ACTIVE',
+              origin: { kind: 'COMMERCE_ONLY', postalAddress: commerceOnlyPostalAddress },
+              profile: { kind: 'RETAIL', profileRef: profile },
+              purposes: ['DELIVERY'],
+              revision: 1,
+              savedAddressRef,
+            },
+            outcome: 'ADDED',
+          }),
+        ),
+      );
+      const adapter = yield* savedAddressAdapter;
+      const recorded: unknown[] = [];
+      // An existing profile ends accepted without change: the address still goes to it, never to a second profile.
+      const result = yield* adapter.execute({
+        ...input(),
+        dependencies: [profileParent('accepted_no_change')],
+        effect: profileAddressEffect,
+        legalEntityId: sellingLegalEntityId,
+        recordResolvedEffect: (value) =>
+          Effect.sync(() => {
+            recorded.push(value);
+          }),
+      });
+      expect(result.status).toBe('accepted_change');
+      expect(recorded).toMatchObject([
+        {
+          intent: {
+            _tag: 'AddSavedAddress',
+            payload: {
+              origin: { kind: 'COMMERCE_ONLY', postalAddress: commerceOnlyPostalAddress },
+              profile: { kind: 'RETAIL', profileRef: { resourceId: profile.resourceId } },
+              source: { effectId, identity: { occurrenceId: 'occurrence-1', recordId: 'customer-1' } },
+            },
+          },
+        },
+      ]);
+      expect(calls.address.mock.calls[0]?.[0]).toMatchObject({
+        origin: { kind: 'COMMERCE_ONLY' },
+        profile: { kind: 'RETAIL', profileRef: { resourceId: profile.resourceId } },
+      });
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+
+  it.effect('writes nothing when the profile effect was not accepted', () =>
+    Effect.gen(function* unacceptedProfile() {
+      reset();
+      const adapter = yield* savedAddressAdapter;
+      const result = yield* adapter
+        .execute({
+          ...input(),
+          dependencies: [profileParent('conflict')],
+          effect: profileAddressEffect,
+          legalEntityId: sellingLegalEntityId,
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(calls.address).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+
+  it.effect('finds nothing committed for an unresolved address and never recovers by itself', () =>
+    Effect.gen(function* noRecovery() {
+      reset();
+      const adapter = yield* savedAddressAdapter;
+      const result = yield* adapter.recover({
+        ...input(),
+        dependencies: [profileParent('accepted_change')],
+        effect: profileAddressEffect,
+        legalEntityId: sellingLegalEntityId,
+      });
+      expect(result).toEqual({ status: 'not_committed' });
+      const revoked = yield* adapter.recover({
+        ...input(),
+        canExecuteNewEffects: false,
+        dependencies: [profileParent('accepted_change')],
+        effect: profileAddressEffect,
+        legalEntityId: sellingLegalEntityId,
+      });
+      expect(revoked).toEqual({ status: 'unavailable' });
+      expect(calls.address).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+});
+
 it.effect('keeps a successful Contact write indeterminate when its following receipt Read is forbidden', () =>
   Effect.gen(function* acknowledgedContactReadDenied() {
     reset();
@@ -2202,6 +2333,142 @@ describe('explicit organization contextual ICO native path', () => {
         expect(calls.organizationIco).not.toHaveBeenCalled();
         expect(calls.privacy).not.toHaveBeenCalled();
       }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+});
+
+const organizationCounterpartyProfileOperation = {
+  entrypointKey: 'commerce.customer-context.create-counterparty-purchasing-profile',
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+} as const;
+const profileIcoEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...organizationIcoEffect,
+  dependsOn: ['counterparty-profile'],
+  effectKey: 'ico-set',
+  intent: {
+    _tag: 'OrganizationCustomerProfileIcoFromProfileEffect',
+    fromProfileEffect: { effectKey: 'counterparty-profile', itemKey: 'customer-1' },
+    payload: {
+      countryCode: 'CZ',
+      effectiveAt: '2026-11-07T00:00:00.000Z',
+      expectedRevision: 0,
+      identifier: { identifierType: 'ICO', value: '27074358' },
+      operation: 'SET',
+      originalInput: '27074358',
+    },
+    sourceReference: {
+      occurrenceId: 'occurrence-1',
+      recordId: 'customer-1',
+      source: { issuer: 'internal-symmy', namespace: 'customers', recordType: 'CUSTOMER', routeRef: routeId },
+    },
+  },
+  ref: Struct.omit(organizationIcoEffect.ref, ['originalTarget']),
+});
+const counterpartyProfileParent = (
+  status: 'accepted_change' | 'accepted_no_change' | 'conflict',
+): SymmyEffectAdapterInput['dependencies'][number] => ({
+  effect: Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...retailDependencyEffect,
+    effectKey: 'counterparty-profile',
+    ref: { ...retailDependencyEffect.ref, operation: organizationCounterpartyProfileOperation },
+  }),
+  itemKey: 'customer-1',
+  outcome: Option.some({ effectId: effect.ref.effectId, owner: 'commerce.customer-context', status }),
+  ownerReceipt: Option.some(
+    Schema.decodeUnknownSync(SymmyPartyCommerceOwnerReceiptSchema)({
+      _tag: 'CounterpartyProfileCreated',
+      counterpartyRef: {
+        moduleId: 'party.registry',
+        resourceId: '10000000-0000-4000-8000-000000000072',
+        resourceType: 'party.registry.counterparty',
+        tenantId,
+      },
+      profileRef: organizationIcoProfile,
+    }),
+  ),
+  state: 'settled',
+  version: 1,
+});
+describe('company ICO resolved from the profile effect of the same job', () => {
+  it.effect('records the explicit ICO change on the profile the parent returned, then writes it', () =>
+    Effect.gen(function* resolvedProfileIco() {
+      reset();
+      calls.profileReceipt.mockReturnValue(Effect.succeed(organizationIcoCurrentProfile));
+      calls.organizationIco.mockReturnValue(Effect.succeed(organizationIcoNative));
+      const adapter = yield* organizationIcoAdapter;
+      const recorded: unknown[] = [];
+      // An existing profile ends accepted without change: the ICO still goes to it, never to a second profile.
+      const result = yield* adapter.execute({
+        ...input(),
+        dependencies: [counterpartyProfileParent('accepted_no_change')],
+        effect: profileIcoEffect,
+        legalEntityId: sellingLegalEntityId,
+        recordResolvedEffect: (value) =>
+          Effect.sync(() => {
+            recorded.push(value);
+          }),
+      });
+      expect(result.status).toBe('accepted_change');
+      expect(recorded).toMatchObject([
+        {
+          intent: {
+            _tag: 'OrganizationCustomerProfileIco',
+            payload: { effectId, operation: 'SET', profileRef: { resourceId: organizationIcoProfile.resourceId } },
+            sourceReference: { occurrenceId: 'occurrence-1', recordId: 'customer-1' },
+          },
+          ref: { originalTarget: { resourceId: organizationIcoProfile.resourceId, tenantId } },
+        },
+      ]);
+      expect(JSON.stringify(recorded)).not.toContain('fromProfileEffect');
+      expect(calls.organizationIco).toHaveBeenCalledTimes(1);
+      expect(calls.organizationIco.mock.calls[0]?.[0]).toMatchObject({
+        effectId,
+        expectedRevision: 0,
+        identifier: { identifierType: 'ICO', value: '27074358' },
+        profileRef: { resourceId: organizationIcoProfile.resourceId },
+      });
+      expect(calls.profileReceipt).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+
+  it.effect('writes nothing when the profile effect was not accepted', () =>
+    Effect.gen(function* unacceptedProfile() {
+      reset();
+      const adapter = yield* organizationIcoAdapter;
+      const result = yield* adapter
+        .execute({
+          ...input(),
+          dependencies: [counterpartyProfileParent('conflict')],
+          effect: profileIcoEffect,
+          legalEntityId: sellingLegalEntityId,
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(calls.organizationIco).not.toHaveBeenCalled();
+      expect(calls.profileReceipt).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+
+  it.effect('names no profile of a Retail effect and never writes through the unresolved intent', () =>
+    Effect.gen(function* wrongParent() {
+      reset();
+      const adapter = yield* organizationIcoAdapter;
+      const result = yield* adapter
+        .execute({
+          ...input(),
+          dependencies: [{ ...profileParent('accepted_change'), itemKey: 'customer-1' }],
+          effect: profileIcoEffect,
+          legalEntityId: sellingLegalEntityId,
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(calls.organizationIco).not.toHaveBeenCalled();
+      const unresolved = yield* adapter
+        .recover({ ...input(), dependencies: [counterpartyProfileParent('accepted_change')], effect: profileIcoEffect })
+        .pipe(Effect.result);
+      expect(Result.isFailure(unresolved) || unresolved.success.status !== 'settled').toBe(true);
+      expect(calls.organizationIco).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 });
 

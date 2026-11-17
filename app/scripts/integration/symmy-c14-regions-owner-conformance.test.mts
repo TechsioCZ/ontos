@@ -3,6 +3,7 @@ import { MarketRefSchema } from '@app/commerce-market-catalog/resources/market';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { grantTestTenantRoleAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
+import { SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
 import { executeSetSupportedCurrenciesWithAuthorization } from '@app/pricing/api/client';
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
 import { CurrentSupportedCurrenciesRequestSchema } from '@app/pricing-contracts/current-supported-currencies';
@@ -41,23 +42,25 @@ const fixtureStageMessage = 'INTERNAL_C14 Regions fixture stage';
 const sourceIssuer = 'INTERNAL_C14_REGIONS_OPERATOR';
 const sourceNamespace = 'explicit-region-fixtures';
 const sourceRegionIds = ['CZ fixture / alpha', 'CZ fixture / beta'];
-const unsupportedFields = ['name', 'tax_rate', 'tax_included', 'payment_providers'];
 const regionSchema = Schema.Struct({
-  country_codes: Schema.Tuple([Schema.Literal('CZ')]),
-  currency_code: Schema.Literal('CZK'),
+  countryCodes: Schema.Tuple([Schema.Literal('CZ')]),
+  currencyCode: Schema.Literal('CZK'),
   id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
-  market_code: Schema.Literal('INTERNAL_C14_CZ_REGION_MARKET'),
+  marketCode: Schema.Literal('INTERNAL_C14_CZ_REGION_MARKET'),
   marketRef: MarketRefSchema,
-  source_record_id: Schema.String,
+  sourceRecordId: SymmySourceRecordKeySchema.fields.sourceRecordId,
 });
 const projectionSchema = Schema.Struct({
-  contractVersion: Schema.Literal('INTERNAL_C14'),
   count: Schema.Int,
   limit: Schema.Int,
   offset: Schema.Int,
-  projection: Schema.Literal('regions'),
   regions: Schema.Array(regionSchema),
-  unsupported_fields: Schema.Array(Schema.String),
+});
+const selectedProjectionSchema = Schema.Struct({
+  count: Schema.Int,
+  limit: Schema.Int,
+  offset: Schema.Int,
+  regions: Schema.Array(Schema.Struct({ id: regionSchema.fields.id, marketCode: regionSchema.fields.marketCode })),
 });
 const problemSchema = Schema.Struct({ status: Schema.Int, title: Schema.String, type: Schema.String });
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
@@ -282,7 +285,7 @@ it.live(
         });
         const client = yield* HttpClient.HttpClient;
         const get = (query: string) =>
-          client.get(`${shell.baseUrl}/api/symmy/v1/admin/regions?contractVersion=INTERNAL_C14&${query}`, {
+          client.get(`${shell.baseUrl}/api/symmy/v1/admin/regions?${query}`, {
             headers: { 'x-api-key': Redacted.value(key.secret) },
           });
         const noCurrency = yield* get('limit=1');
@@ -311,29 +314,60 @@ it.live(
         const first = yield* firstResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
         );
-        expect(first).toMatchObject({ count: 2, limit: 1, offset: 0, unsupported_fields: unsupportedFields });
+        expect(first).toMatchObject({ count: 2, limit: 1, offset: 0 });
+        expect(first).not.toHaveProperty('contractVersion');
+        expect(first).not.toHaveProperty('unsupported_fields');
         expect(first.regions).toMatchObject([
           {
-            country_codes: ['CZ'],
-            currency_code: 'CZK',
-            market_code: 'INTERNAL_C14_CZ_REGION_MARKET',
+            countryCodes: ['CZ'],
+            currencyCode: 'CZK',
+            marketCode: 'INTERNAL_C14_CZ_REGION_MARKET',
             marketRef,
-            source_record_id: sourceRegionIds[0],
+            sourceRecordId: sourceRegionIds[0],
           },
         ]);
         const second = yield* (yield* get('limit=1&offset=1')).json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
         );
         expect(second.count).toBe(2);
-        expect(second.regions[0]?.source_record_id).toBe(sourceRegionIds[1]);
+        expect(second.regions[0]?.sourceRecordId).toBe(sourceRegionIds[1]);
         expect(second.regions[0]?.id).not.toBe(first.regions[0]?.id);
         const end = yield* (yield* get('limit=1&offset=2')).json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
         );
         expect(end.count).toBe(2);
         expect(end.regions).toEqual([]);
-        const invalid = yield* get('limit=101');
-        expect(invalid.status).toBe(400);
+        const bySourceKey = yield* (yield* get(`limit=50&q=${encodeURIComponent('FIXTURE / BETA')}`)).json.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
+        );
+        expect(bySourceKey.count).toBe(1);
+        expect(bySourceKey.regions.map(({ sourceRecordId }) => sourceRecordId)).toEqual([sourceRegionIds[1]]);
+        const byMarketCode = yield* (yield* get('q=region_market')).json.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
+        );
+        expect(byMarketCode.count).toBe(2);
+        const noMatch = yield* (yield* get('q=no-such-region')).json.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
+        );
+        expect(noMatch).toMatchObject({ count: 0, regions: [] });
+        const selected = yield* (yield* get('fields=marketCode')).json.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(selectedProjectionSchema, { onExcessProperty: 'error' })),
+        );
+        expect(selected.count).toBe(2);
+        expect(selected.regions.map(({ marketCode }) => marketCode)).toEqual([
+          'INTERNAL_C14_CZ_REGION_MARKET',
+          'INTERNAL_C14_CZ_REGION_MARKET',
+        ]);
+        for (const rejected of [
+          'limit=101',
+          'contractVersion=INTERNAL_C14',
+          'code=a',
+          'order=id',
+          'q=',
+          'fields=nope',
+        ]) {
+          expect((yield* get(rejected)).status, rejected).toBe(400);
+        }
         yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=now() where tenant_id=${tenantId} and principal_id=${integration.principalId} and workload_key=${currencyRead}`;
         const denied = yield* get('limit=1');
         expect(denied.status).toBe(403);

@@ -5,7 +5,7 @@ import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Exit, Option, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
@@ -309,20 +309,45 @@ const negativePriceAssessment = Schema.encodeSync(DefinePriceResultSchema)(
     sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
   }),
 );
-const selectedPriceGroup = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
-  items: [{ effects: [priceDefinitionEffect(priceGroupA)], itemId: effect.itemId, itemKey: 'price-item' }],
-  selector: {
-    kind: 'PRICE_GROUP',
-    source: {
-      entityKind: 'PRICE_GROUP',
-      issuerId: 'internal-ebs',
-      route: { integrationRouteId: 'route-1', tenantId },
-      sourceNamespace: 'price-lists',
-      sourceRecordId: 'list-A',
+const priceReviseEffect = (group?: typeof priceGroupA) => {
+  const intent = {
+    _tag: 'PriceRevise',
+    payload: {
+      expectedCurrent: {
+        effectivePeriod: { effectiveFrom: definePriceIntent.payload.effectiveFrom, effectiveTo: null },
+        priceRef,
+        revision: priceRevision.revision,
+        revisionId: priceRevision.revisionId,
+        scheduleRevision: 1,
+      },
+      intent: 'VALUE_ONLY_CURRENT',
+      monetaryAmount: { amount: '30', currencyCode: 'CZK' },
+      priceRef,
+      reason: 'Internal revise proof',
+      sourceAssertion: {
+        ...definePriceIntent.payload.sourceAssertion,
+        lineage: {
+          kind: 'SUPERSESSION',
+          reason: 'Internal revise proof',
+          supersededSourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
+        },
+        originalAssertion: {
+          ...definePriceIntent.payload.sourceAssertion.originalAssertion,
+          monetaryAmount: { amount: '30', currencyCode: 'CZK' },
+        },
+        sourceAssertionId: '10000000-0000-4000-8000-000000000026',
+      },
     },
-    target: priceGroupA,
-  },
-}).selector;
+  };
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...priceDefinitionEffect(priceGroupA),
+    intent: group === undefined ? intent : { ...intent, priceGroupRef: group },
+    ref: {
+      ...priceDefinitionEffect(priceGroupA).ref,
+      operation: { entrypointKey: 'commerce.pricing.revise-price', moduleId: 'commerce.pricing', schemaVersion: '2' },
+    },
+  });
+};
 const priceGroupCreateIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema)({
   _tag: 'PriceGroupCreate',
   payload: {
@@ -341,6 +366,48 @@ const priceGroupCreateIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInven
       namespace: 'price-lists',
       recordKey: 'list-A',
       routeId: 'route-1',
+    },
+  },
+});
+const priceGroupAtHeadEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...effect,
+  effectKey: 'group-create',
+  intent: {
+    _tag: 'PriceGroupCreateAtCatalogHead',
+    payload: {
+      businessCode: 'INTERNAL_GROUP',
+      classificationPurpose: 'Internal price classification',
+      compatibilityContracts: [{ contractId: 'internal-contract', version: 1 }],
+      description: 'Internal fixture definition',
+      displayName: 'Internal Group',
+      effectiveFrom: '2026-11-07T10:00:00.000Z',
+      effectiveTo: null,
+      reason: 'Explicit internal source definition',
+      sourceCorrelation: {
+        issuer: 'internal-ebs',
+        mappingVersion: 'internal-1',
+        namespace: 'price-lists',
+        recordKey: 'list-A',
+        routeId: 'route-1',
+        sourceOccurrenceId: 'occurrence-1',
+      },
+    },
+  },
+  ref: {
+    ...effect.ref,
+    occurrence: {
+      occurrenceId: 'occurrence-1',
+      record: {
+        ...effect.ref.occurrence.record,
+        entityKind: 'PRICE_GROUP',
+        sourceNamespace: 'price-lists',
+        sourceRecordId: 'list-A',
+      },
+    },
+    operation: {
+      entrypointKey: 'pricing.price-group-catalog.create-price-group',
+      moduleId: 'pricing.price-group-catalog',
+      schemaVersion: '1',
     },
   },
 });
@@ -493,6 +560,53 @@ const configuration = ConfigProvider.fromEnvRecord({
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 
+interface ReviseProblem {
+  readonly _tag: string;
+  readonly code: string;
+  readonly status: number;
+}
+/** The Pricing owner reads and refusals the batch route adds: the current definition of a price and a REVISE refusal. */
+const pricingOwnerMock = (
+  request: Request,
+  options: { readonly definitionGroup: typeof priceGroupA; readonly reviseProblem: ReviseProblem | undefined },
+): { readonly event: string; readonly response: Response } | undefined => {
+  const { definitionGroup, reviseProblem } = options;
+  if (request.url.includes('/reads/price-group-catalog-head')) {
+    return { event: 'owner-catalog-head-read', response: Response.json({ catalogRevision: 6 }) };
+  }
+  if (reviseProblem !== undefined && request.url.includes('/actions/revise-price')) {
+    return {
+      event: 'owner-write',
+      response: Response.json(
+        { ...reviseProblem, detail: 'Internal owner refusal', title: 'Refused', type: 'https://ontos.dev/problems/x' },
+        { headers: { 'content-type': 'application/problem+json' }, status: reviseProblem.status },
+      ),
+    };
+  }
+  return request.url.includes('/reads/price-definition')
+    ? {
+        event: 'owner-price-definition-read',
+        response: Response.json({
+          currentEvidence: {
+            observedAt: '2026-11-07T10:00:02.000Z',
+            priceRef,
+            revision: priceRevision.revision,
+            revisionId: priceRevision.revisionId,
+          },
+          definition: {
+            identityKey: {
+              ...definePriceIntent.payload.identityKey,
+              priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: definitionGroup },
+            },
+            priceRef,
+            revision: priceRevision,
+          },
+          outcome: 'PRICE_DEFINITION_CURRENT',
+        }),
+      }
+    : undefined;
+};
+
 const harness = (
   replay: boolean,
   selectedEffect = effect,
@@ -505,6 +619,8 @@ const harness = (
   },
   groupReceipt?: typeof PriceGroupResultLookupResponseSchema.Encoded,
   variantBindingReceipt?: { readonly changed?: boolean },
+  definitionGroup = priceGroupA,
+  reviseProblem?: ReviseProblem,
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -551,6 +667,11 @@ const harness = (
           offset: 0,
         }),
       );
+    }
+    const pricingMock = pricingOwnerMock(request, { definitionGroup, reviseProblem });
+    if (pricingMock !== undefined) {
+      events.push(pricingMock.event);
+      return Promise.resolve(pricingMock.response);
     }
     if (groupReceipt !== undefined && request.url.includes('/reads/price-group-result-lookup')) {
       events.push('owner-group-recovery');
@@ -1365,57 +1486,119 @@ describe('Symmy native public owner adapter transport', () => {
       );
     },
   );
-  it.effect(
-    'rejects a body Price Group that differs from the trusted code-selected native target before any owner request',
-    () => {
-      const h = harness(false, priceDefinitionEffect(priceGroupB));
-      return h.provide(
-        Effect.gen(function* test() {
-          if (selectedPriceGroup === undefined) {
-            return yield* Effect.die('Missing configured Price Group fixture');
-          }
-          const adapter = yield* h.adapter;
-          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, selector: selectedPriceGroup });
-          expect(outcome.status).toBe('unresolved');
-          expect(h.requests).toHaveLength(0);
-          return yield* Effect.void;
-        }),
-      );
-    },
-  );
-  it.effect('rejects a configured code whose exact source association resolves to another native Price Group', () => {
-    const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupB);
-    return h.provide(
-      Effect.gen(function* test() {
-        if (selectedPriceGroup === undefined) {
-          return yield* Effect.die('Missing configured Price Group fixture');
-        }
-        const adapter = yield* h.adapter;
-        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, selector: selectedPriceGroup });
-        expect(outcome.status).toBe('unresolved');
-        expect(h.events).toEqual(['owner-group-source-read']);
-        expect(h.requests).toHaveLength(2);
-        return yield* Effect.void;
-      }),
-    );
-  });
-  it.effect.each(['priceListsBatchUpsert', 'priceListPricesBatch'] as const)(
-    'rejects a persisted direct Price command without a qualified list binding before owner dispatch',
-    (routeKey) => {
-      const h = harness(false, priceDefinitionEffect(priceGroupB), productId, priceGroupA, false, {
+  it.effect.each([
+    { group: priceGroupA, status: 'accepted_change', writes: 1 },
+    { group: priceGroupB, status: 'unresolved', writes: 0 },
+  ])(
+    'writes a batch Price only to a list this route source created and named by its body',
+    ({ group, status, writes }) => {
+      const h = harness(false, priceDefinitionEffect(group), productId, priceGroupA, false, {
         assessment: canonicalPriceAssessment,
         receipt: originalPriceReceipt('CREATED'),
       });
       return h.provide(
         Effect.gen(function* test() {
           const adapter = yield* h.adapter;
-          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey });
-          expect(outcome.status).toBe('unresolved');
-          expect(h.requests).toHaveLength(0);
+          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+          expect(outcome.status).toBe(status);
+          expect(h.events.filter((event) => event === 'owner-group-source-read')).toHaveLength(1);
+          expect(h.events.filter((event) => event === 'owner-price-write')).toHaveLength(writes);
         }),
       );
     },
   );
+  it.effect.each([
+    { associated: priceGroupA, current: priceGroupB, reason: 'the price is current in another list' },
+    { associated: priceGroupB, current: priceGroupA, reason: 'the named list was not created by this source' },
+  ])('refuses a batch REVISE before any owner write when $reason', ({ associated, current }) => {
+    const h = harness(
+      false,
+      priceReviseEffect(priceGroupA),
+      productId,
+      associated,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      current,
+    );
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.events).not.toContain('owner-write');
+        expect(h.events.filter((event) => event === 'owner-price-definition-read')).toHaveLength(1);
+      }),
+    );
+  });
+  it.effect.each([
+    {
+      _tag: 'RevisePriceActionIneligibleProblem',
+      code: 'revise_price_source_invalid',
+      expected: 'invalid',
+      status: 422,
+    },
+    {
+      _tag: 'RevisePriceActionIneligibleProblem',
+      code: 'revise_price_target_mismatch',
+      expected: 'invalid',
+      status: 422,
+    },
+    {
+      _tag: 'RevisePriceActionIneligibleProblem',
+      code: 'revise_price_source_held',
+      expected: 'unresolved',
+      status: 422,
+    },
+    { _tag: 'RevisePriceActionNotFoundProblem', code: 'price_schedule_absent', expected: 'unresolved', status: 404 },
+  ])('settles a batch REVISE the owner refuses as $code without retrying it', ({ _tag, code, expected, status }) => {
+    const h = harness(
+      false,
+      priceReviseEffect(priceGroupA),
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      { _tag, code, status },
+    );
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+        expect(outcome.status).toBe(expected);
+        expect(h.events.filter((event) => event === 'owner-write')).toHaveLength(1);
+      }),
+    );
+  });
+  it.effect('refuses a batch REVISE whose intent names no price list', () => {
+    const h = harness(false, priceReviseEffect());
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListPricesBatch' });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.requests.filter((request) => request.url.includes('/reads/'))).toHaveLength(0);
+      }),
+    );
+  });
+  it.effect('rejects a persisted direct Price command without a qualified list binding before owner dispatch', () => {
+    const h = harness(false, priceDefinitionEffect(priceGroupB), productId, priceGroupA, false, {
+      assessment: canonicalPriceAssessment,
+      receipt: originalPriceReceipt('CREATED'),
+    });
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey: 'priceListsBatchUpsert' });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.requests).toHaveLength(0);
+      }),
+    );
+  });
   it.effect.each([
     { group: priceGroupA, status: 'accepted_change', writes: 1 },
     { group: priceGroupB, status: 'unresolved', writes: 0 },
@@ -1698,6 +1881,55 @@ describe('Symmy native public owner adapter transport', () => {
       );
     }),
   );
+  it.effect(
+    'reads the catalog head right before a head-fenced Price Group create and records the resolved create',
+    () => {
+      const h = harness(false, priceGroupAtHeadEffect);
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          yield* Effect.exit(adapter.execute(h.input));
+          const [resolved] = h.resolvedEffects;
+          expect(resolved?.intent).toMatchObject({
+            payload: { businessCode: 'INTERNAL_GROUP', expectedCatalogRevision: 6 },
+          });
+          expect(Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[5])(resolved?.intent)).toBe(true);
+          expect(resolved?.ref.originalTarget).toBeUndefined();
+          expect(h.events.indexOf('owner-catalog-head-read')).toBeLessThan(h.events.indexOf('resolved-target'));
+          expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+          expect(h.events.filter((event) => event === 'owner-catalog-head-read')).toHaveLength(1);
+        }),
+      );
+    },
+  );
+  it.effect('never resolves a head-fenced create again once the owner call has begun or without authority', () =>
+    Effect.gen(function* refuses() {
+      const resumed = harness(false, priceGroupAtHeadEffect);
+      yield* resumed.provide(
+        Effect.gen(function* resumedAfterOwnerCall() {
+          const adapter = yield* resumed.adapter;
+          const exit = yield* Effect.exit(
+            adapter.execute({
+              ...resumed.input,
+              originalExecutorPrincipalId: executorId,
+              originalInvocationId: invocationId,
+            }),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(resumed.events).not.toContain('owner-catalog-head-read');
+        }),
+      );
+      const unauthorized = harness(false, priceGroupAtHeadEffect);
+      yield* unauthorized.provide(
+        Effect.gen(function* withoutAuthority() {
+          const adapter = yield* unauthorized.adapter;
+          const exit = yield* Effect.exit(adapter.execute({ ...unauthorized.input, canExecuteNewEffects: false }));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(unauthorized.requests).toHaveLength(0);
+        }),
+      );
+    }),
+  );
   it.effect('rejects an Inventory backend that differs from the trusted route backend before any HTTP request', () => {
     const h = harness(false, stockEffectForBackend('native-backend-B'));
     return h.provide(
@@ -1709,4 +1941,204 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
+});
+
+type ResolutionJson = typeof Schema.Json.Type;
+type ResolutionFields = Readonly<Record<string, ResolutionJson>>;
+const productParent = { effectKey: 'catalog-create', itemKey: 'product-item' };
+const variantParent = { effectKey: 'additional-variant', itemKey: 'variant-item' };
+const furtherVariantRef = { ...variantRef, resourceId: '10000000-0000-4000-8000-000000000031' };
+const variantParentState = {
+  ...Schema.decodeUnknownSync(SymmyExecutionEffectStateSchema)({
+    effect: dependentVariantEffect,
+    outcome: { effectId, owner: 'commerce.catalog', status: 'accepted_change' },
+    ownerReceipt: { _tag: 'VariantCreated', productRef, variantRef: furtherVariantRef },
+    state: 'settled',
+    version: 1,
+  }),
+  itemKey: 'variant-item',
+};
+const dependentEffect = (
+  request: ResolutionFields,
+  operation: { readonly entrypointKey: string; readonly moduleId: string; readonly schemaVersion: string },
+  named: readonly (typeof productParent)[] = [],
+) => {
+  const [variant] = named;
+  const intent = { _tag: 'CatalogProductDependentEffect', parent: productParent, request };
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...effect,
+    dependsOn: [productParent, ...named],
+    intent: variant === undefined ? intent : { ...intent, variantParent: variant },
+    ref: { ...effect.ref, operation },
+  });
+};
+const updateOperation = {
+  entrypointKey: 'commerce.catalog.update-product',
+  moduleId: 'commerce.catalog',
+  schemaVersion: '1',
+};
+const factsOperation = {
+  entrypointKey: 'commerce.catalog.set-variant-localized-facts',
+  moduleId: 'commerce.catalog',
+  schemaVersion: '1',
+};
+const updateEffectOf = () =>
+  dependentEffect(
+    {
+      _tag: 'UpdateProduct',
+      payload: { expectedRevision: 1, reason: 'Symmy product import', targetLifecycle: 'ACTIVE' },
+    },
+    updateOperation,
+  );
+const factsEffectOf = (named: readonly (typeof productParent)[] = []) =>
+  dependentEffect(
+    {
+      _tag: 'SetVariantLocalizedFacts',
+      payload: {
+        evidenceRefs: ['symmy-product:key:0'],
+        expectedRevision: 0,
+        facts: { name: 'Chair' },
+        locale: 'en',
+        reason: 'Symmy product import',
+      },
+    },
+    factsOperation,
+    named,
+  );
+const priceEffectOf = () => {
+  const planned = priceDefinitionEffect(priceGroupA);
+  const priceIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[7])(planned.intent);
+  const { payload } = Schema.encodeSync(SymmyCatalogPricingInventoryIntentSchema.members[7])(priceIntent);
+  const { catalogSelection: _planned, ...identityKey } = payload.identityKey;
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...planned,
+    dependsOn: [productParent],
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent: productParent,
+      request: { _tag: 'DefinePrice', payload: { ...payload, identityKey } },
+    },
+  });
+};
+const resolutionOf = (
+  selected: SymmyPinnedEffect,
+  dependencies: readonly (typeof parentState)[],
+  legalEntity?: string,
+) => {
+  const h = harness(false, selected);
+  return h.provide(
+    Effect.gen(function* resolution() {
+      const adapter = yield* h.adapter;
+      const exit = yield* Effect.exit(adapter.execute({ ...h.input, dependencies, legalEntityId: legalEntity }));
+      return { exit, h };
+    }),
+  );
+};
+const resolvedIntentOf = (resolved: SymmyPinnedEffect | undefined) => ({
+  payload: Match.value(resolved?.intent).pipe(
+    Match.tags({
+      CatalogSetVariantLocalizedFacts: ({ payload }) => payload,
+      CatalogUpdateProduct: ({ payload }) => payload,
+      PriceDefine: ({ payload }) => payload,
+    }),
+    Match.option,
+    Option.getOrUndefined,
+  ),
+  tag: resolved?.intent?._tag,
+});
+
+describe('Symmy commands on the Product the same job creates', () => {
+  it.effect('resolves a lifecycle update to the Product of the settled create receipt before any native write', () =>
+    Effect.gen(function* resolvesUpdate() {
+      const { h } = yield* resolutionOf(updateEffectOf(), [parentState]);
+      const [resolved] = h.resolvedEffects;
+      const { payload, tag } = resolvedIntentOf(resolved);
+      expect(tag).toBe('CatalogUpdateProduct');
+      expect(payload).toMatchObject({ expectedRevision: 1, productRef, targetLifecycle: 'ACTIVE' });
+      expect(resolved?.ref.originalTarget).toEqual(productRef);
+      expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+    }),
+  );
+
+  it.effect('resolves a localized text to the initial Variant of the receipt, or to the further Variant it names', () =>
+    Effect.gen(function* resolvesFacts() {
+      const initial = yield* resolutionOf(factsEffectOf(), [parentState]);
+      const [initialResolved] = initial.h.resolvedEffects;
+      expect(resolvedIntentOf(initialResolved).tag).toBe('CatalogSetVariantLocalizedFacts');
+      expect(resolvedIntentOf(initialResolved).payload).toMatchObject({
+        facts: { name: 'Chair' },
+        locale: 'en',
+        productRef,
+        variantRef,
+      });
+      expect(initialResolved?.ref.originalTarget).toEqual(variantRef);
+      const further = yield* resolutionOf(factsEffectOf([variantParent]), [parentState, variantParentState]);
+      const [furtherResolved] = further.h.resolvedEffects;
+      expect(resolvedIntentOf(furtherResolved).payload).toMatchObject({ productRef, variantRef: furtherVariantRef });
+      expect(furtherResolved?.ref.originalTarget).toEqual(furtherVariantRef);
+    }),
+  );
+
+  it.effect('resolves a price to the Price define of the receipt Variant and keeps its planned Price ref', () =>
+    Effect.gen(function* resolvesPrice() {
+      const { h } = yield* resolutionOf(priceEffectOf(), [parentState], legalEntityId);
+      const [resolved] = h.resolvedEffects;
+      expect(resolvedIntentOf(resolved).tag).toBe('PriceDefine');
+      expect(resolvedIntentOf(resolved).payload).toMatchObject({
+        identityKey: { catalogSelection: { productRef, variantRef } },
+        priceRef,
+      });
+      expect(resolved?.ref.originalTarget).toEqual(priceRef);
+      const other = yield* resolutionOf(priceEffectOf(), [parentState], '10000000-0000-4000-8000-0000000000bb');
+      expect(Exit.isFailure(other.exit)).toBe(true);
+      expect(other.h.resolvedEffects).toHaveLength(0);
+    }),
+  );
+
+  it.effect('does not resolve without the settled create receipt the effect names and declares', () =>
+    Effect.gen(function* refuses() {
+      const selected = updateEffectOf();
+      const foreign = '10000000-0000-4000-8000-0000000000aa';
+      const wrongTenant = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: { ...variantRef, tenantId: foreign },
+            productRef: { ...productRef, tenantId: foreign },
+          }),
+        ),
+      };
+      const { dependsOn: _declared, ...withoutDependency } = selected;
+      for (const [selectedEffect, dependencies] of [
+        [selected, []],
+        [selected, [{ ...parentState, itemKey: 'decoy-item' }]],
+        [selected, [wrongTenant]],
+        [selected, [{ ...parentState, state: 'planned' as const }]],
+        [Schema.decodeUnknownSync(SymmyPinnedEffectSchema)(withoutDependency), [parentState]],
+      ] as const) {
+        const { exit, h } = yield* resolutionOf(selectedEffect, dependencies);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.resolvedEffects).toHaveLength(0);
+        expect(h.requests).toHaveLength(0);
+      }
+    }),
+  );
+
+  it.effect('refuses a text whose Variant create is missing and a text that already names an owner target', () =>
+    Effect.gen(function* refusesFacts() {
+      const missing = yield* resolutionOf(factsEffectOf([variantParent]), [parentState]);
+      expect(Exit.isFailure(missing.exit)).toBe(true);
+      expect(missing.h.resolvedEffects).toHaveLength(0);
+      const targeted = factsEffectOf();
+      const withTarget = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+        ...targeted,
+        ref: { ...targeted.ref, originalTarget: variantRef },
+      });
+      const refused = yield* resolutionOf(withTarget, [parentState]);
+      expect(Exit.isFailure(refused.exit)).toBe(true);
+      expect(refused.h.resolvedEffects).toHaveLength(0);
+    }),
+  );
 });

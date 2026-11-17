@@ -53,6 +53,12 @@ const identityKey = {
   priceGroupSelector: { kind: 'NO_GROUP' as const },
   unitBasis,
 };
+const groupRef = {
+  moduleId: 'pricing.price-group-catalog' as const,
+  resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  resourceType: 'pricing.price-group-catalog.price-group' as const,
+  tenantId,
+};
 const assertion = Schema.decodeSync(PriceSourceAssertionInputSchema)({
   lineage: { kind: 'INITIAL' },
   mapping: { mappingContractRef: 'erp-price-exact-key', mappingContractVersion: '4' },
@@ -96,6 +102,23 @@ const request = {
   trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(operationAt)),
 };
 
+const readBack = Schema.decodeSync(PriceIdentityKeySchema)({
+  ...identityKey,
+  unitBasis: { ...unitBasis, quantity: '1.000000000' },
+});
+const otherKeys = [
+  { ...identityKey, unitBasis: { ...unitBasis, quantity: '2.000000000' } },
+  { ...identityKey, priceGroupSelector: { kind: 'PRICE_GROUP' as const, priceGroupRef: groupRef } },
+  { ...identityKey, commercialScope: { ...identityKey.commercialScope, marketId: 'sk-market' } },
+  {
+    ...identityKey,
+    unitBasis: {
+      quantity: '1.000000000',
+      unitRef: { ...unitBasis.unitRef, resourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+    },
+  },
+].map((key) => Schema.decodeSync(PriceIdentityKeySchema)(key));
+
 const boundaryFor = (assessment: ExternalPriceSourceAuthorityAssessment) =>
   makeExternalPriceInputBoundary({ assess: () => Effect.succeed(assessment) });
 
@@ -113,6 +136,37 @@ describe('Pricing Source Authority and external Price input boundary', () => {
         expect(result.evidence.sourceAssertion.sourceAuthority).toEqual(grant.authority);
         expect(result.evidence.sourceAssertion.mapping).toEqual(grant.mapping);
       }
+    }),
+  );
+
+  it.effect(
+    'compares the unit quantity as a number: a grant for "1" covers the key Pricing reads back as nine decimals',
+    () =>
+      Effect.gen(function* normalizedQuantity() {
+        const granted = yield* boundaryFor({ grant, outcome: 'AUTHORITY_GRANTED' }).assess({
+          ...request,
+          identityKey: readBack,
+        });
+        expect(granted.outcome).toBe('READY_FOR_CANONICAL_WRITE');
+
+        // Only the number is relaxed: another quantity, group, scope or unit is still another key.
+        for (const other of otherKeys) {
+          const refused = yield* boundaryFor({ grant, outcome: 'AUTHORITY_GRANTED' }).assess({
+            ...request,
+            identityKey: other,
+          });
+          expect(refused).toMatchObject({
+            outcome: 'PRICE_SOURCE_ASSERTION_KNOWN_INVALID',
+            reason: 'MAPPING_REJECTED',
+          });
+        }
+      }),
+  );
+
+  it.effect('holds a revision without any grant for its identity', () =>
+    Effect.gen(function* noGrant() {
+      const held = yield* boundaryFor({ outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' }).assess(request);
+      expect(held).toMatchObject({ outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD' });
     }),
   );
 

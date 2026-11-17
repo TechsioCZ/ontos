@@ -138,12 +138,14 @@ import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-
 import { setCompositionCurrentRead } from '../../src/api/set-composition-current.read.ts';
 import { setCompositionHistoryRead } from '../../src/api/set-composition-history.read.ts';
 
+import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
 import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
 
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
 
 const reads = [
   bindInitialVariantSourceRecoveryRead,
+  catalogSourceProductPageRead,
   catalogSourceProductsRead,
   activateLocalOverrideRecoveryRead,
   activatePackageDefinitionRecoveryRead,

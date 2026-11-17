@@ -37,7 +37,7 @@ const humanCapabilities = [
 ];
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const json = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 
@@ -275,10 +275,9 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   );
   const client = yield* HttpClient.HttpClient;
   const submit = Effect.fn('PrivacyDispatchNative.submit')(function* submit(key: string) {
-    const plan = yield* planFor(key);
+    // The public products body: its name is the private intent the job retains until Privacy dispatches its erasure.
     const payload = {
-      contractVersion: 'INTERNAL_C14',
-      plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan),
+      products: [{ identifier: { type: 'sku', value: key }, name: privateIntentMarker, variants: [{}] }],
     };
     const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/products/batch`, {
       body: yield* HttpBody.json(payload),
@@ -286,7 +285,7 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     });
     if (response.status !== 202) {
       return yield* new PrivacyDispatchNativeFailure({
-        reason: `Actual source admission refused with ${response.status}`,
+        reason: `Actual source admission refused with ${response.status}: ${yield* response.text}`,
       });
     }
     return { payload, receipt: yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema))) };

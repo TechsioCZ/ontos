@@ -164,6 +164,44 @@ const projectionPhase = (job: SymmyExecutionJob, acceptedCount: number) => {
   return job.effects.every(({ state }) => state === 'planned') ? 'admitted' : 'running';
 };
 
+/**
+ * The request item a plan item belongs to. The plan builders give each source record its own plan item, so a
+ * customer, its contacts and its addresses, a price list and its prices, and a product with its variants and
+ * prices are several plan items of one public request item. The key scheme is `customer-i` with
+ * `contact-i-n` and `address-i-n`, `price-list-i` with `price-list-i-price-n`, and `product-i` with
+ * `product-i-variant-n` and `product-i-variant-n-price-m`. Any other key (stock `stock-i`, price `price-i`,
+ * operator plans) is its own request item.
+ */
+export const symmyRequestItemKey = (itemKey: string): string =>
+  itemKey
+    .replace(/^(?:contact|address)-(?<customer>\d+)-\d+$/u, 'customer-$<customer>')
+    .replace(/^(?<list>price-list-\d+)-price-\d+$/u, '$<list>')
+    .replace(/^(?<product>product-\d+)-variant-\d+(?:-price-\d+)?$/u, '$<product>');
+
+interface ProjectedPlanItem<Effect> {
+  readonly effects: readonly Effect[];
+  readonly itemId: string;
+  readonly requestItemKey: string;
+}
+
+/**
+ * Folds the plan items of one request item into one item, in request order: the effects in plan order and the
+ * item id of the first plan item. The public `items[n]` is request item `n`, whatever the plan needs to bind
+ * one source record per item.
+ */
+const regroupByRequestItem = <Effect>(items: readonly ProjectedPlanItem<Effect>[]) => {
+  const groups = new Map<string, { readonly effects: Effect[]; readonly itemId: string }>();
+  for (const item of items) {
+    const group = groups.get(item.requestItemKey);
+    if (group === undefined) {
+      groups.set(item.requestItemKey, { effects: [...item.effects], itemId: item.itemId });
+    } else {
+      group.effects.push(...item.effects);
+    }
+  }
+  return [...groups.values()];
+};
+
 type SymmyJobExecutionProjection = typeof SymmyJobExecutionProjectionSchema.Type;
 
 export const projectSymmyExecutionJob: (
@@ -188,7 +226,7 @@ export const projectSymmyExecutionJob: (
     const outcomes = job.effects.flatMap(({ outcome }) => Option.toArray(outcome));
     const acceptedCount = outcomes.filter(accepted).length;
     const phase = projectionPhase(job, acceptedCount);
-    const items = job.plan.items.map((item) => ({
+    const planned = job.plan.items.map((item) => ({
       effects: [
         ...item.effects.map((effect) => {
           const state = states.get(effect.ref.effectId);
@@ -207,9 +245,10 @@ export const projectSymmyExecutionJob: (
         ...projectSymmyUnsupportedBranches(item),
       ],
       itemId: item.itemId,
+      requestItemKey: symmyRequestItemKey(item.itemKey),
     }));
     return yield* Schema.decodeUnknownEffect(SymmyJobExecutionProjectionSchema, { onExcessProperty: 'error' })({
-      items,
+      items: regroupByRequestItem(planned),
       jobId: job.jobId,
       phase,
     }).pipe(Effect.mapError(unavailable));

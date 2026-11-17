@@ -1,4 +1,4 @@
-import { PricingCurrencyCodeSchema } from '@app/pricing-contracts/current-supported-currencies';
+import { PricingCurrencyCodeSchema, PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { PriceNonNegativeDecimalSchema, PriceRevisionIdSchema } from '@app/pricing-contracts/domain/price-definition';
 import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import {
@@ -22,6 +22,12 @@ export const RevisePricePayloadSchema = Schema.Union([
   Schema.Struct({
     ...target,
     acknowledgement: Schema.optionalKey(PriceScheduleAcknowledgementSchema),
+    /**
+     * The instant the new value takes effect, when the source asserts its own: it must not be after the operation
+     * and not before the Current Revision it replaces. Without it the value takes effect at the operation time.
+     * An acknowledgement carries its own period, so the two never travel together.
+     */
+    effectiveFrom: Schema.optionalKey(PricingInstantSchema),
     expectedCurrent: ExpectedPriceCurrentSchema,
     intent: Schema.Literal('VALUE_ONLY_CURRENT'),
     monetaryAmount: monetaryAmountSchema,

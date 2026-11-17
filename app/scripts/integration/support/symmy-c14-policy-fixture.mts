@@ -41,7 +41,7 @@ const symmyApp = 'symmy-integration';
 
 const admissionReceipt = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const polledJob = Schema.Struct({
   items: Schema.optionalKey(Schema.Array(Schema.Struct({ outcome: Schema.String }))),

@@ -1585,6 +1585,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.catalog-source-product-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "catalog-source-product-page",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.catalog-source-product-page",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.catalog-source-products.read",
             "kind": "read",
             "modes": [
@@ -8074,6 +8100,58 @@
             "subjectWorkloads": [
               "commerce.customer-context.organization-ico-facts.read"
             ]
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-source-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-source-page",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-source-page",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.customer-context.customer-profile-source-parties.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-profile-source-parties",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-profile-source-parties",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
           }
         },
         {
@@ -21531,6 +21609,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.source-party-search.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-party-search",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.source-party-search",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.source-person-admission.read",
             "kind": "read",
             "modes": [
@@ -22515,6 +22619,32 @@
     },
     {
       "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "pricing.price-group-catalog.price-group-catalog-head.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "price-group-catalog-head",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "pricing.price-group-catalog.api.price-group-catalog-head",
+            "moduleKey": "pricing.price-group-catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
         {
           "accessDeclaration": {
             "key": "pricing.price-group-catalog.price-group-definition-revision.create",

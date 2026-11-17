@@ -52,6 +52,7 @@ const apiNames = [
   'privacyMeasureExecution',
   'searchLabels',
   'sourceCounterpartyAdmission',
+  'sourcePartySearch',
   'sourcePersonAdmission',
   'sourceProfileExport',
 ] as const;

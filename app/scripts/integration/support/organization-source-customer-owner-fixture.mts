@@ -4,6 +4,7 @@ import { issueDelegatedGatewayContext } from '@app/shared-contracts/server/gatew
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
 import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';
+import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import {
   CustomerGroupSourceAuthorityFixtureRouteSchema,
   seedCustomerGroupSourceAuthority,
@@ -48,6 +49,7 @@ import {
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { SymmySourceOrganizationFactsGovernanceSelectorSchema } from '@app/symmy-integration/api/symmy-source-organization-facts';
 import { PgClient } from '@effect/sql-pg';
+import { observeCustomerGroupSourceNativeFixture } from '@app/commerce-customer-context/testing/customer-group-source-observation';
 import { Config, DateTime, Duration, Effect, Option, Redacted, Schedule, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 import {
@@ -104,7 +106,7 @@ export const organizationSourceFixture = {
 } as const;
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 export const OrganizationSourceEffectObservationSchema = Schema.Struct({
   effectId: SymmyEffectIdSchema,
@@ -135,6 +137,8 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       ownedDatabase: isolated,
       productionGate: true,
       relaySource: { sourceAppId: symmyApp },
+      // The company read composes several owner reads, each behind its own gateway assertion.
+      requestDeadlineSeconds: 60,
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = randomUUID();
@@ -475,6 +479,29 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       route,
       tenantId,
     });
+    // The public customers route no longer takes a plan and the organization revisions have no public route: this
+    // fixture carries its internal plans on the still internal selected group route, under its own test-only
+    // enrollment. No production route and no allowed effect of one changes.
+    // The selector names the segment group the first job creates; its target becomes the real group once it exists,
+    // because a Membership effect is checked against the current definition of the selected group.
+    const carrierGroupRef = {
+      moduleId: COMMERCE_MODULE_ID,
+      resourceId: randomUUID(),
+      resourceType: 'commerce.customer-context.customer-group',
+      tenantId,
+    };
+    const carrierCode = 'INTERNAL_ORGANIZATION_CARRIER';
+    const carrierSelector = {
+      kind: 'CUSTOMER_GROUP' as const,
+      source: {
+        entityKind: 'CUSTOMER_GROUP',
+        issuerId: groupSource.issuer,
+        route: { integrationRouteId: sourceRouteId, tenantId },
+        sourceNamespace: groupSource.namespace,
+        sourceRecordId: groupSource.recordId,
+      },
+      target: carrierGroupRef,
+    };
     const encodedPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan);
     const configuration = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
       ...encodedPlan,
@@ -512,10 +539,11 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
           },
         ],
       })),
+      selector: carrierSelector,
       sourceRouteId,
     });
     const lifecyclePolicy = { policyId: 'INTERNAL_ORGANIZATION_SOURCE_RETENTION', revision: '1' };
-    yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy) values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(configuration)}::jsonb,${organizationSourceFixture.mappingRevision},'customersBatch',${organizationSourceFixture.routeRevision},${yield* json(lifecyclePolicy)}::jsonb)`;
+    yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_code,route_revision,lifecycle_policy) values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(configuration)}::jsonb,${organizationSourceFixture.mappingRevision},'customerGroupCustomersBatch',${carrierCode},${organizationSourceFixture.routeRevision},${yield* json(lifecyclePolicy)}::jsonb)`;
     const partyUrl = new URL(Redacted.value(yield* Config.Redacted('PARTY_REGISTRY_DATABASE_URL')));
     const partyWorkerUrl = new URL(Redacted.value(yield* Config.Redacted('PARTY_REGISTRY_WORKER_DATABASE_URL')));
     for (const url of [partyUrl, partyWorkerUrl]) {
@@ -638,15 +666,61 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       });
     });
     const client = yield* HttpClient.HttpClient;
+    const selectorCode = (targetResourceId: string) =>
+      encodeSymmySourceSelector(
+        {
+          issuerId: groupSource.issuer,
+          routeId: sourceRouteId,
+          selectorKind: 'CUSTOMER_GROUP',
+          sourceNamespace: groupSource.namespace,
+          tenantId,
+        },
+        groupSource.recordId,
+        targetResourceId,
+      );
+    /** Points the carrier route at the group the first job created, and returns the selected source code. */
+    const selectCarrierGroup = Effect.fn('OrganizationSourceCustomerOwner.selectCarrierGroup')(
+      function* selectCarrierGroup() {
+        const group = yield* observeCustomerGroupSourceNativeFixture({
+          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+          legalEntityId,
+          operatorPrincipalId: integration.issuerPrincipalId,
+          operatorProviderUserId: shell.providerUserId,
+          ownedDatabase: isolated,
+          source: {
+            issuer: groupSource.issuer,
+            mappingRevision: groupSource.mappingRevision,
+            namespace: groupSource.namespace,
+            recordId: groupSource.recordId,
+            route: groupSource.route,
+          },
+          tenantId,
+        });
+        if (Option.isNone(group)) {
+          return selectorCode(carrierGroupRef.resourceId);
+        }
+        const retargeted = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+          ...(yield* Schema.encodeEffect(SymmyRouteExecutionConfigurationSchema)(configuration)),
+          selector: { ...carrierSelector, target: group.value.groupRef },
+        });
+        yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(retargeted)}::jsonb
+          where tenant_id=${tenantId} and route_id=${routeId}`;
+        return selectorCode(group.value.groupRef.resourceId);
+      },
+    );
     const submitFor = (idempotencyKey: string, submittedPlan: typeof SymmyInternalExecutionPlanSchema.Type) =>
       Effect.gen(function* submit() {
-        const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
-          body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(submittedPlan),
-          }),
-          headers: { 'idempotency-key': idempotencyKey, 'x-api-key': Redacted.value(key.secret) },
-        });
+        const selectedCode = yield* selectCarrierGroup();
+        const response = yield* client.post(
+          `${shell.baseUrl}/api/symmy/v1/customer-groups/${selectedCode}/customers/batch`,
+          {
+            body: yield* HttpBody.json({
+              contractVersion: 'INTERNAL_C14',
+              plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(submittedPlan),
+            }),
+            headers: { 'idempotency-key': idempotencyKey, 'x-api-key': Redacted.value(key.secret) },
+          },
+        );
         if (response.status !== 202) {
           yield* writeDiagnostics();
           yield* Effect.logError({
@@ -870,7 +944,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
                 {
                   effectKey: 'organization-profile-read',
                   operation: {
-                    entrypointKey: 'commerce.customer-context.api.customer-profile-source',
+                    entrypointKey: 'commerce.customer-context.api.customer-profile-source-page',
                     moduleId: COMMERCE_MODULE_ID,
                     schemaVersion: '1',
                   },
@@ -906,10 +980,9 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision) values(${randomUUID()},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema))(readRoute)}::jsonb,${source.mappingRevision},'adminCustomers',${source.route.revision})`;
         companyReadConfigured = true;
       }
-      return yield* client.get(
-        `${shell.baseUrl}/api/symmy/v1/admin/customers?contractVersion=INTERNAL_C14&code=${encodeURIComponent(source.recordId)}`,
-        { headers: { 'x-api-key': Redacted.value(key.secret) } },
-      );
+      return yield* client.get(`${shell.baseUrl}/api/symmy/v1/admin/customers`, {
+        headers: { 'x-api-key': Redacted.value(key.secret) },
+      });
     });
     const readOriginalReceipt = Effect.fn('OrganizationSourceCustomerOwner.originalReceipt')(
       function* originalReceipt(input: {
