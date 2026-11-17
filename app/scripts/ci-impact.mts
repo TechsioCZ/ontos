@@ -13,13 +13,15 @@ export interface CiWorkspacePackage {
 /** Source preparation and topology proofs are independent of artifact-consuming test work. */
 export const integrationPhases = (entries: readonly IntegrationEntry[]) => {
   const browser = entries.filter(({ suite }) => suite === 'browser');
+  const work = entries.filter(({ suite }) => suite === 'integration');
   return {
+    late: work.slice(8),
     preparation:
       entries.length === 0 || browser.length > 0
         ? browser
         : [{ name: 'Prepare integration database', suite: 'database' as const }],
     topology: entries.filter(({ suite }) => suite === 'bootstrap'),
-    work: entries.filter(({ suite }) => suite === 'integration'),
+    work: work.slice(0, 8),
   };
 };
 

@@ -146,11 +146,11 @@ lanes="${INTEGRATION_LANES:-4}"
 [[ "$lanes" == 2 || "$lanes" == 4 ]] || exit 2
 started=$SECONDS
 status=0
-# The whole pricing proof starts several native owners inside its unchanged 30s
-# test deadline. Give that CPU-bound proof the runner before starting other lanes.
+# Full native topology proofs already run several owner processes internally.
+# Reserve their CPU budget before admitting independent business-test lanes.
 parallel_tasks=()
 for task in "${tasks[@]}"; do
-  if [[ "$task" == whole:pricing || "$task" == ./verticals/commerce-market-catalog#1/4 ]]; then
+  if [[ "$task" == whole:pricing || "$task" == ./verticals/commerce-market-catalog#1/4 || "$task" == whole:organization || "$task" == whole:preproposal-* ]]; then
     ONTOS_CI_WORKER_SLOT=0 bash scripts/ci/run-integration-suites.sh --task "$task" || status=$?
   else
     parallel_tasks+=("$task")
