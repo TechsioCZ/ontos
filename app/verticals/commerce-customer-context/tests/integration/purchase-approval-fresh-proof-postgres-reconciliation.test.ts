@@ -13,7 +13,7 @@ import {
   waitForExactBlock,
 } from './purchase-approval-fresh-proof-postgres.fixture.ts';
 
-it.live(
+it.live.concurrent(
   'rejects fresh intent at actual request expiry without replacing P1 or extending the request',
   () =>
     Effect.scoped(
@@ -64,7 +64,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'component competing proofs and Order claims consume once under concurrent registered Actions',
   () =>
     Effect.scoped(
@@ -144,7 +144,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'rejects fresh I2 after Current source or material-value drift and preserves immutable P1',
   () =>
     Effect.scoped(
@@ -222,7 +222,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'refuses terminal decision rewrites of an approved proof-bearing request without superseding P1',
   () =>
     Effect.scoped(

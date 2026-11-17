@@ -1,17 +1,6 @@
 import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import { describe, expect, it } from 'effect-rstest';
 
-import { pricingApi } from '../../shared/api.ts';
-import {
-  executeCommercialFeeResultLookup,
-  executeContractualDiscountResultLookup,
-  executeCurrencySupportResultLookup,
-  executeCurrentPricingDecision,
-  executePriceResultLookup,
-  executeQuantityTierResultLookup,
-  executeQuotationResultLookup,
-  executeZeroFloorAuthorizationResultLookup,
-} from '../../src/api/pricing-client.ts';
 import { pricingManifest } from '../../vertical.manifest.ts';
 import { pricingRegistration } from '../../vertical.registration.ts';
 
@@ -62,18 +51,5 @@ describe('Pricing module contract', () => {
     );
     expect(pricingManifest.publicSurface.shellContributions.pages).toEqual([]);
     expect(pricingRegistration.moduleId).toBe(pricingManifest.module.id);
-    for (const client of [
-      executeCommercialFeeResultLookup,
-      executeContractualDiscountResultLookup,
-      executeCurrencySupportResultLookup,
-      executeCurrentPricingDecision,
-      executePriceResultLookup,
-      executeQuantityTierResultLookup,
-      executeQuotationResultLookup,
-      executeZeroFloorAuthorizationResultLookup,
-    ]) {
-      expect(client).toBeDefined();
-    }
-    expect(pricingApi).toBeDefined();
   });
 });

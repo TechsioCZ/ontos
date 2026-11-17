@@ -268,15 +268,6 @@ it.effect('proves an empty classification set and detects a later matching assig
   }),
 );
 
-it.effect('publishes all three Catalog owner contracts through the deployed client barrel', () =>
-  Effect.gen(function* publicClients() {
-    const client = yield* Effect.promise(() => import('@app/catalog/api/client'));
-    expect(client.executeAssortmentSelectionAssessmentV1).toBeTypeOf('function');
-    expect(client.executeAssortmentSetCompositionV1).toBeTypeOf('function');
-    expect(client.executeAssortmentProductClassificationV1).toBeTypeOf('function');
-  }),
-);
-
 it('requires the published single-payload request envelope for each discriminated owner operation', () => {
   const classificationRequest = {
     request: { effectiveAt: '2026-09-28T12:00:00.000Z', operation: 'OBSERVE', productRef },

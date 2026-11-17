@@ -24,8 +24,11 @@ import { promotionRegistration } from '../../vertical.registration.ts';
 
 const digest = (value: string) => Hex.encode(sha256(utf8ToBytes(value)));
 
-/** Uses the actual Codesmith deployment artifact; never fabricates owner Actions or public descriptors. */
-export const loadPromotionTestComposition = Effect.fn('PromotionTest.composition')(function* composition() {
+/**
+ * Uses the actual Codesmith deployment artifact; never fabricates owner Actions or public descriptors.
+ * Only immutable, read-only values: no test may mutate them, so one evaluation serves the whole module.
+ */
+const readPublishedComposition = Effect.fn('PromotionTest.publishedComposition')(function* composition() {
   const fs = yield* FileSystem.FileSystem;
   const document = yield* fs.readFileString(
     new URL('../../dist/public/.well-known/ontos-module-manifest.json', import.meta.url).pathname,
@@ -57,14 +60,6 @@ export const loadPromotionTestComposition = Effect.fn('PromotionTest.composition
     observedAt: base.observedAt,
     validUntil: base.validUntil,
   });
-  const connections = yield* loadDatabaseConnectionPair();
-  const adminContext = yield* Layer.build(
-    PgClient.layer({ url: Redacted.make(connections.admin.connectionString) }).pipe(
-      Layer.provideMerge(Reactivity.layer),
-    ),
-  );
-  const admin = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
-  yield* publishTestApplicationCompositionAuthority(admin, snapshot);
   const spice = yield* loadSpiceDbConfig().pipe(
     Effect.mapError(
       (cause) =>
@@ -81,7 +76,31 @@ export const loadPromotionTestComposition = Effect.fn('PromotionTest.composition
     SPICEDB_PRESHARED_KEY: Redacted.make(spice.preSharedKey),
     ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: spice.deploymentEnvironment,
   };
-  return { admin, connections, contract, snapshot, spiceEnvironment };
+  const connections = yield* loadDatabaseConnectionPair();
+  return { connections, contract, snapshot, spiceEnvironment };
+});
+
+/** Memoized for the whole test module; the first caller evaluates it, every later caller reads its result. */
+let publishedComposition: ReturnType<typeof readPublishedComposition> | undefined;
+
+/**
+ * The manifest read, contract decode, digests, content revision, snapshot validation, connection pair and
+ * SpiceDB configuration happen once per test module. The admin client stays per caller, so it is still
+ * released with the caller's scope, and the composition authority is republished for every test in case a
+ * concurrently running suite has overwritten the shared core row.
+ */
+export const loadPromotionTestComposition = Effect.fn('PromotionTest.composition')(function* composition() {
+  const memoized = publishedComposition ?? (yield* Effect.cached(readPublishedComposition()));
+  publishedComposition = memoized;
+  const published = yield* memoized;
+  const adminContext = yield* Layer.build(
+    PgClient.layer({ url: Redacted.make(published.connections.admin.connectionString) }).pipe(
+      Layer.provideMerge(Reactivity.layer),
+    ),
+  );
+  const admin = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
+  yield* publishTestApplicationCompositionAuthority(admin, published.snapshot);
+  return { ...published, admin };
 });
 
 interface PromotionTestAccessSpec {

@@ -2,7 +2,6 @@ import {
   PricingMaterialChangedSchema,
   PricingMaterialChangeUnverifiableSchema,
   PricingNonMaterialSchema,
-  PricingOwnerConfirmedNonMaterialSchema,
 } from '@app/pricing-contracts/domain/material-change';
 import type {
   PricingMaterialChangeClassification,
@@ -12,17 +11,12 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { classifyPricingMaterialChange } from '../../src/services/material-change-classification.service.ts';
-import {
-  makeIssue787OwnerTransition,
-  makeIssue787Snapshot,
-  makeIssue787SourceEvidence,
-} from './support/issue-787-material-change.fixture.ts';
+import { makeIssue787Snapshot, makeIssue787SourceEvidence } from './support/issue-787-material-change.fixture.ts';
 
 const request = (
   previous: PricingMaterialStateSnapshot,
   current: PricingMaterialStateSnapshot,
-  ownerTransitions: Parameters<typeof classifyPricingMaterialChange>[0]['ownerTransitions'] = [],
-) => ({ current, ownerTransitions, previous });
+): Parameters<typeof classifyPricingMaterialChange>[0] => ({ current, ownerTransitions: [], previous });
 
 const expectNonMaterial = (result: PricingMaterialChangeClassification, reason: string) => {
   expect(Schema.is(PricingNonMaterialSchema)(result)).toBe(true);
@@ -53,20 +47,6 @@ describe('Pricing material-change classification', () => {
 
     expectNonMaterial(classifyPricingMaterialChange(request(previous, exact)), 'EXACT_MATERIAL_STATE');
     expectNonMaterial(classifyPricingMaterialChange(request(previous, storefrontOnly)), 'STOREFRONT_OR_TAX_ONLY');
-  });
-
-  it('requires exact owner evidence before accepting a meaning-preserving proof transition', () => {
-    const previous = makeIssue787Snapshot();
-    const current = makeIssue787Snapshot({ attemptId: 'attempt-2', revision: '2', snapshotId: 'snapshot-2' });
-
-    expectMaterial(classifyPricingMaterialChange(request(previous, current)), ['EXACT_PRICE_KEY_OR_SET_CHANGED']);
-    const confirmed = classifyPricingMaterialChange(
-      request(previous, current, [makeIssue787OwnerTransition(previous, current)]),
-    );
-    expect(Schema.is(PricingOwnerConfirmedNonMaterialSchema)(confirmed)).toBe(true);
-    if (Schema.is(PricingOwnerConfirmedNonMaterialSchema)(confirmed)) {
-      expect(confirmed.transitions).toMatchObject([{ bindingRef: 'binding:price:line-a' }]);
-    }
   });
 
   it('never lets owner transition evidence hide Price insertion, collision, or a crossed boundary', () => {

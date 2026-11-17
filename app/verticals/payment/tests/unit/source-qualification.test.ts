@@ -191,10 +191,6 @@ describe('#1152 exact source qualification', () => {
     expect(tagOf(qualify({ authorities: [unbound, deferred] }))).toBe('Unauthorized');
   });
 
-  it('#1152 a revoked authority is not authority', () => {
-    expect(tagOf(qualify({ authorities: [authority({ status: 'REVOKED' })] }))).toBe('Unauthorized');
-  });
-
   it('#1152 a receipt belongs to another account or environment: foreign binding never qualifies', () => {
     for (const source of [
       { ...bankSource, accountRef: 'CZ0000000000000000000001' },

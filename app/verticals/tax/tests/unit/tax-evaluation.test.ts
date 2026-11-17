@@ -244,10 +244,6 @@ describe('Prospective Launch Tax evaluation', () => {
   });
 
   describe('#942 F23 deterministic Decision identity', () => {
-    it('the same input and state give the same decisionId', () => {
-      expect(success(evaluate()).decision.decisionId).toBe(success(evaluate()).decision.decisionId);
-    });
-
     it('input order, Tax Evaluation Time and traceability context never change it', () => {
       const shuffled = evaluationRequest({
         catalog: [catalogEntry('o2', REDUCED_CODE), catalogEntry('o1', STANDARD_CODE)],

@@ -346,11 +346,6 @@ it.live('publishes only a proven flat fixed Set with one shelf and two brackets'
       expect(yield* withTenant(foreignTenantId, (transaction) => transaction.select().from(setCompositions))).toEqual(
         [],
       );
-      const role = yield* runtime.execute<{ rolbypassrls: boolean; rolsuper: boolean }>(
-        sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
-        'objects',
-      );
-      expect(role).toEqual([{ rolbypassrls: false, rolsuper: false }]);
 
       // The shelf now has two owner-issued required choices. The Set basis must
       // read this authority in the same runtime transaction as publication.

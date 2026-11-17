@@ -16,6 +16,8 @@ import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { RevisePricePayloadSchema } from '@app/pricing/actions/revise-price';
 import { Schema } from 'effect';
 
+import { SymmyPriceGroupRefSchema } from './symmy-price-batch.ts';
+
 const dependencyKey = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/u));
 const productEffectReference = Schema.Struct({
   effectKey: dependencyKey.pipe(Schema.brand('SymmyExecutionEffectKey')),
@@ -50,6 +52,14 @@ const variantFromProductEffectPayload = Schema.Struct({
   variantRef: CreateVariantPayloadSchema.fields.variantRef,
 });
 
+/**
+ * A Price Group create whose catalog fence is not known when the request is admitted. The fence is the tenant
+ * ledger head at the moment the create runs, so the adapter reads it right before the owner call and records the
+ * resolved `PriceGroupCreate`. Every other field is explicit.
+ */
+const { expectedCatalogRevision: _resolvedAtExecution, ...priceGroupAtHeadFields } =
+  CreatePriceGroupPayloadSchema.fields;
+
 const definePriceFromGroupEffectPayload = Schema.Struct({
   ...DefinePricePayloadSchema.fields,
   identityKey: Schema.Struct({
@@ -57,6 +67,48 @@ const definePriceFromGroupEffectPayload = Schema.Struct({
     priceGroupSelector: Schema.Struct({ kind: Schema.Literal('PRICE_GROUP') }),
   }),
 });
+
+const updatedProduct = UpdateProductPayloadSchema.fields;
+const localizedFacts = SetVariantLocalizedFactsPayloadSchema.fields;
+const pricedIdentity = DefinePricePayloadSchema.fields.identityKey.fields;
+/**
+ * A command on a Product, or on one of its Variants, that the same job creates. The Product and the Variant
+ * references are the facts that do not exist when the plan is built (and are not the planned ones when the create
+ * is a semantic replay of an existing source record), so each request names every other owner fact and the receipts
+ * of the create effects supply the references. The adapter resolves them once, before any native write, into the
+ * plain intent.
+ */
+const productDependentRequest = Schema.Union([
+  Schema.TaggedStruct('UpdateProduct', {
+    payload: Schema.Struct({
+      expectedRevision: updatedProduct.expectedRevision,
+      reason: updatedProduct.reason,
+      targetLifecycle: updatedProduct.targetLifecycle,
+    }),
+  }),
+  Schema.TaggedStruct('SetVariantLocalizedFacts', {
+    payload: Schema.Struct({
+      evidenceRefs: localizedFacts.evidenceRefs,
+      expectedRevision: localizedFacts.expectedRevision,
+      facts: localizedFacts.facts,
+      locale: localizedFacts.locale,
+      reason: localizedFacts.reason,
+    }).check(
+      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
+    ),
+  }),
+  Schema.TaggedStruct('DefinePrice', {
+    payload: Schema.Struct({
+      ...DefinePricePayloadSchema.fields,
+      identityKey: Schema.Struct({
+        commercialScope: pricedIdentity.commercialScope,
+        currencyCode: pricedIdentity.currencyCode,
+        priceGroupSelector: pricedIdentity.priceGroupSelector,
+        unitBasis: pricedIdentity.unitBasis,
+      }),
+    }),
+  }),
+]);
 
 export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
   Schema.TaggedStruct('ProductCreated', {
@@ -98,12 +150,23 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('PriceGroupCreate', { payload: CreatePriceGroupPayloadSchema }),
   Schema.TaggedStruct('PriceGroupRevise', { payload: CreatePriceGroupDefinitionRevisionPayloadSchema }),
   Schema.TaggedStruct('PriceDefine', { payload: DefinePricePayloadSchema }),
-  Schema.TaggedStruct('PriceRevise', { payload: RevisePricePayloadSchema }),
+  Schema.TaggedStruct('PriceRevise', {
+    payload: RevisePricePayloadSchema,
+    /** The price list the caller named. The adapter refuses a price of any other list and an unenrolled list. */
+    priceGroupRef: Schema.optionalKey(SymmyPriceGroupRefSchema),
+  }),
   SymmyInventoryImportIntentSchema,
   Schema.TaggedStruct('CatalogCreateVariantFromProductEffect', {
     parent: productEffectReference,
     payload: variantFromProductEffectPayload,
     productSource: CatalogSourceCorrelationSchema,
+  }),
+  Schema.TaggedStruct('CatalogProductDependentEffect', {
+    /** The Product create effect, which supplies the Product and, without `variantParent`, its initial Variant. */
+    parent: productEffectReference,
+    request: productDependentRequest,
+    /** The create effect of a further Variant, which supplies the Variant a text or a price is about. */
+    variantParent: Schema.optionalKey(productEffectReference),
   }),
   Schema.TaggedStruct('PriceDefineFromGroupEffect', {
     fromPriceGroupEffect: productEffectReference,
@@ -114,5 +177,6 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
       Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
     ),
   }),
+  Schema.TaggedStruct('PriceGroupCreateAtCatalogHead', { payload: Schema.Struct(priceGroupAtHeadFields) }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

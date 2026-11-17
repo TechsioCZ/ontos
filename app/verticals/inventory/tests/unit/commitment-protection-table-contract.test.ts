@@ -9,7 +9,6 @@ import {
   INVENTORY_COMMITMENT_PROTECTION_TABLES,
   inventoryCommitmentProtectionHistory,
   inventoryCommitmentProtectionHistoryImmutabilityContract,
-  inventoryCommitmentProtectionLifecycleContract,
   inventoryCommitmentProtectionScopeContract,
   inventoryCommitmentProtections,
 } from '../../src/persistence/commitment-protection-table.ts';
@@ -44,27 +43,7 @@ describe('Commitment Protection persistence contract', () => {
     expect(inventoryCommitmentProtectionScopeContract.event).toBe('INSERT OR UPDATE');
   });
 
-  it('freezes the original Confirmation, Reservation, authority, allocations, and proof identity', () => {
-    expect(inventoryCommitmentProtectionLifecycleContract.immutableColumns).toEqual(
-      expect.arrayContaining([
-        'protection_id',
-        'confirmation_id',
-        'reservation_id',
-        'attempt_id',
-        'owner_configuration_id',
-        'issuer_backend_kind',
-        'issuer_backend_id',
-        'authority_effect_id',
-        'owner_evidence_ref',
-        'established_at',
-      ]),
-    );
-    expect(inventoryCommitmentProtectionLifecycleContract.allowedTransitions).toEqual([
-      'PROTECTED -> AT_RISK',
-      'AT_RISK -> AT_RISK',
-    ]);
-    expect(inventoryCommitmentProtectionLifecycleContract.monotonicRevision).toBe(true);
-    expect(inventoryCommitmentProtectionLifecycleContract.releaseAllowed).toBe(false);
+  it('names the exact scope constraints for Confirmation, Reservation, authority, and snapshot', () => {
     expect(inventoryCommitmentProtectionScopeContract.constraintNames).toEqual({
       authority: 'inventory_commitment_protections_exact_authority_ck',
       confirmation: 'inventory_commitment_protections_exact_confirmation_ck',

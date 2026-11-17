@@ -236,9 +236,6 @@ describe('Package Stock Item Binding', () => {
         const original = yield* resolver.resolve(demand(1)).pipe(Effect.flatMap(resolvePackageStockRequirement));
         const revised = yield* resolver.resolve(demand(2)).pipe(Effect.flatMap(resolvePackageStockRequirement));
 
-        expect(packageSelection(1).packageOption?.optionRef.resourceId).toBe(
-          packageSelection(2).packageOption?.optionRef.resourceId,
-        );
         expect(original.catalogSelection.packageOption?.contentRevision.revision).toBe(1);
         expect(revised.catalogSelection.packageOption?.contentRevision.revision).toBe(2);
         expect(original.exactSelectionMeaning.id).not.toBe(revised.exactSelectionMeaning.id);

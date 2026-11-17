@@ -16,15 +16,27 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'reads/symmy-route-context',
     ]),
   ],
-  ['catalog', new Set(['reads/catalog-source-products'])],
+  ['catalog', new Set(['reads/catalog-source-products', 'reads/catalog-source-product-page'])],
   ['price-group-catalog', new Set(['reads/price-group-source-associations', 'reads/price-group-definition'])],
-  ['pricing', new Set(['reads/price-group-source-prices', 'reads/current-supported-currencies'])],
+  [
+    'pricing',
+    new Set(['reads/price-group-source-prices', 'reads/price-schedule', 'reads/current-supported-currencies']),
+  ],
   ['commerce-market-catalog', new Set(['reads/current-market-catalog'])],
   [
     'commerce-customer-context',
-    new Set(['reads/customer-profile-source', 'reads/customer-profile-ico', 'reads/organization-customer-profile-ico']),
+    new Set([
+      'reads/customer-profile-source',
+      'reads/customer-profile-source-page',
+      'reads/customer-profile-source-parties',
+      'reads/customer-profile-ico',
+      'reads/organization-customer-profile-ico',
+    ]),
   ],
-  ['party-registry', new Set(['reads/source-profile-export', 'reads/organization-business-name-export'])],
+  [
+    'party-registry',
+    new Set(['reads/source-profile-export', 'reads/organization-business-name-export', 'reads/source-party-search']),
+  ],
 ]);
 
 /** Only the issuer's release URL and this finite server-owned operation list reach the native relay. */

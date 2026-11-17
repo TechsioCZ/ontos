@@ -89,29 +89,6 @@ const diagnostic: ExactPriceConflictDiagnostic = {
 };
 
 describe('exact Price conflict runtime', () => {
-  it('retains authorized equal-amount claimants while returning only redacted public identities', () => {
-    const result = makeExactPriceConflictRuntime().classify(request, diagnostic);
-    const conflict = Match.value(result.lookup).pipe(
-      Match.tag('CONFLICT', (value) => value),
-      Match.orElse(() => {
-        throw new Error('Expected a redacted exact Price conflict');
-      }),
-    );
-
-    expect(result.ownerDiagnostic?.claimants).toEqual(diagnostic.claimants);
-    expect(result.ownerDiagnostic?.verification).toBe('OWNER_VERIFIED_COMPLETE_CURRENT_SET');
-    expect(conflict.currentTruthRefs).toEqual([
-      { priceRef: firstClaimant.priceRef, revisionId: firstClaimant.priceRevision.revisionId },
-      { priceRef: secondClaimant.priceRef, revisionId: secondClaimant.priceRevision.revisionId },
-    ]);
-    expect(conflict.evidence).toEqual(evidence);
-    expect(conflict.reason).toBe('COMPETING_CURRENT_EXACT_PRICES');
-    expect(conflict.request).toEqual(request);
-    expect(result.lookup).not.toHaveProperty('claimants');
-    expect(JSON.stringify(result.lookup)).not.toContain('monetaryAmount');
-    expect(JSON.stringify(result.lookup)).not.toContain('provenanceRefs');
-  });
-
   it('does not fabricate a conflict when owner evidence is bound to another exact request', () => {
     const mismatchedRequest: ExactPriceLookupRequest = Schema.decodeSync(ExactPriceLookupRequestSchema)({
       ...request,

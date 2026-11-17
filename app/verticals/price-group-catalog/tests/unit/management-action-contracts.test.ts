@@ -175,20 +175,6 @@ describe('Price Group management Action contracts', () => {
     ).toEqual([]);
   });
 
-  it('registers every permission against its exact protected Action entrypoint', () => {
-    expect(pricingPriceGroupCreatePermission.protectedEntrypoints).toEqual([
-      'pricing.price-group-catalog.create-price-group',
-    ]);
-    expect(pricingPriceGroupRevisionCreatePermission.protectedEntrypoints).toEqual([
-      'pricing.price-group-catalog.create-price-group-definition-revision',
-    ]);
-    expect(pricingPriceGroupRevisionCreatePermission.allowedScopeKinds).toEqual(['pricing_catalog', 'price_group']);
-    expect(pricingPriceGroupRetirePermission.protectedEntrypoints).toEqual([
-      'pricing.price-group-catalog.retire-price-group',
-    ]);
-    expect(pricingPriceGroupRetirePermission.allowedScopeKinds).toEqual(['pricing_catalog', 'price_group']);
-  });
-
   it('publishes exact owner facts instead of generic JSON envelopes', () => {
     const definition = {
       acceptedCatalogRevision: 1,

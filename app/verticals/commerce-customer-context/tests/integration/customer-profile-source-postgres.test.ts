@@ -14,11 +14,15 @@ import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/e
 import { CreateCounterpartyPurchasingProfilePayloadSchema } from '../../shared/actions/create-counterparty-purchasing-profile.ts';
 import { CustomerProfileSourceResponseSchema } from '../../shared/apis/customer-profile-source.ts';
 import type { CustomerProfileSourceRequest } from '../../shared/apis/customer-profile-source.ts';
+import type { CustomerProfileSourcePageRequest } from '../../shared/apis/customer-profile-source-page.ts';
+import type { CustomerProfileSourcePartiesRequest } from '../../shared/apis/customer-profile-source-parties.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { CustomerProfilePartySourceReference } from '../../shared/domain/customer-profile-source.ts';
 import { ensureRetailCustomerProfileAction } from '../../src/actions/ensure-retail-customer-profile.action.ts';
 import { createCounterpartyPurchasingProfileAction } from '../../src/actions/create-counterparty-purchasing-profile.action.ts';
+import { customerProfileSourcePageRead } from '../../src/api/customer-profile-source-page.read.ts';
+import { customerProfileSourcePartiesRead } from '../../src/api/customer-profile-source-parties.read.ts';
 import { customerProfileSourceRead } from '../../src/api/customer-profile-source.read.ts';
 import {
   CommerceSourceProcessingEligibility,
@@ -52,6 +56,8 @@ const transport = () => ({
   targetModuleKey: 'commerce.customer-context',
 });
 
+const recordIds = (items: readonly { readonly source: { readonly recordId: string } }[]) =>
+  items.map((item) => item.source.recordId);
 const partyReferenceKey = (reference: CustomerProfilePartySourceReference) =>
   JSON.stringify([
     reference.source.issuer,
@@ -307,6 +313,14 @@ it.live(
           },
           trigger: 'AUTHORIZED_ONBOARDING',
         });
+        const readPage = (input: CustomerProfileSourcePageRequest) =>
+          Context.get(context, ReadRuntime)
+            .runRead({ input, principal, registration: customerProfileSourcePageRead, transport: transport() })
+            .pipe(Effect.provideContext(context));
+        const readParties = (input: CustomerProfileSourcePartiesRequest) =>
+          Context.get(context, ReadRuntime)
+            .runRead({ input, principal, registration: customerProfileSourcePartiesRead, transport: transport() })
+            .pipe(Effect.provideContext(context));
         const ensure = (input = payload) =>
           runAction({
             payload: input,
@@ -486,6 +500,72 @@ it.live(
             profile: { profileRef: { ...createdCounterparty.profileRef, kind: 'COUNTERPARTY' } },
           },
         });
+        const sourceKeys = ['customer-001', 'customer-002', 'customer-003'];
+        const firstPage = yield* readPage({ ...authority, limit: 2, offset: 0 });
+        expect(firstPage.count).toBe(3);
+        expect(recordIds(firstPage.items)).toEqual(sourceKeys.slice(0, 2));
+        const lastPage = yield* readPage({ ...authority, limit: 2, offset: 2 });
+        expect(lastPage.count).toBe(3);
+        expect(recordIds(lastPage.items)).toEqual(['customer-003']);
+        expect(lastPage.items[0]?.profile.profileRef.kind).toBe('COUNTERPARTY');
+        const wholePage = yield* readPage({ ...authority, limit: 100, offset: 0 });
+        const wholeList = yield* read({ ...authority, cursor: null, limit: 100, mode: 'LIST' });
+        expect(wholeList).toMatchObject({ items: wholePage.items, nextCursor: null });
+        expect(recordIds(wholePage.items)).toEqual(sourceKeys);
+        expect(yield* readPage({ ...authority, limit: 1, offset: 1 })).toMatchObject({
+          count: 3,
+          items: [{ source: { recordId: 'customer-002' } }],
+        });
+        // The candidate list carries identifiers only, in the same order, and its total is the whole route.
+        const candidates = yield* readParties({ ...authority, limit: 2 });
+        expect(candidates.count).toBe(3);
+        expect(candidates.items.map(({ recordId }) => recordId)).toEqual(sourceKeys.slice(0, 2));
+        expect(candidates.items[0]).toEqual({
+          partyRef: payload.subject.partyRef,
+          partySourceReference,
+          recordId: 'customer-001',
+        });
+        // A search filters before count, offset and limit: by key (ignoring case, literally) or by matched Party.
+        const searched = (terms: readonly { readonly partyIds: readonly string[]; readonly term: string }[]) =>
+          readPage({ ...authority, limit: 100, offset: 0, search: { terms } });
+        const searchedKeys = (result: { readonly items: Parameters<typeof recordIds>[0] }) => recordIds(result.items);
+        const byKey = yield* searched([{ partyIds: [], term: 'CUSTOMER-002' }]);
+        expect([byKey.count, searchedKeys(byKey)]).toEqual([1, ['customer-002']]);
+        const byAll = yield* searched([{ partyIds: [], term: 'customer-00' }]);
+        expect([byAll.count, searchedKeys(byAll)]).toEqual([3, sourceKeys]);
+        for (const literal of ['_', '%', '\\', 'customer-0_2', 'customer-%']) {
+          expect((yield* searched([{ partyIds: [], term: literal }])).count, literal).toBe(0);
+        }
+        // Retail customers 001 and 002 share one Party; matching the Party matches both, whatever the key says.
+        const byParty = yield* searched([{ partyIds: [payload.subject.partyRef.resourceId], term: 'ada' }]);
+        expect(searchedKeys(byParty)).toEqual(['customer-001', 'customer-002', 'customer-003']);
+        const mixed = yield* searched([
+          { partyIds: [], term: 'customer-003' },
+          { partyIds: [payload.subject.partyRef.resourceId], term: 'ada' },
+        ]);
+        expect([mixed.count, searchedKeys(mixed)]).toEqual([1, ['customer-003']]);
+        const pagedSearch = yield* readPage({
+          ...authority,
+          limit: 1,
+          offset: 1,
+          search: { terms: [{ partyIds: [], term: 'customer' }] },
+        });
+        expect([pagedSearch.count, searchedKeys(pagedSearch)]).toEqual([3, ['customer-002']]);
+        expect(
+          yield* readPage({
+            ...authority,
+            limit: 5,
+            offset: 3,
+            search: { terms: [{ partyIds: [], term: 'customer' }] },
+          }),
+        ).toEqual({ count: 3, items: [] });
+        expect(yield* readPage({ ...authority, limit: 50, offset: 3 })).toEqual({ count: 3, items: [] });
+        expect(yield* readPage({ ...authority, limit: 50, offset: 100 })).toEqual({ count: 3, items: [] });
+        expect(
+          yield* Effect.flip(
+            readPage({ ...authority, limit: 1, offset: 0, route: { id: 'other', revision: 'route-1' } }),
+          ),
+        ).toMatchObject({ code: 'read_permission_denied' });
         const callsBefore = privacyChecks;
         privacyDenied = true;
         expect(
@@ -502,6 +582,7 @@ it.live(
           new Set([
             'commerce.customer-context.requirement.create-counterparty-profile-source-privacy',
             'commerce.customer-context.requirement.customer-profile-source-privacy',
+            'commerce.customer-context.requirement.customer-profile-source-page-privacy',
             'commerce.customer-context.requirement.ensure-retail-profile-source-privacy',
           ]),
         );
@@ -511,13 +592,22 @@ it.live(
             'commerce.customer-context.requirement.create-counterparty-profile-source-person',
             'commerce.customer-context.requirement.customer-profile-source-counterparty',
             'commerce.customer-context.requirement.customer-profile-source-counterparty-person',
+            'commerce.customer-context.requirement.customer-profile-source-page-counterparty',
+            'commerce.customer-context.requirement.customer-profile-source-page-counterparty-person',
+            'commerce.customer-context.requirement.customer-profile-source-page-party',
             'commerce.customer-context.requirement.customer-profile-source-party',
             'commerce.customer-context.requirement.ensure-retail-profile-source-person',
           ]),
         );
+        expect(yield* Effect.flip(readPage({ ...authority, limit: 10, offset: 0 }))).toMatchObject({
+          code: 'read_handler_unavailable',
+        });
         privacyDenied = false;
         partyUnavailable = true;
         expect(yield* Effect.flip(read({ ...authority, cursor: null, limit: 10, mode: 'LIST' }))).toMatchObject({
+          code: 'read_handler_unavailable',
+        });
+        expect(yield* Effect.flip(readPage({ ...authority, limit: 10, offset: 0 }))).toMatchObject({
           code: 'read_handler_unavailable',
         });
         partyUnavailable = false;
@@ -526,6 +616,9 @@ it.live(
           .set({ active: false })
           .where(eq(customerProfileSourceRoutes.tenantId, fixture.tenantId));
         expect(yield* Effect.flip(read({ ...authority, effectId: source.effectId, mode: 'RECEIPT' }))).toMatchObject({
+          code: 'read_permission_denied',
+        });
+        expect(yield* Effect.flip(readPage({ ...authority, limit: 10, offset: 0 }))).toMatchObject({
           code: 'read_permission_denied',
         });
         const [bindings, receipts] = yield* Effect.all([

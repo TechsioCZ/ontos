@@ -394,7 +394,9 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                   asc(outboxDeliveries.outboxDeliveryId),
                 )
                 .limit(1)
-                .for('update', { skipLocked: true });
+                // A message and its domain event are shared by every delivery fanned out from them. Locking those
+                // joined rows would make SKIP LOCKED silently skip a peer delivery of the same message.
+                .for('update', { of: outboxDeliveries, skipLocked: true });
               const [candidate] = candidates;
               if (candidate === undefined) {
                 // The probe saw due work the locked claim did not get: another claimer holds it, or the two

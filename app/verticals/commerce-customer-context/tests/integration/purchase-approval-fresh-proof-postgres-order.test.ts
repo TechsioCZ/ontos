@@ -29,7 +29,8 @@ import {
 
 /**
  * Order and Shell replies are transport fixtures; all clients, Action gates and SQL are real. The buyer is the
- * verified subject and the Order module the verified actor, as the Shell signs a delegated call.
+ * verified subject and the Order module the verified actor, as the Shell signs a delegated call. It stays a plain
+ * `it.live`: the nesting rule exempts only that call form's callback, and this case nests its transport fixture.
  */
 it.live(
   'consumes an approved proof through the registered Order Action and rejects conflicting evidence',
@@ -243,7 +244,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'prepares registered revalidations concurrently without SQL and gates their final commits on the Core Tenant',
   () =>
     Effect.scoped(
@@ -303,7 +304,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'preserves different-intent Submit conflict while registered revalidation authority is paused without SQL',
   () =>
     Effect.scoped(
@@ -347,7 +348,7 @@ it.live(
   120_000,
 );
 
-it.live(
+it.live.concurrent(
   'refuses original I1 after the actual registered request wait crosses exclusive P1 expiry',
   () =>
     Effect.scoped(

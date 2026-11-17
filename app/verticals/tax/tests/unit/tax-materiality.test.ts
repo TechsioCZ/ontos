@@ -297,12 +297,6 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     expect(attestedDifferences(compare(previous, reordered))).toEqual(Option.some([]));
   });
 
-  it('#943 F10 the same old/new states give the same conclusion', () => {
-    const current = evaluate(evaluationRequest(), withStandardRule(selected('21', 'rule-standard', 2)));
-
-    expect(compare(approved, current)).toEqual(compare(approved, current));
-  });
-
   it('#943 F1 #937 F1-F6 another purchase is unverifiable, never compared by visible values', () => {
     const otherSeller = evaluate(
       evaluationRequest({

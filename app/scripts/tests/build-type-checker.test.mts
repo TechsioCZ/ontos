@@ -70,7 +70,8 @@ const resolveBuildOutputs = Effect.fn(function* resolveBuildOutputs(environment:
       ['--no-warnings', '--input-type=module', '--eval', probe, JSON.stringify(modernConfigs)],
       {
         cwd: workspaceRoot,
-        env: { ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '', ...environment },
+        // Blank counts as unset, so an inherited checker switch cannot leak into a case that does not set it.
+        env: { ONTOS_CI_TYPECHECK_SEPARATE: '', ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '', ...environment },
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -105,6 +106,17 @@ it.live(
     expectSharedBrowserTargets(outputs);
     for (const [config, output] of Object.entries(outputs)) {
       expect(output.disableTsChecker, `${config} must keep output.disableTsChecker: false`).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'CI builds leave checking to the required workspace job only when explicitly separated',
+  Effect.fn(function* testEffect() {
+    const outputs = yield* resolveBuildOutputs({ NODE_ENV: 'production', ONTOS_CI_TYPECHECK_SEPARATE: '1' });
+    expectSharedBrowserTargets(outputs);
+    for (const [config, output] of Object.entries(outputs)) {
+      expect(output.disableTsChecker, `${config} must not repeat the workspace typecheck`).toBe(true);
     }
   }),
 );

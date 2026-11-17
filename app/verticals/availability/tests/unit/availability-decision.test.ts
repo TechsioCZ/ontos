@@ -9,74 +9,9 @@ import { AvailabilitySubjectSchema } from '../../shared/domain/availability-subj
 import { AvailabilityOwnerQualificationSchema } from '../../shared/domain/availability-decision.ts';
 import type { AvailabilityEvaluationInput } from '../../shared/domain/availability-decision.ts';
 import { availabilityEvaluationService } from '../../src/services/availability-evaluation.service.ts';
-import { configuration, position, stockInput, subject } from '../support/availability-decision.ts';
+import { boundary, complete, makeCurrentnessInput } from '../support/availability-currentness.ts';
+import { configuration, subject } from '../support/availability-decision.ts';
 
-const boundary = {
-  kind: 'INFORMATIONAL' as const,
-  requiredAt: subject.purchasingContext.contextVerification.request.operationTime,
-};
-const complete = {
-  _tag: 'COMPLETE' as const,
-  evidence: Schema.decodeUnknownSync(OwnerVerifiableSetCompletenessEvidenceSchema)({
-    observedAt: '2026-10-05T12:00:00.000Z',
-    ownerRevision: 'set-revision-1',
-    scope: { kind: 'EXACT_PREDICATE', predicateRef: 'owner-predicate-1' },
-  }),
-  predicateRef: 'owner-predicate-1',
-};
-const makeInput = (amounts: readonly string[], requested = '10'): AvailabilityEvaluationInput => {
-  const exactSubject = { ...subject, quantity: { ...subject.quantity, amount: requested } };
-  const stock = Schema.decodeUnknownSync(AvailabilityStockInputSchema)({
-    ...stockInput,
-    positions: amounts.map((amount, index) => {
-      const onHand = {
-        ...position.position.onHand,
-        _tag: 'CURRENT' as const,
-        evidenceRef: `proof-${index}`,
-        observedAt: subject.purchasingContext.contextVerification.request.operationTime,
-        quantity: { amount, unitRef: subject.quantity.unitRef },
-      };
-      return {
-        ...position,
-        position: {
-          ...position.position,
-          onHand,
-          ref: { ...position.position.ref, resourceId: `99999999-9999-4999-8999-${String(index).padStart(12, '0')}` },
-        },
-        sourceEvidence: { ...position.sourceEvidence, _tag: 'OWNER_MANAGED' as const, onHand },
-      };
-    }),
-  });
-  return {
-    ownerQualification: {
-      currentness: 'CURRENT',
-      positions: stock.positions.map((entry, index) => ({
-        constraintSupport: 'RESOLVED',
-        positionRef: entry.position.ref,
-        reusableQuantity: {
-          _tag: 'PROVEN',
-          quantity: { amount: amounts[index] ?? '0', unitRef: subject.quantity.unitRef },
-        },
-        usability: 'USABLE',
-      })),
-      selectedBackendAuthority: { _tag: 'PROVEN', configuration },
-      set: complete,
-      stockInput: stock,
-      subject: exactSubject,
-      useBoundary: boundary,
-    },
-    policy: {
-      kind: 'LAUNCH_EXACT_QUANTITY',
-      owner: 'AVAILABILITY',
-      revisionRef: 'LAUNCH_EXACT_QUANTITY_V1',
-      subject: exactSubject,
-      useBoundary: boundary,
-    },
-    stockInput: stock,
-    subject: exactSubject,
-    useBoundary: boundary,
-  };
-};
 const check = (input: AvailabilityEvaluationInput, outcome: string, reason?: string) =>
   Effect.gen(function* verifyDecision() {
     const result = yield* availabilityEvaluationService(input);
@@ -92,7 +27,7 @@ const check = (input: AvailabilityEvaluationInput, outcome: string, reason?: str
 
 describe('exact owner-qualified Availability decision', () => {
   it('requires separate owner-qualified backend authority in the contract', () => {
-    const qualification = makeInput(['3'], '2').ownerQualification;
+    const qualification = makeCurrentnessInput(['3'], '2').ownerQualification;
     const decode = Schema.decodeUnknownSync(Schema.toType(AvailabilityOwnerQualificationSchema));
     expect(decode(qualification)).toEqual(qualification);
     const unproven = { ...qualification, selectedBackendAuthority: { _tag: 'UNPROVEN' } };
@@ -108,16 +43,16 @@ describe('exact owner-qualified Availability decision', () => {
 
   it.effect('covers 6 + 4 without allocating and respects quantity 2 versus 5', () =>
     Effect.gen(function* checkCoverage() {
-      yield* check(makeInput(['6', '4']), 'AVAILABLE');
-      yield* check(makeInput(['3'], '2'), 'AVAILABLE');
-      yield* check(makeInput(['3'], '5'), 'UNAVAILABLE', 'INSUFFICIENT_REUSABLE_QUANTITY');
-      yield* check(makeInput(['0']), 'UNAVAILABLE', 'CURRENT_ZERO');
-      yield* check(makeInput([]), 'UNAVAILABLE', 'COMPLETE_EMPTY_SET');
-      yield* check(makeInput(['0.1', '0.2'], '0.3'), 'AVAILABLE');
+      yield* check(makeCurrentnessInput(['6', '4']), 'AVAILABLE');
+      yield* check(makeCurrentnessInput(['3'], '2'), 'AVAILABLE');
+      yield* check(makeCurrentnessInput(['3'], '5'), 'UNAVAILABLE', 'INSUFFICIENT_REUSABLE_QUANTITY');
+      yield* check(makeCurrentnessInput(['0']), 'UNAVAILABLE', 'CURRENT_ZERO');
+      yield* check(makeCurrentnessInput([]), 'UNAVAILABLE', 'COMPLETE_EMPTY_SET');
+      yield* check(makeCurrentnessInput(['0.1', '0.2'], '0.3'), 'AVAILABLE');
     }),
   );
   it.effect('rejects a coherent alternate backend against independently selected authority', () => {
-    const input = makeInput(['3'], '2');
+    const input = makeCurrentnessInput(['3'], '2');
     const alternate = { ...configuration, configurationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' };
     const positions = input.stockInput.positions.map((entry) => {
       const onHand = {
@@ -151,7 +86,7 @@ describe('exact owner-qualified Availability decision', () => {
 
   it.effect('does not label constrained reusable zero or unusable Positions as physical Current zero', () =>
     Effect.gen(function* constrainedZero() {
-      const input = makeInput(['10'], '2');
+      const input = makeCurrentnessInput(['10'], '2');
       const constrained = {
         ...input,
         ownerQualification: {
@@ -180,7 +115,7 @@ describe('exact owner-qualified Availability decision', () => {
 
   it.effect('distinguishes unproven selected authority from actual Position scope mismatch', () =>
     Effect.gen(function* authorityReasons() {
-      const input = makeInput(['3'], '2');
+      const input = makeCurrentnessInput(['3'], '2');
       yield* check(
         {
           ...input,
@@ -214,7 +149,7 @@ describe('exact owner-qualified Availability decision', () => {
   it.effect('incomplete sets cannot establish positive or negative', () =>
     Effect.gen(function* checkIncomplete() {
       for (const amounts of [['100'], ['0'], []]) {
-        const input = makeInput(amounts);
+        const input = makeCurrentnessInput(amounts);
         yield* check(
           { ...input, ownerQualification: { ...input.ownerQualification, set: { _tag: 'UNPROVEN' } } },
           'INDETERMINATE',
@@ -224,7 +159,7 @@ describe('exact owner-qualified Availability decision', () => {
     }),
   );
   it.effect('never derives reusable quantity from ON_HAND minus RESERVED', () => {
-    const input = makeInput(['100']);
+    const input = makeCurrentnessInput(['100']);
     return check(
       {
         ...input,
@@ -242,7 +177,7 @@ describe('exact owner-qualified Availability decision', () => {
   });
   it.effect('preserves stale, uncertain currentness and unresolved constraint reasons', () =>
     Effect.gen(function* checkUncertainty() {
-      const input = makeInput(['100']);
+      const input = makeCurrentnessInput(['100']);
       for (const currentness of ['STALE', 'INDETERMINATE'] as const) {
         yield* check(
           { ...input, ownerQualification: { ...input.ownerQualification, currentness } },
@@ -279,7 +214,7 @@ describe('exact owner-qualified Availability decision', () => {
   );
   it.effect('binds proof to exact subject, boundary, source snapshot and predicate', () =>
     Effect.gen(function* checkProofBinding() {
-      const input = makeInput(['100']);
+      const input = makeCurrentnessInput(['100']);
       yield* check(
         {
           ...input,
@@ -310,7 +245,7 @@ describe('exact owner-qualified Availability decision', () => {
     }),
   );
   it.effect('rejects duplicate counting even if quantities seem sufficient', () => {
-    const input = makeInput(['6']);
+    const input = makeCurrentnessInput(['6']);
     const doubled = { ...input.stockInput, positions: [...input.stockInput.positions, ...input.stockInput.positions] };
     return check(
       {
@@ -328,7 +263,7 @@ describe('exact owner-qualified Availability decision', () => {
   });
   it.effect('owner uncertainty reasons remain distinct and independent proven support is usable', () =>
     Effect.gen(function* checkOwnerUncertainty() {
-      const input = makeInput(['10']);
+      const input = makeCurrentnessInput(['10']);
       for (const reason of ['CONFLICT', 'SOURCE_COVERAGE_UNCERTAIN', 'UNRESOLVED_RESERVATION_EFFECT'] as const) {
         const positions = input.ownerQualification.positions.map((entry) => ({
           ...entry,
@@ -350,13 +285,13 @@ describe('exact owner-qualified Availability decision', () => {
           'AVAILABLE',
         );
       }
-      yield* check(makeInput(['6'], '10'), 'UNAVAILABLE');
+      yield* check(makeCurrentnessInput(['6'], '10'), 'UNAVAILABLE');
     }),
   );
   it.effect('UNKNOWN, MISSING, STALE and INDETERMINATE never become zero', () =>
     Effect.gen(function* checkEvidenceStates() {
       for (const tag of ['UNKNOWN', 'MISSING', 'INDETERMINATE', 'STALE'] as const) {
-        const input = makeInput(['10']);
+        const input = makeCurrentnessInput(['10']);
         const positions = input.stockInput.positions.map((entry) => {
           const onHand = Schema.decodeUnknownSync(
             AvailabilityInventoryPositionEvidenceSchema.fields.position.fields.onHand,
@@ -420,7 +355,7 @@ describe('exact owner-qualified Availability decision', () => {
     }),
   );
   it.effect('a different Unit is uncertainty rather than conversion or substitution', () => {
-    const input = makeInput(['10']);
+    const input = makeCurrentnessInput(['10']);
     const otherUnit = Schema.decodeUnknownSync(AvailabilitySubjectSchema.fields.quantity.fields.unitRef)({
       ...subject.quantity.unitRef,
       resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -441,7 +376,7 @@ describe('exact owner-qualified Availability decision', () => {
     );
   });
   it.effect('safely broader Inventory completeness uses the canonical envelope', () => {
-    const input = makeInput(['6', '4']);
+    const input = makeCurrentnessInput(['6', '4']);
     const evidence = Schema.decodeUnknownSync(OwnerVerifiableSetCompletenessEvidenceSchema)({
       observedAt: '2026-10-05T12:00:00.000Z',
       ownerRevision: 'broader-owner-revision',
@@ -459,7 +394,7 @@ describe('exact owner-qualified Availability decision', () => {
   it.effect('independent support is a positive lower bound and never an uncertain negative', () =>
     Effect.gen(function* checkIndependentBound() {
       for (const amount of ['3', '5', '6']) {
-        const input = makeInput([amount], '5');
+        const input = makeCurrentnessInput([amount], '5');
         const positions = input.ownerQualification.positions.map((entry) => ({
           ...entry,
           constraintSupport: 'INDEPENDENTLY_PROVEN' as const,
@@ -471,7 +406,7 @@ describe('exact owner-qualified Availability decision', () => {
           'SOURCE_COVERAGE_UNCERTAIN',
         );
       }
-      yield* check(makeInput(['3'], '5'), 'UNAVAILABLE');
+      yield* check(makeCurrentnessInput(['3'], '5'), 'UNAVAILABLE');
     }),
   );
 });

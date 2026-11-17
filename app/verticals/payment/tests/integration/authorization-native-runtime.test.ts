@@ -5,6 +5,7 @@ import type { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Option, Predicate, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -71,6 +72,7 @@ import {
 import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
+  awaitQueuedLockWaiters,
   collectInput,
   COMPOSITION_REVISION,
   inScope,
@@ -480,16 +482,12 @@ const frozenT = (harness: Harness, seconds: number) =>
     ])
     .pipe(Effect.map(([row]) => DateTime.fromDateUnsafe(row?.t ?? new Date(0))));
 
-/**
- * Holds the Payment row lock in a separate runtime-role transaction. After `proceed` completes it
- * keeps holding the lock inside PostgreSQL (`pg_sleep`) until `holdUntil`, then commits.
- */
+/** Holds the Payment row lock in a separate runtime-role transaction until `proceed` completes. */
 const holdPaymentRowLock = (
   harness: Harness,
   paymentId: string,
   locked: Deferred.Deferred<number>,
   proceed: Deferred.Deferred<boolean>,
-  holdUntil?: DateTime.Utc,
 ) =>
   inScope(
     harness.runtimeClient,
@@ -501,36 +499,8 @@ const holdPaymentRowLock = (
       );
       yield* Deferred.succeed(locked, row?.pid ?? 0);
       yield* Deferred.await(proceed);
-      if (holdUntil !== undefined) {
-        yield* harness.runtimeClient.unsafe(
-          'select pg_sleep(greatest(0, extract(epoch from ($1::timestamptz - clock_timestamp()))))',
-          [DateTime.formatIso(holdUntil)],
-        );
-      }
     }),
   );
-
-/** Polls until PostgreSQL itself reports `expected` backends queued (directly or transitively) behind `holder`. */
-const awaitWaitersBehind = (adminClient: PgClient.PgClient, holder: number, expected: number) => {
-  const waiting = adminClient
-    .unsafe<{ readonly waiting: number }>(
-      `with recursive blocked(pid) as (
-         select pid from pg_catalog.pg_stat_activity where $1 = any(pg_catalog.pg_blocking_pids(pid))
-         union
-         select activity.pid from pg_catalog.pg_stat_activity activity
-           join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
-       ) select count(*)::integer as waiting from blocked`,
-      [holder],
-    )
-    .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
-  const poll = (remaining: number): Effect.Effect<number, Effect.Error<typeof waiting>> =>
-    waiting.pipe(
-      Effect.flatMap((count) =>
-        count >= expected || remaining === 0 ? Effect.succeed(count) : Effect.suspend(() => poll(remaining - 1)),
-      ),
-    );
-  return poll(5000);
-};
 
 const outboxCount = (harness: Harness) =>
   harness.admin
@@ -664,22 +634,25 @@ it.live('#1149 a different Attempt may be authorized only after every proof of t
       expect(yield* failureCode(harness.issue(issuePayload(bindingB, 'key-B')))).toBe(
         'payment_authorization_issuance_conflict',
       );
-      // Wait inside PostgreSQL until the actual time is past A's expiry.
-      yield* harness.adminClient.unsafe(
-        'select pg_sleep(greatest(0, extract(epoch from ($1::timestamptz - clock_timestamp()))))',
-        [DateTime.formatIso(DateTime.addDuration(proofA.proof.expiresAt, Duration.millis(100)))],
-      );
-      expect(
-        (yield* harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA })).reasons,
-      ).toEqual(['EXPIRED']);
-      const proofB = yield* harness.issue(issuePayload(bindingB, 'key-B'));
-      const validations = yield* Effect.all(
-        [
-          harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA }),
-          harness.validate({ authorizationId: proofB.proof.authorizationId, binding: bindingB }),
-        ],
-        { concurrency: 1 },
-      );
+      // The business clock moves past A's expiry instead of waiting for it: every proof decision here
+      // reads expiry off the Effect clock, and PostgreSQL only stores the instants it is given.
+      const { expiredA, validations } = yield* Effect.gen(function* pastExpiryOfA() {
+        yield* TestClock.setTime(DateTime.toEpochMillis(proofA.proof.expiresAt) + 100);
+        const expiredProofA = yield* harness.validate({
+          authorizationId: proofA.proof.authorizationId,
+          binding: bindingA,
+        });
+        const proofB = yield* harness.issue(issuePayload(bindingB, 'key-B'));
+        const laterValidations = yield* Effect.all(
+          [
+            harness.validate({ authorizationId: proofA.proof.authorizationId, binding: bindingA }),
+            harness.validate({ authorizationId: proofB.proof.authorizationId, binding: bindingB }),
+          ],
+          { concurrency: 1 },
+        );
+        return { expiredA: expiredProofA, validations: laterValidations };
+      }).pipe(Effect.provide(TestClock.layer()));
+      expect(expiredA.reasons).toEqual(['EXPIRED']);
       expect(validations.map(({ outcome }) => outcome)).toEqual(['NOT_VALID', 'VALID']);
     }),
   ),
@@ -1276,33 +1249,47 @@ it.live('#1149 Proof expires while execution waits; replay and a refreshed Compo
 
       const locked = yield* Deferred.make<number>();
       const release = yield* Deferred.make<boolean>();
-      const holdUntil = DateTime.addDuration(expiresAt, Duration.millis(150));
-      const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release, holdUntil).pipe(
-        Effect.forkChild,
-      );
+      const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       // The request starts before E ...
       const requestStart = yield* databaseNow(harness.adminClient);
       expect(DateTime.isLessThan(requestStart, expiresAt)).toBe(true);
-      const validation = yield* harness.validate({ authorizationId, binding }).pipe(Effect.forkChild);
+      const queued = yield* Deferred.make<boolean>();
+      /*
+       * The business clock starts at that same request instant and passes E only once the validation is
+       * proven to be queued on the Payment row lock. Expiry is decided off the Effect clock and never in
+       * SQL, so no wall-clock wait is needed to put the decision after E.
+       */
+      const validating = yield* Effect.gen(function* validateAcrossExpiry() {
+        yield* TestClock.setTime(DateTime.toEpochMillis(requestStart));
+        const validation = yield* harness.validate({ authorizationId, binding }).pipe(Effect.forkChild);
+        yield* Deferred.await(queued);
+        yield* TestClock.setTime(DateTime.toEpochMillis(expiresAt) + 150);
+        // ... while the lock holder keeps the row until the business clock is past E.
+        yield* Deferred.succeed(release, true);
+        const waited = yield* Fiber.join(validation);
+        const replay = yield* harness.issue(issuePayload(binding, 'expiring', 1));
+        const replayAtR2 = yield* harness.issue(issuePayload(binding, 'expiring', 1), R2);
+        const afterReplay = yield* harness.validate({ authorizationId, binding });
+        return { afterReplay, replay, replayAtR2, waited };
+      }).pipe(Effect.provide(TestClock.layer()), Effect.forkChild);
       // ... and PostgreSQL proves it waits on the Payment row lock (not merely slow) ...
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 1)).toBe(1);
-      // ... while the lock holder keeps the row inside PostgreSQL until after E.
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
+      yield* Deferred.succeed(queued, true);
       yield* Fiber.join(holder);
-      const waited = yield* Fiber.join(validation);
+      const { afterReplay, replay, replayAtR2, waited } = yield* Fiber.join(validating);
       expect(waited).toMatchObject({ outcome: 'NOT_VALID', reasons: ['EXPIRED'] });
       // The actual boundary is after the wait, at or after E, regardless of T or the request start.
       expect(DateTime.isGreaterThanOrEqualTo(waited.validatedAt, expiresAt)).toBe(true);
       // Exact replay recovers the original proof and times; it never refreshes the expiry.
-      expect(yield* harness.issue(issuePayload(binding, 'expiring', 1))).toEqual({
-        issuance: 'REPLAYED',
-        proof: issued.proof,
-      });
+      expect(replay).toEqual({ issuance: 'REPLAYED', proof: issued.proof });
       // A refreshed runtime Composition R2 does not revive it; the original provenance stays R1.
-      const replayAtR2 = yield* harness.issue(issuePayload(binding, 'expiring', 1), R2);
       expect(replayAtR2.proof.provenance.compositionRevision).toBe(R1);
-      expect((yield* harness.validate({ authorizationId, binding })).reasons).toEqual(['EXPIRED']);
+      expect(afterReplay.reasons).toEqual(['EXPIRED']);
     }),
   ),
 );
@@ -1323,10 +1310,17 @@ it.live('#1149 Refund races with prepaid proof issuance: refund first, issuance 
       const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       const refund = yield* startRefund(harness, payment, collected.operationId).pipe(Effect.forkChild);
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 1)).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       const issuance = yield* failureCode(harness.issue(issuePayload(binding, 'race-a'))).pipe(Effect.forkChild);
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 2)).toBe(2);
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid }).pipe(
+          Effect.ensuring(Deferred.succeed(release, true)),
+        ),
+      ).toBe(2);
       yield* Fiber.join(holder);
       expect((yield* Fiber.join(refund)).outcome).toBe('PENDING');
       // Issuance decided under the lock after the refund committed: no proof against stale full coverage.
@@ -1348,10 +1342,17 @@ it.live('#1149 Refund races with prepaid proof issuance: issuance first, the pro
       const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       const issuance = yield* harness.issue(issuePayload(binding, 'race-b')).pipe(Effect.forkChild);
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 1)).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       const refund = yield* startRefund(harness, payment, collected.operationId).pipe(Effect.forkChild);
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 2)).toBe(2);
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid }).pipe(
+          Effect.ensuring(Deferred.succeed(release, true)),
+        ),
+      ).toBe(2);
       yield* Fiber.join(holder);
       const issued = yield* Fiber.join(issuance);
       yield* Fiber.join(refund);
@@ -1379,10 +1380,17 @@ it.live('#1149 Refund races with prepaid proof validation: validation waits on t
       const holder = yield* holdPaymentRowLock(harness, payment.paymentId, locked, release).pipe(Effect.forkChild);
       const holderPid = yield* Deferred.await(locked);
       const refund = yield* startRefund(harness, payment, collected.operationId).pipe(Effect.forkChild);
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 1)).toBe(1);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 1, holderPid }).pipe(
+          Effect.onError(() => Deferred.succeed(release, true)),
+        ),
+      ).toBe(1);
       const validation = yield* validate.pipe(Effect.forkChild);
-      expect(yield* awaitWaitersBehind(harness.adminClient, holderPid, 2)).toBe(2);
-      yield* Deferred.succeed(release, true);
+      expect(
+        yield* awaitQueuedLockWaiters(harness.adminClient, { expected: 2, holderPid }).pipe(
+          Effect.ensuring(Deferred.succeed(release, true)),
+        ),
+      ).toBe(2);
       yield* Fiber.join(holder);
       yield* Fiber.join(refund);
       expect(yield* Fiber.join(validation)).toMatchObject({

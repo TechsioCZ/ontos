@@ -51,8 +51,10 @@ export default defineConfig({
   projects: [
     {
       include: ['tests/integration/**/*.test.ts'],
+      maxConcurrency: 2,
       name: 'integration',
       root: new URL('.', import.meta.url).pathname,
+      setupFiles: ['../../scripts/ci/integration-worker-setup.mts'],
       testEnvironment: 'node',
       testTimeout: 30_000,
       tools: { rspack: { module: { rules: ownerBuildRules } }, swc },
@@ -62,6 +64,9 @@ export default defineConfig({
       name: 'unit',
       root: new URL('.', import.meta.url).pathname,
       testEnvironment: 'node',
+      // Four times the slowest unit test without its own budget, 665 ms in gates runs 43616061381
+      // and 43844802542, instead of the silent 5000 ms Rstest default.
+      testTimeout: 2660,
       tools: { swc },
     },
   ],

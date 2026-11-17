@@ -30,6 +30,16 @@ import type {
   CustomerProfileSourceResponse,
   CustomerProfileSourceItem,
 } from '../../shared/apis/customer-profile-source.ts';
+import { CustomerProfileSourcePageResponseSchema } from '../../shared/apis/customer-profile-source-page.ts';
+import { CustomerProfileSourcePartiesResponseSchema } from '../../shared/apis/customer-profile-source-parties.ts';
+import type {
+  CustomerProfileSourcePartiesRequest,
+  CustomerProfileSourcePartiesResponse,
+} from '../../shared/apis/customer-profile-source-parties.ts';
+import type {
+  CustomerProfileSourcePageRequest,
+  CustomerProfileSourcePageResponse,
+} from '../../shared/apis/customer-profile-source-page.ts';
 import type { CustomerProfileSourceAssertion } from '../../shared/domain/customer-profile-source.ts';
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
 import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
@@ -48,8 +58,28 @@ type StoredSourceResponse = typeof storedSourceResponseSchema.Type;
 const OWNER_MODULE_KEY = 'commerce.customer-context';
 const DATABASE_SCHEMA = 'commerce_customer_context';
 const SOURCE_READ_ROUTINE_KEY = 'customer-profile-source.read';
-const sourcePartyRequirement = 'commerce.customer-context.requirement.customer-profile-source-party';
-const sourcePrivacyRequirement = 'commerce.customer-context.requirement.customer-profile-source-privacy';
+/** The dependency requirement keys of one read entrypoint: each entrypoint declares and executes its own. */
+interface SourceReadRequirements {
+  readonly counterparty: string;
+  readonly counterpartyPerson: string;
+  readonly organization: string;
+  readonly party: string;
+  readonly privacy: string;
+}
+const sourceReadRequirements: SourceReadRequirements = {
+  counterparty: 'commerce.customer-context.requirement.customer-profile-source-counterparty',
+  counterpartyPerson: 'commerce.customer-context.requirement.customer-profile-source-counterparty-person',
+  organization: 'commerce.customer-context.requirement.customer-profile-source-organization',
+  party: 'commerce.customer-context.requirement.customer-profile-source-party',
+  privacy: 'commerce.customer-context.requirement.customer-profile-source-privacy',
+};
+const sourcePageReadRequirements: SourceReadRequirements = {
+  counterparty: 'commerce.customer-context.requirement.customer-profile-source-page-counterparty',
+  counterpartyPerson: 'commerce.customer-context.requirement.customer-profile-source-page-counterparty-person',
+  organization: 'commerce.customer-context.requirement.customer-profile-source-page-organization',
+  party: 'commerce.customer-context.requirement.customer-profile-source-page-party',
+  privacy: 'commerce.customer-context.requirement.customer-profile-source-page-privacy',
+};
 
 const sourceReadRoutine = defineScopedRoutine({
   name: 'read_customer_profile_source',
@@ -62,6 +92,33 @@ const sourceReadRoutine = defineScopedRoutine({
   ],
   resultSchema: Schema.Struct({ outcome: Schema.String, result: Schema.Unknown }),
   routineKey: SOURCE_READ_ROUTINE_KEY,
+  schema: DATABASE_SCHEMA,
+});
+const sourcePageRoutine = defineScopedRoutine({
+  name: 'read_customer_profile_source_page',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({ outcome: Schema.String, result: Schema.Unknown }),
+  routineKey: 'customer-profile-source.page-read',
+  schema: DATABASE_SCHEMA,
+});
+const routeNotAuthorized = 'The current route does not authorize this source Profile read';
+const sourcePartiesRoutine = defineScopedRoutine({
+  name: 'read_customer_profile_source_parties',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({ outcome: Schema.String, result: Schema.Unknown }),
+  routineKey: 'customer-profile-source.parties-read',
   schema: DATABASE_SCHEMA,
 });
 const organizationReceiptResultSchema = Schema.Struct({
@@ -103,11 +160,20 @@ export interface CustomerProfileSourceReadServices {
     ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
   >;
 }
+export interface CustomerProfileSourcePageReadServices {
+  readonly readPage: (
+    input: CustomerProfileSourcePageRequest,
+  ) => Effect.Effect<CustomerProfileSourcePageResponse, ReadHandlerUnavailable | ReadPermissionDenied>;
+}
 
-export const customerProfileSourceReadServices: ReadServiceFactory<
-  CustomerProfileSourceReadServices,
-  CommerceSourceProcessingEligibility | CommerceSourceProfileOwnerProof
-> = Effect.fn('CustomerProfileSourceRead.services')(function* sourceProfileReadServices(
+export interface CustomerProfileSourcePartiesReadServices {
+  readonly readParties: (
+    input: CustomerProfileSourcePartiesRequest,
+  ) => Effect.Effect<CustomerProfileSourcePartiesResponse, ReadHandlerUnavailable | ReadPermissionDenied>;
+}
+
+const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(function* sourceProfileReadServices(
+  requirements: SourceReadRequirements,
   transaction: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[0],
   scope: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[1],
 ) {
@@ -140,13 +206,13 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
             resourceId: item.profile.profileRef.resourceId,
           },
         },
-        sourcePrivacyRequirement,
+        requirements.privacy,
       )
       .pipe(Effect.mapError(unavailable));
   const currentAdmissionForItem = Effect.fn('CustomerProfileSourceRead.currentAdmission')(
     function* currentAdmissionForItem(item: CustomerProfileSourceItem) {
       if (item.profile.subject.kind === 'RETAIL') {
-        yield* requireModuleOperation(sourcePartyRequirement).pipe(Effect.mapError(unavailable));
+        yield* requireModuleOperation(requirements.party).pipe(Effect.mapError(unavailable));
         if (
           item.profile.subject.partyRef.resourceId !== item.partyRef.resourceId ||
           item.profile.subject.sellingLegalEntityRef.resourceId !== scope.legalEntityId
@@ -154,29 +220,27 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
           return yield* unavailable();
         }
         const result = yield* proof
-          .retail(scope, item.partyRef, item.source, item.partySourceReference, sourcePartyRequirement)
+          .retail(scope, item.partyRef, item.source, item.partySourceReference, requirements.party)
           .pipe(Effect.mapError(unavailable));
         if (result.outcome !== 'CURRENT_PARTY_RESOLVED' || result.partyResourceId !== item.partyRef.resourceId) {
           return yield* unavailable();
         }
         return result.currentAdmission;
       }
-      yield* requireModuleOperation('commerce.customer-context.requirement.customer-profile-source-counterparty').pipe(
-        Effect.mapError(unavailable),
-      );
+      yield* requireModuleOperation(requirements.counterparty).pipe(Effect.mapError(unavailable));
       const result = yield* proof
         .counterparty(
           scope,
           item.profile.subject.counterpartyRef.resourceId,
           item.source,
           item.partySourceReference,
-          'commerce.customer-context.requirement.customer-profile-source-counterparty',
+          requirements.counterparty,
         )
         .pipe(Effect.mapError(unavailable));
       if (result.outcome !== 'ELIGIBLE' || result.partyResourceId !== item.partyRef.resourceId) {
         return yield* unavailable();
       }
-      const personKey = 'commerce.customer-context.requirement.customer-profile-source-counterparty-person';
+      const personKey = requirements.counterpartyPerson;
       yield* requireModuleOperation(personKey).pipe(Effect.mapError(unavailable));
       const person = yield* proof
         .retail(scope, item.partyRef, item.source, item.partySourceReference, personKey)
@@ -190,7 +254,7 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
   const checkItem = Effect.fn('CustomerProfileSourceRead.checkItem')(function* checkItem(
     item: CustomerProfileSourceItem,
   ) {
-    yield* requireModuleOperation(sourcePrivacyRequirement).pipe(Effect.mapError(unavailable));
+    yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
     if (
       item.profile.profileRef.tenantId !== scope.tenantId ||
       item.partyRef.tenantId !== scope.tenantId ||
@@ -260,9 +324,9 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
     ) {
       return yield* unavailable();
     }
-    yield* requireModuleOperation(sourcePartyRequirement).pipe(Effect.mapError(unavailable));
+    yield* requireModuleOperation(requirements.party).pipe(Effect.mapError(unavailable));
     const admission = yield* proof
-      .retail(scope, receipt.intent.subject.partyRef, original, originalPartyReference, sourcePartyRequirement)
+      .retail(scope, receipt.intent.subject.partyRef, original, originalPartyReference, requirements.party)
       .pipe(Effect.mapError(unavailable));
     if (
       admission.outcome !== 'CURRENT_PARTY_RESOLVED' ||
@@ -274,7 +338,7 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
     ) {
       return yield* unavailable();
     }
-    yield* requireModuleOperation(sourcePrivacyRequirement).pipe(Effect.mapError(unavailable));
+    yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
     yield* privacy
       .check(
         scope,
@@ -291,7 +355,7 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
           },
           target: { kind: 'PARTY', resourceId: receipt.intent.subject.partyRef.resourceId },
         },
-        sourcePrivacyRequirement,
+        requirements.privacy,
       )
       .pipe(Effect.mapError(unavailable));
     return { _tag: 'MINIMAL_RECEIPT' as const, currentAdmission: admission.currentAdmission, receipt };
@@ -341,7 +405,7 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
             projectionVersion: ORGANIZATION_PROFILE_SOURCE_CURRENT_VERSION,
             sourceReference: safe.partySourceReference,
           },
-          'commerce.customer-context.requirement.customer-profile-source-organization',
+          requirements.organization,
         )
         .pipe(Effect.mapError(unavailable));
       if (
@@ -438,7 +502,7 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
             projectionVersion: ORGANIZATION_PROFILE_SOURCE_RECEIPT_VERSION,
             sourceReference: safe.intent.partySourceReference,
           },
-          'commerce.customer-context.requirement.customer-profile-source-organization',
+          requirements.organization,
         )
         .pipe(Effect.mapError(unavailable));
       if (
@@ -453,7 +517,50 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
     },
   );
   return {
-    readSource: Effect.fn('CustomerProfileSourceRead.read')(function* readSource(input) {
+    readPage: Effect.fn('CustomerProfileSourceRead.readPage')(function* readPage(
+      input: CustomerProfileSourcePageRequest,
+    ) {
+      const [row] = yield* transaction
+        .invoke(sourcePageRoutine, [scope.principalId, input])
+        .pipe(Effect.mapError(unavailable));
+      if (row?.outcome === 'SOURCE_AUTHORITY_DENIED') {
+        return yield* new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: routeNotAuthorized,
+        });
+      }
+      if (row?.outcome !== 'AVAILABLE') {
+        return yield* unavailable();
+      }
+      const page = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageResponseSchema, {
+        onExcessProperty: 'error',
+      })(row.result).pipe(Effect.mapError(unavailable));
+      const items =
+        page.items.length === 0
+          ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
+          : yield* Effect.forEach(page.items, projectCurrentItem, { concurrency: 1 });
+      return { ...page, items };
+    }),
+    readParties: Effect.fn('CustomerProfileSourceRead.readParties')(function* readParties(
+      input: CustomerProfileSourcePartiesRequest,
+    ) {
+      const [row] = yield* transaction
+        .invoke(sourcePartiesRoutine, [scope.principalId, input])
+        .pipe(Effect.mapError(unavailable));
+      if (row?.outcome === 'SOURCE_AUTHORITY_DENIED') {
+        return yield* new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: routeNotAuthorized,
+        });
+      }
+      if (row?.outcome !== 'AVAILABLE') {
+        return yield* unavailable();
+      }
+      return yield* Schema.decodeUnknownEffect(CustomerProfileSourcePartiesResponseSchema, {
+        onExcessProperty: 'error',
+      })(row.result).pipe(Effect.mapError(unavailable));
+    }),
+    readSource: Effect.fn('CustomerProfileSourceRead.read')(function* readSource(input: CustomerProfileSourceRequest) {
       if (input.mode === 'ORG_RECEIPT') {
         return yield* recoverOrganizationReceipt(input);
       }
@@ -469,7 +576,7 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
       if (row.outcome === 'SOURCE_AUTHORITY_DENIED') {
         return yield* new ReadPermissionDenied({
           code: 'read_permission_denied',
-          reason: 'The current route does not authorize this source Profile read',
+          reason: routeNotAuthorized,
         });
       }
       if (row.outcome === 'NOT_FOUND') {
@@ -490,12 +597,12 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
       return yield* Match.value(result).pipe(
         Match.tagsExhaustive({
           ABSENT: (value) =>
-            requireModuleOperation(sourcePrivacyRequirement).pipe(Effect.mapError(unavailable), Effect.as(value)),
+            requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as(value)),
           CURRENT: (value) =>
             projectCurrentItem(value.item).pipe(Effect.map((item) => ({ _tag: 'CURRENT' as const, item }))),
           PAGE: (value) =>
             (value.items.length === 0
-              ? requireModuleOperation(sourcePrivacyRequirement).pipe(Effect.mapError(unavailable), Effect.as([]))
+              ? requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
               : Effect.forEach(value.items, projectCurrentItem, { concurrency: 1 })
             ).pipe(Effect.map((items) => ({ ...value, items }))),
           RECEIPT: Effect.fn('CustomerProfileSourceRead.recover')(function* checkReceipt({
@@ -525,3 +632,26 @@ export const customerProfileSourceReadServices: ReadServiceFactory<
     }),
   };
 });
+
+type SourceReadServiceRequirements = CommerceSourceProcessingEligibility | CommerceSourceProfileOwnerProof;
+export const customerProfileSourceReadServices: ReadServiceFactory<
+  CustomerProfileSourceReadServices,
+  SourceReadServiceRequirements
+> = (transaction, scope) =>
+  makeSourceReadServices(sourceReadRequirements, transaction, scope).pipe(
+    Effect.map(({ readSource }) => ({ readSource })),
+  );
+export const customerProfileSourcePageReadServices: ReadServiceFactory<
+  CustomerProfileSourcePageReadServices,
+  SourceReadServiceRequirements
+> = (transaction, scope) =>
+  makeSourceReadServices(sourcePageReadRequirements, transaction, scope).pipe(
+    Effect.map(({ readPage }) => ({ readPage })),
+  );
+export const customerProfileSourcePartiesReadServices: ReadServiceFactory<
+  CustomerProfileSourcePartiesReadServices,
+  SourceReadServiceRequirements
+> = (transaction, scope) =>
+  makeSourceReadServices(sourcePageReadRequirements, transaction, scope).pipe(
+    Effect.map(({ readParties }) => ({ readParties })),
+  );

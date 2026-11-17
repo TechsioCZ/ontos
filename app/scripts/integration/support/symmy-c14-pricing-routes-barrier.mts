@@ -37,22 +37,44 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
     const sourceReceiptReads = yield* Ref.make(0);
     const diagnostic = yield* Ref.make('none');
     const armedPriceId = yield* Ref.make(Option.none<string>());
+    // A public price list gets its price identity from the admission, so a test can hold the next Price by order.
+    const armedNextPrice = yield* Ref.make(false);
+    const revocationNextPrice = yield* Ref.make(false);
+    /** The held price: the exact armed id, or the first price that arrives once the next one is armed. */
+    const heldPriceId = Effect.fn('InternalC14PricingRoutes.heldPrice')(function* heldPrice(
+      held: { readonly id: Ref.Ref<Option.Option<string>>; readonly next: Ref.Ref<boolean> },
+      taken: Effect.Effect<boolean>,
+      priceId: string,
+    ) {
+      if ((yield* Ref.get(held.next)) && !(yield* taken)) {
+        yield* Ref.set(held.id, Option.some(priceId));
+      }
+      return yield* Ref.get(held.id);
+    });
     const application = Effect.gen(function* forwardActualPricingRequest() {
       const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
       const path = new URL(request.url);
-      const armed = yield* Ref.get(armedPriceId);
-      const revoke = yield* Ref.get(revocationPriceId);
       let loseAcceptedReply = false;
       let holdForRevocation = false;
       if (path.pathname.endsWith('/reads/price-source-result-lookup')) {
         yield* Ref.update(sourceReceiptReads, (count) => count + 1);
       }
-      if (path.pathname.endsWith('/actions/define-price') && (Option.isSome(armed) || Option.isSome(revoke))) {
+      if (path.pathname.endsWith('/actions/define-price')) {
         const payload = yield* Effect.tryPromise({
           catch: unavailable,
           try: async () => await Schema.decodeUnknownPromise(DefinePricePayloadSchema)(await request.clone().json()),
         });
-        if (Option.isSome(armed) && payload.priceRef.resourceId === armed.value) {
+        const armedNow = yield* heldPriceId(
+          { id: armedPriceId, next: armedNextPrice },
+          Ref.get(intercepted),
+          payload.priceRef.resourceId,
+        );
+        const revokeNow = yield* heldPriceId(
+          { id: revocationPriceId, next: revocationNextPrice },
+          Deferred.isDone(revocationArrived),
+          payload.priceRef.resourceId,
+        );
+        if (Option.isSome(armedNow) && payload.priceRef.resourceId === armedNow.value) {
           yield* Ref.update(armedPriceCommandCount, (count) => count + 1);
           if (!(yield* Ref.getAndSet(intercepted, true))) {
             loseAcceptedReply = true;
@@ -62,7 +84,7 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
             }
           }
         }
-        if (Option.isSome(revoke) && payload.priceRef.resourceId === revoke.value) {
+        if (Option.isSome(revokeNow) && payload.priceRef.resourceId === revokeNow.value) {
           holdForRevocation = yield* Deferred.succeed(revocationArrived, payload);
           if (holdForRevocation && !(yield* Deferred.await(revocationReleased))) {
             return HttpServerResponse.empty({ status: 503 });
@@ -159,6 +181,7 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
     );
     return {
       armedPriceCommandCount: Ref.get(armedPriceCommandCount),
+      armForNextPrice: Ref.set(armedNextPrice, true),
       armForPrice: (priceId: string) =>
         Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(priceId).pipe(
           Effect.flatMap((id) => Ref.set(armedPriceId, Option.some(id))),
@@ -168,6 +191,7 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
       diagnostic: Ref.get(diagnostic),
       release: Deferred.succeed(released, true),
       revocation: {
+        armForNextPrice: Ref.set(revocationNextPrice, true),
         armForPrice: (priceId: string) =>
           Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(priceId).pipe(
             Effect.flatMap((id) => Ref.set(revocationPriceId, Option.some(id))),

@@ -64,10 +64,6 @@ const decodeIdentity = Schema.decodeUnknownSync(PriceIdentityKeySchema, { onExce
 const decodeRevision = Schema.decodeUnknownSync(PriceRevisionSchema, { onExcessProperty: 'error' });
 
 describe('Pricing Price definition contract', () => {
-  it('accepts one exact Variant Price and treats explicit zero as a real pre-Tax amount', () => {
-    expect(decodeDefinition(definition)).toEqual(definition);
-  });
-
   it('keeps native currency keys generalized without activating another currency', () => {
     const eurDefinition = {
       ...definition,

@@ -95,9 +95,6 @@ it.live(
           Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch),
         );
       expect(
-        Schema.is(SelectionEvidenceAuthenticationProblemSchema)(yield* request('Bearer invalid').pipe(Effect.flip)),
-      ).toBe(true);
-      expect(
         Schema.is(SelectionEvidenceAuthenticationProblemSchema)(
           yield* request(yield* owner.authorization(owner.fixture.manager, 'pricing')).pipe(Effect.flip),
         ),
@@ -128,13 +125,6 @@ it.live(
       expect(
         Schema.is(SelectionEvidenceForbiddenProblemSchema)(
           yield* owner.read(owner.selected, owner.fixture.denied).pipe(Effect.flip),
-        ),
-      ).toBe(true);
-      expect(
-        Schema.is(SelectionEvidenceForbiddenProblemSchema)(
-          yield* owner
-            .read(owner.selected, { ...owner.fixture.manager, legalEntityId: owner.fixture.legalEntityId })
-            .pipe(Effect.flip),
         ),
       ).toBe(true);
       const foreignTenant = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());

@@ -2,21 +2,10 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { mapAssertSizeEquivalenceActionProblem } from '../../api/assert-size-equivalence-action-problems.ts';
 import { mapReplaceProductSizesActionProblem } from '../../api/replace-product-sizes-action-problems.ts';
-import { AssertSizeEquivalenceActionApi } from '../../shared/apis/assert-size-equivalence-action.ts';
-import { ReplaceProductSizesActionApi } from '../../shared/apis/replace-product-sizes-action.ts';
-import { executeAssertSizeEquivalence } from '../../src/api/assert-size-equivalence-action-client.ts';
-import { executeReplaceProductSizes } from '../../src/api/replace-product-sizes-action-client.ts';
 import { CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';
 import { SizePersistenceConflict } from '../../src/persistence/size-usage-persistence.ts';
 
 describe('Size Action HTTP contracts', () => {
-  it('publishes independent typed Action transports and owner clients', () => {
-    expect(ReplaceProductSizesActionApi).toBeDefined();
-    expect(AssertSizeEquivalenceActionApi).toBeDefined();
-    expect(executeReplaceProductSizes).toBeDefined();
-    expect(executeAssertSizeEquivalence).toBeDefined();
-  });
-
   it('maps invalid, missing, stale, retired, and unavailable outcomes without leaking details', () => {
     const cases = [
       [mapReplaceProductSizesActionProblem, 'INVALID_INPUT', 400],

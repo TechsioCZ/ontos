@@ -66,8 +66,7 @@ export const SYMMY_ROUTES = {
   priceListPricesBatch: {
     method: 'POST',
     mode: 'durable_job',
-    path: `${SYMMY_REST_PREFIX}/price-lists/{code}/prices/batch`,
-    selector: 'code',
+    path: `${SYMMY_REST_PREFIX}/price-lists/prices/batch`,
     successStatus: 202,
   },
   priceLists: {

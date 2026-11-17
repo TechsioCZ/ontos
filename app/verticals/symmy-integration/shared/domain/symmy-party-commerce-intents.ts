@@ -67,11 +67,30 @@ const counterpartyProfileFromCounterpartyPayload = Schema.Struct({
   }),
 });
 
+/**
+ * The company ICO of a profile the same job creates: the profile and the effect id are the two facts the owner action
+ * needs that no plan can name before the job ran, so the intent carries every other field of a first SET.
+ */
+const [organizationIcoSet] = ChangeOrganizationCustomerProfileIcoPayloadSchema.members;
+const organizationIcoFromProfilePayload = Schema.Struct({
+  countryCode: organizationIcoSet.fields.countryCode,
+  effectiveAt: organizationIcoSet.fields.effectiveAt,
+  expectedRevision: organizationIcoSet.fields.expectedRevision,
+  identifier: organizationIcoSet.fields.identifier,
+  operation: organizationIcoSet.fields.operation,
+  originalInput: organizationIcoSet.fields.originalInput,
+});
+
 const savedAddressFromReceiptsPayload = Schema.Struct({
   label: AddSavedAddressPayloadSchema.fields.label,
   purposes: AddSavedAddressPayloadSchema.fields.purposes,
   reason: AddSavedAddressPayloadSchema.fields.reason,
   source: AddSavedAddressPayloadSchema.fields.source,
+});
+/** A Commerce-only address names its postal address itself, so no Party contact point stands behind it. */
+const savedAddressFromProfilePayload = Schema.Struct({
+  ...savedAddressFromReceiptsPayload.fields,
+  postalAddress: AddSavedAddressPayloadSchema.fields.origin.members[1].fields.postalAddress.schema.members[0],
 });
 
 /** Internal normalized inputs retain the complete native owner contract, including evidence and meaning. */
@@ -89,6 +108,15 @@ export const SymmyPartyCommerceIntentSchema = Schema.Union([
     fromCounterpartyEffect: partyDependency,
     fromProfileEffect: partyDependency,
     payload: Schema.toEncoded(savedAddressFromReceiptsPayload),
+  }),
+  Schema.TaggedStruct('AddSavedRetailAddressFromProfileEffect', {
+    fromProfileEffect: partyDependency,
+    payload: Schema.toEncoded(savedAddressFromProfilePayload),
+  }),
+  Schema.TaggedStruct('AddSavedCounterpartyAddressFromProfileEffect', {
+    fromCounterpartyEffect: partyDependency,
+    fromProfileEffect: partyDependency,
+    payload: Schema.toEncoded(savedAddressFromProfilePayload),
   }),
   Schema.TaggedStruct('OnboardCounterpartyCustomer', {
     payload: Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
@@ -133,6 +161,17 @@ export const SymmyPartyCommerceIntentSchema = Schema.Union([
   }),
   Schema.TaggedStruct('OrganizationCustomerProfileIco', {
     payload: Schema.toEncoded(ChangeOrganizationCustomerProfileIcoPayloadSchema),
+    sourceReference: OrganizationBusinessSourceReferenceSchema,
+  }),
+  Schema.TaggedStruct('OrganizationCustomerProfileIcoFromProfileEffect', {
+    fromProfileEffect: partyDependency,
+    payload: Schema.toEncoded(organizationIcoFromProfilePayload).check(
+      Schema.makeFilter((input) =>
+        input.originalInput === input.identifier.value
+          ? undefined
+          : 'The original numeric digits must equal the accepted input',
+      ),
+    ),
     sourceReference: OrganizationBusinessSourceReferenceSchema,
   }),
   Schema.TaggedStruct('CustomerProfileIco', { payload: Schema.toEncoded(ChangeCustomerProfileIcoPayloadSchema) }),
@@ -192,7 +231,15 @@ export const materializeSymmyPartyCommerceIntent = (
         value.payload.source === undefined
           ? value
           : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
+      AddSavedCounterpartyAddressFromProfileEffect: (value) =>
+        value.payload.source === undefined
+          ? value
+          : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
       AddSavedRetailAddressFromOwnerReceipts: (value) =>
+        value.payload.source === undefined
+          ? value
+          : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
+      AddSavedRetailAddressFromProfileEffect: (value) =>
         value.payload.source === undefined
           ? value
           : { ...value, payload: { ...value.payload, source: { ...value.payload.source, effectId: ref.effectId } } },
@@ -237,6 +284,7 @@ export const materializeSymmyPartyCommerceIntent = (
       OnboardCounterpartyCustomer: (value) => value,
       OnboardCounterpartyCustomerFromParty: (value) => value,
       OrganizationCustomerProfileIco: (value) => ({ ...value, payload: { ...value.payload, effectId: ref.effectId } }),
+      OrganizationCustomerProfileIcoFromProfileEffect: (value) => value,
       PartyCorrect: (value) => value,
       PartyCreate: (value) => value,
       PartyMatch: (value) => value,
@@ -333,4 +381,61 @@ export const resolveSymmyCounterpartySavedAddress = (
           },
         },
       })
+    : Option.none();
+
+type CommerceOnlyAddressIntent = Extract<
+  SymmyPartyCommerceIntent,
+  { readonly _tag: 'AddSavedCounterpartyAddressFromProfileEffect' | 'AddSavedRetailAddressFromProfileEffect' }
+>;
+type ResolvedSavedAddress = Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AddSavedAddress' }>;
+
+/** The Commerce-only origin names the postal address itself; no Party contact point stands behind it. */
+const commerceOnlyAddress = (
+  intent: CommerceOnlyAddressIntent,
+  profile: ResolvedSavedAddress['payload']['profile'],
+): ResolvedSavedAddress => ({
+  _tag: 'AddSavedAddress',
+  payload: {
+    ...Struct.omit(intent.payload, ['postalAddress']),
+    origin: { kind: 'COMMERCE_ONLY', postalAddress: intent.payload.postalAddress },
+    profile,
+  },
+});
+
+/** The ICO goes to the actual profile the parent effect created or found, under the effect id of this effect. */
+export const resolveSymmyOrganizationProfileIco = (
+  intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'OrganizationCustomerProfileIcoFromProfileEffect' }>,
+  profile: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'CounterpartyProfileCreated' }>,
+  effectId: string,
+): Extract<SymmyPartyCommerceIntent, { readonly _tag: 'OrganizationCustomerProfileIco' }> => ({
+  _tag: 'OrganizationCustomerProfileIco',
+  payload: { ...intent.payload, effectId, profileRef: profile.profileRef },
+  sourceReference: intent.sourceReference,
+});
+
+/** A Retail saved address belongs to the actual profile the parent effect returned, in that profile's Tenant. */
+export const resolveSymmyRetailSavedAddressFromProfile = (
+  intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AddSavedRetailAddressFromProfileEffect' }>,
+  profile: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'RetailProfileEnsured' }>,
+): Option.Option<ResolvedSavedAddress> =>
+  profile.partyRef.tenantId === profile.profileRef.tenantId
+    ? Option.some(commerceOnlyAddress(intent, { kind: 'RETAIL', profileRef: profile.profileRef }))
+    : Option.none();
+
+/** A Counterparty saved address needs the profile and the counterparty of one Tenant and of one onboarding. */
+export const resolveSymmyCounterpartySavedAddressFromProfile = (
+  intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AddSavedCounterpartyAddressFromProfileEffect' }>,
+  profile: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'CounterpartyProfileCreated' }>,
+  counterparty: Extract<SymmyPartyCommerceOwnerReceipt, { readonly _tag: 'CounterpartyCustomerOnboarded' }>,
+): Option.Option<ResolvedSavedAddress> =>
+  profile.counterpartyRef.resourceId === counterparty.counterpartyRef.resourceId &&
+  profile.counterpartyRef.tenantId === counterparty.counterpartyRef.tenantId &&
+  profile.profileRef.tenantId === counterparty.counterpartyRef.tenantId
+    ? Option.some(
+        commerceOnlyAddress(intent, {
+          counterpartyRef: counterparty.counterpartyRef,
+          kind: 'COUNTERPARTY',
+          profileRef: profile.profileRef,
+        }),
+      )
     : Option.none();

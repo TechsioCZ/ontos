@@ -22,7 +22,7 @@ const callers = {
   'party-registry': 4,
   pricing: 2,
   privacy: 9,
-  'symmy-integration': 50,
+  'symmy-integration': 55,
 } as const;
 const receivers = [
   'catalog',

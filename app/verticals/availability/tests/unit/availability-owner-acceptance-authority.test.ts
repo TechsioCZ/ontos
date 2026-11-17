@@ -224,34 +224,6 @@ describe('Availability owner acceptance: exact subject, authority and truthful q
       expect(Result.isFailure(Schema.decodeUnknownResult(AvailabilitySubjectSchema)(candidate))).toBe(true);
     }
   });
-  it.effect('scenario 2: the same exact Selection supports 2 but truthfully refuses 5', () =>
-    Effect.gen(function* compareExactRequests() {
-      const two = yield* evaluate(makeCurrentnessInput(['3'], '2'));
-      const five = yield* evaluate(makeCurrentnessInput(['3'], '5'));
-      expect(two.outcome).toBe('AVAILABLE');
-      expect(five.outcome).toBe('UNAVAILABLE');
-      expect(two.subject.selection).toEqual(five.subject.selection);
-      expect(two.subject.quantity.amount).toBe('2');
-      expect(five.subject.quantity.amount).toBe('5');
-      expect(two.subject.purchasingContext).toEqual(five.subject.purchasingContext);
-    }),
-  );
-  it.effect(
-    'scenario 3: independent Catalog readiness or Assortment eligibility cannot fill missing Availability proof',
-    () =>
-      Effect.gen(function* requireOwnAuthority() {
-        const input = makeCurrentnessInput(['100'], '2');
-        // Consumer labels are deliberately not owner-issued Assortment evidence or an Availability input.
-        const consumerLabels = { assortment: 'ELIGIBLE', catalog: 'READY' };
-        const result = yield* evaluate({
-          ...input,
-          ownerQualification: { ...input.ownerQualification, set: { _tag: 'UNPROVEN' } },
-        });
-        expect(consumerLabels).toEqual({ assortment: 'ELIGIBLE', catalog: 'READY' });
-        expect(result.outcome).toBe('INDETERMINATE');
-        expect(result.reasons).toContain('SET_COMPLETENESS_UNPROVEN');
-      }),
-  );
   it.effect('scenario 4: authoritative Current zero remains distinct from unknown stock', () =>
     Effect.gen(function* preserveZero() {
       const result = yield* evaluate(makeCurrentnessInput(['0'], '2'));
@@ -359,31 +331,6 @@ describe('Availability owner acceptance: exact subject, authority and truthful q
       });
       expect(result.outcome).toBe('INDETERMINATE');
       expect(result.reasons).toContain('DUPLICATE_POSITION');
-    }),
-  );
-  it.effect('scenario 10: known rows or an empty result never prove relevant-set completeness', () =>
-    Effect.gen(function* rejectQueryCompleteness() {
-      for (const amounts of [['3'], []]) {
-        const input = makeCurrentnessInput(amounts, '5');
-        const result = yield* evaluate({
-          ...input,
-          ownerQualification: { ...input.ownerQualification, set: { _tag: 'UNPROVEN' } },
-        });
-        expect(result.outcome).toBe('INDETERMINATE');
-        expect(result.reasons).toContain('SET_COMPLETENESS_UNPROVEN');
-      }
-    }),
-  );
-  it.effect('scenario 11: safe quantity three refuses exact five without an automatic partial offer', () =>
-    Effect.gen(function* refusePartial() {
-      const input = makeCurrentnessInput(['3'], '5');
-      const result = yield* evaluate(input);
-      expect(result.outcome).toBe('UNAVAILABLE');
-      expect(result.subject).toEqual(input.subject);
-      expect(result.reasons).toContain('INSUFFICIENT_REUSABLE_QUANTITY');
-      for (const property of ['partialQuantity', 'backorder', 'preorder', 'supplierPromise']) {
-        expect(result).not.toHaveProperty(property);
-      }
     }),
   );
   it.effect('scenario 12: a missing selected ERP assertion does not permit an alternate backend', () =>

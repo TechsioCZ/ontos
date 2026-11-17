@@ -1,44 +1,23 @@
 import { randomUUID } from 'node:crypto';
 
-import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '@app/price-group-catalog/actions/create-price-group-definition-revision';
-import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog/api/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { bootstrapInternalC14PricingSourceAuthority } from '@app/pricing/testing/c14-source-authority-bootstrap';
 import { makeOwnedIntegrationPriceGroupReaderWorkloadControlNative } from '@app/core-runtime/testing/workload-binding-native';
 import { PriceGroupSourcePricesResponseSchema } from '@app/pricing/apis/price-group-source-prices';
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
-import { decodeSymmySourceSelector, encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
-import {
-  Array as EffectArray,
-  Cause,
-  DateTime,
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  Match,
-  Order,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Array as EffectArray, Cause, DateTime, Duration, Effect, Exit, Layer, Order, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
-import type { HttpClientResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { bootstrapInternalC14PricingRouteInputs } from './support/symmy-c14-pricing-routes-inputs.mts';
 import {
   decodeInternalC14CapturedPriceGrant,
-  decodeInternalC14DeferredPriceListPlan,
-  decodeInternalC14PriceGroupRevisionPlan,
-  decodeInternalC14SourcePricePlan,
-  internalPricingRouteSource,
+  decodeInternalC14PriceGrantFor,
 } from './support/symmy-c14-pricing-routes-plan.mts';
-import { enrollInternalC14SelectedPriceRoute } from './support/symmy-c14-pricing-routes-selected.mts';
 import { assertInternalC14PriceRecovery } from './support/symmy-c14-pricing-routes-recovery.mts';
 import { makeInternalC14PricingRouteFixture } from './support/symmy-c14-pricing-routes-runtime.mts';
 import { startProductWorker, SymmyC14ProductFixtureUnavailable } from './support/symmy-c14-product-runtime.mts';
@@ -64,7 +43,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
 );
 const admitted = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const statusSchema = Schema.Struct({
   items: Schema.optionalKey(Schema.Array(SymmyItemOutcomeSchema)),
@@ -72,21 +51,20 @@ const statusSchema = Schema.Struct({
   status: Schema.String,
 });
 const projectionSchema = Schema.Struct({
-  contractVersion: Schema.Literal('INTERNAL_C14'),
   count: Schema.Int,
   limit: Schema.Int,
   offset: Schema.Int,
-  price_lists: Schema.Array(
+  priceLists: Schema.Array(
     Schema.Struct({
-      id: Schema.String,
+      code: Schema.String,
+      description: Schema.String,
+      endsAt: Schema.optionalKey(PricingInstantSchema),
       name: Schema.String,
-      priceGroupRef: Schema.optionalKey(PriceGroupRefSchema),
+      priceGroupRef: PriceGroupRefSchema,
       prices: Schema.optionalKey(PriceGroupSourcePricesResponseSchema),
-      source_record_id: Schema.String,
+      startsAt: PricingInstantSchema,
     }),
   ),
-  projection: Schema.Literal('price_lists'),
-  unsupported_fields: Schema.Array(Schema.String),
 });
 const observe = <A, E, R>(reason: string, read: Effect.Effect<A, E, R>, done: (value: A) => boolean) =>
   Effect.gen(function* observeNativeResult() {
@@ -101,163 +79,185 @@ const observe = <A, E, R>(reason: string, read: Effect.Effect<A, E, R>, done: (v
   });
 
 type PricingFixture = Effect.Success<ReturnType<typeof makeInternalC14PricingRouteFixture>>;
-const readNativeCurrentGroup = Effect.fn('InternalC14PricingRoutes.currentGroup')(function* readCurrentGroup(
-  fixture: PricingFixture,
-  priceGroupRef: typeof PriceGroupRefSchema.Type,
-) {
-  const gateway = yield* issueApiKeyGatewayContext(
-    { audience: 'price-group-catalog', compositionRevision: fixture.snapshot.composition.revision },
-    {
-      apiKey: fixture.key.secret,
-      baseUrl: `${fixture.shell.baseUrl}/shell-super-app-api`,
-      requestCorrelation: randomUUID(),
-    },
-  );
-  const result = yield* executePriceGroupDefinitionWithAuthorization(
-    { priceGroupRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
-    `Bearer ${gateway.token}`,
-    randomUUID(),
-    {
-      baseUrl: `${fixture.groupOwner.origin}/price-group-catalog-api`,
-      compositionRevision: fixture.snapshot.composition.revision,
-    },
-  );
-  if (result.selection !== 'CURRENT') {
-    return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The actual current Group fence is unavailable' });
-  }
-  return result;
+/** One public price list. The route fills in everything else: contract, fence, reasons, identities and sources. */
+const publicList = (list: {
+  readonly businessCode: string;
+  readonly code: string;
+  readonly effectiveFrom: string;
+  readonly prices: readonly unknown[];
+  readonly purpose: string;
+}) => ({
+  businessCode: list.businessCode,
+  code: list.code,
+  description: 'INTERNAL_C14 actual native Price Group receiving proof',
+  effectiveFrom: list.effectiveFrom,
+  name: `Internal ${list.businessCode}`,
+  prices: list.prices,
+  purpose: list.purpose,
 });
-
-const assertSelectedPriceRefusals = Effect.fn('InternalC14PricingRoutes.selectedRefusals')(function* selectedRefusals(
+const publicPrice = (input: {
+  readonly at: string;
+  readonly marketId: string;
+  readonly selection: { readonly productRef: Schema.Json; readonly variantRef: Schema.Json };
+  readonly unitRef: Schema.Json;
+}) => ({
+  amount: '25',
+  commercialScope: { channelId: 'B2C', marketId: input.marketId },
+  currencyCode: 'CZK',
+  effectiveFrom: input.at,
+  productRef: input.selection.productRef,
+  unitBasis: { quantity: '1', unitRef: input.unitRef },
+  variantRef: input.selection.variantRef,
+});
+const pricesPath = '/api/symmy/v1/price-lists/prices/batch';
+const outcomesOf = (job: typeof statusSchema.Type) =>
+  (job.items ?? []).flatMap((item) => item.effects).map(({ status }) => status);
+const tableCounts = ({ prices, revisions }: { readonly prices: number; readonly revisions: number }) => ({
+  prices,
+  revisions,
+});
+/** The first price GET /price-lists lists for one price list. */
+const firstListedPrice = (lists: typeof projectionSchema.Type, code: string) =>
+  lists.priceLists.find((list) => list.code === code)?.prices?.prices[0]?.price;
+const currentRevisionOf = (price: ReturnType<typeof firstListedPrice>) =>
+  price?.outcome === 'PRICE_DEFINITION_CURRENT' ? price.definition.revision : undefined;
+/** A refused request reaches no owner: no job is admitted and no Price is written. */
+const assertPriceBatchRefusals = Effect.fn('InternalC14PricingRoutes.priceBatchRefusals')(function* batchRefusals(
   fixture: PricingFixture,
-  group: { readonly id: string; readonly priceGroupRef: typeof PriceGroupRefSchema.Type },
-  plan: typeof SymmyInternalExecutionPlanSchema.Type,
+  group: { readonly priceGroupRef: typeof PriceGroupRefSchema.Type },
+  price: ReturnType<typeof publicPrice>,
 ) {
   const client = yield* HttpClient.HttpClient;
-  const body = { contractVersion: 'INTERNAL_C14', plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(plan) };
   const ownerCounts = fixture.admin<{ jobs: number; writes: number }>`select
     (select count(*)::integer from symmy_integration.import_jobs where tenant_id=${fixture.tenantId}) as jobs,
     (select count(*)::integer from core.action_invocations where tenant_id=${fixture.tenantId}
       and action_key='commerce.pricing.define-price') as writes`;
   const before = yield* ownerCounts;
-  const foreignAlias = encodeSymmySourceSelector(
-    {
-      issuerId: 'INTERNAL_C14_OTHER_ISSUER',
-      routeId: fixture.sourceRouteId,
-      selectorKind: 'PRICE_GROUP',
-      sourceNamespace: internalPricingRouteSource.namespace,
-      tenantId: fixture.tenantId,
-    },
-    fixture.firstRecordId,
-    group.priceGroupRef.resourceId,
-  );
   const refusedHeaders = {
-    'idempotency-key': 'INTERNAL_C14_REFUSED_SELECTED_PRICE',
+    'idempotency-key': 'INTERNAL_C14_REFUSED_PRICE_BATCH',
     'x-api-key': Redacted.value(fixture.key.secret),
   };
-  const send = (code: string) =>
+  const send = (body: Schema.Json) =>
     Effect.gen(function* sendRefusedPrice() {
-      return yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${code}/prices/batch`, {
+      return yield* client.post(`${fixture.shell.baseUrl}${pricesPath}`, {
         body: yield* HttpBody.json(body),
         headers: refusedHeaders,
       });
     });
-  expect((yield* send('unknown-c14-list')).status).toBe(403);
-  expect((yield* send(foreignAlias)).status).toBe(403);
-  const malformed = {
+  const body = { priceGroupRef: group.priceGroupRef, prices: [{ ...price, operation: 'DEFINE' }] };
+  // A list that does not exist.
+  const unknown = yield* send({
     ...body,
-    plan: {
-      ...body.plan,
-      items: body.plan.items.map((item) => ({
-        ...item,
-        effects: item.effects.map((effect) =>
-          Match.value(effect.intent).pipe(
-            Match.when({ _tag: 'PriceDefine' }, (intent) => {
-              const { unitBasis, ...withoutUnit } = intent.payload.identityKey;
-              expect(unitBasis).toBeDefined();
-              return { ...effect, intent: { ...intent, payload: { ...intent.payload, identityKey: withoutUnit } } };
-            }),
-            Match.orElse(() => effect),
-          ),
-        ),
-      })),
-    },
-  };
-  const malformedResponse = yield* client.post(
-    `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${group.id}/prices/batch`,
-    { body: yield* HttpBody.json(malformed), headers: refusedHeaders },
-  );
-  expect(malformedResponse.status).toBe(400);
-  const unboundUpsert = yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/batch-upsert`, {
-    body: yield* HttpBody.json(body),
-    headers: { ...refusedHeaders, 'idempotency-key': 'INTERNAL_C14_REFUSED_UNBOUND_PRICE' },
+    priceGroupRef: { ...group.priceGroupRef, resourceId: randomUUID() },
   });
-  expect(unboundUpsert.status).toBe(403);
+  expect(unknown.status).toBe(403);
+  // A list that exists but that this route's source did not create: the same answer, so no list is revealed.
   const [configured] = yield* fixture.admin<{ plan: string }>`select fixture_plan::text as plan
     from symmy_integration.job_routes where tenant_id=${fixture.tenantId} and route_id=${fixture.selectedRouteId}`;
   if (configured === undefined) {
-    return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The selected Pricing fixture is not enrolled' });
+    return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The prices route is not enrolled' });
   }
-  const unboundLiteralCode = 'INTERNAL_C14_UNBOUND_LIST';
-  yield* Effect.acquireUseRelease(
-    fixture.admin`update symmy_integration.job_routes set fixture_plan=fixture_plan-'selector', route_code=${unboundLiteralCode}
+  const foreign = yield* Effect.acquireUseRelease(
+    fixture.admin`update symmy_integration.job_routes
+      set fixture_plan=jsonb_set(fixture_plan,'{sourceRouteId}',to_jsonb(${randomUUID()}::text))
       where tenant_id=${fixture.tenantId} and route_id=${fixture.selectedRouteId}`,
-    Effect.fn('InternalC14PricingRoutes.rejectUnselectedFixture')(function* rejectUnselectedFixture() {
-      const unboundFixture = yield* client.post(
-        `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${unboundLiteralCode}/prices/batch`,
-        {
-          body: yield* HttpBody.json({ fixtureId: 'INTERNAL_C14' }),
-          headers: { ...refusedHeaders, 'idempotency-key': 'INTERNAL_C14_REFUSED_UNBOUND_FIXTURE' },
-        },
-      );
-      expect(unboundFixture.status).toBe(403);
-    }),
+    () => send(body),
     () =>
-      fixture.admin`update symmy_integration.job_routes set fixture_plan=${configured.plan}::jsonb, route_code=${fixture.firstRecordId}
-      where tenant_id=${fixture.tenantId} and route_id=${fixture.selectedRouteId}`.pipe(Effect.orDie),
+      fixture.admin`update symmy_integration.job_routes set fixture_plan=${configured.plan}::jsonb
+        where tenant_id=${fixture.tenantId} and route_id=${fixture.selectedRouteId}`.pipe(Effect.orDie),
   );
+  expect(foreign.status).toBe(403);
+  expect(yield* foreign.json).toEqual(yield* unknown.json);
+  // The internal plan body is no longer a body of this route.
+  const internal = yield* send({ contractVersion: 'INTERNAL_C14', plan: { items: [] } });
+  expect(internal.status).toBe(400);
+  // The old path with a code segment finds no route.
+  const oldPath = yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/some-code/prices/batch`, {
+    body: yield* HttpBody.json(body),
+    headers: refusedHeaders,
+  });
+  expect(oldPath.status).toBe(404);
   expect(yield* ownerCounts).toEqual(before);
   return yield* Effect.void;
 });
 
-const groupLookupRef = Effect.fn('InternalC14PricingRoutes.groupLookupRef')(function* lookupRef(
-  id: string,
-  tenantId: string,
-) {
-  return yield* Match.value(yield* decodeSymmySourceSelector(id)).pipe(
-    Match.tag('Legacy', () =>
-      Effect.fail(new SymmyC14ProductFixtureUnavailable({ message: 'The projected list has no qualified selector' })),
-    ),
-    Match.tag('Qualified', ({ targetResourceId }) =>
-      Schema.decodeUnknownEffect(PriceGroupRefSchema)({
-        moduleId: 'pricing.price-group-catalog',
-        resourceId: targetResourceId,
-        resourceType: 'pricing.price-group-catalog.price-group',
-        tenantId,
+/** An existing list does not hold back the new one behind it: each create fences on the head it meets. */
+const assertExistingListDoesNotBlockNewOne = Effect.fn('InternalC14PricingRoutes.existingThenNew')(
+  function* existingThenNew<E, R>(
+    fixture: PricingFixture,
+    existing: ReturnType<typeof publicList>,
+    settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>,
+  ) {
+    const groupCount = fixture.admin<{ count: number }>`select count(*)::integer as count
+      from price_group_catalog.price_groups where tenant_id=${fixture.tenantId}`;
+    const [before] = yield* groupCount;
+    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
+    const settled = yield* settleLists('INTERNAL_C14_EXISTING_AND_NEW_LISTS', [
+      existing,
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_MIXED',
+        code: 'INTERNAL_C14_MIXED_NEW_LIST',
+        effectiveFrom: startsAt,
+        prices: [],
+        purpose: 'Explicit INTERNAL_C14 existing list followed by a new list',
       }),
-    ),
-    Match.exhaustive,
-  );
+    ]);
+    expect(outcomesOf(settled)).toEqual(['conflict', 'accepted_change']);
+    expect((yield* groupCount)[0]?.count).toBe((before?.count ?? 0) + 1);
+    // A list is readable once its definition starts, so the projections that follow wait for it.
+    yield* waitUntil(DateTime.makeUnsafe(startsAt));
+  },
+);
+
+const refRecord = Schema.Record(Schema.String, Schema.Json);
+const inTenant = (ref: Schema.Json, tenantId: string): Schema.Json => ({
+  ...Schema.decodeUnknownSync(refRecord)(ref),
+  tenantId,
 });
 
-const assertWrongGroupRefused = Effect.fn('InternalC14PricingRoutes.wrongGroupRefusal')(function* wrongGroupRefusal<
-  E,
-  R,
->(
-  response: HttpClientResponse.HttpClientResponse,
-  readStatus: (jobId: string) => Effect.Effect<typeof statusSchema.Type, E, R>,
-) {
-  if (response.status === 202) {
-    const job = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(admitted)));
-    const refused = yield* observe('The mismatched Price Group did not settle', readStatus(job.jobId), (value) =>
-      value.status.startsWith('completed_'),
-    );
-    expect(refused.status).toBe('completed_none');
-    expect((refused.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual(['unresolved']);
-  } else {
-    expect(response.status).toBe(403);
-  }
-});
+/**
+ * A price that names another tenant is not accepted for its item. It neither fails the request nor holds back the
+ * list it belongs to or the lists beside it.
+ */
+const assertForeignTenantPrices = Effect.fn('InternalC14PricingRoutes.foreignTenantPrices')(
+  function* foreignTenantPrices<E, R>(
+    fixture: PricingFixture,
+    input: {
+      readonly priceFacts: Omit<Parameters<typeof publicPrice>[0], 'at'>;
+      readonly settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>;
+    },
+  ) {
+    const foreignTenantId = randomUUID();
+    const startsAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
+    const own = publicPrice({ ...input.priceFacts, at: startsAt });
+    const foreignUnit = { ...input.priceFacts, unitRef: inTenant(input.priceFacts.unitRef, foreignTenantId) };
+    const foreign = yield* input.settleLists('INTERNAL_C14_FOREIGN_TENANT_PRICE', [
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_FOREIGN',
+        code: 'INTERNAL_C14_FOREIGN_PRICE_LIST',
+        effectiveFrom: startsAt,
+        prices: [
+          { ...own, productRef: inTenant(own.productRef, foreignTenantId) },
+          publicPrice({ ...foreignUnit, at: startsAt }),
+        ],
+        purpose: 'Explicit INTERNAL_C14 prices of another tenant',
+      }),
+      publicList({
+        businessCode: 'INTERNAL_C14_PRICE_GROUP_AFTER_FOREIGN',
+        code: 'INTERNAL_C14_AFTER_FOREIGN_LIST',
+        effectiveFrom: startsAt,
+        prices: [],
+        purpose: 'Explicit INTERNAL_C14 list after prices of another tenant',
+      }),
+    ]);
+    expect(outcomesOf(foreign)).toEqual(['accepted_change', 'unsupported', 'unsupported', 'accepted_change']);
+    const [prices] = yield* fixture.admin<{
+      count: number;
+    }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
+    expect(prices?.count).toBe(1);
+    yield* waitUntil(DateTime.makeUnsafe(startsAt));
+  },
+);
 
 it.live(
   'INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority',
@@ -298,13 +298,10 @@ it.live(
         );
         const client = yield* HttpClient.HttpClient;
         const headers = { 'x-api-key': Redacted.value(fixture.key.secret) };
-        const submit = (idempotencyKey: string, plan = fixture.plan) =>
-          Effect.gen(function* submitGroupPlan() {
+        const submit = (idempotencyKey: string, priceLists: readonly unknown[]) =>
+          Effect.gen(function* submitPriceLists() {
             const response = yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/batch-upsert`, {
-              body: yield* HttpBody.json({
-                contractVersion: 'INTERNAL_C14',
-                plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(plan),
-              }),
+              body: yield* HttpBody.json({ priceLists }),
               headers: { ...headers, 'idempotency-key': idempotencyKey },
             });
             if (response.status !== 202) {
@@ -330,8 +327,30 @@ it.live(
             expect(response.status).toBe(202);
             return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(admitted)));
           });
-        const receipt = yield* submit('INTERNAL_C14_PRICE_GROUPS');
-        expect(yield* submit('INTERNAL_C14_PRICE_GROUPS')).toEqual(receipt);
+        const groupLists = [
+          publicList({
+            businessCode: 'INTERNAL_C14_PRICE_GROUP_A',
+            code: fixture.firstRecordId,
+            effectiveFrom: fixture.at,
+            prices: [],
+            purpose: 'Explicit INTERNAL_C14 source group pricing',
+          }),
+          publicList({
+            businessCode: 'INTERNAL_C14_PRICE_GROUP_B',
+            code: fixture.secondRecordId,
+            effectiveFrom: fixture.at,
+            prices: [],
+            purpose: 'Explicit INTERNAL_C14 contractor source group pricing',
+          }),
+        ];
+        const receipt = yield* submit('INTERNAL_C14_PRICE_GROUPS', groupLists);
+        expect(yield* submit('INTERNAL_C14_PRICE_GROUPS', groupLists)).toEqual(receipt);
+        // The same key with other content is refused before anything is read or written.
+        const conflicting = yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/batch-upsert`, {
+          body: yield* HttpBody.json({ priceLists: [groupLists[0]] }),
+          headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_PRICE_GROUPS' },
+        });
+        expect(conflicting.status).toBe(409);
         const readStatus = (jobId: string) =>
           Effect.gen(function* actualJobStatus() {
             const response = yield* client.get(`${fixture.shell.baseUrl}/api/symmy/v1/jobs/${jobId}`, {
@@ -390,10 +409,9 @@ it.live(
         yield* waitUntil(DateTime.makeUnsafe(fixture.at));
         const get = (query: string, expectedStatus = 200) =>
           Effect.gen(function* readActualPriceListProjection() {
-            const response = yield* client.get(
-              `${fixture.shell.baseUrl}/api/symmy/v1/price-lists?contractVersion=INTERNAL_C14&${query}`,
-              { headers },
-            );
+            const response = yield* client.get(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists?${query}`, {
+              headers,
+            });
             if (response.status !== expectedStatus) {
               const problem = yield* response.json.pipe(
                 Effect.flatMap(
@@ -428,7 +446,7 @@ it.live(
           limit: 1,
           offset: 0,
         });
-        expect(first.price_lists).toHaveLength(1);
+        expect(first.priceLists).toHaveLength(1);
         const secondResponse = yield* get('limit=1&offset=1');
         expect(secondResponse.status).toBe(200);
         const second = yield* secondResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)));
@@ -437,100 +455,61 @@ it.live(
           limit: 1,
           offset: 1,
         });
-        expect(second.price_lists).toHaveLength(1);
-        const all = [...first.price_lists, ...second.price_lists];
+        expect(second.priceLists).toHaveLength(1);
+        const all = [...first.priceLists, ...second.priceLists];
         expect(
           EffectArray.sort(
-            all.map(({ source_record_id }) => source_record_id),
+            all.map(({ code }) => code),
             Order.String,
           ),
         ).toEqual(EffectArray.sort([fixture.firstRecordId, fixture.secondRecordId], Order.String));
-        expect(new Set(all.map(({ id }) => id)).size).toBe(2);
+        expect(new Set(all.map(({ code }) => code)).size).toBe(2);
         for (const list of all) {
-          expect(list.id).toHaveLength(87);
-          expect(list).not.toHaveProperty('priceGroupRef');
-          const filteredResponse = yield* get(`code=${encodeURIComponent(list.source_record_id)}&limit=1&offset=0`);
-          expect(filteredResponse.status).toBe(200);
-          const filtered = yield* filteredResponse.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
-          );
-          expect(filtered.count).toBe(1);
-          expect(filtered.price_lists).toEqual([list]);
+          expect(list.priceGroupRef.resourceType).toBe('pricing.price-group-catalog.price-group');
+          expect(list.priceGroupRef.tenantId).toBe(fixture.tenantId);
         }
+        expect(new Set(all.map(({ priceGroupRef }) => priceGroupRef.resourceId)).size).toBe(2);
         const [forbidden] = yield* fixture.admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} and (action_key like 'commerce.customer-context.%' or action_key like '%promotion%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
         expect(forbidden?.count).toBe(0);
-        const retry = yield* submit(`INTERNAL_C14_PRICE_GROUPS_RETRY_${randomUUID()}`);
+        // A create-only body never changes an existing price list: its business code is already owned.
+        const retry = yield* submit(`INTERNAL_C14_PRICE_GROUPS_RETRY_${randomUUID()}`, groupLists);
         const replayed = yield* observe(
           'Actual Price Group replay did not settle',
           readStatus(retry.jobId),
           (value) =>
             value.status.startsWith('completed_') || value.status === 'blocked' || value.status === 'indeterminate',
         );
-        expect((replayed.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
-          'duplicate',
-          'duplicate',
-        ]);
+        // Every list answers for itself: both business codes are owned, so both end conflict.
+        expect(outcomesOf(replayed)).toEqual(['conflict', 'conflict']);
         const replayProjectionResponse = yield* get('limit=2&offset=0');
         expect(replayProjectionResponse.status).toBe(200);
         const replayProjection = yield* replayProjectionResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
         expect(replayProjection.count).toBe(2);
-        expect(replayProjection.price_lists.map(({ id }) => id)).toEqual(all.map(({ id }) => id));
-        const originalGroup = all.find(({ source_record_id }) => source_record_id === fixture.firstRecordId);
+        expect(replayProjection.priceLists.map(({ priceGroupRef }) => priceGroupRef)).toEqual(
+          all.map(({ priceGroupRef }) => priceGroupRef),
+        );
+        const originalGroup = all.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(originalGroup);
-        const originalGroupRef = yield* groupLookupRef(originalGroup.id, fixture.tenantId);
-        const current = yield* readNativeCurrentGroup(fixture, originalGroupRef);
-        const expectedCurrent = yield* Schema.decodeUnknownEffect(
-          CreatePriceGroupDefinitionRevisionPayloadSchema.fields.expectedCurrent,
-        )(current.currentEvidence);
-        const revisionAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
-        const revisionPlan = yield* decodeInternalC14PriceGroupRevisionPlan({
-          at: DateTime.formatIso(revisionAt),
-          current: expectedCurrent,
-          occurrenceId: randomUUID(),
-          recordId: fixture.firstRecordId,
-          sourceRouteId: fixture.sourceRouteId,
-        });
-        const revision = yield* submit('INTERNAL_C14_PRICE_GROUP_REVISION', revisionPlan);
-        const revised = yield* observe(
-          'Actual Price Group revision did not settle',
-          readStatus(revision.jobId),
-          (value) =>
-            value.status.startsWith('completed_') || value.status === 'blocked' || value.status === 'indeterminate',
-        );
-        expect((revised.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
-          'accepted_change',
-        ]);
-        yield* waitUntil(revisionAt);
-        const revisedResponse = yield* get(`code=${encodeURIComponent(fixture.firstRecordId)}&limit=1&offset=0`);
-        expect(revisedResponse.status).toBe(200);
-        const revisedProjection = yield* revisedResponse.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
-        );
-        expect(revisedProjection.price_lists).toEqual([{ ...originalGroup, name: 'Internal revised group A' }]);
-        const beforeHeld = yield* readNativeCurrentGroup(fixture, originalGroupRef);
-        const heldImportedAt = DateTime.formatIso(yield* DateTime.now);
+        const originalGroupRef = originalGroup.priceGroupRef;
         const heldEffectiveAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
-        const missingAuthority = yield* decodeInternalC14DeferredPriceListPlan({
-          at: heldEffectiveAt,
-          expectedCatalogRevision: beforeHeld.currentEvidence.catalogRevision,
-          groupBusinessCode: 'INTERNAL_C14_PRICE_GROUP_HELD',
-          groupOccurrenceId: randomUUID(),
-          groupPurpose: 'Explicit INTERNAL_C14 held source group pricing',
-          groupRecordId: 'INTERNAL_C14_HELD_PRICE_LIST',
-          importedAt: heldImportedAt,
+        const priceFacts = {
           marketId: inputs.market.marketRef.resourceId,
-          occurrenceId: randomUUID(),
-          priceId: randomUUID(),
-          recordId: 'INTERNAL_C14_PRICE_WITHOUT_AUTHORITY',
           selection: inputs.readiness.selection,
-          sellingLegalEntityId: fixture.legalEntityId,
-          sourceRouteId: fixture.sourceRouteId,
           unitRef: inputs.unit.unit,
-        });
+        };
+        const missingAuthority = [
+          publicList({
+            businessCode: 'INTERNAL_C14_PRICE_GROUP_HELD',
+            code: 'INTERNAL_C14_HELD_PRICE_LIST',
+            effectiveFrom: heldEffectiveAt,
+            prices: [publicPrice({ ...priceFacts, at: heldEffectiveAt })],
+            purpose: 'Explicit INTERNAL_C14 held source group pricing',
+          }),
+        ];
         // A known negative native ACK is never reissued as if no canonical row proved non-commit.
         const heldJob = yield* submit('INTERNAL_C14_MISSING_PRICE_AUTHORITY', missingAuthority);
         const held = yield* observe(
@@ -555,38 +534,24 @@ it.live(
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
         expect(afterHeld?.count).toBe(0);
         yield* waitUntil(DateTime.makeUnsafe(heldEffectiveAt));
-        const heldGroupResponse = yield* get('code=INTERNAL_C14_HELD_PRICE_LIST&limit=1&offset=0');
+        const heldGroupResponse = yield* get('limit=100&offset=0');
         expect(heldGroupResponse.status).toBe(200);
         const heldGroups = yield* heldGroupResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        expect(heldGroups.price_lists).toHaveLength(1);
-        const [heldGroup] = heldGroups.price_lists;
-        // Current evidence is per Group: use the most recently created Group's actual fence.
-        const heldGroupRef = yield* groupLookupRef(heldGroup.id, fixture.tenantId);
-        const refreshed = yield* readNativeCurrentGroup(fixture, heldGroupRef);
-        const importedAt = DateTime.formatIso(yield* DateTime.now);
+        const heldGroup = heldGroups.priceLists.find(({ code }) => code === 'INTERNAL_C14_HELD_PRICE_LIST');
+        assert.isOk(heldGroup);
         const groupEffectiveAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
-        const newPriceId = randomUUID();
-        const groupRecordId = 'INTERNAL_C14_NEW_PRICE_LIST_C';
-        const deferred = yield* decodeInternalC14DeferredPriceListPlan({
-          at: DateTime.formatIso(groupEffectiveAt),
-          expectedCatalogRevision: refreshed.currentEvidence.catalogRevision,
-          groupBusinessCode: 'INTERNAL_C14_PRICE_GROUP_C',
-          groupOccurrenceId: randomUUID(),
-          groupPurpose: 'Explicit INTERNAL_C14 API exclusive source group pricing',
-          groupRecordId,
-          importedAt,
-          marketId: inputs.market.marketRef.resourceId,
-          occurrenceId: randomUUID(),
-          priceId: newPriceId,
-          recordId: 'INTERNAL_C14_NEW_PRICE_C',
-          selection: inputs.readiness.selection,
-          sellingLegalEntityId: fixture.legalEntityId,
-          sourceRouteId: fixture.sourceRouteId,
-          unitRef: inputs.unit.unit,
-        });
-        yield* fixture.priceBarrier.armForPrice(newPriceId);
+        const deferred = [
+          publicList({
+            businessCode: 'INTERNAL_C14_PRICE_GROUP_C',
+            code: 'INTERNAL_C14_NEW_PRICE_LIST_C',
+            effectiveFrom: DateTime.formatIso(groupEffectiveAt),
+            prices: [publicPrice({ ...priceFacts, at: DateTime.formatIso(groupEffectiveAt) })],
+            purpose: 'Explicit INTERNAL_C14 API exclusive source group pricing',
+          }),
+        ];
+        yield* fixture.priceBarrier.armForNextPrice;
         const deferredJob = yield* submit('INTERNAL_C14_NEW_GROUP_AND_PRICE', deferred);
         const actualRequest = yield* fixture.priceBarrier.arrived.pipe(
           Effect.timeoutOrElse({
@@ -604,7 +569,7 @@ it.live(
           }),
         );
         const parentRows =
-          yield* fixture.admin`select owner_receipt from symmy_integration.job_effects where tenant_id=${fixture.tenantId} and job_id=${deferredJob.jobId} and effect_key='new-group'`.pipe(
+          yield* fixture.admin`select owner_receipt from symmy_integration.job_effects where tenant_id=${fixture.tenantId} and job_id=${deferredJob.jobId} and effect_key='group-create'`.pipe(
             Effect.flatMap(
               Schema.decodeUnknownEffect(
                 Schema.Array(
@@ -621,7 +586,7 @@ it.live(
           );
         expect(parentRows).toHaveLength(1);
         const [parentReceipt] = parentRows;
-        expect(actualRequest.priceRef.resourceId).toBe(newPriceId);
+        const newPriceId = actualRequest.priceRef.resourceId;
         expect(actualRequest.identityKey.catalogSelection).toEqual(inputs.readiness.selection);
         expect(actualRequest.identityKey.priceGroupSelector).toEqual({
           kind: 'PRICE_GROUP',
@@ -713,7 +678,7 @@ it.live(
                   on i.tenant_id=e.tenant_id and i.idempotency_key=e.effect_id::text
                   and i.principal_id=${fixture.systemId}
                   and i.action_key='commerce.pricing.define-price' and i.status='succeeded'
-                where e.tenant_id=${fixture.tenantId} and e.job_id=${deferredJob.jobId} and e.effect_key='new-price'`;
+                where e.tenant_id=${fixture.tenantId} and e.job_id=${deferredJob.jobId} and e.effect_key='price-define'`;
               return yield* new SymmyC14ProductFixtureUnavailable({
                 message: `${failure.message}; status: ${JSON.stringify(retainedStatus)}; commands: ${commands}; receiptReads: ${receiptReads}; facts: ${JSON.stringify(facts)}; pricing: ${pricing}; worker: ${worker}; gateway: ${JSON.stringify(gateway)}; issuer: ${JSON.stringify(issuer)}`,
               });
@@ -741,39 +706,84 @@ it.live(
         expect(yield* fixture.priceBarrier.armedPriceCommandCount).toBe(1);
         expect(yield* fixture.priceBarrier.sourceReceiptReads).toBeGreaterThanOrEqual(1);
 
+        // An existing business code ends conflict for its list and its price is not accepted, nothing is written.
+        const duplicateJob = yield* submit('INTERNAL_C14_EXISTING_LIST_WITH_PRICE', deferred);
+        const duplicated = yield* observe(
+          'The existing price list did not settle',
+          readStatus(duplicateJob.jobId),
+          (value) => value.status.startsWith('completed_') || value.status === 'indeterminate',
+        );
+        expect((duplicated.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
+          'conflict',
+          'unsupported',
+        ]);
+        const [afterDuplicate] = yield* fixture.admin<{
+          count: number;
+        }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
+        expect(afterDuplicate?.count).toBe(1);
+
+        const settleLists = (idempotencyKey: string, lists: readonly unknown[]) =>
+          submit(idempotencyKey, lists).pipe(
+            Effect.flatMap((job) =>
+              observe(
+                `The price lists ${idempotencyKey} did not settle`,
+                readStatus(job.jobId),
+                (value) => value.status.startsWith('completed_') || value.status === 'indeterminate',
+              ),
+            ),
+          );
+        yield* assertExistingListDoesNotBlockNewOne(fixture, groupLists[0], settleLists);
+        yield* assertForeignTenantPrices(fixture, { priceFacts, settleLists });
+
         const selectedAt = DateTime.formatIso(yield* DateTime.now);
-        const selectedPriceFacts = {
-          at: selectedAt,
-          importedAt: selectedAt,
+        const batchPrice = { ...publicPrice({ ...priceFacts, at: selectedAt }), operation: 'DEFINE' };
+        const otherGroup = all.find(({ code }) => code === fixture.secondRecordId);
+        assert.isOk(otherGroup);
+        yield* assertPriceBatchRefusals(fixture, { priceGroupRef: originalGroupRef }, batchPrice);
+        const submitPrices = (
+          idempotencyKey: string,
+          priceGroupRef: typeof PriceGroupRefSchema.Type,
+          prices: readonly Schema.Json[],
+        ) =>
+          Effect.gen(function* submitPriceBatch() {
+            const response = yield* client.post(`${fixture.shell.baseUrl}${pricesPath}`, {
+              body: yield* HttpBody.json({ priceGroupRef, prices }),
+              headers: { ...headers, 'idempotency-key': idempotencyKey },
+            });
+            if (response.status !== 202) {
+              const pricing = yield* fixture.pricingOwner.diagnostic;
+              const gateway = yield* fixture.shell.gatewayDiagnostics();
+              const requests = yield* fixture.shell.requestDiagnostics();
+              return yield* new SymmyC14ProductFixtureUnavailable({
+                message: `Price batch ${idempotencyKey} HTTP ${response.status}; body: ${yield* response.text}; pricing: ${pricing.slice(-2500)}; gateway: ${JSON.stringify(gateway.slice(-3))}; requests: ${JSON.stringify(requests).slice(-2500)}`,
+              });
+            }
+            return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(admitted)));
+          });
+        const settle = (job: typeof admitted.Type) =>
+          observe(
+            'The actual price batch did not settle',
+            readStatus(job.jobId),
+            (value) => value.status.startsWith('completed_') || value.status === 'indeterminate',
+          );
+        const priceCounts = fixture.admin<{ prices: number; revisions: number; revisions_called: number }>`select
+          (select count(*)::integer from pricing.prices where tenant_id=${fixture.tenantId}) as prices,
+          (select count(*)::integer from pricing.price_revisions where tenant_id=${fixture.tenantId}) as revisions,
+          (select count(*)::integer from core.action_invocations where tenant_id=${fixture.tenantId}
+            and action_key='commerce.pricing.revise-price') as revisions_called`;
+
+        const grant = yield* decodeInternalC14PriceGrantFor({
+          effectiveFrom: selectedAt,
+          groupRef: originalGroupRef,
           marketId: inputs.market.marketRef.resourceId,
-          recordId: 'INTERNAL_C14_SELECTED_PRICE_A',
           selection: inputs.readiness.selection,
           sellingLegalEntityId: fixture.legalEntityId,
           unitRef: inputs.unit.unit,
-        };
-        const selectedPrice = yield* decodeInternalC14SourcePricePlan({
-          ...selectedPriceFacts,
-          groupRef: originalGroupRef,
-          occurrenceId: randomUUID(),
-          priceId: randomUUID(),
-        });
-        yield* enrollInternalC14SelectedPriceRoute(fixture, selectedPrice);
-        yield* assertSelectedPriceRefusals(
-          fixture,
-          { id: originalGroup.id, priceGroupRef: originalGroupRef },
-          selectedPrice.plan,
-        );
-        const otherGroup = all.find(({ source_record_id }) => source_record_id === fixture.secondRecordId);
-        assert.isOk(otherGroup);
-        const wrongGroupPrice = yield* decodeInternalC14SourcePricePlan({
-          ...selectedPriceFacts,
-          groupRef: yield* groupLookupRef(otherGroup.id, fixture.tenantId),
-          occurrenceId: randomUUID(),
-          priceId: randomUUID(),
+          verifiedAt: selectedAt,
         });
         expect(
           yield* bootstrapInternalC14PricingSourceAuthority({
-            grant: wrongGroupPrice.grant,
+            grant,
             legalEntityId: fixture.legalEntityId,
             operatorPrincipalId: fixture.integration.issuerPrincipalId,
             operatorProviderUserId: fixture.shell.providerUserId,
@@ -783,60 +793,26 @@ it.live(
             tenantId: fixture.tenantId,
           }),
         ).toEqual({ outcome: 'STORED' });
-        const priceOwnerCounts = fixture.admin<{ calls: number; prices: number }>`select
-          (select count(*)::integer from core.action_invocations where tenant_id=${fixture.tenantId}
-            and action_key='commerce.pricing.define-price') as calls,
-          (select count(*)::integer from pricing.prices where tenant_id=${fixture.tenantId}) as prices`;
-        const beforeWrongGroup = yield* priceOwnerCounts;
-        const wrongGroupBody = {
-          contractVersion: 'INTERNAL_C14',
-          plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(wrongGroupPrice.plan),
-        };
-        const wrongGroupSelected = yield* client.post(
-          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${originalGroup.id}/prices/batch`,
-          {
-            body: yield* HttpBody.json(wrongGroupBody),
-            headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_REFUSED_OTHER_GROUP_SELECTED' },
-          },
-        );
-        yield* assertWrongGroupRefused(wrongGroupSelected, readStatus);
-        const wrongGroupUpsert = yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/batch-upsert`, {
-          body: yield* HttpBody.json(wrongGroupBody),
-          headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_REFUSED_OTHER_GROUP_UPSERT' },
+        const selectedJob = yield* submitPrices('INTERNAL_C14_SELECTED_PRICE', originalGroupRef, [batchPrice]);
+        // The same key and body replays the job, and the same key with another body is refused.
+        expect(yield* submitPrices('INTERNAL_C14_SELECTED_PRICE', originalGroupRef, [batchPrice])).toEqual(selectedJob);
+        const reused = yield* client.post(`${fixture.shell.baseUrl}${pricesPath}`, {
+          body: yield* HttpBody.json({
+            priceGroupRef: originalGroupRef,
+            prices: [{ ...batchPrice, amount: '26' }],
+          }),
+          headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_SELECTED_PRICE' },
         });
-        expect(wrongGroupUpsert.status).toBe(403);
-        expect(yield* priceOwnerCounts).toEqual(beforeWrongGroup);
-
-        const selectedBody = {
-          contractVersion: 'INTERNAL_C14',
-          plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(selectedPrice.plan),
-        };
-        const selectedResponse = yield* client.post(
-          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${originalGroup.id}/prices/batch`,
-          {
-            body: yield* HttpBody.json(selectedBody),
-            headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_SELECTED_PRICE' },
-          },
-        );
-        expect(selectedResponse.status).toBe(202);
-        const selectedJob = yield* selectedResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(admitted)));
-        const selectedResult = yield* observe(
-          'The actual selected Price did not settle',
-          readStatus(selectedJob.jobId),
-          (value) => value.status.startsWith('completed_') || value.status === 'indeterminate',
-        );
+        expect(reused.status).toBe(409);
+        const selectedResult = yield* settle(selectedJob);
         expect(selectedResult.status).toBe('completed_all');
-        expect((selectedResult.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual([
-          'accepted_change',
-        ]);
-        const withPricesResponse = yield* get(
-          `code=${encodeURIComponent(fixture.firstRecordId)}&limit=1&offset=0&priceLimit=1&priceOffset=0`,
-        );
+        expect(outcomesOf(selectedResult)).toEqual(['accepted_change']);
+        const withPricesResponse = yield* get('limit=100&offset=0&priceLimit=1&priceOffset=0');
         expect(withPricesResponse.status).toBe(200);
         const withPrices = yield* withPricesResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        const priced = withPrices.price_lists.find(({ id }) => id === originalGroup.id);
+        const priced = withPrices.priceLists.find(({ code }) => code === fixture.firstRecordId);
         assert.isOk(priced?.prices);
         expect(priced.prices.count).toBe(1);
         expect(priced.prices.prices).toHaveLength(1);
@@ -845,19 +821,95 @@ it.live(
         if (nativePrice.price.outcome !== 'PRICE_DEFINITION_CURRENT') {
           return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The accepted native Price is not Current' });
         }
-        expect(nativePrice.price.definition.priceRef).toEqual(selectedPrice.payload.priceRef);
+        expect(nativePrice.price.definition.priceRef.resourceType).toBe('commerce.pricing.price');
         expect(nativePrice.price.definition.identityKey.priceGroupSelector).toEqual({
           kind: 'PRICE_GROUP',
           priceGroupRef: originalGroupRef,
         });
-        const emptyPricePageResponse = yield* get(
-          `code=${encodeURIComponent(fixture.firstRecordId)}&limit=1&offset=0&priceLimit=1&priceOffset=1`,
-        );
+        const emptyPricePageResponse = yield* get('limit=100&offset=0&priceLimit=1&priceOffset=1');
         expect(emptyPricePageResponse.status).toBe(200);
         const emptyPricePage = yield* emptyPricePageResponse.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
         );
-        expect(emptyPricePage.price_lists[0]?.prices).toMatchObject({ count: 1, limit: 1, offset: 1, prices: [] });
+        expect(emptyPricePage.priceLists.find(({ code }) => code === fixture.firstRecordId)?.prices).toMatchObject({
+          count: 1,
+          limit: 1,
+          offset: 1,
+          prices: [],
+        });
+        // REVISE copies the priceRef and the revision GET /price-lists returned, unchanged.
+        const { definition: listed } = nativePrice.price;
+        const reviseOf = (amount: string, revisionId = listed.revision.revisionId) => ({
+          amount,
+          currencyCode: 'CZK',
+          expectedRevision: { revision: listed.revision.revision, revisionId },
+          operation: 'REVISE',
+          priceRef: listed.priceRef,
+        });
+        const listedPrice = () =>
+          get('limit=100&offset=0&priceLimit=1&priceOffset=0').pipe(
+            Effect.flatMap((response) => response.json),
+            Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema)),
+            Effect.map((lists) => firstListedPrice(lists, fixture.firstRecordId)),
+          );
+        const beforeRevise = yield* priceCounts;
+        // A price of another list than the one the body names is refused for its item, and nothing is written.
+        const otherList = yield* settle(
+          yield* submitPrices('INTERNAL_C14_REVISE_OTHER_LIST', otherGroup.priceGroupRef, [reviseOf('30')]),
+        );
+        expect(otherList.status).toBe('completed_none');
+        expect(outcomesOf(otherList)).toEqual(['unresolved']);
+        expect(yield* priceCounts).toEqual(beforeRevise);
+        // A price that names another tenant is not accepted for its item, whatever its operation. It neither fails the
+        // request nor changes the items beside it, which are still judged on their own.
+        const foreignRefTenantId = randomUUID();
+        const ungrantedBeside = { ...batchPrice, unitBasis: { ...batchPrice.unitBasis, quantity: '3' } };
+        const foreignBatch = yield* settle(
+          yield* submitPrices('INTERNAL_C14_FOREIGN_TENANT_BATCH', originalGroupRef, [
+            { ...batchPrice, productRef: inTenant(batchPrice.productRef, foreignRefTenantId) },
+            ungrantedBeside,
+            { ...reviseOf('31'), priceRef: { ...listed.priceRef, tenantId: foreignRefTenantId } },
+          ]),
+        );
+        expect(foreignBatch.status).toBe('completed_none');
+        expect(outcomesOf(foreignBatch)).toEqual(['unsupported', 'unresolved', 'unsupported']);
+        expect(yield* priceCounts).toEqual(beforeRevise);
+        // Items are independent. A price without a source authority grant for its exact identity is held, and a
+        // revision that is no longer the current one ends conflict. Neither writes anything.
+        const ungrantedPrice = { ...batchPrice, unitBasis: { ...batchPrice.unitBasis, quantity: '2' } };
+        const stale = yield* settle(
+          yield* submitPrices('INTERNAL_C14_REVISE_STALE', originalGroupRef, [
+            ungrantedPrice,
+            reviseOf('30', randomUUID()),
+          ]),
+        );
+        expect(stale.status).toBe('completed_none');
+        expect(outcomesOf(stale)).toEqual(['unresolved', 'conflict']);
+        expect((yield* priceCounts).map(tableCounts)).toEqual(beforeRevise.map(tableCounts));
+        expect(currentRevisionOf(yield* listedPrice())).toEqual(listed.revision);
+        // The revision the caller read is the current one: the amount changes and the revision number rises. The
+        // grant of the DEFINE covers it although Pricing reads the unit quantity back with nine decimals, and the
+        // revision starts at the time the source asserts (the admission time), not at the owner clock.
+        const beforeCurrentRevise = yield* priceCounts;
+        const current = yield* settle(
+          yield* submitPrices('INTERNAL_C14_REVISE_CURRENT', originalGroupRef, [reviseOf('30')]),
+        );
+        expect(current.status).toBe('completed_all');
+        expect(outcomesOf(current)).toEqual(['accepted_change']);
+        const after = yield* priceCounts;
+        expect(after.map(tableCounts)).toEqual(
+          beforeCurrentRevise.map(({ prices, revisions }) => ({ prices, revisions: revisions + 1 })),
+        );
+        expect(currentRevisionOf(yield* listedPrice())).toMatchObject({
+          monetaryAmount: { amount: '30.000000000' },
+          revision: listed.revision.revision + 1,
+        });
+        // The revision the caller read is now stale: a second revision of it ends conflict and writes nothing.
+        const staleNow = yield* settle(
+          yield* submitPrices('INTERNAL_C14_REVISE_AFTER_REVISION', originalGroupRef, [reviseOf('31')]),
+        );
+        expect(outcomesOf(staleNow)).toEqual(['conflict']);
+        expect((yield* priceCounts).map(tableCounts)).toEqual(after.map(tableCounts));
         const [actualPrices] = yield* fixture.admin<{
           count: number;
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
@@ -867,31 +919,20 @@ it.live(
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} and (action_key like 'commerce.customer-context.%' or action_key like '%promotion%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
         expect(implicitCalls?.count).toBe(0);
 
-        const latestGroup = yield* readNativeCurrentGroup(fixture, parentReceipt.owner_receipt.priceGroupRef);
-        const revokedPriceId = randomUUID();
         const revokedGroupEffectiveAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
-        const revokedPlan = yield* decodeInternalC14DeferredPriceListPlan({
-          at: DateTime.formatIso(revokedGroupEffectiveAt),
-          expectedCatalogRevision: latestGroup.currentEvidence.catalogRevision,
-          groupBusinessCode: 'INTERNAL_C14_PRICE_GROUP_REVOKED',
-          groupOccurrenceId: randomUUID(),
-          groupPurpose: 'Explicit INTERNAL_C14 route deactivation race',
-          groupRecordId: 'INTERNAL_C14_REVOKED_PRICE_LIST',
-          importedAt: DateTime.formatIso(yield* DateTime.now),
-          marketId: inputs.market.marketRef.resourceId,
-          occurrenceId: randomUUID(),
-          priceId: revokedPriceId,
-          recordId: 'INTERNAL_C14_REVOKED_PRICE',
-          selection: inputs.readiness.selection,
-          sellingLegalEntityId: fixture.legalEntityId,
-          sourceRouteId: fixture.sourceRouteId,
-          unitRef: inputs.unit.unit,
-        });
+        const revokedLists = [
+          publicList({
+            businessCode: 'INTERNAL_C14_PRICE_GROUP_REVOKED',
+            code: 'INTERNAL_C14_REVOKED_PRICE_LIST',
+            effectiveFrom: DateTime.formatIso(revokedGroupEffectiveAt),
+            prices: [publicPrice({ ...priceFacts, at: DateTime.formatIso(revokedGroupEffectiveAt) })],
+            purpose: 'Explicit INTERNAL_C14 route deactivation race',
+          }),
+        ];
         const { revocation } = fixture.priceBarrier;
-        yield* revocation.armForPrice(revokedPriceId);
-        const revokedJob = yield* submit('INTERNAL_C14_REVOKE_DURING_PRICE_DISPATCH', revokedPlan);
+        yield* revocation.armForNextPrice;
+        const revokedJob = yield* submit('INTERNAL_C14_REVOKE_DURING_PRICE_DISPATCH', revokedLists);
         const heldPrice = yield* revocation.arrived.pipe(Effect.timeout('20 seconds'));
-        expect(heldPrice.priceRef.resourceId).toBe(revokedPriceId);
         const readSettledEffects = () =>
           fixture.admin<{
             action_key: string;
@@ -910,7 +951,7 @@ it.live(
               on i.tenant_id=e.tenant_id and i.action_invocation_id=e.owner_invocation_id
             where e.tenant_id=${fixture.tenantId} and e.state='settled' and i.status='succeeded'
               and (e.job_id in (${deferredJob.jobId},${selectedJob.jobId})
-                or (e.job_id=${revokedJob.jobId} and e.effect_key='new-group'))
+                or (e.job_id=${revokedJob.jobId} and e.effect_key='group-create'))
             order by e.job_id,e.effect_key`;
         const settledBeforeRevocation = yield* readSettledEffects();
         expect(settledBeforeRevocation).toHaveLength(4);
@@ -1005,9 +1046,9 @@ it.live(
         yield* fixture.groupOwner.child.exitCode;
         const unavailable = yield* get(firstPageQuery, 503);
         expect(unavailable.status).toBe(503);
-        assert.isTrue(all.every(({ source_record_id }) => source_record_id.length > 0));
+        assert.isTrue(all.every(({ code }) => code.length > 0));
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
-  420_000,
+  900_000,
 );

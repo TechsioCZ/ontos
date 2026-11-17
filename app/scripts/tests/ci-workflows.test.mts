@@ -45,6 +45,11 @@ const WORKER_PROOF_STEP = 'Build and run the Outbox Worker host artifact against
 const CI_MATRICES_PATH = '../ci-matrices.json';
 const MATRIX_SHARD = 'matrix.shard';
 const SEED_KEY_OUTPUT = 'needs.ci-plan.outputs.seed-key';
+const QUALITY_AUDIT_WORKFLOW = 'quality-audit.yml';
+const LEFTHOOK_CONFIG = 'lefthook.yml';
+const CACHE_SAVE_ACTION = 'actions/cache/save@';
+const INSTALL_APP_ACTION = './.github/actions/install-app';
+const WHOLE_TREE_LINT_SHARDS = 'shards=[1,2,3]';
 /** The test files that must migrate their own job database, as the matrices name them for the weighted runner. */
 const FRESH_DATABASE_TESTS = Schema.decodeUnknownSync(
   Schema.Struct({ 'fresh-database-tests': Schema.Array(Schema.String) }),
@@ -79,6 +84,11 @@ const readGateWorkflow = () => {
     expect(matrix.include).toBe(`\${{ fromJSON(needs.ci-plan.outputs.${key}) }}`);
     jobs[job] = { ...entry, strategy: { ...strategy, matrix: { ...matrix, include: rows } } };
   }
+  // ci-plan picks the lint shards; a complete run keeps the three whole-tree shards.
+  const lint = record(jobs['format-and-lint']);
+  const lintStrategy = record(lint.strategy);
+  expect(record(lintStrategy.matrix).shard).toBe(`\${{ fromJSON(needs.ci-plan.outputs.lint-shards) }}`);
+  jobs['format-and-lint'] = { ...lint, strategy: { ...lintStrategy, matrix: { shard: [1, 2, 3] } } };
   return { ...workflow, jobs };
 };
 /** The fixed system PATH a workflow step script runs with in these tests. */
@@ -89,8 +99,8 @@ const skipsGates = (changedPaths: readonly string[], ignored: readonly string[])
 
 const ROOT_DOCUMENTATION_TRIGGERS = [
   readWorkflow(GATES_WORKFLOW).on.push,
-  readWorkflow('quality-audit.yml').on.push,
-  readWorkflow('quality-audit.yml').on.pull_request,
+  readWorkflow(QUALITY_AUDIT_WORKFLOW).on.push,
+  readWorkflow(QUALITY_AUDIT_WORKFLOW).on.pull_request,
 ];
 
 it('deploys nothing and audits nothing for changes to repository-root documentation only', () => {
@@ -104,7 +114,7 @@ it('deploys nothing and audits nothing for changes to repository-root documentat
       'app/docs/architecture/DEPLOYMENT.md',
       'app/AGENTS.md',
       '.github/workflows/ultramodern-workspace-gates.yml',
-      'lefthook.yml',
+      LEFTHOOK_CONFIG,
     ]) {
       expect(skipsGates(['docs/index.md', gatedPath], ignored)).toBe(false);
     }
@@ -499,7 +509,7 @@ it('keeps only verified unit outputs from the unit output cache and saves them o
   const verify = index(
     ({ run }) => run === 'mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"',
   );
-  const save = index(({ uses }) => uses?.startsWith('actions/cache/save@') === true);
+  const save = index(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
   const pack = index(({ name }) => name === "Pack the shard's build outputs");
   expect(paths > -1 && paths < restore && restore < plan && plan < build && build < verify).toBe(true);
   expect(verify < save && save < pack).toBe(true);
@@ -736,7 +746,8 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     ),
   );
   const { scripts } = readRootScripts();
-  expect(scripts['test:scripts']).toBe('rstest --project scripts --pool.maxWorkers 1');
+  // The local script runs the same project; its local worker count is not what the shards use.
+  expect(scripts['test:scripts']).toMatch(/^rstest --project scripts --pool\.maxWorkers \d+$/u);
   // The module entrypoint boundary check is the repository's own boundary script.
   expect(scripts['module-entrypoints:check']).toContain('check-module-entrypoint-boundaries.mts');
   const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
@@ -781,9 +792,11 @@ const WEIGHTED_UNIT_LINE =
 it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
   const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
+  // The shared-contracts type tests run on the typecheck row, beside the TS-Go build they depend on.
   expect(scripts['test:unit']).toBe(
-    'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component',
+    'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component && pnpm --filter @app/shared-contracts test:types',
   );
+  expect(gateCommands().flat()).toContain('pnpm --filter ./packages/shared-contracts test:types');
   const weighted = new Map<string, { components: number; shards: string[] }>();
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
@@ -1031,7 +1044,7 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       'app/scripts/check.mts',
       'app/scripts/zerops/build-app.sh',
       'app/verticals/catalog/package.json',
-      'lefthook.yml',
+      LEFTHOOK_CONFIG,
     ];
     for (const file of sourcePaths) {
       const destination = path.join(repository, file);
@@ -1447,7 +1460,7 @@ it('restores the integration seed from its input-keyed cache and never makes a r
     expect(producer.steps[selfRestore]?.run).toContain(check);
   }
   expectProducerVerifiesSeedRealm(producer.steps);
-  const save = producer.steps.find(({ uses }) => uses?.startsWith('actions/cache/save@') === true);
+  const save = producer.steps.find(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
   expect(save).toBeDefined();
   expect(selfRestore).toBeLessThan(save === undefined ? -1 : producer.steps.indexOf(save));
   expect(save?.if).toBe("steps.seed-cache.outputs.cache-hit != 'true'");
@@ -1617,9 +1630,7 @@ it('keeps deployment out of the workspace gates and guards Action transaction I/
   const { env, jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   expect(env.ONTOS_ACTION_TRANSACTION_IO_GUARD).toBe('true');
   // The retired deploy chain stays out of the gates: the workflow only plans and runs checks.
-  expect(sorted(Object.keys(jobs))).toEqual(
-    sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, 'warm-caches', ...GATE_JOBS, WORKSPACE_GATES_JOB]),
-  );
+  expect(sorted(Object.keys(jobs))).toEqual(sorted([QUEUE_PROOF_JOB, CI_PLAN_JOB, ...GATE_JOBS, WORKSPACE_GATES_JOB]));
 });
 
 it('runs migration equivalence proofs only against the owned CI maintenance database', () => {
@@ -1630,4 +1641,194 @@ it('runs migration equivalence proofs only against the owned CI maintenance data
     MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: 'postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres',
     MIGRATION_EQUIVALENCE_TEST_SANDBOX: 'owned-postgres18',
   });
+});
+
+const AnyStepSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  id: Schema.optional(Schema.String),
+  if: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+const AnyJobsSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      outputs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      'runs-on': Schema.optional(Schema.String),
+      steps: Schema.Array(AnyStepSchema),
+    }),
+  ),
+});
+const readJobsOf = (file: string) =>
+  Schema.decodeUnknownSync(AnyJobsSchema)(
+    parse(readFileSync(new URL(`../../../.github/workflows/${file}`, import.meta.url), 'utf-8')),
+  ).jobs;
+const InstallActionSchema = Schema.Struct({
+  runs: Schema.Struct({ steps: Schema.Array(AnyStepSchema) }),
+});
+const readInstallAction = () =>
+  Schema.decodeUnknownSync(InstallActionSchema)(
+    parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
+  ).runs.steps;
+const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
+const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
+
+it('restores and publishes only a complete installed workspace, from the one planner install', () => {
+  const steps = readInstallAction();
+  const restore = steps.find(({ id }) => id === 'workspace');
+  // A job that installs with extra arguments (zerops-stage.yml's filtered installs) never restores the complete tree.
+  expect(restore?.if).toBe("inputs.install-args == ''");
+  const key = String(restore?.with?.key);
+  for (const input of [
+    'app/.mise.toml',
+    'app/pnpm-lock.yaml',
+    'app/pnpm-workspace.yaml',
+    'app/*/*/package.json',
+    'app/patches/**',
+  ]) {
+    expect(key).toContain(input);
+  }
+  // A half-restored dependency graph is a wrong answer, never a cheaper one.
+  expect(restore?.with?.['restore-keys']).toBeUndefined();
+  const publishable = steps.find(({ id }) => id === 'publishable');
+  expect(publishable?.run).toContain('save-node-modules needs a complete install');
+  const save = steps.find(({ name }) => name === 'Save the installed workspace');
+  expect(save?.with?.key).toBe(expression('steps.workspace.outputs.cache-primary-key'));
+  const store = steps.find(({ name }) => name === 'Save the pnpm store');
+  expect(store?.if).toContain(DEMO_REF);
+  expect(store?.if).toContain("github.ref == 'refs/heads/main'");
+
+  const gates = readJobsOf(GATES_WORKFLOW);
+  const savers = Object.entries(gates).flatMap(([job, { steps: jobSteps }]) =>
+    jobSteps
+      .filter(({ uses, with: inputs }) => uses === INSTALL_APP_ACTION && inputs?.['save-node-modules'] !== undefined)
+      .map(() => job),
+  );
+  expect(savers).toEqual([CI_PLAN_JOB]);
+  const planInstall = gates[CI_PLAN_JOB]?.steps.find(({ uses }) => uses === INSTALL_APP_ACTION);
+  expect(planInstall?.with).toEqual({ 'save-node-modules': 'true', 'save-store': 'true' });
+  // The stage deploy shares the action and keeps installing exactly what it asks for.
+  for (const { steps: jobSteps } of Object.values(readJobsOf('zerops-stage.yml'))) {
+    for (const step of jobSteps.filter(({ uses }) => uses === INSTALL_APP_ACTION)) {
+      expect(step.with?.['install-args'] ?? '').not.toBe('');
+      expect(step.with?.['save-node-modules']).toBeUndefined();
+    }
+  }
+});
+
+it('lets only the trunks save the installed workspace, and never over the entry the run restored', () => {
+  const save = readInstallAction().find(({ name }) => name === 'Save the installed workspace');
+  expect(save?.if).toContain(DEMO_REF);
+  expect(save?.if).toContain("steps.workspace.outputs.cache-hit != 'true'");
+});
+
+it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
+  const plan = readJobsOf(GATES_WORKFLOW)[CI_PLAN_JOB];
+  const upload = plan?.steps.find(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true);
+  expect(upload?.with).toMatchObject({
+    name: CHANGED_PATHS_ARTIFACT,
+    path: `${RUNNER_TEMP_EXPRESSION}/ci-changed-paths`,
+  });
+  expect(plan?.outputs?.['lint-shards']).toBe(expression("steps.lint-shards.outputs.shards || '[1,2,3]'"));
+  const choose = plan?.steps.find(({ id }) => id === 'lint-shards')?.run ?? 'exit 1';
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-choice-'));
+  const shardsFor = (mode: string, paths: readonly string[]) => {
+    const changed = path.join(directory, 'changed');
+    const output = path.join(directory, 'output');
+    writeFileSync(changed, paths.map((file) => `${file}\0`).join(''));
+    writeFileSync(output, '');
+    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', choose], {
+      env: { CHANGED_PATHS: changed, GITHUB_OUTPUT: output, PATH: STEP_PATH, PLAN_MODE: mode },
+      stdio: 'pipe',
+    });
+    return readFileSync(output, 'utf-8').trim();
+  };
+  try {
+    const ordinary = ['app/verticals/catalog/src/a b.ts', 'app/verticals/catalog/src/index.ts'];
+    expect(shardsFor('affected', ordinary)).toBe('shards=[0]');
+    expect(shardsFor('full', ordinary)).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor('affected', [])).toBe(WHOLE_TREE_LINT_SHARDS);
+    for (const configuration of [
+      'app/oxlint.config.ts',
+      'app/.oxfmtrc.json',
+      LEFTHOOK_CONFIG,
+      'app/verticals/catalog/tsconfig.json',
+      'app/tools/oxlint/effect-native/rules/index.mts',
+      'app/patches/x.patch',
+      'app/package.json',
+      'app/pnpm-lock.yaml',
+      'app/.mise.toml',
+    ]) {
+      expect(shardsFor('affected', [...ordinary, configuration])).toBe(WHOLE_TREE_LINT_SHARDS);
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+  const lint = readJobsOf(GATES_WORKFLOW)[FORMAT_AND_LINT_JOB]?.steps ?? [];
+  const download = lint.find(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true);
+  expect(download?.if).toBe('matrix.shard == 0');
+  expect(download?.with?.name).toBe(CHANGED_PATHS_ARTIFACT);
+  const changedRow = lint.find(
+    ({ name }) => name === "Format and Lint the run's changed files through the pre-commit hook",
+  );
+  expect(changedRow?.if).toBe('matrix.shard == 0');
+  expect(changedRow?.run).toContain('export GIT_LITERAL_PATHSPECS=1');
+  expect(changedRow?.run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
+  expect(changedRow?.run?.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
+  expect(lint.find(({ name }) => name === "Format and Lint the shard's files through the pre-commit hook")?.if).toBe(
+    'matrix.shard != 0',
+  );
+});
+
+it('logs the wall time of every gate command', () => {
+  const jobs = readJobsOf(GATES_WORKFLOW);
+  for (const job of [WORKSPACE_GATE_JOB, WORKSPACE_UNIT_JOB, WORKSPACE_UNIT_ARTIFACTS_JOB]) {
+    const run = jobs[job]?.steps.find(({ env }) => env?.COMMANDS !== undefined)?.run ?? '';
+    expect(run).toContain('started=$SECONDS');
+    expect(run).toContain(String.raw`printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"`);
+  }
+});
+
+it('saves the demo trunk its own TS-Go and Chromium caches once, after the step that proves them', () => {
+  const jobs = readJobsOf(GATES_WORKFLOW);
+  const tsgo = jobs[WORKSPACE_GATE_JOB]?.steps.find(
+    ({ uses, with: inputs }) =>
+      uses?.startsWith(CACHE_SAVE_ACTION) === true && inputs?.path === 'app/node_modules/.cache/tsgo',
+  );
+  expect(tsgo?.if).toBe(`success() && matrix.typescript-build == true && ${DEMO_REF}`);
+  expect(tsgo?.with?.key).toBe(expression('steps.install.outputs.typescript-build-key'));
+  const browser = jobs[BROWSER_INTEGRATION_JOB]?.steps ?? [];
+  const wait = browser.findIndex(({ name }) => name === 'Wait for the Chromium install');
+  const chromium = browser.findIndex(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
+  expect(chromium).toBe(wait + 1);
+  expect(browser[chromium]?.if).toContain(DEMO_REF);
+  expect(browser[chromium]?.if).toContain("steps.playwright-cache.outputs.cache-hit != 'true'");
+});
+
+it('creates schema-only native fixtures from an immutable template of the prepared job database', () => {
+  const steps = readJobsOf(GATES_WORKFLOW)[SERVICE_INTEGRATION_JOB]?.steps ?? [];
+  const capture = steps.findIndex(
+    ({ name }) => name === "Capture the prepared schema as the native fixtures' template",
+  );
+  const tests = steps.findIndex((step) => isPackageTestStep({ env: step.env, name: step.name }));
+  const preparation = steps.findIndex(({ name }) => name === WORKER_PROOF_STEP);
+  expect(preparation).toBeGreaterThan(-1);
+  expect(capture).toBeGreaterThan(preparation);
+  expect(tests).toBe(capture + 1);
+  expect(steps[capture]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
+  expect(steps[capture]?.run).toContain('bash scripts/ci/prepare-schema-template.sh ontos-db "$archive"');
+  expect(steps[tests]?.env).toMatchObject({
+    ONTOS_TEST_SCHEMA_TEMPLATE: 'ontos_ci_schema_template',
+    ONTOS_TEST_SCHEMA_TEMPLATE_SOURCE: 'ontos_ci',
+  });
+});
+
+it('runs Quality Audit without its duplicate self-test on the pinned runner image', () => {
+  const [audit] = Object.values(readJobsOf(QUALITY_AUDIT_WORKFLOW));
+  expect(audit?.['runs-on']).toBe('ubuntu-24.04');
+  expect(audit?.steps.some(({ run }) => run?.includes('quality:audit:test') === true)).toBe(false);
+  expect(audit?.steps.some(({ run }) => run?.includes('quality:audit:gate --summary') === true)).toBe(true);
 });

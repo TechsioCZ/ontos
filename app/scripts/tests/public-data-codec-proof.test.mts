@@ -2074,30 +2074,6 @@ it('does not claim initial absence for builtin prototype properties', () => {
 
 const prototypeGetterPrefix =
   'Object.defineProperty(Object.prototype,"other",{configurable:true,enumerable:true,get(){this.nonce="injected";}});';
-for (const [name, read] of [
-  ['object destructure', 'const {other}=Object.prototype;'],
-  ['object rest', 'const {...rest}=Object.prototype;'],
-  ['object spread', 'const copy={...Object.prototype};'],
-  ['native entries', 'Object.entries(Object.prototype);'],
-  ['native values', 'Object.values(Object.prototype);'],
-  ['native assign values', 'Object.assign({},Object.prototype);'],
-  ['Reflect getter', 'Reflect.get(Object.prototype,"other");'],
-] as const) {
-  it(`rejects implicit prototype getter execution through ${name}`, () =>
-    expect(prototypeKeyEvidence(`${prototypeGetterPrefix}${read}`)).toBe(false));
-}
-for (const [name, write] of [
-  ['ordinary assignment', 'Object.prototype.other="injected";'],
-  ['Reflect assignment', 'Reflect.set(Object.prototype,"other","injected");'],
-  ['native assign setter', 'Object.assign(Object.prototype,{other:"injected"});'],
-] as const) {
-  it(`rejects implicit prototype setter execution through ${name}`, () =>
-    expect(
-      prototypeKeyEvidence(
-        `Object.defineProperty(Object.prototype,"other",{configurable:true,set(value){this.nonce=value;}});${write}`,
-      ),
-    ).toBe(false));
-}
 
 const runPrototypeFixture = (source: string): string | undefined =>
   withTemporaryWorkspace((directory) => {

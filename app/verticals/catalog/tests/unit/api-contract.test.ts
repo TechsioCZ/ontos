@@ -11,12 +11,7 @@ import {
   catalogPublicOperationContracts,
   CatalogOperationOutcomeSchema,
 } from '../../shared/api.ts';
-import {
-  ProductDetailApi,
-  ProductDetailRequestSchema,
-  ProductDetailResponseSchema,
-} from '../../shared/apis/product-detail.ts';
-import { ProductHistoryApi } from '../../shared/apis/product-history.ts';
+import { ProductDetailRequestSchema, ProductDetailResponseSchema } from '../../shared/apis/product-detail.ts';
 import { CategoryRevisionConflict } from '../../shared/actions/create-product-category.ts';
 import { mapAddProductCategoryAssignmentActionProblem } from '../../api/add-product-category-assignment-action-problems.ts';
 import { mapCreateProductCategoryActionProblem } from '../../api/create-product-category-action-problems.ts';
@@ -30,18 +25,8 @@ import { mapRetireVariantActionProblem } from '../../api/retire-variant-action-p
 import { mapReactivateVariantActionProblem } from '../../api/reactivate-variant-action-problems.ts';
 import { VariantActionConflict } from '../../src/actions/variant-action-support.ts';
 import { VariantCurrentBasisUnavailable } from '../../src/persistence/variant-persistence.ts';
-import { CreateVariantActionApi } from '../../shared/apis/create-variant-action.ts';
-import { ChangeVariantActionApi } from '../../shared/apis/change-variant-action.ts';
-import { RetireVariantActionApi } from '../../shared/apis/retire-variant-action.ts';
-import { ReactivateVariantActionApi } from '../../shared/apis/reactivate-variant-action.ts';
-import {
-  ProductCategoryClassificationApi,
-  ProductCategoryClassificationResponseSchema,
-} from '../../shared/apis/product-category-classification.ts';
-import {
-  ProductCategoryHistoryApi,
-  ProductCategoryHistoryResponseSchema,
-} from '../../shared/apis/product-category-history.ts';
+import { ProductCategoryClassificationResponseSchema } from '../../shared/apis/product-category-classification.ts';
+import { ProductCategoryHistoryResponseSchema } from '../../shared/apis/product-category-history.ts';
 import { productDetailRead, readProductDetail } from '../../src/api/product-detail.read.ts';
 import { productHistoryRead } from '../../src/api/product-history.read.ts';
 import type { CatalogPersistence } from '../../src/persistence/catalog-persistence.ts';
@@ -58,19 +43,9 @@ it('publishes governed Product detail and historical-read APIs behind the Catalo
     operationId: 'CatalogApi:catalog:readiness',
     routePath: '/catalog/readiness',
   });
-  expect(ProductDetailApi).toBeDefined();
-  expect(ProductHistoryApi).toBeDefined();
-  expect(ProductCategoryClassificationApi).toBeDefined();
-  expect(ProductCategoryHistoryApi).toBeDefined();
 });
 
 it('publishes four independent Variant Action transports with redacted conflicts and unavailable Current basis', () => {
-  expect([CreateVariantActionApi, ChangeVariantActionApi, RetireVariantActionApi, ReactivateVariantActionApi]).toEqual([
-    expect.anything(),
-    expect.anything(),
-    expect.anything(),
-    expect.anything(),
-  ]);
   const mappers = [
     mapCreateVariantActionProblem,
     mapChangeVariantActionProblem,

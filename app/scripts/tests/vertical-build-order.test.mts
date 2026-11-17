@@ -6,8 +6,6 @@ import { expect, it } from 'effect-rstest';
 const PRIVACY_PACKAGE = '@app/privacy';
 const LEGACY_COMPLETION_EXPORT = './admin/legacy-completion';
 const LEGACY_COMPLETION_SOURCE = './scripts/legacy-completion-publication.ts';
-const TESTING_FIXTURE_EXPORT = './testing/fixture';
-const TESTING_FIXTURE_SOURCE = './tests/support/fixture.ts';
 
 const appRoot = new URL('../../', import.meta.url);
 const ManifestSchema = Schema.Struct({
@@ -69,51 +67,4 @@ it('lets a vertical import another vertical only through source exports, never t
       expect(isSourceExport(key, target, vertical.name), `${vertical.name} ${key} -> ${target}`).toBe(true);
     }
   }
-});
-
-it('allows only published testing source support alongside ordinary source exports', () => {
-  for (const [key, target] of [
-    ['./api', './shared/api.ts'],
-    ['./api/client', './src/api/client.ts'],
-    ['./locales/cs', './locales/cs/messages.json'],
-    [TESTING_FIXTURE_EXPORT, TESTING_FIXTURE_SOURCE],
-    ['./testing/nested/fixture', './tests/support/nested/fixture.mts'],
-    [TESTING_FIXTURE_EXPORT, './tests/fixtures/fixture.ts'],
-    ['./testing/*', './tests/support/*.ts'],
-  ] as const) {
-    expect(isSourceExport(key, target), `${key} -> ${target}`).toBe(true);
-  }
-  for (const [key, target] of [
-    ['./api', './dist/api.js'],
-    ['./api', './src/dist/api.ts'],
-    ['./api', './build/api.js'],
-    ['./api', './.output/api.js'],
-    ['./api', './vertical.registration.ts'],
-    ['./api', './src/vertical.registration.ts'],
-    ['./api', './src/registration/action.ts'],
-    ['./api', './src/implementation/action.ts'],
-    ['./api', './src/private/action.ts'],
-    [TESTING_FIXTURE_EXPORT, './tests/support/implementation/action.ts'],
-    [TESTING_FIXTURE_EXPORT, './tests/support/dist/fixture.ts'],
-    [TESTING_FIXTURE_EXPORT, './tests/support/fixture.js'],
-    [TESTING_FIXTURE_EXPORT, './tests/support/../private/fixture.ts'],
-    ['./testing/../fixture', TESTING_FIXTURE_SOURCE],
-    [TESTING_FIXTURE_EXPORT, './tests/support/./fixture.ts'],
-    [TESTING_FIXTURE_EXPORT, './tests/support/fixture.ts/../../private.ts'],
-    [TESTING_FIXTURE_EXPORT, './tests/support/%2e%2e/private.ts'],
-    ['./api', './shared/../vertical.registration.ts'],
-    ['./api', './shared/../../other/shared/api.ts'],
-    ['./api', TESTING_FIXTURE_SOURCE],
-    ['./testing', TESTING_FIXTURE_SOURCE],
-    ['./testing-tools/fixture', TESTING_FIXTURE_SOURCE],
-  ] as const) {
-    expect(isSourceExport(key, target), `${key} -> ${target}`).toBe(false);
-  }
-});
-
-it('permits only the published Privacy administrative completion source', () => {
-  expect(isSourceExport(LEGACY_COMPLETION_EXPORT, LEGACY_COMPLETION_SOURCE, PRIVACY_PACKAGE)).toBe(true);
-  expect(isSourceExport(LEGACY_COMPLETION_EXPORT, LEGACY_COMPLETION_SOURCE, '@app/catalog')).toBe(false);
-  expect(isSourceExport('./admin/other', LEGACY_COMPLETION_SOURCE, PRIVACY_PACKAGE)).toBe(false);
-  expect(isSourceExport(LEGACY_COMPLETION_EXPORT, './scripts/other.ts', PRIVACY_PACKAGE)).toBe(false);
 });

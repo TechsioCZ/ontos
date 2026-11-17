@@ -7,11 +7,11 @@ import { configuration, position, stockInput, subject } from './availability-dec
 
 const predicateRef = 'owner-predicate-1';
 const changedAt = '2026-10-05T12:05:00.000Z';
-const boundary = {
+export const boundary = {
   kind: 'INFORMATIONAL' as const,
   requiredAt: subject.purchasingContext.contextVerification.request.operationTime,
 };
-const complete = {
+export const complete = {
   _tag: 'COMPLETE' as const,
   evidence: Schema.decodeUnknownSync(OwnerVerifiableSetCompletenessEvidenceSchema)({
     observedAt: '2026-10-05T12:00:00.000Z',

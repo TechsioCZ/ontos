@@ -76,7 +76,6 @@ const WorkerArtifactSchema = Schema.Struct({
   sourceRevision: Schema.OptionFromNullOr(Schema.String),
 });
 const decodeWorkerArtifact = Schema.decodeUnknownSync(Schema.fromJsonString(WorkerArtifactSchema));
-const decodeDataEvent = Schema.decodeUnknownSync(Schema.Tuple([Schema.Unknown]));
 const BuildIdentitySchema = Schema.Struct({
   build: Schema.String,
   buildMarker: Schema.String,
@@ -86,10 +85,16 @@ const BuildIdentitySchema = Schema.Struct({
 const decodeWorkerIdentities = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(BuildIdentitySchema)));
 
 const waitForExit = (child: ChildProcess) =>
-  Effect.gen(function* awaitChildExit() {
-    while (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
-      yield* Effect.sleep('10 millis');
+  Effect.callback<true>((resume) => {
+    const onExit = (): void => resume(Effect.succeed(true));
+    // The subscription is registered before the exit state is re-read. The other order loses a
+    // child that exits in between and then waits for an event that has already fired.
+    child.once('exit', onExit);
+    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+      child.removeListener('exit', onExit);
+      resume(Effect.succeed(true));
     }
+    return Effect.sync(() => child.removeListener('exit', onExit));
   });
 
 const terminateChild = (child: ChildProcess) =>
@@ -114,13 +119,24 @@ const scopedChild = <Child extends ChildProcess>(start: () => Child) =>
   Effect.acquireRelease(Effect.sync(start), terminateChild);
 
 const readWorkerOutput = (child: { readonly stdout: Readable }) =>
-  Effect.gen(function* awaitWorkerOutput() {
-    const dataEvent: unknown = yield* Effect.tryPromise((signal) => once(child.stdout, 'data', { signal })).pipe(
-      Effect.timeout('3 seconds'),
-    );
-    const [output] = decodeDataEvent(dataEvent);
-    return String(output);
-  });
+  Effect.callback<string>((resume) => {
+    // stdout arrives in chunks the operating system chooses, so one 'data' event is not one line.
+    // Accumulating to the first newline makes the returned value independent of that split, which
+    // is what the JSON and pattern assertions on it depend on. `setEncoding` decodes at this I/O
+    // boundary, so each chunk is text and a multi-byte character split across chunks stays intact.
+    child.stdout.setEncoding('utf-8');
+    let buffered = '';
+    const onData = (chunk: string): void => {
+      buffered += chunk;
+      const newline = buffered.indexOf('\n');
+      if (newline !== -1) {
+        child.stdout.removeListener('data', onData);
+        resume(Effect.succeed(buffered.slice(0, newline)));
+      }
+    };
+    child.stdout.on('data', onData);
+    return Effect.sync(() => child.stdout.removeListener('data', onData));
+  }).pipe(Effect.timeout('3 seconds'));
 
 const makeFixture = () =>
   Effect.gen(function* testEffect1() {

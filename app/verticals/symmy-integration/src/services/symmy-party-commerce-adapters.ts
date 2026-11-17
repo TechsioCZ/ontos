@@ -126,7 +126,10 @@ import {
   resolveSymmyContactPointParty,
   resolveSymmyCounterpartyProfileCounterparty,
   resolveSymmyRetailSavedAddress,
+  resolveSymmyRetailSavedAddressFromProfile,
   resolveSymmyCounterpartySavedAddress,
+  resolveSymmyCounterpartySavedAddressFromProfile,
+  resolveSymmyOrganizationProfileIco,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -450,7 +453,9 @@ export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent
         addressSourceMatches(input, payload.source) &&
         payload.profile.profileRef.tenantId === input.effect.ref.occurrence.record.route.tenantId,
       AddSavedCounterpartyAddressFromOwnerReceipts: () => false,
+      AddSavedCounterpartyAddressFromProfileEffect: () => false,
       AddSavedRetailAddressFromOwnerReceipts: () => false,
+      AddSavedRetailAddressFromProfileEffect: () => false,
       AssignCounterpartyPriceGroup: ({ authorizationSubject, payload }) =>
         targetMatches(input, payload.profile) &&
         profileSourceMatches(input, payload.source) &&
@@ -506,6 +511,7 @@ export const symmyPartyCommerceIntentMatchesEffect = (input: IntentScope, intent
         input.effect.ref.originalTarget?.moduleId === payload.profileRef.moduleId &&
         input.effect.ref.originalTarget.resourceType === payload.profileRef.resourceType &&
         sourceMatches(input, sourceReference.source, sourceReference.recordId, sourceReference.occurrenceId),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => false,
       PartyCorrect: ({ payload }) =>
         Match.value(payload).pipe(
           Match.when({ factKind: 'RELATIONSHIP' }, () => false),
@@ -600,7 +606,9 @@ const nativeIdentityForIntent = (intent: SymmyPartyCommerceIntent) =>
       AddPartyContactPointFromParty: () => Effect.fail(symmyJobWorkerUnavailable()),
       AddSavedAddress: (selected) => addSavedAddressRequestIdentity(selected.payload),
       AddSavedCounterpartyAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+      AddSavedCounterpartyAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
       AddSavedRetailAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+      AddSavedRetailAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
       AssignCounterpartyPriceGroup: (selected) => assignCounterpartyPriceGroupRequestIdentity(selected.payload),
       AssignCustomerPriceGroup: (selected) => assignCustomerPriceGroupRequestIdentity(selected.payload),
       CreateCounterpartyProfile: (selected) => createCounterpartyPurchasingProfileRequestIdentity(selected.payload),
@@ -616,6 +624,7 @@ const nativeIdentityForIntent = (intent: SymmyPartyCommerceIntent) =>
       OnboardCounterpartyCustomerFromParty: () => Effect.fail(symmyJobWorkerUnavailable()),
       OrganizationCustomerProfileIco: (selected) =>
         changeOrganizationCustomerProfileIcoRequestIdentity(selected.payload),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
       PartyCorrect: (selected) => correctPartyFactRequestIdentity(selected.payload),
       PartyCreate: (selected) => createPartyRequestIdentity(selected.payload),
       PartyMatch: (selected) => matchPartyRequestIdentity(selected.payload),
@@ -921,7 +930,9 @@ const operationForIntent = (intent: SymmyPartyCommerceIntent) =>
       AddPartyContactPointFromParty: () => operations[13],
       AddSavedAddress: () => operations[16],
       AddSavedCounterpartyAddressFromOwnerReceipts: () => operations[16],
+      AddSavedCounterpartyAddressFromProfileEffect: () => operations[16],
       AddSavedRetailAddressFromOwnerReceipts: () => operations[16],
+      AddSavedRetailAddressFromProfileEffect: () => operations[16],
       AssignCounterpartyPriceGroup: () => operations[11],
       AssignCustomerPriceGroup: () => operations[10],
       CreateCounterpartyProfile: () => operations[9],
@@ -936,6 +947,7 @@ const operationForIntent = (intent: SymmyPartyCommerceIntent) =>
       OnboardCounterpartyCustomer: () => operations[12],
       OnboardCounterpartyCustomerFromParty: () => operations[12],
       OrganizationCustomerProfileIco: () => operations[19],
+      OrganizationCustomerProfileIcoFromProfileEffect: () => operations[19],
       PartyCorrect: () => operations[3],
       PartyCreate: () => operations[0],
       PartyMatch: () => operations[1],
@@ -1302,6 +1314,23 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
           return Option.some<SymmyPartyCommerceIntent>(resolvedAddress.value);
         },
       ),
+      AddSavedCounterpartyAddressFromProfileEffect: Effect.fn(
+        'SymmyPartyCommerceAdapters.resolveCounterpartyProfileAddress',
+      )(function* resolveCounterpartyProfileAddress(pending) {
+        const profile = yield* Match.value(yield* dependencyReceipt(input, pending.fromProfileEffect)).pipe(
+          Match.tag('CounterpartyProfileCreated', (value) => Effect.succeed(value)),
+          Match.orElse(() => Effect.fail(symmyJobWorkerUnavailable())),
+        );
+        const resolvedAddress = resolveSymmyCounterpartySavedAddressFromProfile(
+          pending,
+          profile,
+          yield* counterpartyDependencyReceipt(input, pending.fromCounterpartyEffect),
+        );
+        if (Option.isNone(resolvedAddress)) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        return Option.some<SymmyPartyCommerceIntent>(resolvedAddress.value);
+      }),
       AddSavedRetailAddressFromOwnerReceipts: Effect.fn('SymmyPartyCommerceAdapters.resolveRetailAddress')(
         function* resolveRetailAddress(pending) {
           const found = yield* dependencyReceipt(input, pending.fromProfileEffect);
@@ -1314,6 +1343,19 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
             profile,
             yield* contactDependencyReceipt(input, pending.fromContactPointEffect),
           );
+          if (Option.isNone(resolvedAddress)) {
+            return yield* symmyJobWorkerUnavailable();
+          }
+          return Option.some<SymmyPartyCommerceIntent>(resolvedAddress.value);
+        },
+      ),
+      AddSavedRetailAddressFromProfileEffect: Effect.fn('SymmyPartyCommerceAdapters.resolveRetailProfileAddress')(
+        function* resolveRetailProfileAddress(pending) {
+          const profile = yield* Match.value(yield* dependencyReceipt(input, pending.fromProfileEffect)).pipe(
+            Match.tag('RetailProfileEnsured', (value) => Effect.succeed(value)),
+            Match.orElse(() => Effect.fail(symmyJobWorkerUnavailable())),
+          );
+          const resolvedAddress = resolveSymmyRetailSavedAddressFromProfile(pending, profile);
           if (Option.isNone(resolvedAddress)) {
             return yield* symmyJobWorkerUnavailable();
           }
@@ -1347,6 +1389,17 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
           );
         },
       ),
+      OrganizationCustomerProfileIcoFromProfileEffect: Effect.fn('SymmyPartyCommerceAdapters.resolveProfileIco')(
+        function* resolveProfileIco(pending) {
+          const profile = yield* Match.value(yield* dependencyReceipt(input, pending.fromProfileEffect)).pipe(
+            Match.tag('CounterpartyProfileCreated', (value) => Effect.succeed(value)),
+            Match.orElse(() => Effect.fail(symmyJobWorkerUnavailable())),
+          );
+          return Option.some<SymmyPartyCommerceIntent>(
+            resolveSymmyOrganizationProfileIco(pending, profile, input.effect.ref.effectId),
+          );
+        },
+      ),
     }),
     Match.orElse(() => Effect.succeed(Option.none<SymmyPartyCommerceIntent>())),
   );
@@ -1362,9 +1415,15 @@ const resolveDependencies = Effect.fn('SymmyPartyCommerceAdapters.resolveDepende
   ) {
     return yield* symmyJobWorkerUnavailable();
   }
+  // The company ICO is a write to one profile, so its resolved effect names that profile as its original target.
+  const resolvedTarget = Match.value(resolved.value).pipe(
+    Match.tag('OrganizationCustomerProfileIco', (value) => ({ originalTarget: value.payload.profileRef })),
+    Match.orElse(() => ({})),
+  );
   const effect = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
     ...input.effect,
     intent: yield* organizationResolvedIntent(input, resolved.value),
+    ref: { ...input.effect.ref, ...resolvedTarget },
   }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   if (
     !symmyPartyCommerceIntentMatchesEffect(
@@ -1657,7 +1716,9 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
           return yield* outcome(input, 'outcome' in result ? changedStatus(result.outcome === 'ADDED') : 'denied');
         }),
         AddSavedCounterpartyAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+        AddSavedCounterpartyAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
         AddSavedRetailAddressFromOwnerReceipts: () => Effect.fail(symmyJobWorkerUnavailable()),
+        AddSavedRetailAddressFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
         AssignCounterpartyPriceGroup: Effect.fn('SymmyPartyCommerceAdapters.AssignCounterpartyPriceGroup')(
           function* invokeCounterpartyPriceGroup(
             intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'AssignCounterpartyPriceGroup' }>,
@@ -1859,6 +1920,7 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
             return yield* outcome(input, Option.isSome(acknowledged) ? 'accepted_change' : 'denied');
           },
         ),
+        OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.fail(symmyJobWorkerUnavailable()),
         PartyCorrect: Effect.fn('SymmyPartyCommerceAdapters.PartyCorrect')(function* invokePartyCorrect(
           intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCorrect' }>,
         ) {
@@ -2490,7 +2552,9 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
       AddPartyContactPointFromParty: () => Effect.succeed(unavailableRecovery),
       AddSavedAddress: (selected) => recoverSavedAddress(crypto, input, selected),
       AddSavedCounterpartyAddressFromOwnerReceipts: () => Effect.succeed(unavailableRecovery),
+      AddSavedCounterpartyAddressFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       AddSavedRetailAddressFromOwnerReceipts: () => Effect.succeed(unavailableRecovery),
+      AddSavedRetailAddressFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       AssignCounterpartyPriceGroup: (selected) => recoverAssignment(crypto, input, selected),
       AssignCustomerPriceGroup: (selected) => recoverAssignment(crypto, input, selected),
       CreateCounterpartyProfile: (selected) => recoverProfile(crypto, input, selected),
@@ -2505,6 +2569,7 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
       OnboardCounterpartyCustomer: (selected) => recoverParty(crypto, input, 'ONBOARD_COUNTERPARTY_CUSTOMER', selected),
       OnboardCounterpartyCustomerFromParty: () => Effect.succeed(unavailableRecovery),
       OrganizationCustomerProfileIco: (selected) => recoverOrganizationIco(crypto, input, selected),
+      OrganizationCustomerProfileIcoFromProfileEffect: () => Effect.succeed(unavailableRecovery),
       PartyCorrect: (selected) => recoverParty(crypto, input, 'CORRECTION', selected),
       PartyCreate: (selected) => recoverParty(crypto, input, 'CREATE', selected),
       PartyMatch: (selected) => recoverParty(crypto, input, 'MATCH', selected),

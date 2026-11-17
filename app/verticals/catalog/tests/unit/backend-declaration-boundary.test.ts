@@ -32,6 +32,7 @@ import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-
 import { createVariantRecoveryRead } from '../../src/api/create-variant-recovery.read.ts';
 import { createProductRecoveryRead } from '../../src/api/create-product-recovery.read.ts';
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
+import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
 import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -69,6 +70,7 @@ describe('Catalog backend declaration and full publication', () => {
       createVariantRecoveryRead,
       createProductRecoveryRead,
       bindInitialVariantSourceRecoveryRead,
+      catalogSourceProductPageRead,
       catalogSourceProductsRead,
     ];
     expect(declaration.reads).toHaveLength(reads.length);

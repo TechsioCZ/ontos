@@ -73,6 +73,7 @@ import {
 import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
+  awaitQueuedLockWaiters,
   failureCodeOf,
   makeTestScope,
   newPaymentInput,
@@ -836,33 +837,11 @@ it.live('#1148 a proven unreturned predecessor collection blocks a successor; a 
 );
 
 /**
- * Polls until at least two sessions are (transitively) blocked behind the holder backend; the second
- * racer may queue behind the first rather than the holder itself.
+ * Waits until both racers are (transitively) blocked behind the holder backend; the second racer may
+ * queue behind the first rather than behind the holder itself.
  */
-const awaitBlockedBehind = (adminClient: LifecycleNativeDatabase['adminClient'], holderPid: number) => {
-  const waiters = adminClient
-    .unsafe<{ readonly waiting: number }>(
-      `with recursive blocked(pid) as (
-         select activity.pid from pg_catalog.pg_stat_activity activity
-         where $1 = any(pg_catalog.pg_blocking_pids(activity.pid))
-         union
-         select activity.pid from pg_catalog.pg_stat_activity activity
-         join blocked on blocked.pid = any(pg_catalog.pg_blocking_pids(activity.pid))
-       )
-       select count(*)::integer as waiting from blocked`,
-      [holderPid],
-    )
-    .pipe(Effect.map((rows) => rows[0]?.waiting ?? 0));
-  const awaitBothBlocked = (remaining: number): Effect.Effect<number, Effect.Error<typeof waiters>> =>
-    waiters.pipe(
-      Effect.flatMap((waiting) =>
-        waiting >= 2 || remaining === 0
-          ? Effect.succeed(waiting)
-          : Effect.suspend(() => awaitBothBlocked(remaining - 1)),
-      ),
-    );
-  return awaitBothBlocked(2000);
-};
+const awaitBothBlockedBehind = (adminClient: LifecycleNativeDatabase['adminClient'], holderPid: number) =>
+  awaitQueuedLockWaiters(adminClient, { expected: 2, holderPid });
 
 /**
  * Races two Actions behind an external holder of the given Payment row locks: both queue behind it
@@ -893,7 +872,7 @@ const raceBehindPaymentLocks = Effect.fn('LifecycleConcurrencyTest.raceBehindPay
   const holderPid = yield* Deferred.await(locked);
   const first = yield* Effect.result(racers[0]).pipe(Effect.forkChild);
   const second = yield* Effect.result(racers[1]).pipe(Effect.forkChild);
-  const blockedCount = yield* awaitBlockedBehind(adminClient, holderPid).pipe(
+  const blockedCount = yield* awaitBothBlockedBehind(adminClient, holderPid).pipe(
     Effect.ensuring(Deferred.succeed(release, true)),
   );
   yield* Fiber.join(holder);
@@ -933,7 +912,7 @@ const raceOnNewIntentKey = Effect.fn('LifecycleConcurrencyTest.raceOnNewIntentKe
   const holderPid = yield* Deferred.await(locked);
   const first = yield* Effect.result(racers[0]).pipe(Effect.forkChild);
   const second = yield* Effect.result(racers[1]).pipe(Effect.forkChild);
-  const blockedCount = yield* awaitBlockedBehind(scenario.native.adminClient, holderPid).pipe(
+  const blockedCount = yield* awaitBothBlockedBehind(scenario.native.adminClient, holderPid).pipe(
     Effect.ensuring(Deferred.succeed(release, true)),
   );
   const holderFailure = yield* Fiber.join(holder);

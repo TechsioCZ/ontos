@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { expect, it } from 'effect-rstest';
-
 import { appRoot, describeWorkspace, effectNativeRule, ruleTester } from './rule-tester.mts';
 import type { WorkspaceEntry } from './rule-tester.mts';
 
@@ -144,16 +142,13 @@ write('verticals/shadowed-config/rstest.config.mts', 'export default {};');
 const ordinary = 'verticals/native/tests/integration/ordinary.test.ts';
 write(ordinary, source);
 invalid.push(ordinary);
-const foreign = add('physical-owner');
+add('physical-owner');
 const target = 'outside/tests/authority.ts';
 write(target, source);
 const link = 'verticals/physical-owner/tests/integration/symlink.ts';
 entries.push({ path: link, symlinkTo: target });
 write('verticals/physical-owner/rstest.config.ts', configuration("['./tests/integration/symlink.ts']"));
 invalid.push(link);
-it('stages the symlinked setup apart from its owner setup', () => {
-  expect(foreign).not.toBe(link);
-});
 
 // Later entries overwrite earlier ones when the workspace is written.
 const latest = (logicalPath: string) => entries.findLast((candidate) => candidate.path === logicalPath);

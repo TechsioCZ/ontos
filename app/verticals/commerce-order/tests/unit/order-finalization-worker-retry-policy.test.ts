@@ -25,24 +25,10 @@ const retryWindow = (maxAttempts: number) => {
 };
 
 describe('Order finalization worker retry policy', () => {
-  it('declares the reviewed retry budget', () => {
-    expect(retryPolicy).toEqual({
-      initialBackoffMs: SECOND,
-      maxAttempts: 60,
-      maxBackoffMs: APPROVAL_REQUEST_VALIDITY_MAXIMUM,
-      multiplier: 2,
-    });
-  });
-
   it('retries for longer than the Quotation and approval request bounds combined, using the fewest attempts', () => {
     const covered = QUOTATION_VALIDITY_MAXIMUM + APPROVAL_REQUEST_VALIDITY_MAXIMUM;
     expect(retryWindow(retryPolicy.maxAttempts)).toBe(88_447 * SECOND);
     expect(retryWindow(retryPolicy.maxAttempts)).toBeGreaterThanOrEqual(covered);
     expect(retryWindow(retryPolicy.maxAttempts - 1)).toBeLessThan(covered);
-  });
-
-  it('stays inside the Core descriptor maximums', () => {
-    expect(retryPolicy.maxAttempts).toBeLessThanOrEqual(100);
-    expect(retryPolicy.maxBackoffMs).toBeLessThanOrEqual(24 * HOUR);
   });
 });

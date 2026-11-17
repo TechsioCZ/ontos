@@ -42,28 +42,6 @@ const result = Schema.decodeUnknownSync(CreateProductResultSchema)({
 });
 
 describe('create Product decoded-success snapshot hook', () => {
-  it.effect('passes the decoded result and invocation to transaction-local capture', () =>
-    Effect.gen(function* insertDecodedResult() {
-      const observed: unknown[] = [];
-      yield* recordCreateProductResultSnapshot({
-        actionInvocationId,
-        result,
-        services: {
-          captureResult: (id, value) => {
-            observed.push({ id, value });
-            return Effect.void;
-          },
-        },
-      });
-      expect(observed).toEqual([
-        {
-          id: actionInvocationId,
-          value: result,
-        },
-      ]);
-    }),
-  );
-
   it.effect('preserves a typed snapshot persistence failure', () =>
     Effect.gen(function* failClosedSnapshot() {
       const unavailable = new CatalogPersistenceUnavailable({

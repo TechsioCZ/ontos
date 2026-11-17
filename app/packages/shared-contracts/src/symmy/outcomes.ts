@@ -28,7 +28,18 @@ const rejectedEffect = Schema.Struct({
 
 const unsupportedEffect = Schema.Struct({
   branchId: Schema.optionalKey(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyUnsupportedBranchId'))),
-  branchKind: Schema.optionalKey(Schema.Literals(['CategoryHint', 'AttributeHint', 'MediaHint', 'VariantUpdateHint'])),
+  branchKind: Schema.optionalKey(
+    Schema.Literals([
+      'CategoryHint',
+      'AttributeHint',
+      'MediaHint',
+      'VariantUpdateHint',
+      'DescriptiveHint',
+      'ClassificationHint',
+      'PriceHint',
+      'IdentifierHint',
+    ]),
+  ),
   owner: OntosModuleIdSchema,
   reason: Schema.Literals(['missing_context', 'unsupported_meaning', 'owner_not_activated']),
   status: Schema.Literal('unsupported'),

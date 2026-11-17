@@ -298,7 +298,7 @@ it.effect('pins the reviewed roles, their dangerous cells and the seven assignme
     // Capabilities the release declared after the review stay with full access: no reviewed role holds one.
     const excluded = new Set<string>(Object.values(reviewedExclusions).flat());
     expect([reviewedExclusions.sales.length, reviewedExclusions.accounting.length, excluded.size]).toEqual([
-      16, 10, 16,
+      18, 12, 18,
     ]);
     expect([...excluded].filter((key) => !state.entries.has(key))).toEqual([]);
     expect(

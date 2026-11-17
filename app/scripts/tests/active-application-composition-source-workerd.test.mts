@@ -161,23 +161,40 @@ it.live('fails closed when the KV read does not answer within its deadline', () 
   Effect.gen(function* delayedSnapshotAcquisition() {
     const delayedProbeWorker = `
 import { env } from 'cloudflare:workers';
-import { Effect } from 'effect';
+import { Effect, Fiber } from 'effect';
 import { ActiveApplicationCompositionSourceLive } from ${JSON.stringify(sourceModule)};
+import * as TestClock from 'effect/testing/TestClock';
 import { ActiveApplicationCompositionSource } from ${JSON.stringify(sourceService)};
 
 export default {
   async fetch() {
     const binding = env.${BINDING};
     const originalGet = binding.get.bind(binding);
-    binding.get = (key, type) =>
-      new Promise((resolve) => setTimeout(resolve, 5100)).then(() => originalGet(key, type));
+    let releaseRead = () => {};
+    // The KV value only arrives once the bounded read has already failed, so the deadline is
+    // ordered by the read's own completion rather than by outlasting a duration.
+    const arrival = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+    let pendingRead = Promise.resolve(null);
+    binding.get = (key, type) => {
+      pendingRead = arrival.then(() => originalGet(key, type));
+      return pendingRead;
+    };
     const result = await Effect.runPromise(
-      ActiveApplicationCompositionSource.pipe(
-        Effect.flatMap(({ load }) => load),
-        Effect.provide(ActiveApplicationCompositionSourceLive),
-        Effect.match({ onFailure: (error) => ({ failure: error.reason }), onSuccess: (snapshot) => ({ snapshot }) }),
-      ),
+      Effect.gen(function* timeOutRead() {
+        const fiber = yield* ActiveApplicationCompositionSource.pipe(
+          Effect.flatMap(({ load }) => load),
+          Effect.provide(ActiveApplicationCompositionSourceLive),
+          Effect.match({ onFailure: (error) => ({ failure: error.reason }), onSuccess: (snapshot) => ({ snapshot }) }),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust('5 seconds');
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestClock.layer())),
     );
+    releaseRead();
+    await pendingRead;
     return Response.json(result);
   },
 };

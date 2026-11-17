@@ -1,13 +1,11 @@
 import { catalogRegistration } from '../../vertical.registration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, ReadRuntime, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { describe, expect, it } from 'effect-rstest';
 
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   ChangeProductManufacturerPayloadSchema,
   RemoveProductManufacturerPayloadSchema,
@@ -79,6 +77,9 @@ const unavailable = () =>
       reason: 'Owner unavailable',
     }),
   );
+// No Catalog Action handler reads ActionHandlerContext.compositionRevision, so a fixed opaque
+// revision replaces a per-test Application Composition snapshot build.
+const fixtureCompositionRevision = 'a'.repeat(64);
 const context = (
   compositionRevision: string,
   overrides: Partial<ManufacturerPersistence> = {},
@@ -208,47 +209,38 @@ describe('manufacturer Action contracts', () => {
 
   it.effect('preserves definite owner forbidden separately from unavailable', () =>
     Effect.gen(function* verifyForbidden() {
-      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-        ['catalog'],
-        ultramodernApiMarker.buildMarker,
-      );
       expect(setProductManufacturerAction.descriptor.idempotency).toBe('required');
       const forbidden = yield* handleSetProductManufacturer(
         setPayload,
-        context(compositionSnapshot.composition.revision, {
+        context(fixtureCompositionRevision, {
           set: () => Effect.fail(new ManufacturerTargetForbidden()),
         }),
       ).pipe(Effect.flip);
       expect(Schema.is(ManufacturerTargetForbidden)(forbidden)).toBe(true);
-      const failed = yield* handleSetProductManufacturer(
-        setPayload,
-        context(compositionSnapshot.composition.revision),
-      ).pipe(Effect.flip);
+      const failed = yield* handleSetProductManufacturer(setPayload, context(fixtureCompositionRevision)).pipe(
+        Effect.flip,
+      );
       expect(Schema.is(ManufacturerPersistenceUnavailable)(failed)).toBe(true);
     }),
   );
 
   it.effect('maps missing, invalid, and conflicting mutations without writing evidence', () =>
     Effect.gen(function* verifyOutcomes() {
-      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-        ['catalog'],
-        ultramodernApiMarker.buildMarker,
-      );
       const missing = yield* handleSetProductManufacturer(
         setPayload,
-        context(compositionSnapshot.composition.revision, { set: () => Effect.succeed({ _tag: 'not_found' }) }),
+        context(fixtureCompositionRevision, { set: () => Effect.succeed({ _tag: 'not_found' }) }),
       ).pipe(Effect.flip);
       expect(missing).toMatchObject({ code: 'manufacturer_not_found' });
       const conflict = yield* handleChangeProductManufacturer(
         changePayload,
-        context(compositionSnapshot.composition.revision, {
+        context(fixtureCompositionRevision, {
           change: () => Effect.succeed({ _tag: 'identity_conflict' }),
         }),
       ).pipe(Effect.flip);
       expect(conflict).toMatchObject({ code: 'manufacturer_conflict' });
       const removed = yield* handleRemoveProductManufacturer(
         removePayload,
-        context(compositionSnapshot.composition.revision, {
+        context(fixtureCompositionRevision, {
           remove: () => Effect.succeed({ _tag: 'applied', relationId: removePayload.relationId, revision: 2 }),
         }),
       );

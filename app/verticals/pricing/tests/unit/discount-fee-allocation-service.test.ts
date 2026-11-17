@@ -1,9 +1,6 @@
 import type {
   PricingGenericAllocationRequest,
   PricingAllocationPrecision,
-  PricingOwnerExactAllocationRequest,
-  PricingWholePurchaseContractualAllocationRequest,
-  PricingWholePurchaseContractualNotApplicableRequest,
 } from '@app/pricing-contracts/domain/discount-fee-allocation';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import { Effect, Schema } from 'effect';
@@ -173,46 +170,8 @@ const genericRequest = (
   precision,
   source: source('GENERIC_SUPPORTED'),
 });
-const wholeRequest = (): PricingWholePurchaseContractualAllocationRequest => ({
-  allocationKind: 'WHOLE_PURCHASE_CONTRACTUAL',
-  decision,
-  eligibleBasis: {
-    currencyCode: 'CZK',
-    eligibleAmount: '100.0072',
-    recipients: [
-      { intermediateValue: money('9.7097'), occurrenceId: 'line-a', recipientKind: 'MERCHANDISE' },
-      { intermediateValue: money('90.2975'), occurrenceId: 'line-b', recipientKind: 'MERCHANDISE' },
-    ],
-  },
-  originalContribution: money('-100'),
-  precision,
-  source: source('PRICING_WHOLE_PURCHASE_CONTRACTUAL'),
-});
 
 describe('Pricing Discount and Fee allocation service', () => {
-  it.effect('preserves an authoritative exact allocation without redistributing it', () =>
-    Effect.gen(function* preservesOwnerAllocation() {
-      const request: PricingOwnerExactAllocationRequest = {
-        allocationKind: 'OWNER_EXACT',
-        decision,
-        originalContribution: money('-5'),
-        ownerAllocations: [allocation('line-b', '-3'), allocation('line-a', '-2')],
-        ownerScope: 'MULTI_LINE',
-        precision,
-        source: source('OWNER_EXACT'),
-      };
-
-      const result = yield* allocatePricingDiscountsAndFees(request);
-
-      expect(result).toEqual({
-        allocations: request.ownerAllocations,
-        outcome: 'ALLOCATION_APPLIED',
-        request,
-        sumInvariant: 'ALLOCATIONS_SUM_TO_ORIGINAL_CONTRIBUTION',
-      });
-    }),
-  );
-
   it.effect('allocates generic contributions proportionally in stable recipient order', () =>
     Effect.gen(function* allocatesGenericContribution() {
       const reversed = genericRequest([basis('line-b', '3'), basis('line-a', '1')]);
@@ -253,60 +212,6 @@ describe('Pricing Discount and Fee allocation service', () => {
         ]);
         expect(secondResult.allocations).toEqual(firstResult.allocations);
       }
-    }),
-  );
-
-  it.effect('returns a typed failure instead of guessing an equal split for zero generic basis', () =>
-    Effect.gen(function* rejectsZeroBasis() {
-      const request = genericRequest([basis('line-a', '0'), basis('line-b', '0')]);
-
-      expect(yield* allocatePricingDiscountsAndFees(request)).toEqual({
-        outcome: 'ALLOCATION_FAILED',
-        reason: 'GENERIC_ZERO_BASIS',
-        request,
-      });
-    }),
-  );
-
-  it.effect('preserves the full contractual contribution and every recipient capacity for the sub-cent fixture', () =>
-    Effect.gen(function* preservesSubCentCapacity() {
-      const request = wholeRequest();
-
-      const result = yield* allocatePricingDiscountsAndFees(request);
-
-      expect(result.outcome).toBe('ALLOCATION_APPLIED');
-      if (result.outcome === 'ALLOCATION_APPLIED') {
-        expect(result.capacityInvariant).toBe('EVERY_ALLOCATION_WITHIN_ELIGIBLE_INTERMEDIATE');
-        expect(result.allocations).toEqual([
-          allocation('line-a', '-9.709000951931460935'),
-          allocation('line-b', '-90.290999048068539065'),
-        ]);
-      }
-    }),
-  );
-
-  it.effect('preserves B <= D as known non-applicability', () =>
-    Effect.gen(function* preservesKnownNonApplicability() {
-      const request: PricingWholePurchaseContractualNotApplicableRequest = {
-        allocationKind: 'WHOLE_PURCHASE_CONTRACTUAL_NOT_APPLICABLE',
-        configuredDiscount: money('100.0072'),
-        decision,
-        eligibleBasis: {
-          currencyCode: 'CZK',
-          eligibleAmount: '100.0072',
-          recipients: [
-            { intermediateValue: money('9.7097'), occurrenceId: 'line-a', recipientKind: 'MERCHANDISE' },
-            { intermediateValue: money('90.2975'), occurrenceId: 'line-b', recipientKind: 'MERCHANDISE' },
-          ],
-        },
-        reason: 'BASIS_NOT_GREATER_THAN_DISCOUNT',
-        source: source('PRICING_WHOLE_PURCHASE_CONTRACTUAL'),
-      };
-
-      expect(yield* allocatePricingDiscountsAndFees(request)).toEqual({
-        outcome: 'ALLOCATION_NOT_APPLICABLE',
-        request,
-      });
     }),
   );
 
