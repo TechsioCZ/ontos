@@ -2212,8 +2212,18 @@ it('verifies the exact Tunnel download and checksum before allowing a deployment
   expect(step?.run).toContain('trap \'rm -rf -- "$scratch"\' EXIT');
 });
 
-it('runs every workspace gate check in some workspace-gate entry', () => {
-  const commands = gateCommands().flat();
+it('keeps every check in the source, unit or format gates without repeating the tooling pool', () => {
+  const ruleChecks =
+    readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
+      ({ name }) => name === 'Check lint rules and shared contract types',
+    )?.run ?? '';
+  const commands = [
+    ...gateCommands().flat(),
+    ...ruleChecks
+      .trim()
+      .split('\n')
+      .map((command) => command.replace(/^mise exec -- /u, '')),
+  ];
   for (const check of [
     TYPECHECK_COMMAND,
     'pnpm typecheck:lint-rules',
