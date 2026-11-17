@@ -2681,9 +2681,14 @@ it('overlaps bootstrap artifact transfer with the independent fresh-database pro
     'gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern \'node-units-*\' --dir "$RUNNER_TEMP/native-composition-units"',
   );
   expect(prefetch).toBeLessThan(named(BOOTSTRAP_MIGRATOR_STEP));
-  expect(steps[fetched]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(steps[fetched]?.if).toBeUndefined();
   expect(fetched).toBeGreaterThan(prefetch);
   expect(fetched).toBeLessThan(unpack);
+  for (const step of steps) {
+    if (step.wait !== undefined) {
+      expect(step.if, step.name).toBeUndefined();
+    }
+  }
 });
 
 it('prefetches only this run and propagates a failed artifact download', () => {
