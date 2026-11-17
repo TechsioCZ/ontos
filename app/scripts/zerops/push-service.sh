@@ -15,13 +15,15 @@
 #                                   slower, steadier upload avoids the project-wide stall. A rate below package size / 25 s
 #                                   (about 10M for the 230 MB app package) makes every attempt slower than the limit
 #                                   below, so the upload goes three times and the push fails.
-#   ONTOS_PUSH_UPLOAD_WARMUP=true   an experiment, off unless set: before the first real upload of this service (once
-#                                   per push-service.sh run, so up to four times per push step), one tiny throwaway HEAD
-#                                   to the same upload host. The first upload of a service stops every hostname of the
-#                                   project for 20-30 s whatever the package size (86 MB and 230 MB alike) and a second
-#                                   upload is clean, so this tells whether the first transfer, rather than the first
-#                                   large transfer, is what stalls. The warm-up can never fail the push: any answer,
-#                                   curl error or timeout (cap 15 s) is logged and the push carries on unchanged.
+#   ONTOS_PUSH_UPLOAD_WARMUP=true   off unless set: the first upload of this service shares one curl invocation with a
+#                                   credential-free HEAD to the upload host's origin, so the PUT that follows reuses
+#                                   that connection instead of paying TCP slow start on a 105 MB body (job
+#                                   133137182166: cold attempt total 27.73 s at speed_upload 3,961,637, the next
+#                                   attempt 6 s at 18,208,644, which is what makes the 25 s rule below fire on a
+#                                   healthy upload). The warm-up can never fail the push: any answer, curl error or
+#                                   timeout (cap 15 s) is logged on its own fact line, only the upload's own status
+#                                   decides the attempt, and the warm-up's measured seconds come off the duration the
+#                                   25 s rule below judges.
 #
 # Keep the package small and push one service at a time: Zerops silently truncates an upload that runs longer
 # than about 30 s, so a slower upload goes again (UPLOAD_LIMIT_SECONDS, default 25).
@@ -199,20 +201,15 @@ esac
 
 timing_format='namelookup=%{time_namelookup} connect=%{time_connect} appconnect=%{time_appconnect} pretransfer=%{time_pretransfer} starttransfer=%{time_starttransfer} total=%{time_total} speed_upload=%{speed_upload} size_upload=%{size_upload} http_code=%{http_code}'
 
-# One tiny throwaway request to the host the upload goes to, before the first real upload of this service. A HEAD to the
+# One tiny throwaway request to the host the upload goes to, in the same curl invocation as that upload. A HEAD to the
 # host root: the same address, TLS and proxy entry the upload reaches, but no path, no signed query, no user info and
 # never the token, so it cannot consume the signed upload URL, cannot store anything and sends no credential anywhere
-# new. Any answer, curl error or timeout is logged on the one fact line and the push continues unchanged. The cap is
-# shorter than UPLOAD_LIMIT_SECONDS below, so a warm-up that hangs cannot eat the attempt's truncation budget.
+# new. `--next` keeps curl's connection pool between the two requests, so the PUT inherits the warmed connection and its
+# grown congestion window; a separate curl process could not, which is why warming used to buy nothing. Any answer,
+# curl error or timeout is logged on its own fact line and the push continues unchanged: only the upload's own status
+# decides the attempt, and the warm-up's own seconds come off the attempt's duration, so a warm-up that hangs can
+# neither fail the push nor eat the truncation budget below. The cap bounds what it can add to the push.
 warmup_timeout_seconds=15
-warmup_upload() {
-  local attempt="$1" host="$2" url="$3" started timing exit_code=0 note=''
-  started="$(stamp)"
-  timing="$(curl -sS -I --http1.1 --max-time "$warmup_timeout_seconds" -o /dev/null \
-    -w "$timing_format curl_exit=%{exitcode}" "$url" 2>/dev/null)" || exit_code=$?
-  ((exit_code == 0)) || note=" (the warm-up failed; the push continues)"
-  log "upload warm-up (attempt $attempt, 0 bytes): host $host, started $started, ${timing:-curl_exit=$exit_code}$note"
-}
 
 # An upload that took longer than the limit is assumed truncated and goes again to a fresh app version. Zerops
 # answered 2xx to a curl that sent every byte and still kept a truncated package (2026-10-30), and the API reports no
@@ -231,21 +228,50 @@ for attempt in 1 2 3; do
   log "app version create ended (attempt $attempt): version $version_id"
   upload_host="$(url_host "$upload_url")"
   log "upload started (attempt $attempt, $package_bytes bytes): host $upload_host, $(upload_route "$upload_host")"
+  # One curl invocation, so one connection: the warm-up HEAD described above (before the first upload of this service
+  # only) and then the upload itself, `--next` between them. Each request writes its own fact line, labelled so that
+  # neither can be read as the other, and the upload's line stays exactly the timing format the facts have always used.
+  requests=()
+  warmup_started=''
   if ((attempt == 1)) && [ -n "$warmup_enabled" ]; then
-    warmup_upload "$attempt" "$upload_host" "$(url_origin "$upload_url")"
+    warmup_started="$(stamp)"
+    requests+=(-sS --http1.1 -I --max-time "$warmup_timeout_seconds" -o /dev/null
+      -w "request=warmup $timing_format curl_exit=%{exitcode}\n" "$(url_origin "$upload_url")" --next)
   fi
-  # The clock starts after the warm-up: only the real upload is judged by the limit below, and "uploaded in N s" means
-  # the upload's own duration.
-  started="$(date +%s)"
   # The signed upload URL is a secret: a refused upload names its status and Zerops's answer, never the URL.
-  timing="$(curl -sS --http1.1 --retry 2 "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" "$upload_url" \
-    -o "$work/upload-response" -w "$timing_format")"
-  upload_code="${timing##*http_code=}"
-  if [[ "$upload_code" != 2?? ]]; then
-    log_error "upload refused (attempt $attempt): HTTP $upload_code: $(head -c 8192 "$work/upload-response")"
+  requests+=(-sS --http1.1 --retry 2 "${rate_args[@]}" -X PUT -T "$work/package.tar.gz" -o "$work/upload-response"
+    -w "request=upload $timing_format\n" "$upload_url")
+  started="$(date +%s)"
+  curl_exit=0
+  written="$(curl "${requests[@]}")" || curl_exit=$?
+  # The warm-up's own seconds belong to the warm-up: they come off the attempt's duration below, so a slow warm-up
+  # cannot turn a healthy upload into a redone one. Truncated to whole seconds, which charges the upload at most one
+  # second too much, and zero when the warm-up wrote no duration, which never shortens the upload's measured time.
+  warmup_charge=0
+  if [ -n "$warmup_started" ]; then
+    warmup_fact="$(grep '^request=warmup ' <<<"$written" || true)"
+    warmup_fact="${warmup_fact#request=warmup }"
+    warmup_fact="${warmup_fact:-curl_exit=$curl_exit}"
+    note=''
+    [[ "${warmup_fact##*curl_exit=}" == 0 ]] || note=' (the warm-up failed; the push continues)'
+    log "upload warm-up (attempt $attempt, 0 bytes): host $upload_host, started $warmup_started, $warmup_fact$note"
+    warmup_seconds="${warmup_fact##*total=}"
+    warmup_seconds="${warmup_seconds%% *}"
+    warmup_charge="${warmup_seconds%%[.,]*}"
+    [[ "$warmup_charge" =~ ^[0-9]+$ ]] || warmup_charge=0
+  fi
+  timing="$(grep '^request=upload ' <<<"$written" || true)"
+  if [ -z "$timing" ]; then
+    log_error "upload (attempt $attempt) wrote no timing (curl exit $curl_exit); the limit below cannot be applied"
     exit 1
   fi
-  took=$(($(date +%s) - started))
+  timing="${timing#request=upload }"
+  upload_code="${timing##*http_code=}"
+  if [[ "$upload_code" != 2?? ]]; then
+    log_error "upload refused (attempt $attempt): HTTP $upload_code (curl exit $curl_exit): $(head -c 8192 "$work/upload-response")"
+    exit 1
+  fi
+  took=$(($(date +%s) - started - warmup_charge))
   log "upload timing (attempt $attempt): $timing"
   log "upload ended (attempt $attempt, $package_bytes bytes): uploaded in ${took}s (attempt $attempt)"
   ((took <= upload_limit_seconds)) && break

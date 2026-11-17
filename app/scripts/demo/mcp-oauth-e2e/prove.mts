@@ -327,14 +327,51 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
     const claims = yield* Effect.try(() => decodeJwt(Redacted.value(flow.accessToken)));
     const grantId = yield* Schema.decodeUnknownEffect(Schema.String)(claims[GRANT_CLAIM]);
     summary.grantId = grantId;
+    // The token the authorization code bought keeps its own binding. Everything below - the whole MCP session and the
+    // rejected 2025-11-25 initialize - still runs on it after the rotation, so the code-issued token is proven end to
+    // end; `access` follows the rotation, because the replay's revocation is asserted against the live token.
+    const codeIssued = flow.accessToken;
     let access = flow.accessToken;
+
+    // Refresh rotation: the rotated pair works at once. It runs first so the 30 s reuse grace of the rotated-out
+    // refresh token elapses while the rest of the proof runs; the replay that presents it stays last, because being
+    // rejected revokes the connection and every token with it.
+    let rotatedAt = yield* Clock.monotonicTimeNanos;
+    const recordedRotation = yield* rec.stepEffect(
+      k,
+      'rotace refresh tokenu + nový access token funguje',
+      Effect.gen(function* verifyRotatedTokens() {
+        const result = yield* Effect.suspend(() =>
+          rotateRefreshToken({ issuer: E2E.issuer, provider, resource: E2E.mcpUrl }),
+        );
+        rotatedAt = yield* Clock.monotonicTimeNanos;
+        const { client: fresh } = yield* Effect.acquireRelease(connectMcp(E2E.mcpUrl, result.accessToken), (value) =>
+          closeMcpClient(value.client).pipe(Effect.orDie),
+        );
+        open.push(fresh);
+        const who = yield* callJson(fresh, 'ontos_whoami');
+        const pass =
+          Option.exists(
+            result.newRefreshToken,
+            (token) => Redacted.value(token) !== Redacted.value(result.oldRefreshToken),
+          ) && !who.isError;
+        return {
+          detail: `nový refresh=${Option.isNone(result.newRefreshToken) ? 'ne' : 'ano'}, whoami=${who.isError ? 'isError' : 'OK'}`,
+          pass,
+          value: result,
+        };
+      }).pipe(Effect.scoped),
+    );
+    if (Option.isSome(recordedRotation)) {
+      access = recordedRotation.value.accessToken;
+    }
 
     // Current MCP revision only (2026-07-28, server/discover).
     const recordedConnection = yield* rec.stepEffect(
       k,
       'tools/list (2026-07-28)',
       Effect.gen(function* verifyCurrentProtocol() {
-        const connection = yield* Effect.suspend(() => connectMcp(E2E.mcpUrl, access));
+        const connection = yield* Effect.suspend(() => connectMcp(E2E.mcpUrl, codeIssued));
         open.push(connection.client);
         const names = yield* listToolNames(connection.client);
         return {
@@ -614,12 +651,13 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
     );
     yield* Effect.tryPromise(async () => await client.close());
 
-    // A 2025-era client is told which revision the server speaks instead of being served.
+    // A 2025-era client is told which revision the server speaks instead of being served. On the code-issued token,
+    // after the rotation: the token the authorization code bought is still the one under test here.
     yield* rec.stepEffect(
       k,
       'initialize 2025-11-25 odmítnut (jen 2026-07-28)',
       Effect.gen(function* verifyLegacyProtocolRejected() {
-        const { body, status } = yield* Effect.suspend(() => rawLegacyInitialize(E2E.mcpUrl, access));
+        const { body, status } = yield* Effect.suspend(() => rawLegacyInitialize(E2E.mcpUrl, codeIssued));
         return {
           detail: `HTTP ${status} ${body.slice(0, 160)}`,
           pass: body.includes('"error"') && body.includes(MODERN_PROTOCOL_VERSION) && !body.includes('"result"'),
@@ -627,39 +665,9 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
       }),
     );
 
-    // Refresh rotation: the rotated pair works at once.
-    let rotatedAt = yield* Clock.monotonicTimeNanos;
-    const recordedRotation = yield* rec.stepEffect(
-      k,
-      'rotace refresh tokenu + nový access token funguje',
-      Effect.gen(function* verifyRotatedTokens() {
-        const result = yield* Effect.suspend(() =>
-          rotateRefreshToken({ issuer: E2E.issuer, provider, resource: E2E.mcpUrl }),
-        );
-        rotatedAt = yield* Clock.monotonicTimeNanos;
-        const { client: fresh } = yield* Effect.acquireRelease(connectMcp(E2E.mcpUrl, result.accessToken), (value) =>
-          closeMcpClient(value.client).pipe(Effect.orDie),
-        );
-        open.push(fresh);
-        const who = yield* callJson(fresh, 'ontos_whoami');
-        const pass =
-          Option.exists(
-            result.newRefreshToken,
-            (token) => Redacted.value(token) !== Redacted.value(result.oldRefreshToken),
-          ) && !who.isError;
-        return {
-          detail: `nový refresh=${Option.isNone(result.newRefreshToken) ? 'ne' : 'ano'}, whoami=${who.isError ? 'isError' : 'OK'}`,
-          pass,
-          value: result,
-        };
-      }).pipe(Effect.scoped),
-    );
-    if (Option.isSome(recordedRotation)) {
-      access = recordedRotation.value.accessToken;
-    }
-
     /**
-     * Waits until the 30 s reuse grace of the rotated-out refresh token has passed, then presents it. Without a recorded
+     * Waits out whatever is left of the 30 s reuse grace of the rotated-out refresh token, then presents it. The
+     * rotation happened before the MCP session above, so most of the grace has already passed. Without a recorded
      * rotation there is no old refresh token to present, so nothing is replayed.
      */
     const replayOldRefresh = () =>

@@ -64,9 +64,31 @@ export interface CiWorkspacePackage {
   readonly directory: string;
   /** Package-relative files the manifest's `exports` map points at: what other packages consume from it. */
   readonly exportTargets?: readonly string[];
+  /**
+   * False when the manifest declares no `test:integration` script: every integration row runs
+   * `pnpm -r --if-present … run test:integration`, so such a package makes no integration suite run and an
+   * exclusion-only row must not pay for its services. Absent means unknown and covered.
+   */
+  readonly integrationSuite?: boolean;
   readonly name: string;
   readonly uncertain?: boolean;
 }
+
+/**
+ * The pnpm workspace packages outside `apps`, `packages` and `verticals` (app/pnpm-workspace.yaml): the two Next.js
+ * storefronts, each named after its directory. They are leaves — no workspace package depends on them — and they are
+ * not OntOS modules, so `topology/ownership.json` does not name them. Their own gate is the source row
+ * 'Storefront Typecheck (AKROS and N1)', which runs in every round.
+ */
+export const rootLevelPackageDirectories: readonly string[] = ['akros-storefront', 'n1-storefront'];
+
+/**
+ * Trees the workspace root package (`directory: '.'`) owns for selection. pnpm's root package has no directory
+ * prefix, so the trees whose change only its own suites prove are named here: the repository tooling under
+ * `app/scripts` is proved by the Repository Tooling Tests source rows and the Root Integration shards. Everything
+ * else under `app/` outside a package directory stays unowned and runs the complete suite, `.github/**` included.
+ */
+const rootOwnedTrees: readonly string[] = ['scripts/'];
 
 const CiTopologyUnitSchema = Schema.Struct({
   id: Schema.String,
@@ -134,9 +156,23 @@ const gateIds = [
 const rootDocumentation = (changedPath: string) =>
   changedPath.startsWith('docs/') || ['CONTEXT-MAP.md', 'README.md', 'AGENTS.md'].includes(changedPath);
 
+/** A path inside a tree some workspace package owns: a package directory, a root-level package or a root tree. */
+const ownedTree = (changedPath: string) =>
+  /^app\/(?:apps|verticals|packages)\/[a-z0-9-]+\//u.test(changedPath) ||
+  rootLevelPackageDirectories.some((directory) => changedPath.startsWith(`app/${directory}/`)) ||
+  rootOwnedTrees.some((tree) => changedPath.startsWith(`app/${tree}`));
+
+/** The packages a changed path belongs to; the root package owns its named trees, never the whole repository. */
+const pathOwners = (changedPath: string, packages: readonly CiWorkspacePackage[]) =>
+  packages.filter(({ directory }) =>
+    directory === '.'
+      ? rootOwnedTrees.some((tree) => changedPath.startsWith(`app/${tree}`))
+      : changedPath.startsWith(`app/${directory}/`),
+  );
+
 const broadPath = (changedPath: string) =>
   !rootDocumentation(changedPath) &&
-  (!/^app\/(?:apps|verticals|packages)\/[a-z0-9-]+\//u.test(changedPath) ||
+  (!ownedTree(changedPath) ||
     /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
       changedPath,
     ) ||
@@ -188,6 +224,100 @@ const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
   );
 };
 
+/**
+ * Everything the migrated integration database is made of. This list mirrors, entry for entry, the `hashFiles(...)`
+ * arguments of the step named "Name the integration seed cache" in
+ * .github/workflows/ultramodern-workspace-gates.yml. The two lists must stay comparable by eye: the seed key and the
+ * Fresh Database Integration rows have to agree on what can change the database, because a diff that names no new
+ * seed cannot change what those rows prove.
+ */
+export const integrationSeedInputs: readonly string[] = [
+  'app/**/drizzle*/**',
+  'app/**/drizzle*.config.ts',
+  'app/database/**',
+  'app/scripts/postgres/**',
+  'app/scripts/run-zerops-migrator.mjs',
+  'app/scripts/migration-convergence*',
+  'app/scripts/access-release-activation*',
+  'app/scripts/activate-access-catalog-release.mts',
+  'app/scripts/application-migration-pending.mts',
+  'app/verticals/commerce-customer-context/scripts/**',
+  'app/scripts/run-optional-commerce-portal-auth-db.mts',
+  'app/scripts/verify-application-db-schema.mts',
+  'app/scripts/audit-database-trust-boundaries.mts',
+  'app/scripts/prove-zerops-migrator-artifact.sh',
+  'app/scripts/ci/integration-seed*.mts',
+  'app/packages/core-runtime/spicedb/**',
+  'app/packages/core-runtime/src/install/**',
+  'app/packages/core-runtime/src/access/**',
+  'app/packages/core-runtime/src/permissions/**',
+  'app/packages/core-runtime/src/db/**',
+  'app/topology/**',
+  'app/docker-compose.yml',
+  'app/zerops.yaml',
+  'app/package.json',
+  'app/pnpm-lock.yaml',
+  'app/.mise.toml',
+  '!app/**/node_modules/**',
+  '!app/tools/**',
+];
+
+/** The glob dialect of `hashFiles`: `**` spans whole path segments, `*` stays inside one. */
+const GLOBSTAR = '<<globstar>>';
+const seedInputMatcher = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .replaceAll('**', GLOBSTAR)
+      .replaceAll(/[$()+.?[\\\]^{|}]/gu, String.raw`\$&`)
+      .replaceAll('*', '[^/]*')
+      .replaceAll(`/${GLOBSTAR}/`, '/(?:.*/)?')
+      .replaceAll(`/${GLOBSTAR}`, '(?:/.*)?')
+      .replaceAll(GLOBSTAR, '.*')}$`,
+    'u',
+  );
+const seedInputs = integrationSeedInputs.filter((glob) => !glob.startsWith('!')).map(seedInputMatcher);
+const seedExclusions = integrationSeedInputs
+  .filter((glob) => glob.startsWith('!'))
+  .map((glob) => seedInputMatcher(glob.slice(1)));
+
+/** Whether a changed path names a new integration seed, and so can change what the fresh-database rows prove. */
+const namesNewSeed = (changedPath: string) =>
+  seedInputs.some((pattern) => pattern.test(changedPath)) &&
+  !seedExclusions.some((pattern) => pattern.test(changedPath));
+
+/**
+ * Whether the workspace graph itself cannot be trusted: a package outside the directory and naming conventions, a
+ * duplicate name, or a dependency or contract producer that is not in the workspace. Nothing is narrowed from a
+ * graph with a hole in it.
+ */
+const unaccountedWorkspace = (packages: readonly CiWorkspacePackage[]) =>
+  new Set(packages.map(({ name }) => name)).size !== packages.length ||
+  packages.some(
+    (entry) =>
+      entry.uncertain === true ||
+      (entry.directory !== '.' &&
+        !/^(?:apps|packages|verticals)\/[a-z0-9-]+$/u.test(entry.directory) &&
+        !rootLevelPackageDirectories.includes(entry.directory)) ||
+      (!/^(?:@app\/[a-z0-9-]+|app)$/u.test(entry.name) && !rootLevelPackageDirectories.includes(entry.name)) ||
+      entry.dependencies.some((dependency) => !packages.some(({ name }) => name === dependency)) ||
+      (entry.contractProducer !== undefined && !packages.some(({ name }) => name === entry.contractProducer)),
+  );
+
+/** Whether the changed paths themselves demand the complete suite: empty, shared, sensitive or owned by nobody. */
+const broadDiff = (changedPaths: readonly string[], packages: readonly CiWorkspacePackage[]) =>
+  changedPaths.length === 0 ||
+  changedPaths.some(broadPath) ||
+  changedPaths.some((changedPath) => !rootDocumentation(changedPath) && pathOwners(changedPath, packages).length === 0);
+
+/** Whether a matrix names a package selector or a proof dependency this planner cannot resolve to a package. */
+const unprovenTemplates = (templates: Templates, packages: readonly CiWorkspacePackage[]) =>
+  templates.unit.some(({ commands }) => unknownFilters(commands)) ||
+  templates.integration.some(
+    (entry) =>
+      unknownFilters(entry['package-filters'] ?? '') ||
+      (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
+  );
+
 export const planCiChecks = (input: {
   readonly applyAffected: boolean;
   readonly changedPaths: readonly string[];
@@ -197,9 +327,10 @@ export const planCiChecks = (input: {
 }) => {
   const { packages, templates } = input;
   const owned = input.changedPaths.flatMap((changedPath) =>
-    packages
-      .filter(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`))
-      .map((owner) => ({ consumed: reachesConsumers(changedPath, owner), name: owner.name })),
+    pathOwners(changedPath, packages).map((owner) => ({
+      consumed: reachesConsumers(changedPath, owner),
+      name: owner.name,
+    })),
   );
   const seeds = owned.map(({ name }) => name);
   const affectedNames = new Set([
@@ -211,43 +342,32 @@ export const planCiChecks = (input: {
   ]);
   const affected = packages.filter(({ name }) => affectedNames.has(name));
   const affectedPackages = EffectArray.sort([...affectedNames], Order.String);
-  const uncertain = packages.some(
-    (entry) =>
-      entry.uncertain === true ||
-      (entry.directory !== '.' && !/^(?:apps|packages|verticals)\/[a-z0-9-]+$/u.test(entry.directory)) ||
-      !/^(?:@app\/[a-z0-9-]+|app)$/u.test(entry.name) ||
-      entry.dependencies.some((dependency) => !packages.some(({ name }) => name === dependency)) ||
-      (entry.contractProducer !== undefined && !packages.some(({ name }) => name === entry.contractProducer)),
-  );
   const broad =
     input.forceFull === true ||
-    uncertain ||
-    templates.unit.some(({ commands }) => unknownFilters(commands)) ||
-    templates.integration.some(
-      (entry) =>
-        unknownFilters(entry['package-filters'] ?? '') ||
-        (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
-    ) ||
-    new Set(packages.map(({ name }) => name)).size !== packages.length ||
-    input.changedPaths.length === 0 ||
-    input.changedPaths.some(broadPath) ||
-    seeds.length === 0 ||
-    input.changedPaths.some(
-      (changedPath) =>
-        !rootDocumentation(changedPath) &&
-        !packages.some(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`)),
-    );
+    unaccountedWorkspace(packages) ||
+    unprovenTemplates(templates, packages) ||
+    broadDiff(input.changedPaths, packages) ||
+    seeds.length === 0;
   const mode = !broad && input.applyAffected ? 'affected' : 'full';
+  const freshDatabaseTests = new Set((templates['fresh-database-tests'] ?? []).map((file) => `app/${file}`));
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
     if (entry.suite === 'browser') {
       return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
     }
-    // The files that migrate or recover their own database run in every affected round, from a fresh preparation.
+    // The files that migrate or recover their own database run from a fresh preparation, to prove the migration,
+    // database, grant, topology and image inputs the seed is made of. A diff that names none of them cannot change
+    // what they prove, so these rows follow the diff exactly as the seed cache key does — plus the diff that
+    // changes one of the very files they run.
     if (entry['fresh-database-tests'] === 'only') {
-      return [entry];
+      return input.changedPaths.some((changedPath) => namesNewSeed(changedPath) || freshDatabaseTests.has(changedPath))
+        ? [entry]
+        : [];
     }
     const packageFilters = entry['package-filters'] ?? '';
-    const selected = packageFilters.length === 0 ? [] : matchingPackages(packageFilters, affected);
+    const selected =
+      packageFilters.length === 0
+        ? []
+        : matchingPackages(packageFilters, affected).filter(({ integrationSuite }) => integrationSuite !== false);
     const rootSuite = entry['root-suite'] === true && affected.some(({ directory }) => directory === '.');
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
     if (selected.length === 0 && !rootSuite && !proofAffected) {
@@ -256,7 +376,11 @@ export const planCiChecks = (input: {
     const filters = selected.length === 0 ? '' : selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
     return [{ ...entry, 'package-filters': filters, 'root-suite': rootSuite }];
   });
-  const selectedUnit = templates.unit.flatMap((entry) => {
+  // A change only the root package owns is in no unit row: every row excludes the workspace root with
+  // `--filter '!.'`, and `app/scripts/check-ci-gates.sh` requires the workspace unit gate to have run in an
+  // affected plan. So the unit matrix stays complete for it and the integration matrix narrows to the root shards.
+  const rootOnly = affected.length > 0 && affected.every(({ directory }) => directory === '.');
+  const narrowedUnit = templates.unit.flatMap((entry) => {
     const filters = entry.commands.split('\n')[0] ?? '';
     const selected = matchingPackages(filters, affected);
     if (selected.length === 0) {
@@ -276,6 +400,7 @@ export const planCiChecks = (input: {
       },
     ];
   });
+  const selectedUnit = rootOnly ? templates.unit : narrowedUnit;
   // A malformed/empty unit mapping never becomes a green no-op.
   const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
   const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
@@ -338,6 +463,7 @@ const ManifestSchema = Schema.Struct({
   ontosContractOwner: Schema.optionalKey(Schema.Struct({ packageName: Schema.String })),
   optionalDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   peerDependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
 /** Every file an `exports` map points at, package-relative, through conditions and fallback lists. */
@@ -364,6 +490,7 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
       }
     }
   }
+  directories.push(...rootLevelPackageDirectories);
   const manifests = yield* Effect.forEach(
     directories,
     (directory) =>
@@ -403,9 +530,12 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
       ],
       directory,
       exportTargets: exportTargets(manifest.exports),
+      integrationSuite: manifest.scripts?.['test:integration'] !== undefined,
       name: manifest.name,
       uncertain:
+        // `topology/ownership.json` is the OntOS module map: it names the root-level storefront packages nowhere.
         (directory !== '.' &&
+          !rootLevelPackageDirectories.includes(directory) &&
           !ownership.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
         [
           manifest.dependencies,

@@ -593,13 +593,15 @@ export const unitInputs = (directory: string, graph: UnitInputGraph) =>
       return yield* new WorkspaceInputsInvalid({ reason: `Missing build driver: ${BUILD_DRIVER}` });
     }
     add(BUILD_DRIVER);
-    for (const token of matches(SCRIPT_TOKEN, driver)) {
+    // A shell comment describing the later release pack is not a unit-build dependency.
+    const commands = driver.replaceAll(/^[\t ]*#.*$/gmu, '');
+    for (const token of matches(SCRIPT_TOKEN, commands)) {
       const script = path.posix.normalize(token.replace(/^\$\{?root\}?\//u, ''));
       if (!BUILD_DRIVER_TOOLS.has(script)) {
         add(`app/${script}`);
       }
     }
-    const prebuilt = groupValue(PREBUILT_PACKAGES.exec(driver)) ?? '';
+    const prebuilt = groupValue(PREBUILT_PACKAGES.exec(commands)) ?? '';
     for (const project of prebuilt.split(/\s+/u).filter((value) => value.length > 0)) {
       addPackage(`app/${project}`);
     }

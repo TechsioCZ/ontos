@@ -139,6 +139,14 @@ zerops:
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
+        # pnpm's content-addressable store, moved from the build user's home into the build tree so `cache:` below can
+        # keep it between builds; it shares a filesystem with app/node_modules, so the install still hardlinks instead
+        # of copying. pnpm 12 reads this name (`npm_config_store_dir` is ignored). Only the store's location moves:
+        # the install still writes real files into app/node_modules, which scripts/verify-zerops-workspace-install.mts
+        # keeps requiring, so the runtime tree never ships links into a cache the runtime container does not receive.
+        PNPM_CONFIG_STORE_DIR: /build/source/app/.zerops/pnpm-store
+        # Peer-context copies of identical packages share inodes, so tar ships the bytes once.
+        PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
@@ -172,6 +180,12 @@ zerops:
       # Unchanged units reuse their last build (scripts/zerops/build-app.sh); Rspack and TS-Go keep their caches.
       cache:
         - app/.zerops/unit-cache
+        # The pnpm store (PNPM_CONFIG_STORE_DIR above). It is not in scripts/zerops/app-runtime-paths.txt, so it is
+        # cached but never shipped. Measured bound, not a promise: the in-container install took 22.6 s with the store
+        # already warm (1669 reused, 0 downloaded) and 79.8 s on a build that re-fetched and re-ran native postinstalls,
+        # so this can recover at most ~57 s and only on a build that would otherwise refetch. Against that, Zerops moves
+        # every `cache:` path in and out on each build. If `app deployed in NNNs` does not drop, revert this pair.
+        - app/.zerops/pnpm-store
         - app/node_modules/.cache
         - app/apps/*/node_modules/.cache
         - app/verticals/*/node_modules/.cache

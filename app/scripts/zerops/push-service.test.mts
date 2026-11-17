@@ -27,18 +27,6 @@ const shims = {
   curl: `#!/usr/bin/env bash
 zerops="${ZEROPS_API_ORIGIN}"
 printf '%s\\n' "$*" >>"$RUNNER_TEMP/curl-calls"
-# FAKE_CURL_HEAD_FAIL makes the warm-up HEAD fail the way curl does: 7 cannot connect, 28 timed out.
-# FAKE_CURL_HEAD_DELAY holds the warm-up HEAD for that many seconds before the real curl runs.
-if [ -n "\${FAKE_CURL_HEAD_FAIL:-}" ]; then
-  for arg in "$@"; do
-    if [ "$arg" = -I ]; then exit "$FAKE_CURL_HEAD_FAIL"; fi
-  done
-fi
-if [ -n "\${FAKE_CURL_HEAD_DELAY:-}" ]; then
-  for arg in "$@"; do
-    if [ "$arg" = -I ]; then sleep "$FAKE_CURL_HEAD_DELAY"; fi
-  done
-fi
 args=()
 for arg in "$@"; do
   arg="\${arg/#"$zerops"/$FAKE_ZEROPS_ORIGIN}"
@@ -47,6 +35,29 @@ for arg in "$@"; do
   fi
   args+=("$arg")
 done
+# The warm-up and the upload share one curl invocation, joined by --next, so a fake that failed or delayed the whole
+# process would take the upload with it. These two replace the warm-up request alone: they write the write-out line
+# curl would have written for it and hand the arguments after --next to the real curl, which uploads as usual.
+# FAKE_CURL_HEAD_FAIL makes the warm-up HEAD fail the way curl does: 7 cannot connect, 28 timed out.
+# FAKE_CURL_HEAD_DELAY holds the warm-up HEAD for that many seconds and reports them as its own transfer time, the
+# way a slow warm-up inside curl does, so the script can subtract them from the attempt.
+if [ -n "\${FAKE_CURL_HEAD_FAIL:-}\${FAKE_CURL_HEAD_DELAY:-}" ] && [[ " \${args[*]} " == *" --next "* ]]; then
+  upload=()
+  after_next=''
+  for arg in "\${args[@]}"; do
+    [ -z "$after_next" ] || upload+=("$arg")
+    [ "$arg" = --next ] && after_next=yes
+  done
+  delay="\${FAKE_CURL_HEAD_DELAY:-0}"
+  [ "$delay" = 0 ] || sleep "$delay"
+  exit_code="\${FAKE_CURL_HEAD_FAIL:-0}"
+  code=200
+  ((exit_code == 0)) || code=000
+  printf 'request=warmup namelookup=0.000010 connect=0.000020 appconnect=0.000000 pretransfer=0.000030 '
+  printf 'starttransfer=%s total=%s speed_upload=0 size_upload=0 http_code=%s curl_exit=%s\\n' \\
+    "$delay" "$delay" "$code" "$exit_code"
+  exec "$REAL_CURL" "\${upload[@]}"
+fi
 exec "$REAL_CURL" "\${args[@]}"
 `,
   date: `#!/usr/bin/env bash
@@ -321,10 +332,18 @@ it.live('the upload rate limit is an experiment: off by default, passed to curl 
   }),
 );
 
-/** The curl calls that warmed the upload host up: a HEAD, so the only ones with -I. */
-const warmups = (curlArguments: string) => curlArguments.split('\n').filter((call) => call.includes(' -I '));
+/**
+ * The warm-up requests, one entry per invocation that carried one. The warm-up shares its curl invocation with the
+ * upload it warms, so the invocation is the only one with -I and the warm-up's own arguments are the slice before
+ * `--next` — the upload's signed URL sits after it and belongs to the upload.
+ */
+const warmups = (curlArguments: string) =>
+  curlArguments
+    .split('\n')
+    .filter((call) => call.includes(' -I '))
+    .map((call) => call.split(' --next ')[0] ?? '');
 
-it.live('the upload warm-up is an experiment: off by default, exactly one before the first upload when on', () =>
+it.live("the upload warm-up is off by default and shares the first upload's own curl invocation when on", () =>
   Effect.gen(function* uploadWarmup() {
     const plain = yield* runPush(() => processState('FINISHED'));
     expect(plain.stdout).not.toContain('warm-up');
@@ -343,6 +362,11 @@ it.live('the upload warm-up is an experiment: off by default, exactly one before
     expect(writes(warm.calls).filter((call) => call !== 'HEAD /')).toEqual(ONE_EACH);
     expect(warmups(warm.curlArguments)).toHaveLength(1);
     expect(uploads(warm.curlArguments)).toHaveLength(1);
+    // The point of the warm-up: one invocation, so curl keeps the connection and the PUT skips TCP slow start. A
+    // second process could not, which is what made the earlier separate HEAD buy nothing.
+    const shared = warm.curlArguments.split('\n').filter((call) => call.includes(' -I ') && call.includes(' -T '));
+    expect(shared).toHaveLength(1);
+    expect(shared[0]?.indexOf(' -I ')).toBeLessThan(shared[0]?.indexOf(' --next ') ?? -1);
     expect(warm.curlArguments.split('\n')[1]).toContain(' -I ');
     // One fact line with the same fields as the upload facts: start time, duration, status and bytes.
     expect(warm.stdout).toMatch(

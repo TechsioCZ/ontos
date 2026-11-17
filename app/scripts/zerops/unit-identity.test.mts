@@ -89,6 +89,7 @@ const FILES: readonly (readonly [string, string])[] = [
   [
     BUILD_DRIVER,
     [
+      '# The release pack runs later: scripts/zerops/pack-app-release.sh',
       'node "$root/scripts/zerops/delivery-plan-cli.mts" digests >"$ZEROPS_UNIT_DIGESTS"',
       'for project in packages/shared-contracts; do',
       '  pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"',
@@ -100,6 +101,7 @@ const FILES: readonly (readonly [string, string])[] = [
   ['app/scripts/zerops/hosted-credential-claim.mts', 'export const claim = 1;'],
   [OWNER_ENTRY, "import { claim } from './hosted-credential-claim.mts';"],
   ['app/scripts/zerops/push-service.sh', 'zcli push'],
+  ['app/scripts/zerops/pack-app-release.sh', 'tar -cf release.tar app'],
   ['app/topology/reference-topology.json', '{}'],
   ['app/tsconfig.base.json', '{}'],
   [ZEROPS_YAML, 'zerops: []'],
@@ -170,6 +172,7 @@ it.effect('keeps a unit identity for unrelated units, deploy files, tests, docs,
       `${SHELL}/src/index.ts`,
       ZEROPS_YAML,
       'app/scripts/zerops/push-service.sh',
+      'app/scripts/zerops/pack-app-release.sh',
       'app/scripts/zerops/delivery-plan-cli.mts',
       'app/scripts/unused.mts',
       `${CRM}/src/index.test.ts`,

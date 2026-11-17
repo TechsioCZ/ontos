@@ -49,8 +49,6 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
     'Pricing and Inventory Integration',
     'Catalog Integration',
     'Native Preproposal Basis and Approval Proof',
-    'Fresh Database Integration (1/2)',
-    'Fresh Database Integration (2/2)',
   ]);
   expect(plan.unit.flatMap(({ commands }) => commands.split('\n'))).toContain(
     'pnpm -r --no-sort --if-present --filter ./verticals/catalog run test:unit',
@@ -82,7 +80,7 @@ const narrowPlan = (changedPath: string) =>
 const SHELL_OR_ROOT = (entry: { readonly 'package-filters'?: string; readonly 'root-suite'?: boolean }) =>
   (entry['package-filters'] ?? '').includes('./apps/shell-super-app') || entry['root-suite'] === true;
 
-it('narrows a change inside one vertical to its own rows, the fresh-database rows and the source gates', () => {
+it('narrows a change inside one vertical to its own rows and the source gates', () => {
   const plan = narrowPlan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([FINANCE_BILLING]);
@@ -92,7 +90,8 @@ it('narrows a change inside one vertical to its own rows, the fresh-database row
   // Neither the Shell nor a root suite consumes a vertical's internals; only its public surface.
   expect(ordinary.some(SHELL_OR_ROOT)).toBe(false);
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(false);
-  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
+  // This diff names none of the seed inputs the gates' integration seed key hashes, so the fresh-database rows stay out.
+  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(0);
   expect(plan.source).toEqual(templates.source);
   expect(plan.unit.map(({ name }) => name)).toEqual(['Unit and Component Tests (every other package)']);
   // Its tests are its own as well.
@@ -389,8 +388,8 @@ it('uses every customer-context shard for any selected customer-context package 
       .filter((entry) => entry['rstest-shard'] !== undefined && entry['fresh-database-tests'] !== 'only')
       .map((entry) => entry['rstest-shard']),
   ).toEqual(['1/7', '2/7', '3/7', '4/7', '5/7', '6/7', '7/7']);
-  // Its files that migrate their own database still run, in the Fresh Database rows.
-  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(2);
+  // A source change names no seed input, so the Fresh Database rows stay out; its own scripts/** tree selects them.
+  expect(plan.integration.filter((entry) => entry['fresh-database-tests'] === 'only')).toHaveLength(0);
   expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
 });
 

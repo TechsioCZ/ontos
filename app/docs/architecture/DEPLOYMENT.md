@@ -75,7 +75,7 @@ Probes:
 ### Build
 
 - Node builds and runtimes use Zerops' `alpine/nodejs@26` image and its `node` executable. Builds install the workspace's pinned pnpm version; no Node archive is downloaded or included in the deployment. The local and CI Node patch pin remains in `.mise.toml`, while Zerops manages its image's Node 26 patch version.
-- GitHub Actions builds the units, in seven parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time.
+- GitHub Actions builds the units, in eight parallel shards (`zerops-stage.yml`, job **Build units**). Each shard runs `scripts/zerops/build-app.sh` for its units, two at a time, and the shards are dealt so the slowest of those two-wide lanes is as short as the measured unit costs allow.
 - Each unit's build script still ends with `modern deploy`, but only to write `.output/index.js`. `scripts/zerops/owner-entry.mts` turns that file into `dist/zerops-entry.mjs`, which exports `start(port)`.
 - A unit whose committed inputs are unchanged keeps its previous `dist/`. The digest is in `dist/.zerops-build-digest`. Each shard keeps its builds in the Actions cache, outside the checkout: any untracked file in the tree turns every release identity into `workspace`.
 - The deploy job packs every shard's `dist/` (no source maps, type bundles or precompressed copies) into `app/.zerops-prebuilt.tar.zst` and pushes it with the checkout.
@@ -86,9 +86,9 @@ Probes:
 
 `.github/workflows/zerops-stage.yml` runs on each push to `demo/sales-crm`, except pushes that touch only `docs/**` or Markdown files. It also runs on manual dispatch. Runs are serialized in the `zerops-stage` concurrency group.
 
-1. **Build units**: seven shards, as above.
+1. **Build units**: eight shards, as above.
 2. **Deploy** (environment `stage-edge`): syncs the owner secret bundle to the `app` service, then pushes the `app` and `storefront` setups in parallel with `scripts/zerops/push-service.sh`, using the commit SHA as the version name. That script uploads over HTTP/1.1 with curl, because Zerops silently drops an upload that runs longer than about 30 seconds. On failure the job prints the app log.
-3. **Verify**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The newsletter grant and withdrawal proof only warns.
+3. **Verify**: runs the timing probe (`/cs` and OAuth metadata) and checks that every storefront home lists products and the MCP OAuth proof, both blocking. The declared-read warm-up is blocking as well: it fails when its budget expires before every declared persona and destination has been read.
 
 Environment `stage-edge` needs the variables `ZEROPS_PROJECT_ID`, `ZEROPS_APP_SERVICE_ID` and `ZEROPS_STOREFRONT_SERVICE_ID`, and the secrets `ZEROPS_TOKEN` and `DEMO_IMMUTABLE_RELEASE_SECRETS`.
 

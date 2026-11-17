@@ -28,7 +28,6 @@ const Step = Schema.Struct({
 const Workflow = Schema.Struct({
   jobs: Schema.Struct({
     deploy: Schema.Struct({ steps: Schema.Array(Step) }),
-    newsletter: Schema.Struct({ steps: Schema.Array(Step) }),
     plan: Schema.Struct({ steps: Schema.Array(Step) }),
     record: Schema.Struct({ if: Schema.String, steps: Schema.Array(Step) }),
     verify: Schema.Struct({
@@ -248,7 +247,7 @@ it.effect('keeps browser setup failures blocking rather than running proofs with
     expect(result.stdout).not.toContain('proofs-ready');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
-it.effect('preserves mandatory verification, source-pin publication and honest newsletter failure reporting', () =>
+it.effect('preserves mandatory verification and source-pin publication', () =>
   Effect.gen(function* proofGatesUnchanged() {
     const { jobs } = yield* readWorkflow;
     // Verify is prepared beside the app deploy; its proofs start only after that deploy succeeded.
@@ -279,13 +278,6 @@ it.effect('preserves mandatory verification, source-pin publication and honest n
     }
     expect(probe?.run).toBe('mise exec -- node scripts/zerops/verify-service.mjs app');
     expect(oauth?.run).toContain('scripts/demo/prove-mcp-oauth.mts --variant=1 --verification');
-    for (const id of ['Read native newsletter evidence', 'Prove the native newsletter grant and withdrawal']) {
-      expect(jobs.newsletter.steps.find((step) => step.name === id)?.['continue-on-error']).toBe(true);
-    }
-    const warning = jobs.newsletter.steps.find((step) => step.name === 'Warn about a failed newsletter proof');
-    expect(warning?.if).toContain("steps.newsletter-evidence.outcome == 'failure'");
-    expect(warning?.if).toContain("steps.newsletter-proof.outcome == 'failure'");
-    expect(warning?.run).toContain('not verified');
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -349,11 +341,11 @@ for (const scenario of [
   { name: 'OAuth fails', oauth: 23, status: 1, warmup: 0 },
   { name: 'both fail', oauth: 23, status: 1, warmup: 17 },
 ]) {
-  it.effect(`executes Verify scripts and newsletter installers under strict Bash when ${scenario.name}`, () =>
+  it.effect(`executes Verify scripts under strict Bash when ${scenario.name}`, () =>
     Effect.gen(function* executeWorkflowScripts() {
       const fs = yield* FileSystem.FileSystem;
       const { jobs } = yield* readWorkflow;
-      const steps = [...jobs.verify.steps, ...installerSteps(jobs.newsletter.steps)];
+      const { steps } = jobs.verify;
       const directory = yield* fs.makeTempDirectoryScoped();
       const app = path.join(directory, 'app');
       const bin = path.join(directory, 'bin');
@@ -434,8 +426,8 @@ for (const scenario of [
       );
       const recorded = yield* fs.readFileString(calls);
       const invocations = recorded.trim().split('\n');
-      expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(2);
-      expect(invocations.filter((call) => call === WARMUP_INSTALL.replace('mise ', ''))).toHaveLength(2);
+      expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(1);
+      expect(invocations.filter((call) => call === WARMUP_INSTALL.replace('mise ', ''))).toHaveLength(1);
       expect(recorded).toContain('exec -- node scripts/zerops/verify-service.mjs app');
       expect(recorded).toContain('sudo find ');
       expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
@@ -444,15 +436,13 @@ for (const scenario of [
   );
 }
 
-it.effect('uses the proven full workspace install and bypasses pre-run verification in both browser jobs', () =>
+it.effect('uses the proven full workspace install and bypasses pre-run verification in the browser job', () =>
   Effect.gen(function* completeVerificationSetup() {
     const { jobs } = yield* readWorkflow;
-    for (const job of [jobs.verify, jobs.newsletter]) {
-      expect(job.steps.find((step) => step.uses === './.github/actions/install-app')?.with?.['install-args']).toBe(
-        '--trust-lockfile',
-      );
-    }
-    for (const job of [jobs.plan, jobs.verify, jobs.newsletter]) {
+    expect(
+      jobs.verify.steps.find((step) => step.uses === './.github/actions/install-app')?.with?.['install-args'],
+    ).toBe('--trust-lockfile');
+    for (const job of [jobs.plan, jobs.verify]) {
       for (const step of job.steps) {
         for (const invocation of (step.run ?? '').matchAll(/mise exec -- pnpm (?<arguments>[^\n]+)/gu)) {
           expect(invocation.groups?.arguments, step.name).toMatch(/^--config\.verify-deps-before-run=false /u);

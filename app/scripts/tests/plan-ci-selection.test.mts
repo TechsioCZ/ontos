@@ -1,0 +1,248 @@
+import { readFileSync } from 'node:fs';
+
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import type { CiWorkspacePackage } from '../plan-ci-checks.mts';
+import {
+  CiTemplatesSchema,
+  integrationSeedInputs,
+  planCiChecks,
+  rootLevelPackageDirectories,
+} from '../plan-ci-checks.mts';
+
+const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
+  readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+);
+
+const AKROS = 'akros-storefront';
+const N1 = 'n1-storefront';
+const SHELL = '@app/shell-super-app';
+const CUSTOMER_CONTEXT = '@app/commerce-customer-context';
+const WORK_TASKS = '@app/work-tasks';
+const WORK_TASKS_DIRECTORY = 'verticals/work-tasks';
+const FINANCE_BILLING = '@app/finance-billing';
+const FINANCE_DIRECTORY = 'verticals/finance-billing';
+
+/**
+ * The storefronts are leaves with no integration suite, the root package owns `app/scripts`, and the Shell and the
+ * root consume the verticals through their public surface.
+ */
+const packages: readonly CiWorkspacePackage[] = [
+  { dependencies: [], directory: AKROS, integrationSuite: false, name: AKROS },
+  { dependencies: [CUSTOMER_CONTEXT], directory: N1, integrationSuite: false, name: N1 },
+  {
+    dependencies: [],
+    directory: 'verticals/commerce-customer-context',
+    integrationSuite: true,
+    name: CUSTOMER_CONTEXT,
+  },
+  { dependencies: [], directory: WORK_TASKS_DIRECTORY, integrationSuite: false, name: WORK_TASKS },
+  {
+    dependencies: [],
+    directory: FINANCE_DIRECTORY,
+    exportTargets: ['src/worker-host/entry.ts'],
+    integrationSuite: true,
+    name: FINANCE_BILLING,
+  },
+  { dependencies: [FINANCE_BILLING], directory: 'apps/shell-super-app', integrationSuite: true, name: SHELL },
+  { dependencies: [SHELL], directory: '.', integrationSuite: true, name: 'app' },
+  // The native preproposal proof names its runtime owners; an unknown one widens every run.
+  ...['party-registry', 'commerce-cart', 'catalog', 'storefront-registry', 'commerce-market-catalog', 'pricing'].map(
+    (unit): CiWorkspacePackage => ({
+      dependencies: [],
+      directory: `verticals/${unit}`,
+      integrationSuite: true,
+      name: `@app/${unit}`,
+    }),
+  ),
+];
+
+const plan = (...changedPaths: readonly string[]) =>
+  planCiChecks({ applyAffected: true, changedPaths, packages, templates });
+const names = (entries: readonly { readonly name: string }[]) => entries.map(({ name }) => name);
+const EVERY_OTHER_PACKAGE = 'Unit and Component Tests (every other package)';
+const STOREFRONT_TYPECHECK = 'Storefront Typecheck (AKROS and N1)';
+const ROOT_TOOLING_FILE = 'app/scripts/check-local.mts';
+const fresh = (entries: readonly { readonly 'fresh-database-tests'?: string }[]) =>
+  entries.filter((entry) => entry['fresh-database-tests'] === 'only');
+
+it('selects the storefront typecheck and the storefront unit rows for a change confined to a storefront', () => {
+  for (const directory of rootLevelPackageDirectories) {
+    const storefront = plan(`app/${directory}/src/app/page.tsx`);
+    expect(storefront.mode, directory).toBe('affected');
+    expect(storefront.affectedPackages, directory).toEqual([directory]);
+    // The storefront typecheck is a source row: it runs in every round, narrowed or not.
+    expect(names(storefront.source), directory).toContain(STOREFRONT_TYPECHECK);
+    expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
+    expect(storefront.unit[0]?.commands, directory).toContain(`--filter ./${directory} run test:unit`);
+    // A storefront is a leaf with no integration or browser suite: no service, seed or browser job is paid for.
+    expect(storefront.integration, directory).toEqual([]);
+    expect(storefront.expected['service-integration'], directory).toBe('skipped');
+    expect(storefront.expected['integration-seed-proof'], directory).toBe('skipped');
+    expect(storefront.expected['browser-integration'], directory).toBe('skipped');
+  }
+  const both = plan(`app/${AKROS}/src/lib/cart.ts`, `app/${N1}/src/catalog/view.tsx`, 'README.md');
+  expect(both.mode).toBe('affected');
+  expect(both.affectedPackages).toEqual([AKROS, N1]);
+  expect(both.unit[0]?.commands).toContain(`--filter ./${AKROS} --filter ./${N1} run test:unit`);
+});
+
+it('keeps the manifest, config, schema and authority rules widening inside the storefront trees', () => {
+  for (const file of [
+    'package.json',
+    'next.config.ts',
+    'vitest.config.ts',
+    'src/db/schema.ts',
+    'src/auth/session.ts',
+  ]) {
+    expect(plan(`app/${AKROS}/${file}`).mode, file).toBe('full');
+  }
+});
+
+it('widens nothing from a storefront while still following the edge into it', () => {
+  // A storefront is a leaf: no workspace package depends on it, so its own change reaches no consumer.
+  expect(plan(`app/${N1}/src/catalog/view.tsx`).affectedPackages).toEqual([N1]);
+  expect(plan(`app/${AKROS}/src/app/page.tsx`).affectedPackages).toEqual([AKROS]);
+  // The edge into it is real: a change to the public surface of what N1 consumes selects N1 as a consumer.
+  const surface = plan('app/verticals/commerce-customer-context/vertical.runtime-declaration.ts');
+  expect(surface.mode).toBe('affected');
+  expect(surface.affectedPackages).toContain(N1);
+  expect(surface.unit.map(({ commands }) => commands).join('\n')).toContain(`--filter ./${N1} run test:unit`);
+  // A vertical N1 does not consume never selects it.
+  expect(plan(`app/${FINANCE_DIRECTORY}/src/worker-host/entry.ts`).affectedPackages).not.toContain(N1);
+});
+
+it('selects the root suites for a change confined to app/scripts and keeps the rest of the root unowned', () => {
+  const scripts = plan(ROOT_TOOLING_FILE);
+  expect(scripts.mode).toBe('affected');
+  expect(scripts.affectedPackages).toEqual(['app']);
+  // The repository tooling tests are source rows; the root integration shards prove the rest.
+  expect(names(scripts.source).filter((name) => name.startsWith('Repository Tooling Tests'))).toHaveLength(3);
+  expect(names(scripts.integration)).toEqual([
+    'Root Integration (1/4)',
+    'Root Integration (2/4)',
+    'Root Integration (3/4)',
+    'Root Integration (4/4)',
+  ]);
+  // The root package is in no unit row (`--filter '!.'`), and app/scripts/check-ci-gates.sh requires the workspace
+  // unit gate to have run in an affected plan, so the unit matrix stays complete; the integration matrix narrows.
+  expect(scripts.unit).toEqual(templates.unit);
+  expect(scripts.expected['workspace-unit']).toBe('success');
+  expect(scripts.expected['workspace-unit-artifacts']).toBe('success');
+  expect(scripts.expected['browser-integration']).toBe('skipped');
+  expect(scripts.integration).toHaveLength(4);
+  // The shared, authority and configuration rules still apply inside app/scripts.
+  for (const file of ['authorization/catalog.mts', 'ci/cache-entry-key.config.ts', 'ops/grant-stage-access.mts']) {
+    expect(plan(`app/scripts/${file}`).mode, file).toBe('full');
+  }
+  // Every other root path stays unowned: a workflow change can affect every job.
+  for (const changedPath of [
+    '.github/workflows/ultramodern-workspace-gates.yml',
+    'app/package.json',
+    'app/pnpm-lock.yaml',
+    'app/topology/ownership.json',
+    'app/docker-compose.yml',
+  ]) {
+    expect(plan(changedPath).mode, changedPath).toBe('full');
+  }
+});
+
+it('runs the fresh-database rows only for a diff that names a new integration seed', () => {
+  // A diff that touches no seed input cannot change what they prove.
+  expect(fresh(plan(`app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`).integration)).toEqual([]);
+  expect(fresh(plan(`app/${AKROS}/src/app/page.tsx`).integration)).toEqual([]);
+  expect(fresh(plan(ROOT_TOOLING_FILE).integration)).toEqual([]);
+  // Every seed input the narrowing rules can reach in affected mode selects both rows and the seed producer.
+  for (const changedPath of [
+    'app/scripts/ci/integration-seed-model.mts',
+    'app/scripts/postgres/roles.sql',
+    'app/scripts/run-zerops-migrator.mjs',
+    'app/scripts/migration-convergence-plan.mts',
+    'app/scripts/verify-application-db-schema.mts',
+    'app/scripts/prove-zerops-migrator-artifact.sh',
+    'app/verticals/commerce-customer-context/scripts/seed-portal.mts',
+  ]) {
+    const seeded = plan(changedPath);
+    expect(seeded.mode, changedPath).toBe('affected');
+    expect(fresh(seeded.integration), changedPath).toHaveLength(2);
+    expect(seeded.expected['integration-seed-proof'], changedPath).toBe('success');
+  }
+  // A change to one of the very files these rows run selects them as well.
+  const freshTest = templates['fresh-database-tests']?.find((file) => file.startsWith(`${WORK_TASKS_DIRECTORY}/`));
+  expect(freshTest).toBeDefined();
+  expect(fresh(plan(`app/${freshTest ?? ''}`).integration)).toHaveLength(2);
+  // Full mode is unchanged: the complete suite always contains them.
+  expect(
+    fresh(
+      planCiChecks({ applyAffected: false, changedPaths: ['app/pnpm-lock.yaml'], packages, templates }).integration,
+    ),
+  ).toHaveLength(2);
+  // The seed input list mirrors the gates' own cache key, so it must stay comparable by eye.
+  expect(integrationSeedInputs.filter((glob) => glob.startsWith('!'))).toEqual([
+    '!app/**/node_modules/**',
+    '!app/tools/**',
+  ]);
+  expect(integrationSeedInputs.every((glob) => glob.replace(/^!/u, '').startsWith('app/'))).toBe(true);
+});
+
+it('leaves an integration row out for a package whose manifest declares no integration suite', () => {
+  // The exclusion-only row runs `pnpm -r --if-present … run test:integration`: a package without that script makes
+  // no suite run, so its services are never started.
+  const taskState = plan(`app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`);
+  expect(taskState.mode).toBe('affected');
+  expect(taskState.affectedPackages).toEqual([WORK_TASKS]);
+  expect(taskState.integration).toEqual([]);
+  // A package that does declare one still selects it.
+  const invoices = plan(`app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`);
+  expect(names(invoices.integration)).toEqual(['Database, Migration, RLS, Authorization, and Outbox Integration']);
+  expect(invoices.integration[0]?.['package-filters']).toBe(`--filter ./${FINANCE_DIRECTORY}`);
+});
+
+it('satisfies the gate aggregator for every narrowed plan it can produce', () => {
+  // app/scripts/check-ci-gates.sh: in an affected plan every gate outside its optional list must be 'success', and
+  // at least one of the two workspace unit gates must have run. A plan that skips them is rejected, not green.
+  const optional = new Set([
+    'workspace-unit',
+    'workspace-unit-artifacts',
+    'service-integration',
+    'integration-seed-proof',
+    'browser-integration',
+  ]);
+  for (const changedPath of [
+    `app/${AKROS}/src/app/page.tsx`,
+    `app/${N1}/src/catalog/view.tsx`,
+    ROOT_TOOLING_FILE,
+    'app/scripts/ci/integration-seed-model.mts',
+    `app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`,
+    `app/${FINANCE_DIRECTORY}/src/services/invoice-totals.ts`,
+  ]) {
+    const narrowed = plan(changedPath);
+    expect(narrowed.mode, changedPath).toBe('affected');
+    for (const [gate, result] of Object.entries(narrowed.expected)) {
+      expect(optional.has(gate) ? ['success', 'skipped'] : ['success'], `${changedPath} ${gate}`).toContain(result);
+    }
+    expect([narrowed.expected['workspace-unit'], narrowed.expected['workspace-unit-artifacts']], changedPath).toContain(
+      'success',
+    );
+  }
+});
+
+it('widens a storefront or root-level package the workspace cannot account for', () => {
+  const unaccounted: readonly CiWorkspacePackage[][] = [
+    [...packages, { dependencies: [], directory: 'other-storefront', name: 'other-storefront' }],
+    [...packages, { dependencies: [], directory: AKROS, name: 'renamed-storefront' }],
+    packages.map((entry) => (entry.directory === AKROS ? { ...entry, uncertain: true } : entry)),
+  ];
+  for (const [index, entries] of unaccounted.entries()) {
+    expect(
+      planCiChecks({
+        applyAffected: true,
+        changedPaths: [`app/${AKROS}/src/app/page.tsx`],
+        packages: entries,
+        templates,
+      }).mode,
+      String(index),
+    ).toBe('full');
+  }
+});

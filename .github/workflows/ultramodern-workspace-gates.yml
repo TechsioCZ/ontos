@@ -66,7 +66,7 @@ jobs:
   queue-proof:
     name: Find the merge queue proof of this commit
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: read
@@ -93,7 +93,7 @@ jobs:
     name: Select required checks from changed inputs
     needs: [queue-proof]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
@@ -163,9 +163,9 @@ jobs:
         working-directory: app
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
-          # Only a candidate/* dispatch without force-ci-full narrows the gates to the changed owners (the candidate step
-          # sets a base only then). Pull requests, merge groups and trunk pushes always run the complete suite.
-          APPLY_AFFECTED: ${{ steps.candidate.outputs.base != '' && 'true' || 'false' }}
+          # A candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates to the changed
+          # owners and their consumers. Pull requests, merge groups and pushes to main still run the complete suite.
+          APPLY_AFFECTED: ${{ (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm')) && 'true' || 'false' }}
         run: |
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
@@ -179,7 +179,7 @@ jobs:
   warm-caches:
     name: Warm the gate caches on main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Harden Runner
@@ -278,7 +278,7 @@ jobs:
     name: Build node artifacts (${{ matrix.shard }}/6)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The Shell builds for about 5 minutes since its packaged-dependency completion was rewritten (13 before); it
     # stays alone in its shard until a run confirms that. A vertical shard holds about 300 s of build work per lane.
     timeout-minutes: 30
@@ -468,39 +468,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Rows that prepare their services before they need the build outputs start after this lease, not after the
-  # builds. The lease ends once every build shard has a runner, so waiting rows can never hold all 20 runners while
-  # a shard is still queued. It proves nothing and only gates the start of those rows.
-  build-lease:
-    name: Wait until every build shard has a runner
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
-    permissions:
-      actions: read
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout the wait script
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: app/scripts/wait-for-build-shards.sh
-          sparse-checkout-cone-mode: false
-
-      - name: Wait until every build shard started
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WAIT_FOR_BUILD_SHARDS_INTERVAL: '5'
-        run: bash app/scripts/wait-for-build-shards.sh started 'Build node artifacts (' 6
-
   # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -552,7 +525,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -616,7 +589,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit-artifacts'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -678,11 +651,15 @@ jobs:
           [[ ${#failed[@]} -eq 0 ]]
 
   static-contracts:
-    name: Static Contracts
+    name: Static Contracts (${{ matrix.group }})
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [database, contracts]
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -717,20 +694,20 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
 
-      # Share one install across independent checks and retain a log for each check.
-      # Keep the memory-heavy API analyzer and Commerce build outside this group.
+      # Separate the two memory-heavy analyzers instead of serializing them on one runner.
+      # The remaining independent checks share the contracts runner and retain individual logs.
       - parallel:
           - name: Validate the root lefthook config
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             run: app/node_modules/.bin/lefthook validate
 
           - name: Skills
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm skills:check
 
           - name: Database Access Boundaries
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'database' }}
             working-directory: app
             env:
               # The whole-workspace prover peaks at about 5.7 GiB footprint (5.2 GiB resident) and ran out of
@@ -739,34 +716,34 @@ jobs:
             run: mise exec -- pnpm database-access:check
 
           - name: Lean Core Dependencies
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm lean-core:check
 
           - name: Workspace Contract
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm contract:check
 
           - name: Module Contract Generation
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm check:module-contracts
 
           - name: Action Unit Tests
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
             run: mise exec -- pnpm action:test:unit
 
       # Module contract generation creates and deletes bundles inside verticals.
       # Wait for it before the i18n scanner walks those source directories.
       - name: I18n Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm i18n:boundaries
 
       - name: API Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         env:
           # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
@@ -776,9 +753,10 @@ jobs:
       # The reviewed authorization catalogue and what is generated from it (which modules get a module credential)
       # must match the declarations in source; a stale artefact would key the wrong modules.
       - name: Authorization catalogue artefact
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm authorization:catalog:artifact:check
+
 
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
   # over every tracked file (`--all-files` is `git ls-files`); the hook's own globs choose what each tool checks.
@@ -796,11 +774,10 @@ jobs:
   # candidate check, over every file.
   format-and-lint:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/3)
-    # The three shards start once every build shard has a runner (or when no build runs), so they never take the 20
-    # runners' first wave from the builds on the critical path; lint itself is off it.
-    needs: [ci-plan, build-lease]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build-lease.result) && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
-    runs-on: ubuntu-latest
+    # Lint needs source only; it never holds a runner waiting for build jobs.
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -861,13 +838,12 @@ jobs:
   # are listed heaviest first, so on a full run the longest jobs take the first free runners.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [ci-plan, build-lease]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.build-lease.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
-    # The build wait reads this run's job results.
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -996,15 +972,6 @@ jobs:
           DROP OWNED BY ontos_runtime;
           DROP ROLE ontos_runtime;
           SQL
-
-      # The services and the fresh database are ready before the build outputs are needed: this row started right after
-      # planning (via build-lease), so its preparation ran while the build shards built. It now needs those outputs.
-      - name: Wait for this run's Node build shards
-        working-directory: app
-        timeout-minutes: 25
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh finished 'Build node artifacts (' 6
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata.
       # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
@@ -1188,7 +1155,7 @@ jobs:
     name: Prove and cache the integration seed database
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['integration-seed-proof'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
@@ -1353,7 +1320,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['browser-integration'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1535,7 +1502,7 @@ jobs:
     name: Prove Node backend-federation artifacts
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-proof'] == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Its complete handler layers acquire real pools.
     services:
@@ -1626,7 +1593,7 @@ jobs:
         node-artifact-build,
         node-artifact-proof,
       ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read

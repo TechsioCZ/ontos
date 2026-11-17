@@ -20,6 +20,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
+import { ProjectUuidSchema } from '../../shared/domain/project.ts';
 import { projectsRelations } from '../../src/db/schema.ts';
 import {
   buildProjectSearchDocuments,
@@ -205,15 +206,31 @@ it.effect('does not split a 10,001-row first population into destructive replace
   Effect.gen(function* noReplacementPageCap() {
     const rows = Array.from({ length: 10_001 }, (_, index) => row(index + 1));
     const source = yield* sourceFixture(() => rows);
-    const store = makeInMemoryCoreSearchProjectionStore();
+    const published: unknown[] = [];
     yield* refreshProjectSearchProjection(claim(true)).pipe(
       Effect.provideService(CoreSearchWorkerSnapshot, source.reader),
-      Effect.provideService(CoreSearchIngestion, makeCoreSearchIngestion(store, projectSearchIngestionRegistrations)),
+      Effect.provideService(CoreSearchIngestion, {
+        ingest: (input) =>
+          Effect.sync(() => {
+            expect(source.isReading()).toBe(false);
+            published.push(input);
+          }),
+      }),
     );
-    const documents = yield* candidates(store, 'ONTO');
     expect(source.statements).toHaveLength(1);
-    expect(documents).toHaveLength(10_001);
-    expect(documents.at(-1)?.ref.resourceId).toBe(row(10_001).projectId);
+    const observations = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          mutation: Schema.Struct({
+            document: Schema.Struct({ ref: Schema.Struct({ resourceId: ProjectUuidSchema }) }),
+            kind: Schema.Literal('upsert'),
+          }),
+        }),
+      ),
+    )(published);
+    expect(observations.map(({ mutation }) => mutation.document.ref.resourceId)).toEqual(
+      rows.map(({ projectId }) => projectId),
+    );
   }),
 );
 
