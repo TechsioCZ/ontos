@@ -322,12 +322,20 @@
 /* Figma311:2190:28px steppers flank a36px native field; no enclosing frame.
  * Coarse-pointer minimum remains owned by the kit's separate touch role. */
 @utility n1-mini-cart-quantity {
+  --border-width-form-control: var(--dimension-0);
+  --color-form-control-bg: var(--color-base);
+  --color-numeric-input-input-bg: var(--color-base);
   /* The shared0.59 foundation expands sm to36px. This compact field keeps
    * its32px N1 slot:24px line +2px padding per side +2px border per side. */
   --height-form-control-sm: var(--dimension-32);
+  --height-numeric-input-compact-sm: var(--dimension-32);
   --padding-input-sm: var(--dimension-2) var(--dimension-4);
   --spacing-numeric-input-trigger-min: var(--dimension-28);
   --padding-numeric-input-trigger-x: var(--dimension-4);
+}
+
+@utility n1-mini-cart-quantity-touch {
+  --height-numeric-input-compact-sm: var(--dimension-44);
 }
 
 /* Ready checkout319:1800 is16px/bold. Only its existing summary section

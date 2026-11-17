@@ -21,6 +21,43 @@ const line = { expectedUnitPriceMinor: 1210, productId: "product-1", quantity: 2
 const request = { lines: [line], locale: "cs", scope };
 
 describe("cart quote wire and owner verdict", () => {
+  it("bounds optional stock hints without inventing availability for unknown lines", () => {
+    const quote = { issues: [], outcome: "VALID", scope, totalMinor: 2420, totalVatMinor: 420 };
+    expect(Schema.is(CartQuoteSchema)(quote)).toBe(true);
+    expect(
+      Schema.is(CartQuoteSchema)({
+        ...quote,
+        stocks: [
+          { productId: "p1", stockQuantity: null },
+          { productId: "p1", stockQuantity: 0, variantId: "v1" },
+          { productId: "p1", stockQuantity: 3.5, variantId: "v2" },
+        ],
+      }),
+    ).toBe(true);
+    for (const stockQuantity of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        Schema.is(CartQuoteSchema)({ ...quote, stocks: [{ productId: "p1", stockQuantity }] }),
+      ).toBe(false);
+    }
+    expect(
+      Schema.is(CartQuoteSchema)({
+        ...quote,
+        stocks: [
+          { productId: "p1", stockQuantity: 2 },
+          { productId: "p1", stockQuantity: 3 },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      Schema.is(CartQuoteSchema)({
+        ...quote,
+        stocks: Array.from({ length: 51 }, (_, index) => ({
+          productId: `p${index}`,
+          stockQuantity: 1,
+        })),
+      }),
+    ).toBe(false);
+  });
   it.effect("allows only the declared finite phase diagnostics", () =>
     Effect.gen(function* closedDiagnosticContract() {
       for (const diagnostic of [

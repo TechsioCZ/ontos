@@ -68,7 +68,7 @@ describe("automatic cart quote summary", () => {
           dictionary: d,
           invalid: false,
           locale: "cs",
-          quote: { result: null, state, verify: () => {} },
+          quote: { result: null, state, stocks: [], verify: () => {} },
           verified: null,
         }),
       );
@@ -90,7 +90,7 @@ describe("automatic cart quote summary", () => {
         dictionary: d,
         invalid: false,
         locale: "cs",
-        quote: { result: null, state: "unavailable", verify: () => {} },
+        quote: { result: null, state: "unavailable", stocks: [], verify: () => {} },
         verified: null,
       }),
     );
@@ -119,7 +119,7 @@ describe("automatic cart quote summary", () => {
         dictionary: d,
         invalid: false,
         locale: "cs",
-        quote: { result: verified, state: "ready", verify: () => {} },
+        quote: { result: verified, state: "ready", stocks: [], verify: () => {} },
         verified,
       }),
     );

@@ -5,6 +5,7 @@ import { describe, expect, it } from "effect-rstest";
 import { cartQuoteHandler, cartQuoteWeb } from "../src/ontos/cart-quote-http";
 import { quoteCart } from "../src/ontos/cart-quote-server";
 import { CartQuoteRequestSchema } from "../src/ontos/cart-quote";
+import type { CatalogResponseSchema } from "../src/ontos/catalog-model";
 
 rs.mock("server-only", () => ({}));
 afterEach(() => {
@@ -35,6 +36,8 @@ interface BackendOptions {
   readonly responseCurrency?: "CZK" | "EUR";
   readonly responseMarketId?: string;
   readonly secretMarker?: string;
+  readonly stockCatalog?: typeof CatalogResponseSchema.Type;
+  readonly stockReadStatus?: number;
 }
 const backend = (options: BackendOptions = {}) => {
   rs.stubEnv("ONTOS_N1_STOREFRONT_API_KEY", "cart-test-key");
@@ -50,6 +53,27 @@ const backend = (options: BackendOptions = {}) => {
     const path = new URL(request.url).pathname;
     if (path.endsWith("/gateway-read")) {
       reads += 1;
+      if (reads > 2) {
+        return Promise.resolve(
+          Response.json(
+            options.stockCatalog ?? {
+              market: { configured: true, currency: "CZK", marketId },
+              products: [],
+            },
+            {
+              headers: {
+                "x-ontos-gateway-context": JSON.stringify({
+                  apiBaseUrl: "/shell-super-app-api/gateway/merchandise",
+                  compositionRevision: "a".repeat(64),
+                  expiresAt: 9_999_999_999,
+                  token: "redeemed-stock-read-assertion",
+                }),
+              },
+              status: options.stockReadStatus ?? 200,
+            },
+          ),
+        );
+      }
       if (options.readStatus !== undefined) {
         return Promise.resolve(
           Response.json(
@@ -228,6 +252,290 @@ const request = (body: string, requestOrigin = origin) =>
   });
 
 describe("governed cart quote transport", () => {
+  it.effect("returns fresh per-variant stock without substituting the group total", () =>
+    Effect.gen(function* variantStockHints() {
+      const owner = backend({
+        stockCatalog: {
+          market: { configured: true, currency: "CZK", marketId },
+          products: [
+            {
+              availability: "IN_STOCK",
+              currency: "CZK",
+              id: "product-1",
+              name: "Hoodie",
+              slug: "hoodie",
+              stockOnHand: 100,
+              stockTracked: true,
+              variantRecords: [
+                {
+                  active: true,
+                  attributes: "M",
+                  availability: "LOW_STOCK",
+                  grossPriceMinor: 1210,
+                  id: "size-m",
+                  name: "M",
+                  sku: "HOODIE-M",
+                  stockOnHand: 3,
+                },
+                {
+                  active: false,
+                  attributes: "S",
+                  availability: "IN_STOCK",
+                  grossPriceMinor: 1210,
+                  id: "inactive",
+                  name: "S",
+                  sku: "HOODIE-S",
+                  stockOnHand: 9,
+                },
+              ],
+              variantSummary: { count: 2, minGrossPriceMinor: 1210, stockOnHand: 100 },
+            },
+          ],
+        },
+      });
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)({
+        ...input,
+        lines: [
+          input.lines[0],
+          ...["size-m", "inactive", "missing"].map((variantId) => ({
+            ...input.lines[0],
+            variantId,
+          })),
+        ],
+      });
+      const quote = yield* quoteCart(payload).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(quote).toMatchObject({ outcome: "VALID", totalMinor: 2420 });
+      expect(quote.stocks).toEqual([
+        { productId: "product-1", stockQuantity: null },
+        { productId: "product-1", stockQuantity: 3, variantId: "size-m" },
+        { productId: "product-1", stockQuantity: null, variantId: "inactive" },
+        { productId: "product-1", stockQuantity: null, variantId: "missing" },
+      ]);
+      expect(yield* Effect.promise(async () => await owner.calls.at(-1)?.json())).toMatchObject({
+        audience: "merchandise",
+        legalEntityId,
+        query: {
+          view: {
+            storefront: true,
+            storefrontCatalog: {
+              fields: "full",
+              includeCategories: false,
+              marketId,
+              pageSize: 1,
+              productIds: ["product-1"],
+            },
+          },
+        },
+      });
+    }),
+  );
+  it.effect("leaves duplicate active variant stock unknown instead of choosing one record", () =>
+    Effect.gen(function* ambiguousVariantStock() {
+      const owner = backend({
+        stockCatalog: {
+          market: { configured: true, currency: "CZK", marketId },
+          products: [
+            {
+              availability: "IN_STOCK",
+              currency: "CZK",
+              id: "product-1",
+              name: "Hoodie",
+              slug: "hoodie",
+              stockOnHand: 100,
+              stockTracked: true,
+              variantRecords: [1, 9].map((stockOnHand) => ({
+                active: true,
+                attributes: "M",
+                availability: "IN_STOCK",
+                grossPriceMinor: 1210,
+                id: "size-m",
+                name: "M",
+                sku: "HOODIE-M",
+                stockOnHand,
+              })),
+            },
+          ],
+        },
+      });
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)({
+        ...input,
+        lines: [{ ...input.lines[0], variantId: "size-m" }],
+      });
+      const quote = yield* quoteCart(payload).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(quote).toMatchObject({ outcome: "VALID", totalMinor: 2420 });
+      expect(quote.stocks).toEqual([
+        { productId: "product-1", stockQuantity: null, variantId: "size-m" },
+      ]);
+    }),
+  );
+  for (const stockReadStatus of [403, 503]) {
+    it.effect(`keeps the native quote when optional stock read returns ${stockReadStatus}`, () =>
+      Effect.gen(function* optionalStockFailure() {
+        const owner = backend({ stockReadStatus });
+        const response = yield* Effect.promise(() =>
+          cartQuoteWeb.handler(
+            request(JSON.stringify(input)),
+            Context.make(FetchHttpClient.Fetch, owner.fetch),
+          ),
+        );
+        const quote = yield* Effect.promise(() => response.json());
+        expect(quote).toMatchObject({ outcome: "VALID", totalMinor: 2420 });
+        expect(quote).not.toHaveProperty("stocks");
+      }),
+    );
+  }
+  for (const mismatch of [
+    "currency",
+    "market",
+    "configured",
+    "foreign-product",
+    "duplicate-product",
+  ] as const) {
+    it.effect(`ignores stock hints from a ${mismatch} mismatch`, () =>
+      Effect.gen(function* scopedStockHints() {
+        const product = {
+          availability: "IN_STOCK",
+          id: "product-1",
+          name: "Product",
+          slug: "product",
+          stockOnHand: 2,
+          stockTracked: true,
+        };
+        let products = [product];
+        if (mismatch === "foreign-product") {
+          products = [{ ...product, id: "foreign" }];
+        } else if (mismatch === "duplicate-product") {
+          products = [product, product];
+        }
+        const owner = backend({
+          stockCatalog: {
+            market: {
+              configured: mismatch !== "configured",
+              currency: mismatch === "currency" ? "EUR" : "CZK",
+              marketId: mismatch === "market" ? "foreign-market" : marketId,
+            },
+            products,
+          },
+        });
+        const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)(input);
+        const quote = yield* quoteCart(payload).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        );
+        expect(quote).toMatchObject({ outcome: "VALID", totalMinor: 2420 });
+        expect(quote).not.toHaveProperty("stocks");
+      }),
+    );
+  }
+  it.effect("preserves known zero and leaves absent or untracked stock unknown", () =>
+    Effect.gen(function* missingStockHints() {
+      const owner = backend({
+        stockCatalog: {
+          market: { configured: true, currency: "CZK", marketId },
+          products: [
+            {
+              availability: "OUT_OF_STOCK",
+              id: "zero",
+              name: "Sold out",
+              slug: "zero",
+              stockOnHand: 0,
+              stockTracked: true,
+            },
+            {
+              availability: "IN_STOCK",
+              id: "untracked",
+              name: "Untracked",
+              slug: "untracked",
+              stockOnHand: 100,
+              stockTracked: false,
+            },
+          ],
+        },
+      });
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)({
+        ...input,
+        lines: ["zero", "untracked", "absent"].map((productId) => ({
+          ...input.lines[0],
+          productId,
+        })),
+      });
+      const quote = yield* quoteCart(payload).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(quote.stocks).toEqual([
+        { productId: "zero", stockQuantity: 0 },
+        { productId: "untracked", stockQuantity: null },
+        { productId: "absent", stockQuantity: null },
+      ]);
+    }),
+  );
+  it.effect("keeps owner rejection and current simple-product stock as separate evidence", () =>
+    Effect.gen(function* rejectedStockHints() {
+      const owner = backend({
+        outcome: "REJECTED",
+        stockCatalog: {
+          market: { configured: true, currency: "CZK", marketId },
+          products: [
+            {
+              availability: "LOW_STOCK",
+              currency: "CZK",
+              id: "product-1",
+              name: "Product",
+              slug: "product",
+              stockOnHand: 2,
+              stockTracked: true,
+            },
+          ],
+        },
+      });
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)(input);
+      const quote = yield* quoteCart(payload).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(quote).toMatchObject({
+        issues: [{ code: "PRICE_CHANGED", currentUnitPriceMinor: 1300 }],
+        outcome: "REJECTED",
+        stocks: [{ productId: "product-1", stockQuantity: 2 }],
+      });
+    }),
+  );
+  it.effect("reads only the fifty requested product identities in bounded chunks", () =>
+    Effect.gen(function* boundedStockReads() {
+      const owner = backend();
+      const productIds = Array.from({ length: 50 }, (_, index) => `product-${index}`);
+      const payload = yield* Schema.decodeUnknownEffect(CartQuoteRequestSchema)({
+        ...input,
+        lines: productIds.map((productId) => ({ ...input.lines[0], productId })),
+      });
+      const quote = yield* quoteCart(payload).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(quote.stocks).toHaveLength(50);
+      const stockReads = owner.calls
+        .filter((call) => new URL(call.url).pathname.endsWith("/gateway-read"))
+        .slice(2);
+      expect(stockReads).toHaveLength(3);
+      for (const [index, read] of stockReads.entries()) {
+        const chunk = productIds.slice(index * 24, index * 24 + 24);
+        expect(yield* Effect.promise(() => read.json())).toMatchObject({
+          query: {
+            view: {
+              storefrontCatalog: { fields: "full", pageSize: chunk.length, productIds: chunk },
+            },
+          },
+        });
+      }
+    }),
+  );
   it.effect("never reports a parked native proposal as a confirmed quote", () =>
     Effect.gen(function* parkedQuote() {
       const owner = backend({ proposal: true });
@@ -268,8 +576,10 @@ describe("governed cart quote transport", () => {
           totalMinor: 2420,
           totalVatMinor: 420,
         });
-        expect(owner.calls).toHaveLength(4);
-        const action = owner.calls.at(-1);
+        expect(owner.calls).toHaveLength(5);
+        const action = owner.calls.find((call) =>
+          new URL(call.url).pathname.endsWith("/place-storefront-order"),
+        );
         expect(new URL(action?.url ?? "https://unexpected.example").pathname).toBe(
           "/shell-super-app-api/gateway/merchandise/merchandise/actions/place-storefront-order",
         );

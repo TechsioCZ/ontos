@@ -20,10 +20,11 @@ import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
 import { verifiedCartQuote } from "./cart-quote-state";
-import { cartLineKey, cartQuantityStep } from "./cart-state";
+import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
   cartIssueText,
+  cartEntryWithStock,
   hasInvalidCartDraft,
   issuesForCartEntry,
   quantityDraftForEntry,
@@ -79,6 +80,16 @@ const MiniCartTrigger = ({
 const formatMoney = (amount: number, currency: string, locale: string) =>
   new Intl.NumberFormat(locale, { currency, style: "currency" }).format(amount / 100);
 
+const remainingStock = (entry: CartEntry, dictionary: Dictionary, locale: string) => {
+  const quantity = entry.stockQuantity;
+  if (quantity === undefined || quantity === null || quantity <= 0 || quantity >= 5) {
+    return null;
+  }
+  return dictionary.shopping.stockRemaining
+    .replace("{quantity}", cartCountFormats[locale === "en" ? "en" : "cs"].format(quantity))
+    .replace("{unit}", () => entry.unit);
+};
+
 const MiniCartLine = ({
   dictionary: d,
   draft,
@@ -100,7 +111,14 @@ const MiniCartLine = ({
 }) => {
   const cart = useCart();
   const value = draft?.value ?? String(entry.quantity);
-  const invalid = !validCartQuantity(Number(value), entry.minimumQuantity, entry.packageQuantity);
+  const stockLabel = remainingStock(entry, d, locale);
+  const maximum = cartQuantityMaximum(entry.stockQuantity, entry.packageQuantity);
+  const invalid = !validCartQuantity(
+    Number(value),
+    entry.minimumQuantity,
+    entry.packageQuantity,
+    maximum,
+  );
   const inputId = `mini-cart-${encodeURIComponent(cartLineKey(entry))}`;
   const image = publicImage(entry.image ?? undefined, cart?.imageHosts ?? []);
   const href = `/${locale}/produkt/${encodeURIComponent(entry.slug)}`;
@@ -135,16 +153,19 @@ const MiniCartLine = ({
             className="n1-mini-cart-price"
             state="known"
           />
+          {stockLabel !== null && <p className="text-xs text-danger">{stockLabel}</p>}
         </div>
-        <div className="n1-mini-cart-quantity w-23 shrink-0 self-center max-n1-compact:order-last max-n1-compact:w-full pointer-coarse:order-last pointer-coarse:w-full">
+        <div className="n1-mini-cart-quantity pointer-coarse:n1-mini-cart-quantity-touch w-23 shrink-0 self-center max-n1-compact:order-last max-n1-compact:w-full pointer-coarse:order-last pointer-coarse:w-full">
           <NumericInput
             allowOverflow={false}
-            clampValueOnBlur={false}
+            clampValueOnBlur
+            className="ml-auto w-23 pointer-coarse:w-32"
+            density="compact"
             disabled={cart === null}
             id={inputId}
             invalid={invalid || draft?.saveError === true}
             locale={locale}
-            max={1_000_000}
+            max={Math.max(entry.minimumQuantity ?? 0.001, maximum)}
             min={entry.minimumQuantity ?? 0.001}
             onValueChange={({ value: next }) => {
               const quantity = Number(next);
@@ -152,6 +173,7 @@ const MiniCartLine = ({
                 quantity,
                 entry.minimumQuantity,
                 entry.packageQuantity,
+                maximum,
               );
               const saved = valid && (cart?.update(entry, quantity) ?? false);
               onDraft({
@@ -167,7 +189,7 @@ const MiniCartLine = ({
             step={cartQuantityStep(entry.packageQuantity)}
             value={value}
           >
-            <div className="flex items-center max-n1-compact:justify-end pointer-coarse:justify-end">
+            <NumericInput.Control>
               <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
                 <NumericInput.DecrementTrigger
                   aria-label={d.shopping.decreaseQuantity}
@@ -178,14 +200,11 @@ const MiniCartLine = ({
                   variant="secondary"
                 />
               </div>
-              <div className="w-9 shrink-0">
-                <NumericInput.Control>
-                  <NumericInput.Input
-                    aria-describedby={`${inputId}-feedback`}
-                    aria-label={`${d.quantity}: ${entry.name}`}
-                  />
-                </NumericInput.Control>
-              </div>
+              <NumericInput.Input
+                aria-describedby={`${inputId}-feedback`}
+                aria-label={`${d.quantity}: ${entry.name}`}
+                className="text-center"
+              />
               <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
                 <NumericInput.IncrementTrigger
                   aria-label={d.shopping.increaseQuantity}
@@ -196,7 +215,7 @@ const MiniCartLine = ({
                   variant="secondary"
                 />
               </div>
-            </div>
+            </NumericInput.Control>
           </NumericInput>
         </div>
         <div className="flex h-7 w-7 shrink-0">
@@ -384,9 +403,8 @@ export const MiniCart = ({
   if (drafts !== storedDrafts) {
     setStoredDrafts(drafts);
   }
-  const invalid = hasInvalidCartDraft(drafts, entries);
   const request =
-    open && state === "filled" && cart?.scope !== null && cart !== null && !invalid
+    open && state === "filled" && cart?.scope !== null && cart !== null
       ? {
           lines: entries.map((entry) =>
             Struct.pick(entry, ["productId", "variantId", "quantity", "expectedUnitPriceMinor"]),
@@ -396,6 +414,16 @@ export const MiniCart = ({
         }
       : null;
   const quote = useCartQuote(request, true);
+  const invalid = hasInvalidCartDraft(
+    drafts,
+    entries.map((entry) =>
+      cartEntryWithStock(
+        entry,
+        quote.stocks,
+        quote.state === "ready" && quote.result?.stocks !== undefined,
+      ),
+    ),
+  );
   const [removal, setRemoval] = useState(0);
   const [mutationError, setMutationError] = useState(false);
   const canCheckout = verifiedCartQuote(quote, invalid || mutationError) !== null;
@@ -430,7 +458,11 @@ export const MiniCart = ({
                   <MiniCartLine
                     dictionary={d}
                     draft={quantityDraftForEntry(drafts, entry)}
-                    entry={entry}
+                    entry={cartEntryWithStock(
+                      entry,
+                      quote.stocks,
+                      quote.state === "ready" && quote.result?.stocks !== undefined,
+                    )}
                     issues={issuesForCartEntry(quote.result?.issues ?? [], entry)}
                     key={cartLineKey(entry)}
                     locale={locale}

@@ -49,6 +49,23 @@ export const CartQuoteSchema = Schema.Struct({
   ),
   outcome: Schema.Literals(["VALID", "REJECTED"]),
   scope: CartScopeSchema,
+  stocks: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        productId: id,
+        stockQuantity: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+        variantId: Schema.optionalKey(id),
+      }),
+    ).check(
+      Schema.isMaxLength(50),
+      Schema.makeFilter((stocks) => {
+        const identities = stocks.map((stock) =>
+          JSON.stringify([stock.productId, stock.variantId ?? null]),
+        );
+        return new Set(identities).size === stocks.length;
+      }),
+    ),
+  ),
   totalMinor: Schema.NullOr(nonnegativeMinor),
   totalVatMinor: Schema.NullOr(nonnegativeMinor),
 }).check(

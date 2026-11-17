@@ -118,6 +118,9 @@ export const ProductCardModelSchema = Schema.Struct({
   sku: Schema.String,
   slug: Schema.String,
   stock: Schema.Literals(["available", "limited", "unavailable", "unknown"]),
+  stockQuantity: Schema.optionalKey(
+    Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  ),
   unit: optionalString,
   variantCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   variantPreview: Schema.optionalKey(VariantPreviewItemsSchema),
@@ -417,6 +420,7 @@ export const projectCatalog = (
       sku: product.sku ?? "",
       slug: product.slug,
       stock: stockStatus(product),
+      stockQuantity: stockQuantityOf(product),
       variantPreview: product.storefrontVariantPreview?.variants ?? [],
     };
     const variantCount = variantCountOf(product);

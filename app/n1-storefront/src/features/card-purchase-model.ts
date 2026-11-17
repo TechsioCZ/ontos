@@ -4,7 +4,7 @@ import type { ProductCardModel } from "@/ontos/catalog-model";
 import { CartScopeSchema } from "@/ontos/cart-quote";
 import type { useCart } from "./cart-provider";
 import type { CartEntry } from "./cart-state";
-import { validCartQuantity } from "./cart-state";
+import { cartLineKey, cartQuantityMaximum, validCartQuantity } from "./cart-state";
 
 const SimpleCardProductSchema = Schema.Struct({
   ...ProductCardModelSchema.fields,
@@ -38,7 +38,23 @@ export const simpleCardEntry = (
   }
   // Match the native order contract; never round the owner's minimum for a shortcut.
   if (
-    !validCartQuantity(product.minimumQuantity, product.minimumQuantity, product.packageQuantity)
+    !validCartQuantity(
+      product.minimumQuantity,
+      product.minimumQuantity,
+      product.packageQuantity,
+      cartQuantityMaximum(
+        product.stockQuantity === null || product.stockQuantity === undefined
+          ? null
+          : Math.max(
+              0,
+              product.stockQuantity -
+                (cart.entries.find(
+                  (entry) => cartLineKey(entry) === cartLineKey({ productId: product.id }),
+                )?.quantity ?? 0),
+            ),
+        product.packageQuantity,
+      ),
+    )
   ) {
     return null;
   }
@@ -52,6 +68,7 @@ export const simpleCardEntry = (
     quantity: product.minimumQuantity,
     sku: product.sku,
     slug: product.slug,
+    stockQuantity: product.stockQuantity ?? null,
     unit: product.unit,
     variantName: "",
   };

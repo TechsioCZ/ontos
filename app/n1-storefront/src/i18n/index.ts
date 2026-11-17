@@ -414,6 +414,7 @@ const cs = {
     remove: "Odebrat",
     scopeUnavailable: "Košík nyní nelze načíst. Zkuste to prosím později.",
     shipping: "Doprava",
+    stockRemaining: "Zbývá pouze {quantity} {unit}",
     storageError:
       "Uložený košík nelze načíst. Pro pokračování ho můžete vymazat pouze v tomto trhu.",
     subtotal: "Zboží včetně DPH",
@@ -860,6 +861,7 @@ const en: typeof cs = {
     remove: "Remove",
     scopeUnavailable: "Your cart cannot be loaded right now. Please try again later.",
     shipping: "Shipping",
+    stockRemaining: "Only {quantity} {unit} left",
     storageError:
       "The saved cart could not be loaded. You can clear it for this market to continue.",
     subtotal: "Goods including VAT",

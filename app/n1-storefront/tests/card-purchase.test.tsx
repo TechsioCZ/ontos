@@ -81,6 +81,24 @@ beforeEach(() => {
 });
 
 describe("simple card purchase uses real native values", () => {
+  it("disables a card when its minimum would exceed stock or the existing cart allocation", () => {
+    const limited = { ...product, minimumQuantity: 1, stockQuantity: 2 };
+    const entry = simpleCardEntry(limited, cartState());
+    expect(entry).toMatchObject({ quantity: 1, stockQuantity: 2 });
+    if (entry === null) {
+      return;
+    }
+    expect(
+      simpleCardEntry(limited, cartState({ entries: [{ ...entry, quantity: 2 }] })),
+    ).toBeNull();
+    expect(simpleCardEntry({ ...limited, minimumQuantity: 3 }, cartState())).toBeNull();
+    expect(
+      simpleCardEntry(
+        limited,
+        cartState({ entries: [{ ...entry, quantity: 2, variantId: "another-variant" }] }),
+      ),
+    ).not.toBeNull();
+  });
   it("rejects an owner minimum that is not a native package multiple", () => {
     expect(simpleCardEntry({ ...product, packageQuantity: 2 }, cartState())).toBeNull();
     expect(simpleCardEntry({ ...product, packageQuantity: 1.5 }, cartState())).toMatchObject({

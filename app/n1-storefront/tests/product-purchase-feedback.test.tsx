@@ -51,6 +51,59 @@ beforeEach(() => {
 });
 
 describe("product purchase feedback", () => {
+  it.each([
+    { allowed: false, existing: 0, minimum: 11, stock: 10 },
+    { allowed: false, existing: 10, minimum: 1, stock: 10 },
+    { allowed: true, existing: 1, minimum: 1, stock: 2 },
+  ])(
+    "respects stock and already selected quantities: %j",
+    ({ allowed, existing, minimum, stock }) => {
+      const add = rs.fn(() => true);
+      rs.mocked(useCart).mockReturnValue({
+        acceptPrice: () => false,
+        add,
+        clear: () => {},
+        clearSubmitted: () => false,
+        entries:
+          existing === 0
+            ? []
+            : [
+                {
+                  expectedUnitPriceMinor: 10_000,
+                  image: null,
+                  name: product.name,
+                  productId: product.id,
+                  quantity: existing,
+                  sku: "",
+                  slug: product.slug,
+                  unit: "ks",
+                  variantName: "",
+                },
+              ],
+        error: false,
+        imageHosts: [],
+        loaded: true,
+        remove: () => false,
+        scope: { currency: "CZK", legalEntityId: "legal", marketId: "market", tenantId: "tenant" },
+        update: () => false,
+      });
+      const selected = { ...product, minimumQuantity: minimum, stockQuantity: stock };
+      const html = renderToStaticMarkup(
+        <ProductPurchase
+          dictionary={getDictionary("cs")}
+          locale="cs"
+          product={selected}
+          selection={selectProductDetail(selected, selected.variants[0]?.id)}
+        />,
+      );
+      feedback.actions[0]?.();
+      expect(add).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      expect(feedback.create).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      if (!allowed) {
+        expect(html).toContain('disabled=""');
+      }
+    },
+  );
   for (const [minimumQuantity, packageQuantity, allowed] of [
     [3, 2, false],
     [4, 2, true],
@@ -72,7 +125,7 @@ describe("product purchase feedback", () => {
         scope: { currency: "CZK", legalEntityId: "legal", marketId: "market", tenantId: "tenant" },
         update: () => false,
       });
-      const selected = { ...product, minimumQuantity, packageQuantity };
+      const selected = { ...product, minimumQuantity, packageQuantity, stockQuantity: 100 };
       renderToStaticMarkup(
         <ProductPurchase
           dictionary={getDictionary("cs")}
