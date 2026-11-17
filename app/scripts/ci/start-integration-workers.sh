@@ -38,7 +38,10 @@ spicedb_image="$(jq -er '.services["ontos-spicedb"].image' "$scratch/compose.jso
 
 start_worker() {
   local worker="$1" database="ontos-ci-db-$1" spice="ontos-ci-spicedb-$1"
+  # These allocations are discarded after the job; keep native WAL/fsync/commit
+  # semantics, without paying the hosted runner disk latency for disposable pages.
   docker run --detach --name "$database" --label ontos-ci-worker \
+    --tmpfs /var/lib/postgresql:rw,size=2g \
     --env POSTGRES_USER --env POSTGRES_PASSWORD --env POSTGRES_DB=postgres \
     --publish "127.0.0.1:$((5540 + worker)):5432" "$postgres_image" >/dev/null
   docker run --detach --name "$spice" --label ontos-ci-worker \
@@ -95,6 +98,8 @@ identifiers=()
 acl_query="$(cat scripts/ci/integration-database-acl.sql)"
 source_acl="$(cat "$INTEGRATION_DATABASE_ARCHIVE/database.acl")"
 for ((worker = 1; worker <= ONTOS_CI_ISOLATED_WORKERS; worker++)); do
+  durability="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc     "select current_setting('fsync') || ':' || current_setting('synchronous_commit') || ':' || current_setting('full_page_writes')")"
+  [[ "$durability" == on:on:on ]]
   identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
   [[ -n "$identifier" ]]
   for existing in "${identifiers[@]}"; do
