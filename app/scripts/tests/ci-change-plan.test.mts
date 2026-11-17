@@ -668,7 +668,12 @@ it('plans with no installed dependencies using the same tested impact algorithm'
         }
       }
     }
-    for (const mode of [{}, { BOOTSTRAP_MODE: 'Full' }, { BOOTSTRAP_MODE: 'docs' }]) {
+    const invalidModes: readonly Readonly<Record<string, string>>[] = [
+      {},
+      { BOOTSTRAP_MODE: 'Full' },
+      { BOOTSTRAP_MODE: 'docs' },
+    ];
+    for (const mode of invalidModes) {
       expect(() => plan('/bin/bash', [NO_INSTALL_PLANNER, paths], fixture, mode)).toThrow(
         /BOOTSTRAP_MODE must be affected or full/u,
       );

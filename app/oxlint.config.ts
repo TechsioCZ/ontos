@@ -226,8 +226,9 @@ export default defineConfig({
     denyWarnings: true,
     reportUnusedDisableDirectives: 'error',
     typeAware: true,
-    // Compiler diagnostics run once in the required workspace typecheck; keep every typed lint rule.
-    typeCheck: false,
+    // The workspace typecheck builds only the referenced projects, which leave out most tests and the
+    // repository tooling scripts. Compiler diagnostics here cover every file this lint reads.
+    typeCheck: true,
   },
   overrides: [
     {
