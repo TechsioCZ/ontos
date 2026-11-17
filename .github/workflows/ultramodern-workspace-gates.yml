@@ -568,9 +568,9 @@ jobs:
           fi
           git diff --exit-code HEAD
 
-  # Seven integration batches and four build shards share eighteen hosted slots:
-  # 3 source + format + static + 4 builds + 9 service rows = 18.
-  # The two unit rows replace completed build slots, not add to that peak.
+  # Seven integration batches and four build shards use at most seventeen hosted slots:
+  # 2 source + format + static + 4 builds + 9 service rows = 17.
+  # Three unit rows replace completed build slots; repository tooling shares the typecheck runner.
   service-integration:
     name: ${{ matrix.name }}
     needs: [ci-plan]
