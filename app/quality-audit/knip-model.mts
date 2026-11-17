@@ -207,11 +207,16 @@ const rstestEnvironmentEvidence = (
   }
   const config = exportedObject(facts);
   const projects = unwrap(objectValue(config, 'projects'), facts.variables);
-  const configurations = [config];
+  // Rstest 0.12.6 runs only the declared projects once `projects` is set and gives inline projects
+  // none of the root's setupFiles or testEnvironment. The root stays an active project while its
+  // projects cannot be read statically, because they may resolve to nothing.
+  const configurations = projects?.type === 'ArrayExpression' ? [] : [config];
   if (projects?.type === 'ArrayExpression') {
     for (const element of projects.elements) {
-      const project = unwrap(element ?? undefined, facts.variables);
-      if (project?.type === 'ObjectExpression') {
+      // An inline project may arrive wrapped, as in `defineProject({ ... })` or `{ ... } satisfies T`.
+      const project =
+        element?.type === 'SpreadElement' ? undefined : objectExpression(element ?? undefined, facts.variables);
+      if (project !== undefined) {
         configurations.push(project);
       }
     }

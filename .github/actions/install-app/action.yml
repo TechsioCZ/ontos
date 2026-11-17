@@ -88,8 +88,9 @@ runs:
           for farm in apps/*/node_modules packages/*/node_modules verticals/*/node_modules; do
             [[ -d "$farm" ]] && farms+=("$farm")
           done
-          # With -L, `-type l` matches only the links that do not resolve.
-          dangling="$(find -L "${farms[@]}" -maxdepth 1 -type l -print | wc -l | tr -d ' ')"
+          # Each farm's direct dependency links and the links inside its @scope directories, such as
+          # node_modules/@effect/sql-pg; with -L, `-type l` matches only the links that do not resolve.
+          dangling="$(find -L "${farms[@]}" -mindepth 1 -maxdepth 2 \( -path '*/node_modules/@*/*' -o ! -path '*/node_modules/*/*' \) -type l -print | wc -l | tr -d ' ')"
           if [[ "$dangling" == '0' ]]; then
             usable=true
           else
@@ -163,7 +164,7 @@ runs:
         for farm in apps/*/node_modules packages/*/node_modules verticals/*/node_modules; do
           [[ -d "$farm" ]] && farms+=("$farm")
         done
-        dangling="$(find -L "${farms[@]}" -maxdepth 1 -type l -print | wc -l | tr -d ' ')"
+        dangling="$(find -L "${farms[@]}" -mindepth 1 -maxdepth 2 \( -path '*/node_modules/@*/*' -o ! -path '*/node_modules/*/*' \) -type l -print | wc -l | tr -d ' ')"
         outside="$(find "${farms[@]}" -type l -print0 | xargs -0 -r readlink -f -- | grep -cv "^$PWD/" || true)"
         if [[ "$dangling" != '0' || "$outside" != '0' ]]; then
           echo "::error::The installed workspace is not self-contained ($dangling dangling, $outside outside app/); it cannot be cached without the pnpm store."

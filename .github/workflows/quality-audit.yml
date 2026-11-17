@@ -74,14 +74,15 @@ jobs:
           install-args: --ignore-scripts
           mise-env: "false"
 
-      # The former "Verify audit runner and gate behavior" step (`pnpm quality:audit:test`, 32-51 s)
-      # is gone. All eight test files it named are `scripts/tests/*.test.mts`, which the blocking
-      # gate already runs in full through `pnpm test:scripts` (rstest project `scripts`, include
-      # `scripts/**/*.test.mts`) on every pull_request and merge_group, so it lost no coverage.
-      # A silently broken runner still cannot report clean: the gate step below reads
-      # summary.json and fails closed. Verified by running it against an absent, an empty and a
-      # truncated summary (exit 1 each: NotFound, then "Malformed audit summary") versus a
-      # complete six-analyzer summary (exit 0).
+      # `pnpm quality:audit:test` runs eight `scripts/tests/*.test.mts` files, which the blocking gate
+      # already runs through `pnpm test:scripts` on pull requests to main, merge groups and pushes to
+      # main. Every other base, such as demo/sales-crm or a stacked branch, gets no gate run, so the
+      # audit runner proves itself here. A silently broken runner still cannot report clean: the gate
+      # step below reads summary.json and fails closed.
+      - name: Verify audit runner and gate behavior where the blocking gate does not run
+        if: ${{ !((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+        run: mise exec -- pnpm quality:audit:test
+
       - name: Hold lint suppressions at the committed baseline
         run: mise exec -- pnpm lint:suppressions
 

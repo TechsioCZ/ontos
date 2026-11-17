@@ -213,10 +213,9 @@ it.effect(
   }),
 );
 
-// The Quality Audit workflow no longer runs `pnpm quality:audit:test` as a self-test step; this
-// file reaches CI only through the blocking gate's `pnpm test:scripts` (rstest project `scripts`).
-// The cases below are therefore the whole proof that a broken or half-written summary cannot imply
-// a clean audit, which is what lets that step go. Keep them exhaustive.
+// This file reaches CI through the blocking gate's `pnpm test:scripts` (rstest project `scripts`), and
+// through the Quality Audit self-test only where that gate does not run. The cases below are the whole
+// proof that a broken or half-written summary cannot imply a clean audit. Keep them exhaustive.
 it.effect(
   'partial, duplicate, unknown, failed and empty reports fail closed',
   Effect.fn(function* mergedScenario8() {

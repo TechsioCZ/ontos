@@ -35,7 +35,7 @@ it('leaves ordinary local test configuration untouched', () => {
 it('retargets every identity and child fixture to four distinct clusters and datastores', () => {
   for (const worker of ['1', '2', '3', '4']) {
     const current = Result.getOrThrow(
-      decode({ ...environment, RSTEST_WORKER_ID: worker }).pipe(
+      decode({ ...environment, ONTOS_CI_WORKER_SLOT: worker }).pipe(
         Result.map(integrationWorkerEnvironment),
         Result.map(Option.getOrUndefined),
       ),
@@ -64,9 +64,13 @@ it('retargets every identity and child fixture to four distinct clusters and dat
 
 it('refuses a missing or unprovisioned slot instead of sharing the source cluster', () => {
   for (const worker of [undefined, '0', '5', 'invalid']) {
-    expect(Result.isFailure(decode({ ...environment, RSTEST_WORKER_ID: worker }))).toBe(true);
+    expect(Result.isFailure(decode({ ...environment, ONTOS_CI_WORKER_SLOT: worker }))).toBe(true);
   }
-  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '1' }))).toBe(true);
+  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '1', ONTOS_CI_WORKER_SLOT: '1' }))).toBe(
+    true,
+  );
+  // An Rstest worker id grows past the provisioned clusters, so it never stands in for the lane's slot.
+  expect(Result.isFailure(decode({ ...environment, RSTEST_WORKER_ID: '1' }))).toBe(true);
   expect(Result.isFailure(decode({ ...environment, ONTOS_CI_WORKER_SLOT: '5', RSTEST_WORKER_ID: '1' }))).toBe(true);
 });
 
@@ -213,9 +217,9 @@ it('runs the explicit measured schedule without adding implicit package or root 
 });
 
 it('accepts two active lanes but refuses an unprovisioned third cluster', () => {
-  const settings = { ...environment, ONTOS_CI_ISOLATED_WORKERS: '2', RSTEST_WORKER_ID: '2' };
+  const settings = { ...environment, ONTOS_CI_ISOLATED_WORKERS: '2', ONTOS_CI_WORKER_SLOT: '2' };
   expect(Result.isSuccess(decode(settings))).toBe(true);
-  expect(Result.isFailure(decode({ ...settings, RSTEST_WORKER_ID: '3' }))).toBe(true);
+  expect(Result.isFailure(decode({ ...settings, ONTOS_CI_WORKER_SLOT: '3' }))).toBe(true);
   expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-2', isolatedWorkers: '2', port: 5542 })).toBe(true);
   expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-3', isolatedWorkers: '2', port: 5543 })).toBe(false);
 });
