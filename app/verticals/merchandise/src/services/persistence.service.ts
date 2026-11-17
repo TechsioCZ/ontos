@@ -1965,8 +1965,24 @@ export const evolveMerchandiseState = (
   state: MerchandiseState,
   command: MerchandiseCommand,
   input: MerchandiseCommandInput,
-): Effect.Effect<MerchandiseChange, MerchandiseCommandError> =>
-  Match.value(command).pipe(
+): Effect.Effect<MerchandiseChange, MerchandiseCommandError> => {
+  if (Predicate.isTagged(command, 'ConfigureStorefrontCatalog')) {
+    return Effect.succeed({
+      entityIds: [],
+      state:
+        state.storefrontCatalogSettings?.[command.storefrontAppId]?.mainSourceProductsOnly ===
+        command.mainSourceProductsOnly
+          ? state
+          : {
+              ...state,
+              storefrontCatalogSettings: {
+                ...state.storefrontCatalogSettings,
+                [command.storefrontAppId]: { mainSourceProductsOnly: command.mainSourceProductsOnly },
+              },
+            },
+    });
+  }
+  return Match.value(command).pipe(
     Match.tag('CreateProduct', (value) => addProduct(state, value, input)),
     Match.tag('UpdateProduct', (value) => updateProduct(state, value, input)),
     Match.tag('ChangePrice', (value) => changePrice(state, value, input)),
@@ -2143,6 +2159,7 @@ export const evolveMerchandiseState = (
     Match.tag('SyncTaxRates', () => Effect.fail(conflict('A VAT rate sync runs only through persistence'))),
     Match.exhaustive,
   );
+};
 
 type AiCommand = Extract<
   MerchandiseCommand,
@@ -2229,6 +2246,7 @@ export const workingSetRequestOf = (
       ChangeOrderStatus: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
+      ConfigureStorefrontCatalog: (): WorkingSetRequest => ({ productIds: [] }),
       CreateCategory: (value): WorkingSetRequest => ({
         categoryIds: Option.match(value.parentId, {
           onNone: () => [value.id],
@@ -3262,8 +3280,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         revision: head.revision,
         totalProducts: page.total,
       } satisfies RecordsResponse;
+      const withSettings =
+        view.storefrontCatalogSettings === true
+          ? { ...staffResponse, storefrontCatalogSettings: head.storefrontCatalogSettings ?? {} }
+          : staffResponse;
       const withAiChanges =
-        canRead && head.aiChanges !== undefined ? { ...staffResponse, aiChanges: head.aiChanges } : staffResponse;
+        canRead && head.aiChanges !== undefined ? { ...withSettings, aiChanges: head.aiChanges } : withSettings;
       const withTotalOrders =
         orderList.total === undefined ? withAiChanges : { ...withAiChanges, totalOrders: orderList.total };
       const response: RecordsResponse =

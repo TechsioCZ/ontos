@@ -43,6 +43,7 @@ export const loadCatalog = (locale: string, query: CatalogQuery) =>
       includeCategories: productId === undefined,
       marketId: market.marketRef.resourceId,
       pageSize: full ? 1 : 24,
+      storefrontAppId: config.appId,
     };
     const storefrontCatalog =
       productId === undefined ? catalogQuery : { ...catalogQuery, productIds: [productId] };

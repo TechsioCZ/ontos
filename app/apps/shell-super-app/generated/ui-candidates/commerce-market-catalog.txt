@@ -4,7 +4,9 @@
 bg-base
 block
 border
+border-border-primary
 border-border-primary/60
+border-t
 divide-border-primary/60
 divide-y
 fixed
@@ -30,6 +32,7 @@ items-start
 justify-between
 justify-end
 outline
+pt-200
 px-150
 py-100
 py-150

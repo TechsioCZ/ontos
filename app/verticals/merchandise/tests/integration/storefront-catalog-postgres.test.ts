@@ -14,6 +14,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 import {
+  ManageCatalogPayloadSchema,
   MerchandiseCommandSchema,
   MerchandiseNotFound,
   MerchandiseRevisionConflict,
@@ -56,6 +57,8 @@ import {
   loadHead,
   loadWorkingSet,
   persistChange,
+  readSnapshot,
+  replaceSnapshot,
   productSearchText,
   whereScope,
 } from '../../src/services/merchandise-store.ts';
@@ -69,7 +72,7 @@ import {
   encodeState,
   withMerchandise,
 } from './support/merchandise-database.ts';
-import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
 
 type RecordsViewInput = typeof RecordsViewSchema.Encoded;
 type StorefrontCatalogQueryInput = typeof StorefrontCatalogQuerySchema.Encoded;
@@ -99,6 +102,41 @@ const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQueryInput) 
 
 const onCatalog = <A, E>(run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
   withMerchandise(catalogState, run);
+
+/** Exercise the same head lock, state evolution and revisioned write as ManageCatalog. */
+const configureListing = (fixture: MerchandiseFixture, storefrontAppId: string, mainSourceProductsOnly: boolean) =>
+  fixture.db.transaction((transaction) =>
+    Effect.gen(function* configureStorefrontListing() {
+      const { command } = Schema.decodeUnknownSync(ManageCatalogPayloadSchema)({
+        command: {
+          _tag: 'ConfigureStorefrontCatalog',
+          mainSourceProductsOnly,
+          storefrontAppId,
+        },
+        expectedRevision: fixture.revision,
+      });
+      const head = yield* loadHead(transaction, fixture.scope, { lock: true });
+      if (head === undefined) {
+        return yield* Effect.die('The listing fixture must have a catalog head');
+      }
+      const working = yield* loadWorkingSet(transaction, fixture.scope, head, workingSetRequestOf(command, 'settings'));
+      const change = yield* evolveMerchandiseState(working.state, command, {
+        actor: { principalId: '20000000-0000-4000-8000-000000000002', tenantId: fixture.scope.tenantId },
+        now: DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
+        resourceId: 'settings',
+        tax: TEST_TAX,
+      });
+      return yield* persistChange(
+        transaction,
+        fixture.scope,
+        working,
+        change.state,
+        DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
+        TEST_RATES,
+        {},
+      );
+    }),
+  );
 
 it.live(
   'filters source variants only on explicit opt-in and keeps other storefronts and direct reads unchanged',
@@ -155,6 +193,43 @@ it.live(
         expect(yield* idsOf(fixture, { mainSourceProductsOnly: true, productIds: ['orphan'] })).toEqual(['orphan']);
         const staff = yield* staffProducts(fixture.db, fixture.scope, Schema.decodeSync(RecordsViewSchema)({}), false);
         expect(staff.total).toBe(3);
+        // Saved preferences take precedence over the legacy request flag and are isolated per shop.
+        const akros = { sort: 'name' as const, storefrontAppId: 'akros-storefront' };
+        expect(yield* idsOf(fixture, akros)).toEqual(['main', 'legacy']);
+        expect(yield* idsOf(fixture, { storefrontAppId: 'n1-storefront' })).toHaveLength(3);
+        expect(yield* idsOf(fixture, { storefrontAppId: 'sroubshop-storefront' })).toHaveLength(3);
+        yield* configureListing(fixture, 'akros-storefront', false);
+        const all = yield* catalogPage(fixture, {
+          ...akros,
+          fields: 'card',
+          mainSourceProductsOnly: true,
+          page: 3,
+          pageSize: 1,
+        });
+        expect([all.total, staffProductIds(all)]).toEqual([3, ['legacy']]);
+        yield* configureListing(fixture, 'n1-storefront', true);
+        expect(yield* idsOf(fixture, akros)).toHaveLength(3);
+        expect(yield* idsOf(fixture, { sort: 'name', storefrontAppId: 'n1-storefront' })).toEqual(['main', 'legacy']);
+        // A fresh import that contains no settings must retain staff choices.
+        yield* fixture.db.transaction((transaction) =>
+          replaceSnapshot(transaction, fixture.scope, state, TEST_PRICING),
+        );
+        expect((yield* readSnapshot(fixture.db, fixture.scope))?.state.storefrontCatalogSettings).toEqual({
+          'akros-storefront': { mainSourceProductsOnly: false },
+          'n1-storefront': { mainSourceProductsOnly: true },
+        });
+        yield* configureListing(fixture, 'akros-storefront', true);
+        expect(yield* idsOf(fixture, { ...akros, mainSourceProductsOnly: false })).toEqual(['main', 'legacy']);
+        expect(yield* idsOf(fixture, { ...akros, q: 'orphan' })).toEqual([]);
+        expect(yield* idsOf(fixture, { ...akros, slug: 'orphan' })).toEqual(['orphan']);
+        expect(yield* idsOf(fixture, { ...akros, productIds: ['orphan'] })).toEqual(['orphan']);
+        // A second company's default is unaffected by the first company's explicit settings.
+        yield* withMerchandise(state, (other) =>
+          Effect.gen(function* otherCompanyListing() {
+            expect(yield* idsOf(other, akros)).toEqual(['main', 'legacy']);
+            expect(yield* idsOf(other, { storefrontAppId: 'n1-storefront' })).toHaveLength(3);
+          }),
+        );
       }),
     );
   },

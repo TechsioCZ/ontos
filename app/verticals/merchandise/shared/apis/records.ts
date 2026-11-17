@@ -25,6 +25,8 @@ import {
   ProductSchema,
   StockMovementSchema,
   ShippingMethodSchema,
+  StorefrontAppIdSchema,
+  StorefrontCatalogSettingsSchema,
 } from '../domain/merchandise-model.ts';
 import {
   MarketIdSchema,
@@ -70,6 +72,8 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
   q: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   slug: Schema.optionalKey(Schema.String),
   sort: Schema.optionalKey(Schema.Literals(['name', 'price-asc', 'price-desc'])),
+  /** Selects this company's saved listing policy; omitted retains the legacy explicit filter. */
+  storefrontAppId: Schema.optionalKey(StorefrontAppIdSchema),
   /**
    * Cart/checkout: with `fields: 'full'`, each product's `variantRecords` hold only these variants and up to 50
    * products are returned. Without it a `full` page holds at most 2 products (one product can carry 400 variants).
@@ -155,6 +159,7 @@ export const PRODUCT_DETAIL_PAGE_LIMIT = 2;
  * Indicators always cover the whole company and ignore filters.
  */
 export const RecordsViewSchema = Schema.Struct({
+  storefrontCatalogSettings: Schema.optionalKey(Schema.Boolean),
   /** Trusted storefront server supplies the verified portal subject, never a browser-supplied identity. */
   storefrontCheckout: Schema.optionalKey(Schema.Boolean),
   storefrontCustomerOrders: Schema.optionalKey(
@@ -241,6 +246,7 @@ export const MerchandiseStateSchema = Schema.Struct({
   movements: Schema.Array(StockMovementSchema),
   orders: Schema.Array(OrderSchema),
   products: Schema.Array(ProductSchema),
+  storefrontCatalogSettings: Schema.optionalKey(StorefrontCatalogSettingsSchema),
   /**
    * Working-set facts a command needs beyond its loaded rows: the highest order number of the company and
    * whether its catalog is an imported source catalog (AKROS pickup label). Seeds and resets leave them out.
@@ -288,6 +294,8 @@ export const RecordsResponseSchema = Schema.Struct({
   canCleanupDemo: Schema.optionalKey(Schema.Boolean),
   canEditOrders: Schema.optionalKey(Schema.Boolean),
   canManageCatalog: Schema.optionalKey(Schema.Boolean),
+  /** Staff catalog administration: explicit per-storefront overrides of listing defaults. */
+  storefrontCatalogSettings: Schema.optionalKey(StorefrontCatalogSettingsSchema),
   /** Staff: may configure market offers and price lists (AKROS: administrators and the company administrator). */
   canManageMarkets: Schema.optionalKey(Schema.Boolean),
   canWrite: Schema.Boolean,

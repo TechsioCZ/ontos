@@ -66,6 +66,7 @@ const readQuoteContext = (config: StorefrontConfiguration, locale: string) =>
             includeCategories: false,
             marketId: market.marketRef.resourceId,
             pageSize: 1,
+            storefrontAppId: config.appId,
           },
         },
       },

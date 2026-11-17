@@ -37,6 +37,9 @@ export const catalogHeads = merchandiseSchema.table.withRLS(
   {
     ...scopeColumns,
     aiChanges: jsonb('ai_changes'),
+    storefrontCatalogSettings: jsonb('storefront_catalog_settings')
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
     /** Durable task import checkpoint; unfinished catalogs are not published through ordinary reads/writes. */
     bootstrapCheckpoint: jsonb('bootstrap_checkpoint'),
     homepageFeaturedProductIds: text('homepage_featured_product_ids')

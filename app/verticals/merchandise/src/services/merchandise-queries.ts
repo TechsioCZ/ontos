@@ -28,6 +28,7 @@ import {
   StorefrontVariantPreviewSchema,
   VariantIdSchema,
   VariantSummarySchema,
+  mainSourceProductsOnlyFor,
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Order,
@@ -576,18 +577,27 @@ const storefrontPriceOrder = (sort: StorefrontCatalogQuery['sort'], ranked: SQL[
 
 const IN_STOCK = ['IN_STOCK', 'LOW_STOCK'];
 
+/** Read the company's saved policy in the same snapshot as the filtered count and page. */
+const mainSourceListingPolicy = (scope: StoreScope, catalog: StorefrontCatalogQuery): SQL =>
+  catalog.storefrontAppId === undefined
+    ? sql`${catalog.mainSourceProductsOnly === true}`
+    : sql`coalesce((select (${catalogHeads.storefrontCatalogSettings}->${catalog.storefrontAppId}->>'mainSourceProductsOnly')::boolean
+        from ${catalogHeads} where ${whereScope(catalogHeads, scope)}),
+        ${mainSourceProductsOnlyFor({}, catalog.storefrontAppId)})`;
+
 const storefrontFilters = (
   catalog: StorefrontCatalogQuery,
   featuredIds: SQL,
   categoryId: ReturnType<typeof categoryIdBySlug> | undefined,
+  listingPolicy: SQL,
 ) => [
   eq(products.archived, false),
   eq(products.active, true),
   eq(products.published, true),
   // Filtering belongs before count/limit/offset. Exact reads still resolve historical
   // orphan items for saved links and carts; standalone main products remain listable.
-  catalog.mainSourceProductsOnly === true && catalog.slug === undefined && catalog.productIds === undefined
-    ? sql`coalesce((${products.document}->>'sourceBaseProduct')::boolean, true)`
+  catalog.slug === undefined && catalog.productIds === undefined
+    ? sql`(not (${listingPolicy}) or coalesce((${products.document}->>'sourceBaseProduct')::boolean, true))`
     : undefined,
   catalog.featured === true
     ? or(sql`${products.id} = any(${featuredIds})`, eq(products.isRecommended, true))
@@ -1209,7 +1219,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
   const baseFilters = [
-    ...storefrontFilters(catalog, featuredIds, categoryId),
+    ...storefrontFilters(catalog, featuredIds, categoryId, mainSourceListingPolicy(scope, catalog)),
     sellableClassificationFilter(scope),
     Option.getOrUndefined(offer),
   ];

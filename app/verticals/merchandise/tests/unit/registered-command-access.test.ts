@@ -188,6 +188,11 @@ commandTests(applyCommandAction, {
   unit: 'ks',
 });
 commandTests(manageCatalogAction, { _tag: 'UpdateProduct', id: 'product-1', patch: { name: 'Bolt' } });
+commandTests(manageCatalogAction, {
+  _tag: 'ConfigureStorefrontCatalog',
+  mainSourceProductsOnly: false,
+  storefrontAppId: 'akros-storefront',
+});
 commandTests(manageMarketsAction, { _tag: 'RemoveMarket', marketId: '50000000-0000-4000-8000-000000000001' });
 commandTests(cleanupDemoAction, { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Remove demo fixture' });
 commandTests(changeProductImagesAction, {

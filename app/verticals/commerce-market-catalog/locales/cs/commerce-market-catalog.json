@@ -39,6 +39,16 @@
       "noEshops": "Zatím nemáte žádný registrovaný e-shop.",
       "storefrontsUnavailable": "Seznam e-shopů je teď nedostupný, trhy proto zobrazujeme bez nich.",
       "newMarket": "Nový trh",
+      "listing": {
+        "label": "Ve výpisu zobrazovat pouze hlavní produkty",
+        "help": "Skryje jednotlivé varianty ve výpisech a vyhledávání tohoto e-shopu. Přímé odkazy a košík zůstanou dostupné. Změna se projeví nejpozději do 10 sekund.",
+        "save": "Uložit zobrazení produktů",
+        "saving": "Ukládám…",
+        "saved": "Zobrazení produktů je uloženo.",
+        "proposed": "Změna zobrazení produktů čeká na schválení.",
+        "reload": "Načíst aktuální nastavení",
+        "loadFailed": "Nastavení e-shopů se nepodařilo načíst."
+      },
       "unassigned": {
         "title": "Trhy bez e-shopu",
         "empty": "Všechny trhy už prodávají v některém e-shopu."

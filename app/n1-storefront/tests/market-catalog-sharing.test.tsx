@@ -107,11 +107,30 @@ const owner = (options: OwnerOptions = {}) => {
   const urls: string[] = [];
   respond = async (request) => {
     urls.push(request.url);
-    const body = Schema.decodeUnknownSync(Schema.Struct({ readName: Schema.String }))(
-      await request.json(),
-    );
+    const body = Schema.decodeUnknownSync(
+      Schema.Struct({ query: Schema.Unknown, readName: Schema.String }),
+    )(await request.json());
     reads.push(body.readName);
     const market = body.readName === "current-market-catalog";
+    if (body.readName === "records") {
+      const query = Schema.decodeUnknownSync(
+        Schema.Struct({
+          view: Schema.Struct({
+            storefrontCatalog: Schema.Struct({
+              mode: Schema.optionalKey(Schema.String),
+              productIds: Schema.optionalKey(Schema.Array(Schema.String)),
+              storefrontAppId: Schema.optionalKey(Schema.String),
+            }),
+          }),
+        }),
+      )(body.query);
+      if (
+        query.view.storefrontCatalog.mode !== "categories" &&
+        query.view.storefrontCatalog.productIds === undefined
+      ) {
+        expect(query.view.storefrontCatalog.storefrontAppId).toBe("n1-storefront");
+      }
+    }
     const status = market ? (options.marketStatus ?? 200) : 200;
     return Response.json(market ? marketCatalog : records, {
       headers: status === 200 ? { "x-ontos-gateway-context": gatewayContext } : {},

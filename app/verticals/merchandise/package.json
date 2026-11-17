@@ -5,6 +5,8 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/merchandise-client.ts",
+    "./apis/manage-catalog-action": "./shared/apis/manage-catalog-action.ts",
+    "./apis/manage-catalog-action/client": "./src/api/manage-catalog-action-client.ts",
     "./apis/manage-markets-action": "./shared/apis/manage-markets-action.ts",
     "./apis/manage-markets-action/client": "./src/api/manage-markets-action-client.ts",
     "./apis/records": "./shared/apis/records.ts",

@@ -12,7 +12,7 @@ import {
 } from '../../shared/actions/command-guard.ts';
 import { MerchandisePermissionDenied } from '../../shared/errors/merchandise-permission-denied.ts';
 
-const deniedCommands = ['BulkUpdateProducts', 'ChangePrice', 'EditOrder'] as const;
+const deniedCommands = ['BulkUpdateProducts', 'ChangePrice', 'EditOrder', 'ConfigureStorefrontCatalog'] as const;
 
 it('forces e-shop API keys into the public view even if the flag is omitted or false', () => {
   const request = { view: { orderClientRequestId: 'guest-request', storefront: false } };
@@ -29,7 +29,13 @@ const isRejection = Schema.is(MerchandisePermissionDenied);
 it.effect('only allows guest order placement for the storefront company key', () =>
   Effect.gen(function* storefrontCommands() {
     yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
-    for (const tag of ['EditOrder', 'ChangeOrderStatus', 'UpdateProduct', 'CreateOrder']) {
+    for (const tag of [
+      'EditOrder',
+      'ChangeOrderStatus',
+      'UpdateProduct',
+      'CreateOrder',
+      'ConfigureStorefrontCatalog',
+    ]) {
       const failure = yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
       expect(isRejection(failure)).toBe(true);
       yield* assertStorefrontScope('session', ESHOP_LEGAL_ENTITY_ID, tag);

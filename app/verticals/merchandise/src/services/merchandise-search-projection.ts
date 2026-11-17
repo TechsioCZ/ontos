@@ -661,6 +661,7 @@ export const merchandiseSearchRefreshTarget = (
       ChangePrice: (value) => ({ ...base, productIds: [value.id] }),
       ChangeProductImages: (value) => ({ ...base, productIds: [value.id] }),
       ConfigureMarket: () => base,
+      ConfigureStorefrontCatalog: () => base,
       CreateCategory: () => base,
       CreateOrder: () => ({ ...base, orderIds: ids }),
       CreateProduct: () => ({ ...base, productIds: ids }),

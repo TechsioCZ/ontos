@@ -1,6 +1,5 @@
 import "server-only";
 import { cache } from "react";
-import { getBrandId } from "@/brand/config";
 import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 import { getActiveMarket } from "./active-market";
 import { catalogCache } from "./catalog-cache";
@@ -89,18 +88,11 @@ const categoryPages = catalogCache<CategoryPage>({
   limit: 60,
 });
 
-/** Stable server deployment/profile identities; the same build also serves SroubShop. */
-const usesAkrosSourceListing = () =>
-  getBrandId() === "akros" && getConfig().appId === "akros-storefront";
-
-/** Other brands keep the owner's default visibility, including standalone source products. */
-const listingQuery = (query: Record<string, unknown>): Record<string, unknown> =>
-  usesAkrosSourceListing() &&
-  query.mode !== "categories" &&
-  query.slug === undefined &&
-  query.productIds === undefined
-    ? { ...query, mainSourceProductsOnly: true }
-    : query;
+/** Merchandise resolves the company's saved listing preference for this e-shop. */
+const listingQuery = (query: Record<string, unknown>): Record<string, unknown> => ({
+  ...query,
+  storefrontAppId: getConfig().appId,
+});
 
 /**
  * Every storefront catalog read is answered for one market: its offer and its currency. Without a market id
@@ -122,7 +114,7 @@ const readCatalog = async (
 const marketIdOf = async () => (await getActiveMarket()).marketId;
 /** Cache keys of market-dependent entries. */
 const marketKey = (marketId: string | undefined, key: string) =>
-  `${usesAkrosSourceListing()}\u0000${marketId ?? ""}\u0000${key}`;
+  `${getConfig().appId}\u0000${marketId ?? ""}\u0000${key}`;
 
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>

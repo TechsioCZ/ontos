@@ -1,27 +1,41 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
-import { EmptyState, PageHeader, SectionCard, Toaster } from '@app/admin-ui';
+import { EmptyState, PageHeader, SectionCard, Toaster, useRecordDraft } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/merchandise/apis/manage-catalog-action';
+import { mainSourceProductsOnlyFor } from '@app/merchandise/domain/merchandise-model';
+import type { StorefrontCatalogSettings } from '@app/merchandise/domain/merchandise-model';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageData } from '@app/shared-contracts/page-data';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { Effect, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import csResource from '../../../../../locales/cs/commerce-market-catalog.json';
 import enResource from '../../../../../locales/en/commerce-market-catalog.json';
 import { eshopsOverview } from '../../../../market-admin/eshops-model.ts';
 import type { EshopCard, MarketChip } from '../../../../market-admin/eshops-model.ts';
-import { LoadFailure, MarketChipButton, NAMESPACE, useMarketText } from '../../../../market-admin/market-ui.tsx';
+import {
+  failureText,
+  LoadFailure,
+  MarketChipButton,
+  NAMESPACE,
+  useMarketText,
+} from '../../../../market-admin/market-ui.tsx';
 import { NewMarketDialog } from '../../../../market-admin/new-market-dialog.tsx';
 import {
   creationGrantData,
   marketCatalogData,
   marketSettingsData,
   refreshAll,
+  saveStorefrontCatalog,
   storefrontsData,
 } from '../../../../market-admin/page-data.ts';
+import type { WriteFailure } from '../../../../market-admin/page-data.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 
@@ -65,14 +79,55 @@ const useCompanyData = <A, E>(
   return snapshot;
 };
 
-const EshopCardView = ({
+export const EshopCardView = ({
   card,
   onOpenMarket,
+  refresh,
+  settings,
 }: {
   readonly card: EshopCard;
   readonly onOpenMarket: (chip: MarketChip) => void;
+  readonly refresh: Effect.Effect<void>;
+  readonly settings: {
+    readonly canManageCatalog?: boolean;
+    readonly revision: number;
+    readonly storefrontCatalogSettings?: StorefrontCatalogSettings;
+  };
 }) => {
   const { text } = useMarketText();
+  const toaster = useToast();
+  const [failure, setFailure] = useState<WriteFailure | null>(null);
+  const record = useRecordDraft<boolean, never>({
+    isValid: () => settings.canManageCatalog === true,
+    refresh,
+    revision: settings.revision,
+    runtime: browserRuntime,
+    save: (value, revision) => {
+      setFailure(null);
+      return saveStorefrontCatalog(card.appId, value, revision).pipe(
+        Effect.map((outcome) => {
+          if (!outcome.ok) {
+            setFailure(outcome.reason);
+            return outcome.reason === 'conflict' ? ('conflict' as const) : ('failed' as const);
+          }
+          if (Schema.is(ActionProposalAcceptedSchema)(outcome.value)) {
+            toaster.create({ title: text('eshops.listing.proposed'), type: 'warning' });
+            return 'proposed' as const;
+          }
+          toaster.create({ title: text('eshops.listing.saved'), type: 'success' });
+          refreshAll(refresh);
+          return outcome.value.revision;
+        }),
+      );
+    },
+    server: mainSourceProductsOnlyFor(settings.storefrontCatalogSettings ?? {}, card.appId),
+  });
+  const handleCheckedChange = record.setDraft;
+  const handleSave = record.save;
+  const handleReload = () => {
+    setFailure(null);
+    record.reloadLatest();
+  };
   return (
     <SectionCard
       actions={
@@ -105,6 +160,28 @@ const EshopCardView = ({
           ))}
         </div>
       )}
+      <div className="flex flex-col items-start gap-150 border-border-primary border-t pt-200">
+        <FormCheckbox
+          checked={record.draft}
+          disabled={record.pending}
+          helpText={text('eshops.listing.help')}
+          label={text('eshops.listing.label')}
+          name={`main-source-products-${card.appId}`}
+          onCheckedChange={handleCheckedChange}
+          readOnly={settings.canManageCatalog !== true}
+        />
+        {settings.canManageCatalog === true && (
+          <Button disabled={!record.canSave} onClick={handleSave} size="sm" variant="primary">
+            {text(record.pending ? 'eshops.listing.saving' : 'eshops.listing.save')}
+          </Button>
+        )}
+        {failure !== null && <StatusText status="error">{failureText(text, failure)}</StatusText>}
+        {record.status === 'conflict' && (
+          <Button onClick={handleReload} size="sm" theme="outlined" variant="secondary">
+            {text('eshops.listing.reload')}
+          </Button>
+        )}
+      </div>
     </SectionCard>
   );
 };
@@ -143,14 +220,14 @@ const EshopsPageContent = ({ context }: PageContextProps) => {
       title={text('pages.eshops.title')}
     />
   );
-  if (catalog.state !== 'ready') {
+  if (catalog.state !== 'ready' || settings.state !== 'ready') {
     return (
       <div className="flex flex-col gap-300">
         {header}
-        {catalog.state === 'pending' ? (
-          <StatusText>{text('eshops.loading')}</StatusText>
-        ) : (
+        {[catalog.state, settings.state].includes('failed') ? (
           <LoadFailure message={text('eshops.loadFailed')} onRetry={reload} />
+        ) : (
+          <StatusText>{text('eshops.loading')}</StatusText>
         )}
       </div>
     );
@@ -171,7 +248,13 @@ const EshopsPageContent = ({ context }: PageContextProps) => {
       )}
       {storefronts.state === 'ready' && overview.eshops.length === 0 && <EmptyState title={text('eshops.noEshops')} />}
       {overview.eshops.map((card) => (
-        <EshopCardView card={card} key={card.appId} onOpenMarket={(chip) => openMarket(chip.marketId)} />
+        <EshopCardView
+          card={card}
+          key={`${legalEntityId}:${card.appId}`}
+          onOpenMarket={(chip) => openMarket(chip.marketId)}
+          refresh={marketSettingsData.refresh(legalEntityId)}
+          settings={settings.value}
+        />
       ))}
       <SectionCard title={text('eshops.unassigned.title')}>
         {overview.unassigned.length === 0 ? (

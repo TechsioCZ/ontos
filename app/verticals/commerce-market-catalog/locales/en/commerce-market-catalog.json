@@ -39,6 +39,16 @@
       "noEshops": "You have no registered e-shop yet.",
       "storefrontsUnavailable": "The e-shop list is unavailable right now, so markets are shown without it.",
       "newMarket": "New market",
+      "listing": {
+        "label": "Show only main products in listings",
+        "help": "Hides individual variants in this shop’s listings and search. Direct links and cart items remain available. Changes take effect within 10 seconds.",
+        "save": "Save product visibility",
+        "saving": "Saving…",
+        "saved": "Product visibility saved.",
+        "proposed": "The product visibility change is awaiting approval.",
+        "reload": "Load current settings",
+        "loadFailed": "Shop settings could not be loaded."
+      },
       "unassigned": {
         "title": "Markets without an e-shop",
         "empty": "Every market already sells in an e-shop."
