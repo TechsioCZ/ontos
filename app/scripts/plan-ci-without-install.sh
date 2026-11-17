@@ -37,7 +37,6 @@ appendFileSync(process.env.GITHUB_OUTPUT, Object.entries({
   unit: JSON.stringify(plan.unit), integration: JSON.stringify(phases.work),
   integrationSetup: JSON.stringify(phases.preparation),
   integrationTopology: JSON.stringify(phases.topology),
-  integrationLate: JSON.stringify(phases.late),
 }).map(([key, value]) => `${key}=${value}\n`).join(''));
 appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## CI selection\n\n${plan.reason}\n\nAffected packages: ${plan.affectedPackages.join(', ')}\n`);
 JS
