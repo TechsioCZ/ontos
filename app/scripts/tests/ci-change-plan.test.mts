@@ -430,6 +430,9 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       };
       const documentationPlan = run('pull_request');
       expect(documentationPlan).toContain('mode=docs\n');
+      for (const helper of ['sourceExtra', 'unitAfterTooling', 'integrationSetup', 'integrationTopology']) {
+        expect(documentationPlan).toContain(`${helper}=[]\n`);
+      }
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
       expect(run('merge_group')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
