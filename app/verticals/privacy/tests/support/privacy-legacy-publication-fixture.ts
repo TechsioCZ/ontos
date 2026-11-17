@@ -152,8 +152,9 @@ const run = Effect.fn('PrivacyLegacyFixture.run')(function* run(
     return yield* failure('Owner fixture native identity does not match its creator capability');
   }
   if (command === 'prepare-empty') {
-    // This owner's supported migration command alone; no raw business seed or foreign migration import.
-    const migration = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', 'db:migrate'], {
+    // The creator cloned the job's migrated empty schema. Verify this owner's
+    // real objects and grants, rather than replaying migrations over those objects.
+    const verification = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', 'db:verify'], {
       cwd: settings.directory,
       env: {
         DATABASE_ADMIN_URL: Redacted.value(settings.admin),
@@ -165,11 +166,11 @@ const run = Effect.fn('PrivacyLegacyFixture.run')(function* run(
       stdout: 'pipe',
     });
     const [code] = yield* Effect.all(
-      [migration.exitCode, Stream.runDrain(migration.stdout), Stream.runDrain(migration.stderr)],
+      [verification.exitCode, Stream.runDrain(verification.stdout), Stream.runDrain(verification.stderr)],
       { concurrency: 3 },
     );
     if (code !== 0) {
-      return yield* failure('Privacy-owned empty database migration failed');
+      return yield* failure('Privacy-owned empty database verification failed');
     }
     return yield* write({ databaseOid: identity.databaseOid, type: 'prepared' });
   }
