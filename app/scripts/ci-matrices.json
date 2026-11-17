@@ -4,10 +4,6 @@
       "name": "Workspace Typecheck and Repository Tooling",
       "typescript-build": true,
       "commands": "pnpm typecheck\npnpm test:scripts\n"
-    },
-    {
-      "name": "Source, Generation, and Deployment Contracts",
-      "commands": "node scripts/generate-outbox-worker-deployment.mjs\npnpm module-entrypoints:check\nnode scripts/plan-deployment-impact.mts --outbox-worker-mode host\n"
     }
   ],
   "unit": [

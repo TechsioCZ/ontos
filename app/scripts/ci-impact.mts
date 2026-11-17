@@ -36,7 +36,7 @@ export type LintSweep = (typeof lintSweeps)[number];
 
 /**
  * Unit rows reuse the slot of the check they follow. A full lint sweep keeps the lint slot busy for minutes,
- * so a row that follows lint follows the source rows instead, which free one slot each. The work job carries
+ * so a row that follows lint follows the source contracts instead, which free their slot early. The work job carries
  * the workspace-unit gate id: when no selected row starts with the builds, the first selected row is
  * promoted into it.
  */
