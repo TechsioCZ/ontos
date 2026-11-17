@@ -25,7 +25,6 @@ import {
   SHARED_PROBLEM_DETAILS_SOURCE_PATH,
   SHARED_CONTRACTS_WORKSPACE_NAME,
   SHARED_CONTRACTS_WORKSPACE_PATH,
-  INVENTORY_OWNER_PATH,
   BOUNDARY_FIXTURE_TOPOLOGY,
   BOUNDARY_FIXTURE_SHELL_ID,
   BOUNDARY_FIXTURE_SHELL_PATH,
@@ -1338,7 +1337,7 @@ it('binds native handler audiences to the actual owner and preserves thin server
 });
 
 it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
   const actionFile = `${owner}/shared/apis/reserve-action.ts`;

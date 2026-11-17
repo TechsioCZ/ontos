@@ -32,7 +32,6 @@ import {
   CATALOG_VERTICAL_PATH,
   PRICING_SHARED_API_PATH,
   PRICING_HANDLER_PATH,
-  INVENTORY_OWNER_PATH,
   STOCK_LIST_SERVER_CONTRACT_IMPORT,
   INVENTORY_DEPLOYMENT_ID,
   INVENTORY_PACKAGE_SPECIFIER,
@@ -778,7 +777,7 @@ it.live(
 );
 
 it('recognizes native Effect.fn scoped generators only with the actual Core factory ABI', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/src/api/stock-list.read.ts`;
   const service = `${owner}/src/services/stock-list.ts`;
   const source = `import type { ScopedTransactionExecutor, OperationalScope } from '@app/core-runtime';
@@ -817,7 +816,7 @@ it.live(
     Effect.gen(function* publishedContractWithOwnerClient() {
       const root = yield* makeFixture();
       yield* writeGovernedModuleApi(root);
-      const contractFile = `${INVENTORY_OWNER_PATH}/shared/apis/stock-list.ts`;
+      const contractFile = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
       const published = STOCK_LIST_PUBLISHED_SOURCE;
       const packageFile = 'packages/inventory-public-contracts/package.json';
       const contract = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));

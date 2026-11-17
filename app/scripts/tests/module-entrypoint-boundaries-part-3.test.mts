@@ -34,7 +34,6 @@ import {
   CATALOG_VERTICAL_PATH,
   PRICING_SHARED_API_PATH,
   PRICING_HANDLER_PATH,
-  INVENTORY_OWNER_PATH,
   BOUNDARY_FIXTURE_TOPOLOGY,
   BOUNDARY_FIXTURE_SHELL_ID,
   BOUNDARY_FIXTURE_SHELL_PATH,
@@ -589,7 +588,7 @@ it('proves only closed schema and request-discriminator dispatch through the unc
 });
 
 it('resolves the published owner client once and requires exact relative Action exports', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/shared/inventory-stock-client.ts`;
   const publication =
     "// <generated-action-http-client-exports>\nexport * from '../src/api/reserve-action-client.ts';\n// </generated-action-http-client-exports>";
