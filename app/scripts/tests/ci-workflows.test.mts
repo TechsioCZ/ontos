@@ -1675,7 +1675,7 @@ const GATE_JOB_NEEDS = {
   [FORMAT_AND_LINT_JOB]: [CI_PLAN_JOB],
   [NODE_ARTIFACT_BUILD_JOB]: [CI_PLAN_JOB],
   [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, FORMAT_AND_LINT_JOB],
-  'static-contracts': [CI_PLAN_JOB, REMAINING_NODE_BUILD_JOB],
+  'static-contracts': [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, REMAINING_NODE_BUILD_JOB],
 } satisfies Readonly<Record<string, readonly string[]>>;
@@ -2028,7 +2028,7 @@ it('builds Node artifacts on four independent runners without waiting for or pro
 it('builds every Node release from this commit rather than restoring another release identity', () => {
   const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   expect(strategy.matrix.shard).toEqual([1, 3, 4, 6, 7]);
-  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 5, 8]);
+  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 5]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
   expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
@@ -2555,7 +2555,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
-  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 8");
+  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 7");
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   expect(workers).toBeGreaterThan(-1);
   expect(workers < wait && wait < download).toBe(true);
@@ -3154,7 +3154,7 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
   const topology = jobs[TOPOLOGY_PROOF_JOB];
   const work = jobs[SERVICE_INTEGRATION_JOB];
   expect(
-    source + builds + work.strategy.matrix.include.length + setup.strategy.matrix.include.length,
+    source + builds + staticRows + work.strategy.matrix.include.length + setup.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
   const units = commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length;
   // Topology reuses source-contracts; the shorter third unit row reuses browser.
@@ -3181,6 +3181,9 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
   expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).not.toContain(SOURCE_EXTRA_JOB);
   expect(all[TOPOLOGY_PROOF_JOB]?.needs).toContain(SOURCE_EXTRA_JOB);
   expect(all[TOPOLOGY_PROOF_JOB]?.needs).not.toContain(SERVICE_SETUP_JOB);
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toContain(NODE_ARTIFACT_BUILD_JOB);
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).not.toContain(REMAINING_NODE_BUILD_JOB);
+  expect(all['static-contracts']?.needs).toEqual([CI_PLAN_JOB]);
   expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.service-integration-setup.result == 'success'");
   expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.ci-plan.outputs.unitAfterPreparation != '[]'");
   expect(all[SOURCE_EXTRA_JOB]?.needs).toEqual([CI_PLAN_JOB]);
