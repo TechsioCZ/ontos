@@ -235,6 +235,8 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       )(priceReadSources),
       productionGate: true,
       relaySource: { registeredWorkloads: rules, sourceAppId: 'symmy-integration' },
+      // A price-list read composes several owner reads, each behind its own gateway assertion.
+      requestDeadlineSeconds: 60,
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantSlug = `internal-c14-pricing-${tenantId}`;
