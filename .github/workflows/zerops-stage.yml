@@ -6,9 +6,11 @@ name: Zerops Stage Deploy
 # ontos-stage-shop). The N1 e-shop (`n1`, ontos-stage-n1) is its own Next storefront with its own setup and service.
 # Each storefront service holds its own key, tenant and brand in its service variables
 # (ONTOS_AKROS_STOREFRONT_API_KEY, STOREFRONT_BRAND, ONTOS_STOREFRONT_APP_ID, ONTOS_STOREFRONT_LEGAL_ENTITY_ID).
-# Zerops builds the app from app/zerops.yaml; the storefronts arrive built from the runner (build_storefronts). The app
+# Zerops builds the app from app/zerops.yaml; the storefronts arrive built on the runner that delivers them. The app
 # container runs the owner migrations and publishes the Application Composition itself when it starts, and Zerops
 # switches traffic only after /_host/ready answers.
+# One job, created at push time, plans, delivers and verifies (.github/actions/deliver-stage). Only when app units must
+# build does it stop after the plan: the build matrix runs, and `deliver_app` delivers and verifies instead.
 # Cloudflare stays in front of stage only as DNS, WAF and Access.
 on:
   push:
@@ -25,18 +27,14 @@ on:
       - '**/CHANGELOG.md'
       - '**/LICENSE.md'
   workflow_dispatch:
-    # The upload warm-up is on by default now that it shares one curl invocation, and so one connection, with the
-    # upload itself (scripts/zerops/push-service.sh): the PUT inherits the warmed connection and its grown congestion
-    # window instead of paying TCP slow start on a 105 MB body. Warming from a separate process bought nothing, which
-    # is why it was an experiment: job 133137182166 uploaded at 3,961,637 B/s on the cold attempt (27.73 s, over the
-    # 25 s truncation rule) and at 18,208,644 B/s on the next one. The next app-changing push is the measurement:
-    # expect one upload attempt and `uploaded in` under 10 s. A second attempt, or any hostname of the project
-    # stalling, means this default goes back off in the next push.
+    # The upload warm-up shares one curl invocation, and so one connection, with the upload itself
+    # (scripts/zerops/push-service.sh). Its rule was: a second upload attempt means this goes back off. Job
+    # 134027998055 needed a second attempt with it on (25.58 s at 4.29 MB/s), so it is off; a dispatch can still try it.
     inputs:
       upload_warmup:
         description: Share one warmed connection with the first upload of each service
         type: boolean
-        default: true
+        default: false
       # A full release (a dispatch, a retry, or the first push after a failed deploy) deploys every service, yet keeps
       # each unit whose committed inputs are unchanged. Only this input rebuilds every unit regardless of its cache.
       rebuild_units:
@@ -51,7 +49,9 @@ defaults:
   run:
     shell: bash
 
-# One deploy at a time; a newer push waits for the running one.
+# One delivery at a time; a newer push waits for the running one. A run that a newer push superseded ends once its own
+# Zerops processes have finished, before its proofs (scripts/zerops/stage-push.sh superseded): GitHub never cancels
+# it, and no two runs ever overlap on Zerops.
 concurrency:
   group: zerops-stage
   cancel-in-progress: false
@@ -63,142 +63,86 @@ env:
   STAGE_N1_URL: https://ontos-stage-n1.web-revolution.cz
 
 jobs:
-  plan:
-    name: Plan selective delivery
+  # Created at push time and holding the only runner the delivery needs: plan, push, verify.
+  deliver:
+    name: Plan, deliver and verify stage
     if: github.ref == 'refs/heads/demo/sales-crm'
     runs-on: ubuntu-24.04
+    # The app deploy's own limit plus the storefronts and the proofs.
+    timeout-minutes: 95
+    # Reading this branch's earlier runs, their plans and their unit builds needs `actions: read`.
+    permissions:
+      actions: read
+      contents: read
+    environment:
+      name: stage-edge
+      deployment: false
     outputs:
       app: ${{ steps.plan.outputs.app }}
       storefront: ${{ steps.plan.outputs.storefront }}
       shop: ${{ steps.plan.outputs.shop }}
       n1: ${{ steps.plan.outputs.n1 }}
-      any: ${{ steps.plan.outputs.any }}
-      full: ${{ steps.plan.outputs.full }}
-      receipt: ${{ steps.plan.outputs.receipt }}
-    steps:
-      - name: Checkout the planned revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      # The planner uses merge-base and diff against the verified receipt, so retain all HEAD ancestry.
-      # It reads no tags or other branches; checkout's fetch-depth: 0 would fetch every ref.
-      - name: Fetch only the planned revision's complete ancestry
-        run: git fetch --no-tags --unshallow origin "$GITHUB_SHA"
-
-      # delivery-plan-cli.mts -> delivery-plan.mts: only effect and @effect/platform-node, both root deps.
-      - name: Setup the planner toolchain
-        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
-        with:
-          working_directory: app
-          minimum_release_age: 24h
-
-      # Cache the installed root importer, not the pnpm store: an exact hit needs no relinking.
-      # The key hashes the install command's own script (any flag change invalidates it), not the whole workflow.
-      # No fallback key: different lockfiles, install policy, patches or toolchains must reinstall.
-      - name: Restore the frozen planner dependencies
-        id: planner-dependencies
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: app/node_modules
-          key: zerops-planner-modules-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml', 'app/package.json', 'app/pnpm-workspace.yaml', 'app/patches/**', 'app/scripts/zerops/install-planner-dependencies.sh') }}
-
-      - name: Install the planner dependencies
-        if: steps.planner-dependencies.outputs.cache-hit != 'true'
-        working-directory: app
-        run: bash scripts/zerops/install-planner-dependencies.sh
-
-      - name: Save the frozen planner dependencies
-        if: steps.planner-dependencies.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: app/node_modules
-          key: ${{ steps.planner-dependencies.outputs.cache-primary-key }}
-
-      # A verified ledger is a cache hint, never proof by itself. Match it to the immediately preceding
-      # successful workflow attempt; a failed/missing run, cache eviction or API failure forces all services.
-      - name: Restore the last verified service source pins
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/zerops-delivery/last-success
-          key: zerops-stage-delivery-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: zerops-stage-delivery-v1-
-
-      - name: Read the preceding workflow result
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/zerops-delivery"
-          # This repository is public. An anonymous bounded read needs no additional token permissions.
-          # Rate limits, malformed responses and missing history all fall back to a full deployment.
-          curl --fail --silent --show-error --max-time 30 \
-            "https://api.github.com/repos/$REPOSITORY/actions/workflows/zerops-stage.yml/runs?branch=demo%2Fsales-crm&per_page=30" \
-            -o "$RUNNER_TEMP/zerops-delivery/prior-runs.json" ||
-            printf '{"workflow_runs":[]}\n' >"$RUNNER_TEMP/zerops-delivery/prior-runs.json"
-
-      # A failed or old rerun can change stage even outside the bounded API history page.
-      # Every deploy attempt publishes this marker BEFORE any remote mutation.
-      - name: Restore the latest attempted delivery
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/zerops-delivery/last-attempt
-          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: zerops-stage-attempt-v1-
-
-      - name: Plan from the last verified release, never HEAD parent
-        id: plan
-        working-directory: app
-        run: mise exec -- node scripts/zerops/delivery-plan-cli.mts plan "$RUNNER_TEMP/zerops-delivery"
-
-      - name: Retain the delivery decision
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zerops-delivery-plan
-          path: ${{ runner.temp }}/zerops-delivery/plan.json
-          retention-days: 30
-
-  # Beside the plan, never after it: this commit's unit identities, computed exactly as a build computes them
-  # (`build-app.sh --digests-only`: the declared build environment, the same table), and each shard's unit list. A build
-  # shard whose cached units all carry these identities reuses them without installing or building
-  # (scripts/zerops/reuse-shard-units.sh). Should this job fail, every shard builds as it always did.
-  # Front path: when every unit's identity equals that of the newest earlier run of this branch that uploaded unit
-  # builds, this job downloads that run's zerops-units-* artifacts (no shard cache is restored), proves every unit in
-  # them by identity and names the run: the build matrix is skipped and the app deploy downloads those artifacts.
-  unit_identities:
-    name: Compute this commit's unit identities
-    if: github.ref == 'refs/heads/demo/sales-crm'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    # Reading another run's artifacts needs `actions: read`.
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      all_reused: ${{ steps.earlier-proof.outputs.all_reused }}
-      units_run_id: ${{ steps.earlier-proof.outputs.run_id }}
+      build_units: ${{ steps.units.outputs.build }}
     env:
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
+      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
+      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
+      ZEROPS_N1_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_N1_STOREFRONT_SERVICE_ID }}
       # Must equal the build job's SHARDS and its matrix: this job prints the shard lists the build shards read.
       SHARDS: 8
-      ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
-      ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
-      ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
-      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
     steps:
+      # Depth 1: the plan reads its changes from GitHub's compare API, and the app push ships this checkout's .git.
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install the identity tooling
+      # The planner (effect, @effect/platform-node) and the unit identities read only the root importer's packages; the
+      # whole workspace installs after the app upload (.github/actions/deliver-stage).
+      - name: Install the planner and identity tooling
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile --filter app
 
-      - name: Write the unit identities and shard lists
+      # Run history, not caches: the newest green run is the verified base, and every later run that changed stage
+      # without being verified hands its services on. Anything unreadable deploys every service.
+      - name: Read the delivery history
         working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/zerops-delivery"
+          bash scripts/zerops/read-delivery-history.sh >"$RUNNER_TEMP/zerops-delivery/history.json"
+          jq -c '{runs: (.runs | length?), mutations, comparison: (.comparison | if . then {base, ancestor, truncated, changed: (.changedPaths | length)} else null end)}' \
+            "$RUNNER_TEMP/zerops-delivery/history.json"
+
+      - name: Plan from the last verified run, never HEAD parent
+        id: plan
+        working-directory: app
+        run: mise exec -- node scripts/zerops/delivery-plan-cli.mts plan "$RUNNER_TEMP/zerops-delivery"
+
+      # Before any mutation: the next run reads this plan back when this one changes stage without being verified.
+      - name: Retain the delivery decision
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zerops-delivery-plan
+          path: ${{ runner.temp }}/zerops-delivery/plan.json
+          overwrite: true
+          retention-days: 30
+
+      # This commit's unit identities, computed exactly as a build computes them (`build-app.sh --digests-only`: the
+      # declared build environment, the same table), and each shard's unit list.
+      - name: Write the unit identities and shard lists
+        if: steps.plan.outputs.app == 'true'
+        working-directory: app
+        env:
+          ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+          ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
+          ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         run: |
           out="$RUNNER_TEMP/zerops-unit-identities"
           mkdir -p "$out"
@@ -211,20 +155,22 @@ jobs:
           cat "$out/shards.tsv"
 
       - name: Retain the unit identities
+        if: steps.plan.outputs.app == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zerops-unit-identities
           path: ${{ runner.temp }}/zerops-unit-identities/
           if-no-files-found: error
+          overwrite: true
           retention-days: 3
 
-      # FRONT PATH (artifacts, not caches). Unit builds (zerops-units-*) exist only in runs whose build matrix ran. That
-      # run's artifacts are reused when its identity table equals this commit's and every unit in them carries this commit's
-      # identity. Anything else (no such run, expired artifacts, a changed unit, any error) leaves the matrix to build
-      # as before; rebuild_units never reuses. The Zerops build proves every kept unit again.
+      # FRONT PATH (artifacts, not caches). The newest earlier run of this branch that holds unit builds (zerops-units-*)
+      # is reused when its identity table equals this commit's and every unit in them carries this commit's identity.
+      # Anything else (no such run, expired artifacts, a changed unit, any error) leaves the build matrix to build;
+      # rebuild_units never reuses. The Zerops build proves every kept unit again.
       - name: Find the newest earlier unit builds of this branch
         id: earlier
-        if: inputs.rebuild_units != true
+        if: steps.plan.outputs.app == 'true' && inputs.rebuild_units != true
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
@@ -258,7 +204,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: zerops-units-*
-          path: ${{ runner.temp }}/earlier/units
+          path: ${{ runner.temp }}/units
           run-id: ${{ steps.earlier.outputs.run_id }}
           github-token: ${{ github.token }}
 
@@ -269,30 +215,72 @@ jobs:
         env:
           EARLIER_RUN_ID: ${{ steps.earlier.outputs.run_id }}
         run: |
-          if bash scripts/zerops/reuse-shard-units.sh prove-archives "$RUNNER_TEMP/zerops-unit-identities" "$RUNNER_TEMP/earlier/units"; then
+          if bash scripts/zerops/reuse-shard-units.sh prove-archives "$RUNNER_TEMP/zerops-unit-identities" "$RUNNER_TEMP/units"; then
             printf 'all_reused=true\nrun_id=%s\n' "$EARLIER_RUN_ID" >>"$GITHUB_OUTPUT"
           else
             echo 'The earlier unit builds are not this commit'"'"'s; the build matrix builds.'
           fi
+
+      # With every unit proven, this job delivers; otherwise the build matrix builds and `deliver_app` delivers.
+      - name: Decide where the units come from
+        id: units
+        env:
+          APP: ${{ steps.plan.outputs.app }}
+          ALL_REUSED: ${{ steps.earlier-proof.outputs.all_reused }}
+        run: |
+          if [ "$APP" = true ] && [ "$ALL_REUSED" != true ]; then
+            echo 'build=true' >>"$GITHUB_OUTPUT"
+            echo 'Units must build: the build matrix runs, then deliver_app delivers and verifies.'
+          else
+            echo 'build=false' >>"$GITHUB_OUTPUT"
+          fi
+
+      # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
+      # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
+      - name: Mark the actual deployment attempt
+        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
+        run: |
+          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
+          test "$current_head" = "$GITHUB_SHA"
+          echo "delivering $GITHUB_SHA; every secret sync and push of this run follows"
+
+      - name: Deliver and verify stage
+        if: steps.plan.outputs.any == 'true' && steps.units.outputs.build != 'true'
+        uses: ./.github/actions/deliver-stage
+        with:
+          app: ${{ steps.plan.outputs.app }}
+          storefront: ${{ steps.plan.outputs.storefront }}
+          shop: ${{ steps.plan.outputs.shop }}
+          n1: ${{ steps.plan.outputs.n1 }}
+          units: ${{ runner.temp }}/units
+          keep-units: ${{ steps.plan.outputs.app }}
+          zerops-token: ${{ secrets.ZEROPS_TOKEN }}
+          owner-secrets: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          smtp-password: ${{ secrets.STAGE_SMTP_PASSWORD }}
+          shop-storefront-api-key: ${{ secrets.SHOP_STOREFRONT_API_KEY }}
+          n1-storefront-api-key: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          cloudflare-zone-id: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
+          zerops-shared-ipv4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+          # A push carries no inputs and does not warm; a dispatch's own value decides.
+          upload-warmup: ${{ github.event.inputs.upload_warmup || 'false' }}
 
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
   # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
   # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
   # The Shell builds alone in shard 0 (measured 74-116 s, no longer the longest unit); the modules are dealt over the
   # two build lanes of shards 1-7 by scripts/zerops/build-shard-units.mts, by their measured build seconds.
-  # SHARDS must equal the matrix below and the one in unit_identities. Seven module shards, not six: over the five
+  # SHARDS must equal the matrix below and the one in the delivery job. Seven module shards, not six: over the five
   # runs that rebuilt every unit, 27 modules over six shards left the slowest lane 14% above the average lane because
   # 4-5 modules pack into two lanes unevenly, and the seventh shard takes the predicted slowest shard from 5.3 to
   # 4.5 min. It adds one runner slot and no cache: a shard's entry holds only its own units, so an extra shard splits
   # the 2.0 GB of zerops-units-v2-* entries instead of duplicating them.
   build:
     name: Build units (shard ${{ matrix.shard }})
-    needs: [plan, unit_identities]
-    # Not blocked by a failed unit_identities job: without its table every shard builds. Skipped only when that job
-    # proved every unit of earlier builds (its front path).
-    if: >-
-      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' &&
-      needs.unit_identities.outputs.all_reused != 'true' }}
+    needs: [deliver]
+    # Only when the delivery found no earlier builds of this commit's units (its front path).
+    if: needs.deliver.outputs.build_units == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -315,7 +303,6 @@ jobs:
           persist-credentials: false
 
       - name: Take this commit's unit identities
-        if: needs.unit_identities.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: zerops-unit-identities
@@ -326,7 +313,6 @@ jobs:
       # nearest older one. Without the identity table the entry has no name: the prefix still restores, nothing saves.
       - name: Name the shard's unit cache entry
         id: unit-cache-key
-        if: needs.unit_identities.result == 'success'
         env:
           SHARD: ${{ matrix.shard }}
         run: |
@@ -355,7 +341,7 @@ jobs:
       # build. Exit 3 means some unit must build; anything else is a failure. rebuild_units always builds.
       - name: Reuse the shard's unchanged units
         id: reuse
-        if: needs.unit_identities.result == 'success' && env.ZEROPS_FORCE_BUILD != 'true'
+        if: env.ZEROPS_FORCE_BUILD != 'true'
         working-directory: app
         env:
           UNIT_CACHE_DIR: ${{ runner.temp }}/zerops-unit-cache
@@ -414,141 +400,17 @@ jobs:
           name: zerops-units-${{ matrix.shard }}
           path: ${{ runner.temp }}/units.tar.zst
           compression-level: 0
-          retention-days: 3
-
-  # Preparing secrets and storefront deployment does not wait for unrelated app unit shards.
-  # STOREFRONT RUNNER PREBUILD (lane STOREFRONT). Each selected storefront is built once here, beside the unit shards:
-  # tsrs typecheck, then `next build` with the build-time environment its zerops.yaml setup declares. The Zerops
-  # `storefront` and `n1` setups only check and unpack this archive (app/zerops.yaml); they never install or build.
-  # deploy_storefront and deploy_shop take `zerops-storefront-storefront` (one AKROS build: brand, key and app id are
-  # runtime service variables), deploy_n1 takes `zerops-storefront-n1`. A storefront the plan keeps is not rebuilt.
-  # A missing archive, or one from another revision or setup, fails that deploy job before any push.
-  build_storefronts:
-    name: Build ${{ matrix.package }} on the runner
-    needs: [plan]
-    if: >-
-      needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true' || needs.plan.outputs.n1 == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      # One storefront's failure must not cancel the other's build: each deploy job needs only its own archive.
-      fail-fast: false
-      matrix:
-        include: >-
-          ${{ fromJSON(format('[{0}{1}{2}]',
-          (needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true') && '{"setup":"storefront","package":"akros-storefront"}' || '',
-          (needs.plan.outputs.storefront == 'true' || needs.plan.outputs.shop == 'true') && needs.plan.outputs.n1 == 'true' && ',' || '',
-          needs.plan.outputs.n1 == 'true' && '{"setup":"n1","package":"n1-storefront"}' || '')) }}
-    env:
-      PKG: ${{ matrix.package }}
-      SETUP: ${{ matrix.setup }}
-      NEXT_TELEMETRY_DISABLED: '1'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-
-      # Webpack's compiler cache only speeds the build; its contents never decide what ships. The entry is named by the
-      # storefront's own sources and the install, so a push that does not touch them saves nothing; a change saves once.
-      # Hashed here, before the build writes into the storefront's directory.
-      - name: Restore Next's compiler cache
-        id: next-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: app/${{ matrix.package }}/.next/cache
-          key: next-cache-v2-${{ matrix.package }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-${{ hashFiles(format('app/{0}/src/**', matrix.package), format('app/{0}/public/**', matrix.package), format('app/{0}/*.ts', matrix.package), format('app/{0}/*.mjs', matrix.package), format('app/{0}/*.json', matrix.package)) }}
-          restore-keys: |
-            next-cache-v2-${{ matrix.package }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-
-            next-cache-v2-${{ matrix.package }}-
-
-      # `next typegen`, then tsrs over Next's tsconfig.json with the generated route types. The build below still runs
-      # Next's own type step too, until the storefronts emit declarations cleanly under the workspace typecheck.
-      - name: Typecheck with tsrs
-        working-directory: app
-        run: mise exec -- pnpm --filter "$PKG" run typecheck
-
-      # The build-time environment of the setup, as zerops.yaml declared it while Zerops built: AKROS reads
-      # STOREFRONT_IMAGE_HOSTS (empty) in next.config.ts; N1 reads nothing at build. No secret is present.
-      # Next's type check holds the owner API types the storefronts import: a cold N1 build peaks near 3.3 GiB, past
-      # Node's default heap (about 2 GiB), so the build gets 4 GiB of the runner's 16 GB. AKROS gets the same.
-      - name: Build the standalone server
-        working-directory: app
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: |
-          if [ "$PKG" = akros-storefront ]; then export STOREFRONT_IMAGE_HOSTS=''; fi
-          mise exec -- pnpm --filter "$PKG" run build
-
-      - name: Save Next's compiler cache
-        if: steps.next-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: app/${{ matrix.package }}/.next/cache
-          key: ${{ steps.next-cache.outputs.cache-primary-key }}
-
-      # The archive unpacks to app/.zerops/runtime/<package> on Zerops, where `start` runs <package>/server.js.
-      # Zerops runs Alpine (musl) and this runner is glibc: a native addon would load on neither side safely, so any
-      # `.node` file fails here. Symlinks must stay relative so they resolve after the move.
-      - name: Pack the standalone server with its manifest
-        run: |
-          out="$RUNNER_TEMP/storefront-runtime"
-          dist="$RUNNER_TEMP/storefront-dist"
-          mkdir -p "$out" "$dist"
-          mv "app/$PKG/.next/standalone" "$out/$PKG"
-          cp -a "app/$PKG/.next/static" "$out/$PKG/$PKG/.next/static"
-          cp -a "app/$PKG/public" "$out/$PKG/$PKG/public"
-          test -f "$out/$PKG/$PKG/server.js"
-          native="$(find "$out" -name '*.node' -print)"
-          if [ -n "$native" ]; then echo "::error::native addons in the standalone server:"; echo "$native"; exit 1; fi
-          absolute="$(find "$out" -type l -lname '/*' -print)"
-          if [ -n "$absolute" ]; then echo "::error::absolute symlinks in the standalone server:"; echo "$absolute"; exit 1; fi
-          tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
-            --file "$dist/.zerops-storefront.tar.gz" -C "$out" "$PKG"
-          # The committed inputs of this build: the storefront, the workspace sources N1 imports, and the install.
-          case "$PKG" in
-            akros-storefront) inputs=(app/akros-storefront) ;;
-            n1-storefront) inputs=(app/n1-storefront app/apps app/packages app/verticals app/tsconfig.json app/tsconfig.base.json) ;;
-          esac
-          inputs+=(app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/patches app/.mise.toml)
-          input_digest="$(git ls-files -s -- "${inputs[@]}" | sha256sum | cut -d' ' -f1)"
-          jq -n --arg setup "$SETUP" --arg package "$PKG" --arg sourceRevision "$GITHUB_SHA" \
-            --arg inputDigest "$input_digest" \
-            --arg archiveSha256 "$(sha256sum "$dist/.zerops-storefront.tar.gz" | cut -d' ' -f1)" \
-            --arg node "$(cd app && mise exec -- node -p process.versions.node)" \
-            --arg arch "$(cd app && mise exec -- node -p process.arch)" \
-            '{setup: $setup, package: $package, sourceRevision: $sourceRevision, inputDigest: $inputDigest,
-              archiveSha256: $archiveSha256, node: $node, arch: $arch, platform: "linux", builtLibc: "glibc",
-              nativeAddons: 0}' >"$dist/.zerops-storefront.json"
-          ls -lh "$dist"
-          cat "$dist/.zerops-storefront.json"
-
-      - name: Upload the storefront archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zerops-storefront-${{ matrix.setup }}
-          path: ${{ runner.temp }}/storefront-dist/
-          include-hidden-files: true
-          if-no-files-found: error
-          compression-level: 0
           overwrite: true
           retention-days: 3
 
-  deploy:
-    name: Prepare independent service deployments
-    needs: [plan]
-    if: >-
-      always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true'
+  # The same delivery once this run's unit builds exist: one more runner, created only when units had to build.
+  deliver_app:
+    name: Deliver and verify stage after the unit builds
+    needs: [deliver, build]
+    if: needs.deliver.outputs.build_units == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    # Reading the cache index before the deploy needs `actions: read`; the deploy itself still needs only
-    # `contents: read`.
+    timeout-minutes: 95
+    # Downloading this run's unit builds needs `actions: read`.
     permissions:
       actions: read
       contents: read
@@ -568,553 +430,41 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Mark the actual deployment attempt
-        # A retry may reuse this run's built artifacts, but must never deploy an older branch head.
-        env:
-          PLANNED_RECEIPT: ${{ needs.plan.outputs.receipt }}
-        run: |
-          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
-          test "$current_head" = "$GITHUB_SHA"
-          printf '%s\n' "$PLANNED_RECEIPT" |
-            jq -e --argjson runId "$GITHUB_RUN_ID" --arg sourceRevision "$GITHUB_SHA" \
-              '.runId==$runId and .validatedHead==$sourceRevision' >/dev/null
-          mkdir -p "$RUNNER_TEMP/zerops-delivery/last-attempt"
-          jq -n --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg sourceRevision "$GITHUB_SHA" '{runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}' \
-            >"$RUNNER_TEMP/zerops-delivery/last-attempt/attempt.json"
-
-      # Future selective plans can use this hint; cache visibility never decides whether valid artifacts deploy.
-      - name: Persist the attempted delivery before any remote mutation
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install the root importer
+        uses: ./.github/actions/install-app
         with:
-          path: ${{ runner.temp }}/zerops-delivery/last-attempt
-          key: zerops-stage-attempt-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          install-args: --trust-lockfile --filter app
 
-      # The owner secret bundle is the one GitHub copy of every owner's runtime secrets. The app host hands each owner
-      # only its own entries; the bundle itself never leaves the supervisor.
-      - name: Sync the owner secret bundle to the app service
-        if: needs.plan.outputs.app == 'true'
-        env:
-          OWNER_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
-
-      # Stage mail uses the Cloudflare Email Service API; zerops.yaml maps this secret to CLOUDFLARE_EMAIL_API_TOKEN.
-      - name: Sync the SMTP password to the app service
-        if: needs.plan.outputs.app == 'true'
-        env:
-          SMTP_PASSWORD: ${{ secrets.STAGE_SMTP_PASSWORD }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" SMTP_PASSWORD SMTP_PASSWORD
-
-      # ŠroubShop runs as its own storefront application `sroubshop-storefront` with its own managed key (the pseudonym
-      # cutover in app/scripts/demo/pseudonymize-akros-demo.md). The key is a stage-edge secret written once by the
-      # operator; both values are service variables of the shop service and take effect with the shop push below.
-      - name: Sync the ŠroubShop storefront identity to the shop service
-        if: needs.plan.outputs.shop == 'true'
-        env:
-          SHOP_STOREFRONT_API_KEY: ${{ secrets.SHOP_STOREFRONT_API_KEY }}
-          SHOP_STOREFRONT_APP_ID: sroubshop-storefront
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" ONTOS_AKROS_STOREFRONT_API_KEY SHOP_STOREFRONT_API_KEY
-          bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" ONTOS_STOREFRONT_APP_ID SHOP_STOREFRONT_APP_ID
-
-      # The N1 storefront key is a stage-edge secret, written once by the operator, and a sensitive service variable of the
-      # n1 service. It is never in Git or a log. A missing secret fails the deploy before any push.
-      - name: Sync the N1 storefront key to the n1 service
-        if: needs.plan.outputs.n1 == 'true'
-        env:
-          ONTOS_N1_STOREFRONT_API_KEY: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_N1_STOREFRONT_SERVICE_ID" ONTOS_N1_STOREFRONT_API_KEY ONTOS_N1_STOREFRONT_API_KEY
-
-      - name: Download the delivery plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-delivery-plan
-          path: ${{ runner.temp }}/zerops-delivery
-
-  deploy_app:
-    name: Deploy and check app
-    needs: [plan, deploy, unit_identities, build]
-    # The unit builds come from this run's matrix, or (matrix skipped) from the earlier run unit_identities proved.
-    if: >-
-      always() && needs.deploy.result == 'success' && needs.plan.outputs.app == 'true' &&
-      (needs.build.result == 'success' ||
-      (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    # Downloading the earlier run's unit builds needs `actions: read`.
-    permissions:
-      actions: read
-      contents: read
-    environment:
-      name: stage-edge
-      deployment: false
-    env:
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
-      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
-      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
-      ZEROPS_N1_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_N1_STOREFRONT_SERVICE_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Download the delivery plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-delivery-plan
-          path: ${{ runner.temp }}/zerops-delivery
       - name: Download the unit builds
-        if: needs.plan.outputs.app == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: zerops-units-*
           path: ${{ runner.temp }}/units
-          run-id: ${{ needs.unit_identities.outputs.units_run_id || github.run_id }}
-          github-token: ${{ github.token }}
 
-      # The push carries every prebuilt dist/ (git-ignored) with the checkout; its digests tell the Zerops build to
-      # keep them, so Zerops only installs the workspace.
-      # The units travel as one zstd archive inside the push, which keeps the package small enough to upload in one
-      # go (pack-prebuilt-units.sh: a long window over the units' shared code, checked with the Zerops build's own
-      # plain decode); the Zerops build unpacks it and keeps every unit whose digest it carries.
-      - name: Pack the unit builds for the push
-        if: needs.plan.outputs.app == 'true'
-        run: |
-          mkdir -p "$RUNNER_TEMP/dists"
-          for archive in "$RUNNER_TEMP"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
-          sh app/scripts/zerops/pack-prebuilt-units.sh "$RUNNER_TEMP/dists" app/.zerops-prebuilt.tar.zst
-
-      - name: Push only services whose inputs changed
-        if: needs.plan.outputs.app == 'true'
-        env:
-          # A push carries no inputs, so it warms by default; a dispatch's own value decides. An unticked dispatch
-          # sends the string 'false', which wins the `||` by being a non-empty string: that is how the input still
-          # turns the warm-up off, and why this must not be "simplified" to a bare boolean.
-          ONTOS_PUSH_UPLOAD_WARMUP: ${{ github.event.inputs.upload_warmup || 'true' }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      # delivery-plan.mts MUTATION_MARKER: the next plan reads whether this step succeeded in any attempt of this run.
+      # It precedes every secret sync and push, so a run that never got past it changed nothing on stage.
+      - name: Mark the actual deployment attempt
         run: |
           current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
           test "$current_head" = "$GITHUB_SHA"
-          jq --arg service 'app' '.services = [.services[] | select(. == $service)]' \
-            "$RUNNER_TEMP/zerops-delivery/plan.json" >"$RUNNER_TEMP/service-plan.json"
-          bash app/scripts/zerops/push-delivery.sh "$RUNNER_TEMP/service-plan.json"
-      - name: Show app runtime and build logs after a failed deploy
-        if: failure()
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          # v1.1.0 ignores --show-build-logs; v1.1.3 fixes its flag lookup.
-          npm install --global @zerops/zcli@1.1.3 >/dev/null
-          zcli login "$ZEROPS_TOKEN" >/dev/null
-          zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
-          # The CLI selects the latest appVersion; correlate it with the failed push process.
-          zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --show-build-logs --limit 300 || true
+          echo "delivering $GITHUB_SHA; every secret sync and push of this run follows"
 
-  deploy_storefront:
-    name: Deploy and check storefront
-    needs: [plan, deploy, build_storefronts]
-    # A kept service deploys nothing and only re-verifies; a selected one needs build_storefronts to have run. Its
-    # own archive is then the gate: a failed build leaves none, and the download below fails before any push.
-    if: >-
-      always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
-      (needs.plan.outputs.storefront != 'true' || needs.build_storefronts.result == 'success' ||
-      needs.build_storefronts.result == 'failure')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    environment:
-      name: stage-edge
-      deployment: false
-    env:
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
-      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
-      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
-      ZEROPS_N1_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_N1_STOREFRONT_SERVICE_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Deliver and verify stage
+        uses: ./.github/actions/deliver-stage
         with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Download the delivery plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-delivery-plan
-          path: ${{ runner.temp }}/zerops-delivery
-      - name: Take the storefront archive built on the runner
-        if: needs.plan.outputs.storefront == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-storefront-storefront
-          path: app
-      # Never a stale or foreign build: the manifest must name this commit and this setup, and the archive its digest.
-      - name: Refuse an archive from another revision or setup
-        if: needs.plan.outputs.storefront == 'true'
-        run: |
-          jq -e --arg sha "$GITHUB_SHA" --arg setup 'storefront' \
-            '.sourceRevision == $sha and .setup == $setup and .nativeAddons == 0' app/.zerops-storefront.json
-          echo "$(jq -r .archiveSha256 app/.zerops-storefront.json)  app/.zerops-storefront.tar.gz" | sha256sum -c -
-      - name: Push only services whose inputs changed
-        if: needs.plan.outputs.storefront == 'true'
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
-          test "$current_head" = "$GITHUB_SHA"
-          jq --arg service 'storefront' '.services = [.services[] | select(. == $service)]' \
-            "$RUNNER_TEMP/zerops-delivery/plan.json" >"$RUNNER_TEMP/service-plan.json"
-          bash app/scripts/zerops/push-delivery.sh "$RUNNER_TEMP/service-plan.json"
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-      - name: Verify storefront after its own deployment (or verify its kept release)
-        working-directory: app
-        run: mise exec -- node scripts/zerops/verify-service.mjs storefront
-
-  deploy_shop:
-    name: Deploy and check shop
-    needs: [plan, deploy, build_storefronts]
-    # A kept service deploys nothing and only re-verifies; a selected one needs build_storefronts to have run. Its
-    # own archive is then the gate: a failed build leaves none, and the download below fails before any push.
-    if: >-
-      always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
-      (needs.plan.outputs.shop != 'true' || needs.build_storefronts.result == 'success' ||
-      needs.build_storefronts.result == 'failure')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    environment:
-      name: stage-edge
-      deployment: false
-    env:
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
-      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
-      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
-      ZEROPS_N1_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_N1_STOREFRONT_SERVICE_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Download the delivery plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-delivery-plan
-          path: ${{ runner.temp }}/zerops-delivery
-      - name: Take the storefront archive built on the runner
-        if: needs.plan.outputs.shop == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-storefront-storefront
-          path: app
-      # Never a stale or foreign build: the manifest must name this commit and this setup, and the archive its digest.
-      - name: Refuse an archive from another revision or setup
-        if: needs.plan.outputs.shop == 'true'
-        run: |
-          jq -e --arg sha "$GITHUB_SHA" --arg setup 'storefront' \
-            '.sourceRevision == $sha and .setup == $setup and .nativeAddons == 0' app/.zerops-storefront.json
-          echo "$(jq -r .archiveSha256 app/.zerops-storefront.json)  app/.zerops-storefront.tar.gz" | sha256sum -c -
-      - name: Push only services whose inputs changed
-        if: needs.plan.outputs.shop == 'true'
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
-          test "$current_head" = "$GITHUB_SHA"
-          jq --arg service 'shop' '.services = [.services[] | select(. == $service)]' \
-            "$RUNNER_TEMP/zerops-delivery/plan.json" >"$RUNNER_TEMP/service-plan.json"
-          bash app/scripts/zerops/push-delivery.sh "$RUNNER_TEMP/service-plan.json"
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-      - name: Verify shop after its own deployment (or verify its kept release)
-        working-directory: app
-        run: mise exec -- node scripts/zerops/verify-service.mjs shop
-
-  deploy_n1:
-    name: Deploy and check n1
-    needs: [plan, deploy, build_storefronts]
-    # A kept service deploys nothing and only re-verifies; a selected one needs build_storefronts to have run. Its
-    # own archive is then the gate: a failed build leaves none, and the download below fails before any push.
-    if: >-
-      always() && needs.deploy.result == 'success' && needs.plan.outputs.any == 'true' &&
-      (needs.plan.outputs.n1 != 'true' || needs.build_storefronts.result == 'success' ||
-      needs.build_storefronts.result == 'failure')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    environment:
-      name: stage-edge
-      deployment: false
-    env:
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
-      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
-      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
-      ZEROPS_N1_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_N1_STOREFRONT_SERVICE_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Download the delivery plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-delivery-plan
-          path: ${{ runner.temp }}/zerops-delivery
-      - name: Take the n1 archive built on the runner
-        if: needs.plan.outputs.n1 == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zerops-storefront-n1
-          path: app
-      # Never a stale or foreign build: the manifest must name this commit and this setup, and the archive its digest.
-      - name: Refuse an archive from another revision or setup
-        if: needs.plan.outputs.n1 == 'true'
-        run: |
-          jq -e --arg sha "$GITHUB_SHA" --arg setup 'n1' \
-            '.sourceRevision == $sha and .setup == $setup and .nativeAddons == 0' app/.zerops-storefront.json
-          echo "$(jq -r .archiveSha256 app/.zerops-storefront.json)  app/.zerops-storefront.tar.gz" | sha256sum -c -
-      - name: Push only services whose inputs changed
-        if: needs.plan.outputs.n1 == 'true'
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
-          test "$current_head" = "$GITHUB_SHA"
-          jq --arg service 'n1' '.services = [.services[] | select(. == $service)]' \
-            "$RUNNER_TEMP/zerops-delivery/plan.json" >"$RUNNER_TEMP/service-plan.json"
-          bash app/scripts/zerops/push-delivery.sh "$RUNNER_TEMP/service-plan.json"
-      # The N1 hostname routes only after the n1 service has its zerops.yaml ports (the push above); before that Zerops
-      # rejects the routing for port 3071. Idempotent Zerops public routing (its certificate follows) plus DNS-only A and AAAA.
-      - name: Route the N1 stage hostname
-        if: needs.plan.outputs.n1 == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
-          ZEROPS_SHARED_IPV4: ${{ vars.ZEROPS_SHARED_IPV4 }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: bash app/scripts/zerops/route-stage-domains.sh ontos-stage-n1.web-revolution.cz "$ZEROPS_N1_STOREFRONT_SERVICE_ID" 3071
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-      - name: Verify n1 after its own deployment (or verify its kept release)
-        working-directory: app
-        run: mise exec -- node scripts/zerops/verify-service.mjs n1
-
-  # Starts with the app deploy, not after it: checkout, install and browsers are ready while Zerops builds, and the
-  # proofs start once `deploy_app` succeeded (Wait for the app deployment). A failed, skipped or cancelled app deploy
-  # fails this job, so `record` (which needs deploy_app and verify) never records it. A plan without the app still
-  # runs Verify: it skips only the wait and proves the kept app release.
-  verify:
-    name: Verify stage
-    needs: [plan, deploy, unit_identities, build]
-    if: >-
-      always() && needs.deploy.result == 'success' &&
-      (needs.plan.outputs.app == 'false' || needs.build.result == 'success' ||
-      (needs.build.result == 'skipped' && needs.unit_identities.outputs.all_reused == 'true'))
-    runs-on: ubuntu-24.04
-    # The app deploy's own limit (75 minutes) plus the proofs.
-    timeout-minutes: 95
-    # Reading this run's jobs needs `actions: read`.
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      # Keep the proven full workspace setup: deployment verification must not depend on a partial install.
-      - name: Install the verification dependencies
-        uses: ./.github/actions/install-app
-        with:
-          install-args: --trust-lockfile
-
-      # The frozen graph covers both clients' revisions and any overrides; no prefix fallback.
-      - name: Use the runner-owned verification browser cache
-        run: printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
-
-      # Name both SDK versions for the image-specific apt archive cache.
-      - name: Name the pinned verification browsers
-        id: verification-browser-versions
-        working-directory: app
-        run: |
-          oauth="$(mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version)"
-          warmup="$(mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core --version)"
-          echo "versions=${oauth// /-}-${warmup// /-}" >>"$GITHUB_OUTPUT"
-
-      - name: Restore the pinned verification browsers
-        id: verification-browsers
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
-
-      # Reuse the gates' apt archive approach, never a cached installed /usr tree. apt checks the current index.
-      - name: Name the Chromium system-library package cache
-        id: chromium-debs
-        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"
-
-      - name: Restore the Chromium system-library packages
-        id: chromium-debs-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/playwright-apt-debs
-          key: ${{ steps.chromium-debs.outputs.key }}
-
-      - name: Seed apt with the cached Chromium system-library packages
-        run: |
-          if [ -d ~/.cache/playwright-apt-debs ]; then
-            sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
-          fi
-
-      # Always validate BOTH clients, even on exact cache hits: a restored archive may be partial.
-      # --with-deps still checks/installs OS libraries; the restored apt packages only avoid their downloads.
-      - name: Install headless Chromium for the OAuth consent screens
-        working-directory: app
-        run: mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright install --with-deps chromium
-
-      - name: Install headless Chromium for the warm-up client
-        working-directory: app
-        run: mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium
-
-      - name: Collect the Chromium system-library packages
-        run: |
-          mkdir -p ~/.cache/playwright-apt-debs
-          touch ~/.cache/playwright-apt-debs/.downloaded
-          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
-
-      - name: Save the Chromium system-library packages
-        if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/playwright-apt-debs
-          key: ${{ steps.chromium-debs.outputs.key }}
-
-      - name: Save the pinned verification browsers
-        if: steps.verification-browsers.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
-
-      # Only a succeeded app deploy lets the proofs start; it fails at once on any other end of that job. A plan without
-      # the app skips this step and proves the kept release. A failed read of the jobs is asked again inside the
-      # deadline. The app deploy is created with this job (same `needs`), so a deploy job still missing after five
-      # minutes was not started in this attempt and fails the wait.
-      - name: Wait for the app deployment
-        if: needs.plan.outputs.app == 'true'
-        timeout-minutes: 80
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
-          WAIT_FOR_BUILD_SHARDS_TIMEOUT: '4800'
-          WAIT_FOR_BUILD_SHARDS_MISSING_TIMEOUT: '300'
-        run: bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1
-
-      - name: Time /cs and OAuth metadata without waiting for storefronts
-        working-directory: app
-        run: mise exec -- node scripts/zerops/verify-service.mjs app
-
-      # Independent read-only warm-up accounts and OAuth proof sessions may run together. Neither result is ignored.
-      # Warm-up keeps its full persona/route coverage, and its five personas now sweep concurrently, one browser
-      # context each (scripts/ops/stage-warmup.mts). Its budget there is a wall-clock cap, not an expected cost: when
-      # it expires with any declared persona or destination unread, the warm-up now FAILS this step instead of
-      # printing a warning and exiting 0, so the visible-identifier gate can no longer pass without having read.
-      - name: Warm declared reads and prove MCP over OAuth side by side
-        working-directory: app
-        env:
-          ONTOS_STAGE_WARMUP_ENABLED: 'true'
-          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
-          ONTOS_OAUTH_ISSUER: ${{ env.STAGE_SHELL_URL }}/shell-super-app-api/oauth
-          E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
-          E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
-        run: |
-          mkdir -p "$E2E_OUT_DIR"
-          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
-          export E2E_PLAYWRIGHT_MODULE
-          mise exec -- node scripts/ops/stage-warmup.mts >"$E2E_OUT_DIR/warmup.log" 2>&1 &
-          warmup_pid=$!
-          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification >"$E2E_OUT_DIR/oauth.log" 2>&1 &
-          oauth_pid=$!
-          trap 'kill "$warmup_pid" "$oauth_pid" 2>/dev/null || true' EXIT
-          warmup_status=0
-          oauth_status=0
-          wait "$warmup_pid" || warmup_status=$?
-          wait "$oauth_pid" || oauth_status=$?
-          trap - EXIT
-          echo '::group::Stage warm-up'
-          cat "$E2E_OUT_DIR/warmup.log"
-          echo "Warm-up exit: $warmup_status"
-          echo '::endgroup::'
-          echo '::group::MCP OAuth proof'
-          cat "$E2E_OUT_DIR/oauth.log"
-          echo "MCP OAuth exit: $oauth_status"
-          echo '::endgroup::'
-          test "$warmup_status" -eq 0 && test "$oauth_status" -eq 0
-
-      - name: Upload the MCP OAuth proof
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mcp-oauth-e2e
-          path: ${{ runner.temp }}/mcp-oauth-e2e
-          if-no-files-found: ignore
-          retention-days: 14
-
-  record:
-    name: Record verified service source pins
-    needs: [plan, build, deploy, deploy_app, deploy_storefront, deploy_shop, deploy_n1, verify]
-    if: >-
-      always() && needs.plan.result == 'success' &&
-      (needs.plan.outputs.any == 'false' ||
-      (needs.deploy.result == 'success' && needs.verify.result == 'success' &&
-      (needs.plan.outputs.app == 'false' ||
-      (needs.deploy_app.result == 'success')) &&
-      needs.deploy_storefront.result == 'success' && needs.deploy_shop.result == 'success' &&
-      needs.deploy_n1.result == 'success'))
-    runs-on: ubuntu-24.04
-    steps:
-      # validatedHead is the input-comparison base, NOT every service's deployed revision. A reused
-      # service retains its real older source pin. The app still publishes its own composition at readiness.
-      - name: Write the verified ledger
-        env:
-          RECEIPT: ${{ needs.plan.outputs.receipt }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/zerops-delivery/last-success"
-          # Record the attempt that passed the real deployment and live proofs, including a job-only retry.
-          printf '%s\n' "$RECEIPT" |
-            jq -e --argjson runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-              --arg sourceRevision "$GITHUB_SHA" \
-              'select(.runId==$runId and .validatedHead==$sourceRevision) | .runAttempt=$runAttempt | .lastAttempt={runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}' \
-              >"$RUNNER_TEMP/zerops-delivery/last-success/receipt.json"
-
-      - name: Save the verified source pins
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/zerops-delivery/last-success
-          key: zerops-stage-delivery-v1-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Retain the verified ledger
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zerops-verified-delivery
-          path: ${{ runner.temp }}/zerops-delivery/last-success/receipt.json
-          retention-days: 30
+          app: 'true'
+          storefront: ${{ needs.deliver.outputs.storefront }}
+          shop: ${{ needs.deliver.outputs.shop }}
+          n1: ${{ needs.deliver.outputs.n1 }}
+          units: ${{ runner.temp }}/units
+          zerops-token: ${{ secrets.ZEROPS_TOKEN }}
+          owner-secrets: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          smtp-password: ${{ secrets.STAGE_SMTP_PASSWORD }}
+          shop-storefront-api-key: ${{ secrets.SHOP_STOREFRONT_API_KEY }}
+          n1-storefront-api-key: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          cloudflare-zone-id: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
+          zerops-shared-ipv4: ${{ vars.ZEROPS_SHARED_IPV4 }}
+          # A push carries no inputs and does not warm; a dispatch's own value decides.
+          upload-warmup: ${{ github.event.inputs.upload_warmup || 'false' }}

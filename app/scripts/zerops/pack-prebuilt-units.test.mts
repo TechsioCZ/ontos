@@ -105,8 +105,8 @@ it.effect('refuses an empty directory and anything that is not a unit output', (
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it('the deploy job packs the unit builds with this script before the push', () => {
-  const workflow = readFileSync(new URL('../../../.github/workflows/zerops-stage.yml', import.meta.url), 'utf-8');
+it('the delivery packs the unit builds with this script before the push', () => {
+  const workflow = readFileSync(new URL('../../../.github/actions/deliver-stage/action.yml', import.meta.url), 'utf-8');
   expect(workflow).toContain(
     'sh app/scripts/zerops/pack-prebuilt-units.sh "$RUNNER_TEMP/dists" app/.zerops-prebuilt.tar.zst',
   );

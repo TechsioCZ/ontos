@@ -1,0 +1,423 @@
+name: Deliver and verify stage
+description: >-
+  Every stage mutation of a run and every proof after it, on one runner (.github/workflows/zerops-stage.yml): the
+  secrets of every selected service before the first push, the app push first, the storefront builds and pushes while
+  Zerops builds the app, then every service's verification once the app is live, and the warm-up and MCP OAuth proofs.
+  Run from the repository root after the caller's own "Mark the actual deployment attempt" step and an install of the
+  root importer (install-app with --filter app).
+
+inputs:
+  app:
+    description: Push the app ('true' or 'false').
+    required: true
+  storefront:
+    description: Push the AKROS storefront ('true' or 'false').
+    required: true
+  shop:
+    description: Push the shop, the AKROS storefront build for ŠroubShop ('true' or 'false').
+    required: true
+  n1:
+    description: Push the N1 storefront ('true' or 'false').
+    required: true
+  units:
+    description: The directory holding the unit builds (units.tar.zst archives at any depth) the app push carries.
+    default: ''
+  keep-units:
+    description: >-
+      Upload those unit builds as this run's zerops-units-0, so the next push that changes no unit reuses them
+      ('true' when they came from an earlier run).
+    default: 'false'
+  upload-warmup:
+    description: Share one warmed connection with the first upload of each service ('true' or 'false').
+    default: 'false'
+  zerops-token:
+    description: The Zerops API token.
+    required: true
+  owner-secrets:
+    description: The owner secret bundle (app).
+    default: ''
+  smtp-password:
+    description: The stage mail API token (app).
+    default: ''
+  shop-storefront-api-key:
+    description: The ŠroubShop storefront key (shop).
+    default: ''
+  n1-storefront-api-key:
+    description: The N1 storefront key (n1).
+    default: ''
+  cloudflare-api-token:
+    description: The Cloudflare token that routes the N1 hostname (n1).
+    default: ''
+  cloudflare-account-id:
+    description: The Cloudflare account (n1).
+    default: ''
+  cloudflare-zone-id:
+    description: The Cloudflare stage zone (n1).
+    default: ''
+  zerops-shared-ipv4:
+    description: The project's shared Zerops IPv4 address (n1).
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Every secret of every selected service, before the first push: a missing secret fails the delivery while stage is
+    # untouched. The owner secret bundle is the one GitHub copy of every owner's runtime secrets; the app host hands
+    # each owner only its own entries. Stage mail uses the Cloudflare Email Service API (zerops.yaml maps SMTP_PASSWORD
+    # to CLOUDFLARE_EMAIL_API_TOKEN). ŠroubShop runs as its own storefront application `sroubshop-storefront` with its
+    # own managed key (app/scripts/demo/pseudonymize-akros-demo.md). The N1 key is a stage-edge secret written once by
+    # the operator. Each takes effect with its service's push below.
+    - name: Sync every selected service's secrets before any push
+      shell: bash
+      env:
+        PUSH_APP: ${{ inputs.app }}
+        PUSH_SHOP: ${{ inputs.shop }}
+        PUSH_N1: ${{ inputs.n1 }}
+        OWNER_SECRETS: ${{ inputs.owner-secrets }}
+        SMTP_PASSWORD: ${{ inputs.smtp-password }}
+        SHOP_STOREFRONT_API_KEY: ${{ inputs.shop-storefront-api-key }}
+        SHOP_STOREFRONT_APP_ID: sroubshop-storefront
+        ONTOS_N1_STOREFRONT_API_KEY: ${{ inputs.n1-storefront-api-key }}
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: |
+        sync=app/scripts/zerops/sync-service-secret.sh
+        if [ "$PUSH_APP" = true ]; then
+          bash "$sync" "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
+          bash "$sync" "$ZEROPS_APP_SERVICE_ID" SMTP_PASSWORD SMTP_PASSWORD
+        fi
+        if [ "$PUSH_SHOP" = true ]; then
+          bash "$sync" "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" ONTOS_AKROS_STOREFRONT_API_KEY SHOP_STOREFRONT_API_KEY
+          bash "$sync" "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" ONTOS_STOREFRONT_APP_ID SHOP_STOREFRONT_APP_ID
+        fi
+        if [ "$PUSH_N1" = true ]; then
+          bash "$sync" "$ZEROPS_N1_STOREFRONT_SERVICE_ID" ONTOS_N1_STOREFRONT_API_KEY ONTOS_N1_STOREFRONT_API_KEY
+        fi
+
+    # The units travel as one zstd archive inside the push (pack-prebuilt-units.sh: a long window over the units'
+    # shared code, checked with the Zerops build's own plain decode); the Zerops build unpacks it and keeps every unit
+    # whose digest it carries, so Zerops only installs the workspace.
+    - name: Pack the unit builds for the push
+      if: inputs.app == 'true'
+      shell: bash
+      env:
+        UNITS: ${{ inputs.units }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/dists"
+        mapfile -t archives < <(find "$UNITS" -type f -name units.tar.zst | LC_ALL=C sort)
+        test "${#archives[@]}" -gt 0
+        for archive in "${archives[@]}"; do tar --extract --zstd --file "$archive" -C "$RUNNER_TEMP/dists"; done
+        sh app/scripts/zerops/pack-prebuilt-units.sh "$RUNNER_TEMP/dists" app/.zerops-prebuilt.tar.zst
+        # The push ships this checkout: anything else in it would make every release identity `workspace` on Zerops.
+        dirty="$(git status --porcelain --untracked-files=all | grep -vxF '?? app/.zerops-prebuilt.tar.zst' || true)"
+        if [ -n "$dirty" ]; then
+          echo '::error::the checkout the app push ships is not this commit:'
+          printf '%s\n' "$dirty" | head -40
+          exit 1
+        fi
+
+    # The app's Zerops process is the longest, so it starts first; every later step runs while Zerops builds it.
+    - name: Push the app
+      id: push-app
+      if: inputs.app == 'true'
+      shell: bash
+      env:
+        ONTOS_PUSH_UPLOAD_WARMUP: ${{ inputs.upload-warmup }}
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: bash app/scripts/zerops/stage-push.sh start app
+
+    # Flattened to one archive per directory, so the artifact keeps one level however often it is handed on.
+    - name: Name the reused unit builds for the next push
+      if: inputs.app == 'true' && inputs.keep-units == 'true'
+      shell: bash
+      env:
+        UNITS: ${{ inputs.units }}
+      run: |
+        keep="$RUNNER_TEMP/units-keep"
+        rm -rf "$keep"
+        index=0
+        while IFS= read -r archive; do
+          mkdir -p "$keep/$index"
+          cp "$archive" "$keep/$index/units.tar.zst"
+          index=$((index + 1))
+        done < <(find "$UNITS" -type f -name units.tar.zst | LC_ALL=C sort)
+
+    - name: Keep the reused unit builds for the next push
+      if: inputs.app == 'true' && inputs.keep-units == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: zerops-units-0
+        path: ${{ runner.temp }}/units-keep/
+        if-no-files-found: error
+        compression-level: 0
+        overwrite: true
+        retention-days: 3
+
+    # The storefront builds and the verification need the whole workspace; the caller installed the root importer.
+    - name: Install the app workspace
+      shell: bash
+      working-directory: app
+      run: mise exec -- pnpm install --frozen-lockfile --trust-lockfile
+
+    # Webpack's compiler cache only speeds the build; its contents never decide what ships. The entry is named by the
+    # storefront's own sources and the install, so a push that does not touch them saves nothing; a change saves once.
+    - name: Restore the AKROS storefront's Next compiler cache
+      id: akros-next-cache
+      if: inputs.storefront == 'true' || inputs.shop == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: app/akros-storefront/.next/cache
+        key: next-cache-v2-akros-storefront-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-${{ hashFiles('app/akros-storefront/src/**', 'app/akros-storefront/public/**', 'app/akros-storefront/*.ts', 'app/akros-storefront/*.mjs', 'app/akros-storefront/*.json') }}
+        restore-keys: |
+          next-cache-v2-akros-storefront-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-
+          next-cache-v2-akros-storefront-
+
+    - name: Build the AKROS storefront
+      if: inputs.storefront == 'true' || inputs.shop == 'true'
+      shell: bash
+      working-directory: app
+      run: bash scripts/zerops/build-storefront.sh akros-storefront storefront
+
+    - name: Save the AKROS storefront's Next compiler cache
+      if: (inputs.storefront == 'true' || inputs.shop == 'true') && steps.akros-next-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: app/akros-storefront/.next/cache
+        key: ${{ steps.akros-next-cache.outputs.cache-primary-key }}
+
+    - name: Push the AKROS storefront and the shop
+      if: inputs.storefront == 'true' || inputs.shop == 'true'
+      shell: bash
+      env:
+        PUSH_STOREFRONT: ${{ inputs.storefront }}
+        PUSH_SHOP: ${{ inputs.shop }}
+        ONTOS_PUSH_UPLOAD_WARMUP: ${{ inputs.upload-warmup }}
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: |
+        if [ "$PUSH_STOREFRONT" = true ]; then bash app/scripts/zerops/stage-push.sh start storefront; fi
+        if [ "$PUSH_SHOP" = true ]; then bash app/scripts/zerops/stage-push.sh start shop; fi
+
+    - name: Restore the N1 storefront's Next compiler cache
+      id: n1-next-cache
+      if: inputs.n1 == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: app/n1-storefront/.next/cache
+        key: next-cache-v2-n1-storefront-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-${{ hashFiles('app/n1-storefront/src/**', 'app/n1-storefront/public/**', 'app/n1-storefront/*.ts', 'app/n1-storefront/*.mjs', 'app/n1-storefront/*.json') }}
+        restore-keys: |
+          next-cache-v2-n1-storefront-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}-
+          next-cache-v2-n1-storefront-
+
+    - name: Build the N1 storefront
+      if: inputs.n1 == 'true'
+      shell: bash
+      working-directory: app
+      run: bash scripts/zerops/build-storefront.sh n1-storefront n1
+
+    - name: Save the N1 storefront's Next compiler cache
+      if: inputs.n1 == 'true' && steps.n1-next-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: app/n1-storefront/.next/cache
+        key: ${{ steps.n1-next-cache.outputs.cache-primary-key }}
+
+    - name: Push the N1 storefront
+      if: inputs.n1 == 'true'
+      shell: bash
+      env:
+        ONTOS_PUSH_UPLOAD_WARMUP: ${{ inputs.upload-warmup }}
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: bash app/scripts/zerops/stage-push.sh start n1
+
+    # After the last upload, so the browser downloads never share the runner's bandwidth with an upload.
+    - name: Use the runner-owned verification browser cache
+      shell: bash
+      run: printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+
+    - name: Name the pinned verification browsers
+      id: verification-browser-versions
+      shell: bash
+      working-directory: app
+      run: |
+        oauth="$(mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright --version)"
+        warmup="$(mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core --version)"
+        echo "versions=${oauth// /-}-${warmup// /-}" >>"$GITHUB_OUTPUT"
+
+    # The frozen graph covers both clients' revisions and any overrides; no prefix fallback.
+    - name: Restore the pinned verification browsers
+      id: verification-browsers
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/zerops-verify-browsers
+        key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
+
+    # Reuse the gates' apt archive approach, never a cached installed /usr tree. apt checks the current index.
+    - name: Name the Chromium system-library package cache
+      id: chromium-debs
+      shell: bash
+      run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ steps.verification-browser-versions.outputs.versions }}" >>"$GITHUB_OUTPUT"
+
+    - name: Restore the Chromium system-library packages
+      id: chromium-debs-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/playwright-apt-debs
+        key: ${{ steps.chromium-debs.outputs.key }}
+
+    - name: Seed apt with the cached Chromium system-library packages
+      shell: bash
+      run: |
+        if [ -d ~/.cache/playwright-apt-debs ]; then
+          sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
+        fi
+
+    # Always validate BOTH clients, even on exact cache hits: a restored archive may be partial.
+    # --with-deps still checks/installs OS libraries; the restored apt packages only avoid their downloads.
+    - name: Install headless Chromium for the OAuth consent screens
+      shell: bash
+      working-directory: app
+      run: mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright install --with-deps chromium
+
+    - name: Install headless Chromium for the warm-up client
+      shell: bash
+      working-directory: app
+      run: mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium
+
+    - name: Collect the Chromium system-library packages
+      shell: bash
+      run: |
+        mkdir -p ~/.cache/playwright-apt-debs
+        touch ~/.cache/playwright-apt-debs/.downloaded
+        find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
+
+    - name: Save the Chromium system-library packages
+      if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/playwright-apt-debs
+        key: ${{ steps.chromium-debs.outputs.key }}
+
+    - name: Save the pinned verification browsers
+      if: steps.verification-browsers.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/zerops-verify-browsers
+        key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
+
+    - name: Wait for the storefront deployments
+      if: inputs.storefront == 'true' || inputs.shop == 'true' || inputs.n1 == 'true'
+      shell: bash
+      env:
+        PUSH_STOREFRONT: ${{ inputs.storefront }}
+        PUSH_SHOP: ${{ inputs.shop }}
+        PUSH_N1: ${{ inputs.n1 }}
+      run: |
+        services=()
+        if [ "$PUSH_STOREFRONT" = true ]; then services+=(storefront); fi
+        if [ "$PUSH_SHOP" = true ]; then services+=(shop); fi
+        if [ "$PUSH_N1" = true ]; then services+=(n1); fi
+        bash app/scripts/zerops/stage-push.sh wait "${services[@]}"
+
+    # The N1 hostname routes only after the n1 service has its zerops.yaml ports (the push above); before that Zerops
+    # rejects the routing for port 3071. Idempotent Zerops public routing (its certificate follows) plus DNS-only A and
+    # AAAA.
+    - name: Route the N1 stage hostname
+      if: inputs.n1 == 'true'
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        CLOUDFLARE_ZONE_ID: ${{ inputs.cloudflare-zone-id }}
+        ZEROPS_SHARED_IPV4: ${{ inputs.zerops-shared-ipv4 }}
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: bash app/scripts/zerops/route-stage-domains.sh ontos-stage-n1.web-revolution.cz "$ZEROPS_N1_STOREFRONT_SERVICE_ID" 3071
+
+    - name: Wait for the app deployment
+      if: inputs.app == 'true'
+      shell: bash
+      run: bash app/scripts/zerops/stage-push.sh wait app
+
+    # Every push this job started ends before the job does, even after a failed step, so the next run never pushes
+    # over a Zerops process of this one.
+    - name: Wait for every push this job started
+      if: failure()
+      shell: bash
+      run: bash app/scripts/zerops/stage-push.sh wait-started
+
+    - name: Show app runtime and build logs after a failed deploy
+      if: failure() && steps.push-app.outcome != 'skipped'
+      shell: bash
+      env:
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: |
+        # v1.1.0 ignores --show-build-logs; v1.1.3 fixes its flag lookup.
+        npm install --global @zerops/zcli@1.1.3 >/dev/null
+        zcli login "$ZEROPS_TOKEN" >/dev/null
+        zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --limit 300 || true
+        # The CLI selects the latest appVersion; correlate it with the failed push process.
+        zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_APP_SERVICE_ID" --show-build-logs --limit 300 || true
+
+    # Every deployment of this run has finished on Zerops. A newer push replaces this release, and its own run
+    # redeploys whatever this run changed and verifies stage.
+    - name: End here when a newer push superseded this run
+      shell: bash
+      run: bash app/scripts/zerops/stage-push.sh superseded
+
+    # The storefronts sign in through the app, so they are verified only once the app is live: never against an app
+    # that is swapping containers. A kept service deploys nothing and is verified all the same.
+    - name: Verify every service against the live app
+      shell: bash
+      working-directory: app
+      run: |
+        mise exec -- node scripts/zerops/verify-service.mjs app
+        for service in storefront shop n1; do
+          mise exec -- node scripts/zerops/verify-service.mjs "$service"
+        done
+
+    # Independent read-only warm-up accounts and OAuth proof sessions may run together. Neither result is ignored.
+    # Warm-up keeps its full persona/route coverage, and its five personas sweep concurrently, one browser context each
+    # (scripts/ops/stage-warmup.mts). Its budget there is a wall-clock cap, not an expected cost: when it expires with
+    # any declared persona or destination unread, the warm-up FAILS this step, so the visible-identifier gate can never
+    # pass without having read.
+    - name: Warm declared reads and prove MCP over OAuth side by side
+      shell: bash
+      working-directory: app
+      env:
+        ONTOS_STAGE_WARMUP_ENABLED: 'true'
+        E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
+        E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
+      run: |
+        # The workflow's STAGE_SHELL_URL: the Shell both proofs sign in to, and the OAuth issuer it serves.
+        export ONTOS_SHELL_URL="${STAGE_SHELL_URL:?STAGE_SHELL_URL is required}"
+        export ONTOS_OAUTH_ISSUER="$STAGE_SHELL_URL/shell-super-app-api/oauth"
+        mkdir -p "$E2E_OUT_DIR"
+        E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+        export E2E_PLAYWRIGHT_MODULE
+        mise exec -- node scripts/ops/stage-warmup.mts >"$E2E_OUT_DIR/warmup.log" 2>&1 &
+        warmup_pid=$!
+        mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification >"$E2E_OUT_DIR/oauth.log" 2>&1 &
+        oauth_pid=$!
+        trap 'kill "$warmup_pid" "$oauth_pid" 2>/dev/null || true' EXIT
+        warmup_status=0
+        oauth_status=0
+        wait "$warmup_pid" || warmup_status=$?
+        wait "$oauth_pid" || oauth_status=$?
+        trap - EXIT
+        echo '::group::Stage warm-up'
+        cat "$E2E_OUT_DIR/warmup.log"
+        echo "Warm-up exit: $warmup_status"
+        echo '::endgroup::'
+        echo '::group::MCP OAuth proof'
+        cat "$E2E_OUT_DIR/oauth.log"
+        echo "MCP OAuth exit: $oauth_status"
+        echo '::endgroup::'
+        test "$warmup_status" -eq 0 && test "$oauth_status" -eq 0
+
+    - name: Upload the MCP OAuth proof
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: mcp-oauth-e2e
+        path: ${{ runner.temp }}/mcp-oauth-e2e
+        if-no-files-found: ignore
+        overwrite: true
+        retention-days: 14

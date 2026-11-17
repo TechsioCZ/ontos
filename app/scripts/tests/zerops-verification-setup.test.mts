@@ -6,14 +6,16 @@ import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 import { parse } from 'yaml';
 
+import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const OAUTH_INSTALL =
   'mise exec -- pnpm --config.verify-deps-before-run=false --filter @app/shell-super-app exec playwright install --with-deps chromium';
 const WARMUP_INSTALL = 'mise exec -- pnpm --config.verify-deps-before-run=false exec playwright-core install chromium';
 const RESTORE = 'Restore the pinned verification browsers';
+const BROWSER_CACHE = 'Use the runner-owned verification browser cache';
+const WARMUP_CLIENT = 'Install headless Chromium for the warm-up client';
 const SAVE = 'Save the pinned verification browsers';
-const WAIT_FOR_APP = 'Wait for the app deployment';
 const CACHE_KEY = `zerops-verify-browsers-v1-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}`;
 const Step = Schema.Struct({
   'continue-on-error': Schema.optionalKey(Schema.Boolean),
@@ -25,32 +27,40 @@ const Step = Schema.Struct({
   with: Schema.optionalKey(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean]))),
   'working-directory': Schema.optionalKey(Schema.String),
 });
-const Workflow = Schema.Struct({
-  jobs: Schema.Struct({
-    deploy: Schema.Struct({ steps: Schema.Array(Step) }),
-    plan: Schema.Struct({ steps: Schema.Array(Step) }),
-    record: Schema.Struct({ if: Schema.String, steps: Schema.Array(Step) }),
-    verify: Schema.Struct({
-      if: Schema.String,
-      steps: Schema.Array(Step),
-      'timeout-minutes': Schema.Number,
-    }),
-  }),
-});
+const Job = Schema.Struct({ steps: Schema.Array(Step), 'timeout-minutes': Schema.Number });
+const Workflow = Schema.Struct({ jobs: Schema.Struct({ deliver: Job, deliver_app: Job }) });
+const Action = Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(Step) }) });
+const repository = path.resolve(import.meta.dirname, '../../..');
 const readWorkflow = Effect.gen(function* readVerificationWorkflow() {
   const fs = yield* FileSystem.FileSystem;
-  const source = yield* fs.readFileString(
-    path.resolve(import.meta.dirname, '../../../.github/workflows/zerops-stage.yml'),
-  );
+  const source = yield* fs.readFileString(path.join(repository, '.github/workflows/zerops-stage.yml'));
   return yield* Schema.decodeUnknownEffect(Workflow)(parse(source));
 });
+/** The delivery both delivering jobs run (.github/actions/deliver-stage): pushes, then every proof. */
+const readDelivery = Effect.gen(function* readDeliveryAction() {
+  const fs = yield* FileSystem.FileSystem;
+  const source = yield* fs.readFileString(path.join(repository, '.github/actions/deliver-stage/action.yml'));
+  return (yield* Schema.decodeUnknownEffect(Action)(parse(source))).runs.steps;
+});
+/** The verification steps of the delivery: browser setup and the proofs, without its pushes and waits. */
+const VERIFICATION_STEPS = new Set([
+  BROWSER_CACHE,
+  'Name the pinned verification browsers',
+  'Name the Chromium system-library package cache',
+  'Seed apt with the cached Chromium system-library packages',
+  'Install headless Chromium for the OAuth consent screens',
+  WARMUP_CLIENT,
+  'Collect the Chromium system-library packages',
+  'Verify every service against the live app',
+  'Warm declared reads and prove MCP over OAuth side by side',
+]);
 const installerSteps = (steps: readonly (typeof Step.Type)[]) =>
   steps.filter((step) => step.run === OAUTH_INSTALL || step.run === WARMUP_INSTALL);
 
 it.effect('keys the shared browser cache to the frozen graph, toolchain and runner platform with no fallback', () =>
   Effect.gen(function* exactBrowserCache() {
-    const { verify } = (yield* readWorkflow).jobs;
-    const configure = verify.steps.find((step) => step.name === 'Use the runner-owned verification browser cache');
+    const verify = { steps: yield* readDelivery };
+    const configure = verify.steps.find((step) => step.name === BROWSER_CACHE);
     expect(configure?.run).toBe(
       `printf 'PLAYWRIGHT_BROWSERS_PATH=%s/zerops-verify-browsers\\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"`,
     );
@@ -58,7 +68,8 @@ it.effect('keys the shared browser cache to the frozen graph, toolchain and runn
     for (const name of [RESTORE, SAVE]) {
       const step = verify.steps.find((entry) => entry.name === name);
       expect(step?.with?.key).toBe(CACHE_KEY);
-      expect(step?.with?.path).toBe(`\${{ env.PLAYWRIGHT_BROWSERS_PATH }}`);
+      // The path the exported PLAYWRIGHT_BROWSERS_PATH names.
+      expect(step?.with?.path).toBe(`\${{ runner.temp }}/zerops-verify-browsers`);
       expect(step?.with?.['restore-keys']).toBeUndefined();
       expect(step?.uses).toContain('@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
     }
@@ -66,7 +77,7 @@ it.effect('keys the shared browser cache to the frozen graph, toolchain and runn
 );
 it.effect('always validates both pinned clients and keeps OS dependency installation on hits as well as misses', () =>
   Effect.gen(function* installerOrdering() {
-    const { steps } = (yield* readWorkflow).jobs.verify;
+    const steps = yield* readDelivery;
     const installers = installerSteps(steps);
     expect(installers.map((step) => step.run)).toEqual([OAUTH_INSTALL, WARMUP_INSTALL]);
     for (const step of installers) {
@@ -75,9 +86,11 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
       expect(step.env).toBeUndefined();
     }
     const index = (name: string) => steps.findIndex((step) => step.name === name);
-    expect(index(RESTORE)).toBeGreaterThan(index('Install the verification dependencies'));
-    expect(index(RESTORE)).toBeGreaterThan(index('Use the runner-owned verification browser cache'));
-    expect(index(SAVE)).toBeGreaterThan(index('Install headless Chromium for the warm-up client'));
+    expect(index(RESTORE)).toBeGreaterThan(index('Install the app workspace'));
+    // After the last upload: the browser downloads never share the runner's bandwidth with one.
+    expect(index(BROWSER_CACHE)).toBeGreaterThan(index('Push the N1 storefront'));
+    expect(index(RESTORE)).toBeGreaterThan(index(BROWSER_CACHE));
+    expect(index(SAVE)).toBeGreaterThan(index(WARMUP_CLIENT));
     expect(index(SAVE)).toBeLessThan(index('Warm declared reads and prove MCP over OAuth side by side'));
     for (const command of [
       'scripts/ops/stage-warmup.mts',
@@ -85,7 +98,7 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
       'scripts/demo/prove-mcp-oauth.mts',
     ]) {
       const proof = steps.findIndex((step) => step.run?.includes(command) === true);
-      expect(proof, command).toBeGreaterThan(index('Install headless Chromium for the warm-up client'));
+      expect(proof, command).toBeGreaterThan(index(WARMUP_CLIENT));
     }
     expect(steps.find((step) => step.name === SAVE)?.if).toBe(
       "steps.verification-browsers.outputs.cache-hit != 'true'",
@@ -97,104 +110,43 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
     }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
-const retryHead = 'a'.repeat(40);
-const retryReceipt = {
-  lastAttempt: { runAttempt: 1, runId: 123, sourceRevision: retryHead },
-  runAttempt: 1,
-  runId: 123,
-  schemaVersion: 1,
-  services: { app: retryHead, storefront: 'b'.repeat(40) },
-  validatedHead: retryHead,
-};
-
+const HEAD = 'a'.repeat(40);
 for (const scenario of [
-  { expectedStatus: 0, name: 'same-source job retry', remoteHead: retryHead, runId: '123', source: retryHead },
-  { expectedStatus: 1, name: 'superseded source', remoteHead: 'c'.repeat(40), runId: '123', source: retryHead },
-  { expectedStatus: 1, name: 'wrong planned source', remoteHead: retryHead, runId: '123', source: 'd'.repeat(40) },
-  { expectedStatus: 1, name: 'another run', remoteHead: retryHead, runId: '456', source: retryHead },
+  { marks: true, name: 'the planned head', remoteHead: HEAD },
+  { marks: false, name: 'a superseded head', remoteHead: 'c'.repeat(40) },
+  { marks: false, name: 'an unreadable head', remoteHead: '' },
 ]) {
-  it.effect(`checks real source identity for ${scenario.name} instead of requiring a matching attempt number`, () =>
-    Effect.gen(function* retrySourceAdmission() {
-      const fs = yield* FileSystem.FileSystem;
-      const { steps } = (yield* readWorkflow).jobs.deploy;
-      const command = steps.find((step) => step.name === 'Mark the actual deployment attempt')?.run;
-      if (command === undefined) {
-        return yield* Effect.die('The deploy must check the attempted source');
-      }
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const git = path.join(directory, 'git');
-      yield* fs.writeFileString(git, '#!/bin/bash\nprintf \'%s\\trefs/heads/demo/sales-crm\\n\' "$REMOTE_HEAD"\n');
-      yield* fs.chmod(git, 0o700);
-      const receipt = { ...retryReceipt, validatedHead: scenario.source };
-      const result = yield* collectToolingProcess(
-        ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', command], {
-          env: {
-            GITHUB_RUN_ATTEMPT: '2',
-            GITHUB_RUN_ID: scenario.runId,
-            GITHUB_SHA: retryHead,
-            PATH: `${directory}:${yield* Config.String('PATH')}`,
-            PLANNED_RECEIPT: JSON.stringify(receipt),
-            REMOTE_HEAD: scenario.remoteHead,
-            RUNNER_TEMP: directory,
-          },
-        }),
-      );
-      expect(result.status).toBe(scenario.expectedStatus);
-      const marker = path.join(directory, 'zerops-delivery/last-attempt/attempt.json');
-      if (scenario.expectedStatus === 0) {
-        expect(
-          Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(yield* fs.readFileString(marker)),
-        ).toEqual({
-          runAttempt: 2,
-          runId: 123,
-          sourceRevision: retryHead,
-        });
-      } else {
-        expect(yield* fs.exists(marker)).toBe(false);
-      }
-      return yield* Effect.void;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+  for (const job of ['deliver', 'deliver_app'] as const) {
+    it.effect(`${job} marks the attempt only for ${scenario.name}`, () =>
+      Effect.gen(function* markAttempt() {
+        const fs = yield* FileSystem.FileSystem;
+        const { steps } = (yield* readWorkflow).jobs[job];
+        const command = steps.find((step) => step.name === MUTATION_MARKER)?.run;
+        if (command === undefined) {
+          return yield* Effect.die('The delivery must mark its attempt');
+        }
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const git = path.join(directory, 'git');
+        yield* fs.writeFileString(
+          git,
+          '#!/bin/bash\n[ -n "$REMOTE_HEAD" ] || exit 2\nprintf \'%s\\trefs/heads/demo/sales-crm\\n\' "$REMOTE_HEAD"\n',
+        );
+        yield* fs.chmod(git, 0o700);
+        const result = yield* collectToolingProcess(
+          ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', command], {
+            env: {
+              GITHUB_SHA: HEAD,
+              PATH: `${directory}:${yield* Config.String('PATH')}`,
+              REMOTE_HEAD: scenario.remoteHead,
+            },
+          }),
+        );
+        expect(result.status === 0).toBe(scenario.marks);
+        return yield* Effect.void;
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 }
-
-it.effect('records the verified retry while preserving the actual per-service source pins', () =>
-  Effect.gen(function* recordVerifiedRetry() {
-    const fs = yield* FileSystem.FileSystem;
-    const { jobs } = yield* readWorkflow;
-    const command = jobs.record.steps.find((step) => step.name === 'Write the verified ledger')?.run;
-    if (command === undefined) {
-      return yield* Effect.die('The verified delivery must retain its source pins');
-    }
-    const directory = yield* fs.makeTempDirectoryScoped();
-    const result = yield* collectToolingProcess(
-      ChildProcess.make('/bin/bash', ['-e', '-o', 'pipefail', '-c', command], {
-        env: {
-          GITHUB_RUN_ATTEMPT: '2',
-          GITHUB_RUN_ID: '123',
-          GITHUB_SHA: retryHead,
-          PATH: yield* Config.String('PATH'),
-          RECEIPT: JSON.stringify(retryReceipt),
-          RUNNER_TEMP: directory,
-        },
-      }),
-    );
-    expect(result.status).toBe(0);
-    const recorded = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(
-      yield* fs.readFileString(path.join(directory, 'zerops-delivery/last-success/receipt.json')),
-    );
-    expect(recorded).toEqual({
-      ...retryReceipt,
-      lastAttempt: { runAttempt: 2, runId: 123, sourceRevision: retryHead },
-      runAttempt: 2,
-    });
-    const persistence = jobs.deploy.steps.find(
-      (step) => step.name === 'Persist the attempted delivery before any remote mutation',
-    );
-    expect(persistence?.['continue-on-error']).toBe(true);
-    expect(jobs.deploy.steps.some((step) => step.name.includes('durable attempt marker'))).toBe(false);
-    return yield* Effect.void;
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
 
 const fakeMise = `#!/bin/bash
 printf '%s\\n' "$*" >>"$SETUP_CALLS"
@@ -204,7 +156,7 @@ for (const cacheState of ['miss', 'hit', 'partial-or-wrong-revision']) {
   it.effect(`runs both native installers for ${cacheState} before allowing proofs`, () =>
     Effect.gen(function* cacheRecoveryCommands() {
       const fs = yield* FileSystem.FileSystem;
-      const { steps } = (yield* readWorkflow).jobs.verify;
+      const steps = yield* readDelivery;
       const directory = yield* fs.makeTempDirectoryScoped();
       const bin = path.join(directory, 'mise');
       yield* fs.writeFileString(bin, fakeMise);
@@ -230,7 +182,7 @@ for (const cacheState of ['miss', 'hit', 'partial-or-wrong-revision']) {
 it.effect('keeps browser setup failures blocking rather than running proofs with an absent binary', () =>
   Effect.gen(function* installFailure() {
     const fs = yield* FileSystem.FileSystem;
-    const { steps } = (yield* readWorkflow).jobs.verify;
+    const steps = yield* readDelivery;
     const directory = yield* fs.makeTempDirectoryScoped();
     const bin = path.join(directory, 'mise');
     yield* fs.writeFileString(bin, fakeMise);
@@ -247,37 +199,34 @@ it.effect('keeps browser setup failures blocking rather than running proofs with
     expect(result.stdout).not.toContain('proofs-ready');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
-it.effect('preserves mandatory verification and source-pin publication', () =>
+it.effect('verifies every service only after the app is live, with no condition on any proof', () =>
   Effect.gen(function* proofGatesUnchanged() {
     const { jobs } = yield* readWorkflow;
-    // Verify is prepared beside the app deploy; its proofs start only after that deploy succeeded.
-    expect(jobs.verify['timeout-minutes']).toBe(95);
-    expect(jobs.verify.if).toContain("needs.deploy.result == 'success'");
-    const wait = jobs.verify.steps.findIndex((step) => step.name === WAIT_FOR_APP);
-    expect(jobs.verify.steps[wait]?.if).toBe("needs.plan.outputs.app == 'true'");
-    expect(jobs.verify.steps[wait]?.run).toBe(
-      "bash scripts/wait-for-build-shards.sh finished 'Deploy and check app' 1",
-    );
-    expect(jobs.verify.steps[wait]?.['continue-on-error']).toBeUndefined();
-    for (const command of ['scripts/zerops/verify-service.mjs app', 'scripts/demo/prove-mcp-oauth.mts']) {
-      const proof = jobs.verify.steps.findIndex((step) => step.run?.includes(command) === true);
-      expect(proof, command).toBeGreaterThan(wait);
+    expect(jobs.deliver['timeout-minutes']).toBe(95);
+    expect(jobs.deliver_app['timeout-minutes']).toBe(95);
+    const steps = yield* readDelivery;
+    const index = (name: string) => steps.findIndex((step) => step.name === name);
+    const waitApp = index('Wait for the app deployment');
+    const waitStorefronts = index('Wait for the storefront deployments');
+    expect(steps[waitApp]?.run).toBe('bash app/scripts/zerops/stage-push.sh wait app');
+    expect(steps[waitApp]?.['continue-on-error']).toBeUndefined();
+    // A superseded run ends after its own Zerops processes and before its proofs.
+    const superseded = index('End here when a newer push superseded this run');
+    expect(superseded).toBeGreaterThan(Math.max(waitApp, waitStorefronts));
+    for (const command of [
+      'scripts/zerops/verify-service.mjs app',
+      'scripts/zerops/verify-service.mjs "$service"',
+      'scripts/ops/stage-warmup.mts',
+      'scripts/demo/prove-mcp-oauth.mts --variant=1 --verification',
+    ]) {
+      const proof = steps.findIndex((step) => step.run?.includes(command) === true);
+      expect(proof, command).toBeGreaterThan(superseded);
+      expect(steps[proof]?.if, command).toBeUndefined();
+      expect(steps[proof]?.['continue-on-error'], command).toBeUndefined();
     }
-    expect(jobs.record.if).toContain("needs.verify.result == 'success'");
-    expect(jobs.record.if).toContain("needs.deploy_app.result == 'success'");
-    const probe = jobs.verify.steps.find(
-      (step) => step.name === 'Time /cs and OAuth metadata without waiting for storefronts',
+    expect(steps[index('Verify every service against the live app')]?.run).toContain(
+      'for service in storefront shop n1',
     );
-    const oauth = jobs.verify.steps.find(
-      (step) => step.run?.includes('scripts/demo/prove-mcp-oauth.mts --variant=1 --verification') === true,
-    );
-    for (const step of [probe, oauth]) {
-      expect(step).toBeDefined();
-      expect(step?.if).toBeUndefined();
-      expect(step?.['continue-on-error']).toBeUndefined();
-    }
-    expect(probe?.run).toBe('mise exec -- node scripts/zerops/verify-service.mjs app');
-    expect(oauth?.run).toContain('scripts/demo/prove-mcp-oauth.mts --variant=1 --verification');
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -313,7 +262,7 @@ case "$*" in
     echo oauth-output
     exit "$OAUTH_EXIT"
     ;;
-  *"scripts/zerops/verify-service.mjs app") echo service-output ;;
+  *"scripts/zerops/verify-service.mjs "*) echo "service-output $*" ;;
   *) echo "unexpected mise invocation: $*" >&2; exit 98 ;;
 esac
 `;
@@ -344,8 +293,8 @@ for (const scenario of [
   it.effect(`executes Verify scripts under strict Bash when ${scenario.name}`, () =>
     Effect.gen(function* executeWorkflowScripts() {
       const fs = yield* FileSystem.FileSystem;
-      const { jobs } = yield* readWorkflow;
-      const { steps } = jobs.verify;
+      const steps = (yield* readDelivery).filter((step) => VERIFICATION_STEPS.has(step.name));
+      expect(steps.map((step) => step.name).toSorted()).toEqual([...VERIFICATION_STEPS].toSorted());
       const directory = yield* fs.makeTempDirectoryScoped();
       const app = path.join(directory, 'app');
       const bin = path.join(directory, 'bin');
@@ -382,13 +331,13 @@ for (const scenario of [
         PATH: `${bin}:${yield* Config.String('PATH')}`,
         RUNNER_TEMP: directory,
         SETUP_CALLS: calls,
+        STAGE_SHELL_URL: 'https://shell.example.test',
         WARMUP_EXIT: String(scenario.warmup),
         WARMUP_STARTED: path.join(directory, 'warmup-started'),
       };
       let proofRan = false;
       for (const step of steps) {
-        // The deploy wait reads this run's jobs from the Actions API; the assertions above pin it.
-        if (step.run === undefined || step.name === WAIT_FOR_APP) {
+        if (step.run === undefined) {
           continue;
         }
         // GitHub expands expressions before invoking Bash; leave all shell commands and substitutions untouched.
@@ -428,7 +377,9 @@ for (const scenario of [
       const invocations = recorded.trim().split('\n');
       expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(1);
       expect(invocations.filter((call) => call === WARMUP_INSTALL.replace('mise ', ''))).toHaveLength(1);
-      expect(recorded).toContain('exec -- node scripts/zerops/verify-service.mjs app');
+      for (const service of ['app', 'storefront', 'shop', 'n1']) {
+        expect(recorded).toContain(`exec -- node scripts/zerops/verify-service.mjs ${service}`);
+      }
       expect(recorded).toContain('sudo find ');
       expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
       expect(yield* fs.readFileString(path.join(cached, 'downloaded.deb'))).toBe('downloaded package');
@@ -436,17 +387,18 @@ for (const scenario of [
   );
 }
 
-it.effect('uses the proven full workspace install and bypasses pre-run verification in the browser job', () =>
+it.effect('installs the whole workspace once and bypasses pre-run verification for every pnpm command it runs', () =>
   Effect.gen(function* completeVerificationSetup() {
-    const { jobs } = yield* readWorkflow;
-    expect(
-      jobs.verify.steps.find((step) => step.uses === './.github/actions/install-app')?.with?.['install-args'],
-    ).toBe('--trust-lockfile');
-    for (const job of [jobs.plan, jobs.verify]) {
-      for (const step of job.steps) {
-        for (const invocation of (step.run ?? '').matchAll(/mise exec -- pnpm (?<arguments>[^\n]+)/gu)) {
-          expect(invocation.groups?.arguments, step.name).toMatch(/^--config\.verify-deps-before-run=false /u);
+    const steps = yield* readDelivery;
+    expect(steps.find((step) => step.name === 'Install the app workspace')?.run).toBe(
+      'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
+    );
+    for (const step of steps) {
+      for (const invocation of (step.run ?? '').matchAll(/mise exec -- pnpm (?<arguments>[^\n]+)/gu)) {
+        if (invocation.groups?.arguments?.startsWith('install ') === true) {
+          continue;
         }
+        expect(invocation.groups?.arguments, step.name).toMatch(/^--config\.verify-deps-before-run=false /u);
       }
     }
   }).pipe(Effect.provide(NodeServices.layer)),

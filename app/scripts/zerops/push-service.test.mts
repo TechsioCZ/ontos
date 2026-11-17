@@ -280,6 +280,8 @@ it.live(
         'build and deploy process process-N for app version version-N',
         'process state: FINISHED',
         'app deployed in Ns',
+        // The fake API answers no app version and reports no timestamps; Zerops reports its phases here.
+        'zerops timeline: no timestamps readable',
       ]);
       expect(result.stdout).not.toContain(TOKEN);
       expect(result.stdout).not.toContain('/upload');
@@ -515,7 +517,7 @@ it('omits non-build inputs per service without mutating the runner index or weak
   expect(source).toContain('must not\n# scale with package size');
 });
 
-/** The runner's storefront build, as build_storefronts uploads it and the deploy job downloads it into app/. */
+/** The runner's storefront build, as scripts/zerops/build-storefront.sh stages it under app/. */
 const STOREFRONT_ARCHIVE = {
   'app/.zerops-storefront.json': '{"setup":"storefront"}\n',
   'app/.zerops-storefront.tar.gz': 'archive',
@@ -554,7 +556,9 @@ it.live('a storefront push without the runner-built archive fails before any Zer
   Effect.gen(function* missingArchive() {
     const result = yield* runPush(() => processState('FINISHED'), {}, {}, { setup: 'n1' });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('the n1 push needs app/.zerops-storefront.tar.gz (the build_storefronts artifact)');
+    expect(result.stderr).toContain(
+      'the n1 push needs app/.zerops-storefront.tar.gz (staged by scripts/zerops/build-storefront.sh)',
+    );
     expect(result.calls).toEqual([]);
   }),
 );
@@ -676,5 +680,32 @@ it.live('an upload refused by HTTP status never starts a build even when curl se
     expect(result.stderr).toContain('upload refused (attempt 1): HTTP 403');
     expect(uploads(result.curlArguments)).toHaveLength(1);
     expect(result.calls).not.toContain(ONE_EACH[2]);
+  }),
+);
+
+it.live('prints where Zerops spent the process: every timestamp it reports, oldest first, and nothing else', () =>
+  Effect.gen(function* zeropsTimeline() {
+    const result = yield* runPush(() => ({
+      body: JSON.stringify({
+        created: '2026-11-17T12:08:00.500Z',
+        finished: '2026-11-17T12:15:18.700Z',
+        id: 'process-1',
+        publicMeta: { build: { startDate: '2026-11-17T12:08:10Z' } },
+        status: 'FINISHED',
+        user: { email: 'someone@example.test' },
+      }),
+      status: 200,
+    }));
+    expect(result.status).toBe(0);
+    const timeline = result.stdout
+      .split('\n')
+      .filter((line) => line.includes('zerops timeline: '))
+      .map((line) => line.replace(/^.* zerops timeline: /u, ''));
+    expect(timeline).toEqual([
+      '2026-11-17T12:08:00.500Z process.created',
+      '2026-11-17T12:08:10Z process.publicMeta.build.startDate',
+      '2026-11-17T12:15:18.700Z process.finished',
+    ]);
+    expect(result.stdout).not.toContain('someone@example.test');
   }),
 );

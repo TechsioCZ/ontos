@@ -7,12 +7,11 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   buildEnvironment,
+  DELIVERY_ROOTS,
   DeliveryPlanSchema,
-  DeliveryAttemptSchema,
-  DeliveryReceiptSchema,
+  deliveryReads,
   isReferenceSource,
   planDelivery,
-  previousVerifiedBase,
   SERVICES,
   unitIdentity,
   unitInputDigest,
@@ -33,19 +32,38 @@ const Topology = Schema.Struct({
   shell: Schema.Struct({ path: Schema.String }),
   verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
-const Runs = Schema.Struct({
-  workflow_runs: Schema.Array(
+const PriorRunSchema = Schema.Struct({
+  conclusion: Schema.OptionFromNullOr(Schema.String),
+  head_branch: Schema.String,
+  head_sha: Schema.String,
+  id: Schema.Number,
+  path: Schema.String,
+  run_attempt: Schema.Number,
+  run_number: Schema.Number,
+  status: Schema.String,
+});
+const Service = Schema.Literals(SERVICES);
+/**
+ * What scripts/zerops/read-delivery-history.sh read from GitHub. `runs` is null when the run list could not be read;
+ * each part that could not be read is null, and the plan then deploys every service.
+ */
+const History = Schema.Struct({
+  comparison: Schema.OptionFromNullOr(
     Schema.Struct({
-      conclusion: Schema.OptionFromNullOr(Schema.String),
-      head_branch: Schema.String,
-      head_sha: Schema.String,
-      id: Schema.Number,
-      path: Schema.String,
-      run_attempt: Schema.Number,
-      run_number: Schema.Number,
-      status: Schema.String,
+      ancestor: Schema.Boolean,
+      base: Schema.String,
+      changedPaths: Schema.Array(Schema.String),
+      truncated: Schema.Boolean,
     }),
   ),
+  mutations: Schema.Array(
+    Schema.Struct({
+      mutated: Schema.OptionFromNullOr(Schema.Boolean),
+      runId: Schema.Number,
+      services: Schema.OptionFromNullOr(Schema.Array(Service)),
+    }),
+  ),
+  runs: Schema.OptionFromNullOr(Schema.Array(PriorRunSchema)),
 });
 class DeliveryInputInvalid extends Schema.TaggedError<DeliveryInputInvalid>()('DeliveryInputInvalid', {
   reason: Schema.String,
@@ -188,68 +206,46 @@ export const readUnitIdentities = (revision: string) =>
     return { graph, identities, units: workspace.units };
   });
 
-const optionalReceipt = (filename: string) =>
-  Effect.gen(function* readReceipt() {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(filename).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DeliveryReceiptSchema))),
-      Effect.orElseSucceed(() => null),
-    );
-  });
-const optionalAttempt = (filename: string) =>
-  Effect.gen(function* readAttempt() {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(filename).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DeliveryAttemptSchema))),
-      Effect.orElseSucceed(() => null),
-    );
-  });
+/** The committed text of a file, for the delivery roots the reference graph does not read as sources. */
+const committedText = (revision: string, filename: string) => git(['show', `${revision}:${filename}`]);
 
 const plan = Command.make('plan', { directory: Argument.String('directory') }, ({ directory }) =>
   Effect.gen(function* writePlan() {
     const fs = yield* FileSystem.FileSystem;
     const head = yield* Config.String('GITHUB_SHA');
-    const runId = yield* Config.Number('GITHUB_RUN_ID');
     const runAttempt = yield* Config.Number('GITHUB_RUN_ATTEMPT');
     const runNumber = yield* Config.Number('GITHUB_RUN_NUMBER');
     const event = yield* Config.String('GITHUB_EVENT_NAME');
     const workspace = yield* readWorkspace(head);
-    const previousReceipt = yield* optionalReceipt(path.join(directory, 'last-success', 'receipt.json'));
-    const previousAttempt = yield* optionalAttempt(path.join(directory, 'last-attempt', 'attempt.json'));
-    const previousRuns = yield* fs.readFileString(path.join(directory, 'prior-runs.json')).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Runs))),
-      Effect.map((runs) => runs.workflow_runs.map((run) => ({ ...run, conclusion: Option.getOrNull(run.conclusion) }))),
-      Effect.orElseSucceed(() => []),
+    const graph = unitInputGraph({ ...workspace, sources: yield* readSources(workspace.entries) });
+    const texts = new Map<string, string>();
+    for (const root of DELIVERY_ROOTS.filter((entry) => !isReferenceSource(entry))) {
+      texts.set(root, yield* committedText(head, root));
+    }
+    // Unreadable or malformed history is no history: every service deploys.
+    const history = yield* fs.readFileString(path.join(directory, 'history.json')).pipe(
+      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(History))),
+      Effect.orElseSucceed(() => ({ comparison: Option.none(), mutations: [], runs: Option.none() })),
     );
-    const base = previousVerifiedBase(previousReceipt, previousRuns, runNumber);
-    const ancestor =
-      base === null
-        ? false
-        : yield* git(['merge-base', '--is-ancestor', base, head]).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-    const changedPaths =
-      ancestor && base !== null
-        ? (yield* git(['diff', '--name-only', '--no-renames', '-z', base, head]))
-            .split('\0')
-            .filter((value) => value.length > 0)
-        : [];
     const result = yield* planDelivery({
       ...workspace,
-      ancestor,
-      changedPaths,
+      comparison: Option.getOrNull(history.comparison),
+      deliveryReads: yield* deliveryReads(graph, workspace.units, texts),
       forceFull: event === 'workflow_dispatch',
       head,
-      previousAttempt,
-      previousReceipt,
-      previousRuns,
+      mutations: history.mutations.map((entry) => ({
+        mutated: Option.getOrNull(entry.mutated),
+        runId: entry.runId,
+        services: Option.getOrNull(entry.services),
+      })),
+      previousRuns: Option.getOrElse(history.runs, () => []).map((run) => ({
+        ...run,
+        conclusion: Option.getOrNull(run.conclusion),
+      })),
       runAttempt,
-      runId,
       runNumber,
     });
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(DeliveryPlanSchema))(result);
-    const encodedReceipt = yield* Schema.encodeEffect(Schema.fromJsonString(DeliveryReceiptSchema))(result.receipt);
     yield* fs.writeFileString(path.join(directory, 'plan.json'), `${encoded}\n`);
     const outputs = yield* Config.String('GITHUB_OUTPUT');
     yield* fs.writeFileString(
@@ -258,7 +254,6 @@ const plan = Command.make('plan', { directory: Argument.String('directory') }, (
         ...SERVICES.map((service) => `${service}=${result.services.includes(service)}`),
         `any=${result.services.length > 0}`,
         `full=${result.full}`,
-        `receipt=${encodedReceipt}`,
         '',
       ].join('\n'),
       { flag: 'a' },

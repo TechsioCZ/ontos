@@ -14,16 +14,16 @@ const WORKFLOW = path.resolve(APP, '../.github/workflows/zerops-stage.yml');
 const DIGEST = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const NEEDS_BUILD = 3;
-const BUILD_SHARD_CONDITION = `\${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.app == 'true' && needs.unit_identities.outputs.all_reused != 'true' }}`;
+const BUILD_SHARD_CONDITION = "needs.deliver.outputs.build_units == 'true'";
 const FORCE_OFF = "env.ZEROPS_FORCE_BUILD != 'true'";
 const NOT_REUSED = "steps.reuse.outputs.reused != 'true'";
-const IDENTITIES_READY = "needs.unit_identities.result == 'success'";
 const REUSE_STEP = "Reuse the shard's unchanged units";
 const IDENTITY_STEP = 'Write the unit identities and shard lists';
 const BUILD_STEP = "Build the shard's units";
 
 const StepSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+  id: Schema.optional(Schema.String),
   if: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
   run: Schema.optional(Schema.String),
@@ -36,7 +36,7 @@ const JobSchema = Schema.Struct({
   steps: Schema.Array(StepSchema),
 });
 const WorkflowSchema = Schema.Struct({
-  jobs: Schema.Struct({ build: JobSchema, unit_identities: JobSchema }),
+  jobs: Schema.Struct({ build: JobSchema, deliver: JobSchema }),
 });
 
 const workflow = Effect.gen(function* readWorkflow() {
@@ -253,7 +253,7 @@ const stubs = (root: string) =>
 it.live("runs the workflow's identity step: the digest table from build-app.sh and one unit list per shard", () =>
   Effect.gen(function* identityStep() {
     const fs = yield* FileSystem.FileSystem;
-    const script = yield* stepRun((yield* workflow).unit_identities, IDENTITY_STEP);
+    const script = yield* stepRun((yield* workflow).deliver, IDENTITY_STEP);
     const { app, root } = yield* fixture(BOTH_CURRENT);
     const bin = yield* stubs(root);
     const searchPath = `${bin}:${yield* Config.String('PATH')}`;
@@ -304,16 +304,14 @@ it.live("runs the workflow's build step: it builds, prunes foreign cached units 
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect('reuses only by identity, never blocks a build, and rebuild_units always builds', () =>
+it.effect('reuses only by identity, builds whenever any unit is unproven, and rebuild_units always builds', () =>
   Effect.gen(function* wiring() {
-    const { build, unit_identities: identities } = yield* workflow;
-    expect(build.needs).toEqual(['plan', 'unit_identities']);
-    // A failed identities job leaves the shards to build; only a cancelled run or a failed plan stops them.
+    const { build, deliver } = yield* workflow;
+    expect(build.needs).toEqual(['deliver']);
     expect(build.if).toBe(BUILD_SHARD_CONDITION);
     const step = (name: string) => build.steps.find((candidate) => candidate.name === name);
-    // The identities also name the cache entry, so they are taken even when rebuild_units forces every build.
-    expect(step("Take this commit's unit identities")?.if).toBe(IDENTITIES_READY);
-    expect(step(REUSE_STEP)?.if).toBe(`${IDENTITIES_READY} && ${FORCE_OFF}`);
+    expect(step("Take this commit's unit identities")?.if).toBeUndefined();
+    expect(step(REUSE_STEP)?.if).toBe(FORCE_OFF);
     for (const name of ['Install the app workspace', BUILD_STEP]) {
       expect(step(name)?.if, name).toBe(NOT_REUSED);
     }
@@ -323,23 +321,30 @@ it.effect('reuses only by identity, never blocks a build, and rebuild_units alwa
     );
     expect(step("Upload the shard's unit builds")?.if).toBeUndefined();
     // The identities are computed in the build environment: the same declared variables, the same values.
+    const identityStep = deliver.steps.find((candidate) => candidate.name === IDENTITY_STEP);
     for (const name of [
       'ONTOS_PUBLIC_ORIGIN',
       'ONTOS_SHOP_STOREFRONT_ORIGIN',
       'ONTOS_STOREFRONT_ORIGIN',
       'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
       'ULTRAMODERN_SKIP_SERVER_TYPECHECK',
-      'SHARDS',
     ]) {
-      expect(identities.env?.[name], name).toBe(build.env?.[name]);
+      expect(identityStep?.env?.[name], name).toBe(build.env?.[name]);
     }
-    expect(yield* stepRun(identities, IDENTITY_STEP)).toContain('sh scripts/zerops/build-app.sh --digests-only');
-    expect(identities.needs).toBeUndefined();
-    // The front path never runs for rebuild_units, and only its proof names the run whose builds deploy.
-    const front = (name: string) => identities.steps.find((candidate) => candidate.name === name);
-    expect(front('Find the newest earlier unit builds of this branch')?.if).toBe('inputs.rebuild_units != true');
-    expect(yield* stepRun(identities, 'Prove every unit of the earlier builds by identity')).toContain(
+    expect(deliver.env?.SHARDS).toBe(build.env?.SHARDS);
+    expect(yield* stepRun(deliver, IDENTITY_STEP)).toContain('sh scripts/zerops/build-app.sh --digests-only');
+    // The front path never runs for rebuild_units, and only its proof lets this job deliver without the matrix.
+    const front = (name: string) => deliver.steps.find((candidate) => candidate.name === name);
+    expect(front('Find the newest earlier unit builds of this branch')?.if).toBe(
+      "steps.plan.outputs.app == 'true' && inputs.rebuild_units != true",
+    );
+    expect(yield* stepRun(deliver, 'Prove every unit of the earlier builds by identity')).toContain(
       'reuse-shard-units.sh prove-archives',
+    );
+    const decide = yield* stepRun(deliver, 'Decide where the units come from');
+    expect(decide).toContain('if [ "$APP" = true ] && [ "$ALL_REUSED" != true ]; then');
+    expect(front('Decide where the units come from')?.env?.ALL_REUSED).toBe(
+      `\${{ steps.earlier-proof.outputs.all_reused }}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -20,6 +20,7 @@ const SOURCES = [
   '.github/workflows/ultramodern-workspace-gates.yml',
   STAGE_WORKFLOW,
   '.github/actions/install-app/action.yml',
+  '.github/actions/deliver-stage/action.yml',
 ] as const;
 const PER_RUN =
   /github\.(?:sha|run_id|run_attempt|event\.pull_request\.head\.sha)|\$\{?GITHUB_(?:SHA|RUN_ID|RUN_ATTEMPT)\b|\.github\/workflows\//u;
@@ -30,9 +31,6 @@ const CACHE_ACTION = /^actions\/cache(?:\/restore|\/save)?@/u;
  * per-commit or per-run part.
  */
 const PER_RUN_ALLOWED = new Map([
-  // The deploy ledger: one record per attempt (well under 1 KiB), read back by prefix to find the last verified one.
-  ['zerops-stage-attempt-v1-', 'one delivery attempt record per run, under 1 KiB'],
-  ['zerops-stage-delivery-v1-', 'one verified source pin record per run, under 1 KiB'],
   // Saved only by main pushes (warm-caches): the incremental TS-Go state of that commit, restored by prefix.
   ['tsgo-', 'the TS-Go incremental build of one main commit, saved by main pushes only'],
 ]);
@@ -87,7 +85,12 @@ const cacheSteps = Effect.gen(function* readCacheSteps() {
   for (const source of SOURCES) {
     const document: unknown = parse(yield* fs.readFileString(path.join(REPOSITORY, source)));
     const jobs = source.endsWith('action.yml')
-      ? [['install-app', (yield* Schema.decodeUnknownEffect(ActionSchema)(document)).runs.steps] as const]
+      ? [
+          [
+            path.basename(path.dirname(source)),
+            (yield* Schema.decodeUnknownEffect(ActionSchema)(document)).runs.steps,
+          ] as const,
+        ]
       : Object.entries((yield* Schema.decodeUnknownEffect(WorkflowSchema)(document)).jobs).map(
           ([job, { steps }]) => [job, steps ?? []] as const,
         );
