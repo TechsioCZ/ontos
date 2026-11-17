@@ -974,6 +974,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     mode: 'schema-only',
     purpose: 'stabilization-1258-privacy-drain',
   });
+  yield* isolated.restoreCoreMigrationJournal();
   yield* Effect.logInfo('Privacy fixture setup: owned database created');
   // Capture the actual creator result inside this private scope; no structural URL/executor API escapes.
   const adminAddress = new URL(isolated.connections.admin.connectionString);

@@ -42,37 +42,69 @@
       "root-suite": true,
       "package-filters": "--filter ./verticals/commerce-customer-context",
       "lanes": 4,
-      "package-partition": "1/2",
-      "root-rstest-shard": "1/8"
+      "package-partition": "1/3",
+      "root-rstest-shard": "1/12"
     },
     {
       "suite": "integration",
-      "name": "Customer Context Schedules and Owner Integration",
+      "name": "Customer Context Schedules Integration",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry",
+      "package-filters": "--filter ./verticals/commerce-customer-context",
       "lanes": 4,
-      "package-partition": "2/2",
-      "root-rstest-shard": "2/8"
+      "package-partition": "2/3",
+      "root-rstest-shard": "2/12"
     },
     {
       "suite": "integration",
-      "name": "Shell Integration",
+      "name": "Customer Context and Catalog Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/catalog --filter ./verticals/storefront-registry",
+      "lanes": 4,
+      "package-partition": "3/3",
+      "root-rstest-shard": "3/12"
+    },
+    {
+      "suite": "integration",
+      "name": "Shell Gateway Integration",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./apps/shell-super-app",
       "lanes": 2,
-      "root-rstest-shard": "3/8"
+      "package-partition": "1/2",
+      "root-rstest-shard": "4/12"
     },
     {
       "suite": "integration",
-      "name": "Privacy Integration",
+      "name": "Shell Runtime Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "package-filters": "--filter ./apps/shell-super-app",
+      "lanes": 2,
+      "package-partition": "2/2",
+      "root-rstest-shard": "5/12"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Completion Integration",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/privacy",
       "lanes": 2,
+      "package-partition": "1/2",
       "whole-owner-proofs": "privacy",
-      "root-rstest-shard": "4/8"
+      "root-rstest-shard": "6/12"
+    },
+    {
+      "suite": "integration",
+      "name": "Privacy Owner Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "package-filters": "--filter ./verticals/privacy",
+      "lanes": 2,
+      "package-partition": "2/2",
+      "root-rstest-shard": "7/12"
     },
     {
       "suite": "integration",
@@ -81,26 +113,37 @@
       "root-suite": true,
       "package-filters": "--filter ./packages/core-runtime --filter ./verticals/party-registry",
       "lanes": 4,
-      "root-rstest-shard": "5/8"
+      "root-rstest-shard": "8/12"
     },
     {
       "suite": "integration",
-      "name": "Commerce Owners and Federation Integration",
+      "name": "Commerce Pricing and Inventory Integration",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/catalog --filter ./verticals/commerce-market-catalog",
-      "lanes": 4,
+      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory",
+      "lanes": 2,
       "whole-owner-proofs": "pricing",
-      "root-rstest-shard": "6/8"
+      "root-rstest-shard": "9/12"
+    },
+    {
+      "suite": "integration",
+      "name": "Organization Owner Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "package-filters": "--filter ./verticals/payment",
+      "lanes": 2,
+      "whole-owner-proofs": "organization",
+      "root-rstest-shard": "10/12"
     },
     {
       "suite": "integration",
       "name": "Native Preproposal and Commerce Integration",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter ./verticals/tax --filter ./verticals/projects --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog",
+      "package-filters": "--filter ./verticals/tax --filter ./verticals/projects --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion",
       "lanes": 2,
       "native-preproposal": true,
+      "preproposal-case": "basis",
       "proof-packages": [
         "@app/shell-super-app",
         "@app/party-registry",
@@ -111,15 +154,15 @@
         "@app/pricing",
         "@app/commerce-customer-context"
       ],
-      "root-rstest-shard": "7/8",
-      "preproposal-case": "basis"
+      "root-rstest-shard": "11/12"
     },
     {
       "suite": "integration",
-      "name": "Native Approval and Organization Integration",
+      "name": "Native Approval and Market Integration",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "",
+      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog",
+      "lanes": 2,
       "native-preproposal": true,
       "preproposal-case": "approval",
       "proof-packages": [
@@ -132,9 +175,7 @@
         "@app/pricing",
         "@app/commerce-customer-context"
       ],
-      "whole-owner-proofs": "organization",
-      "lanes": 2,
-      "root-rstest-shard": "8/8"
+      "root-rstest-shard": "12/12"
     },
     {
       "suite": "browser",

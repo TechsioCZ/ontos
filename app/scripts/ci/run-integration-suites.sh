@@ -109,9 +109,9 @@ for ((index = 0; index < ${#filters[@]}; index += 2)); do
       [[ "$files" -ge "$shards" ]] || shards="$files"
       first=1
       stride=1
-      # Customer Context's native fixture cases dominate one runner. Partition
+      # Native fixture cases dominate these owners. Partition
       # its files across two rows, with disjoint Rstest shards, not duplicate suites.
-      if [[ "$package" == ./verticals/commerce-customer-context && -n "${PACKAGE_PARTITION:-}" ]]; then
+      if [[ "$package" =~ ^(\./verticals/(commerce-customer-context|privacy)|\./apps/shell-super-app)$ && -n "${PACKAGE_PARTITION:-}" ]]; then
         IFS=/ read -r first stride <<<"$PACKAGE_PARTITION"
         [[ "$first" =~ ^[1-9][0-9]*$ && "$stride" =~ ^[1-9][0-9]*$ && "$first" -le "$stride" ]] || exit 2
         shards=$((shards * stride))
@@ -122,23 +122,8 @@ for ((index = 0; index < ${#filters[@]}; index += 2)); do
       ;;
   esac
 done
-phase="${INTEGRATION_PHASE:-built}"
-[[ "$phase" == source || "$phase" == built ]] || exit 2
-if [[ ${#tasks[@]} -eq 0 && "$phase" == built ]]; then
-  exit 2
-fi
-selected=()
-for task in "${tasks[@]}"; do
-  if [[ "$task" == ./packages/core-runtime#* ]]; then
-    [[ "$phase" != source ]] || selected+=("$task")
-  else
-    [[ "$phase" != built ]] || selected+=("$task")
-  fi
-done
-tasks=("${selected[@]}")
 if [[ ${#tasks[@]} -eq 0 ]]; then
-  # Affected selection can leave either phase with no selected work.
-  exit 0
+  exit 2
 fi
 if [[ "${1:-}" == --list ]]; then
   printf '%s\0' "${tasks[@]}"

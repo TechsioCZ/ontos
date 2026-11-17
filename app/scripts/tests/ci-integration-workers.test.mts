@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,25 +183,23 @@ it('partitions root and package files without duplicating compound scripts or wh
   expect(new Set(tasks).size).toBe(tasks.length);
 });
 
-it('runs every source-only Core shard before artifacts and never repeats it in the built phase', () => {
-  const script = integrationSuitesScript;
-  const list = (phase: string) =>
-    execFileSync('/bin/bash', [script, '--list'], {
-      env: {
-        INTEGRATION_PHASE: phase,
-        NATIVE_PREPROPOSAL: 'true',
-        PACKAGE_FILTERS: '--filter ./packages/core-runtime --filter ./verticals/privacy',
-        PATH: testPath,
-      },
-    })
-      .toString()
-      .split('\0')
-      .filter(Boolean);
-  expect(list('source')).toEqual(['1/4', '2/4', '3/4', '4/4'].map((shard) => `./packages/core-runtime#${shard}`));
-  const built = list('built');
-  expect(built.some((task) => task.includes('core-runtime'))).toBe(false);
-  expect(built.filter((task) => task.startsWith('./verticals/privacy#'))).toHaveLength(4);
-  expect(built.filter((task) => task.startsWith('whole:preproposal-'))).toHaveLength(2);
+it('runs each Core and owner shard once alongside independently selected native proofs', () => {
+  const tasks = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
+    env: {
+      NATIVE_PREPROPOSAL: 'true',
+      PACKAGE_FILTERS: '--filter ./packages/core-runtime --filter ./verticals/privacy',
+      PATH: testPath,
+    },
+  })
+    .toString()
+    .split('\0')
+    .filter(Boolean);
+  expect(tasks.filter((task) => task.includes('core-runtime'))).toEqual(
+    ['1/4', '2/4', '3/4', '4/4'].map((shard) => `./packages/core-runtime#${shard}`),
+  );
+  expect(tasks.filter((task) => task.startsWith('./verticals/privacy#'))).toHaveLength(4);
+  expect(tasks.filter((task) => task.startsWith('whole:preproposal-'))).toHaveLength(2);
+  expect(new Set(tasks).size).toBe(tasks.length);
 });
 
 it('covers Customer Context exactly once across rows without partitioning an unrelated package', () => {
@@ -244,4 +242,27 @@ it('selects one complete native proof per runner without repeating either case',
       .filter(Boolean);
     expect(tasks).toEqual([`whole:preproposal-${proof}`]);
   }
+});
+
+it('schedules every real root file once without starting empty tail shards', () => {
+  const files = readdirSync(new URL('../integration/', import.meta.url)).filter(
+    (file) =>
+      file.endsWith('.test.mts') &&
+      !['organization-source-customer-owner-conformance.test.mts', 'scoped-owner-migrations.test.mts'].includes(file),
+  );
+  const tasks = Array.from({ length: 8 }, (_, index) =>
+    execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
+      env: { PATH: testPath, ROOT_RSTEST_SHARD: `${index + 1}/8`, ROOT_SUITE: 'true' },
+    })
+      .toString()
+      .split('\0')
+      .filter(Boolean),
+  ).flat();
+  expect(
+    EffectArray.sort(
+      tasks.map((task) => Number(task.split(':')[1]?.split('/')[0])),
+      Order.Number,
+    ),
+  ).toEqual(Array.from({ length: files.length }, (_, index) => index + 1));
+  expect(new Set(tasks).size).toBe(tasks.length);
 });

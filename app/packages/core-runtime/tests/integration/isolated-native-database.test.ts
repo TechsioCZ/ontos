@@ -549,6 +549,11 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
         (select count(*)::int from trust.scope_sealing_keys) as keys,
         to_regnamespace('core')::text as core, to_regnamespace('party')::text as party`;
       expect(state).toEqual({ authority: 0, core: 'core', keys: 1, party: 'party', tenants: 0 });
+      expect(yield* clone`select * from drizzle.__drizzle_migrations_core`).toEqual([]);
+      yield* fixture.restoreCoreMigrationJournal();
+      const [receipts] = yield* clone<{ readonly count: number }>`
+        select count(*)::int as count from drizzle.__drizzle_migrations_core`;
+      expect(receipts?.count).toBeGreaterThan(0);
       const snapshot = yield* makeApplicationCompositionSnapshotFixture(['party-registry'], 'privacy-schema-clone');
       yield* fixture.publishInitialComposition(snapshot);
       expect((yield* fixture.composition.observe()).phase).toBe('active');

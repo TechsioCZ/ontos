@@ -334,7 +334,7 @@ it.live(
       expect(refused.status).not.toBe(0);
       expect(yield* observeNative(native.selectedEnvironment)).toEqual(pendingSnapshot);
       expect(new Set(Object.keys(native.selectedEnvironment))).toEqual(
-        new Set(['APP_ENV_PATH', 'DATABASE_ADMIN_URL', 'DATABASE_URL', 'MIGRATOR_PORT', 'PATH']),
+        new Set(['APP_ENV_PATH', 'DATABASE_ADMIN_URL', 'DATABASE_URL', 'MIGRATOR_PORT', 'NODE_COMPILE_CACHE', 'PATH']),
       );
       yield* runToReadiness(selectedFile, native.selectedEnvironment, false);
       const after = yield* observeNative(native.selectedEnvironment);

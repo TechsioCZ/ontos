@@ -14,7 +14,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { makeQuantityProfileOwnedDatabase } from '../support/quantity-profile-owned-database.ts';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
@@ -76,7 +76,11 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
     { contract: ownContract, marker: ownContract.deployment },
     { contract: party.contract, marker: party.marker },
   ]);
-  const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
+  const isolated = yield* makeIsolatedNativeDatabaseFixture({
+    compositionSnapshot: snapshot,
+    mode: 'schema-only',
+    purpose: 'stabilization-1266-quantity-profile-admission',
+  });
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
       access: 'allowed',

@@ -80,10 +80,12 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   // Ordinary package tests remain restricted to the affected owner and its consumers.
   expect(plan.integration.map(({ name }) => name)).toEqual([
     'Deployment Bootstrap and Node Federation Proof',
-    'Privacy Integration',
-    'Commerce Owners and Federation Integration',
+    'Customer Context and Catalog Integration',
+    'Privacy Completion Integration',
+    'Commerce Pricing and Inventory Integration',
+    'Organization Owner Integration',
     'Native Preproposal and Commerce Integration',
-    'Native Approval and Organization Integration',
+    'Native Approval and Market Integration',
   ]);
   const tests = plan.integration.filter(({ suite }) => suite === 'integration');
   expect(
@@ -226,16 +228,9 @@ it('selects browser checks and all root integration shards when they consume a c
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual([
-    '1/8',
-    '2/8',
-    '3/8',
-    '4/8',
-    '5/8',
-    '6/8',
-    '7/8',
-    '8/8',
-  ]);
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(
+    Array.from({ length: 12 }, (_, index) => `${index + 1}/12`),
+  );
   const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
   expect(filters).toContain('--filter ./apps/shell-super-app');
   expect(filters).toContain('--filter ./verticals/catalog');
@@ -305,7 +300,7 @@ it('selects both disjoint customer-context partitions and retains its independen
   const selected = plan.integration.filter((entry) =>
     (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
   );
-  expect(selected.map((entry) => entry['package-partition'])).toEqual(['1/2', '2/2']);
+  expect(selected.map((entry) => entry['package-partition'])).toEqual(['1/3', '2/3', '3/3']);
   expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(2);
 });
 

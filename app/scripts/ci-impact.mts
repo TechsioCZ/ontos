@@ -10,6 +10,12 @@ export interface CiWorkspacePackage {
   readonly uncertain?: boolean;
 }
 
+/** Prerequisite proofs finish before the artifact-consuming runner wave is admitted. */
+export const integrationPhases = (entries: readonly IntegrationEntry[]) => ({
+  prerequisites: entries.filter(({ suite }) => suite !== 'integration'),
+  work: entries.filter(({ suite }) => suite === 'integration'),
+});
+
 /** Runtime federation references are consumer edges even when package manifests omit them. */
 export const withCiTopologyDependencies = (
   packages: readonly CiWorkspacePackage[],

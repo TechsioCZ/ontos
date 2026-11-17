@@ -20,11 +20,15 @@ import { parse } from 'yaml';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 
+import { CiTemplatesSchema, integrationPhases } from '../plan-ci-checks.mts';
+
 const BASELINE_CAPTURE_JOB = 'capture-application-baseline';
 const DEPLOY_PLAN_JOB = 'deploy-plan';
+
 const CF_TOKEN_SOURCE = 'secrets.CLOUDFLARE_API_TOKEN';
 const COMPOSITION_URL_SOURCE = 'vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL';
 const SHELL_APP_ID = 'shell-super-app';
+const CUSTOMER_CONTEXT_SELECTOR = './verticals/commerce-customer-context';
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
 const WorkflowSchema = Schema.Struct({
   on: Schema.Struct({
@@ -55,6 +59,7 @@ const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}
 const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
+const SERVICE_SETUP_JOB = 'service-integration-setup';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 
 /** Expand only matrix references for the full-run contract tests; separately test the actual planner. */
@@ -62,11 +67,16 @@ const readGateWorkflow = () => {
   const record = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
   const workflow = record(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   const jobs = { ...record(workflow.jobs) };
-  const matrices = record(JSON.parse(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8')));
+  const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+  );
+  const phases = integrationPhases(templates.integration);
+  const matrices = { ...templates, integration: phases.work, integrationSetup: phases.prerequisites };
   for (const [job, key] of [
     [WORKSPACE_GATE_JOB, 'source'],
     [WORKSPACE_UNIT_JOB, 'unit'],
     [SERVICE_INTEGRATION_JOB, 'integration'],
+    [SERVICE_SETUP_JOB, 'integrationSetup'],
   ] as const) {
     const entry = record(jobs[job ?? '']);
     const strategy = record(entry.strategy);
@@ -1651,7 +1661,7 @@ const ROOT_GATE_JOBS = [
 const GATE_JOB_NEEDS = {
   [FORMAT_AND_LINT_JOB]: [CI_PLAN_JOB],
   [NODE_ARTIFACT_BUILD_JOB]: [CI_PLAN_JOB],
-  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB],
+  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_SETUP_JOB, FORMAT_AND_LINT_JOB],
   'static-contracts': [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB],
@@ -2305,36 +2315,41 @@ it('runs the root unit and component tests of every workspace package in exactly
   expect(tested.filter((unit) => !namedPackages.includes(unit))).toEqual([]);
 });
 
-const IntegrationShardsWorkflowSchema = Schema.Struct({
-  jobs: Schema.Struct({
-    [SERVICE_INTEGRATION_JOB]: Schema.Struct({
-      needs: Schema.Array(Schema.String),
-      steps: Schema.Array(
+const IntegrationRunnerSchema = Schema.Struct({
+  needs: Schema.Array(Schema.String),
+  steps: Schema.Array(
+    Schema.Struct({
+      ...WorkflowStepSchema.fields,
+      background: Schema.optional(Schema.Boolean),
+      uses: Schema.optional(Schema.String),
+      wait: Schema.optional(Schema.String),
+      with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+  strategy: Schema.Struct({
+    matrix: Schema.Struct({
+      include: Schema.Array(
         Schema.Struct({
-          ...WorkflowStepSchema.fields,
-          uses: Schema.optional(Schema.String),
-          with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          lanes: Schema.optional(Schema.Literals([2, 4])),
+          name: Schema.String,
+          'native-composition': Schema.optional(Schema.Boolean),
+          'native-preproposal': Schema.optional(Schema.Boolean),
+          'package-filters': Schema.optional(Schema.String),
+          'package-partition': Schema.optional(Schema.String),
+          'preproposal-case': Schema.optional(Schema.String),
+          'root-rstest-shard': Schema.optional(Schema.String),
+          'root-suite': Schema.optional(Schema.Boolean),
+          suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
+          'whole-owner-proofs': Schema.optional(Schema.String),
         }),
       ),
-      strategy: Schema.Struct({
-        matrix: Schema.Struct({
-          include: Schema.Array(
-            Schema.Struct({
-              name: Schema.String,
-              'native-composition': Schema.optional(Schema.Boolean),
-              'native-preproposal': Schema.optional(Schema.Boolean),
-              'package-filters': Schema.optional(Schema.String),
-              'package-partition': Schema.optional(Schema.String),
-              'preproposal-case': Schema.optional(Schema.String),
-              'root-rstest-shard': Schema.optional(Schema.String),
-              'root-suite': Schema.optional(Schema.Boolean),
-              suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
-              'whole-owner-proofs': Schema.optional(Schema.String),
-            }),
-          ),
-        }),
-      }),
     }),
+  }),
+});
+const IntegrationShardsWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema,
+    [SERVICE_SETUP_JOB]: IntegrationRunnerSchema,
   }),
 });
 
@@ -2448,9 +2463,13 @@ it('supplies same-run built Composition to selected native owner integration sha
   );
   expect(workers).toBeGreaterThan(-1);
   expect(workers < sourceProof && sourceProof < wait && wait < download).toBe(true);
-  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '3/8'");
-  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '3/8')).toHaveLength(1);
-  expect(steps[wait]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '4/12'");
+  expect(steps[sourceProof]?.background).toBe(true);
+  expect(steps[sourceProof]?.env?.ONTOS_CI_WORKER_SLOT).toBe('3');
+  expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(true);
+  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '4/12')).toHaveLength(1);
+  expect(rootShards.find((shard) => shard['root-rstest-shard'] === '4/12')?.lanes).toBe(2);
+  expect(steps[wait]?.if).toBe(BOOTSTRAP_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
@@ -2470,10 +2489,10 @@ it('supplies same-run built Composition to selected native owner integration sha
 
 it('proves the built topology of every delivery unit in one row of the integration matrix', () => {
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_INTEGRATION_JOB
+    SERVICE_SETUP_JOB
   ];
-  // The proof moved out of the last build shard, which the whole integration wave used to wait for.
-  // It keeps the same gate id and no new job key, so the pinned gate set is unchanged.
+  // One prerequisite row proves all built outputs before late-wave admission;
+  // its success is required by the unchanged service-integration gate.
   const rows = integration.strategy.matrix.include.filter(({ suite }) => suite === NODE_PROOF_SUITE);
   expect(rows).toHaveLength(1);
   expect(rows[0]?.['package-filters']).toBeUndefined();
@@ -2609,16 +2628,9 @@ it('covers every root integration shard and assigns each package integration sui
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
-  expect(roots.map((row) => row['root-rstest-shard'])).toEqual([
-    '1/8',
-    '2/8',
-    '3/8',
-    '4/8',
-    '5/8',
-    '6/8',
-    '7/8',
-    '8/8',
-  ]);
+  expect(roots.map((row) => row['root-rstest-shard'])).toEqual(
+    Array.from({ length: 12 }, (_, index) => `${index + 1}/12`),
+  );
   const packages = shards.filter((shard) => shardFilters(shard).length > 0);
   // Every row names exactly the packages it runs; none negates, so no row silently inherits a package
   // a reshard forgot.
@@ -2630,10 +2642,11 @@ it('covers every root integration shard and assigns each package integration sui
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
   for (const [name, count] of counts) {
-    if (name === './verticals/commerce-customer-context') {
-      expect(count).toBe(2);
+    if (name === CUSTOMER_CONTEXT_SELECTOR || name === './verticals/privacy' || name === './apps/shell-super-app') {
+      const expected = name === CUSTOMER_CONTEXT_SELECTOR ? ['1/3', '2/3', '3/3'] : ['1/2', '2/2'];
+      expect(count).toBe(expected.length);
       expect(packages.filter((row) => shardFilters(row).includes(name)).map((row) => row['package-partition'])).toEqual(
-        ['1/2', '2/2'],
+        expected,
       );
     } else {
       expect(count, name).toBe(1);
@@ -2984,18 +2997,21 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(roots.length).toBeGreaterThan(0);
   expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
   const customerContext = integration.strategy.matrix.include.filter((shard) =>
-    shardFilters(shard).includes('./verticals/commerce-customer-context'),
+    shardFilters(shard).includes(CUSTOMER_CONTEXT_SELECTOR),
   );
   expect(customerContext.length).toBeGreaterThan(0);
   expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
-  expect(integration.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(true);
+  const setup = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[SERVICE_SETUP_JOB];
+  expect(setup.strategy.matrix.include.some(({ suite }) => suite === 'browser')).toBe(true);
   const { steps } = integration;
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
-  const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
+  expect(steps.some(({ run }) => run?.includes('zerops:materialize --app commerce-customer-context') === true)).toBe(
+    false,
+  );
   const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(download).toBeGreaterThan(-1);
-  expect(download < unpack && unpack < worker && worker < tests).toBe(true);
+  expect(download < unpack && unpack < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
   // No run-id, repository or token override: the artifacts must belong to this workflow run.
   expect(steps[download]?.with).toEqual({
@@ -3003,14 +3019,9 @@ it('restores same-run Node artifacts for every backend integration fixture and e
     pattern: NODE_BUILD_ARTIFACT_PATTERN,
   });
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
-  expect(steps[worker]?.run).toBe(
-    'mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker',
-  );
-  expect(steps[worker]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
   for (const index of [download, unpack]) {
     expect(steps[index]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   }
-  expect(steps[worker]?.if).toBe('matrix.root-suite == true');
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(preproposal).toHaveLength(2);
   expect(preproposal[0]?.suite).toBe('integration');
@@ -3042,20 +3053,23 @@ it('refuses root native integration when the same-run build archives are missing
   }
 });
 
-it('leaves two organization slots free while running the complete gate matrices', () => {
+it('leaves two organization slots free in both dependency-bounded runner waves', () => {
   const commands = readGateCommandJobs();
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
   const builds = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.shard.length;
-  const services = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_INTEGRATION_JOB
-  ].strategy.matrix.include.length;
   const source = commands[WORKSPACE_GATE_JOB].strategy.matrix.include.length;
-  const unit = commands[WORKSPACE_UNIT_JOB];
-  // Format/lint owns one runner; static contracts owns its matrix.
-  const startup = source + builds + services + commands['static-contracts'].strategy.matrix.row.length + 1;
-  expect(startup).toBeLessThanOrEqual(18);
-  const dependencies = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs[WORKSPACE_UNIT_JOB];
-  expect(dependencies?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
-  expect(startup - builds + unit.strategy.matrix.include.length).toBeLessThanOrEqual(18);
+  const staticRows = commands['static-contracts'].strategy.matrix.row.length;
+  const setup = jobs[SERVICE_SETUP_JOB];
+  const work = jobs[SERVICE_INTEGRATION_JOB];
+  expect(source + staticRows + 1 + builds + setup.strategy.matrix.include.length).toBeLessThanOrEqual(18);
+  expect(
+    source +
+      staticRows +
+      commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
+      work.strategy.matrix.include.length,
+  ).toBeLessThanOrEqual(18);
+  expect(setup.needs).toEqual([CI_PLAN_JOB]);
+  expect(work.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
