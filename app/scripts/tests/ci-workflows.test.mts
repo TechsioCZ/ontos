@@ -2018,8 +2018,8 @@ it('builds Node artifacts on four independent runners without waiting for or pro
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
   const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  expect(strategy.matrix.shard).toEqual([1, 4]);
-  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 3, 5, 6]);
+  expect(strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([5, 6, 7, 8]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
   expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
@@ -2538,7 +2538,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
-  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 6");
+  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 8");
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   expect(workers).toBeGreaterThan(-1);
   expect(workers < wait && wait < download).toBe(true);
