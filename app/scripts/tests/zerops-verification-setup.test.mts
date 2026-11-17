@@ -16,6 +16,12 @@ const RESTORE = 'Restore the pinned verification browsers';
 const BROWSER_CACHE = 'Use the runner-owned verification browser cache';
 const WARMUP_CLIENT = 'Install headless Chromium for the warm-up client';
 const SAVE = 'Save the pinned verification browsers';
+const PROVE_KEPT_APP = 'Prove the live app while the storefronts deploy';
+const PROVE_LIVE_APP = 'Prove the live app';
+const FINISH_PROOFS = 'Verify every service and finish the proofs';
+const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
+const PROOFS_FINISH = 'bash scripts/zerops/stage-proofs.sh finish';
+const PROOFS_SCRIPT = path.resolve(import.meta.dirname, '../zerops/stage-proofs.sh');
 const CACHE_KEY = `zerops-verify-browsers-v1-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}`;
 const Step = Schema.Struct({
   'continue-on-error': Schema.optionalKey(Schema.Boolean),
@@ -51,8 +57,9 @@ const VERIFICATION_STEPS = new Set([
   'Install headless Chromium for the OAuth consent screens',
   WARMUP_CLIENT,
   'Collect the Chromium system-library packages',
-  'Verify every service against the live app',
-  'Warm declared reads and prove MCP over OAuth side by side',
+  PROVE_KEPT_APP,
+  PROVE_LIVE_APP,
+  FINISH_PROOFS,
 ]);
 const installerSteps = (steps: readonly (typeof Step.Type)[]) =>
   steps.filter((step) => step.run === OAUTH_INSTALL || step.run === WARMUP_INSTALL);
@@ -91,14 +98,20 @@ it.effect('always validates both pinned clients and keeps OS dependency installa
     expect(index(BROWSER_CACHE)).toBeGreaterThan(index('Push the N1 storefront'));
     expect(index(RESTORE)).toBeGreaterThan(index(BROWSER_CACHE));
     expect(index(SAVE)).toBeGreaterThan(index(WARMUP_CLIENT));
-    expect(index(SAVE)).toBeLessThan(index('Warm declared reads and prove MCP over OAuth side by side'));
+    // Every proof runs from stage-proofs.sh, and every step that starts or finishes it follows the browser setup.
+    const proofSteps = steps.filter((step) => step.run?.includes('scripts/zerops/stage-proofs.sh') === true);
+    expect(proofSteps.map((step) => step.name)).toEqual([PROVE_KEPT_APP, PROVE_LIVE_APP, FINISH_PROOFS]);
+    expect(index(SAVE)).toBeLessThan(index(PROVE_KEPT_APP));
+    for (const step of proofSteps) {
+      expect(steps.indexOf(step), step.name).toBeGreaterThan(index(WARMUP_CLIENT));
+    }
+    const script = yield* (yield* FileSystem.FileSystem).readFileString(PROOFS_SCRIPT);
     for (const command of [
-      'scripts/ops/stage-warmup.mts',
-      'scripts/zerops/verify-service.mjs app',
-      'scripts/demo/prove-mcp-oauth.mts',
+      'mise exec -- node scripts/ops/stage-warmup.mts',
+      'mise exec -- node scripts/zerops/verify-service.mjs app',
+      'mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification',
     ]) {
-      const proof = steps.findIndex((step) => step.run?.includes(command) === true);
-      expect(proof, command).toBeGreaterThan(index(WARMUP_CLIENT));
+      expect(script, command).toContain(command);
     }
     expect(steps.find((step) => step.name === SAVE)?.if).toBe(
       "steps.verification-browsers.outputs.cache-hit != 'true'",
@@ -199,7 +212,7 @@ it.effect('keeps browser setup failures blocking rather than running proofs with
     expect(result.stdout).not.toContain('proofs-ready');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
-it.effect('verifies every service only after the app is live, with no condition on any proof', () =>
+it.effect('proves the app only while it is live and verifies every service after every push, unconditionally', () =>
   Effect.gen(function* proofGatesUnchanged() {
     const { jobs } = yield* readWorkflow;
     expect(jobs.deliver['timeout-minutes']).toBe(95);
@@ -210,23 +223,31 @@ it.effect('verifies every service only after the app is live, with no condition 
     const waitStorefronts = index('Wait for the storefront deployments');
     expect(steps[waitApp]?.run).toBe('bash app/scripts/zerops/stage-push.sh wait app');
     expect(steps[waitApp]?.['continue-on-error']).toBeUndefined();
-    // A superseded run ends after its own Zerops processes and before its proofs.
+    // A superseded run ends after its own Zerops processes and before its verification.
     const superseded = index('End here when a newer push superseded this run');
     expect(superseded).toBeGreaterThan(Math.max(waitApp, waitStorefronts));
-    for (const command of [
-      'scripts/zerops/verify-service.mjs app',
-      'scripts/zerops/verify-service.mjs "$service"',
-      'scripts/ops/stage-warmup.mts',
-      'scripts/demo/prove-mcp-oauth.mts --variant=1 --verification',
-    ]) {
-      const proof = steps.findIndex((step) => step.run?.includes(command) === true);
-      expect(proof, command).toBeGreaterThan(superseded);
-      expect(steps[proof]?.if, command).toBeUndefined();
-      expect(steps[proof]?.['continue-on-error'], command).toBeUndefined();
+    // Exactly one of the two starts runs: before the storefront waits when the app is kept, after the app is live
+    // when it is pushed. Neither proof reads a storefront.
+    const keptApp = steps[index(PROVE_KEPT_APP)];
+    const liveApp = steps[index(PROVE_LIVE_APP)];
+    expect(keptApp?.if).toBe("inputs.app != 'true'");
+    expect(liveApp?.if).toBe("inputs.app == 'true'");
+    expect(index(PROVE_KEPT_APP)).toBeLessThan(waitStorefronts);
+    expect(index(PROVE_LIVE_APP)).toBeGreaterThan(superseded);
+    for (const step of [keptApp, liveApp]) {
+      expect(step?.run).toBe(PROOFS_START);
+      expect(step?.['working-directory']).toBe('app');
+      expect(step?.['continue-on-error']).toBeUndefined();
     }
-    expect(steps[index('Verify every service against the live app')]?.run).toContain(
-      'for service in storefront shop n1',
-    );
+    // The verification and the proofs' verdicts follow every wait, with no condition: a run whose proofs never
+    // started fails there (stage-proofs.sh finish).
+    const finish = steps[index(FINISH_PROOFS)];
+    expect(index(FINISH_PROOFS)).toBeGreaterThan(index(PROVE_LIVE_APP));
+    expect(finish?.run).toBe(PROOFS_FINISH);
+    expect(finish?.if).toBeUndefined();
+    expect(finish?.['continue-on-error']).toBeUndefined();
+    const script = yield* (yield* FileSystem.FileSystem).readFileString(PROOFS_SCRIPT);
+    expect(script).toContain('for service in storefront shop n1');
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -262,7 +283,7 @@ case "$*" in
     echo oauth-output
     exit "$OAUTH_EXIT"
     ;;
-  *"scripts/zerops/verify-service.mjs "*) echo "service-output $*" ;;
+  *"scripts/zerops/verify-service.mjs "*) echo "service-output $*"; exit "$SERVICE_EXIT" ;;
   *) echo "unexpected mise invocation: $*" >&2; exit 98 ;;
 esac
 `;
@@ -285,107 +306,160 @@ exec "$@"
 `;
 
 for (const scenario of [
-  { name: 'both succeed', oauth: 0, status: 0, warmup: 0 },
-  { name: 'warm-up fails', oauth: 0, status: 1, warmup: 17 },
-  { name: 'OAuth fails', oauth: 23, status: 1, warmup: 0 },
-  { name: 'both fail', oauth: 23, status: 1, warmup: 17 },
+  { name: 'both succeed', oauth: 0, services: 0, status: 0, warmup: 0 },
+  { name: 'warm-up fails', oauth: 0, services: 0, status: 1, warmup: 17 },
+  { name: 'OAuth fails', oauth: 23, services: 0, status: 1, warmup: 0 },
+  { name: 'both fail', oauth: 23, services: 0, status: 1, warmup: 17 },
+  { name: 'a service verification fails', oauth: 0, services: 29, status: 1, warmup: 0 },
 ]) {
-  it.effect(`executes Verify scripts under strict Bash when ${scenario.name}`, () =>
-    Effect.gen(function* executeWorkflowScripts() {
-      const fs = yield* FileSystem.FileSystem;
-      const steps = (yield* readDelivery).filter((step) => VERIFICATION_STEPS.has(step.name));
-      expect(steps.map((step) => step.name).toSorted()).toEqual([...VERIFICATION_STEPS].toSorted());
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const app = path.join(directory, 'app');
-      const bin = path.join(directory, 'bin');
-      const home = path.join(directory, 'home');
-      const archives = path.join(directory, 'apt-archives');
-      const cached = path.join(home, '.cache/playwright-apt-debs');
-      const calls = path.join(directory, 'calls');
-      const githubEnv = path.join(directory, 'github-env');
-      const githubOutput = path.join(directory, 'github-output');
-      for (const folder of [bin, archives, cached, path.join(app, 'apps/shell-super-app')]) {
-        yield* fs.makeDirectory(folder, { recursive: true });
-      }
-      yield* fs.writeFileString(path.join(cached, 'restored.deb'), 'restored package');
-      yield* fs.writeFileString(path.join(archives, 'downloaded.deb'), 'downloaded package');
-      for (const [name, source] of Object.entries({
-        find: workflowFind,
-        mise: workflowMise,
-        sudo: workflowSudo,
-      })) {
-        const executable = path.join(bin, name);
-        yield* fs.writeFileString(executable, source);
-        yield* fs.chmod(executable, 0o700);
-      }
-      const environment = {
-        APT_ARCHIVES: archives,
-        E2E_OUT_DIR: path.join(directory, 'proof'),
-        GITHUB_ENV: githubEnv,
-        GITHUB_OUTPUT: githubOutput,
-        HOME: home,
-        ImageOS: 'ubuntu24',
-        ImageVersion: '20261115',
-        OAUTH_EXIT: String(scenario.oauth),
-        OAUTH_STARTED: path.join(directory, 'oauth-started'),
-        PATH: `${bin}:${yield* Config.String('PATH')}`,
-        RUNNER_TEMP: directory,
-        SETUP_CALLS: calls,
-        STAGE_SHELL_URL: 'https://shell.example.test',
-        WARMUP_EXIT: String(scenario.warmup),
-        WARMUP_STARTED: path.join(directory, 'warmup-started'),
-      };
-      let proofRan = false;
-      for (const step of steps) {
-        if (step.run === undefined) {
-          continue;
+  for (const app of ['pushed', 'kept'] as const) {
+    it.effect(`executes Verify scripts under strict Bash when ${scenario.name} and the app is ${app}`, () =>
+      Effect.gen(function* executeWorkflowScripts() {
+        const fs = yield* FileSystem.FileSystem;
+        // GitHub skips the start that does not apply: one start runs per delivery.
+        const skipped = app === 'pushed' ? PROVE_KEPT_APP : PROVE_LIVE_APP;
+        const all = (yield* readDelivery).filter((step) => VERIFICATION_STEPS.has(step.name));
+        expect(all.map((step) => step.name).toSorted()).toEqual([...VERIFICATION_STEPS].toSorted());
+        const steps = all.filter((step) => step.name !== skipped);
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const appDirectory = path.join(directory, 'app');
+        const bin = path.join(directory, 'bin');
+        const home = path.join(directory, 'home');
+        const archives = path.join(directory, 'apt-archives');
+        const cached = path.join(home, '.cache/playwright-apt-debs');
+        const calls = path.join(directory, 'calls');
+        const githubEnv = path.join(directory, 'github-env');
+        const githubOutput = path.join(directory, 'github-output');
+        const proofs = path.join(directory, 'mcp-oauth-e2e');
+        for (const folder of [
+          bin,
+          archives,
+          cached,
+          path.join(appDirectory, 'apps/shell-super-app'),
+          path.join(appDirectory, 'scripts/zerops'),
+        ]) {
+          yield* fs.makeDirectory(folder, { recursive: true });
         }
-        // GitHub expands expressions before invoking Bash; leave all shell commands and substitutions untouched.
-        const command = step.run.replace(
-          `\${{ steps.verification-browser-versions.outputs.versions }}`,
-          'Version-1.61.0-Version-1.64.0',
-        );
-        const options = {
-          cwd: step['working-directory'] === 'app' ? app : directory,
-          env: environment,
-          extendEnv: true,
+        yield* fs.copy(PROOFS_SCRIPT, path.join(appDirectory, 'scripts/zerops/stage-proofs.sh'));
+        yield* fs.writeFileString(path.join(cached, 'restored.deb'), 'restored package');
+        yield* fs.writeFileString(path.join(archives, 'downloaded.deb'), 'downloaded package');
+        for (const [name, source] of Object.entries({
+          find: workflowFind,
+          mise: workflowMise,
+          sudo: workflowSudo,
+        })) {
+          const executable = path.join(bin, name);
+          yield* fs.writeFileString(executable, source);
+          yield* fs.chmod(executable, 0o700);
+        }
+        const environment = {
+          APT_ARCHIVES: archives,
+          GITHUB_ENV: githubEnv,
+          GITHUB_OUTPUT: githubOutput,
+          HOME: home,
+          ImageOS: 'ubuntu24',
+          ImageVersion: '20261115',
+          OAUTH_EXIT: String(scenario.oauth),
+          OAUTH_STARTED: path.join(directory, 'oauth-started'),
+          PATH: `${bin}:${yield* Config.String('PATH')}`,
+          RUNNER_TEMP: directory,
+          SERVICE_EXIT: String(scenario.services),
+          SETUP_CALLS: calls,
+          STAGE_SHELL_URL: 'https://shell.example.test',
+          WARMUP_EXIT: String(scenario.warmup),
+          WARMUP_STARTED: path.join(directory, 'warmup-started'),
         };
-        const syntax = yield* collectToolingProcess(ChildProcess.make('bash', ['-n', '-c', command], options));
-        expect(syntax.status, step.name).toBe(0);
-        const result = yield* collectToolingProcess(
-          ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', command], options),
-        );
-        const combined = step.run.includes('warmup_pid=$!');
-        expect(result.status, `${step.name}: ${result.stderr}`).toBe(combined ? scenario.status : 0);
-        if (combined) {
-          proofRan = true;
-          expect(result.stdout).toContain('warmup-output');
-          expect(result.stdout).toContain('oauth-output');
-          expect(result.stdout).toContain(`Warm-up exit: ${scenario.warmup}`);
-          expect(result.stdout).toContain(`MCP OAuth exit: ${scenario.oauth}`);
-          expect(yield* fs.readFileString(path.join(environment.E2E_OUT_DIR, 'warmup.log'))).toContain('warmup-output');
-          expect(yield* fs.readFileString(path.join(environment.E2E_OUT_DIR, 'oauth.log'))).toContain('oauth-output');
+        let proofRan = false;
+        for (const step of steps) {
+          if (step.run === undefined) {
+            continue;
+          }
+          // GitHub expands expressions before invoking Bash; leave all shell commands and substitutions untouched.
+          const command = step.run.replace(
+            `\${{ steps.verification-browser-versions.outputs.versions }}`,
+            'Version-1.61.0-Version-1.64.0',
+          );
+          const options = {
+            cwd: step['working-directory'] === 'app' ? appDirectory : directory,
+            env: environment,
+            extendEnv: true,
+          };
+          const syntax = yield* collectToolingProcess(ChildProcess.make('bash', ['-n', '-c', command], options));
+          expect(syntax.status, step.name).toBe(0);
+          const result = yield* collectToolingProcess(
+            ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', command], options),
+          );
+          const verdict = step.name === FINISH_PROOFS;
+          expect(result.status, `${step.name}: ${result.stderr}`).toBe(verdict ? scenario.status : 0);
+          if (verdict) {
+            proofRan = true;
+            expect(result.stdout).toContain('warmup-output');
+            expect(result.stdout).toContain('oauth-output');
+            expect(result.stdout).toContain(`Warm-up exit: ${scenario.warmup}`);
+            expect(result.stdout).toContain(`MCP OAuth exit: ${scenario.oauth}`);
+            expect(result.stdout).toContain(`Service verification exit: ${scenario.services}`);
+            expect(yield* fs.readFileString(path.join(proofs, 'warmup.log'))).toContain('warmup-output');
+            expect(yield* fs.readFileString(path.join(proofs, 'oauth.log'))).toContain('oauth-output');
+          }
         }
-      }
-      expect(proofRan).toBe(true);
-      expect(yield* fs.readFileString(githubEnv)).toContain('PLAYWRIGHT_BROWSERS_PATH=');
-      expect(yield* fs.readFileString(githubOutput)).toContain('versions=Version-1.61.0-Version-1.64.0');
-      expect(yield* fs.readFileString(githubOutput)).toContain(
-        'key=playwright-apt-debs-ubuntu24-20261115-Version-1.61.0-Version-1.64.0',
-      );
-      const recorded = yield* fs.readFileString(calls);
-      const invocations = recorded.trim().split('\n');
-      expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(1);
-      expect(invocations.filter((call) => call === WARMUP_INSTALL.replace('mise ', ''))).toHaveLength(1);
-      for (const service of ['app', 'storefront', 'shop', 'n1']) {
-        expect(recorded).toContain(`exec -- node scripts/zerops/verify-service.mjs ${service}`);
-      }
-      expect(recorded).toContain('sudo find ');
-      expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
-      expect(yield* fs.readFileString(path.join(cached, 'downloaded.deb'))).toBe('downloaded package');
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+        expect(proofRan).toBe(true);
+        expect(yield* fs.readFileString(githubEnv)).toContain('PLAYWRIGHT_BROWSERS_PATH=');
+        expect(yield* fs.readFileString(githubOutput)).toContain('versions=Version-1.61.0-Version-1.64.0');
+        expect(yield* fs.readFileString(githubOutput)).toContain(
+          'key=playwright-apt-debs-ubuntu24-20261115-Version-1.61.0-Version-1.64.0',
+        );
+        const recorded = yield* fs.readFileString(calls);
+        const invocations = recorded.trim().split('\n');
+        expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(1);
+        expect(invocations.filter((call) => call === WARMUP_INSTALL.replace('mise ', ''))).toHaveLength(1);
+        // A failed verification stops at the failing service; otherwise every service is verified.
+        for (const service of scenario.services === 0 ? ['app', 'storefront', 'shop', 'n1'] : ['app']) {
+          expect(recorded).toContain(`exec -- node scripts/zerops/verify-service.mjs ${service}`);
+        }
+        expect(recorded).toContain('sudo find ');
+        expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
+        expect(yield* fs.readFileString(path.join(cached, 'downloaded.deb'))).toBe('downloaded package');
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 }
+
+it.effect('fails the verdict when the proofs never started, and refuses to start them twice', () =>
+  Effect.gen(function* unstartedProofs() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const bin = path.join(directory, 'bin');
+    yield* fs.makeDirectory(path.join(directory, 'apps/shell-super-app'), { recursive: true });
+    yield* fs.makeDirectory(bin);
+    yield* fs.writeFileString(path.join(bin, 'mise'), workflowMise);
+    yield* fs.chmod(path.join(bin, 'mise'), 0o700);
+    const searchPath = `${bin}:${yield* Config.String('PATH')}`;
+    const run = (command: string) =>
+      collectToolingProcess(
+        ChildProcess.make('bash', [PROOFS_SCRIPT, command], {
+          cwd: directory,
+          env: {
+            OAUTH_EXIT: '0',
+            OAUTH_STARTED: path.join(directory, 'oauth-started'),
+            PATH: searchPath,
+            RUNNER_TEMP: directory,
+            SERVICE_EXIT: '0',
+            SETUP_CALLS: path.join(directory, 'calls'),
+            STAGE_SHELL_URL: 'https://shell.example.test',
+            WARMUP_EXIT: '0',
+            WARMUP_STARTED: path.join(directory, 'warmup-started'),
+          },
+          extendEnv: true,
+        }),
+      );
+    const unstarted = yield* run('finish');
+    expect(unstarted.status).toBe(1);
+    expect(unstarted.stdout).toContain('never started');
+    expect((yield* run('start')).status).toBe(0);
+    expect((yield* run('start')).status).toBe(1);
+    expect((yield* run('finish')).status).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect('installs the whole workspace once and bypasses pre-run verification for every pnpm command it runs', () =>
   Effect.gen(function* completeVerificationSetup() {

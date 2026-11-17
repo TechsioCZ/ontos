@@ -16,6 +16,7 @@
  *
  *   node scripts/zerops/prove-app-runtime.mts
  */
+import { availableParallelism, totalmem } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -439,9 +440,9 @@ export const proveAppRuntime = (root: string) =>
     const [importsTook, imports] = yield* Effect.timed(
       withLeftOutAside(root, excluded, entryImportFindings(root, entries)),
     );
-    // Where the build's time goes, check by check.
+    // Where the build's time goes, check by check, and on what machine: the entries import ENTRY_CONCURRENCY at once.
     yield* Console.log(
-      `app runtime checks took: store links ${secondsOf(storesTook)}, workspace links ${secondsOf(importersTook)}, runtime files ${secondsOf(workspaceTook)}, unit entries ${secondsOf(importsTook)}`,
+      `app runtime checks took: store links ${secondsOf(storesTook)}, workspace links ${secondsOf(importersTook)}, runtime files ${secondsOf(workspaceTook)}, unit entries ${secondsOf(importsTook)} (${String(ENTRY_CONCURRENCY)} at once on ${String(availableParallelism())} cores, ${String(Math.round(totalmem() / 2 ** 30))} GiB)`,
     );
     yield* report('kept packages that depend on a left-out package', stores);
     yield* report('workspace packages that need a left-out package at runtime', importers);

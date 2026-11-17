@@ -582,6 +582,8 @@ const DeliveryStepSchema = Schema.Struct({
   with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
 type DeliveryStep = typeof DeliveryStepSchema.Type;
+const stageProofsPath = new URL('../zerops/stage-proofs.sh', import.meta.url);
+const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
 /** The delivery every run shares (.github/actions/deliver-stage), from its secret syncs to its last proof. */
 const deliverySteps = (): readonly DeliveryStep[] =>
   Schema.decodeUnknownSync(Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }) }))(
@@ -603,9 +605,14 @@ it('installs Chromium for the warm-up client before running its bounded browser 
     ({ run }) =>
       run?.includes('pnpm --config.verify-deps-before-run=false exec playwright-core install chromium') === true,
   );
-  const warmup = steps.findIndex(({ run }) => run?.includes('node scripts/ops/stage-warmup.mts') === true);
+  // The proofs start from stage-proofs.sh, which runs the warm-up.
+  const starts = steps.flatMap(({ run }, index) => (run === PROOFS_START ? [index] : []));
   expect(install).toBeGreaterThanOrEqual(0);
-  expect(warmup).toBeGreaterThan(install);
+  expect(starts).toHaveLength(2);
+  for (const start of starts) {
+    expect(start).toBeGreaterThan(install);
+  }
+  expect(readFileSync(stageProofsPath, 'utf-8')).toContain('mise exec -- node scripts/ops/stage-warmup.mts');
 });
 
 it('marks the attempt after the plan is retained and before any remote mutation, in both delivering jobs', () => {
@@ -634,16 +641,18 @@ it('marks the attempt after the plan is retained and before any remote mutation,
   expect(sync).toBe(0);
   expect(firstPush).toBeGreaterThan(sync);
   expect(readFileSync(stagePushPath, 'utf-8')).toContain('if [ "$head" != "$GITHUB_SHA" ]; then');
-  // The live proofs stay mandatory: no cache hit or other condition skips them.
+  // The live proofs stay mandatory: their verdict has no condition, and fails when they never started.
+  const finish = steps.find(({ run }) => run === 'bash scripts/zerops/stage-proofs.sh finish');
+  expect(finish).toBeDefined();
+  expect(finish?.if).toBeUndefined();
+  expect(finish?.['continue-on-error']).toBeUndefined();
+  const proofs = readFileSync(stageProofsPath, 'utf-8');
   for (const proof of [
     'scripts/ops/stage-warmup.mts',
     'scripts/zerops/verify-service.mjs app',
     'scripts/demo/prove-mcp-oauth.mts',
   ]) {
-    const step = steps.find(({ run }) => run?.includes(proof) === true);
-    expect(step, proof).toBeDefined();
-    expect(step?.if, proof).toBeUndefined();
-    expect(step?.['continue-on-error'], proof).toBeUndefined();
+    expect(proofs, proof).toContain(`mise exec -- node ${proof}`);
   }
   for (const step of steps) {
     expect(step.with?.['fail-on-cache-miss'], step.name ?? step.uses).not.toBe(true);

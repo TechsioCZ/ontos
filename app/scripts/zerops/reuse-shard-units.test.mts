@@ -237,7 +237,7 @@ it.live("runs the workflow's reuse step: reused, must build, and a failing scrip
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-/** PATH stubs: `mise exec -- …` runs the command, `node` answers build-shard-units.mts with a fixed deal. */
+/** PATH stubs: `mise exec -- …` runs the command, `node` answers build-shard-units.mts (one shard or `all`) with a fixed deal. */
 const stubs = (root: string) =>
   Effect.gen(function* writeStubs() {
     const fs = yield* FileSystem.FileSystem;
@@ -249,7 +249,13 @@ const stubs = (root: string) =>
     );
     yield* fs.writeFileString(
       path.join(bin, 'node'),
-      '#!/usr/bin/env bash\ncase "$2" in 0) echo shell-super-app ;; 2) echo crm tax ;; *) echo "unit-$2" ;; esac\n',
+      [
+        '#!/usr/bin/env bash',
+        'deal() { case "$1" in 0) echo shell-super-app ;; 2) echo crm tax ;; *) echo "unit-$1" ;; esac; }',
+        'if [ "$2" != all ]; then deal "$2"; exit 0; fi',
+        String.raw`for shard in $(seq 0 $(($3 - 1))); do printf '%s\t%s\n' "$shard" "$(deal "$shard")"; done`,
+        '',
+      ].join('\n'),
     );
     yield* fs.chmod(path.join(bin, 'mise'), 0o700);
     yield* fs.chmod(path.join(bin, 'node'), 0o700);

@@ -147,11 +147,9 @@ jobs:
           out="$RUNNER_TEMP/zerops-unit-identities"
           mkdir -p "$out"
           mise exec -- sh scripts/zerops/build-app.sh --digests-only "$out/digests.tsv"
-          shard=0
-          while [ "$shard" -lt "$SHARDS" ]; do
-            printf '%s\t%s\n' "$shard" "$(mise exec -- node scripts/zerops/build-shard-units.mts "$shard" "$SHARDS")"
-            shard=$((shard + 1))
-          done >"$out/shards.tsv"
+          # Every shard in one process: one per shard took 6 s of the delivery's critical path (run 44144418654).
+          mise exec -- node scripts/zerops/build-shard-units.mts all "$SHARDS" >"$out/shards.tsv"
+          test "$(wc -l <"$out/shards.tsv")" -eq "$SHARDS"
           cat "$out/shards.tsv"
 
       - name: Retain the unit identities

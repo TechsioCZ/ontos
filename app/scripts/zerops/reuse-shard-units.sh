@@ -114,14 +114,12 @@ take_units() {
   scratch="$(mktemp -d)"
   # shellcheck disable=SC2064 # the scratch path is fixed now.
   trap "rm -rf '$scratch'" RETURN
-  # GNU tar (the runner) reads member patterns literally unless told; bsdtar always globs.
-  local -a glob=()
-  if tar --version 2>/dev/null | grep -q 'GNU tar'; then glob=(--wildcards --wildcards-match-slash); fi
+  # Each archive is decompressed once, whole: extracting unit by unit decompressed it again for every unit (28 passes
+  # over the 30 MB pushed archive took 17 s of the delivery's critical path, run 44144418654).
   for archive in "${found[@]}"; do
     mkdir -p "$scratch/$index"
-    # Only each unit's recorded identity and entry; an unreadable archive is a doubt like any other.
-    if ! tar --extract --zstd --file "$archive" -C "$scratch/$index" "${glob[@]}" \
-      '*/dist/.zerops-build-digest' '*/dist/zerops-entry.mjs' 2>/dev/null; then
+    # An unreadable archive is a doubt like any other.
+    if ! tar --extract --zstd --file "$archive" -C "$scratch/$index" 2>/dev/null; then
       echo "earlier unit archive $archive is unreadable; no unit is taken from the earlier builds"
       found=()
       rm -rf "${scratch:?}"/*
@@ -149,7 +147,8 @@ take_units() {
       continue
     fi
     rm -rf "${dists:?}/$dir/dist"
-    tar --extract --zstd --file "${found[$source]}" -C "$dists" "$dir/dist"
+    mkdir -p "$dists/$dir"
+    mv "$scratch/$source/$dir/dist" "$dists/$dir/dist"
     taken=$((taken + 1))
   done <"$identities/digests.tsv"
   echo "took $taken of $total units from the earlier builds by identity; $((total - taken)) must build: $(tr '\n' ' ' <"$missing")"

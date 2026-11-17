@@ -292,6 +292,14 @@ runs:
         path: ${{ runner.temp }}/zerops-verify-browsers
         key: zerops-verify-browsers-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}
 
+    # Neither the warm-up nor the MCP OAuth proof reads a storefront. When this run does not push the app, the app is
+    # live already: both prove it while the storefronts deploy, off the delivery's critical path.
+    - name: Prove the live app while the storefronts deploy
+      if: inputs.app != 'true'
+      shell: bash
+      working-directory: app
+      run: bash scripts/zerops/stage-proofs.sh start
+
     - name: Wait for the storefront deployments
       if: inputs.storefront == 'true' || inputs.shop == 'true' || inputs.n1 == 'true'
       shell: bash
@@ -325,6 +333,15 @@ runs:
       shell: bash
       run: bash app/scripts/zerops/stage-push.sh wait app
 
+    # Measurement only, in the background while the proofs run: where the new container's boot went.
+    - name: Read the new app container's boot stages
+      id: boot-stages
+      if: inputs.app == 'true'
+      shell: bash
+      env:
+        ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+      run: bash app/scripts/zerops/app-boot-stages.sh start
+
     # Every push this job started ends before the job does, even after a failed step, so the next run never pushes
     # over a Zerops process of this one.
     - name: Wait for every push this job started
@@ -351,55 +368,19 @@ runs:
       shell: bash
       run: bash app/scripts/zerops/stage-push.sh superseded
 
-    # The storefronts sign in through the app, so they are verified only once the app is live: never against an app
-    # that is swapping containers. A kept service deploys nothing and is verified all the same.
-    - name: Verify every service against the live app
+    # Never against an app that is swapping containers: a run that pushes the app proves it once it is live.
+    - name: Prove the live app
+      if: inputs.app == 'true'
       shell: bash
       working-directory: app
-      run: |
-        mise exec -- node scripts/zerops/verify-service.mjs app
-        for service in storefront shop n1; do
-          mise exec -- node scripts/zerops/verify-service.mjs "$service"
-        done
+      run: bash scripts/zerops/stage-proofs.sh start
 
-    # Independent read-only warm-up accounts and OAuth proof sessions may run together. Neither result is ignored.
-    # Warm-up keeps its full persona/route coverage, and its five personas sweep concurrently, one browser context each
-    # (scripts/ops/stage-warmup.mts). Its budget there is a wall-clock cap, not an expected cost: when it expires with
-    # any declared persona or destination unread, the warm-up FAILS this step, so the visible-identifier gate can never
-    # pass without having read.
-    - name: Warm declared reads and prove MCP over OAuth side by side
+    # Every service against the live app while the proofs run, then their verdicts. Unconditional: a run whose proofs
+    # never started fails here.
+    - name: Verify every service and finish the proofs
       shell: bash
       working-directory: app
-      env:
-        ONTOS_STAGE_WARMUP_ENABLED: 'true'
-        E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
-        E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
-      run: |
-        # The workflow's STAGE_SHELL_URL: the Shell both proofs sign in to, and the OAuth issuer it serves.
-        export ONTOS_SHELL_URL="${STAGE_SHELL_URL:?STAGE_SHELL_URL is required}"
-        export ONTOS_OAUTH_ISSUER="$STAGE_SHELL_URL/shell-super-app-api/oauth"
-        mkdir -p "$E2E_OUT_DIR"
-        E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
-        export E2E_PLAYWRIGHT_MODULE
-        mise exec -- node scripts/ops/stage-warmup.mts >"$E2E_OUT_DIR/warmup.log" 2>&1 &
-        warmup_pid=$!
-        mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification >"$E2E_OUT_DIR/oauth.log" 2>&1 &
-        oauth_pid=$!
-        trap 'kill "$warmup_pid" "$oauth_pid" 2>/dev/null || true' EXIT
-        warmup_status=0
-        oauth_status=0
-        wait "$warmup_pid" || warmup_status=$?
-        wait "$oauth_pid" || oauth_status=$?
-        trap - EXIT
-        echo '::group::Stage warm-up'
-        cat "$E2E_OUT_DIR/warmup.log"
-        echo "Warm-up exit: $warmup_status"
-        echo '::endgroup::'
-        echo '::group::MCP OAuth proof'
-        cat "$E2E_OUT_DIR/oauth.log"
-        echo "MCP OAuth exit: $oauth_status"
-        echo '::endgroup::'
-        test "$warmup_status" -eq 0 && test "$oauth_status" -eq 0
+      run: bash scripts/zerops/stage-proofs.sh finish
 
     - name: Upload the MCP OAuth proof
       if: always()
@@ -410,3 +391,8 @@ runs:
         if-no-files-found: ignore
         overwrite: true
         retention-days: 14
+
+    - name: Report the new app container's boot stages
+      if: always() && steps.boot-stages.outcome == 'success'
+      shell: bash
+      run: bash app/scripts/zerops/app-boot-stages.sh report
