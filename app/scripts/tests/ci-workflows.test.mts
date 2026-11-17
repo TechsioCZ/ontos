@@ -2018,8 +2018,8 @@ it('builds Node artifacts on four independent runners without waiting for or pro
 
 it('builds every Node release from this commit rather than restoring another release identity', () => {
   const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
-  expect(strategy.matrix.shard).toEqual([1]);
-  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 3, 4, 5, 6]);
+  expect(strategy.matrix.shard).toEqual([1, 4]);
+  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 3, 5, 6]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
   expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
