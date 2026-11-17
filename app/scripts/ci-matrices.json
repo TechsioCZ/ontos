@@ -21,14 +21,14 @@
       "name": "Workspace Unit and Component Tests (2/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:unit --pool.maxWorkers 2\npnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:component --pool.maxWorkers 2\n",
+      "commands": "pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app run test:unit --pool.maxWorkers 4\npnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app run test:component --pool.maxWorkers 4\n",
       "after-check": "browser"
     },
     {
       "name": "Workspace Unit and Component Tests (3/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing run test:unit --pool.maxWorkers 4\npnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing run test:component --pool.maxWorkers 4\n",
+      "commands": "pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:unit --pool.maxWorkers 4\npnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:component --pool.maxWorkers 4\n",
       "after-check": "static"
     }
   ],
