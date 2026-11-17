@@ -12,6 +12,7 @@ import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import type { Dictionary } from "@/i18n";
+import { getDictionary } from "@/i18n";
 import type { CatalogModel, ProductDetailModel } from "@/ontos/catalog-model";
 import { categoryTrail } from "@/ontos/catalog-navigation";
 import { priceProps } from "./price-props";
@@ -77,8 +78,23 @@ export const ProductView = ({
     productShareOrigin.getSnapshot,
     productShareOrigin.getServerSnapshot,
   );
-  const { current, genericVariantSelected, images, parameters, selectionRequired, variant } =
-    selection;
+  const {
+    current,
+    genericVariantSelected,
+    images,
+    parameters: selectedParameters,
+    selectionRequired,
+    variant,
+  } = selection;
+  const hasProductCode = selectedParameters.some((parameter) =>
+    [getDictionary("cs").productCode, getDictionary("en").productCode].some(
+      (label) => parameter.label.trim().toLowerCase() === label.toLowerCase(),
+    ),
+  );
+  const parameters =
+    current.sku.trim().length > 0 && !hasProductCode
+      ? [{ label: d.productCode, unit: "", value: current.sku }, ...selectedParameters]
+      : selectedParameters;
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -303,21 +319,14 @@ export const ProductView = ({
                     {d.productParameters}
                   </h2>
                   <div className="n1-product-parameters">
-                    <Table
-                      aria-label={d.productParameters}
-                      className="table-fixed"
-                      size="sm"
-                      variant="striped"
-                    >
-                      <colgroup>
-                        <col width="55%" />
-                        <col width="45%" />
-                      </colgroup>
+                    <Table aria-label={d.productParameters} size="sm" variant="striped">
                       <Table.Body>
                         {parameters.map((parameter) => (
                           <Table.Row key={JSON.stringify(parameter)}>
-                            <Table.ColumnHeader scope="row">{parameter.label}</Table.ColumnHeader>
-                            <Table.Cell>
+                            <Table.ColumnHeader className="min-w-24 wrap-anywhere" scope="row">
+                              {parameter.label}
+                            </Table.ColumnHeader>
+                            <Table.Cell className="wrap-anywhere">
                               {parameter.unit.length > 0
                                 ? `${parameter.value} ${parameter.unit}`
                                 : parameter.value}

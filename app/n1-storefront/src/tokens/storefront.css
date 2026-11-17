@@ -302,6 +302,7 @@
 
 /* Legacy N1 parameter rows: normal text/md labels and subtle alternating surfaces. */
 @utility n1-product-parameters {
+  --padding-table-cell-sm: var(--dimension-6) var(--dimension-8);
   --text-table-sm: var(--text-md);
   --font-weight-table-header: var(--font-weight-normal);
   --color-table-row-striped-primary: var(--color-base);
@@ -319,10 +320,12 @@
   --text-totals-summary-total-size: var(--text-sm);
 }
 
-/* Figma311:2190:28px steppers flank a36px native field; no enclosing frame.
- * Coarse-pointer minimum remains owned by the kit's separate touch role. */
+/* Figma311:2164 proportions, with the user's17Nov editable-field affordance:
+ * one border on the central native field, no enclosing/nested group frame. */
 @utility n1-mini-cart-quantity {
-  --border-width-form-control: var(--dimension-0);
+  --border-width-form-control: var(--dimension-1);
+  --color-numeric-input-compact-border: var(--color-fg-secondary);
+  --color-numeric-input-border-hover: var(--color-fg-secondary);
   --color-form-control-bg: var(--color-base);
   --color-numeric-input-input-bg: var(--color-base);
   /* The shared0.59 foundation expands sm to36px. This compact field keeps

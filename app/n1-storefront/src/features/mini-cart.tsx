@@ -189,7 +189,7 @@ const MiniCartLine = ({
             step={cartQuantityStep(entry.packageQuantity)}
             value={value}
           >
-            <NumericInput.Control>
+            <div className="flex items-center">
               <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
                 <NumericInput.DecrementTrigger
                   aria-label={d.shopping.decreaseQuantity}
@@ -200,11 +200,13 @@ const MiniCartLine = ({
                   variant="secondary"
                 />
               </div>
-              <NumericInput.Input
-                aria-describedby={`${inputId}-feedback`}
-                aria-label={`${d.quantity}: ${entry.name}`}
-                className="text-center"
-              />
+              <NumericInput.Control className="min-w-0 flex-1">
+                <NumericInput.Input
+                  aria-describedby={`${inputId}-feedback`}
+                  aria-label={`${d.quantity}: ${entry.name}`}
+                  className="text-center"
+                />
+              </NumericInput.Control>
               <div className="flex h-8 w-7 shrink-0 pointer-coarse:h-11 pointer-coarse:w-11">
                 <NumericInput.IncrementTrigger
                   aria-label={d.shopping.increaseQuantity}
@@ -215,7 +217,7 @@ const MiniCartLine = ({
                   variant="secondary"
                 />
               </div>
-            </NumericInput.Control>
+            </div>
           </NumericInput>
         </div>
         <div className="flex h-7 w-7 shrink-0">
