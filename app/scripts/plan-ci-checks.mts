@@ -184,7 +184,6 @@ const cli = Command.make(
       const encoded = yield* Effect.all({
         expected: encode(plan.expected),
         integration: encode(phases.work),
-        integrationLate: encode(phases.late),
         integrationSetup: encode(phases.preparation),
         integrationTopology: encode(phases.topology),
         source: encode(plan.source),

@@ -26,10 +26,8 @@ it('prepares the database even when browser tests are not selected, without addi
   const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
   expect(phases.preparation).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
   expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
-  expect([...phases.work, ...phases.late]).toEqual(
-    templates.integration.filter((entry) => entry.suite === 'integration'),
-  );
-  expect(integrationPhases([])).toEqual({ late: [], preparation: [], topology: [], work: [] });
+  expect(phases.work).toEqual(templates.integration.filter((entry) => entry.suite === 'integration'));
+  expect(integrationPhases([])).toEqual({ preparation: [], topology: [], work: [] });
 });
 const CATALOG = '@app/catalog';
 const PRICING = '@app/pricing';
