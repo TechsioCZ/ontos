@@ -673,13 +673,15 @@ export const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
 export const STAGE_BRANCH = 'demo/sales-crm';
 /**
  * What runs on stage or delivers it besides the units: the app host and the migrator it runs, the Zerops build, init
- * and start commands, and the stage workflow's own steps. Every tracked file these reach is a delivery read.
+ * and start commands, and the stage workflow's own steps with the delivery action that holds its pushes, warm-up and
+ * proofs. Every tracked file these reach is a delivery read.
  */
 export const DELIVERY_ROOTS = [
   'app/scripts/zerops/app-host.mts',
   'app/scripts/run-zerops-migrator.mjs',
   'app/zerops.yaml',
   STAGE_WORKFLOW,
+  '.github/actions/deliver-stage/action.yml',
 ] as const;
 /** In shell and YAML, any slash-separated token can be a path a command reads (`$root/` and `${root}/` stripped). */
 const PATH_TOKEN = /(?:\$\{?root\}?\/)?(?<value>[\w@.-]+(?:\/[\w@.-]+)+)/gu;
