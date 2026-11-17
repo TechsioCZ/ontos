@@ -73,9 +73,15 @@ it.effect('uses the same immutable PostgreSQL image for development, CI and data
     const fs = yield* FileSystem.FileSystem;
     // CI is covered through docker-compose.yml: the gates workflow declares no PostgreSQL service of its
     // own any more, every job that needs a cluster starts this same Compose file, so pinning the image
-    // here and asserting the workflow cannot name a different one is the same guarantee.
+    // here and asserting the workflow cannot name any PostgreSQL image, under any tag or digest, is the
+    // same guarantee.
+    const workflowImage = /\bpostgres(?:@sha256:|:[a-z0-9])|^\s*image:\s*['"]?(?:[\w.-]+\/)*postgres['"]?\s*$/mu;
+    for (const declared of ['image: postgres:18.5-alpine', 'image: postgres', "image: 'docker.io/library/postgres'"]) {
+      expect(declared).toMatch(workflowImage);
+    }
+    expect('postgresql://ontos_runtime@localhost:5433/ontos_ci').not.toMatch(workflowImage);
     const workflow = yield* fs.readFileString(path.join(root, '../.github/workflows/ultramodern-workspace-gates.yml'));
-    expect(workflow.match(/postgres:\d+\.\d+-alpine@sha256:[a-f0-9]{64}/gu)).toBeNull();
+    expect(workflow).not.toMatch(workflowImage);
     const images = yield* Effect.all(
       ['docker-compose.yml', 'zerops.yaml', 'scripts/run-zerops-spicedb.sh'].map((file) =>
         fs

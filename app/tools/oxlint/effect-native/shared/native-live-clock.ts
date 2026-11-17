@@ -190,19 +190,21 @@ const excludedLayerOptions = (input: ESTree.Node | undefined): { readonly memoMa
       return null;
     }
     seen.add(property.key.name);
+    // A type assertion such as `true as const` leaves the runtime literal unchanged.
+    const value = unwrap(property.value);
     if (property.key.name === 'excludeTestServices') {
-      if (property.value.type !== 'Literal' || property.value.value !== true) {
+      if (value?.type !== 'Literal' || value.value !== true) {
         return null;
       }
       excluded = true;
     } else if (property.key.name === 'concurrent') {
-      if (property.value.type !== 'Literal' || !Predicate.isBoolean(property.value.value)) {
+      if (value?.type !== 'Literal' || !Predicate.isBoolean(value.value)) {
         return null;
       }
     } else if (property.key.name === 'memoMap') {
       memoMap = property.value;
     } else if (property.key.name === 'timeout') {
-      if (!literalLayerTimeout(property.value)) {
+      if (value === null || !literalLayerTimeout(value)) {
         return null;
       }
     } else {
