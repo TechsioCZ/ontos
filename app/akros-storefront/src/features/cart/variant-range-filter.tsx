@@ -11,6 +11,8 @@ import { useDictionary } from "@/ontos/market-context";
 
 // The kit's numeric inputs parse Czech decimals (comma) in every market; a typed dot is normalized below.
 const formatter = new Intl.NumberFormat("cs-CZ", { maximumFractionDigits: 6 });
+const isHTMLElement = (value: EventTarget): value is HTMLElement =>
+  HTMLElement.prototype.isPrototypeOf(value);
 
 export function VariantRangeFilter({
   filter,
@@ -46,8 +48,7 @@ export function VariantRangeFilter({
   // Keep the real measurement scale (including ARIA values). The kit supports a fixed
   // step, so keyboard arrows must move to the next existing dimension across uneven gaps.
   const stepSlider = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!(event.target instanceof HTMLElement) || event.target.getAttribute("role") !== "slider")
-      return;
+    if (!isHTMLElement(event.target) || event.target.getAttribute("role") !== "slider") return;
     const forward = event.key === "ArrowRight" || event.key === "ArrowUp";
     const backward = event.key === "ArrowLeft" || event.key === "ArrowDown";
     if (!forward && !backward) return;
