@@ -381,6 +381,8 @@ it.live(
             registeredWorkloads: [...customerWorkerRules, ...customerRecoveryRules],
             sourceAppId: symmyAppId,
           },
+          // A search composes three owner reads, each behind its own gateway assertion.
+          requestDeadlineSeconds: 60,
           snapshotJson: yield* encodeProductComposition(snapshot),
         });
         const tenantId = yield* uuid;

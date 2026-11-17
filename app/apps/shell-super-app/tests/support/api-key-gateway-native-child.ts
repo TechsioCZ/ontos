@@ -208,6 +208,9 @@ const serve = Effect.scoped(
       'ONTOS_SHELL_NATIVE_ADDITIONAL_RELAY_SOURCES',
     ).pipe(Config.withDefault([]), Effect.mapError(unavailable));
     const productionGate = yield* Config.Boolean('ONTOS_SHELL_NATIVE_PRODUCTION_GATE').pipe(Config.withDefault(false));
+    const requestDeadline = Duration.seconds(
+      yield* Config.Int('ONTOS_SHELL_NATIVE_REQUEST_DEADLINE_SECONDS').pipe(Config.withDefault(20)),
+    );
     if (
       additionalSources.length > 0 &&
       (!productionGate ||
@@ -383,7 +386,13 @@ const serve = Effect.scoped(
             surface = 'gateway';
           }
           const response = yield* productionGate
-            ? observeShellNativeRequestDispatch(dispatch, Effect.fail(unavailable()), requestOutcomes, surface)
+            ? observeShellNativeRequestDispatch(
+                dispatch,
+                Effect.fail(unavailable()),
+                requestOutcomes,
+                surface,
+                requestDeadline,
+              )
             : dispatch.pipe(bounded);
           if (
             productionGate &&
