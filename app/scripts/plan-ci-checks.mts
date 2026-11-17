@@ -1,12 +1,14 @@
 import { Console, Config, Effect, FileSystem, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
-import { integrationPhases, planCiChecks, unitPhases, withCiTopologyDependencies } from './ci-impact.mts';
+import { ciPlanOutputs, ciWorkspacePackages, knownTask, lintSweeps, planCiChecks } from './ci-impact.mts';
 import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const CommandEntrySchema = Schema.Struct({
-  'after-check': Schema.optionalKey(Schema.Literals(['browser', 'static'])),
+  'after-check': Schema.optionalKey(Schema.Literals(['lint', 'static', 'topology'])),
+  // Source checks that share the row's install and run beside its foreground commands.
+  'background-commands': Schema.optionalKey(Schema.String),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -14,31 +16,29 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
-  'after-source': Schema.optionalKey(Schema.Literals(['contracts', 'tooling'])),
+  // Early rows install and restore their clusters while the builds run.
+  early: Schema.optionalKey(Schema.Boolean),
   lanes: Schema.optionalKey(Schema.Literals([2, 4])),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
-  'native-preproposal': Schema.optionalKey(Schema.Boolean),
-  'package-filters': Schema.optionalKey(Schema.String),
-  'package-partition': Schema.optionalKey(Schema.String),
-  'preproposal-case': Schema.optionalKey(Schema.Literals(['basis', 'approval'])),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
-  'root-rstest-shard': Schema.optionalKey(Schema.String),
-  'root-suite': Schema.optionalKey(Schema.Boolean),
   tasks: Schema.optionalKey(Schema.Array(Schema.String)),
-  'whole-owner-proofs': Schema.optionalKey(Schema.String),
   // The bootstrap row proves deployment and federation independently of package selection.
   suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
 }).check(
   Schema.makeFilter((entry) =>
-    entry.suite === 'integration' &&
-    entry['root-suite'] !== true &&
-    (entry['package-filters'] === undefined || entry['package-filters'].length === 0)
-      ? 'Integration templates must name package filters or run the root suite'
+    entry.suite === 'integration' && (entry.tasks === undefined || entry.tasks.length === 0)
+      ? 'Integration templates must list the tasks they run'
       : undefined,
   ),
   Schema.makeFilter((entry) =>
-    entry['native-preproposal'] === true && (entry['proof-packages']?.length ?? 0) === 0
+    (entry.tasks ?? []).some((task) => !knownTask(task))
+      ? 'Integration tasks must use a runnable task form'
+      : undefined,
+  ),
+  Schema.makeFilter((entry) =>
+    (entry.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')) &&
+    (entry['proof-packages']?.length ?? 0) === 0
       ? 'Native preproposal templates must name their runtime proof packages'
       : undefined,
   ),
@@ -69,11 +69,14 @@ export const CiTopologySchema = Schema.Struct({
 });
 
 export {
+  ciPlanOutputs,
   filterPaths,
   integrationPhases,
+  knownTask,
   unitPhases,
   matchingPackages,
   planCiChecks,
+  taskDirectory,
   unknownFilters,
   withCiTopologyDependencies,
 } from './ci-impact.mts';
@@ -109,7 +112,6 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
       ),
     { concurrency: 4 },
   );
-  const names = new Set(manifests.map(({ manifest }) => manifest.name));
   const ownership = yield* fs.readFileString(path.join(app, 'topology/ownership.json')).pipe(
     Effect.flatMap(
       Schema.decodeUnknownEffect(
@@ -124,35 +126,7 @@ const readWorkspace = Effect.gen(function* readCiWorkspace() {
   const topology = yield* fs
     .readFileString(path.join(app, 'topology/reference-topology.json'))
     .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(CiTopologySchema))));
-  return withCiTopologyDependencies(
-    manifests.map(({ directory, manifest }): CiWorkspacePackage => ({
-      contractProducer: manifest.ontosContractOwner?.packageName,
-      dependencies: [
-        ...new Set(
-          [manifest.dependencies, manifest.devDependencies, manifest.optionalDependencies, manifest.peerDependencies]
-            .flatMap((group) => Object.entries(group ?? {}))
-            .filter(
-              ([name, version]) => names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:'),
-            )
-            .map(([name]) => name),
-        ),
-      ],
-      directory,
-      name: manifest.name,
-      uncertain:
-        (directory !== '.' &&
-          !ownership.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
-        [
-          manifest.dependencies,
-          manifest.devDependencies,
-          manifest.optionalDependencies,
-          manifest.peerDependencies,
-        ].some((group) =>
-          Object.values(group ?? {}).some((version) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version)),
-        ),
-    })),
-    topology,
-  );
+  return ciWorkspacePackages({ manifests, owners: ownership.owners, topology });
 });
 
 const cli = Command.make(
@@ -182,25 +156,12 @@ const cli = Command.make(
         packages,
         templates,
       });
-      const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-      const phases = integrationPhases(plan.integration);
-      const units = unitPhases(plan.unit);
-      const encoded = yield* Effect.all({
-        expected: encode(plan.expected),
-        integration: encode(phases.work),
-        integrationAfterContracts: encode(phases.afterContracts),
-        integrationAfterTooling: encode(phases.afterTooling),
-        integrationSetup: encode(phases.preparation),
-        integrationTopology: encode(phases.topology),
-        source: encode(plan.source.filter((row) => row['typescript-build'] === true)),
-        sourceExtra: encode(plan.source.filter((row) => row['typescript-build'] !== true)),
-        unit: encode(units.work),
-        unitAfterBrowser: encode(units.afterBrowser),
-        unitAfterStatic: encode(units.afterStatic),
-      });
+      const lintSweep = yield* Config.Literals(lintSweeps, 'LINT_SWEEP');
+      const encoded = yield* Effect.forEach(Object.entries(ciPlanOutputs(plan, lintSweep)), ([key, value]) =>
+        Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(Effect.map((json) => `${key}=${json}`)),
+      );
       const output = yield* Config.String('GITHUB_OUTPUT');
-      const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);
-      yield* fs.writeFileString(output, `mode=${plan.mode}\n${outputLines.join('\n')}\n`, { flag: 'a' });
+      yield* fs.writeFileString(output, `mode=${plan.mode}\n${encoded.join('\n')}\n`, { flag: 'a' });
       const summary = yield* Config.String('GITHUB_STEP_SUMMARY');
       yield* fs.writeFileString(
         summary,

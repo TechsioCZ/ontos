@@ -10,31 +10,45 @@ export interface CiWorkspacePackage {
   readonly uncertain?: boolean;
 }
 
-/** Partition selected integration work by the completed check slots it reuses. */
+/**
+ * Partition selected integration work by the check slots it reuses. Early rows install and restore their
+ * clusters while the builds run; built rows start on the build slots. The built job carries the
+ * service-integration gate id, so it never receives an empty matrix while integration work is selected.
+ */
 export const integrationPhases = (entries: readonly IntegrationEntry[]) => {
   const browser = entries.filter(({ suite }) => suite === 'browser');
   const suites = entries.filter(({ suite }) => suite === 'integration');
-  const work = suites.filter((entry) => entry['after-source'] === undefined);
+  const built = suites.filter((entry) => entry.early !== true);
+  const promoted = built.length === 0 ? suites.slice(0, 1) : [];
   return {
-    afterContracts: work.length === 0 ? [] : suites.filter((entry) => entry['after-source'] === 'contracts'),
-    afterTooling: work.length === 0 ? [] : suites.filter((entry) => entry['after-source'] === 'tooling'),
+    built: [...promoted, ...built],
+    early: suites.filter((entry) => entry.early === true && !promoted.includes(entry)),
     preparation:
       entries.length === 0 || browser.length > 0
         ? browser
         : [{ name: 'Prepare integration database', suite: 'database' as const }],
     topology: entries.filter(({ suite }) => suite === 'bootstrap'),
-    work: work.length === 0 ? suites : work,
   };
 };
 
-/** Promote one selected row when the early phase is empty; other rows keep their slots. */
-export const unitPhases = (entries: Templates['unit']) => {
-  const work = entries.filter((row) => row['after-check'] === undefined);
+export const lintSweeps = ['all', 'changed'] as const;
+export type LintSweep = (typeof lintSweeps)[number];
+
+/**
+ * Unit rows reuse the slot of the check they follow. A full lint sweep keeps the lint slot busy for minutes,
+ * so a row that follows lint follows the topology proof instead. The work job carries the workspace-unit gate
+ * id: when no selected row starts with the builds, the first selected row is promoted into it.
+ */
+export const unitPhases = (entries: Templates['unit'], lintSweep: LintSweep) => {
+  const phase = (row: Templates['unit'][number]) =>
+    row['after-check'] === 'lint' && lintSweep === 'all' ? 'topology' : row['after-check'];
+  const work = entries.filter((row) => phase(row) === undefined);
   const promoted = work.length === 0 ? entries[0] : undefined;
   const deferred = entries.filter((row) => row !== promoted);
   return {
-    afterBrowser: deferred.filter((row) => row['after-check'] === 'browser'),
-    afterStatic: deferred.filter((row) => row['after-check'] === 'static'),
+    afterLint: deferred.filter((row) => phase(row) === 'lint'),
+    afterStatic: deferred.filter((row) => phase(row) === 'static'),
+    afterTopology: deferred.filter((row) => phase(row) === 'topology'),
     work: promoted === undefined ? work : [promoted],
   };
 };
@@ -70,6 +84,60 @@ export const withCiTopologyDependencies = (
         entry.uncertain === true || invalid || references.some((id) => !units.some((candidate) => candidate.id === id)),
     };
   });
+};
+
+type DependencyGroup = Readonly<Record<string, string>> | undefined;
+
+export interface CiPackageManifest {
+  readonly dependencies?: DependencyGroup;
+  readonly devDependencies?: DependencyGroup;
+  readonly name: string;
+  readonly ontosContractOwner?: { readonly packageName: string };
+  readonly optionalDependencies?: DependencyGroup;
+  readonly peerDependencies?: DependencyGroup;
+}
+
+/**
+ * The planner's view of the workspace. Both entry points read the same files and call this one mapping:
+ * the installed CLI through Effect, ci-plan through plain Node before any dependency is installed.
+ */
+export const ciWorkspacePackages = (input: {
+  readonly manifests: readonly { readonly directory: string; readonly manifest: CiPackageManifest }[];
+  readonly owners: readonly { readonly package: string; readonly path: string }[];
+  readonly topology: typeof CiTopologySchema.Type;
+}): readonly CiWorkspacePackage[] => {
+  const names = new Set(input.manifests.map(({ manifest }) => manifest.name));
+  const groups = (manifest: CiPackageManifest) => [
+    manifest.dependencies,
+    manifest.devDependencies,
+    manifest.optionalDependencies,
+    manifest.peerDependencies,
+  ];
+  const workspacePackage = ({ directory, manifest }: (typeof input.manifests)[number]): CiWorkspacePackage => {
+    const entry = {
+      dependencies: [
+        ...new Set(
+          groups(manifest)
+            .flatMap((group) => Object.entries(group ?? {}))
+            .filter(
+              ([name, version]) => names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:'),
+            )
+            .map(([name]) => name),
+        ),
+      ],
+      directory,
+      name: manifest.name,
+      uncertain:
+        (directory !== '.' &&
+          !input.owners.some((owner) => owner.package === manifest.name && owner.path === directory)) ||
+        groups(manifest).some((group) =>
+          Object.values(group ?? {}).some((version) => /^(?:file:|link:|workspace:(?:[./]|.*[:/]))/u.test(version)),
+        ),
+    };
+    const producer = manifest.ontosContractOwner?.packageName;
+    return producer === undefined ? entry : { ...entry, contractProducer: producer };
+  };
+  return withCiTopologyDependencies(input.manifests.map(workspacePackage), input.topology);
 };
 
 const gateIds = [
@@ -125,6 +193,18 @@ export const matchingPackages = (filters: string, packages: readonly CiWorkspace
   );
 };
 
+/** The workspace directory a package task such as `./verticals/privacy#2/8` runs in; undefined for root and whole proofs. */
+export const taskDirectory = (task: string) =>
+  /^\.\/(?<directory>(?:apps|packages|verticals)\/[a-z0-9-]+)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.directory;
+
+/** Every task form run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
+export const knownTask = (task: string) =>
+  /^root:\d+\/\d+$/u.test(task) ||
+  /^whole:(?:organization|privacy|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
+    task,
+  ) ||
+  taskDirectory(task) !== undefined;
+
 export const planCiChecks = (input: {
   readonly changedPaths: readonly string[];
   readonly forceFull?: boolean;
@@ -154,7 +234,7 @@ export const planCiChecks = (input: {
     templates.unit.some(({ commands }) => unknownFilters(commands)) ||
     templates.integration.some(
       (entry) =>
-        unknownFilters(entry['package-filters'] ?? '') ||
+        (entry.tasks ?? []).some((task) => !knownTask(task)) ||
         (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
     ) ||
     new Set(packages.map(({ name }) => name)).size !== packages.length ||
@@ -166,6 +246,9 @@ export const planCiChecks = (input: {
         !rootDocumentation(changedPath) &&
         !packages.some(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`)),
     );
+  const affectedDirectories = new Set(affected.map(({ directory }) => directory));
+  const rootAffected = affectedDirectories.has('.');
+  // Each task names its owner, so the task list alone decides what an affected plan keeps.
   const selectedIntegration = templates.integration.flatMap((entry): readonly IntegrationEntry[] => {
     // A row that is neither a package suite nor the browser suite proves the deployment bootstrap or the
     // build outputs themselves: it reads no matrix input and has nothing to narrow, so affected selection
@@ -174,41 +257,26 @@ export const planCiChecks = (input: {
       return [entry];
     }
     if (entry.suite === 'browser') {
-      return affected.some(({ directory }) => directory === 'apps/shell-super-app') ? [entry] : [];
+      return affectedDirectories.has('apps/shell-super-app') ? [entry] : [];
     }
-    const packageFilters = entry['package-filters'] ?? '';
-    const selected = packageFilters.length === 0 ? [] : matchingPackages(packageFilters, affected);
-    const rootSuite = entry['root-suite'] === true && affected.some(({ directory }) => directory === '.');
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
-    if (selected.length === 0 && !rootSuite && !proofAffected && (entry['whole-owner-proofs'] ?? '').length === 0) {
-      return [];
-    }
-    const filters = selected.length === 0 ? '' : selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
-    const narrowed = {
-      ...entry,
-      'native-preproposal': entry['native-preproposal'] === true && proofAffected,
-      'package-filters': filters,
-      'root-suite': rootSuite,
-    };
-    if (entry.tasks === undefined) {
-      return [narrowed];
-    }
-    const tasks = entry.tasks.filter((task) => {
+    const tasks = (entry.tasks ?? []).filter((task) => {
       if (task.startsWith('root:') || task === 'whole:migrations') {
-        return rootSuite;
+        return rootAffected;
       }
       if (task.startsWith('whole:preproposal-')) {
         return proofAffected;
       }
       if (task === 'whole:party-worker') {
-        return selected.some(({ directory }) => directory === 'verticals/party-registry');
+        return affectedDirectories.has('verticals/party-registry');
       }
       if (task.startsWith('whole:')) {
         return true;
       }
-      return selected.some(({ directory }) => task === `./${directory}` || task.startsWith(`./${directory}#`));
+      const directory = taskDirectory(task);
+      return directory !== undefined && affectedDirectories.has(directory);
     });
-    return tasks.length === 0 ? [] : [{ ...narrowed, tasks }];
+    return tasks.length === 0 ? [] : [{ ...entry, tasks }];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
     const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
@@ -241,5 +309,23 @@ export const planCiChecks = (input: {
     reason,
     source: templates.source,
     unit: effectiveMode === 'full' ? templates.unit : selectedUnit,
+  };
+};
+
+/** Every ci-plan job output except `mode`, keyed exactly as the workflow reads them. */
+export const ciPlanOutputs = (plan: ReturnType<typeof planCiChecks>, lintSweep: LintSweep) => {
+  const phases = integrationPhases(plan.integration);
+  const units = unitPhases(plan.unit, lintSweep);
+  return {
+    expected: plan.expected,
+    integration: phases.built,
+    integrationEarly: phases.early,
+    integrationSetup: phases.preparation,
+    integrationTopology: phases.topology,
+    source: plan.source,
+    unit: units.work,
+    unitAfterLint: units.afterLint,
+    unitAfterStatic: units.afterStatic,
+    unitAfterTopology: units.afterTopology,
   };
 };
