@@ -338,12 +338,12 @@ it.live(
     write(
       root,
       rstestConfigFile,
-      `import { defineConfig, defineProject } from '@rstest/core';
+      `import { defineConfig, defineInlineProject } from '@rstest/core';
        export default defineConfig({
          setupFiles: ['./${rootSetup}'],
          projects: [
            { name: 'integration', setupFiles: ['./${projectSetup}'] },
-           defineProject({ name: 'wrapped', setupFiles: ['./${wrappedSetup}'] }),
+           defineInlineProject({ name: 'wrapped', setupFiles: ['./${wrappedSetup}'] }),
            { name: 'dynamic', setupFiles: [chooseSetup()] },
            { name: 'relocated', root: 'elsewhere', setupFiles: ['./${deadFile}'] }
          ]
