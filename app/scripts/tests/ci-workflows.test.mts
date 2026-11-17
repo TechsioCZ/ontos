@@ -2386,7 +2386,7 @@ const IntegrationRunnerSchema = Schema.Struct({
     matrix: Schema.Struct({
       include: Schema.Array(
         Schema.Struct({
-          lanes: Schema.optional(Schema.Literals([2, 3, 4])),
+          lanes: Schema.optional(Schema.Literals([2, 4])),
           name: Schema.String,
           'native-composition': Schema.optional(Schema.Boolean),
           'native-preproposal': Schema.optional(Schema.Boolean),
@@ -2540,17 +2540,12 @@ it('supplies same-run built Composition to selected native owner integration sha
   const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
   const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 4");
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
-  const sourceProof = steps.findIndex(
-    ({ run }) => run === 'bash scripts/ci/run-integration-suites.sh --task whole:migrations',
-  );
   expect(workers).toBeGreaterThan(-1);
-  expect(workers < sourceProof && sourceProof < wait && wait < download).toBe(true);
-  expect(steps[sourceProof]?.if).toBe("matrix.root-rstest-shard == '10/10'");
-  expect(steps[sourceProof]?.background).toBe(true);
-  expect(steps[sourceProof]?.env?.ONTOS_CI_WORKER_SLOT).toBe('3');
-  expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(true);
-  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '10/10')).toHaveLength(1);
-  expect(rootShards.find((shard) => shard['root-rstest-shard'] === '10/10')?.lanes).toBe(2);
+  expect(workers < wait && wait < download).toBe(true);
+  expect(
+    integration.strategy.matrix.include.flatMap((row) => row.tasks ?? []).filter((task) => task === 'whole:migrations'),
+  ).toHaveLength(1);
+  expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(false);
   expect(steps[wait]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
@@ -2680,7 +2675,7 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
-    ONTOS_CI_ISOLATED_WORKERS: expression("matrix.root-rstest-shard == '10/10' && '4' || '2'"),
+    ONTOS_CI_ISOLATED_WORKERS: '2',
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
   const isolate = job.steps.findIndex((step) => step.run === START_INTEGRATION_WORKERS);

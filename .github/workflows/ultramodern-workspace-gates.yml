@@ -810,25 +810,9 @@ jobs:
         if: matrix.suite == 'integration'
         working-directory: app
         env:
-          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '2' }}
+          ONTOS_CI_ISOLATED_WORKERS: '2'
           INTEGRATION_DATABASE_ARCHIVE: ${{ runner.temp }}/integration-database
         run: bash scripts/ci/start-integration-workers.sh
-
-      # This acceptance uses only source, PostgreSQL and SpiceDB, not a single Node artifact.
-      # It previously spent 289 seconds behind the build and another native test in root shard 6/16.
-      - name: Prove scoped owner migrations on a separate cluster
-        id: scoped-migrations
-        background: true
-        if: matrix.root-rstest-shard == '10/10'
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          ONTOS_CI_ISOLATED_WORKERS: '4'
-          # Shell's two lanes use clusters 1/2. Reserve cluster 4 for this proof,
-          # including its cluster-global role changes, while Node artifacts build.
-          ONTOS_CI_WORKER_SLOT: '3'
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: bash scripts/ci/run-integration-suites.sh --task whole:migrations
 
       # Setup overlaps the builds. Artifact consumers still wait for this exact run's uploads;
       # the required gate independently requires the build jobs to finish successfully.
@@ -914,14 +898,11 @@ jobs:
           NATIVE_PREPROPOSAL_CASE: ${{ matrix.preproposal-case }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
-          ONTOS_CI_ISOLATED_WORKERS: ${{ matrix.root-rstest-shard == '10/10' && '4' || '2' }}
+          ONTOS_CI_ISOLATED_WORKERS: '2'
           INTEGRATION_LANES: ${{ matrix.lanes }}
           WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
-
-      - name: Wait for the scoped owner migration proof
-        wait: scoped-migrations
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
@@ -1025,7 +1006,7 @@ jobs:
         include:
           - {
               shard: 1,
-              units: verticals/commerce-customer-context verticals/party-registry verticals/price-group-catalog verticals/commerce-cart verticals/availability,
+              units: verticals/commerce-customer-context verticals/party-registry,
             }
     env: &node-build-environment
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
@@ -1104,15 +1085,15 @@ jobs:
         include:
           - {
               shard: 2,
-              units: verticals/catalog verticals/inventory verticals/commerce-market-catalog verticals/storefront-registry verticals/projects,
+              units: verticals/catalog verticals/inventory verticals/commerce-market-catalog verticals/storefront-registry verticals/projects verticals/availability,
             }
           - {
               shard: 3,
-              units: verticals/privacy apps/shell-super-app verticals/symmy-integration verticals/commerce-order verticals/promotion,
+              units: verticals/privacy apps/shell-super-app verticals/symmy-integration verticals/commerce-order verticals/promotion verticals/commerce-cart,
             }
           - {
               shard: 4,
-              units: verticals/assortment verticals/payment verticals/pricing verticals/tax verticals/payment-term-catalog,
+              units: verticals/assortment verticals/payment verticals/pricing verticals/tax verticals/payment-term-catalog verticals/price-group-catalog,
             }
     env: *node-build-environment
     steps: *node-build-steps

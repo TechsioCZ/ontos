@@ -1,4 +1,6 @@
-import { migrate } from 'drizzle-orm/effect-postgres/migrator';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type { Issue } from 'effect/SchemaIssue';
 import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
@@ -10,7 +12,6 @@ import {
   ContextAccessLive,
   findPostgresFailure,
   CorePersistenceLive,
-  makeCoreDatabase,
   DatabaseConfig,
   makeReadRuntimeLive,
   ReadRuntime,
@@ -504,11 +505,12 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
 ) {
   const path = yield* Path.Path;
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
-  const connections = yield* parseDatabaseConnectionPair({
-    DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
-    DATABASE_URL: Redacted.value(bootstrap.database.runtimeUrl),
-  });
-  const { executor: database } = yield* makeCoreDatabase(connections.admin);
+  // Use exactly drizzle-kit's pg driver, without reloading its CLI per owned fixture.
+  const pool = yield* Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString: Redacted.value(bootstrap.database.adminUrl), max: 1 })),
+    (ownedPool) => Effect.promise(() => ownedPool.end()),
+  );
+  const database = drizzle({ client: pool });
   if (owner === 'party') {
     // Keep the real legacy Contacts journal preparation; only the repeated CLI driver is removed.
     const preparation = yield* ChildProcess.make(process.execPath, ['scripts/prepare-contacts-migration.mts'], {
@@ -533,16 +535,15 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
         ]
       : [{ folder: 'drizzle', journal: '__drizzle_migrations_commerce_customer_context' }];
   for (const history of histories) {
-    const migration = yield* Effect.try({
+    yield* Effect.tryPromise({
       catch: () => failure('owned-migration'),
-      try: () =>
+      try:  async () =>
         migrate(database, {
           migrationsFolder: path.join(directory, history.folder),
           migrationsSchema: 'drizzle',
           migrationsTable: history.journal,
         }),
     });
-    yield* migration;
   }
   if (before) {
     yield* installResolverFixture(bootstrap, 'historical');
