@@ -165,15 +165,13 @@ jobs:
           path: ${{ runner.temp }}/ci-changed-paths
           if-no-files-found: warn
           retention-days: 1
-      # Every gate installs the workspace. This one complete install publishes the installed tree (and, on the
-      # trunks, the pnpm store) before the gates fan out, so they restore it instead of relinking it. This job runs
-      # once per run, so no two jobs race to save.
+      # Every gate installs the workspace from the pnpm store. On the trunks this one install saves a missed store
+      # before the gates fan out; it runs once per run, so no two jobs race to save.
       - name: Install the app workspace for code impact analysis
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
         uses: ./.github/actions/install-app
         with:
           save-store: 'true'
-          save-node-modules: 'true'
       - name: Resolve affected packages and required matrices
         id: selection
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'

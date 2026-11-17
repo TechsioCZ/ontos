@@ -1676,53 +1676,13 @@ const readInstallAction = () =>
 const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
 const DEMO_REF = "github.ref == 'refs/heads/demo/sales-crm'";
 
-it('restores and publishes only a complete installed workspace, from the one planner install', () => {
-  const steps = readInstallAction();
-  const restore = steps.find(({ id }) => id === 'workspace');
-  // A job that installs with extra arguments (zerops-stage.yml's filtered installs) never restores the complete tree.
-  expect(restore?.if).toBe("inputs.install-args == ''");
-  const key = String(restore?.with?.key);
-  for (const input of [
-    'app/.mise.toml',
-    'app/pnpm-lock.yaml',
-    'app/pnpm-workspace.yaml',
-    'app/*/*/package.json',
-    'app/patches/**',
-  ]) {
-    expect(key).toContain(input);
-  }
-  // A half-restored dependency graph is a wrong answer, never a cheaper one.
-  expect(restore?.with?.['restore-keys']).toBeUndefined();
-  const publishable = steps.find(({ id }) => id === 'publishable');
-  expect(publishable?.run).toContain('save-node-modules needs a complete install');
-  const save = steps.find(({ name }) => name === 'Save the installed workspace');
-  expect(save?.with?.key).toBe(expression('steps.workspace.outputs.cache-primary-key'));
-  const store = steps.find(({ name }) => name === 'Save the pnpm store');
+it('saves the pnpm store from the one planner install, on the trunks only', () => {
+  const store = readInstallAction().find(({ name }) => name === 'Save the pnpm store');
   expect(store?.if).toContain(DEMO_REF);
   expect(store?.if).toContain("github.ref == 'refs/heads/main'");
-
   const gates = readJobsOf(GATES_WORKFLOW);
-  const savers = Object.entries(gates).flatMap(([job, { steps: jobSteps }]) =>
-    jobSteps
-      .filter(({ uses, with: inputs }) => uses === INSTALL_APP_ACTION && inputs?.['save-node-modules'] !== undefined)
-      .map(() => job),
-  );
-  expect(savers).toEqual([CI_PLAN_JOB]);
   const planInstall = gates[CI_PLAN_JOB]?.steps.find(({ uses }) => uses === INSTALL_APP_ACTION);
-  expect(planInstall?.with).toEqual({ 'save-node-modules': 'true', 'save-store': 'true' });
-  // The stage deploy shares the action and keeps installing exactly what it asks for.
-  for (const { steps: jobSteps } of Object.values(readJobsOf('zerops-stage.yml'))) {
-    for (const step of jobSteps.filter(({ uses }) => uses === INSTALL_APP_ACTION)) {
-      expect(step.with?.['install-args'] ?? '').not.toBe('');
-      expect(step.with?.['save-node-modules']).toBeUndefined();
-    }
-  }
-});
-
-it('lets only the trunks save the installed workspace, and never over the entry the run restored', () => {
-  const save = readInstallAction().find(({ name }) => name === 'Save the installed workspace');
-  expect(save?.if).toContain(DEMO_REF);
-  expect(save?.if).toContain("steps.workspace.outputs.cache-hit != 'true'");
+  expect(planInstall?.with).toEqual({ 'save-store': 'true' });
 });
 
 it('lints only the changed files of a narrowed run unless a tool configuration changed', () => {
