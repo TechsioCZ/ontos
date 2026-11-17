@@ -32,7 +32,6 @@ import {
   CATALOG_SELECTION_CONTRACT_SUBPATH,
   PRICING_SHARED_API_PATH,
   PRICING_HANDLER_PATH,
-  INVENTORY_OWNER_PATH,
   BOUNDARY_FIXTURE_INVENTORY,
   INVENTORY_DEPLOYMENT_ID,
   INVENTORY_PACKAGE_SPECIFIER,
@@ -442,7 +441,7 @@ it('follows the actual immutable Core entrypoint reference while preserving owne
 });
 
 it('proves inferred native scoped factories and nested callback type parameters without accepting forged ownership', () => {
-  const owner = INVENTORY_OWNER_PATH;
+  const owner = INVENTORY_VERTICAL_PATH;
   const file = `${owner}/src/api/stock-list.read.ts`;
   const service = `${owner}/src/services/stock-list.ts`;
   const sources = new Map([
