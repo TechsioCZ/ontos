@@ -1081,7 +1081,7 @@ jobs:
     env: *integration-environment
     steps: *integration-steps
 
-  # Release identities still come from this exact commit; only compiler caches cross commits.
+  # Release identities and compiler outputs are built from this exact commit.
   node-artifact-build:
     name: Build node artifacts (${{ matrix.shard }}/7)
     needs: [ci-plan]
@@ -1116,15 +1116,6 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-
-      - name: Restore the server and browser compiler caches
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            app/apps/*/node_modules/.cache
-            app/verticals/*/node_modules/.cache
-          key: node-compile-v1-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/patches/**', 'app/**/tsconfig*.json', '!app/node_modules/**', '!app/**/node_modules/**') }}-${{ github.sha }}
-          restore-keys: node-compile-v1-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/patches/**', 'app/**/tsconfig*.json', '!app/node_modules/**', '!app/**/node_modules/**') }}-
 
       - name: Build the shard's Node artifacts
         working-directory: app
