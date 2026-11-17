@@ -2276,7 +2276,12 @@ it('runs every static contract check on exactly one row of the static contracts 
     gateCommands()
       .flat()
       .filter((command) => command.endsWith(' pnpm api:check')),
-  ).toEqual(['NODE_OPTIONS=--max-old-space-size=6144 pnpm api:check']);
+  ).toEqual([]);
+  const api = job.steps.flatMap(({ parallel }) => parallel ?? []).filter(({ run }) => run.includes(' pnpm api:check'));
+  expect(api).toHaveLength(1);
+  expect(api[0]?.run).toBe(
+    'mise exec -- pnpm check:module-contracts\nNODE_OPTIONS=--max-old-space-size=6144 mise exec -- pnpm api:check\n',
+  );
   // Every check, including each member of the parallel group, names exactly one row. A check with no
   // row condition would run on all of them, and one naming a row that does not exist would never run.
   const shared = new Set(['Harden Runner', 'Checkout', INSTALL_APP_STEP]);
@@ -2334,15 +2339,18 @@ it('runs the root unit and component tests of every workspace package in exactly
   );
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
-    if (unit === undefined || !unit.endsWith(' run test:unit --pool.maxWorkers 1')) {
+    const match =
+      /^pnpm -r --no-sort --workspace-concurrency=(?<packages>[1-4]) --if-present (?<filters>.+) run test:unit --pool.maxWorkers (?<workers>[1-4])$/u.exec(
+        unit,
+      );
+    if (match?.groups === undefined) {
       return [];
     }
-    const filters = unit
-      .replace(/^pnpm -r --no-sort --workspace-concurrency=4 --if-present /u, '')
-      .replace(/ run test:unit --pool.maxWorkers 1$/u, '');
+    const { filters = '', packages = '', workers = '' } = match.groups;
+    expect(Number(packages) * Number(workers)).toBeLessThanOrEqual(4);
     // Each shard runs test:component over the same packages, after test:unit, and nothing else.
     expect(component).toBe(
-      `pnpm -r --no-sort --workspace-concurrency=4 --if-present ${filters} run test:component --pool.maxWorkers 1`,
+      `pnpm -r --no-sort --workspace-concurrency=${packages} --if-present ${filters} run test:component --pool.maxWorkers ${workers}`,
     );
     expect(rest).toEqual([]);
     return [

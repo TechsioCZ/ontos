@@ -388,7 +388,7 @@ jobs:
         include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterPreparation) }}
     steps: *unit-check-steps
 
-  # The API analyzer follows source/generation checks on their runner, freeing a third unit runner.
+  # Independent source analyzers share this runner rather than delaying the third unit runner.
   # Module generation must finish before the i18n scanner walks generated directories.
   static-contracts:
     name: Static Contracts (${{ matrix.row }})
@@ -460,7 +460,7 @@ jobs:
           )
 
       # Share one install across independent checks and retain a log for each check.
-      # The memory-heavy API analyzer has its own matrix row.
+      # The API analyzer and database boundary scanner each use one native process.
       - parallel:
           - name: Validate the root lefthook config
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
@@ -489,7 +489,10 @@ jobs:
           - name: Module Contract Generation
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
-            run: mise exec -- pnpm check:module-contracts
+            # Generation removes transient bundles; finish it before the API scanner walks source.
+            run: |
+              mise exec -- pnpm check:module-contracts
+              NODE_OPTIONS=--max-old-space-size=6144 mise exec -- pnpm api:check
 
           - name: Action Unit Tests
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
@@ -737,8 +740,26 @@ jobs:
         if: matrix.suite != 'integration'
         working-directory: app
         run: |
+          # Disposable CI pages do not need the hosted runner's slow persistent disk.
+          # Keep the native WAL, fsync and synchronous-commit behavior intact.
+          cat > "$RUNNER_TEMP/integration-compose.yml" <<'YAML'
+          services:
+            ontos-db:
+              volumes:
+                - type: tmpfs
+                  target: /var/lib/postgresql
+                  tmpfs:
+                    size: 2147483648
+          YAML
+          export COMPOSE_FILE="docker-compose.yml:$RUNNER_TEMP/integration-compose.yml"
+          echo "COMPOSE_FILE=$COMPOSE_FILE" >> "$GITHUB_ENV"
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
+          docker inspect ontos-db --format '{{json .Mounts}}' |
+            jq -e 'any(.[]; .Destination == "/var/lib/postgresql" and .Type == "tmpfs")'
+          durability="$(docker compose exec --no-TTY ontos-db psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --tuples-only --no-align \
+            --command "SELECT current_setting('fsync') || ':' || current_setting('synchronous_commit') || ':' || current_setting('full_page_writes')")"
+          [[ "$durability" == on:on:on ]]
 
       # Only the bootstrap row removes the pre-seeded runtime role: it is what makes the migrator prove
       # deployment bootstrap ordering against a scratch cluster. A row that dropped it and then restored
