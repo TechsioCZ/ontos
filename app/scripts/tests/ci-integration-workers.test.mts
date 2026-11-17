@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Option, Result, Schema } from 'effect';
+import { Array as EffectArray, Option, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   IntegrationWorkerSettingsSchema,
@@ -12,6 +12,7 @@ import {
   isIntegrationWorkerEndpoint,
 } from '../ci/integration-worker-environment.mts';
 
+const testPath = '/usr/bin:/bin';
 const integrationSuitesScript = fileURLToPath(new URL('../ci/run-integration-suites.sh', import.meta.url));
 
 const decode = Schema.decodeUnknownResult(IntegrationWorkerSettingsSchema);
@@ -158,7 +159,7 @@ it('partitions root and package files without duplicating compound scripts or wh
       NATIVE_PREPROPOSAL: 'true',
       PACKAGE_FILTERS:
         '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
-      PATH: '/usr/bin:/bin',
+      PATH: testPath,
       ROOT_RSTEST_SHARD: '1/2',
       ROOT_SUITE: 'true',
       WHOLE_OWNER_PROOFS: 'organization pricing privacy',
@@ -173,7 +174,8 @@ it('partitions root and package files without duplicating compound scripts or wh
   }
   expect(tasks.filter((task) => task.includes('party-registry'))).toEqual(['./verticals/party-registry']);
   expect(tasks.filter((task) => task.startsWith('whole:'))).toEqual([
-    'whole:preproposal',
+    'whole:preproposal-basis',
+    'whole:preproposal-approval',
     'whole:organization',
     'whole:pricing',
     'whole:privacy',
@@ -189,7 +191,7 @@ it('runs every source-only Core shard before artifacts and never repeats it in t
         INTEGRATION_PHASE: phase,
         NATIVE_PREPROPOSAL: 'true',
         PACKAGE_FILTERS: '--filter ./packages/core-runtime --filter ./verticals/privacy',
-        PATH: '/usr/bin:/bin',
+        PATH: testPath,
       },
     })
       .toString()
@@ -199,5 +201,35 @@ it('runs every source-only Core shard before artifacts and never repeats it in t
   const built = list('built');
   expect(built.some((task) => task.includes('core-runtime'))).toBe(false);
   expect(built.filter((task) => task.startsWith('./verticals/privacy#'))).toHaveLength(4);
-  expect(built.filter((task) => task === 'whole:preproposal')).toHaveLength(1);
+  expect(built.filter((task) => task.startsWith('whole:preproposal-'))).toHaveLength(2);
+});
+
+it('covers Customer Context exactly once across rows without partitioning an unrelated package', () => {
+  const partitions = ['1/2', '2/2'].map((partition) =>
+    execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
+      env: {
+        PACKAGE_FILTERS: '--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry',
+        PACKAGE_PARTITION: partition,
+        PATH: testPath,
+      },
+    })
+      .toString()
+      .split('\0')
+      .filter(Boolean),
+  );
+  const customer = partitions.flatMap((tasks) => tasks.filter((task) => task.includes('commerce-customer-context')));
+  expect(EffectArray.sort(customer, Order.String)).toEqual(
+    Array.from({ length: 8 }, (_, index) => `./verticals/commerce-customer-context#${index + 1}/8`),
+  );
+  expect(new Set(customer).size).toBe(customer.length);
+  const storefront = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
+    env: { PACKAGE_FILTERS: '--filter ./verticals/storefront-registry', PATH: testPath },
+  })
+    .toString()
+    .split('\0')
+    .filter(Boolean);
+  expect(storefront.length).toBeGreaterThan(0);
+  for (const tasks of partitions) {
+    expect(tasks.filter((task) => task.includes('storefront-registry'))).toEqual(storefront);
+  }
 });

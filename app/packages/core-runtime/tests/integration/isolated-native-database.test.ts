@@ -554,6 +554,22 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
       expect((yield* fixture.composition.observe()).phase).toBe('active');
     }),
   );
+  suite.effect('allocates an empty migrated preproposal source without sharing composition authority', () =>
+    Effect.gen(function* preproposalSchemaClone() {
+      const fixture = yield* makeIsolatedNativeDatabaseFixture({
+        mode: 'schema-only',
+        purpose: 'implementation-1290-preproposal-native-source',
+      });
+      const clone = yield* makeTestPgClient(fixture.connections.admin.connectionString);
+      const [state] = yield* clone<{
+        readonly authority: number;
+        readonly tenants: number;
+      }>`select
+        (select count(*)::int from core.application_composition_authority) as authority,
+        (select count(*)::int from core.tenants) as tenants`;
+      expect(state).toEqual({ authority: 0, tenants: 0 });
+    }),
+  );
   suite.effect('initializes clone-local trust without copying source secrets, grants or business data', () =>
     Effect.gen(function* cloneLocalTrust() {
       const configuredSource = yield* loadDatabaseConnectionPair();

@@ -45,11 +45,6 @@ defaults:
   run:
     shell: bash
 
-# Native fixtures start many short-lived Node owners and migration tools. Reuse
-# V8's compiled code within this runner, never database state or test results.
-env:
-  NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
-
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -245,6 +240,8 @@ jobs:
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     strategy:
       fail-fast: false
       matrix:
@@ -299,6 +296,8 @@ jobs:
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     strategy:
       fail-fast: false
       matrix:
@@ -371,6 +370,7 @@ jobs:
       matrix:
         row: [contracts]
     env:
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
@@ -485,6 +485,8 @@ jobs:
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -566,9 +568,9 @@ jobs:
           fi
           git diff --exit-code HEAD
 
-  # Four integration batches own four independent clusters each. Whole-owner proofs join
-  # those lanes instead of serially extending the deployment bootstrap critical path.
-  # Consolidated source checks keep the complete run within eighteen hosted jobs.
+  # Seven integration batches and four build shards share eighteen hosted slots:
+  # 3 source + format + static + 4 builds + 9 service rows = 18.
+  # The two unit rows replace completed build slots, not add to that peak.
   service-integration:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -583,6 +585,8 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
     env:
+      # Cache compiled code only; every fixture still starts fresh owners and databases.
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       RAYON_NUM_THREADS: '1'
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
@@ -773,7 +777,7 @@ jobs:
       # This acceptance uses only source, PostgreSQL and SpiceDB, not a single Node artifact.
       # It previously spent 289 seconds behind the build and another native test in root shard 6/16.
       - name: Prove scoped owner migrations while the Node artifacts build
-        if: matrix.root-suite == true && matrix.root-rstest-shard == '2/4'
+        if: matrix.root-suite == true && matrix.root-rstest-shard == '3/7'
         working-directory: app
         env:
           APP_ENV_PATH: /dev/null
@@ -789,7 +793,7 @@ jobs:
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 2
+        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 4
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
       # proof row derives the whole Composition from every delivery unit.
@@ -867,6 +871,7 @@ jobs:
           APP_ENV_PATH: /dev/null
           SPICEDB_DATABASE_PASSWORD: spicedb
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          PACKAGE_PARTITION: ${{ matrix.package-partition }}
           NATIVE_PREPROPOSAL: ${{ matrix.native-preproposal }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
@@ -936,7 +941,7 @@ jobs:
   # source-content caching across commits hands native fixtures another release.
   # Dependency and incremental typecheck caches remain independent of releases.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/2)
+    name: Build node artifacts (${{ matrix.shard }}/4)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-24.04
@@ -944,17 +949,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
         include:
           - {
               shard: 1,
-              units: verticals/commerce-customer-context verticals/assortment verticals/party-registry verticals/inventory verticals/symmy-integration apps/shell-super-app verticals/payment verticals/commerce-cart verticals/availability verticals/projects,
+              units: verticals/commerce-customer-context verticals/party-registry verticals/price-group-catalog verticals/commerce-cart verticals/availability,
             }
           - {
               shard: 2,
-              units: verticals/catalog verticals/privacy verticals/commerce-order verticals/tax verticals/storefront-registry verticals/price-group-catalog verticals/commerce-market-catalog verticals/pricing verticals/payment-term-catalog verticals/promotion,
+              units: verticals/catalog verticals/inventory verticals/commerce-market-catalog verticals/storefront-registry verticals/projects,
+            }
+          - {
+              shard: 3,
+              units: verticals/privacy apps/shell-super-app verticals/symmy-integration verticals/commerce-order verticals/promotion,
+            }
+          - {
+              shard: 4,
+              units: verticals/assortment verticals/payment verticals/pricing verticals/tax verticals/payment-term-catalog,
             }
     env:
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:

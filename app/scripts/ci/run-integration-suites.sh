@@ -34,8 +34,10 @@ if [[ "${1:-}" == --execute ]]; then
     whole:pricing)
       exec mise exec -- pnpm --filter ./verticals/pricing run test:integration \
         tests/integration/market-revision-whole-current-pricing-postgres.test.ts --pool.maxWorkers 1 ;;
-    whole:preproposal)
-      exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal ;;
+    whole:preproposal-basis)
+      exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal -t 'produces an exact preproposal basis' ;;
+    whole:preproposal-approval)
+      exec timeout --kill-after=3s 20m mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal -t 'submits and approves' ;;
   esac
   if [[ "$task" == root:* ]]; then
     exec mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard "${task#root:}" \
@@ -62,7 +64,7 @@ fi
 
 tasks=()
 if [[ "${NATIVE_PREPROPOSAL:-}" == true ]]; then
-  tasks+=("whole:preproposal")
+  tasks+=("whole:preproposal-basis" "whole:preproposal-approval")
 fi
 if [[ -n "${WHOLE_OWNER_PROOFS:-}" ]]; then
   read -ra proofs <<<"$WHOLE_OWNER_PROOFS"
@@ -92,7 +94,16 @@ for ((index = 0; index < ${#filters[@]}; index += 2)); do
       [[ "$files" -gt 0 ]] || exit 2
       shards=4
       [[ "$files" -ge "$shards" ]] || shards="$files"
-      for ((shard = 1; shard <= shards; shard++)); do
+      first=1
+      stride=1
+      # Customer Context's native fixture cases dominate one runner. Partition
+      # its files across two rows, with disjoint Rstest shards, not duplicate suites.
+      if [[ "$package" == ./verticals/commerce-customer-context && -n "${PACKAGE_PARTITION:-}" ]]; then
+        IFS=/ read -r first stride <<<"$PACKAGE_PARTITION"
+        [[ "$first" =~ ^[1-9][0-9]*$ && "$stride" =~ ^[1-9][0-9]*$ && "$first" -le "$stride" ]] || exit 2
+        shards=$((shards * stride))
+      fi
+      for ((shard = first; shard <= shards; shard += stride)); do
         tasks+=("$package#$shard/$shards")
       done
       ;;

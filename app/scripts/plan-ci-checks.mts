@@ -18,6 +18,7 @@ const IntegrationEntrySchema = Schema.Struct({
   'native-composition': Schema.optionalKey(Schema.Boolean),
   'native-preproposal': Schema.optionalKey(Schema.Boolean),
   'package-filters': Schema.optionalKey(Schema.String),
+  'package-partition': Schema.optionalKey(Schema.String),
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
   'root-rstest-shard': Schema.optionalKey(Schema.String),
   'root-suite': Schema.optionalKey(Schema.Boolean),
