@@ -22,6 +22,9 @@ import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database
 
 import { CiTemplatesSchema, integrationPhases } from '../plan-ci-checks.mts';
 
+const START_INTEGRATION_WORKERS = 'bash scripts/ci/start-integration-workers.sh';
+const INTEGRATION_DATABASE_ARTIFACT = 'integration-database';
+const BROWSER_TEST_COMMAND = 'mise exec -- pnpm --filter @app/shell-super-app test:e2e';
 const BASELINE_CAPTURE_JOB = 'capture-application-baseline';
 const DEPLOY_PLAN_JOB = 'deploy-plan';
 
@@ -60,6 +63,7 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
 const SERVICE_SETUP_JOB = 'service-integration-setup';
+const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 
 /** Expand only matrix references for the full-run contract tests; separately test the actual planner. */
@@ -71,12 +75,18 @@ const readGateWorkflow = () => {
     readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
   );
   const phases = integrationPhases(templates.integration);
-  const matrices = { ...templates, integration: phases.work, integrationSetup: phases.prerequisites };
+  const matrices = {
+    ...templates,
+    integration: phases.work,
+    integrationSetup: phases.preparation,
+    integrationTopology: phases.topology,
+  };
   for (const [job, key] of [
     [WORKSPACE_GATE_JOB, 'source'],
     [WORKSPACE_UNIT_JOB, 'unit'],
     [SERVICE_INTEGRATION_JOB, 'integration'],
     [SERVICE_SETUP_JOB, 'integrationSetup'],
+    [TOPOLOGY_PROOF_JOB, 'integrationTopology'],
   ] as const) {
     const entry = record(jobs[job ?? '']);
     const strategy = record(entry.strategy);
@@ -1631,7 +1641,7 @@ const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
 /** The integration matrix row that proves the stage-shaped deployment bootstrap from a scratch cluster. */
 const BOOTSTRAP_SUITE = 'bootstrap';
 const BOOTSTRAP_CONDITION = `matrix.suite == '${BOOTSTRAP_SUITE}'`;
-const NON_BOOTSTRAP_CONDITION = "matrix.suite != 'bootstrap'";
+const NON_BOOTSTRAP_CONDITION = "matrix.suite == 'browser' || matrix.suite == 'database'";
 const BOOTSTRAP_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
 const NODE_BUILD_ARTIFACT_PATTERN = 'node-units-*';
 /**
@@ -1661,7 +1671,7 @@ const ROOT_GATE_JOBS = [
 const GATE_JOB_NEEDS = {
   [FORMAT_AND_LINT_JOB]: [CI_PLAN_JOB],
   [NODE_ARTIFACT_BUILD_JOB]: [CI_PLAN_JOB],
-  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_SETUP_JOB, FORMAT_AND_LINT_JOB],
+  [SERVICE_INTEGRATION_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, FORMAT_AND_LINT_JOB],
   'static-contracts': [CI_PLAN_JOB],
   [WORKSPACE_GATE_JOB]: [CI_PLAN_JOB],
   [WORKSPACE_UNIT_JOB]: [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB],
@@ -1795,7 +1805,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   const gates = readTargetWorkflow().jobs['workspace-gates'];
   expect(gates.name).toBe('Workspace gates');
   expect(gates.if).toBe(expression('always()'));
-  expect(gates.needs).toEqual([QUEUE_PROOF_JOB, CI_PLAN_JOB, ...GATE_JOBS]);
+  expect(gates.needs).toEqual([QUEUE_PROOF_JOB, CI_PLAN_JOB, ...GATE_JOBS, TOPOLOGY_PROOF_JOB, SERVICE_SETUP_JOB]);
   expect(gates.steps.at(-1)?.run).toBe('bash app/scripts/check-ci-gates.sh');
   const script = readFileSync(new URL('../check-ci-gates.sh', import.meta.url), 'utf-8');
   const needs = (mode: string, results: readonly string[], proof = 'skipped', proven?: string) => ({
@@ -1811,6 +1821,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
       result: 'success',
     },
     [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
+    [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
   });
   const passed = GATE_JOBS.map(() => 'success');
@@ -1827,6 +1839,10 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     >,
   ) => stepPasses(script, { NEEDS_JSON: JSON.stringify(value) });
   expect(passes(needs('full', passed))).toBe(true);
+  expect(passes({ ...needs('full', passed), [TOPOLOGY_PROOF_JOB]: { result: 'failure' } })).toBe(false);
+  expect(
+    passes(Object.fromEntries(Object.entries(needs('full', passed)).filter(([job]) => job !== TOPOLOGY_PROOF_JOB))),
+  ).toBe(false);
   expect(passes(needs('docs', skipped))).toBe(true);
   expect(passes(needs('proven', skipped, 'success', 'true'))).toBe(true);
   expect(passes(needs('proven', skipped))).toBe(false);
@@ -1841,7 +1857,14 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     GATE_JOBS.map((gate) => [gate, gate === SERVICE_INTEGRATION_JOB ? 'skipped' : 'success']),
   );
   noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
-  expect(passes({ ...noIntegration, [SERVICE_INTEGRATION_JOB]: { result: 'skipped' } })).toBe(true);
+  expect(
+    passes({
+      ...noIntegration,
+      [SERVICE_INTEGRATION_JOB]: { result: 'skipped' },
+      [SERVICE_SETUP_JOB]: { result: 'skipped' },
+      [TOPOLOGY_PROOF_JOB]: { result: 'skipped' },
+    }),
+  ).toBe(true);
   expect(passes(needs('affected', skipped))).toBe(false);
   expect(passes(needs('invented', passed))).toBe(false);
   const missing = needs('docs', skipped);
@@ -2339,7 +2362,7 @@ const IntegrationRunnerSchema = Schema.Struct({
           'preproposal-case': Schema.optional(Schema.String),
           'root-rstest-shard': Schema.optional(Schema.String),
           'root-suite': Schema.optional(Schema.Boolean),
-          suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
+          suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser', 'database']),
           'whole-owner-proofs': Schema.optional(Schema.String),
         }),
       ),
@@ -2350,6 +2373,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema,
     [SERVICE_SETUP_JOB]: IntegrationRunnerSchema,
+    [TOPOLOGY_PROOF_JOB]: IntegrationRunnerSchema,
   }),
 });
 
@@ -2422,7 +2446,7 @@ it('uses the reviewed membership for worker drift checks during deployment and r
 it('runs retained-release browser recovery separately with one worker and its publication flag enabled', () => {
   const source: unknown = readGateWorkflow();
   const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[SERVICE_INTEGRATION_JOB];
-  const normal = steps.findIndex(({ run }) => run === 'mise exec -- pnpm --filter @app/shell-super-app test:e2e');
+  const normal = steps.findIndex(({ run }) => run === BROWSER_TEST_COMMAND);
   const recovery = steps.findIndex(({ env }) => env?.ONTOS_E2E_RETAINED_PARTY_R2 !== undefined);
   expect(normal).toBeGreaterThan(-1);
   expect(recovery).toBeGreaterThan(normal);
@@ -2432,6 +2456,30 @@ it('runs retained-release browser recovery separately with one worker and its pu
     "tests/e2e/login.spec.ts --grep 'reloads failed Contacts into a genuinely published R2'",
   );
   expect(steps[recovery]?.run).toContain('--workers 1');
+});
+
+it('publishes the verified database before browser writes and restores it before isolated workers start', () => {
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
+  const producer = jobs[SERVICE_SETUP_JOB].steps;
+  const consumer = jobs[SERVICE_INTEGRATION_JOB].steps;
+  const migrated = producer.findIndex(({ run }) => run?.includes('pnpm db:verify') === true);
+  const exported = producer.findIndex(({ run }) => run === 'bash scripts/ci/export-integration-database.sh');
+  const uploaded = producer.findIndex(({ with: inputs }) => inputs?.name === INTEGRATION_DATABASE_ARTIFACT);
+  const browser = producer.findIndex(({ run }) => run === BROWSER_TEST_COMMAND);
+  expect(migrated).toBeGreaterThan(-1);
+  expect(migrated < exported && exported < uploaded && uploaded < browser).toBe(true);
+  const downloaded = consumer.findIndex(
+    ({ uses, with: inputs }) =>
+      uses?.startsWith('actions/download-artifact@') === true && inputs?.name === INTEGRATION_DATABASE_ARTIFACT,
+  );
+  const workers = consumer.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
+  expect(downloaded).toBeGreaterThan(-1);
+  expect(downloaded).toBeLessThan(workers);
+  expect(consumer[downloaded]?.with).toEqual({
+    name: INTEGRATION_DATABASE_ARTIFACT,
+    path: `${RUNNER_TEMP_EXPRESSION}/integration-database`,
+  });
+  expect(consumer[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(`${RUNNER_TEMP_EXPRESSION}/integration-database`);
 });
 
 it('supplies same-run built Composition to selected native owner integration shards before their tests', () => {
@@ -2457,18 +2505,18 @@ it('supplies same-run built Composition to selected native owner integration sha
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
   const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 4");
-  const workers = steps.findIndex(({ run }) => run === 'bash scripts/ci/start-integration-workers.sh');
+  const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   const sourceProof = steps.findIndex(
     ({ run }) => run === 'bash scripts/ci/run-integration-suites.sh --task whole:migrations',
   );
   expect(workers).toBeGreaterThan(-1);
   expect(workers < sourceProof && sourceProof < wait && wait < download).toBe(true);
-  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '4/12'");
+  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '3/10'");
   expect(steps[sourceProof]?.background).toBe(true);
   expect(steps[sourceProof]?.env?.ONTOS_CI_WORKER_SLOT).toBe('3');
   expect(steps.some((step) => step.wait === 'scoped-migrations')).toBe(true);
-  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '4/12')).toHaveLength(1);
-  expect(rootShards.find((shard) => shard['root-rstest-shard'] === '4/12')?.lanes).toBe(2);
+  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '3/10')).toHaveLength(1);
+  expect(rootShards.find((shard) => shard['root-rstest-shard'] === '3/10')?.lanes).toBe(2);
   expect(steps[wait]?.if).toBe(BOOTSTRAP_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
@@ -2489,7 +2537,7 @@ it('supplies same-run built Composition to selected native owner integration sha
 
 it('proves the built topology of every delivery unit in one row of the integration matrix', () => {
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
-    SERVICE_SETUP_JOB
+    TOPOLOGY_PROOF_JOB
   ];
   // One prerequisite row proves all built outputs before late-wave admission;
   // its success is required by the unchanged service-integration gate.
@@ -2524,7 +2572,7 @@ it('proves the built topology of every delivery unit in one row of the integrati
   expect(steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
   expect(bootstrap).toBeLessThan(indexes[0] ?? -1);
   expect(migrations).toBeLessThan(indexes[0] ?? -1);
-  expect(steps[named('Start fresh PostgreSQL and SpiceDB services')]?.if).toBeUndefined();
+  expect(steps[named('Start fresh PostgreSQL and SpiceDB services')]?.if).toBe("matrix.suite != 'integration'");
   // The suites never run on this row, and its steps never run on a suite row.
   const tests = steps.find(({ env }) => env?.ROOT_SUITE !== undefined);
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
@@ -2601,7 +2649,7 @@ it('covers every root integration shard and assigns each package integration sui
     ONTOS_CI_ISOLATED_WORKERS: '4',
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
-  const isolate = job.steps.findIndex((step) => step.run === 'bash scripts/ci/start-integration-workers.sh');
+  const isolate = job.steps.findIndex((step) => step.run === START_INTEGRATION_WORKERS);
   expect(isolate).toBeGreaterThan(-1);
   expect(isolate).toBeLessThan(job.steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined));
   expect(job.steps[isolate]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
@@ -2629,7 +2677,7 @@ it('covers every root integration shard and assigns each package integration sui
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
   expect(roots.map((row) => row['root-rstest-shard'])).toEqual(
-    Array.from({ length: 12 }, (_, index) => `${index + 1}/12`),
+    Array.from({ length: 10 }, (_, index) => `${index + 1}/10`),
   );
   const packages = shards.filter((shard) => shardFilters(shard).length > 0);
   // Every row names exactly the packages it runs; none negates, so no row silently inherits a package
@@ -2643,11 +2691,14 @@ it('covers every root integration shard and assigns each package integration sui
   }
   for (const [name, count] of counts) {
     if (name === CUSTOMER_CONTEXT_SELECTOR || name === './verticals/privacy' || name === './apps/shell-super-app') {
-      const expected = name === CUSTOMER_CONTEXT_SELECTOR ? ['1/3', '2/3', '3/3'] : ['1/2', '2/2'];
+      const expected = ['1/2', '2/2'];
       expect(count).toBe(expected.length);
-      expect(packages.filter((row) => shardFilters(row).includes(name)).map((row) => row['package-partition'])).toEqual(
-        expected,
-      );
+      expect(
+        EffectArray.sort(
+          packages.filter((row) => shardFilters(row).includes(name)).map((row) => row['package-partition'] ?? ''),
+          Order.String,
+        ),
+      ).toEqual(expected);
     } else {
       expect(count, name).toBe(1);
     }
@@ -3060,13 +3111,18 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
   const source = commands[WORKSPACE_GATE_JOB].strategy.matrix.include.length;
   const staticRows = commands['static-contracts'].strategy.matrix.row.length;
   const setup = jobs[SERVICE_SETUP_JOB];
+  const topology = jobs[TOPOLOGY_PROOF_JOB];
   const work = jobs[SERVICE_INTEGRATION_JOB];
-  expect(source + staticRows + 1 + builds + setup.strategy.matrix.include.length).toBeLessThanOrEqual(18);
+  expect(
+    source + staticRows + 1 + builds + setup.strategy.matrix.include.length + topology.strategy.matrix.include.length,
+  ).toBeLessThanOrEqual(18);
   expect(
     source +
       staticRows +
       commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
-      work.strategy.matrix.include.length,
+      work.strategy.matrix.include.length +
+      topology.strategy.matrix.include.length +
+      setup.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
   expect(setup.needs).toEqual([CI_PLAN_JOB]);
   expect(work.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);

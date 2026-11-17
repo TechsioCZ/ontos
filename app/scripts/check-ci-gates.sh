@@ -15,7 +15,9 @@ jq -e '
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and
-  (($needs | keys | sort) == (["queue-proof", "ci-plan"] + $gates | sort)) and
+  (($needs | keys | sort) == (["queue-proof", "ci-plan", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  ($needs["node-topology-proof"].result == $expected["service-integration"]) and
+  ($needs["service-integration-setup"].result == $expected["service-integration"]) and
   (all($expected[]; . == "success" or . == "skipped")) and
   (
     if $plan.outputs.mode == "proven" then

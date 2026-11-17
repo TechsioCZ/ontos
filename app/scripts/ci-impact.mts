@@ -10,11 +10,18 @@ export interface CiWorkspacePackage {
   readonly uncertain?: boolean;
 }
 
-/** Prerequisite proofs finish before the artifact-consuming runner wave is admitted. */
-export const integrationPhases = (entries: readonly IntegrationEntry[]) => ({
-  prerequisites: entries.filter(({ suite }) => suite !== 'integration'),
-  work: entries.filter(({ suite }) => suite === 'integration'),
-});
+/** Source preparation and topology proofs are independent of artifact-consuming test work. */
+export const integrationPhases = (entries: readonly IntegrationEntry[]) => {
+  const browser = entries.filter(({ suite }) => suite === 'browser');
+  return {
+    preparation:
+      entries.length === 0 || browser.length > 0
+        ? browser
+        : [{ name: 'Prepare integration database', suite: 'database' as const }],
+    topology: entries.filter(({ suite }) => suite === 'bootstrap'),
+    work: entries.filter(({ suite }) => suite === 'integration'),
+  };
+};
 
 /** Runtime federation references are consumer edges even when package manifests omit them. */
 export const withCiTopologyDependencies = (
