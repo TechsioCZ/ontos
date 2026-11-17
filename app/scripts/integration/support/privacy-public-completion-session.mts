@@ -833,14 +833,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
         revision: digest(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) })),
       },
     });
-    const environment = {
-      DATABASE_ADMIN_URL: input.connections.admin.connectionString,
-      DATABASE_URL: input.connections.runtime.connectionString,
-    };
-    // Supported owner migration entrypoints, never foreign migration/source imports.
-    for (const owner of ['@app/shell-super-app', '@app/party-registry']) {
-      yield* command(['--filter', owner, 'db:migrate'], environment);
-    }
+    // The creator supplies an empty schema-only clone of the migrated source.
     yield* bootstrapOwnerCapabilities(input.connections.runtime.user);
     // Creator-bound Core-only test setup reproduces the pre-owner-verifier active authority.
     // It never deletes authority, touches owner history, or substitutes for operator acceptance.

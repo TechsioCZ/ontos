@@ -118,7 +118,7 @@ type IsolatedNativeDatabaseInput = (
   | {
       readonly compositionSnapshot?: never;
       readonly mode: typeof schemaOnly;
-      readonly purpose: typeof browserCompositionPurpose;
+      readonly purpose: typeof browserCompositionPurpose | typeof retainedPrivacyPurpose;
     }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
@@ -225,6 +225,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
   input.mode === schemaOnly
     ? [
         browserCompositionPurpose,
+        retainedPrivacyPurpose,
         'stabilization-1196-product-create',
         'implementation-1126-group-definition',
         'implementation-1134-inventory-source-import-receipt',
@@ -299,6 +300,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
 
 const supportsOwnedReplacement = (input: IsolatedNativeDatabaseInput): boolean =>
   (input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || input.purpose === retainedPrivacyPurpose)) ||
+  (input.mode === schemaOnly && input.purpose === retainedPrivacyPurpose) ||
   (input.mode === schemaOnly && input.purpose === shellAuthPurpose);
 
 const databaseCreation = Effect.fn('IsolatedNativeDatabase.databaseCreation')(function* databaseCreation(input: {
@@ -343,7 +345,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     }
     const ownedPurpose = input.purpose;
     const snapshot =
-      input.mode === schemaOnly && input.purpose !== browserCompositionPurpose
+      input.mode === schemaOnly &&
+      input.purpose !== browserCompositionPurpose &&
+      input.purpose !== retainedPrivacyPurpose
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
             Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
           )
