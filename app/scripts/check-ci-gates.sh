@@ -8,10 +8,9 @@ jq -e '
   .["queue-proof"] as $proof |
   .["ci-plan"] as $plan |
   ($plan.outputs.expected | fromjson) as $expected |
+  ($plan.outputs.unitAfterDatabase | fromjson) as $unitAfterDatabase |
   ($plan.outputs.unitAfterLint | fromjson) as $unitAfterLint |
-  ($plan.outputs.unitAfterSource | fromjson) as $unitAfterSource |
   ($plan.outputs.unitAfterTopology | fromjson) as $unitAfterTopology |
-  ($plan.outputs.integrationEarly | fromjson) as $integrationEarly |
   [
     "workspace-gate", "workspace-unit", "static-contracts", "format-and-lint",
     "service-integration", "node-artifact-build"
@@ -19,18 +18,15 @@ jq -e '
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and
-  (($needs | keys | sort) == (["workspace-source-contracts", "workspace-unit-after-lint", "workspace-unit-after-source", "workspace-unit-after-topology", "service-integration-early", "queue-proof", "ci-plan", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  (($needs | keys | sort) == (["workspace-source-contracts", "workspace-unit-after-database", "workspace-unit-after-lint", "workspace-unit-after-topology", "queue-proof", "ci-plan", "node-topology-proof"] + $gates | sort)) and
   ($needs["workspace-source-contracts"].result == $expected["workspace-gate"]) and
+  (($unitAfterDatabase | type) == "array") and
+  ($needs["workspace-unit-after-database"].result == (if ($unitAfterDatabase | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
   (($unitAfterLint | type) == "array") and
   ($needs["workspace-unit-after-lint"].result == (if ($unitAfterLint | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
-  (($unitAfterSource | type) == "array") and
-  ($needs["workspace-unit-after-source"].result == (if ($unitAfterSource | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
   (($unitAfterTopology | type) == "array") and
   ($needs["workspace-unit-after-topology"].result == (if ($unitAfterTopology | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
-  (($integrationEarly | type) == "array") and
-  ($needs["service-integration-early"].result == (if ($integrationEarly | length) > 0 then $expected["service-integration"] else "skipped" end)) and
   ($needs["node-topology-proof"].result == $expected["service-integration"]) and
-  ($needs["service-integration-setup"].result == $expected["service-integration"]) and
   (all($expected[]; . == "success" or . == "skipped")) and
   (
     if $plan.outputs.mode == "proven" then

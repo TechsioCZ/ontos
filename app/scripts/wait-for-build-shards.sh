@@ -18,13 +18,13 @@ tab="$(printf '\t')"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
 
-# One `<state>\t<name>` line per other shard of the target. A shard that is still running counts as
-# `uploaded` once its own upload step succeeded, so two proving shards of one target (which keep
-# running after their upload) do not wait for each other.
+# One `<state>\t<name>` line per other shard of the target. A shard counts as `uploaded` once its own
+# upload step succeeded: the job goes on to run its owner tasks, and neither their run time nor their
+# result changes the outputs it already published. A shard that ends before its upload fails the wait.
 upload_step="Upload the shard's build outputs"
 upload_step="${WAIT_FOR_BUILD_UPLOAD_STEP:-$upload_step}"
 filter='.jobs[] | select((.name | startswith(env.PREFIX)) and .name != env.OWN)
-  | (if .conclusion == null and any(.steps[]?; .name == env.UPLOAD and .conclusion == "success")
+  | (if any(.steps[]?; .name == env.UPLOAD and .conclusion == "success")
      then "uploaded" else (.conclusion // "pending") end) + "\t" + .name'
 url="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100"
 

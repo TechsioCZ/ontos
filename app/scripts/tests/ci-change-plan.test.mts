@@ -11,6 +11,7 @@ import {
   CiTemplatesSchema,
   ciPlanOutputs,
   filterPaths,
+  buildJobPrefix,
   integrationPhases,
   knownTask,
   unitPhases,
@@ -26,23 +27,20 @@ const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSche
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
 );
 
+/** Every owner row is one build shard, numbered in row order. */
+const ALL_SHARDS = templates.integration.flatMap((entry, index) =>
+  entry.suite === 'integration'
+    ? [index - templates.integration.findIndex(({ suite }) => suite === 'integration') + 1]
+    : [],
+);
+
 it('prepares the database even when browser tests are not selected, without adding unrelated browser work', () => {
   const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
-  expect(phases.preparation).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
+  expect(phases.setup).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
   expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
-  expect(phases.built).toEqual(
-    templates.integration.filter((entry) => entry.suite === 'integration' && entry.early !== true),
-  );
-  expect(phases.early).toEqual(templates.integration.filter((entry) => entry.early === true));
-  expect(integrationPhases([])).toEqual({ built: [], early: [], preparation: [], topology: [] });
-});
-
-it('promotes one early integration row into the required integration gate when no built row is selected', () => {
-  const selected = templates.integration.filter((entry) => entry.early === true);
-  expect(selected.length).toBeGreaterThan(1);
-  const phases = integrationPhases(selected);
-  expect(phases.built).toEqual(selected.slice(0, 1));
-  expect(phases.early).toEqual(selected.slice(1));
+  expect(phases.build.map(({ shard }) => shard)).toEqual(ALL_SHARDS);
+  expect(phases.build.map(({ suite }) => suite)).toEqual(ALL_SHARDS.map(() => 'integration'));
+  expect(integrationPhases([])).toEqual({ build: [], setup: [], topology: [] });
 });
 
 /** The workspace directories whose integration files a row's tasks run. */
@@ -101,6 +99,62 @@ const workspacePackages = ['apps', 'packages', 'verticals'].flatMap((area) =>
 const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) => directory)]);
 const selectedDirectories = (filters: string) =>
   matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
+
+const WAIT_FOR_BUILDS = "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11";
+
+it('builds every delivery unit in exactly one owner row, and names each building job as a build shard', () => {
+  const topology = Schema.decodeUnknownSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        shell: Schema.Struct({ path: Schema.String }),
+        verticals: Schema.Array(Schema.Struct({ path: Schema.String })),
+      }),
+    ),
+  )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
+  const building = templates.integration.filter((entry) => entry.shard !== undefined);
+  expect(building.every(({ suite }) => suite === 'integration')).toBe(true);
+  const units = building.flatMap(({ units: shardUnits }) => (shardUnits ?? '').split(/\s+/u).filter(Boolean));
+  expect(EffectArray.sort(units, Order.String)).toEqual(
+    EffectArray.sort(
+      [topology.shell, ...topology.verticals].map((unit) => unit.path),
+      Order.String,
+    ),
+  );
+  const { build } = integrationPhases(templates.integration);
+  // Every consumer waits for this many uploads under this prefix; a seventh shard would never be awaited.
+  expect(WAIT_FOR_BUILDS).toContain(`${buildJobPrefix}' ${String(build.length)}`);
+  expect(build.map(({ name }) => name)).toEqual(
+    building.map(
+      (entry, index) => `${buildJobPrefix}${String(index + 1)}/${String(building.length)}) and ${entry.name}`,
+    ),
+  );
+  expect(new Set(building.map(({ shard }) => shard))).toEqual(new Set(building.map((_entry, index) => index + 1)));
+});
+
+it('keeps building every shard in an affected plan that selects none of its owner tasks', () => {
+  for (const owner of workspacePackages) {
+    const plan = planCiChecks({
+      changedPaths: [`app/${owner.directory}/src/service.ts`],
+      packages: workspacePackages,
+      templates,
+    });
+    const { build } = integrationPhases(plan.integration);
+    expect(
+      build.map(({ shard }) => shard),
+      owner.name,
+    ).toEqual(ALL_SHARDS);
+    for (const row of build) {
+      expect(row.suite === 'build' || (row.tasks?.length ?? 0) > 0, `${owner.name}: ${row.name}`).toBe(true);
+    }
+  }
+  const promotion = planCiChecks({
+    changedPaths: ['app/verticals/promotion/src/service.ts'],
+    packages: workspacePackages,
+    templates,
+  });
+  expect(promotion.mode).toBe('affected');
+  expect(integrationPhases(promotion.integration).build.some(({ suite }) => suite === 'build')).toBe(true);
+});
 
 it('preserves the authored worker budget when affected selection narrows package filters', () => {
   const pricing = templates.unit.find((row) =>
@@ -506,12 +560,11 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       for (const helper of [
         'source',
         'unit',
+        'unitAfterDatabase',
         'unitAfterLint',
-        'unitAfterSource',
         'unitAfterTopology',
         'integration',
-        'integrationEarly',
-        'integrationSetup',
+        'integrationBuild',
         'integrationTopology',
       ]) {
         expect(documentationPlan).toContain(`${helper}=[]\n`);
@@ -684,20 +737,16 @@ it('plans with no installed dependencies using the same tested impact algorithm'
 });
 
 it('promotes a lone affected deferred unit row instead of expanding an empty required matrix', () => {
+  const none = { afterDatabase: [], afterLint: [], afterTopology: [] };
   for (const deferred of templates.unit.filter((row) => row['after-check'] !== undefined)) {
-    expect(unitPhases([deferred], 'changed')).toEqual({
-      afterLint: [],
-      afterSource: [],
-      afterTopology: [],
-      work: [deferred],
-    });
+    expect(unitPhases([deferred], 'changed')).toEqual({ ...none, work: [deferred] });
   }
   const full = unitPhases(templates.unit, 'changed');
   expect(full.work).toEqual(templates.unit.filter((row) => row['after-check'] === undefined));
-  expect([...full.work, ...full.afterLint, ...full.afterSource, ...full.afterTopology]).toHaveLength(
+  expect([...full.work, ...full.afterDatabase, ...full.afterLint, ...full.afterTopology]).toHaveLength(
     templates.unit.length,
   );
-  expect(unitPhases([], 'changed')).toEqual({ afterLint: [], afterSource: [], afterTopology: [], work: [] });
+  expect(unitPhases([], 'changed')).toEqual({ ...none, work: [] });
 });
 
 it('promotes only one deferred unit row so the others keep their bounded runner slots', () => {
@@ -705,25 +754,33 @@ it('promotes only one deferred unit row so the others keep their bounded runner 
   expect(selected.length).toBeGreaterThan(1);
   const phases = unitPhases(selected, 'changed');
   expect(phases.work).toEqual(selected.slice(0, 1));
-  expect([...phases.afterLint, ...phases.afterSource, ...phases.afterTopology]).toHaveLength(selected.length - 1);
+  expect([...phases.afterDatabase, ...phases.afterLint, ...phases.afterTopology]).toHaveLength(selected.length - 1);
 });
 
-it('moves the row behind lint to a source slot when ci-plan sweeps every file', () => {
+it('moves the row behind lint to the topology slot when ci-plan sweeps every file', () => {
   const lint = templates.unit.filter((row) => row['after-check'] === 'lint');
   expect(lint).toHaveLength(1);
   const changed = unitPhases(templates.unit, 'changed');
   const all = unitPhases(templates.unit, 'all');
   expect(changed.afterLint).toEqual(lint);
   expect(all.afterLint).toEqual([]);
-  expect(all.afterSource).toEqual(
-    templates.unit.filter((row) => changed.afterSource.includes(row) || lint.includes(row)),
+  expect(all.afterTopology).toEqual(
+    templates.unit.filter((row) => changed.afterTopology.includes(row) || lint.includes(row)),
   );
   expect(all.work).toEqual(changed.work);
-  expect(all.afterTopology).toEqual(changed.afterTopology);
+  expect(all.afterDatabase).toEqual(changed.afterDatabase);
 });
 
-// The gate-id jobs (workspace-unit, service-integration) must never receive an empty matrix while their
-// gate is expected to succeed: expanding an empty matrix fails the run, and skipping it fails the gate.
+/** Every owner task a list of integration rows runs, sorted. */
+const ownerTasks = (rows: readonly { readonly tasks?: readonly string[] | undefined }[]) =>
+  EffectArray.sort(
+    rows.flatMap((row) => row.tasks ?? []),
+    Order.String,
+  );
+
+// The gate-id jobs (workspace-unit, service-integration, node-artifact-build) must never receive an empty
+// matrix while their gate is expected to succeed: expanding an empty matrix fails the run, and skipping it
+// fails the gate.
 it('gives each gate-id job at least one row for every single-owner change and either lint sweep', () => {
   for (const owner of workspacePackages) {
     const plan = planCiChecks({
@@ -736,13 +793,17 @@ it('gives each gate-id job at least one row for every single-owner change and ei
       if (plan.expected['workspace-unit'] === 'success') {
         expect(outputs.unit.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
       }
-      if (plan.integration.some(({ suite }) => suite === 'integration')) {
+      if (plan.expected['service-integration'] === 'success') {
         expect(outputs.integration.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
+        expect(outputs.integrationTopology.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
       }
+      expect(outputs.integrationBuild.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
       expect(
-        [...outputs.unit, ...outputs.unitAfterLint, ...outputs.unitAfterSource, ...outputs.unitAfterTopology],
+        [...outputs.unit, ...outputs.unitAfterDatabase, ...outputs.unitAfterLint, ...outputs.unitAfterTopology],
         owner.name,
       ).toHaveLength(plan.unit.length);
+      // Every selected owner task runs on a building owner row.
+      expect(ownerTasks(outputs.integrationBuild), owner.name).toEqual(ownerTasks(plan.integration));
     }
   }
 });

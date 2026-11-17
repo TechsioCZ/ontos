@@ -91,12 +91,11 @@ jobs:
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
+      unitAfterDatabase: ${{ steps.selection.outputs.unitAfterDatabase || steps.changes.outputs.unitAfterDatabase }}
       unitAfterLint: ${{ steps.selection.outputs.unitAfterLint || steps.changes.outputs.unitAfterLint }}
-      unitAfterSource: ${{ steps.selection.outputs.unitAfterSource || steps.changes.outputs.unitAfterSource }}
       unitAfterTopology: ${{ steps.selection.outputs.unitAfterTopology || steps.changes.outputs.unitAfterTopology }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
-      integrationEarly: ${{ steps.selection.outputs.integrationEarly || steps.changes.outputs.integrationEarly }}
-      integrationSetup: ${{ steps.selection.outputs.integrationSetup || steps.changes.outputs.integrationSetup }}
+      integrationBuild: ${{ steps.selection.outputs.integrationBuild || steps.changes.outputs.integrationBuild }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
     steps:
       - name: Harden Runner
@@ -249,9 +248,10 @@ jobs:
           path: ~/.cache/playwright-apt-debs
           key: ${{ steps.chromium-debs.outputs.key }}
 
-  # Source checks start immediately after planning; they do not wait for Node artifacts. The compiler pass
-  # with the repository tooling tests and the source and deployment contracts each take a runner: sharing
-  # one, they starve each other of CPU and take twice as long.
+  # Source checks start immediately after planning; they do not wait for Node artifacts. The repository
+  # tooling tests keep all four cores of their runner for about six minutes, so the workspace compiler pass
+  # runs beside the changed-file lint, and the source and deployment contracts take their own runner:
+  # sharing one, they starve each other of CPU and take twice as long.
   workspace-gate:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -279,16 +279,12 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
         with:
-          restore-typescript-build: ${{ matrix.typescript-build == true }}
-          save-node-modules: ${{ matrix.typescript-build == true && github.ref != 'refs/heads/main' }}
+          save-node-modules: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
         env:
           COMMANDS: ${{ matrix.commands }}
-          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
-          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
-          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: &run-gate-commands |
@@ -344,12 +340,17 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: *run-gate-commands
 
-  # Unit rows start on a freed slot: the build slots, then the lint, topology and source-contract slots. A
-  # whole-tree lint holds its slot for minutes, so the planner moves that row behind the source contracts.
+  # Unit rows take the slots that free first: the source contracts, the changed-file lint, the deployment
+  # bootstrap and the database producer. A whole-tree lint holds its slot for minutes, so the planner moves
+  # that row behind the bootstrap. Builds run inside owner rows that go on to their own tests, so every unit
+  # row waits inside the job for this run's uploads rather than for the build jobs to end.
   workspace-unit:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
+    needs: [ci-plan, workspace-source-contracts]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.workspace-source-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
+    permissions: &artifact-wait-permissions
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: &unit-check-environment
@@ -373,8 +374,14 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-        with:
-          restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Wait for the same-run Node artifacts for unit contract fixtures
+        if: matrix.node-artifacts == true
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11
 
       - name: Download the same-run Node artifacts for unit contract fixtures
         if: matrix.node-artifacts == true
@@ -392,17 +399,15 @@ jobs:
         working-directory: app
         env:
           COMMANDS: ${{ matrix.commands }}
-          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
-          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
-          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: *run-gate-commands
 
   workspace-unit-after-lint:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, format-and-lint]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.format-and-lint.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterLint != '[]' }}
+    needs: [ci-plan, format-and-lint]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.format-and-lint.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterLint != '[]' }}
+    permissions: *artifact-wait-permissions
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
@@ -412,23 +417,25 @@ jobs:
         include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterLint) }}
     steps: *unit-check-steps
 
-  workspace-unit-after-source:
+  workspace-unit-after-database:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, workspace-source-contracts]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.workspace-source-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterSource != '[]' }}
+    needs: [ci-plan, service-integration]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.service-integration.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterDatabase != '[]' }}
+    permissions: *artifact-wait-permissions
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterSource) }}
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterDatabase) }}
     steps: *unit-check-steps
 
   workspace-unit-after-topology:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-topology-proof]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-topology-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterTopology != '[]' }}
+    needs: [ci-plan, node-topology-proof]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-topology-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterTopology != '[]' }}
+    permissions: *artifact-wait-permissions
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
@@ -593,6 +600,20 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: 'true'
+
+      # The one workspace compiler pass of the run. The tooling tests hold all four cores of their runner;
+      # beside a changed-file lint this pass costs the run nothing.
+      - name: Typecheck the workspace
+        id: typecheck
+        background: true
+        working-directory: app
+        env:
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: 4GiB
+          ULTRAMODERN_TSGO_BUILDERS: '1'
+        run: mise exec -- pnpm typecheck
 
       - name: Check OntOS APIs and generator behavior
         id: generator-checks
@@ -659,15 +680,17 @@ jobs:
       - name: Wait for API and generator checks
         wait: generator-checks
 
+      - name: Wait for the workspace typecheck
+        wait: typecheck
+
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating per row.
-  # Runner budget, at most 18 of the organisation's 20 hosted jobs, leaving the pull request's Quality
-  # Audit a slot: while the builds run, 6 builds + lint + typecheck + source contracts + static + browser +
-  # topology + 6 early owner rows = 18. The early rows and the topology proof install, start services and
-  # wait for this run's uploads inside the job. Each later job takes one finished job's slot: 5 owner rows
-  # and one unit row take the 6 build slots, and one unit row each takes the lint, topology and source
-  # contract slots. A whole-tree lint keeps the lint slot, so its row takes the source contract slot too,
-  # in place of the browser slot, which frees at about the same time and is handed to no job.
+  # Runner budget, at most 18 of the organisation's 20 hosted jobs including the pull request's Quality
+  # Audit: every gate job below starts with the run, 11 building owner rows + database and browser +
+  # topology + lint + tooling tests + source contracts + static contracts = 17. Owner rows and the topology
+  # proof build, install, start services and wait for this run's uploads inside the job. The four unit rows
+  # each take one finished slot: source contracts, lint, topology and the database producer. A whole-tree
+  # lint keeps the lint slot, so its row follows the topology proof too; by then the Quality Audit has ended.
   node-topology-proof:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -721,6 +744,52 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      # A building row builds its shard of the delivery units before anything else, from this exact commit.
+      - name: Build the shard's Node artifacts
+        if: matrix.units
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+          NODE_OPTIONS: --max-old-space-size=2048
+          ONTOS_CI_TYPECHECK_SEPARATE: '1'
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+          # Separates tracing, package assembly and copying in the timestamped CI log.
+          DEBUG: nde
+        run: |
+          # The integration lanes' single-thread cap would serialize the compilers.
+          unset RAYON_NUM_THREADS
+          read -ra units <<<"$SHARD_UNITS"
+          filters=()
+          for unit in "${units[@]}"; do
+            filters+=(--filter "./$unit")
+          done
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
+
+      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
+      - name: Pack the shard's build outputs
+        if: matrix.units
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
+            | grep -zv '/node_modules/$' \
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
+
+      # Consumers wait for this step, not for the job: the row goes on to its owner tasks.
+      - name: Upload the shard's build outputs
+        if: matrix.units
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/units.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
       # Bootstrap starts with the builds. Its source-only migrator and outbox proofs run while this waits
       # for every build shard of this run to upload, then transfers them; a failed shard fails it by name.
       - name: Prefetch the same-run bootstrap Node artifacts
@@ -732,7 +801,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
         run: |
-          bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 6
+          bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
@@ -782,6 +851,7 @@ jobs:
           mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
 
       - name: Create the local SpiceDB TLS certificate
+        if: matrix.suite != 'build'
         working-directory: app
         # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
         run: |
@@ -793,7 +863,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Start fresh PostgreSQL and SpiceDB services
-        if: matrix.suite != 'integration'
+        if: matrix.suite == 'bootstrap' || matrix.suite == 'browser' || matrix.suite == 'database'
         working-directory: app
         run: |
           # Disposable CI pages do not need the hosted runner's slow persistent disk.
@@ -937,7 +1007,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
-        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 6
+        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 11
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
       # proof row derives the whole Composition from every delivery unit.
@@ -1072,43 +1142,12 @@ jobs:
           fi
           docker compose down --volumes --remove-orphans
 
-  service-integration-setup:
-    name: Prepare integration database and browser checks
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
-    permissions:
-      actions: read
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.integrationSetup) }}
-    env: *integration-environment
-    steps: *integration-steps
-
-  # Early rows hold the longest proofs: they install and restore their clusters while the builds run.
-  service-integration-early:
-    name: ${{ matrix.name }}
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' && needs.ci-plan.outputs.integrationEarly != '[]' }}
-    permissions:
-      actions: read
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.integrationEarly) }}
-    env: *integration-environment
-    steps: *integration-steps
-
+  # The gate job of the integration check is the database producer: it runs whenever integration work is
+  # selected, so it never expands an empty matrix.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1121,82 +1160,29 @@ jobs:
     env: *integration-environment
     steps: *integration-steps
 
-  # Release identities and compiler outputs are built from this exact commit. Each shard builds two units at
-  # a time; shards are packed by measured unit build time (seconds, two builds sharing a runner): catalog 98,
-  # customer context 71, inventory 70, shell 68, symmy 66, pricing 55, market catalog 54, party 53,
-  # assortment 50, projects 41, tax 38, price group 38, order 37, payment 37, promotion 35, privacy 35,
-  # payment term 34, storefront 31, cart 27, availability 19.
+  # Release identities and compiler outputs are built from this exact commit. Every owner row is a build
+  # shard: it builds one or two units, uploads them, and then runs its own owner tasks, so the owner wave
+  # starts with the builds instead of behind them, and no runner idles while the builds run. Units are
+  # paired by measured build time (seconds, two builds sharing a runner): catalog 98 alone, customer context
+  # 71, inventory 70, shell 68, symmy 66, pricing 55, market catalog 54, party 53, assortment 50, projects
+  # 41, tax 38, price group 38, order 37, payment 37, promotion 35, privacy 35, payment term 34, storefront
+  # 31, cart 27, availability 19. The rows holding the longest single-file proofs build the smallest shards.
+  # An affected plan without owner tasks for a shard still builds it.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/6)
+    name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
-        include:
-          - { shard: 1, units: verticals/catalog verticals/commerce-customer-context verticals/availability }
-          - { shard: 2, units: verticals/inventory apps/shell-super-app verticals/commerce-cart }
-          - { shard: 3, units: verticals/symmy-integration verticals/pricing verticals/payment-term-catalog }
-          - { shard: 4, units: verticals/commerce-market-catalog verticals/party-registry verticals/privacy }
-          - { shard: 5, units: verticals/assortment verticals/commerce-order verticals/promotion verticals/payment }
-          - { shard: 6, units: verticals/price-group-catalog verticals/tax verticals/projects verticals/storefront-registry }
-    env:
-      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
-      MODERN_PUBLIC_SITE_URL: http://localhost:8080
-      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-
-      - name: Build the shard's Node artifacts
-        working-directory: app
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-          NODE_OPTIONS: --max-old-space-size=2048
-          ONTOS_CI_TYPECHECK_SEPARATE: '1'
-          # Separates tracing, package assembly and copying in the timestamped CI log.
-          DEBUG: nde
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          filters=()
-          for unit in "${units[@]}"; do
-            filters+=(--filter "./$unit")
-          done
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
-
-      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
-      - name: Pack the shard's build outputs
-        working-directory: app
-        env:
-          SHARD_UNITS: ${{ matrix.units }}
-        run: |
-          read -ra units <<<"$SHARD_UNITS"
-          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
-            | grep -zv '/node_modules/$' \
-            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
-
-      - name: Upload the shard's build outputs
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: node-units-${{ matrix.shard }}
-          path: ${{ runner.temp }}/units.tar.zst
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 1
+        include: ${{ fromJSON(needs.ci-plan.outputs.integrationBuild) }}
+    env: *integration-environment
+    steps: *integration-steps
 
   cloudflare-artifact-build:
     name: Build cloudflare artifacts (${{ matrix.shard }}/5)
@@ -1446,16 +1432,14 @@ jobs:
         workspace-gate,
         workspace-source-contracts,
         workspace-unit,
+        workspace-unit-after-database,
         workspace-unit-after-lint,
-        workspace-unit-after-source,
         workspace-unit-after-topology,
         static-contracts,
         format-and-lint,
         service-integration,
-        service-integration-early,
         node-artifact-build,
         node-topology-proof,
-        service-integration-setup,
       ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
