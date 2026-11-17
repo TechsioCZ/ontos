@@ -68,7 +68,7 @@ const STATIC_CONTRACTS_JOB = 'static-contracts';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const UNIT_AFTER_LINT_JOB = 'workspace-unit-after-lint';
-const UNIT_AFTER_STATIC_JOB = 'workspace-unit-after-static';
+const UNIT_AFTER_SOURCE_JOB = 'workspace-unit-after-source';
 const UNIT_AFTER_TOPOLOGY_JOB = 'workspace-unit-after-topology';
 const INTEGRATION_EARLY_JOB = 'service-integration-early';
 
@@ -77,7 +77,7 @@ const PLANNED_MATRIX_JOBS = [
   [WORKSPACE_GATE_JOB, 'source'],
   [WORKSPACE_UNIT_JOB, 'unit'],
   [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
-  [UNIT_AFTER_STATIC_JOB, 'unitAfterStatic'],
+  [UNIT_AFTER_SOURCE_JOB, 'unitAfterSource'],
   [UNIT_AFTER_TOPOLOGY_JOB, 'unitAfterTopology'],
   [SERVICE_INTEGRATION_JOB, 'integration'],
   [INTEGRATION_EARLY_JOB, 'integrationEarly'],
@@ -1829,7 +1829,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_GATE_JOB,
     WORKSPACE_UNIT_JOB,
     UNIT_AFTER_LINT_JOB,
-    UNIT_AFTER_STATIC_JOB,
+    UNIT_AFTER_SOURCE_JOB,
     UNIT_AFTER_TOPOLOGY_JOB,
     STATIC_CONTRACTS_JOB,
     FORMAT_AND_LINT_JOB,
@@ -1852,7 +1852,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
         integrationEarly: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
         mode,
         unitAfterLint: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
-        unitAfterStatic: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
+        unitAfterSource: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
         unitAfterTopology: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
       },
       result: 'success',
@@ -1862,7 +1862,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [UNIT_AFTER_LINT_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [UNIT_AFTER_STATIC_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [UNIT_AFTER_SOURCE_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [UNIT_AFTER_TOPOLOGY_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
   });
@@ -1882,7 +1882,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(passes(needs('full', passed))).toBe(true);
   for (const [helper, output] of [
     [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
-    [UNIT_AFTER_STATIC_JOB, 'unitAfterStatic'],
+    [UNIT_AFTER_SOURCE_JOB, 'unitAfterSource'],
     [UNIT_AFTER_TOPOLOGY_JOB, 'unitAfterTopology'],
     [INTEGRATION_EARLY_JOB, 'integrationEarly'],
   ] as const) {
@@ -2178,7 +2178,6 @@ const CommandMatrixJobSchema = Schema.Struct({
     matrix: Schema.Struct({
       include: Schema.Array(
         Schema.Struct({
-          'background-commands': Schema.optional(Schema.String),
           commands: Schema.String,
           name: Schema.String,
           'node-artifacts': Schema.optional(Schema.Boolean),
@@ -2217,14 +2216,14 @@ const GateCommandsWorkflowSchema = Schema.Struct({
       strategy: Schema.Struct({ matrix: Schema.Struct({ row: Schema.Array(Schema.String) }) }),
     }),
     [UNIT_AFTER_LINT_JOB]: CommandMatrixJobSchema,
-    [UNIT_AFTER_STATIC_JOB]: CommandMatrixJobSchema,
+    [UNIT_AFTER_SOURCE_JOB]: CommandMatrixJobSchema,
     [UNIT_AFTER_TOPOLOGY_JOB]: CommandMatrixJobSchema,
     [WORKSPACE_GATE_JOB]: CommandMatrixJobSchema,
     [WORKSPACE_UNIT_JOB]: CommandMatrixJobSchema,
   }),
 });
 /** Every unit job: the build-slot row and the rows that take the lint, static and topology slots. */
-const UNIT_JOBS = [WORKSPACE_UNIT_JOB, UNIT_AFTER_LINT_JOB, UNIT_AFTER_STATIC_JOB, UNIT_AFTER_TOPOLOGY_JOB] as const;
+const UNIT_JOBS = [WORKSPACE_UNIT_JOB, UNIT_AFTER_LINT_JOB, UNIT_AFTER_SOURCE_JOB, UNIT_AFTER_TOPOLOGY_JOB] as const;
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
 /** A workspace package manifest, whose scripts a package may omit entirely. */
 const PackageScriptsSchema = Schema.Struct({
@@ -2239,9 +2238,7 @@ const readGateCommandJobs = () => Schema.decodeUnknownSync(GateCommandsWorkflowS
 const gateCommands = () => {
   const jobs = readGateCommandJobs();
   return ([WORKSPACE_GATE_JOB, ...UNIT_JOBS] as const).flatMap((job) =>
-    jobs[job].strategy.matrix.include.flatMap(({ 'background-commands': background, commands }) =>
-      [commands, background ?? ''].filter(Boolean).map((lines) => lines.split('\n').filter(Boolean)),
-    ),
+    jobs[job].strategy.matrix.include.map(({ commands }) => commands.split('\n').filter(Boolean)),
   );
 };
 
@@ -3246,11 +3243,13 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(steps[unpack]?.run).toBe(UNPACK_NATIVE_ARTIFACTS_COMMAND);
   expect(steps[download]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(steps[unpack]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
-  const preproposal = integration.strategy.matrix.include.filter((shard) =>
+  // Early owner rows restore the same artifacts after waiting for the builds inside the job.
+  const early = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[INTEGRATION_EARLY_JOB];
+  const preproposal = [...early.strategy.matrix.include, ...integration.strategy.matrix.include].filter((shard) =>
     (shard.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')),
   );
   expect(preproposal).toHaveLength(2);
-  expect(preproposal[0]?.suite).toBe('integration');
+  expect(preproposal.every(({ suite }) => suite === 'integration')).toBe(true);
 });
 
 it('refuses root native integration when the same-run build archives are missing', () => {
@@ -3280,9 +3279,9 @@ it('refuses root native integration when the same-run build archives are missing
 });
 
 // The organisation's free plan runs 20 hosted jobs for every repository together. While the builds run, the
-// pull request's Quality Audit also holds one, so the gates start at most 17 and every later job takes the
+// pull request's Quality Audit also holds one, so the gates start at most 18 and every later job takes the
 // slot of exactly one finished job, whichever order those jobs finish in.
-it('starts at most 17 gate jobs and hands every finished slot to at most one later job', () => {
+it('starts at most 18 gate jobs and hands every finished slot to at most one later job', () => {
   const builds = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.shard.length;
   const staticRows = readGateCommandJobs()[STATIC_CONTRACTS_JOB].strategy.matrix.row.length;
   for (const lintSweep of ['changed', 'all'] as const) {
@@ -3296,15 +3295,12 @@ it('starts at most 17 gate jobs and hands every finished slot to at most one lat
       plan.integrationSetup.length +
       plan.integrationTopology.length +
       plan.integrationEarly.length;
-    expect(first, lintSweep).toBeLessThanOrEqual(17);
+    expect(first, lintSweep).toBeLessThanOrEqual(18);
     expect(plan.integration.length + plan.unit.length, lintSweep).toBeLessThanOrEqual(builds);
     expect(plan.unitAfterLint.length, lintSweep).toBeLessThanOrEqual(lint);
-    expect(plan.unitAfterStatic.length, lintSweep).toBeLessThanOrEqual(staticRows);
-    // A whole-tree lint keeps its slot for minutes, so its row follows the topology proof instead: one job
-    // above the 17, after the Quality Audit has finished.
-    expect(plan.unitAfterTopology.length, lintSweep).toBeLessThanOrEqual(
-      plan.integrationTopology.length + (lintSweep === 'all' ? plan.unitAfterLint.length + 1 : 0),
-    );
+    // A whole-tree lint keeps its slot for minutes, so its row follows the source rows instead.
+    expect(plan.unitAfterSource.length, lintSweep).toBeLessThanOrEqual(plan.source.length);
+    expect(plan.unitAfterTopology.length, lintSweep).toBeLessThanOrEqual(plan.integrationTopology.length);
   }
   expect(fullPlanMatrices('all').unitAfterLint).toEqual([]);
   const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
@@ -3323,7 +3319,7 @@ it('starts at most 17 gate jobs and hands every finished slot to at most one lat
   expect(all[WORKSPACE_UNIT_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
   for (const [job, predecessor, output] of [
     [UNIT_AFTER_LINT_JOB, FORMAT_AND_LINT_JOB, 'unitAfterLint'],
-    [UNIT_AFTER_STATIC_JOB, STATIC_CONTRACTS_JOB, 'unitAfterStatic'],
+    [UNIT_AFTER_SOURCE_JOB, WORKSPACE_GATE_JOB, 'unitAfterSource'],
     [UNIT_AFTER_TOPOLOGY_JOB, TOPOLOGY_PROOF_JOB, 'unitAfterTopology'],
   ] as const) {
     expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, predecessor]);

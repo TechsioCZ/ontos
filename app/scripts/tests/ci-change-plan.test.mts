@@ -501,13 +501,13 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         });
         return readFileSync(output, 'utf-8');
       };
-      const documentationPlan = run('pull_request');
+      const documentationPlan = run('merge_group');
       expect(documentationPlan).toContain('mode=docs\n');
       for (const helper of [
         'source',
         'unit',
         'unitAfterLint',
-        'unitAfterStatic',
+        'unitAfterSource',
         'unitAfterTopology',
         'integration',
         'integrationEarly',
@@ -518,19 +518,21 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       }
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
       expect(documentationPlan).toContain('lintSweep=changed\n');
-      expect(run('merge_group')).toContain('mode=docs\n');
+      expect(run('push')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
       // Without the exact list, and on the nightly run, every tracked file is linted.
       const sweepAll = 'lintSweep=all\n';
       expect(run('workflow_dispatch')).toContain(sweepAll);
       expect(run('schedule')).toContain(sweepAll);
-      expect(run('pull_request', '0'.repeat(40))).toContain('mode=full\n');
-      expect(run('pull_request', '0'.repeat(40))).toContain(sweepAll);
-      expect(run('pull_request', base, 'true')).toContain('mode=full\n');
+      expect(run('merge_group', '0'.repeat(40))).toContain('mode=full\n');
+      expect(run('merge_group', '0'.repeat(40))).toContain(sweepAll);
+      expect(run('merge_group', base, 'true')).toContain('mode=full\n');
+      // A pull request is only ever tested as GitHub's merge commit; a plain commit has no exact base.
+      expect(run('pull_request')).toContain('mode=full\n');
       git('mv', 'README.md', 'runtime.ts');
       git('commit', '--quiet', '-m', 'rename into application input');
-      expect(run('pull_request')).toContain('mode=affected\n');
-      expect(run('pull_request')).toContain('lintSweep=changed\n');
+      expect(run('merge_group')).toContain('mode=affected\n');
+      expect(run('merge_group')).toContain('lintSweep=changed\n');
       // A changed formatter, linter or hook configuration reformats files nobody touched; test-runner
       // configuration does not alter formatting or lint semantics.
       const sweepAfter = (file: string) => {
@@ -539,7 +541,7 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         writeFileSync(target, `${file}\n`);
         git('add', '--all');
         git('commit', '--quiet', '-m', file);
-        const plan = run('pull_request', git('rev-parse', 'HEAD~1'));
+        const plan = run('merge_group', git('rev-parse', 'HEAD~1'));
         return /^lintSweep=(?<sweep>\w+)$/mu.exec(plan)?.groups?.sweep;
       };
       for (const configuration of [
@@ -563,12 +565,26 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       ]) {
         expect(sweepAfter(configuration), configuration).toBe('changed');
       }
+      // The base moved on after the fork point. The pull request's merge commit compares with its first
+      // parent, so only the pull request's own documentation counts, never the base's newer changes.
+      const trunk = git('rev-parse', '--abbrev-ref', 'HEAD');
+      git('reset', '--quiet', '--hard');
+      git('checkout', '--quiet', '-b', 'documentation', base);
+      mkdirSync(path.join(directory, 'docs'), { recursive: true });
+      writeFileSync(path.join(directory, 'docs/guide.md'), 'guide\n');
+      git('add', 'docs/guide.md');
+      git('commit', '--quiet', '-m', 'guide');
+      git('checkout', '--quiet', trunk);
+      git('merge', '--quiet', '--no-ff', '-m', 'Merge documentation', 'documentation');
+      expect(run('pull_request', base)).toContain('mode=docs\n');
+      expect(readFileSync(path.join(directory, 'paths'), 'utf-8')).toBe('docs/guide.md\0');
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
   }),
 );
 
+const NO_INSTALL_PLANNER = 'scripts/plan-ci-without-install.sh';
 const decode = (value: string) =>
   Object.fromEntries(
     value
@@ -600,7 +616,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
       'scripts/ci-matrices.json',
       'scripts/ci-impact.mts',
       'scripts/workspace-consumer-closure.mts',
-      'scripts/plan-ci-without-install.sh',
+      NO_INSTALL_PLANNER,
     ]) {
       copy(file);
     }
@@ -613,35 +629,49 @@ it('plans with no installed dependencies using the same tested impact algorithm'
       }
     }
     expect(existsSync(path.join(fixture, 'node_modules'))).toBe(false);
-    for (const changed of [CATALOG_SOURCE, 'app/scripts/check.mts']) {
-      const paths = path.join(fixture, 'paths');
-      const output = path.join(fixture, 'output');
-      const summary = path.join(fixture, 'summary');
-      writeFileSync(paths, `${changed}\0`);
+    const paths = path.join(fixture, 'paths');
+    const output = path.join(fixture, 'output');
+    const summary = path.join(fixture, 'summary');
+    const plan = (command: string, args: readonly string[], cwd: string, mode: Readonly<Record<string, string>>) => {
       writeFileSync(output, '');
-      execFileSync('/bin/bash', ['scripts/plan-ci-without-install.sh', paths], {
-        cwd: fixture,
+      execFileSync(command, args, {
+        cwd,
         env: {
-          BOOTSTRAP_MODE: 'affected',
+          ...mode,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           LINT_SWEEP: 'changed',
           PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
         },
+        stdio: 'pipe',
       });
-      const native = readFileSync(output, 'utf-8');
-      writeFileSync(output, '');
-      execFileSync(process.execPath, ['scripts/plan-ci-checks.mts', '--paths-file', paths], {
-        cwd: app,
-        env: {
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          LINT_SWEEP: 'changed',
-          PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
-        },
-      });
-      const installed = readFileSync(output, 'utf-8');
-      expect(decode(native)).toEqual(decode(installed));
+      return decode(readFileSync(output, 'utf-8'));
+    };
+    // The nightly and manual backstop reaches the shell planner as BOOTSTRAP_MODE=full and the installed
+    // CLI as --full; both must widen the plan.
+    for (const [bootstrapMode, flags] of [
+      ['affected', []],
+      ['full', ['--full']],
+    ] as const) {
+      for (const changed of [CATALOG_SOURCE, 'app/scripts/check.mts']) {
+        writeFileSync(paths, `${changed}\0`);
+        const native = plan('/bin/bash', [NO_INSTALL_PLANNER, paths], fixture, { BOOTSTRAP_MODE: bootstrapMode });
+        const installed = plan(
+          process.execPath,
+          ['scripts/plan-ci-checks.mts', '--paths-file', paths, ...flags],
+          app,
+          {},
+        );
+        expect(native).toEqual(installed);
+        if (bootstrapMode === 'full') {
+          expect(native.mode).toBe('full');
+        }
+      }
+    }
+    for (const mode of [{}, { BOOTSTRAP_MODE: 'Full' }, { BOOTSTRAP_MODE: 'docs' }]) {
+      expect(() => plan('/bin/bash', [NO_INSTALL_PLANNER, paths], fixture, mode)).toThrow(
+        /BOOTSTRAP_MODE must be affected or full/u,
+      );
     }
   } finally {
     rmSync(fixture, { force: true, recursive: true });
@@ -652,17 +682,17 @@ it('promotes a lone affected deferred unit row instead of expanding an empty req
   for (const deferred of templates.unit.filter((row) => row['after-check'] !== undefined)) {
     expect(unitPhases([deferred], 'changed')).toEqual({
       afterLint: [],
-      afterStatic: [],
+      afterSource: [],
       afterTopology: [],
       work: [deferred],
     });
   }
   const full = unitPhases(templates.unit, 'changed');
   expect(full.work).toEqual(templates.unit.filter((row) => row['after-check'] === undefined));
-  expect([...full.work, ...full.afterLint, ...full.afterStatic, ...full.afterTopology]).toHaveLength(
+  expect([...full.work, ...full.afterLint, ...full.afterSource, ...full.afterTopology]).toHaveLength(
     templates.unit.length,
   );
-  expect(unitPhases([], 'changed')).toEqual({ afterLint: [], afterStatic: [], afterTopology: [], work: [] });
+  expect(unitPhases([], 'changed')).toEqual({ afterLint: [], afterSource: [], afterTopology: [], work: [] });
 });
 
 it('promotes only one deferred unit row so the others keep their bounded runner slots', () => {
@@ -670,21 +700,21 @@ it('promotes only one deferred unit row so the others keep their bounded runner 
   expect(selected.length).toBeGreaterThan(1);
   const phases = unitPhases(selected, 'changed');
   expect(phases.work).toEqual(selected.slice(0, 1));
-  expect([...phases.afterLint, ...phases.afterStatic, ...phases.afterTopology]).toHaveLength(selected.length - 1);
+  expect([...phases.afterLint, ...phases.afterSource, ...phases.afterTopology]).toHaveLength(selected.length - 1);
 });
 
-it('moves the row behind lint to the topology slot when ci-plan sweeps every file', () => {
+it('moves the row behind lint to a source slot when ci-plan sweeps every file', () => {
   const lint = templates.unit.filter((row) => row['after-check'] === 'lint');
   expect(lint).toHaveLength(1);
   const changed = unitPhases(templates.unit, 'changed');
   const all = unitPhases(templates.unit, 'all');
   expect(changed.afterLint).toEqual(lint);
   expect(all.afterLint).toEqual([]);
-  expect(all.afterTopology).toEqual(
-    templates.unit.filter((row) => changed.afterTopology.includes(row) || lint.includes(row)),
+  expect(all.afterSource).toEqual(
+    templates.unit.filter((row) => changed.afterSource.includes(row) || lint.includes(row)),
   );
   expect(all.work).toEqual(changed.work);
-  expect(all.afterStatic).toEqual(changed.afterStatic);
+  expect(all.afterTopology).toEqual(changed.afterTopology);
 });
 
 // The gate-id jobs (workspace-unit, service-integration) must never receive an empty matrix while their
@@ -705,7 +735,7 @@ it('gives each gate-id job at least one row for every single-owner change and ei
         expect(outputs.integration.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
       }
       expect(
-        [...outputs.unit, ...outputs.unitAfterLint, ...outputs.unitAfterStatic, ...outputs.unitAfterTopology],
+        [...outputs.unit, ...outputs.unitAfterLint, ...outputs.unitAfterSource, ...outputs.unitAfterTopology],
         owner.name,
       ).toHaveLength(plan.unit.length);
     }

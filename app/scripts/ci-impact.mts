@@ -36,18 +36,19 @@ export type LintSweep = (typeof lintSweeps)[number];
 
 /**
  * Unit rows reuse the slot of the check they follow. A full lint sweep keeps the lint slot busy for minutes,
- * so a row that follows lint follows the topology proof instead. The work job carries the workspace-unit gate
- * id: when no selected row starts with the builds, the first selected row is promoted into it.
+ * so a row that follows lint follows the source rows instead, which free one slot each. The work job carries
+ * the workspace-unit gate id: when no selected row starts with the builds, the first selected row is
+ * promoted into it.
  */
 export const unitPhases = (entries: Templates['unit'], lintSweep: LintSweep) => {
   const phase = (row: Templates['unit'][number]) =>
-    row['after-check'] === 'lint' && lintSweep === 'all' ? 'topology' : row['after-check'];
+    row['after-check'] === 'lint' && lintSweep === 'all' ? 'source' : row['after-check'];
   const work = entries.filter((row) => phase(row) === undefined);
   const promoted = work.length === 0 ? entries[0] : undefined;
   const deferred = entries.filter((row) => row !== promoted);
   return {
     afterLint: deferred.filter((row) => phase(row) === 'lint'),
-    afterStatic: deferred.filter((row) => phase(row) === 'static'),
+    afterSource: deferred.filter((row) => phase(row) === 'source'),
     afterTopology: deferred.filter((row) => phase(row) === 'topology'),
     work: promoted === undefined ? work : [promoted],
   };
@@ -325,7 +326,7 @@ export const ciPlanOutputs = (plan: ReturnType<typeof planCiChecks>, lintSweep: 
     source: plan.source,
     unit: units.work,
     unitAfterLint: units.afterLint,
-    unitAfterStatic: units.afterStatic,
+    unitAfterSource: units.afterSource,
     unitAfterTopology: units.afterTopology,
   };
 };

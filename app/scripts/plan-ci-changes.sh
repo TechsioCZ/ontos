@@ -12,6 +12,15 @@ if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; the
   mode=proven
   reason='The merge queue already proved this exact commit.'
 elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_request|merge_group|push)$ ]]; then
+  # GitHub tests a pull request as its merge into the current base, the merge commit's first parent.
+  # The event's base.sha is the fork point instead: a shallow checkout lacks it, and it would count every
+  # change the base gained since then as a change of this pull request.
+  if [[ "${GITHUB_EVENT_NAME:-}" == pull_request ]]; then
+    BASE_SHA=
+    if git rev-parse --verify --quiet 'HEAD^2^{commit}' >/dev/null; then
+      BASE_SHA="$(git rev-parse 'HEAD^1')"
+    fi
+  fi
   if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ && "${HEAD_SHA:-}" =~ ^[0-9a-f]{40}$ ]] &&
     git cat-file -e "$BASE_SHA^{commit}" &&
     git cat-file -e "$HEAD_SHA^{commit}" &&
@@ -70,6 +79,6 @@ if [[ "$mode" == docs || "$mode" == proven ]]; then
     "format-and-lint":"skipped", "service-integration":"skipped",
     "node-artifact-build":"skipped"
   }' | sed 's/^/expected=/' >>"$GITHUB_OUTPUT"
-  printf 'source=[]\nunit=[]\nunitAfterLint=[]\nunitAfterStatic=[]\nunitAfterTopology=[]\nintegration=[]\nintegrationEarly=[]\nintegrationSetup=[]\nintegrationTopology=[]\n' >>"$GITHUB_OUTPUT"
+  printf 'source=[]\nunit=[]\nunitAfterLint=[]\nunitAfterSource=[]\nunitAfterTopology=[]\nintegration=[]\nintegrationEarly=[]\nintegrationSetup=[]\nintegrationTopology=[]\n' >>"$GITHUB_OUTPUT"
 fi
 printf '%s\n' "$reason"

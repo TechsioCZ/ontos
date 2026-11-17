@@ -92,7 +92,7 @@ jobs:
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       unitAfterLint: ${{ steps.selection.outputs.unitAfterLint || steps.changes.outputs.unitAfterLint }}
-      unitAfterStatic: ${{ steps.selection.outputs.unitAfterStatic || steps.changes.outputs.unitAfterStatic }}
+      unitAfterSource: ${{ steps.selection.outputs.unitAfterSource || steps.changes.outputs.unitAfterSource }}
       unitAfterTopology: ${{ steps.selection.outputs.unitAfterTopology || steps.changes.outputs.unitAfterTopology }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
       integrationEarly: ${{ steps.selection.outputs.integrationEarly || steps.changes.outputs.integrationEarly }}
@@ -116,7 +116,8 @@ jobs:
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          # A pull request compares with the first parent of its merge commit; the script reads it from Git.
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
           FORCE_FULL: ${{ inputs.force-ci-full }}
@@ -248,9 +249,9 @@ jobs:
           path: ~/.cache/playwright-apt-debs
           key: ${{ steps.chromium-debs.outputs.key }}
 
-  # Source checks start immediately after planning; they do not wait for Node artifacts.
-  # One install serves the compiler pass, the repository tooling tests and, beside them, the source and
-  # deployment contracts, which run in one process each.
+  # Source checks start immediately after planning; they do not wait for Node artifacts. The compiler pass
+  # with the repository tooling tests and the source and deployment contracts each take a runner: sharing
+  # one, they starve each other of CPU and take twice as long.
   workspace-gate:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -281,13 +282,13 @@ jobs:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
           save-node-modules: ${{ matrix.typescript-build == true && github.ref != 'refs/heads/main' }}
 
-      - name: Run the background commands of ${{ matrix.name }}
-        id: background-commands
-        background: true
-        if: matrix.background-commands != ''
+      - name: Run ${{ matrix.name }}
         working-directory: app
         env:
-          COMMANDS: ${{ matrix.background-commands }}
+          COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: &run-gate-commands |
@@ -307,23 +308,8 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-      - name: Run ${{ matrix.name }}
-        working-directory: app
-        env:
-          COMMANDS: ${{ matrix.commands }}
-          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
-          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
-          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
-          MODERN_PUBLIC_SITE_URL: http://localhost:8080
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: *run-gate-commands
-
-      # `wait` always runs, including on rows without background commands.
-      - name: Wait for the background commands
-        wait: background-commands
-
-  # Unit rows start on a freed slot: the build slots, then the lint, static and topology slots. A whole-tree
-  # lint holds its slot for minutes, so the planner moves that row behind the topology proof instead.
+  # Unit rows start on a freed slot: the build slots, then the lint, topology and source slots. A whole-tree
+  # lint holds its slot for minutes, so the planner moves that row behind the source rows instead.
   workspace-unit:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
@@ -390,17 +376,17 @@ jobs:
         include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterLint) }}
     steps: *unit-check-steps
 
-  workspace-unit-after-static:
+  workspace-unit-after-source:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, static-contracts]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterStatic != '[]' }}
+    needs: [ci-plan, node-artifact-build, workspace-gate]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.workspace-gate.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterSource != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterStatic) }}
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterSource) }}
     steps: *unit-check-steps
 
   workspace-unit-after-topology:
@@ -639,11 +625,12 @@ jobs:
 
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating per row.
-  # Runner budget, at most 17 of the organisation's 20 hosted jobs, leaving the pull request's Quality
-  # Audit a slot: while the builds run, 6 builds + lint + source + static + browser + topology + 6 early
-  # owner rows = 17. The early rows and the topology proof install, start services and wait for this
+  # Runner budget, at most 18 of the organisation's 20 hosted jobs, leaving the pull request's Quality
+  # Audit a slot: while the builds run, 6 builds + lint + 2 source + static + browser + topology + 6 early
+  # owner rows = 18. The early rows and the topology proof install, start services and wait for this
   # run's uploads inside the job. Each later job takes exactly one finished job's slot: 5 owner rows and
-  # one unit row take the 6 build slots, and one unit row each takes the lint, static and topology slots.
+  # one unit row take the 6 build slots, one unit row each takes the lint and topology slots, and the
+  # source slots take one unit row, or two when a whole-tree lint keeps the lint slot.
   node-topology-proof:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -1422,7 +1409,7 @@ jobs:
         workspace-gate,
         workspace-unit,
         workspace-unit-after-lint,
-        workspace-unit-after-static,
+        workspace-unit-after-source,
         workspace-unit-after-topology,
         static-contracts,
         format-and-lint,
