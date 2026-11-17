@@ -8,6 +8,7 @@ import { ChildProcess } from 'effect/process';
 import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 
 const SCRIPT = path.join(import.meta.dirname, 'app-boot-stages.sh');
+const OLDER = 'node-id-297.runtime.app.zerops';
 const OLD = 'node-id-298.runtime.app.zerops';
 const NEW = 'node-id-299.runtime.app.zerops';
 /** One runtime log line as `zcli service log --format FULL` prints it. */
@@ -17,9 +18,13 @@ const line = (time: string, host: string, message: string) =>
  * The old container keeps logging while the new one unpacks and boots; the old one's boot from an earlier deploy is
  * still among the newest lines. The first three lines are all the log holds when the push starts.
  */
+const SUPERSEDED =
+  '[app-host] superseded by composition c42; drain started: public port 3000 relays to 1 peer(s) for up to 45s';
 const RUNTIME_LOG = [
   line('17:01:10.000000', OLD, '[boot-timing] stage=host.migrator ms=40000 outcome=ok'),
   line('17:01:20.000000', OLD, '[boot-timing] stage=host.start-to-serving ms=60000 outcome=ok'),
+  // The handover of the container before OLD, from the deploy that started OLD: not this push's.
+  line('17:01:40.000000', OLDER, '[app-host] public port closed; stopping the units'),
   line('18:41:00.000000', OLD, '{"event":"runtime.summary","fields":{"stage":"host.start-to-serving"}}'),
   line('18:42:11.176493', NEW, 'unpacked app release f927 with its Outbox Worker host in 31s'),
   line('18:42:11.329691', NEW, "━━━━  🙏 exec sh -c 'cd app && exec node scripts/zerops/app-host.mts'  ━━━━"),
@@ -28,7 +33,15 @@ const RUNTIME_LOG = [
   line('18:43:58.476326', NEW, '[boot-timing] stage=host.migrator ms=104450 outcome=ok'),
   line('18:44:14.284324', NEW, '[app-host] accepting application traffic on port 3000'),
   line('18:44:14.284346', NEW, '[boot-timing] stage=host.start-to-serving ms=120334 outcome=ok'),
+  line('18:44:14.900000', OLD, SUPERSEDED),
   line('18:44:20.000000', NEW, '{"event":"runtime.summary"}'),
+  line('18:44:38.100000', OLD, '[app-host] SIGTERM received; stopping gracefully'),
+  line(
+    '18:44:38.200000',
+    OLD,
+    '[app-host] drain ended (stop signal): forwarded=12 failed=0 looped=0 dropped=0; closing public port 3000',
+  ),
+  line('18:44:40.300000', OLD, '[app-host] public port closed; stopping the units'),
 ].join('\n');
 
 /**
@@ -84,23 +97,30 @@ const readStages = (extra: Readonly<Record<string, string>> = {}) =>
     return { report, started, summaryText };
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-it.live('reports the boot of the container that started serving after the push, in the log order', () =>
-  Effect.gen(function* newestBoot() {
-    const { report, started, summaryText } = yield* readStages();
-    expect(started.status).toBe(0);
-    expect(report.status).toBe(0);
-    expect(report.stdout.trim().split('\n')).toEqual([
-      `app container ${NEW}:`,
-      '2026-11-17T18:42:11.176493Z  unpacked app release f927 with its Outbox Worker host in 31s',
-      '2026-11-17T18:42:38.242021Z  [boot-timing] stage=migrator.owner-migrations ms=18420 outcome=ok',
-      '2026-11-17T18:43:58.476326Z  [boot-timing] stage=host.migrator ms=104450 outcome=ok',
-      '2026-11-17T18:44:14.284324Z  [app-host] accepting application traffic on port 3000',
-      '2026-11-17T18:44:14.284346Z  [boot-timing] stage=host.start-to-serving ms=120334 outcome=ok',
-    ]);
-    expect(summaryText).toContain('### App container boot stages');
-    expect(summaryText).toContain('stage=host.migrator ms=104450');
-    expect(summaryText).not.toContain('ms=40000');
-  }),
+it.live(
+  'reports the boot of the container that started serving after the push, then the handover of the one it replaced',
+  () =>
+    Effect.gen(function* newestBoot() {
+      const { report, started, summaryText } = yield* readStages();
+      expect(started.status).toBe(0);
+      expect(report.status).toBe(0);
+      expect(report.stdout.trim().split('\n')).toEqual([
+        `app container ${NEW}:`,
+        '2026-11-17T18:42:11.176493Z  unpacked app release f927 with its Outbox Worker host in 31s',
+        '2026-11-17T18:42:38.242021Z  [boot-timing] stage=migrator.owner-migrations ms=18420 outcome=ok',
+        '2026-11-17T18:43:58.476326Z  [boot-timing] stage=host.migrator ms=104450 outcome=ok',
+        '2026-11-17T18:44:14.284324Z  [app-host] accepting application traffic on port 3000',
+        '2026-11-17T18:44:14.284346Z  [boot-timing] stage=host.start-to-serving ms=120334 outcome=ok',
+        'handover of the container it replaced:',
+        `2026-11-17T18:44:14.900000Z  ${OLD}  ${SUPERSEDED}`,
+        `2026-11-17T18:44:38.100000Z  ${OLD}  [app-host] SIGTERM received; stopping gracefully`,
+        `2026-11-17T18:44:38.200000Z  ${OLD}  [app-host] drain ended (stop signal): forwarded=12 failed=0 looped=0 dropped=0; closing public port 3000`,
+        `2026-11-17T18:44:40.300000Z  ${OLD}  [app-host] public port closed; stopping the units`,
+      ]);
+      expect(summaryText).toContain('### App container boot stages');
+      expect(summaryText).toContain('stage=host.migrator ms=104450');
+      expect(summaryText).not.toContain('ms=40000');
+    }),
 );
 
 it.live('never fails the delivery: an unreadable log or a boot that has not ended is only reported', () =>
