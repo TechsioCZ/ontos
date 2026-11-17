@@ -63,6 +63,7 @@ const CI_PLAN_JOB = 'ci-plan';
 const WORKSPACE_UNIT_JOB = 'workspace-unit';
 const SERVICE_INTEGRATION_JOB = 'service-integration';
 const SERVICE_SETUP_JOB = 'service-integration-setup';
+const LATE_INTEGRATION_JOB = 'service-integration-late';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 
@@ -78,6 +79,7 @@ const readGateWorkflow = () => {
   const matrices = {
     ...templates,
     integration: phases.work,
+    integrationLate: phases.late,
     integrationSetup: phases.preparation,
     integrationTopology: phases.topology,
   };
@@ -86,6 +88,7 @@ const readGateWorkflow = () => {
     [WORKSPACE_UNIT_JOB, 'unit'],
     [SERVICE_INTEGRATION_JOB, 'integration'],
     [SERVICE_SETUP_JOB, 'integrationSetup'],
+    [LATE_INTEGRATION_JOB, 'integrationLate'],
     [TOPOLOGY_PROOF_JOB, 'integrationTopology'],
   ] as const) {
     const entry = record(jobs[job ?? '']);
@@ -1809,7 +1812,9 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(gates.needs).toEqual([
     QUEUE_PROOF_JOB,
     CI_PLAN_JOB,
-    ...GATE_JOBS,
+    ...GATE_JOBS.slice(0, 5),
+    LATE_INTEGRATION_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
     REMAINING_NODE_BUILD_JOB,
     TOPOLOGY_PROOF_JOB,
     SERVICE_SETUP_JOB,
@@ -1824,10 +1829,12 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
             GATE_JOBS.map((gate) => [gate, ['docs', 'proven'].includes(mode) ? 'skipped' : 'success']),
           ),
         ),
+        integrationLate: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
         mode,
       },
       result: 'success',
     },
+    [LATE_INTEGRATION_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
     [REMAINING_NODE_BUILD_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
@@ -1866,6 +1873,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     GATE_JOBS.map((gate) => [gate, gate === SERVICE_INTEGRATION_JOB ? 'skipped' : 'success']),
   );
   noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
+  noIntegration[CI_PLAN_JOB].outputs.integrationLate = '[]';
+  noIntegration[LATE_INTEGRATION_JOB].result = 'skipped';
   expect(
     passes({
       ...noIntegration,
@@ -2019,7 +2028,7 @@ it('builds Node artifacts on four independent runners without waiting for or pro
 it('builds every Node release from this commit rather than restoring another release identity', () => {
   const { env: environment, steps, strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   expect(strategy.matrix.shard).toEqual([1]);
-  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 3, 4]);
+  expect(readArtifactBuildJobs()[REMAINING_NODE_BUILD_JOB].strategy.matrix.shard).toEqual([2, 3, 4, 5, 6]);
   expect(environment.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
   const compilerCache = steps.find(({ uses }) => uses?.startsWith('actions/cache@') === true);
   expect(compilerCache?.with?.path).toBe('app/apps/*/node_modules/.cache\napp/verticals/*/node_modules/.cache\n');
@@ -2405,6 +2414,7 @@ const IntegrationRunnerSchema = Schema.Struct({
 });
 const IntegrationShardsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
+    [LATE_INTEGRATION_JOB]: IntegrationRunnerSchema,
     [SERVICE_INTEGRATION_JOB]: IntegrationRunnerSchema,
     [SERVICE_SETUP_JOB]: IntegrationRunnerSchema,
     [TOPOLOGY_PROOF_JOB]: IntegrationRunnerSchema,
@@ -2538,7 +2548,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
   const tests = steps.findIndex(({ env }) => env?.ROOT_SUITE !== undefined);
-  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 4");
+  const wait = steps.findIndex(({ run }) => run === "bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 6");
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   expect(workers).toBeGreaterThan(-1);
   expect(workers < wait && wait < download).toBe(true);
@@ -2684,7 +2694,12 @@ it('covers every root integration shard and assigns each package integration sui
   expect(job.steps[isolate]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.run?.trim()).toBe('bash scripts/ci/run-integration-suites.sh');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
-  const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
+  const lateNative = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    LATE_INTEGRATION_JOB
+  ];
+  const nativeShards = [...job.strategy.matrix.include, ...lateNative.strategy.matrix.include].filter(
+    (shard) => shard['native-preproposal'] === true,
+  );
   expect(nativeShards).toHaveLength(2);
   expect(sorted(nativeShards.map((shard) => shard['preproposal-case'] ?? ''))).toEqual(['approval', 'basis']);
   expect(nativeShards[0]?.suite).toBe('integration');
@@ -2703,7 +2718,10 @@ it('covers every root integration shard and assigns each package integration sui
   expect(commerceScripts['test:integration:native-preproposal']).toBe(
     'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
   );
-  const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
+  const late = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[LATE_INTEGRATION_JOB];
+  const shards = [...job.strategy.matrix.include, ...late.strategy.matrix.include].filter(
+    ({ suite }) => suite === 'integration',
+  );
   const tasks = shards.flatMap((row) => row.tasks ?? []);
   expect(new Set(tasks).size).toBe(tasks.length);
   const rootFiles = readdirSync(new URL('../integration/', import.meta.url)).filter(
@@ -3149,6 +3167,7 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
       staticRows +
       commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
       work.strategy.matrix.include.length +
+      jobs[LATE_INTEGRATION_JOB].strategy.matrix.include.length +
       topology.strategy.matrix.include.length +
       setup.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
@@ -3193,7 +3212,10 @@ it('runs excluded whole-owner scenarios exactly once in isolated integration lan
     SERVICE_INTEGRATION_JOB
   ];
   const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
-  const proofs = job.strategy.matrix.include.flatMap((row) =>
+  const lateProofs = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    LATE_INTEGRATION_JOB
+  ];
+  const proofs = [...job.strategy.matrix.include, ...lateProofs.strategy.matrix.include].flatMap((row) =>
     (row['whole-owner-proofs'] ?? '').split(' ').filter(Boolean),
   );
   expect(sorted(proofs)).toEqual(['organization', 'pricing', 'privacy']);
