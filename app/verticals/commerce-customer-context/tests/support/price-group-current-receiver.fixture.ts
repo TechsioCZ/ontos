@@ -537,8 +537,8 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   for (const history of histories) {
     yield* Effect.tryPromise({
       catch: () => failure('owned-migration'),
-      try:  async () =>
-        migrate(database, {
+      try: async () =>
+        await migrate(database, {
           migrationsFolder: path.join(directory, history.folder),
           migrationsSchema: 'drizzle',
           migrationsTable: history.journal,
