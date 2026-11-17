@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
-import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
-import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -195,7 +193,7 @@ const runQuantityMigrationCommand = Effect.fn('QuantityProfileAdmissionTests.mig
   }
   expect(Number(status)).toBe(0);
 });
-const applyQuantityProfileCurrentMigrations = Effect.fn('QuantityProfileAdmissionTests.currentMigrations')(
+export const applyQuantityProfileCurrentMigrations = Effect.fn('QuantityProfileAdmissionTests.currentMigrations')(
   function* migrate(connections: QuantityMigrationConnections) {
     const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     expect(connections.admin.database).toBe(connections.runtime.database);
@@ -342,17 +340,5 @@ const applyQuantityProfileCurrentMigrations = Effect.fn('QuantityProfileAdmissio
     expect(yield* quantityJournalReceipt(source.admin, 'core')).toEqual(sourceCore);
     expect(yield* quantityJournalReceipt(source.admin, 'commerce_customer_context')).toEqual(sourceOwner);
     return { commerceCustomerContext: currentOwner, core: currentCore };
-  },
-);
-
-export const makeQuantityProfileOwnedDatabase = Effect.fn('QuantityProfileAdmissionTests.ownedDatabase')(
-  function* makeOwnedDatabase(snapshot: ActiveApplicationCompositionSnapshot) {
-    const isolated = yield* makeIsolatedNativeDatabaseFixture({
-      compositionSnapshot: snapshot,
-      mode: 'schema-only',
-      purpose: 'stabilization-1266-quantity-profile-admission',
-    });
-    const receipts = yield* applyQuantityProfileCurrentMigrations(isolated.connections);
-    return { isolated, receipts };
   },
 );

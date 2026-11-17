@@ -64,7 +64,12 @@ fi
 
 tasks=()
 if [[ "${NATIVE_PREPROPOSAL:-}" == true ]]; then
-  tasks+=("whole:preproposal-basis" "whole:preproposal-approval")
+  case "${NATIVE_PREPROPOSAL_CASE:-both}" in
+    basis) tasks+=("whole:preproposal-basis") ;;
+    approval) tasks+=("whole:preproposal-approval") ;;
+    both) tasks+=("whole:preproposal-basis" "whole:preproposal-approval") ;;
+    *) exit 2 ;;
+  esac
 fi
 if [[ -n "${WHOLE_OWNER_PROOFS:-}" ]]; then
   read -ra proofs <<<"$WHOLE_OWNER_PROOFS"
@@ -76,8 +81,16 @@ fi
 if [[ "${ROOT_SUITE:-}" == true ]]; then
   IFS=/ read -r row rows <<<"${ROOT_RSTEST_SHARD:?}"
   [[ "$row" =~ ^[1-9][0-9]*$ && "$rows" =~ ^[1-9][0-9]*$ && "$row" -le "$rows" ]] || exit 2
+  files="$(find scripts/integration -type f -name '*.test.mts' \
+    ! -path scripts/integration/organization-source-customer-owner-conformance.test.mts \
+    ! -path scripts/integration/scoped-owner-migrations.test.mts | wc -l)"
   for ((lane = 0; lane < 4; lane++)); do
-    tasks+=("root:$((row + lane * rows))/$((rows * 4))")
+    shard=$((row + lane * rows))
+    # Rstest assigns one file per shard when shards outnumber files, then exits
+    # nonzero for the empty tail. Do not schedule nonexistent files.
+    if [[ "$shard" -le "$files" ]]; then
+      tasks+=("root:$shard/$((rows * 4))")
+    fi
   done
 fi
 read -ra filters <<<"${PACKAGE_FILTERS:-}"

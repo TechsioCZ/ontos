@@ -233,3 +233,15 @@ it('covers Customer Context exactly once across rows without partitioning an unr
     expect(tasks.filter((task) => task.includes('storefront-registry'))).toEqual(storefront);
   }
 });
+
+it('selects one complete native proof per runner without repeating either case', () => {
+  for (const proof of ['basis', 'approval']) {
+    const tasks = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
+      env: { NATIVE_PREPROPOSAL: 'true', NATIVE_PREPROPOSAL_CASE: proof, PATH: testPath },
+    })
+      .toString()
+      .split('\0')
+      .filter(Boolean);
+    expect(tasks).toEqual([`whole:preproposal-${proof}`]);
+  }
+});

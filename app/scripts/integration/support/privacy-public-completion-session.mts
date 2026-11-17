@@ -602,6 +602,12 @@ const bootstrapOwnerCapabilities = Effect.fn('PrivacyPublicSession.bootstrapOwne
         if (!relation?.owned || (item.rls && !relation.rls)) {
           return yield* failure('Owner relation capability was refused');
         }
+        // Replace copied deployment grants with this owned fixture's exact
+        // direct grants. Effective inherited rights are still checked below.
+        yield* database.executor.execute(
+          sql`revoke all on ${sql.identifier(item.schema)}.${sql.identifier(table)} from ${role}`,
+          'objects',
+        );
         if (item.operations === 'select') {
           yield* database.executor.execute(
             sql`grant select on ${sql.identifier(item.schema)}.${sql.identifier(table)} to ${role}`,

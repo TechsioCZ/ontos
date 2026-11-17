@@ -208,6 +208,27 @@ const makeFixture = Effect.fn('OperatorPublicationTest.makeFixture')(function* m
     sourceConnections,
   });
   const database = yield* makeCoreDatabase(owned.connections.admin);
+  // The clone contains the current schema, but deliberately no source rows.
+  // Restore only immutable Core migration receipts before exercising the real
+  // operator expansion gateway; otherwise it would reapply already-present DDL.
+  const source = yield* makeCoreDatabase(sourceConnections.admin);
+  const migrations = yield* source.executor.execute<{
+    readonly hash: string;
+    readonly name: string;
+    readonly version: string;
+  }>(
+    sql`select created_at::text as version,hash,name
+      from drizzle.__drizzle_migrations_core order by created_at,id`,
+    'objects',
+  );
+  expect(migrations.length).toBeGreaterThan(0);
+  yield* database.executor.execute(
+    sql`insert into drizzle.__drizzle_migrations_core (created_at,hash,name) values ${sql.join(
+      migrations.map((migration) => sql`(${migration.version}::bigint,${migration.hash},${migration.name})`),
+      sql`,`,
+    )}`,
+    'objects',
+  );
   const [identity] = yield* database.executor.execute<{
     readonly databaseOid: string;
     readonly systemIdentifier: string;

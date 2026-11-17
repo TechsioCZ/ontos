@@ -2325,6 +2325,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'native-preproposal': Schema.optional(Schema.Boolean),
               'package-filters': Schema.optional(Schema.String),
               'package-partition': Schema.optional(Schema.String),
+              'preproposal-case': Schema.optional(Schema.String),
               'root-rstest-shard': Schema.optional(Schema.String),
               'root-suite': Schema.optional(Schema.Boolean),
               suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
@@ -2447,8 +2448,8 @@ it('supplies same-run built Composition to selected native owner integration sha
   );
   expect(workers).toBeGreaterThan(-1);
   expect(workers < sourceProof && sourceProof < wait && wait < download).toBe(true);
-  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '3/7'");
-  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '3/7')).toHaveLength(1);
+  expect(steps[sourceProof]?.if).toBe("matrix.root-suite == true && matrix.root-rstest-shard == '3/8'");
+  expect(rootShards.filter((shard) => shard['root-rstest-shard'] === '3/8')).toHaveLength(1);
   expect(steps[wait]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < derive && derive < tests).toBe(true);
@@ -2588,9 +2589,11 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.run?.trim()).toBe('bash scripts/ci/run-integration-suites.sh');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
-  expect(nativeShards).toHaveLength(1);
+  expect(nativeShards).toHaveLength(2);
+  expect(nativeShards.map((shard) => shard['preproposal-case'])).toEqual(['basis', 'approval']);
   expect(nativeShards[0]?.suite).toBe('integration');
   expect(run?.env?.NATIVE_PREPROPOSAL).toBe(expression('matrix.native-preproposal'));
+  expect(run?.env?.NATIVE_PREPROPOSAL_CASE).toBe(expression('matrix.preproposal-case'));
   const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
   expect(scheduler).toContain('tasks+=("whole:preproposal-basis" "whole:preproposal-approval")');
   expect(scheduler).toContain(
@@ -2606,7 +2609,16 @@ it('covers every root integration shard and assigns each package integration sui
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
-  expect(roots.map((row) => row['root-rstest-shard'])).toEqual(['1/7', '2/7', '3/7', '4/7', '5/7', '6/7', '7/7']);
+  expect(roots.map((row) => row['root-rstest-shard'])).toEqual([
+    '1/8',
+    '2/8',
+    '3/8',
+    '4/8',
+    '5/8',
+    '6/8',
+    '7/8',
+    '8/8',
+  ]);
   const packages = shards.filter((shard) => shardFilters(shard).length > 0);
   // Every row names exactly the packages it runs; none negates, so no row silently inherits a package
   // a reshard forgot.
@@ -3000,7 +3012,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   }
   expect(steps[worker]?.if).toBe('matrix.root-suite == true');
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
-  expect(preproposal).toHaveLength(1);
+  expect(preproposal).toHaveLength(2);
   expect(preproposal[0]?.suite).toBe('integration');
 });
 

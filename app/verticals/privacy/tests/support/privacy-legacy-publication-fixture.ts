@@ -154,6 +154,9 @@ const run = Effect.fn('PrivacyLegacyFixture.run')(function* run(
   if (command === 'prepare-empty') {
     // The creator cloned the job's migrated empty schema. Verify this owner's
     // real objects and grants, rather than replaying migrations over those objects.
+    // The general deployment bootstrap broadens this ledger to UPDATE; the
+    // owner migration's exact append/prune policy does not allow UPDATE.
+    yield* client.unsafe('revoke update on privacy.gateway_assertion_redemptions from ontos_runtime');
     const verification = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', 'db:verify'], {
       cwd: settings.directory,
       env: {
