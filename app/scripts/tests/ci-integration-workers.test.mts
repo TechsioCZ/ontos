@@ -295,3 +295,23 @@ it('refuses a missing database archive before starting any service', () => {
     rmSync(directory, { force: true, recursive: true });
   }
 });
+
+it('runs the explicit measured schedule without adding implicit package or root tasks', () => {
+  const rows = Schema.decodeUnknownSync(
+    Schema.Struct({
+      integration: Schema.Array(Schema.Struct({ tasks: Schema.optional(Schema.Array(Schema.String)) })),
+    }),
+  )(JSON.parse(readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'))).integration;
+  for (const row of rows) {
+    if (row.tasks === undefined) {
+      continue;
+    }
+    const tasks = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
+      env: { INTEGRATION_TASKS: JSON.stringify(row.tasks), PATH: testPath },
+    })
+      .toString()
+      .split('\0')
+      .filter(Boolean);
+    expect(tasks).toEqual(row.tasks);
+  }
+});

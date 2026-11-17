@@ -170,6 +170,7 @@ const workerFailureSchema = Schema.Struct({
 });
 const childEnvironment = (
   transport: {
+    readonly NODE_COMPILE_CACHE?: string;
     readonly PATH: string;
     readonly SPICEDB_CA_CERT: string;
     readonly SPICEDB_ENDPOINT: string;
@@ -177,6 +178,7 @@ const childEnvironment = (
   },
   values: Readonly<Record<string, string>>,
 ) => ({
+  NODE_COMPILE_CACHE: transport.NODE_COMPILE_CACHE ?? '',
   PATH: transport.PATH,
   SPICEDB_CA_CERT: transport.SPICEDB_CA_CERT,
   SPICEDB_ENDPOINT: transport.SPICEDB_ENDPOINT,
@@ -284,6 +286,7 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
       env: {
         DATABASE_ADMIN_URL: connections.admin.connectionString,
         DATABASE_URL: connections.runtime.connectionString,
+        NODE_COMPILE_CACHE: yield* Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
         ...urls,
       },
       extendEnv: false,
@@ -508,6 +511,7 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   bootstrap?: Parameters<typeof receivePrivateShellResponse>[2],
 ) {
   const transport = yield* Config.all({
+    NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
     PATH: Config.String('PATH'),
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
     SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),

@@ -33,6 +33,7 @@ import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { PgClient } from '@effect/sql-pg';
 import {
+  Config,
   Context,
   Crypto,
   Deferred,
@@ -686,7 +687,10 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
       ],
       {
         cwd: directory,
-        env: { APP_ENV_PATH: '/dev/null' },
+        env: {
+          APP_ENV_PATH: '/dev/null',
+          NODE_COMPILE_CACHE: yield* Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
+        },
         extendEnv: false,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -703,7 +707,10 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
       [artifact, owner === commerceAppId ? '--describe-price-group-current' : '--describe'],
       {
         cwd: directory,
-        env: { APP_ENV_PATH: '/dev/null' },
+        env: {
+          APP_ENV_PATH: '/dev/null',
+          NODE_COMPILE_CACHE: yield* Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
+        },
         extendEnv: false,
         stderr: 'pipe',
         stdin: 'ignore',
