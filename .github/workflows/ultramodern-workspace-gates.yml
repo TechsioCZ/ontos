@@ -308,8 +308,44 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  # Unit rows start on a freed slot: the build slots, then the lint, topology and source slots. A whole-tree
-  # lint holds its slot for minutes, so the planner moves that row behind the source rows instead.
+  # Part of the workspace-gate check, on its own runner so that its slot frees within minutes for a unit
+  # row; the compiler pass and the repository tooling tests hold theirs to the end of the run.
+  workspace-source-contracts:
+    name: Source, Generation, and Deployment Contracts
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Run the source, generation, and deployment contracts
+        working-directory: app
+        env:
+          COMMANDS: |
+            node scripts/generate-outbox-worker-deployment.mjs
+            pnpm module-entrypoints:check
+            node scripts/plan-deployment-impact.mts --outbox-worker-mode host
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: *run-gate-commands
+
+  # Unit rows start on a freed slot: the build slots, then the lint, topology and source-contract slots. A
+  # whole-tree lint holds its slot for minutes, so the planner moves that row behind the source contracts.
   workspace-unit:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
@@ -378,8 +414,8 @@ jobs:
 
   workspace-unit-after-source:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, workspace-gate]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.workspace-gate.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterSource != '[]' }}
+    needs: [ci-plan, node-artifact-build, workspace-source-contracts]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.workspace-source-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterSource != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
@@ -626,11 +662,12 @@ jobs:
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating per row.
   # Runner budget, at most 18 of the organisation's 20 hosted jobs, leaving the pull request's Quality
-  # Audit a slot: while the builds run, 6 builds + lint + 2 source + static + browser + topology + 6 early
-  # owner rows = 18. The early rows and the topology proof install, start services and wait for this
-  # run's uploads inside the job. Each later job takes exactly one finished job's slot: 5 owner rows and
-  # one unit row take the 6 build slots, one unit row each takes the lint and topology slots, and the
-  # source slots take one unit row, or two when a whole-tree lint keeps the lint slot.
+  # Audit a slot: while the builds run, 6 builds + lint + typecheck + source contracts + static + browser +
+  # topology + 6 early owner rows = 18. The early rows and the topology proof install, start services and
+  # wait for this run's uploads inside the job. Each later job takes one finished job's slot: 5 owner rows
+  # and one unit row take the 6 build slots, and one unit row each takes the lint, topology and source
+  # contract slots. A whole-tree lint keeps the lint slot, so its row takes the source contract slot too,
+  # in place of the browser slot, which frees at about the same time and is handed to no job.
   node-topology-proof:
     name: ${{ matrix.name }}
     needs: [ci-plan]
@@ -1407,6 +1444,7 @@ jobs:
         queue-proof,
         ci-plan,
         workspace-gate,
+        workspace-source-contracts,
         workspace-unit,
         workspace-unit-after-lint,
         workspace-unit-after-source,

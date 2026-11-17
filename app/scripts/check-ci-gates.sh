@@ -19,7 +19,8 @@ jq -e '
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and
-  (($needs | keys | sort) == (["workspace-unit-after-lint", "workspace-unit-after-source", "workspace-unit-after-topology", "service-integration-early", "queue-proof", "ci-plan", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  (($needs | keys | sort) == (["workspace-source-contracts", "workspace-unit-after-lint", "workspace-unit-after-source", "workspace-unit-after-topology", "service-integration-early", "queue-proof", "ci-plan", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  ($needs["workspace-source-contracts"].result == $expected["workspace-gate"]) and
   (($unitAfterLint | type) == "array") and
   ($needs["workspace-unit-after-lint"].result == (if ($unitAfterLint | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
   (($unitAfterSource | type) == "array") and

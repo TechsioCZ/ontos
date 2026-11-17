@@ -67,6 +67,7 @@ const SERVICE_SETUP_JOB = 'service-integration-setup';
 const STATIC_CONTRACTS_JOB = 'static-contracts';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
+const SOURCE_CONTRACTS_JOB = 'workspace-source-contracts';
 const UNIT_AFTER_LINT_JOB = 'workspace-unit-after-lint';
 const UNIT_AFTER_SOURCE_JOB = 'workspace-unit-after-source';
 const UNIT_AFTER_TOPOLOGY_JOB = 'workspace-unit-after-topology';
@@ -1827,6 +1828,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     QUEUE_PROOF_JOB,
     CI_PLAN_JOB,
     WORKSPACE_GATE_JOB,
+    SOURCE_CONTRACTS_JOB,
     WORKSPACE_UNIT_JOB,
     UNIT_AFTER_LINT_JOB,
     UNIT_AFTER_SOURCE_JOB,
@@ -1860,6 +1862,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     [INTEGRATION_EARLY_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [QUEUE_PROOF_JOB]: { outputs: proven === undefined ? {} : { proven }, result: proof },
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [SOURCE_CONTRACTS_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [UNIT_AFTER_LINT_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [UNIT_AFTER_SOURCE_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
@@ -1905,6 +1908,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     }
   }
   expect(passes({ ...needs('full', passed), [TOPOLOGY_PROOF_JOB]: { result: 'failure' } })).toBe(false);
+  expect(passes({ ...needs('full', passed), [SOURCE_CONTRACTS_JOB]: { result: 'failure' } })).toBe(false);
+  expect(passes({ ...needs('full', passed), [SOURCE_CONTRACTS_JOB]: { result: 'skipped' } })).toBe(false);
   expect(
     passes(Object.fromEntries(Object.entries(needs('full', passed)).filter(([job]) => job !== TOPOLOGY_PROOF_JOB))),
   ).toBe(false);
@@ -2200,6 +2205,14 @@ const GateCommandsWorkflowSchema = Schema.Struct({
       ),
       strategy: Schema.optional(Schema.Unknown),
     }),
+    [SOURCE_CONTRACTS_JOB]: Schema.Struct({
+      steps: Schema.Array(
+        Schema.Struct({
+          env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+          name: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
     [STATIC_CONTRACTS_JOB]: Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
@@ -2222,7 +2235,7 @@ const GateCommandsWorkflowSchema = Schema.Struct({
     [WORKSPACE_UNIT_JOB]: CommandMatrixJobSchema,
   }),
 });
-/** Every unit job: the build-slot row and the rows that take the lint, static and topology slots. */
+/** Every unit job: the build-slot row and the rows that take the lint, topology and source contract slots. */
 const UNIT_JOBS = [WORKSPACE_UNIT_JOB, UNIT_AFTER_LINT_JOB, UNIT_AFTER_SOURCE_JOB, UNIT_AFTER_TOPOLOGY_JOB] as const;
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
 /** A workspace package manifest, whose scripts a package may omit entirely. */
@@ -2235,11 +2248,18 @@ const readRootScripts = () =>
   );
 
 const readGateCommandJobs = () => Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(readGateWorkflow()).jobs;
+/** A step's command list, one command per line. */
+const commandLines = (text: string) => text.split('\n').filter(Boolean);
 const gateCommands = () => {
   const jobs = readGateCommandJobs();
-  return ([WORKSPACE_GATE_JOB, ...UNIT_JOBS] as const).flatMap((job) =>
-    jobs[job].strategy.matrix.include.map(({ commands }) => commands.split('\n').filter(Boolean)),
-  );
+  return [
+    ...([WORKSPACE_GATE_JOB, ...UNIT_JOBS] as const).flatMap((job) =>
+      jobs[job].strategy.matrix.include.map(({ commands }) => commandLines(commands)),
+    ),
+    ...jobs[SOURCE_CONTRACTS_JOB].steps.flatMap(({ env }) =>
+      env?.COMMANDS === undefined ? [] : [commandLines(env.COMMANDS)],
+    ),
+  ];
 };
 
 it('verifies the exact Tunnel download and checksum before allowing a deployment', () => {
@@ -3287,9 +3307,11 @@ it('starts at most 18 gate jobs and hands every finished slot to at most one lat
   for (const lintSweep of ['changed', 'all'] as const) {
     const plan = fullPlanMatrices(lintSweep);
     const lint = 1;
+    const sourceContracts = 1;
     const first =
       builds +
       plan.source.length +
+      sourceContracts +
       staticRows +
       lint +
       plan.integrationSetup.length +
@@ -3298,8 +3320,11 @@ it('starts at most 18 gate jobs and hands every finished slot to at most one lat
     expect(first, lintSweep).toBeLessThanOrEqual(18);
     expect(plan.integration.length + plan.unit.length, lintSweep).toBeLessThanOrEqual(builds);
     expect(plan.unitAfterLint.length, lintSweep).toBeLessThanOrEqual(lint);
-    // A whole-tree lint keeps its slot for minutes, so its row follows the source rows instead.
-    expect(plan.unitAfterSource.length, lintSweep).toBeLessThanOrEqual(plan.source.length);
+    // A whole-tree lint keeps its slot for minutes, so its row follows the source contracts instead, in
+    // place of the browser preparation, which frees its slot at about the same time and hands it to no job.
+    expect(plan.unitAfterSource.length, lintSweep).toBeLessThanOrEqual(
+      sourceContracts + (lintSweep === 'all' ? plan.integrationSetup.length : 0),
+    );
     expect(plan.unitAfterTopology.length, lintSweep).toBeLessThanOrEqual(plan.integrationTopology.length);
   }
   expect(fullPlanMatrices('all').unitAfterLint).toEqual([]);
@@ -3309,6 +3334,7 @@ it('starts at most 18 gate jobs and hands every finished slot to at most one lat
     INTEGRATION_EARLY_JOB,
     NODE_ARTIFACT_BUILD_JOB,
     SERVICE_SETUP_JOB,
+    SOURCE_CONTRACTS_JOB,
     STATIC_CONTRACTS_JOB,
     TOPOLOGY_PROOF_JOB,
     WORKSPACE_GATE_JOB,
@@ -3319,7 +3345,7 @@ it('starts at most 18 gate jobs and hands every finished slot to at most one lat
   expect(all[WORKSPACE_UNIT_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
   for (const [job, predecessor, output] of [
     [UNIT_AFTER_LINT_JOB, FORMAT_AND_LINT_JOB, 'unitAfterLint'],
-    [UNIT_AFTER_SOURCE_JOB, WORKSPACE_GATE_JOB, 'unitAfterSource'],
+    [UNIT_AFTER_SOURCE_JOB, SOURCE_CONTRACTS_JOB, 'unitAfterSource'],
     [UNIT_AFTER_TOPOLOGY_JOB, TOPOLOGY_PROOF_JOB, 'unitAfterTopology'],
   ] as const) {
     expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, predecessor]);
@@ -3327,6 +3353,8 @@ it('starts at most 18 gate jobs and hands every finished slot to at most one lat
     expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
   }
   expect(all[INTEGRATION_EARLY_JOB]?.if).toContain("needs.ci-plan.outputs.integrationEarly != '[]'");
+  // The source contracts belong to the workspace-gate check and run whenever it does.
+  expect(all[SOURCE_CONTRACTS_JOB]?.if).toBe(all[WORKSPACE_GATE_JOB]?.if);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
