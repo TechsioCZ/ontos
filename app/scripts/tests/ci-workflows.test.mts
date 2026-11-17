@@ -2152,12 +2152,15 @@ const artifactListing = (names: readonly string[]) =>
 /**
  * Runs the shard wait with a `gh` that answers the jobs API with these jobs, and the artifacts API with
  * these artifact names in turn, as `gh api --jq` would. Expired and unrelated artifacts never count.
+ * With `failAfterArtifactReads`, the jobs API reports a failed shard once the artifacts were read that many
+ * times, so a wait that keeps waiting ends by itself: killing it on a timeout would leave its running `gh`
+ * writing into the directory while it is removed.
  */
 const waitForBuildShards = (
   jobs: readonly { conclusion: string | null; name: string }[],
   own = WAITING_SHARD,
   listings: readonly (readonly string[])[] = [own ? ['x-1', 'x-2', 'x-3'] : ['x-2', 'x-3']],
-  timeout = 10_000,
+  failAfterArtifactReads = 0,
 ) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
   try {
@@ -2181,6 +2184,10 @@ const waitForBuildShards = (
         '  jq -r "$4" "$file" ;;',
         '*)',
         `  if [ ! -e "${directory}/read" ]; then : >"${directory}/read"; echo 'unexpected end of JSON input' >&2; exit 1; fi`,
+        `  n="$(cat "${directory}/artifact-reads" 2>/dev/null || echo 0)"`,
+        '  if [ "$FAIL_AFTER_ARTIFACT_READS" -gt 0 ] && [ "$n" -ge "$FAIL_AFTER_ARTIFACT_READS" ]; then',
+        `    printf %s '{"jobs":[{"conclusion":"failure","name":"Build x (2/3)"}]}' | jq -r "$4"; exit 0`,
+        '  fi',
         '  printf %s "$FAKE_JOBS" | jq -r "$4" ;;',
         'esac',
         '',
@@ -2192,6 +2199,7 @@ const waitForBuildShards = (
       [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', own ? '3' : '2', own],
       {
         env: {
+          FAIL_AFTER_ARTIFACT_READS: String(failAfterArtifactReads),
           FAKE_JOBS: JSON.stringify({ jobs }),
           GITHUB_REPOSITORY: 'owner/repository',
           GITHUB_RUN_ID: '1',
@@ -2200,7 +2208,7 @@ const waitForBuildShards = (
           WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout,
+        timeout: 10_000,
       },
     );
     return true;
@@ -2257,9 +2265,10 @@ it('ends the wait only once the run lists every shard artifact the next download
       ['x-1', 'x-2', 'x-3'],
     ]),
   ).toBe(true);
-  expect(waitForBuildShards(uploaded, WAITING_SHARD, [['x-1', 'x-2']], 2000)).toBe(false);
+  // Three reads of an incomplete list do not end the wait; only the failed shard reported afterwards does.
+  expect(waitForBuildShards(uploaded, WAITING_SHARD, [['x-1', 'x-2']], 3)).toBe(false);
   // An expired artifact under the pattern never stands in for a missing one.
-  expect(waitForBuildShards(uploaded, '', [['x-2']], 2000)).toBe(false);
+  expect(waitForBuildShards(uploaded, '', [['x-2']], 3)).toBe(false);
 });
 
 it('makes every shard wait name the artifacts its next download reads', () => {

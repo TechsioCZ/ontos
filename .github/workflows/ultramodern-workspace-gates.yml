@@ -1126,12 +1126,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-      - name: Upload closed native startup diagnostics
+      # The company ICO conformance proof writes each native owner's own output here when it fails; without it
+      # a 503 from an owner cannot be traced to the owner's cause.
+      - name: Upload closed native startup and owner HTTP diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-startup-${{ strategy.job-index }}
-          path: app/verticals/commerce-market-catalog/.cache/ontos-1250/startup-diagnostic-*.json
+          path: |
+            app/verticals/commerce-market-catalog/.cache/ontos-1250/startup-diagnostic-*.json
+            /tmp/commerce-org-http-*.diag.log
           if-no-files-found: ignore
           retention-days: 1
 
