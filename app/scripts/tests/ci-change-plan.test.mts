@@ -102,7 +102,7 @@ const selectedDirectories = (filters: string) =>
   matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
 
 it('preserves the authored worker budget when affected selection narrows package filters', () => {
-  const pricing = templates.unit.find((row) => row['after-preparation'] === true);
+  const pricing = templates.unit.find((row) => row['after-check'] === 'static');
   expect(pricing).toBeDefined();
   const plan = planCiChecks({
     changedPaths: ['app/verticals/pricing/src/service.ts'],
@@ -111,6 +111,25 @@ it('preserves the authored worker budget when affected selection narrows package
   });
   expect(plan.mode).toBe('affected');
   expect(plan.unit).toEqual([pricing]);
+});
+
+it('does not start an integration row after its selected tasks move to another row', () => {
+  for (const owner of workspacePackages) {
+    const plan = planCiChecks({
+      changedPaths: [`app/${owner.directory}/src/service.ts`],
+      packages: workspacePackages,
+      templates,
+    });
+    for (const row of plan.integration) {
+      if (row.tasks !== undefined) {
+        expect(row.tasks.length, `${owner.name}: ${row.name}`).toBeGreaterThan(0);
+      }
+    }
+    const owns = (task: string) => task === `./${owner.directory}` || task.startsWith(`./${owner.directory}#`);
+    const expected = templates.integration.flatMap((row) => row.tasks ?? []).filter(owns);
+    const selected = plan.integration.flatMap((row) => row.tasks ?? []).filter(owns);
+    expect(EffectArray.sort(selected, Order.String), owner.name).toEqual(EffectArray.sort(expected, Order.String));
+  }
 });
 
 it('selects owner and transitive consumer tests without selecting an unrelated owner', () => {
@@ -463,7 +482,8 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       expect(documentationPlan).toContain('mode=docs\n');
       for (const helper of [
         'sourceExtra',
-        'unitAfterPreparation',
+        'unitAfterStatic',
+        'unitAfterBrowser',
         'integrationSetup',
         'integrationTopology',
         'integrationAfterContracts',
@@ -563,11 +583,20 @@ it('plans with no installed dependencies using the same tested impact algorithm'
 });
 
 it('promotes a lone affected deferred unit row instead of expanding an empty required matrix', () => {
-  const deferred = templates.unit.filter((row) => row['after-preparation'] === true);
+  const deferred = templates.unit.filter((row) => row['after-check'] === 'static');
   expect(deferred).toHaveLength(1);
-  expect(unitPhases(deferred)).toEqual({ afterPreparation: [], work: deferred });
+  expect(unitPhases(deferred)).toEqual({ afterBrowser: [], afterStatic: [], work: deferred });
   const full = unitPhases(templates.unit);
-  expect(full.afterPreparation).toEqual(deferred);
-  expect([...full.work, ...full.afterPreparation]).toEqual(templates.unit);
-  expect(unitPhases([])).toEqual({ afterPreparation: [], work: [] });
+  expect(full.afterStatic).toEqual(deferred);
+  expect([...full.work, ...full.afterBrowser, ...full.afterStatic]).toEqual(templates.unit);
+  expect(unitPhases([])).toEqual({ afterBrowser: [], afterStatic: [], work: [] });
+});
+
+it('promotes only one deferred unit row so the other keeps its bounded runner slot', () => {
+  const selected = templates.unit.filter((row) => row['after-check'] !== undefined);
+  expect(selected).toHaveLength(2);
+  const phases = unitPhases(selected);
+  expect(phases.work).toEqual(selected.slice(0, 1));
+  expect(phases.afterBrowser).toEqual([]);
+  expect(phases.afterStatic).toEqual(selected.slice(1));
 });

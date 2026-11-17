@@ -6,7 +6,7 @@ import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const CommandEntrySchema = Schema.Struct({
-  'after-preparation': Schema.optionalKey(Schema.Boolean),
+  'after-check': Schema.optionalKey(Schema.Literals(['browser', 'static'])),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
@@ -195,7 +195,8 @@ const cli = Command.make(
         source: encode(plan.source.filter((row) => row['typescript-build'] === true)),
         sourceExtra: encode(plan.source.filter((row) => row['typescript-build'] !== true)),
         unit: encode(units.work),
-        unitAfterPreparation: encode(units.afterPreparation),
+        unitAfterBrowser: encode(units.afterBrowser),
+        unitAfterStatic: encode(units.afterStatic),
       });
       const output = yield* Config.String('GITHUB_OUTPUT');
       const outputLines = Object.entries(encoded).map(([key, value]) => `${key}=${value}`);

@@ -27,12 +27,15 @@ export const integrationPhases = (entries: readonly IntegrationEntry[]) => {
   };
 };
 
-/** A single selected deferred row must still leave the required unit gate runnable. */
+/** Promote one selected row when the early phase is empty; other rows keep their slots. */
 export const unitPhases = (entries: Templates['unit']) => {
-  const work = entries.filter((row) => row['after-preparation'] !== true);
+  const work = entries.filter((row) => row['after-check'] === undefined);
+  const promoted = work.length === 0 ? entries[0] : undefined;
+  const deferred = entries.filter((row) => row !== promoted);
   return {
-    afterPreparation: work.length === 0 ? [] : entries.filter((row) => row['after-preparation'] === true),
-    work: work.length === 0 ? entries : work,
+    afterBrowser: deferred.filter((row) => row['after-check'] === 'browser'),
+    afterStatic: deferred.filter((row) => row['after-check'] === 'static'),
+    work: promoted === undefined ? work : [promoted],
   };
 };
 
@@ -205,7 +208,7 @@ export const planCiChecks = (input: {
       }
       return selected.some(({ directory }) => task === `./${directory}` || task.startsWith(`./${directory}#`));
     });
-    return [{ ...narrowed, tasks }];
+    return tasks.length === 0 ? [] : [{ ...narrowed, tasks }];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
     const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);
