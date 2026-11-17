@@ -87,12 +87,15 @@ const symmyAppId = 'symmy-integration';
 const commerceModuleId = 'commerce.customer-context';
 const partyModuleId = 'party.registry';
 
+// A loaded CI runner can need well over 30 s to settle the actual owner graph; the poll still ends the moment it does.
+const SETTLE_POLL_ATTEMPTS = 2400;
+
 export const observeCustomerFixtureUntil = <Value, Failure, Requirements>(
   observe: Effect.Effect<Value, Failure, Requirements>,
   ready: (value: Value) => boolean,
 ) =>
   Effect.gen(function* observeCustomerJob() {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
+    for (let attempt = 0; attempt < SETTLE_POLL_ATTEMPTS; attempt += 1) {
       const value = yield* observe;
       if (ready(value)) {
         return value;
