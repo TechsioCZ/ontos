@@ -313,7 +313,9 @@ export const observeShellNativeRequestDispatch = Effect.fn('ShellNativeFixture.o
     return yield* dispatch.pipe(
       Effect.tapError(() => appendRequestOutcome(outcomes, surface, started, 'dispatch_failed')),
       Effect.timeoutOrElse({
-        duration: Duration.seconds(20),
+        // A hang guard, not a latency budget: a Symmy search composes three owner reads, each behind its own
+        // assertion, and a loaded CI runner needs well over 20 s for it. 60 s is the recorded diagnostic ceiling.
+        duration: Duration.seconds(60),
         orElse: () =>
           appendRequestOutcome(outcomes, surface, started, 'dispatch_timeout').pipe(Effect.andThen(onTimeout)),
       }),
