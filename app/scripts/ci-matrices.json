@@ -52,8 +52,8 @@
       "lanes": 2,
       "tasks": [
         "root:7/23",
-        "./apps/shell-super-app#3/8",
         "./verticals/commerce-customer-context#4/56",
+        "./verticals/party-registry#2/4",
         "./verticals/inventory#2/4",
         "root:17/23",
         "./verticals/commerce-customer-context#31/56"
@@ -137,7 +137,7 @@
       "lanes": 2,
       "tasks": [
         "./apps/shell-super-app#2/8",
-        "./verticals/commerce-customer-context#34/56",
+        "root:13/23",
         "./verticals/pricing#3/4",
         "./packages/core-runtime#2/4",
         "./verticals/party-registry#1/4",
@@ -198,8 +198,8 @@
       "lanes": 2,
       "tasks": [
         "whole:privacy",
-        "root:13/23",
-        "./verticals/party-registry#2/4",
+        "./apps/shell-super-app#3/8",
+        "./verticals/commerce-customer-context#34/56",
         "./apps/shell-super-app#4/8",
         "./verticals/catalog#4/4",
         "./verticals/privacy#8/8",

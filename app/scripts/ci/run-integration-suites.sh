@@ -85,11 +85,15 @@ lanes="${INTEGRATION_LANES:-4}"
 [[ "$lanes" == 2 || "$lanes" == 4 ]] || exit 2
 started=$SECONDS
 status=0
-# These proofs start several native owners inside their unchanged 30 s Rstest deadline. Give them the
-# runner before admitting independent lanes. Proofs with minutes-long budgets share it with one lane.
+# These tasks hold tests that start several native owners inside their unchanged 30 s Rstest deadline and
+# need most of it even beside a light lane: whole Current Pricing 14-22 s, the eight Market Actions 15-25 s,
+# and the governed Party source lifecycle of reviewed-match-reuse 12-23 s, which took 27.6 s and then timed
+# out at 30.1 s beside the Privacy whole proof. Give them the runner before admitting independent lanes, so
+# no packing can pair them with a heavy proof. Proofs with minutes-long budgets share it with one lane.
+exclusive_tasks=(whole:pricing ./verticals/commerce-market-catalog#1/4 ./verticals/party-registry#4/4)
 parallel_tasks=()
 for task in "${tasks[@]}"; do
-  if [[ "$task" == whole:pricing || "$task" == ./verticals/commerce-market-catalog#1/4 ]]; then
+  if [[ " ${exclusive_tasks[*]} " == *" $task "* ]]; then
     ONTOS_CI_WORKER_SLOT=0 bash scripts/ci/run-integration-suites.sh --task "$task" || status=$?
   else
     parallel_tasks+=("$task")
