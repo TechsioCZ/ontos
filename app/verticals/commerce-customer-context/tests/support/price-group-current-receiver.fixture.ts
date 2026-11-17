@@ -1,4 +1,3 @@
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type { Issue } from 'effect/SchemaIssue';
@@ -11,6 +10,7 @@ import {
   ContextAccessLive,
   findPostgresFailure,
   CorePersistenceLive,
+  makeCoreDatabase,
   DatabaseConfig,
   makeReadRuntimeLive,
   ReadRuntime,
@@ -504,8 +504,11 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
 ) {
   const path = yield* Path.Path;
   const directory = path.join(appRoot, 'verticals', owner === 'ccc' ? commerceAppId : partyAppId);
-  const client = yield* PgClient.make({ url: bootstrap.database.adminUrl }).pipe(Effect.provide(Reactivity.layer));
-  const database = yield* makeWithDefaults({}).pipe(Effect.provideService(PgClient.PgClient, client));
+  const connections = yield* parseDatabaseConnectionPair({
+    DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl),
+    DATABASE_URL: Redacted.value(bootstrap.database.runtimeUrl),
+  });
+  const { executor: database } = yield* makeCoreDatabase(connections.admin);
   if (owner === 'party') {
     // Keep the real legacy Contacts journal preparation; only the repeated CLI driver is removed.
     const preparation = yield* ChildProcess.make(process.execPath, ['scripts/prepare-contacts-migration.mts'], {

@@ -2217,7 +2217,15 @@ it('keeps every check in the source, unit or format gates without repeating the 
     readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
       ({ name }) => name === 'Check lint rules and shared contract types',
     )?.run ?? '';
+  const staticPreparation =
+    readGateCommandJobs()['static-contracts'].steps.find(
+      ({ name }) => name === 'Check OntOS APIs and generator behavior',
+    )?.run ?? '';
   const commands = [
+    ...staticPreparation
+      .trim()
+      .split('\n')
+      .map((command) => command.replace(/^mise exec -- /u, '')),
     ...gateCommands().flat(),
     ...ruleChecks
       .trim()
@@ -2672,7 +2680,7 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
-    ONTOS_CI_ISOLATED_WORKERS: expression("matrix.root-rstest-shard == '10/10' && '4' || '3'"),
+    ONTOS_CI_ISOLATED_WORKERS: expression("matrix.root-rstest-shard == '10/10' && '4' || '2'"),
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
   const isolate = job.steps.findIndex((step) => step.run === START_INTEGRATION_WORKERS);

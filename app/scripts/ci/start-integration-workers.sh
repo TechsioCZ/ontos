@@ -13,7 +13,7 @@ umask 077
 : "${INTEGRATION_DATABASE_ARCHIVE:?}"
 : "${GITHUB_SHA:?}"
 : "${ONTOS_CI_ISOLATED_WORKERS:?}"
-[[ "$ONTOS_CI_ISOLATED_WORKERS" == 3 || "$ONTOS_CI_ISOLATED_WORKERS" == 4 ]]
+[[ "$ONTOS_CI_ISOLATED_WORKERS" == 2 || "$ONTOS_CI_ISOLATED_WORKERS" == 3 || "$ONTOS_CI_ISOLATED_WORKERS" == 4 ]]
 [[ "$POSTGRES_USER" =~ ^[a-z_][a-z0-9_]*$ ]]
 [[ "$POSTGRES_DB" =~ ^[a-z_][a-z0-9_]*$ ]]
 for file in roles.sql database.dump database.acl manifest.json checksums.sha256; do
