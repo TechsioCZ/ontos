@@ -11,11 +11,16 @@ const lintSweep = process.env.LINT_SWEEP;
 if (!lintSweeps.includes(lintSweep)) {
   throw new Error(`LINT_SWEEP must be one of ${lintSweeps.join(', ')}`);
 }
+// A misspelt mode must never turn the full backstop into an affected run.
+const bootstrapMode = process.env.BOOTSTRAP_MODE;
+if (bootstrapMode !== 'affected' && bootstrapMode !== 'full') {
+  throw new Error('BOOTSTRAP_MODE must be affected or full');
+}
 const directories = ['.', ...['apps', 'packages', 'verticals'].flatMap(area =>
   readdirSync(area).map(entry => `${area}/${entry}`).filter(directory => existsSync(`${directory}/package.json`)))];
 const plan = planCiChecks({
   changedPaths: readFileSync(process.argv[2], 'utf8').split('\0').filter(Boolean),
-  forceFull: process.env.BOOTSTRAP_MODE === 'full',
+  forceFull: bootstrapMode === 'full',
   packages: ciWorkspacePackages({
     manifests: directories.map(directory => ({directory, manifest: read(`${directory}/package.json`)})),
     owners: read('topology/ownership.json').owners,

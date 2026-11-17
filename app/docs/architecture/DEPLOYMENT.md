@@ -123,31 +123,35 @@ These are non-negotiable:
 ### Change-aware CI
 
 `ultramodern-workspace-gates.yml` always reports the required `Workspace gates` check for
-pull requests and merge groups. `scripts/plan-ci-changes.sh` compares the exact event base
-and checked-out head with a NUL-delimited Git diff, including both sides of renames. A diff
-confined to root `docs/`, `CONTEXT-MAP.md`, `README.md` and `AGENTS.md` needs no application
-installation, builds or services. Application documentation and unknown paths do not get
-this exemption. Missing history, an empty diff, nightly runs and an explicit full request
-require the full suite.
+pull requests and merge groups. `scripts/plan-ci-changes.sh` compares the exact base and the
+checked-out head with a NUL-delimited Git diff, including both sides of renames. A pull request's
+base is the first parent of the merge commit GitHub tests, so changes that reached `main` after the
+fork point never count as its own. A merge group's base is the queue base, which the planner reaches
+through the whole history it fetches without file contents. A diff confined to root `docs/`,
+`CONTEXT-MAP.md`, `README.md` and `AGENTS.md` needs no application installation, builds or
+services. Application documentation and unknown paths do not get this exemption. Missing history,
+an empty diff, nightly runs and an explicit full request require the full suite.
+
+The lint gate checks the changed files with the pre-commit hook's formatter and type-aware linter.
+A changed formatter, linter, hook, patch, TypeScript base, lockfile, workspace or toolchain file,
+the nightly run and any run without the exact changed-path list lint every tracked file instead.
 
 For application changes, `scripts/plan-ci-checks.mts` computes owner and transitive consumer
 impact from workspace manifests, public-contract producer metadata, topology ownership
 and runtime federation references, including the Shell's vertical consumers.
 CI and deployment share the fixed-point consumer traversal. The checked-in
-`scripts/ci-matrices.json` owns the complete source, unit and integration matrices.
-Integration rows also declare runtime packages used by extra native proofs. A change to
-any declared proof package retains that row even when its ordinary test filters select
-no packages. Unknown proof packages require the full suite.
+`scripts/ci-matrices.json` owns the complete source, unit and integration matrices. Every
+integration row lists the tasks it runs: package shards, root shards and whole-owner proofs. An
+affected plan keeps a package task when its package is affected, root tasks when the root package
+is, and the preproposal proofs when one of their declared proof packages is; a row with no task
+left is dropped. A task in an unknown form requires the full suite.
 
-Affected selection starts in **shadow mode**. Every application gate still runs, and the
-job summary records the candidate affected packages and integration shards. Set the
-`CI_AFFECTED_ENABLED` repository variable to `true` only after reviewing these plans against
-representative full runs. With that opt-in, unrelated package tests may be omitted; source
-checks, lint, static contracts and the complete Node artifact proof remain required.
-The retired Cloudflare build and proof jobs stay disabled and are not required gates. Core,
-authorization, schema, public-API, package-metadata, workflow and unknown changes still
-require the complete suite. Source checks do not wait for Node artifact builds; unit and
-integration fixtures retain their same-run artifact dependency.
+An affected plan omits unrelated package tests; source checks, lint, static contracts and the
+complete Node artifact build remain required. The retired Cloudflare build and proof jobs stay
+disabled and are not required gates. Core, authorization, schema, public-API, package-metadata,
+workflow and unknown changes still require the complete suite. Source checks do not wait for Node
+artifact builds, and integration rows that need no built artifact start with the builds; the other
+unit and integration rows retain their same-run artifact dependency.
 
 The final verifier requires a successful plan and exact agreement between every job result
 and its planned `success` or `skipped` state. An affected plan is not a deployment plan and
@@ -833,15 +837,16 @@ list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `fals
   no rate-limit rule: on the Free plan a rate-limit expression cannot match a hostname, so it would
   throttle every other project in the zone. `cost-guards` also records the zone as the `stage-edge` variable
   `CLOUDFLARE_STAGE_ZONE_ID`.
-- `node scripts/ops/cloudflare-stage-cost-guard.mts check` reports the bill once that variable
-  exists. Its hourly workflow is removed: it was disabled on 2026-10-30 and the Cloudflare edge
-  target it guarded is retired, so the command is run by hand while that is true. It sums the
-  whole account's Workers requests and CPU time since the billing cycle started, and logs each OntOS
-  Worker's share and the other Workers' total (`STAGE_BILLING_CYCLE_DAY`,
-  1-28, default 1). Past `STAGE_WORKERS_REQUEST_LIMIT` (default 8M) or `STAGE_WORKERS_CPU_MS_LIMIT`
-  (default 24M), it enables the kill switch and fails the run. All three are optional `stage-edge`
-  variables. The kill switch only stops OntOS stage traffic: if the breakdown shows other projects
-  drive the usage, they need their own action.
+- `node scripts/ops/cloudflare-stage-cost-guard.mts check` reports the bill. Its hourly workflow is
+  removed: it was disabled on 2026-10-30 and the Cloudflare edge target it guarded is retired, so the
+  command is run by hand while that is true. It reads its settings from the shell, where the
+  `stage-edge` variables are not set, so export `CLOUDFLARE_STAGE_ZONE_ID`, `CLOUDFLARE_ACCOUNT_ID`
+  and `CLOUDFLARE_API_TOKEN` first. It sums the whole account's Workers requests and CPU time since
+  the billing cycle started, and logs each OntOS Worker's share and the other Workers' total
+  (`STAGE_BILLING_CYCLE_DAY`, 1-28, default 1). Past `STAGE_WORKERS_REQUEST_LIMIT` (default 8M) or
+  `STAGE_WORKERS_CPU_MS_LIMIT` (default 24M), it enables the kill switch and fails the run. Export
+  any of these three optional limits that `stage-edge` overrides. The kill switch only stops OntOS
+  stage traffic: if the breakdown shows other projects drive the usage, they need their own action.
 - The Workers requests usage notification `ontos-stage-workers-requests` emails `STAGE_ACCESS_EMAILS` at
   5M requests. Cloudflare offers usage notifications to Pay-as-you-go accounts, which a Workers Paid
   account is. If the API still rejects the policy, `cost-guards` and `provision` stop there with the
@@ -877,16 +882,16 @@ To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete the three applicatio
 dashboard; `cost-guards` never deletes them.
 
 To resume after the kill switch trips, find out why, then run
-`node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if
-usage is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
+`node scripts/ops/cloudflare-stage-cutover.mts resume` (the next manual check trips it again if usage
+is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
 guards, delete the kill switch rule and the notification in the dashboard and remove the Access
-applications; deleting `CLOUDFLARE_STAGE_ZONE_ID` stops the hourly check.
+applications.
 
 The cut-over token needs these permissions. Account: Cloudflare Tunnel Edit, Workers Scripts Edit,
 Hyperdrive Edit, Connectivity Directory Admin, Access: Apps and Policies Edit, Access: Service Tokens
 Edit, Notifications Edit, Account Analytics Read and Account Settings Read. Zone: Zone Read, DNS
-Edit, Workers Routes Edit and Zone WAF Edit. The narrower `stage-edge` token additionally needs
-Account Analytics Read and Zone WAF Edit for the hourly check.
+Edit, Workers Routes Edit and Zone WAF Edit. A token for the manual check needs Account Analytics Read and Zone WAF
+Edit.
 
 ### Zerops service retirement
 

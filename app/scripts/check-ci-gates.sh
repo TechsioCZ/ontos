@@ -9,7 +9,7 @@ jq -e '
   .["ci-plan"] as $plan |
   ($plan.outputs.expected | fromjson) as $expected |
   ($plan.outputs.unitAfterLint | fromjson) as $unitAfterLint |
-  ($plan.outputs.unitAfterStatic | fromjson) as $unitAfterStatic |
+  ($plan.outputs.unitAfterSource | fromjson) as $unitAfterSource |
   ($plan.outputs.unitAfterTopology | fromjson) as $unitAfterTopology |
   ($plan.outputs.integrationEarly | fromjson) as $integrationEarly |
   [
@@ -19,11 +19,11 @@ jq -e '
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and
-  (($needs | keys | sort) == (["workspace-unit-after-lint", "workspace-unit-after-static", "workspace-unit-after-topology", "service-integration-early", "queue-proof", "ci-plan", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  (($needs | keys | sort) == (["workspace-unit-after-lint", "workspace-unit-after-source", "workspace-unit-after-topology", "service-integration-early", "queue-proof", "ci-plan", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
   (($unitAfterLint | type) == "array") and
   ($needs["workspace-unit-after-lint"].result == (if ($unitAfterLint | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
-  (($unitAfterStatic | type) == "array") and
-  ($needs["workspace-unit-after-static"].result == (if ($unitAfterStatic | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
+  (($unitAfterSource | type) == "array") and
+  ($needs["workspace-unit-after-source"].result == (if ($unitAfterSource | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
   (($unitAfterTopology | type) == "array") and
   ($needs["workspace-unit-after-topology"].result == (if ($unitAfterTopology | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
   (($integrationEarly | type) == "array") and

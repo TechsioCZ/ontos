@@ -6,9 +6,7 @@ import type { CiWorkspacePackage } from './ci-impact.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const CommandEntrySchema = Schema.Struct({
-  'after-check': Schema.optionalKey(Schema.Literals(['lint', 'static', 'topology'])),
-  // Source checks that share the row's install and run beside its foreground commands.
-  'background-commands': Schema.optionalKey(Schema.String),
+  'after-check': Schema.optionalKey(Schema.Literals(['lint', 'source', 'topology'])),
   commands: Schema.String,
   fetch_depth: Schema.optionalKey(Schema.Number),
   name: Schema.String,
