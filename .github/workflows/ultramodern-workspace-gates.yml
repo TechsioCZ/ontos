@@ -353,7 +353,7 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  # Keep the memory-heavy API analyzer on its own runner, not serially after database analysis.
+  # The API analyzer follows source/generation checks on their runner, freeing a third unit runner.
   # Module generation must finish before the i18n scanner walks generated directories.
   static-contracts:
     name: Static Contracts (${{ matrix.row }})
@@ -364,7 +364,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        row: [contracts, api]
+        row: [contracts]
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -467,15 +467,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
         working-directory: app
         run: mise exec -- pnpm i18n:boundaries
-
-      - name: API Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'api' }}
-        working-directory: app
-        env:
-          # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
-          NODE_OPTIONS: --max-old-space-size=6144
-        run: mise exec -- pnpm api:check
-
   # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it.
   # It can only prove that already-committed files are formatted and linted, and the same lefthook hook
   # proves that at commit time, so it runs over the run's changed files instead of the whole tree. The one
@@ -575,8 +566,11 @@ jobs:
   # Consolidated source checks keep the complete run within eighteen hosted jobs.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -619,37 +613,6 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-
-      # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
-      # proof row derives the whole Composition from every delivery unit.
-      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
-      # Bootstrap also proves federation, so both backend rows read these exact outputs.
-      - name: Download the same-run Node artifacts for native owner fixtures
-        if: matrix.suite != 'browser'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: node-units-*
-          path: ${{ runner.temp }}/native-composition-units
-
-      - name: Unpack the Node artifacts for native owner fixtures
-        if: matrix.suite != 'browser'
-        working-directory: app
-        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
-
-      - name: Derive the fresh built Composition for native owner fixtures
-        if: matrix.native-composition == true
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-        run: |
-          mise exec -- pnpm active-composition:publish prove-build --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
-          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
-      - name: Materialize the native Customer Context worker artifact
-        if: matrix.root-suite == true
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-        run: mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.
@@ -784,6 +747,75 @@ jobs:
           SPICEDB_DATABASE_PASSWORD: spicedb
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
+      - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
+        if: matrix.suite == 'integration'
+        working-directory: app
+        run: bash scripts/ci/start-integration-workers.sh
+
+      - name: Run source-only Core integration while the Node artifacts build
+        if: matrix.suite == 'integration' && contains(matrix.package-filters, '--filter ./packages/core-runtime')
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          INTEGRATION_PHASE: source
+          INTEGRATION_LANES: ${{ matrix.lanes }}
+          ONTOS_CI_ISOLATED_WORKERS: '4'
+          PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: bash scripts/ci/run-integration-suites.sh
+
+      # This acceptance uses only source, PostgreSQL and SpiceDB, not a single Node artifact.
+      # It previously spent 289 seconds behind the build and another native test in root shard 6/16.
+      - name: Prove scoped owner migrations while the Node artifacts build
+        if: matrix.root-suite == true && matrix.root-rstest-shard == '2/4'
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+          ONTOS_CI_ISOLATED_WORKERS: '4'
+          ONTOS_CI_WORKER_SLOT: '0'
+          SPICEDB_DATABASE_PASSWORD: spicedb
+        run: bash scripts/ci/run-integration-suites.sh --task whole:migrations
+
+      # Setup overlaps the builds. Artifact consumers still wait for this exact run's uploads;
+      # the required gate independently requires the build jobs to finish successfully.
+      - name: Wait for the same-run Node artifacts
+        if: matrix.suite != 'browser'
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 2
+
+      # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
+      # proof row derives the whole Composition from every delivery unit.
+      # Restore this run's outputs instead of rebuilding or substituting synthetic build identities.
+      # Bootstrap also proves federation, so both backend rows read these exact outputs.
+      - name: Download the same-run Node artifacts for native owner fixtures
+        if: matrix.suite != 'browser'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/native-composition-units
+
+      - name: Unpack the Node artifacts for native owner fixtures
+        if: matrix.suite != 'browser'
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
+
+      - name: Derive the fresh built Composition for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- pnpm active-composition:publish prove-build --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
+          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
+      - name: Materialize the native Customer Context worker artifact
+        if: matrix.root-suite == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: mise exec -- pnpm zerops:materialize --app commerce-customer-context --package @app/commerce-customer-context --package-dir verticals/commerce-customer-context --worker
+
       # The whole-topology Node artifact proof. It needs every build shard's outputs, so it used to run
       # inside the last build shard, which made the complete integration wave wait for it: shard 1 ended
       # at 6.0 min and the proving shard at 11.6. As a row of this matrix it starts with the wave instead,
@@ -820,11 +852,6 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm active-composition:publish prove-build
 
-      - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
-        if: matrix.suite == 'integration'
-        working-directory: app
-        run: bash scripts/ci/start-integration-workers.sh
-
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         if: matrix.suite == 'integration'
         working-directory: app
@@ -838,18 +865,10 @@ jobs:
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ONTOS_CI_ISOLATED_WORKERS: '4'
+          INTEGRATION_LANES: ${{ matrix.lanes }}
           WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
-
-      - name: Prove native preproposal basis and genuine approval through registered owners
-        if: matrix.native-preproposal == true
-        working-directory: app
-        timeout-minutes: 20
-        env:
-          APP_ENV_PATH: /dev/null
-        # Reuse this shard's services; each case migrates its own disposable source database.
-        run: mise exec -- pnpm --filter @app/commerce-customer-context run test:integration:native-preproposal
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install

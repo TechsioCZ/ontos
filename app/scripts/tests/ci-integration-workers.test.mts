@@ -12,6 +12,8 @@ import {
   isIntegrationWorkerEndpoint,
 } from '../ci/integration-worker-environment.mts';
 
+const integrationSuitesScript = fileURLToPath(new URL('../ci/run-integration-suites.sh', import.meta.url));
+
 const decode = Schema.decodeUnknownResult(IntegrationWorkerSettingsSchema);
 
 const environment = {
@@ -52,6 +54,7 @@ it('retargets every identity and child fixture to four distinct clusters and dat
       expect(retargeted.pathname).toBe(original.pathname);
     }
     expect(current?.ONTOS_TEST_DB_CONTAINER).toBe(`ontos-ci-db-${worker}`);
+    expect(current?.ONTOS_TEST_SCHEMA_TEMPLATE_SOURCE).toBe('ontos_ci');
     expect(current?.SPICEDB_ENDPOINT).toBe(`localhost:${55_050 + Number(worker)}`);
     expect(current?.SPICEDB_GRPC_PORT).toBe(String(55_050 + Number(worker)));
     expect(current?.SPICEDB_HTTP_PORT).toBe(String(58_440 + Number(worker)));
@@ -83,7 +86,7 @@ it('launches package and root suites with the assigned lane and propagates failu
   const pricingSelector = './verticals/pricing';
   const output = path.join(directory, 'launch');
   const mise = path.join(directory, 'mise');
-  const script = fileURLToPath(new URL('../ci/run-integration-suites.sh', import.meta.url));
+  const script = integrationSuitesScript;
   writeFileSync(
     mise,
     '#!/bin/sh\nprintf "%s\\n" "$ONTOS_CI_WORKER_SLOT" "$*" > "$LAUNCH_OUTPUT"\nexit "$LAUNCH_STATUS"\n',
@@ -104,7 +107,7 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
@@ -149,9 +152,10 @@ it('recognizes only a provisioned worker container and port pair in isolated CI 
 });
 
 it('partitions root and package files without duplicating compound scripts or whole-owner proofs', () => {
-  const script = fileURLToPath(new URL('../ci/run-integration-suites.sh', import.meta.url));
+  const script = integrationSuitesScript;
   const result = execFileSync('/bin/bash', [script, '--list'], {
     env: {
+      NATIVE_PREPROPOSAL: 'true',
       PACKAGE_FILTERS:
         '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
       PATH: '/usr/bin:/bin',
@@ -169,9 +173,31 @@ it('partitions root and package files without duplicating compound scripts or wh
   }
   expect(tasks.filter((task) => task.includes('party-registry'))).toEqual(['./verticals/party-registry']);
   expect(tasks.filter((task) => task.startsWith('whole:'))).toEqual([
+    'whole:preproposal',
     'whole:organization',
     'whole:pricing',
     'whole:privacy',
   ]);
   expect(new Set(tasks).size).toBe(tasks.length);
+});
+
+it('runs every source-only Core shard before artifacts and never repeats it in the built phase', () => {
+  const script = integrationSuitesScript;
+  const list = (phase: string) =>
+    execFileSync('/bin/bash', [script, '--list'], {
+      env: {
+        INTEGRATION_PHASE: phase,
+        NATIVE_PREPROPOSAL: 'true',
+        PACKAGE_FILTERS: '--filter ./packages/core-runtime --filter ./verticals/privacy',
+        PATH: '/usr/bin:/bin',
+      },
+    })
+      .toString()
+      .split('\0')
+      .filter(Boolean);
+  expect(list('source')).toEqual(['1/4', '2/4', '3/4', '4/4'].map((shard) => `./packages/core-runtime#${shard}`));
+  const built = list('built');
+  expect(built.some((task) => task.includes('core-runtime'))).toBe(false);
+  expect(built.filter((task) => task.startsWith('./verticals/privacy#'))).toHaveLength(4);
+  expect(built.filter((task) => task === 'whole:preproposal')).toHaveLength(1);
 });

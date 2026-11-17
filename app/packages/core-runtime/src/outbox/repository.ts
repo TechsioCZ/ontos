@@ -215,7 +215,9 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 asc(outboxDeliveries.outboxDeliveryId),
               )
               .limit(1)
-              .for('update', { skipLocked: true });
+              // Joined module-state rows are shared by distinct deliveries. Locking them
+              // makes SKIP LOCKED silently skip a peer delivery in the same tenant.
+              .for('update', { of: outboxDeliveries, skipLocked: true });
             const [candidate] = candidates;
             if (candidate === undefined) {
               return Option.none();
