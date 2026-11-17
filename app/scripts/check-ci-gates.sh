@@ -8,7 +8,8 @@ jq -e '
   .["queue-proof"] as $proof |
   .["ci-plan"] as $plan |
   ($plan.outputs.expected | fromjson) as $expected |
-  ($plan.outputs.unitAfterPreparation | fromjson) as $unitAfter |
+  ($plan.outputs.unitAfterStatic | fromjson) as $unitAfter |
+  ($plan.outputs.unitAfterBrowser | fromjson) as $unitBrowser |
   ($plan.outputs.integrationAfterContracts | fromjson) as $afterContracts |
   ($plan.outputs.integrationAfterTooling | fromjson) as $afterTooling |
   [
@@ -18,10 +19,12 @@ jq -e '
   ($proof.result == "success" or $proof.result == "skipped") and
   $plan.result == "success" and
   (($expected | keys | sort) == ($gates | sort)) and
-  (($needs | keys | sort) == (["workspace-source-extra", "workspace-unit-after-preparation", "service-integration-after-contracts", "service-integration-after-tooling", "queue-proof", "ci-plan", "node-artifact-build-remaining", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
+  (($needs | keys | sort) == (["workspace-source-extra", "workspace-unit-after-static", "workspace-unit-after-browser", "service-integration-after-contracts", "service-integration-after-tooling", "queue-proof", "ci-plan", "node-artifact-build-remaining", "node-topology-proof", "service-integration-setup"] + $gates | sort)) and
   ($needs["workspace-source-extra"].result == $expected["workspace-gate"]) and
   (($unitAfter | type) == "array") and
-  ($needs["workspace-unit-after-preparation"].result == (if ($unitAfter | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
+  ($needs["workspace-unit-after-static"].result == (if ($unitAfter | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
+  (($unitBrowser | type) == "array") and
+  ($needs["workspace-unit-after-browser"].result == (if ($unitBrowser | length) > 0 then $expected["workspace-unit"] else "skipped" end)) and
   (($afterContracts | type) == "array") and
   (($afterTooling | type) == "array") and
   ($needs["service-integration-after-contracts"].result == (if ($afterContracts | length) > 0 then $expected["service-integration"] else "skipped" end)) and

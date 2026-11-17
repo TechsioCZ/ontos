@@ -21,14 +21,15 @@
       "name": "Workspace Unit and Component Tests (2/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:unit --pool.maxWorkers 2\npnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:component --pool.maxWorkers 2\n"
+      "commands": "pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:unit --pool.maxWorkers 2\npnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/inventory --filter ./verticals/privacy --filter ./verticals/tax --filter ./verticals/symmy-integration run test:component --pool.maxWorkers 2\n",
+      "after-check": "browser"
     },
     {
       "name": "Workspace Unit and Component Tests (3/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
       "commands": "pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing run test:unit --pool.maxWorkers 4\npnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing run test:component --pool.maxWorkers 4\n",
-      "after-preparation": true
+      "after-check": "static"
     }
   ],
   "integration": [
@@ -186,6 +187,8 @@
       "tasks": [
         "./apps/shell-super-app#2/8",
         "root:7/40",
+        "./verticals/pricing#3/4",
+        "./verticals/commerce-customer-context#32/56",
         "./apps/shell-super-app#1/8",
         "./verticals/commerce-customer-context#28/56",
         "./verticals/commerce-customer-context#22/56",
@@ -249,7 +252,6 @@
       "tasks": [
         "whole:privacy",
         "root:12/40",
-        "./verticals/pricing#3/4",
         "./verticals/commerce-customer-context#52/56",
         "./verticals/catalog#3/4",
         "./apps/shell-super-app#4/8",
@@ -278,6 +280,7 @@
         "./verticals/privacy#1/8",
         "root:6/40",
         "./verticals/commerce-customer-context#5/56",
+        "./verticals/commerce-customer-context#3/56",
         "./verticals/party-registry#1/4",
         "./verticals/inventory#3/4",
         "./verticals/commerce-customer-context#2/56",
@@ -350,9 +353,7 @@
         "./packages/core-runtime#1/4",
         "./verticals/commerce-customer-context#29/56",
         "./verticals/party-registry#2/4",
-        "./verticals/commerce-customer-context#32/56",
         "./verticals/catalog#2/4",
-        "./verticals/commerce-customer-context#3/56",
         "./verticals/pricing#1/4"
       ]
     },

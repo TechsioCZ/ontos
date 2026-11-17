@@ -90,7 +90,8 @@ jobs:
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       sourceExtra: ${{ steps.selection.outputs.sourceExtra || steps.changes.outputs.sourceExtra }}
-      unitAfterPreparation: ${{ steps.selection.outputs.unitAfterPreparation || steps.changes.outputs.unitAfterPreparation }}
+      unitAfterStatic: ${{ steps.selection.outputs.unitAfterStatic || steps.changes.outputs.unitAfterStatic }}
+      unitAfterBrowser: ${{ steps.selection.outputs.unitAfterBrowser || steps.changes.outputs.unitAfterBrowser }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
       integrationAfterContracts: ${{ steps.selection.outputs.integrationAfterContracts || steps.changes.outputs.integrationAfterContracts }}
@@ -377,17 +378,30 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  workspace-unit-after-preparation:
+  workspace-unit-after-static:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, static-contracts]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterPreparation != '[]' }}
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterStatic != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterPreparation) }}
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterStatic) }}
+    steps: *unit-check-steps
+
+  workspace-unit-after-browser:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, service-integration-setup]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && (needs.service-integration-setup.result == 'success' || needs.service-integration-setup.result == 'skipped') && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterBrowser != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: *unit-check-environment
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterBrowser) }}
     steps: *unit-check-steps
 
   # Independent source analyzers share this runner rather than delaying the third unit runner.
@@ -626,12 +640,12 @@ jobs:
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
   # While builds finish: 12 owners + 2 builds + 2 source + browser + static = 18.
-  # Two unit rows replace the remaining builds. Two short owner rows replace source
-  # checks, topology replaces browser, and isolated Pricing replaces static contracts.
+  # Topology and the first unit row replace the remaining builds. Short owner rows replace
+  # source checks; the other unit rows replace browser and static contracts.
   node-topology-proof:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, service-integration-setup]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.service-integration-setup.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1417,7 +1431,8 @@ jobs:
         workspace-gate,
         workspace-source-extra,
         workspace-unit,
-        workspace-unit-after-preparation,
+        workspace-unit-after-static,
+        workspace-unit-after-browser,
         static-contracts,
         format-and-lint,
         service-integration,

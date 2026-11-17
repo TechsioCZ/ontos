@@ -67,7 +67,8 @@ const STATIC_CONTRACTS_JOB = 'static-contracts';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const SOURCE_EXTRA_JOB = 'workspace-source-extra';
-const UNIT_AFTER_PREPARATION_JOB = 'workspace-unit-after-preparation';
+const UNIT_AFTER_STATIC_JOB = 'workspace-unit-after-static';
+const UNIT_AFTER_BROWSER_JOB = 'workspace-unit-after-browser';
 const INTEGRATION_AFTER_CONTRACTS_JOB = 'service-integration-after-contracts';
 const INTEGRATION_AFTER_TOOLING_JOB = 'service-integration-after-tooling';
 
@@ -1821,7 +1822,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_GATE_JOB,
     SOURCE_EXTRA_JOB,
     WORKSPACE_UNIT_JOB,
-    UNIT_AFTER_PREPARATION_JOB,
+    UNIT_AFTER_STATIC_JOB,
+    UNIT_AFTER_BROWSER_JOB,
     ...GATE_JOBS.slice(2),
     INTEGRATION_AFTER_CONTRACTS_JOB,
     INTEGRATION_AFTER_TOOLING_JOB,
@@ -1842,7 +1844,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
         integrationAfterContracts: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
         integrationAfterTooling: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
         mode,
-        unitAfterPreparation: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
+        unitAfterBrowser: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
+        unitAfterStatic: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
       },
       result: 'success',
     },
@@ -1853,7 +1856,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [SOURCE_EXTRA_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [UNIT_AFTER_PREPARATION_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [UNIT_AFTER_BROWSER_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [UNIT_AFTER_STATIC_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
   });
   const passed = GATE_JOBS.map(() => 'success');
@@ -1871,6 +1875,8 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   ) => stepPasses(script, { NEEDS_JSON: JSON.stringify(value) });
   expect(passes(needs('full', passed))).toBe(true);
   for (const [helper, output] of [
+    [UNIT_AFTER_STATIC_JOB, 'unitAfterStatic'],
+    [UNIT_AFTER_BROWSER_JOB, 'unitAfterBrowser'],
     [INTEGRATION_AFTER_CONTRACTS_JOB, 'integrationAfterContracts'],
     [INTEGRATION_AFTER_TOOLING_JOB, 'integrationAfterTooling'],
   ] as const) {
@@ -3197,23 +3203,29 @@ it('leaves two org slots free while completed checks hand their runners to selec
   expect(remaining + source + staticRows + phases.preparation.length + phases.work.length).toBeLessThanOrEqual(18);
   // Every later replacement has no more rows than the checks whose completed slots it reuses.
   // These inequalities hold independently of the order in which those checks finish.
-  expect(unit.work.length).toBeLessThanOrEqual(remaining);
+  expect(unit.work.length + phases.topology.length).toBeLessThanOrEqual(remaining);
   expect(phases.afterContracts.length).toBeLessThanOrEqual(
     templates.source.filter((row) => row['typescript-build'] !== true).length,
   );
   expect(phases.afterTooling.length).toBeLessThanOrEqual(
     templates.source.filter((row) => row['typescript-build'] === true).length,
   );
-  expect(phases.topology.length).toBeLessThanOrEqual(phases.preparation.length);
-  expect(unit.afterPreparation.length).toBeLessThanOrEqual(staticRows);
+  expect(unit.afterBrowser.length).toBeLessThanOrEqual(phases.preparation.length);
+  expect(unit.afterStatic.length).toBeLessThanOrEqual(staticRows);
   const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
-  expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).toEqual([
+  expect(all[UNIT_AFTER_STATIC_JOB]?.needs).toEqual([
     CI_PLAN_JOB,
     NODE_ARTIFACT_BUILD_JOB,
     REMAINING_NODE_BUILD_JOB,
     STATIC_CONTRACTS_JOB,
   ]);
-  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_SETUP_JOB]);
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, REMAINING_NODE_BUILD_JOB]);
+  expect(all[UNIT_AFTER_BROWSER_JOB]?.needs).toEqual([
+    CI_PLAN_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
+    REMAINING_NODE_BUILD_JOB,
+    SERVICE_SETUP_JOB,
+  ]);
   expect(all[INTEGRATION_AFTER_CONTRACTS_JOB]?.needs).toEqual([
     CI_PLAN_JOB,
     NODE_ARTIFACT_BUILD_JOB,
@@ -3227,7 +3239,7 @@ it('leaves two org slots free while completed checks hand their runners to selec
     WORKSPACE_GATE_JOB,
   ]);
   for (const [job, predecessor, output] of [
-    [UNIT_AFTER_PREPARATION_JOB, STATIC_CONTRACTS_JOB, 'unitAfterPreparation'],
+    [UNIT_AFTER_STATIC_JOB, STATIC_CONTRACTS_JOB, 'unitAfterStatic'],
     [INTEGRATION_AFTER_CONTRACTS_JOB, SOURCE_EXTRA_JOB, 'integrationAfterContracts'],
     [INTEGRATION_AFTER_TOOLING_JOB, WORKSPACE_GATE_JOB, 'integrationAfterTooling'],
   ] as const) {
