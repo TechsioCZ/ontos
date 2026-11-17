@@ -4,24 +4,24 @@ description: Install the app/.mise.toml toolchain and the frozen app/ dependency
 inputs:
   install-args:
     description: Extra `pnpm install` arguments.
-    default: ""
+    default: ''
   mise-env:
     description: Export the app/.mise.toml environment.
-    default: "true"
+    default: 'true'
   save-store:
     description: Save a missed pnpm store on main. Exactly one job sets this, so parallel jobs never race to save.
-    default: "false"
+    default: 'false'
   save-node-modules:
     description: >-
-      Save a missed complete installed workspace. The planner saves it before downstream gates fan out;
-      warm-caches saves on main for future pull requests and merge groups.
+      Save a missed complete installed workspace. The typecheck row saves a missed PR install; the main cache warmer publishes it
+      for future pull requests and merge groups.
       GitHub scopes pull-request caches to that pull request; they cannot replace main caches.
-    default: "false"
+    default: 'false'
   restore-typescript-build:
     description: >-
       Restore the newest TS-Go typecheck build (app/node_modules/.cache/tsgo) saved on main for this
       toolchain and lockfile. TS-Go rechecks every file whose content changed, so a stale build only costs time.
-    default: "false"
+    default: 'false'
 
 outputs:
   typescript-build-key:

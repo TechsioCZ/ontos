@@ -247,6 +247,7 @@ patchedDependencies:
   '@bleedingdev/modern-js-server-utils@3.11.3-ultramodern.1': 975011cb469eee2a85630720686d7b89b25eff8fbd90839f933168756d4bac13
   '@tanstack/router-core@1.171.32': fda52ecfa3ec46559d44ba037067cae400755912bd53fba786b26c1bc4732ef3
   drizzle-orm@1.0.0-rc.5-ab785fc: e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466
+  ndepe@0.1.13: 563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2
 
 importers:
 
@@ -13103,7 +13104,7 @@ snapshots:
       flatted: 3.4.4
       import-meta-resolve: 4.2.0
       mlly: 1.8.2
-      ndepe: 0.1.13(supports-color@10.2.2)
+      ndepe: 0.1.13(patch_hash=563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2)(supports-color@10.2.2)
       pkg-types: 2.3.3
       prettier: 3.9.10
       std-env: 4.3.0
@@ -13174,7 +13175,7 @@ snapshots:
       flatted: 3.4.4
       import-meta-resolve: 4.2.0
       mlly: 1.8.2
-      ndepe: 0.1.13(supports-color@10.2.2)
+      ndepe: 0.1.13(patch_hash=563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2)(supports-color@10.2.2)
       pkg-types: 2.3.3
       prettier: 3.9.10
       std-env: 4.3.0
@@ -13245,7 +13246,7 @@ snapshots:
       flatted: 3.4.4
       import-meta-resolve: 4.2.0
       mlly: 1.8.2
-      ndepe: 0.1.13(supports-color@10.2.2)
+      ndepe: 0.1.13(patch_hash=563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2)(supports-color@10.2.2)
       pkg-types: 2.3.3
       prettier: 3.9.10
       std-env: 4.3.0
@@ -13316,7 +13317,7 @@ snapshots:
       flatted: 3.4.4
       import-meta-resolve: 4.2.0
       mlly: 1.8.2
-      ndepe: 0.1.13(supports-color@10.2.2)
+      ndepe: 0.1.13(patch_hash=563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2)(supports-color@10.2.2)
       pkg-types: 2.3.3
       prettier: 3.9.10
       std-env: 4.3.0
@@ -21373,7 +21374,7 @@ snapshots:
 
   natural-orderby@5.0.0: {}
 
-  ndepe@0.1.13(supports-color@10.2.2):
+  ndepe@0.1.13(patch_hash=563a940a997bdc9ea40de49c60fbab7fabddca51be92fde6bbaba73a7073ace2)(supports-color@10.2.2):
     dependencies:
       '@vercel/nft': 0.29.2(supports-color@10.2.2)
       debug: 4.4.3(supports-color@10.2.2)

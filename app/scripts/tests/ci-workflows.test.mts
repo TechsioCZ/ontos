@@ -41,6 +41,7 @@ const readWorkflow = (name: string) =>
 
 /** The GitHub environment that holds the Cloudflare account token. */
 const EDGE_ENVIRONMENT = 'stage-edge';
+const TYPECHECK_COMMAND = 'pnpm typecheck';
 const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 /** The repository-root git hook configuration; the app workspace may not carry one of its own. */
 const LEFTHOOK_CONFIG = 'lefthook.yml';
@@ -1735,9 +1736,9 @@ it('classifies documentation before installation and schedules full regression w
   const install = steps.findIndex(({ name }) => name === 'Install the app workspace for code impact analysis');
   const selection = steps.find(({ id }) => id === 'selection');
   expect(classify).toBeGreaterThan(-1);
-  expect(install).toBeGreaterThan(classify);
+  expect(install).toBe(-1);
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
-  expect(steps[install]?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
+  expect(selection?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
   expect(selection?.env?.BOOTSTRAP_MODE).toBe(expression('steps.changes.outputs.mode'));
   // The planner selects from the changed paths on every run. A repository variable that has never
   // existed must not decide whether the selection applies: that silently planned the full matrix.
@@ -1747,7 +1748,7 @@ it('classifies documentation before installation and schedules full regression w
   expect(readTargetWorkflow().jobs['deploy-target'].if).toContain('inputs.force-ci-full != true');
 });
 
-it('shares a complete install before fan-out without exporting a mise environment', () => {
+it('plans without app dependencies and publishes only the exact changed paths', () => {
   const { steps } = Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Struct({
@@ -1764,11 +1765,8 @@ it('shares a complete install before fan-out without exporting a mise environmen
     }),
   )(readGateWorkflow()).jobs[CI_PLAN_JOB];
   const install = steps.find(({ name }) => name === 'Install the app workspace for code impact analysis');
-  // The planner precedes every gate, so its install must be complete before it is shared.
-  expect(install?.with).toEqual({
-    'mise-env': 'false',
-    'save-node-modules': expression("github.ref != 'refs/heads/main'"),
-  });
+  expect(install).toBeUndefined();
+  expect(steps.some(({ uses }) => uses === './.github/actions/install-app')).toBe(false);
   // Only the planner's changed-path list leaves this job; $RUNNER_TEMP is job-local.
   const publish = steps.find(({ name }) => name === 'Publish the exact changed-path list');
   expect(publish?.uses).toMatch(/^actions\/upload-artifact@[a-f0-9]{40}$/u);
@@ -1995,7 +1993,7 @@ it('builds every Node release from this commit rather than restoring another rel
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
   const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const install = steps.find(({ name }) => name === INSTALL_APP_STEP);
-  expect(install?.with).toEqual({ 'restore-typescript-build': 'true' });
+  expect(install?.with).toBeUndefined();
 });
 
 it('warms only reusable dependencies and typecheck state on main, never commit-bound releases', () => {
@@ -2013,7 +2011,7 @@ it('warms only reusable dependencies and typecheck state on main, never commit-b
     'save-node-modules': 'true',
   });
   expect(warm.steps.some(({ run }) => (run ?? '').includes('run build'))).toBe(false);
-  expect(warm.steps.some(({ run }) => (run ?? '').includes('pnpm typecheck'))).toBe(true);
+  expect(warm.steps.some(({ run }) => (run ?? '').includes(TYPECHECK_COMMAND))).toBe(true);
 });
 
 /** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
@@ -2164,25 +2162,28 @@ it('verifies the exact Tunnel download and checksum before allowing a deployment
 it('runs every workspace gate check in some workspace-gate entry', () => {
   const commands = gateCommands().flat();
   for (const check of [
-    'pnpm typecheck',
+    TYPECHECK_COMMAND,
     'pnpm typecheck:lint-rules',
     'pnpm test:lint-rules',
     'pnpm lint:repository-policy',
     'pnpm api:check:ontos',
-    'pnpm test:deployment-impact',
+    'node scripts/generate-outbox-worker-deployment.mjs',
+    'pnpm module-entrypoints:check',
+    'node scripts/plan-deployment-impact.mts --outbox-worker-mode host',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
   }
-  // Tooling shares the otherwise short formatter runner; it still runs exactly once.
+  // The complete tooling suite runs once across two shards, never serially after lint. Its
+  // deployment impact tests also cover the old source job's duplicate filtered Rstest invocation.
   const format = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
-  const tooling = format.steps.filter(({ run }) => run === 'mise exec -- pnpm test:scripts');
-  expect(tooling).toHaveLength(1);
-  expect(tooling[0]?.env?.ULTRAMODERN_SOURCE_REVISION).toBe(CURRENT_SOURCE_REVISION);
-  expect(commands).not.toContain('pnpm test:scripts');
-  // The module entrypoint boundary check runs inside the deployment impact gate.
-  const { scripts } = readRootScripts();
-  expect(scripts['test:deployment-impact']).toContain(scripts['module-entrypoints:check']);
+  expect(format.steps.some(({ run }) => run?.includes('pnpm test:scripts') === true)).toBe(false);
+  expect(commands.filter((command) => command.startsWith('pnpm test:scripts'))).toEqual([
+    'pnpm test:scripts --shard 1/2',
+    'pnpm test:scripts --shard 2/2',
+  ]);
+  expect(commands.filter((command) => command === TYPECHECK_COMMAND)).toHaveLength(1);
+  expect(commands).not.toContain('pnpm test:deployment-impact');
   const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
     parallel ? parallel.map((step) => step.run) : [run ?? ''],
   );
@@ -2192,7 +2193,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
 it('runs every static contract check on exactly one row of the static contracts job', () => {
   const job = readGateCommandJobs()['static-contracts'];
   const rows = job.strategy.matrix.row;
-  expect(rows).toEqual(['contracts']);
+  expect(rows).toEqual(['contracts', 'api']);
   // Every check, including each member of the parallel group, names exactly one row. A check with no
   // row condition would run on all of them, and one naming a row that does not exist would never run.
   const shared = new Set(['Harden Runner', 'Checkout', INSTALL_APP_STEP]);
@@ -2633,7 +2634,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   // The hook sees the selected files, and a file it fixes fails the gate.
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
-  const select = run.slice(0, run.indexOf('mise exec'));
+  const select = run.slice(0, run.indexOf('if [[ "$sweep" == all ]]; then\n  # Directory arguments'));
   const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-selection-'));
   const repository = path.join(directory, 'repository');
@@ -2988,7 +2989,7 @@ it('refuses root native integration when the same-run build archives are missing
   }
 });
 
-it('keeps a full run within ten gate executors, excluding planning and the required-check collector', () => {
+it('keeps a full run within the twenty shared gate executors, excluding planning and the required-check collector', () => {
   const commands = readGateCommandJobs();
   const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
@@ -3000,7 +3001,7 @@ it('keeps a full run within ten gate executors, excluding planning and the requi
     readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].strategy.matrix.include.length +
     integration.strategy.matrix.include.length +
     1;
-  expect(count).toBeLessThanOrEqual(10);
+  expect(count).toBeLessThanOrEqual(20);
 });
 
 it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
