@@ -168,14 +168,22 @@ export const planCiChecks = (input: {
       return [];
     }
     const filters = selected.length === 0 ? '' : selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
-    return [
-      {
-        ...entry,
-        'native-preproposal': entry['native-preproposal'] === true && proofAffected,
-        'package-filters': filters,
-        'root-suite': rootSuite,
-      },
-    ];
+    const narrowed = {
+      ...entry,
+      'native-preproposal': entry['native-preproposal'] === true && proofAffected,
+      'package-filters': filters,
+      'root-suite': rootSuite,
+    };
+    if (entry.tasks === undefined) {return [narrowed];}
+    const tasks = entry.tasks.filter((task) => {
+      if (task.startsWith('root:')) {return rootSuite;}
+      if (task.startsWith('whole:preproposal-')) {return proofAffected;}
+      if (task === 'whole:party-worker')
+        {return selected.some(({ directory }) => directory === 'verticals/party-registry');}
+      if (task.startsWith('whole:')) {return true;}
+      return selected.some(({ directory }) => task === `./${directory}` || task.startsWith(`./${directory}#`));
+    });
+    return [{ ...narrowed, tasks }];
   });
   const selectedUnit = templates.unit.flatMap((entry) => {
     const selected = matchingPackages(entry.commands.split('\n')[0] ?? '', affected);

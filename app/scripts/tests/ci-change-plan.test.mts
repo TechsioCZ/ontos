@@ -26,7 +26,7 @@ it('prepares the database even when browser tests are not selected, without addi
   const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
   expect(phases.preparation).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
   expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
-  expect(phases.work).toEqual(templates.integration.filter(({ suite }) => suite === 'integration'));
+  expect(phases.work).toEqual(templates.integration.filter((entry) => entry.suite === 'integration'));
   expect(integrationPhases([])).toEqual({ preparation: [], topology: [], work: [] });
 });
 const CATALOG = '@app/catalog';
@@ -89,12 +89,12 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   // Ordinary package tests remain restricted to the affected owner and its consumers.
   expect(plan.integration.map(({ name }) => name)).toEqual([
     'Deployment Bootstrap and Node Federation Proof',
-    'Customer Context and Catalog Integration',
-    'Privacy Completion Integration',
-    'Commerce Pricing and Inventory Integration',
-    'Organization Owner Integration',
-    'Native Preproposal and Commerce Integration',
-    'Native Approval and Market Integration',
+    'Organization and Native Approval Integration',
+    'Privacy Completion and Customer Context Integration',
+    'Native Preproposal and Composition Integration',
+    'Public Owner and Gateway Integration',
+    'Core and Owner Protocol Integration',
+    'Catalog and Owner Boundaries Integration',
   ]);
   const tests = plan.integration.filter(({ suite }) => suite === 'integration');
   expect(
@@ -238,7 +238,7 @@ it('selects browser checks and all root integration shards when they consume a c
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
   expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(
-    Array.from({ length: 10 }, (_, index) => `${index + 1}/10`),
+    templates.integration.filter((entry) => entry['root-suite'] === true).map((entry) => entry['root-rstest-shard']),
   );
   const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
   expect(filters).toContain('--filter ./apps/shell-super-app');
@@ -309,7 +309,19 @@ it('selects both disjoint customer-context partitions and retains its independen
   const selected = plan.integration.filter((entry) =>
     (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
   );
-  expect(selected.map((entry) => entry['package-partition'])).toEqual(['1/2', '2/2']);
+  expect(
+    EffectArray.sort(
+      selected
+        .flatMap((entry) => entry.tasks ?? [])
+        .filter((task) => task.startsWith('./verticals/commerce-customer-context#')),
+      Order.String,
+    ),
+  ).toEqual(
+    EffectArray.sort(
+      Array.from({ length: 8 }, (_, index) => `./verticals/commerce-customer-context#${index + 1}/8`),
+      Order.String,
+    ),
+  );
   expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(2);
 });
 

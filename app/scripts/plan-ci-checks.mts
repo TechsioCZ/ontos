@@ -23,6 +23,7 @@ const IntegrationEntrySchema = Schema.Struct({
   'proof-packages': Schema.optionalKey(Schema.Array(Schema.String)),
   'root-rstest-shard': Schema.optionalKey(Schema.String),
   'root-suite': Schema.optionalKey(Schema.Boolean),
+  tasks: Schema.optionalKey(Schema.Array(Schema.String)),
   'whole-owner-proofs': Schema.optionalKey(Schema.String),
   // The bootstrap row proves deployment and federation independently of package selection.
   suite: Schema.Literals(['bootstrap', 'integration', 'browser', 'database']),
