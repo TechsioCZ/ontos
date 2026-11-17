@@ -337,6 +337,8 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
       invalidClients,
       /module APIs require an approved Codesmith generator/u,
     );
+    // Each contract case below must fail on the contract alone, never on a client left invalid above.
+    yield* write(root, clientPath, validClient);
     const contractPath = 'verticals/inventory-stock/shared/apis/stock-list.ts';
     const validContract = yield* Effect.promise(() => readFile(path.join(root, contractPath), 'utf-8'));
     yield* assertRejectedSources(
@@ -353,20 +355,17 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
       ],
       /module APIs require an approved Codesmith generator/u,
     );
-    yield* write(root, contractPath, validContract);
-    yield* write(
-      root,
-      contractPath,
-      validContract.replace(
-        "HttpApi.make('StockListApi').add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))",
-        `HttpApi.make('StockListApi')
+    const pipedDecoy = validContract.replace(
+      "HttpApi.make('StockListApi').add(",
+      `HttpApi.make('StockListApi')
   .pipe((api) => {
     DecoyApi.add(HttpApiGroup.make('decoy'));
     return api;
   })
-  .add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))`,
-      ),
+  .add(`,
     );
+    expect(pipedDecoy).not.toBe(validContract);
+    yield* write(root, contractPath, pipedDecoy);
     yield* write(root, clientPath, validClient.replace('client.stockList.execute', 'client.decoy.execute'));
     yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
       onFailure: (cause) =>
@@ -375,12 +374,9 @@ const spoof = 'operationGateway.invoke transportHeaders: authorization: x-correl
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
-    yield* write(
-      root,
-      contractPath,
-      `${validContract.replace(".add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {})))", '')}
-DecoyApi.add(HttpApiGroup.make('decoy'));`,
-    );
+    const detachedContract = validContract.replace(/\.add\(HttpApiGroup\.make\('stockList'\)[\s\S]*?\}\)\)\)/u, '');
+    expect(detachedContract).not.toBe(validContract);
+    yield* write(root, contractPath, `${detachedContract}\nDecoyApi.add(HttpApiGroup.make('decoy'));`);
     yield* write(root, clientPath, validClient.replace('client.stockList.execute', 'client.decoy.execute'));
     yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
       onFailure: (cause) =>
@@ -389,6 +385,7 @@ DecoyApi.add(HttpApiGroup.make('decoy'));`,
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
+    yield* write(root, clientPath, validClient);
     yield* write(
       root,
       contractPath,
