@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Option, Order, Result, Schema } from 'effect';
+import { Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   IntegrationWorkerSettingsSchema,
@@ -152,119 +152,15 @@ it('recognizes only a provisioned worker container and port pair in isolated CI 
   expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-5', isolatedWorkers: '4', port: 5545 })).toBe(false);
 });
 
-it('partitions root and package files without duplicating compound scripts or whole-owner proofs', () => {
-  const script = integrationSuitesScript;
-  const result = execFileSync('/bin/bash', [script, '--list'], {
-    env: {
-      NATIVE_PREPROPOSAL: 'true',
-      PACKAGE_FILTERS:
-        '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
-      PATH: testPath,
-      ROOT_RSTEST_SHARD: '1/2',
-      ROOT_SUITE: 'true',
-      WHOLE_OWNER_PROOFS: 'organization pricing privacy',
-    },
-  });
-  const tasks = result.toString().split('\0').filter(Boolean);
-  expect(tasks.filter((task) => task.startsWith('root:'))).toEqual(['root:1/8', 'root:3/8', 'root:5/8', 'root:7/8']);
-  for (const owner of ['commerce-customer-context', 'privacy']) {
-    expect(tasks.filter((task) => task.startsWith(`./verticals/${owner}#`))).toEqual(
-      ['1/4', '2/4', '3/4', '4/4'].map((shard) => `./verticals/${owner}#${shard}`),
-    );
+/** Lists the scheduler's tasks for this environment. */
+const listTasks = (env: Readonly<Record<string, string>>) => () =>
+  execFileSync('/bin/bash', [integrationSuitesScript, '--list'], { env, stdio: 'pipe' });
+
+it('refuses to start without an explicit task list instead of inventing one', () => {
+  expect(listTasks({ PATH: testPath })).toThrow();
+  for (const tasks of ['null', '[]']) {
+    expect(listTasks({ INTEGRATION_TASKS: tasks, PATH: testPath })).toThrow();
   }
-  expect(tasks.filter((task) => task.includes('party-registry'))).toEqual(['./verticals/party-registry']);
-  expect(tasks.filter((task) => task.startsWith('whole:'))).toEqual([
-    'whole:preproposal-basis',
-    'whole:preproposal-approval',
-    'whole:organization',
-    'whole:pricing',
-    'whole:privacy',
-  ]);
-  expect(new Set(tasks).size).toBe(tasks.length);
-});
-
-it('runs each Core and owner shard once alongside independently selected native proofs', () => {
-  const tasks = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
-    env: {
-      NATIVE_PREPROPOSAL: 'true',
-      PACKAGE_FILTERS: '--filter ./packages/core-runtime --filter ./verticals/privacy',
-      PATH: testPath,
-    },
-  })
-    .toString()
-    .split('\0')
-    .filter(Boolean);
-  expect(tasks.filter((task) => task.includes('core-runtime'))).toEqual(
-    ['1/4', '2/4', '3/4', '4/4'].map((shard) => `./packages/core-runtime#${shard}`),
-  );
-  expect(tasks.filter((task) => task.startsWith('./verticals/privacy#'))).toHaveLength(4);
-  expect(tasks.filter((task) => task.startsWith('whole:preproposal-'))).toHaveLength(2);
-  expect(new Set(tasks).size).toBe(tasks.length);
-});
-
-it('covers Customer Context exactly once across rows without partitioning an unrelated package', () => {
-  const partitions = ['1/2', '2/2'].map((partition) =>
-    execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
-      env: {
-        PACKAGE_FILTERS: '--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry',
-        PACKAGE_PARTITION: partition,
-        PATH: testPath,
-      },
-    })
-      .toString()
-      .split('\0')
-      .filter(Boolean),
-  );
-  const customer = partitions.flatMap((tasks) => tasks.filter((task) => task.includes('commerce-customer-context')));
-  expect(EffectArray.sort(customer, Order.String)).toEqual(
-    Array.from({ length: 8 }, (_, index) => `./verticals/commerce-customer-context#${index + 1}/8`),
-  );
-  expect(new Set(customer).size).toBe(customer.length);
-  const storefront = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
-    env: { PACKAGE_FILTERS: '--filter ./verticals/storefront-registry', PATH: testPath },
-  })
-    .toString()
-    .split('\0')
-    .filter(Boolean);
-  expect(storefront.length).toBeGreaterThan(0);
-  for (const tasks of partitions) {
-    expect(tasks.filter((task) => task.includes('storefront-registry'))).toEqual(storefront);
-  }
-});
-
-it('selects one complete native proof per runner without repeating either case', () => {
-  for (const proof of ['basis', 'approval']) {
-    const tasks = execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
-      env: { NATIVE_PREPROPOSAL: 'true', NATIVE_PREPROPOSAL_CASE: proof, PATH: testPath },
-    })
-      .toString()
-      .split('\0')
-      .filter(Boolean);
-    expect(tasks).toEqual([`whole:preproposal-${proof}`]);
-  }
-});
-
-it('schedules every real root file once without starting empty tail shards', () => {
-  const files = readdirSync(new URL('../integration/', import.meta.url)).filter(
-    (file) =>
-      file.endsWith('.test.mts') &&
-      !['organization-source-customer-owner-conformance.test.mts', 'scoped-owner-migrations.test.mts'].includes(file),
-  );
-  const tasks = Array.from({ length: 8 }, (_, index) =>
-    execFileSync('/bin/bash', [integrationSuitesScript, '--list'], {
-      env: { PATH: testPath, ROOT_RSTEST_SHARD: `${index + 1}/8`, ROOT_SUITE: 'true' },
-    })
-      .toString()
-      .split('\0')
-      .filter(Boolean),
-  ).flat();
-  expect(
-    EffectArray.sort(
-      tasks.map((task) => Number(task.split(':')[1]?.split('/')[0])),
-      Order.Number,
-    ),
-  ).toEqual(Array.from({ length: files.length }, (_, index) => index + 1));
-  expect(new Set(tasks).size).toBe(tasks.length);
 });
 
 it('refuses a missing database archive before starting any service', () => {

@@ -9,11 +9,14 @@ import { expect, it } from 'effect-rstest';
 
 import {
   CiTemplatesSchema,
+  ciPlanOutputs,
   filterPaths,
   integrationPhases,
+  knownTask,
   unitPhases,
   matchingPackages,
   planCiChecks,
+  taskDirectory,
   unknownFilters,
   withCiTopologyDependencies,
 } from '../plan-ci-checks.mts';
@@ -27,28 +30,25 @@ it('prepares the database even when browser tests are not selected, without addi
   const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
   expect(phases.preparation).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
   expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
-  expect(phases.work).toEqual(
-    templates.integration.filter((entry) => entry.suite === 'integration' && entry['after-source'] === undefined),
+  expect(phases.built).toEqual(
+    templates.integration.filter((entry) => entry.suite === 'integration' && entry.early !== true),
   );
-  expect(phases.afterContracts).toEqual(templates.integration.filter((entry) => entry['after-source'] === 'contracts'));
-  expect(phases.afterTooling).toEqual(templates.integration.filter((entry) => entry['after-source'] === 'tooling'));
-  expect(integrationPhases([])).toEqual({
-    afterContracts: [],
-    afterTooling: [],
-    preparation: [],
-    topology: [],
-    work: [],
-  });
+  expect(phases.early).toEqual(templates.integration.filter((entry) => entry.early === true));
+  expect(integrationPhases([])).toEqual({ built: [], early: [], preparation: [], topology: [] });
 });
 
-it('promotes a lone deferred integration selection into the required integration gate', () => {
-  const selected = templates.integration.filter((entry) => entry['after-source'] === 'tooling');
-  expect(selected).toHaveLength(1);
+it('promotes one early integration row into the required integration gate when no built row is selected', () => {
+  const selected = templates.integration.filter((entry) => entry.early === true);
+  expect(selected.length).toBeGreaterThan(1);
   const phases = integrationPhases(selected);
-  expect(phases.work).toEqual(selected);
-  expect(phases.afterContracts).toEqual([]);
-  expect(phases.afterTooling).toEqual([]);
+  expect(phases.built).toEqual(selected.slice(0, 1));
+  expect(phases.early).toEqual(selected.slice(1));
 });
+
+/** The workspace directories whose integration files a row's tasks run. */
+const taskDirectories = (row: { readonly tasks?: readonly string[] | undefined }) => [
+  ...new Set((row.tasks ?? []).flatMap((task) => taskDirectory(task) ?? [])),
+];
 const CATALOG = '@app/catalog';
 const PRICING = '@app/pricing';
 const CATALOG_SOURCE = 'app/verticals/catalog/src/service.ts';
@@ -103,7 +103,9 @@ const selectedDirectories = (filters: string) =>
   matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
 
 it('preserves the authored worker budget when affected selection narrows package filters', () => {
-  const pricing = templates.unit.find((row) => row['after-check'] === 'static');
+  const pricing = templates.unit.find((row) =>
+    selectedDirectories(row.commands.split('\n')[0] ?? '').includes(PRICING_DIRECTORY),
+  );
   expect(pricing).toBeDefined();
   const plan = planCiChecks({
     changedPaths: ['app/verticals/pricing/src/service.ts'],
@@ -150,9 +152,10 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
     ordinaryTasks.every((task) => task.startsWith('./verticals/catalog#') || task.startsWith('./verticals/pricing#')),
   ).toBe(true);
   const tests = plan.integration.filter(({ suite }) => suite === 'integration');
-  expect(
-    matchingPackages(tests.map((entry) => entry['package-filters'] ?? '').join(' '), packages).map(({ name }) => name),
-  ).toEqual([CATALOG, PRICING]);
+  expect(EffectArray.sort([...new Set(tests.flatMap(taskDirectories))], Order.String)).toEqual([
+    CATALOG_DIRECTORY,
+    PRICING_DIRECTORY,
+  ]);
   expect(plan.unit).toHaveLength(2);
   const unitCommands = plan.unit.map(({ commands }) => commands).join('\n');
   expect(unitCommands).toContain('--filter ./verticals/catalog');
@@ -176,8 +179,11 @@ it('plans affected selection by default and keeps the forced backstop on the com
   expect(EffectArray.sort(Object.keys(forced.expected), Order.String)).toEqual(REQUIRED_GATES);
 });
 
-it('retains the native preproposal proof for each runtime owner even without ordinary package-filter matches', () => {
-  const native = templates.integration.find((entry) => entry['native-preproposal'] === true);
+const preproposalRow = (entry: { readonly tasks?: readonly string[] | undefined }) =>
+  (entry.tasks ?? []).some((task) => task.startsWith('whole:preproposal-'));
+
+it('retains the native preproposal proof for each runtime owner even without ordinary package matches', () => {
+  const native = templates.integration.find(preproposalRow);
   expect(native?.['proof-packages']).toHaveLength(8);
   for (const owner of native?.['proof-packages'] ?? []) {
     const workspacePackage = packages.find(({ name }) => name === owner);
@@ -187,13 +193,14 @@ it('retains the native preproposal proof for each runtime owner even without ord
       templates,
     });
     expect(plan.mode).toBe('affected');
-    expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
+    expect(plan.integration.filter(preproposalRow)).toHaveLength(2);
     if (owner === PRICING) {
       expect(plan.affectedPackages).toEqual([PRICING]);
-      expect(['', '--filter ./verticals/pricing']).toContain(
-        plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters'],
-      );
-      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['root-suite']).toBe(false);
+      for (const row of plan.integration.filter(preproposalRow)) {
+        // Only the proof itself and the affected owner's own files remain; no root file rides along.
+        expect(taskDirectories(row).every((directory) => directory === PRICING_DIRECTORY)).toBe(true);
+        expect((row.tasks ?? []).some((task) => task.startsWith('root:'))).toBe(false);
+      }
     }
   }
 });
@@ -202,7 +209,11 @@ it('omits the native preproposal proof for an unrelated owner and widens unknown
   const plan = (entries: typeof packages) =>
     planCiChecks({ changedPaths: ['app/verticals/privacy/src/service.ts'], packages: entries, templates });
   expect(plan(packages).mode).toBe('affected');
-  expect(plan(packages).integration.some((entry) => entry['native-preproposal'] === true)).toBe(false);
+  expect(
+    plan(packages)
+      .integration.flatMap((entry) => entry.tasks ?? [])
+      .some((task) => task.startsWith('whole:preproposal-')),
+  ).toBe(false);
   expect(plan(packages.filter(({ name }) => name !== PRICING)).mode).toBe('full');
   expect(
     Schema.is(CiTemplatesSchema)({
@@ -256,30 +267,40 @@ it('widens broken dependency metadata rather than silently dropping its consumer
   }
 });
 
-it('rejects incomplete full matrices and widens unsupported package-selector syntax', () => {
+it('rejects incomplete full matrices and widens an unrunnable task form', () => {
   expect(
     Schema.is(CiTemplatesSchema)({
       ...templates,
-      integration: [{ name: 'Missing package selection', suite: 'integration' }],
+      integration: [{ name: 'Missing task list', suite: 'integration' }],
     }),
   ).toBe(false);
   expect(
-    planCiChecks({
-      changedPaths: [CATALOG_SOURCE],
-      packages,
-      templates: {
-        ...templates,
-        integration: [
-          {
-            name: 'Unproven selector',
-            'package-filters': '--filter ./verticals/catalog --filter @app/pricing...',
-            suite: 'integration',
-          },
-        ],
-      },
-    }).mode,
-  ).toBe('full');
+    Schema.is(CiTemplatesSchema)({
+      ...templates,
+      integration: [{ name: 'Unrunnable task', suite: 'integration', tasks: ['@app/pricing...'] }],
+    }),
+  ).toBe(false);
+  // The dependency-free planner reads authored JSON without the schema, so it widens on its own.
+  for (const task of ['@app/pricing...', './verticals/catalog#one', 'whole:invented']) {
+    expect(
+      planCiChecks({
+        changedPaths: [CATALOG_SOURCE],
+        packages,
+        templates: { ...templates, integration: [{ name: 'Unproven task', suite: 'integration', tasks: [task] }] },
+      }).mode,
+      task,
+    ).toBe('full');
+  }
 });
+
+/** The root integration work an integration matrix runs. */
+const rootTasks = (entries: readonly { readonly tasks?: readonly string[] | undefined }[]) =>
+  EffectArray.sort(
+    entries
+      .flatMap((entry) => entry.tasks ?? [])
+      .filter((task) => task.startsWith('root:') || task === 'whole:migrations'),
+    Order.String,
+  );
 
 it('selects browser checks and all root integration shards when they consume a changed package', () => {
   const plan = planCiChecks({
@@ -291,13 +312,11 @@ it('selects browser checks and all root integration shards when they consume a c
     templates,
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
-  const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(
-    templates.integration.filter((entry) => entry['root-suite'] === true).map((entry) => entry['root-rstest-shard']),
-  );
-  const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
-  expect(filters).toContain('--filter ./apps/shell-super-app');
-  expect(filters).toContain('--filter ./verticals/catalog');
+  // Every root file runs, including those listed in rows that hold no other root work.
+  expect(rootTasks(plan.integration)).toEqual(rootTasks(templates.integration));
+  const directories = new Set(plan.integration.flatMap(taskDirectories));
+  expect(directories.has(SHELL_DIRECTORY)).toBe(true);
+  expect(directories.has(CATALOG_DIRECTORY)).toBe(true);
 });
 
 it('follows topology-only Shell and vertical remote references to browser tests', () => {
@@ -361,12 +380,9 @@ it('selects both disjoint customer-context partitions and retains its independen
     packages,
     templates,
   });
-  const selected = plan.integration.filter((entry) =>
-    (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
-  );
   expect(
     EffectArray.sort(
-      selected
+      plan.integration
         .flatMap((entry) => entry.tasks ?? [])
         .filter((task) => task.startsWith('./verticals/commerce-customer-context#')),
       Order.String,
@@ -377,7 +393,7 @@ it('selects both disjoint customer-context partitions and retains its independen
       Order.String,
     ),
   );
-  expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(2);
+  expect(plan.integration.filter(preproposalRow)).toHaveLength(2);
 });
 
 it('widens changed shared infrastructure, unknown paths and package metadata to the complete suite', () => {
@@ -426,12 +442,14 @@ it('runs every workspace package in exactly one unit entry', () => {
 });
 
 it('keeps every unit and integration template resolvable so one glob cannot disable affected selection', () => {
-  for (const command of [
-    ...templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean)),
-    ...templates.integration.map((entry) => entry['package-filters'] ?? ''),
-  ]) {
+  for (const command of templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean))) {
     expect(unknownFilters(command)).toBe(false);
     expect(filterPaths(command).filter(({ path: selected }) => !knownSelectors.has(selected ?? ''))).toEqual([]);
+  }
+  for (const task of templates.integration.flatMap((entry) => entry.tasks ?? [])) {
+    expect(knownTask(task), task).toBe(true);
+    const directory = taskDirectory(task);
+    expect(directory === undefined || knownSelectors.has(directory), task).toBe(true);
   }
 });
 
@@ -486,24 +504,65 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       const documentationPlan = run('pull_request');
       expect(documentationPlan).toContain('mode=docs\n');
       for (const helper of [
-        'sourceExtra',
+        'source',
+        'unit',
+        'unitAfterLint',
         'unitAfterStatic',
-        'unitAfterBrowser',
+        'unitAfterTopology',
+        'integration',
+        'integrationEarly',
         'integrationSetup',
         'integrationTopology',
-        'integrationAfterContracts',
-        'integrationAfterTooling',
       ]) {
         expect(documentationPlan).toContain(`${helper}=[]\n`);
       }
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
+      expect(documentationPlan).toContain('lintSweep=changed\n');
       expect(run('merge_group')).toContain('mode=docs\n');
       expect(run('workflow_dispatch')).toContain('mode=full\n');
+      // Without the exact list, and on the nightly run, every tracked file is linted.
+      const sweepAll = 'lintSweep=all\n';
+      expect(run('workflow_dispatch')).toContain(sweepAll);
+      expect(run('schedule')).toContain(sweepAll);
       expect(run('pull_request', '0'.repeat(40))).toContain('mode=full\n');
+      expect(run('pull_request', '0'.repeat(40))).toContain(sweepAll);
       expect(run('pull_request', base, 'true')).toContain('mode=full\n');
       git('mv', 'README.md', 'runtime.ts');
       git('commit', '--quiet', '-m', 'rename into application input');
       expect(run('pull_request')).toContain('mode=affected\n');
+      expect(run('pull_request')).toContain('lintSweep=changed\n');
+      // A changed formatter, linter or hook configuration reformats files nobody touched; test-runner
+      // configuration does not alter formatting or lint semantics.
+      const sweepAfter = (file: string) => {
+        const target = path.join(directory, file);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, `${file}\n`);
+        git('add', '--all');
+        git('commit', '--quiet', '-m', file);
+        const plan = run('pull_request', git('rev-parse', 'HEAD~1'));
+        return /^lintSweep=(?<sweep>\w+)$/mu.exec(plan)?.groups?.sweep;
+      };
+      for (const configuration of [
+        'lefthook.yml',
+        'app/.oxlintrc.json',
+        'app/oxfmt.config.ts',
+        'app/packages/core-runtime/.prettierrc',
+        'app/tools/oxlint/effect-native/rules/no-native-timers.ts',
+        'app/patches/linter.patch',
+        'app/tsconfig.base.json',
+        'app/pnpm-lock.yaml',
+        'app/pnpm-workspace.yaml',
+        'app/.mise.toml',
+      ]) {
+        expect(sweepAfter(configuration), configuration).toBe('all');
+      }
+      for (const configuration of [
+        'app/rstest.config.ts',
+        'vitest.config.mts',
+        'app/verticals/catalog/rstest.config.ts',
+      ]) {
+        expect(sweepAfter(configuration), configuration).toBe('changed');
+      }
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -566,6 +625,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
           BOOTSTRAP_MODE: 'affected',
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
+          LINT_SWEEP: 'changed',
           PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
         },
       });
@@ -576,6 +636,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
         env: {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
+          LINT_SWEEP: 'changed',
           PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
         },
       });
@@ -588,20 +649,65 @@ it('plans with no installed dependencies using the same tested impact algorithm'
 });
 
 it('promotes a lone affected deferred unit row instead of expanding an empty required matrix', () => {
-  const deferred = templates.unit.filter((row) => row['after-check'] === 'static');
-  expect(deferred).toHaveLength(1);
-  expect(unitPhases(deferred)).toEqual({ afterBrowser: [], afterStatic: [], work: deferred });
-  const full = unitPhases(templates.unit);
-  expect(full.afterStatic).toEqual(deferred);
-  expect([...full.work, ...full.afterBrowser, ...full.afterStatic]).toEqual(templates.unit);
-  expect(unitPhases([])).toEqual({ afterBrowser: [], afterStatic: [], work: [] });
+  for (const deferred of templates.unit.filter((row) => row['after-check'] !== undefined)) {
+    expect(unitPhases([deferred], 'changed')).toEqual({
+      afterLint: [],
+      afterStatic: [],
+      afterTopology: [],
+      work: [deferred],
+    });
+  }
+  const full = unitPhases(templates.unit, 'changed');
+  expect(full.work).toEqual(templates.unit.filter((row) => row['after-check'] === undefined));
+  expect([...full.work, ...full.afterLint, ...full.afterStatic, ...full.afterTopology]).toHaveLength(
+    templates.unit.length,
+  );
+  expect(unitPhases([], 'changed')).toEqual({ afterLint: [], afterStatic: [], afterTopology: [], work: [] });
 });
 
-it('promotes only one deferred unit row so the other keeps its bounded runner slot', () => {
+it('promotes only one deferred unit row so the others keep their bounded runner slots', () => {
   const selected = templates.unit.filter((row) => row['after-check'] !== undefined);
-  expect(selected).toHaveLength(2);
-  const phases = unitPhases(selected);
+  expect(selected.length).toBeGreaterThan(1);
+  const phases = unitPhases(selected, 'changed');
   expect(phases.work).toEqual(selected.slice(0, 1));
-  expect(phases.afterBrowser).toEqual([]);
-  expect(phases.afterStatic).toEqual(selected.slice(1));
+  expect([...phases.afterLint, ...phases.afterStatic, ...phases.afterTopology]).toHaveLength(selected.length - 1);
+});
+
+it('moves the row behind lint to the topology slot when ci-plan sweeps every file', () => {
+  const lint = templates.unit.filter((row) => row['after-check'] === 'lint');
+  expect(lint).toHaveLength(1);
+  const changed = unitPhases(templates.unit, 'changed');
+  const all = unitPhases(templates.unit, 'all');
+  expect(changed.afterLint).toEqual(lint);
+  expect(all.afterLint).toEqual([]);
+  expect(all.afterTopology).toEqual(
+    templates.unit.filter((row) => changed.afterTopology.includes(row) || lint.includes(row)),
+  );
+  expect(all.work).toEqual(changed.work);
+  expect(all.afterStatic).toEqual(changed.afterStatic);
+});
+
+// The gate-id jobs (workspace-unit, service-integration) must never receive an empty matrix while their
+// gate is expected to succeed: expanding an empty matrix fails the run, and skipping it fails the gate.
+it('gives each gate-id job at least one row for every single-owner change and either lint sweep', () => {
+  for (const owner of workspacePackages) {
+    const plan = planCiChecks({
+      changedPaths: [`app/${owner.directory}/src/service.ts`],
+      packages: workspacePackages,
+      templates,
+    });
+    for (const lintSweep of ['all', 'changed'] as const) {
+      const outputs = ciPlanOutputs(plan, lintSweep);
+      if (plan.expected['workspace-unit'] === 'success') {
+        expect(outputs.unit.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
+      }
+      if (plan.integration.some(({ suite }) => suite === 'integration')) {
+        expect(outputs.integration.length, `${owner.name} ${lintSweep}`).toBeGreaterThan(0);
+      }
+      expect(
+        [...outputs.unit, ...outputs.unitAfterLint, ...outputs.unitAfterStatic, ...outputs.unitAfterTopology],
+        owner.name,
+      ).toHaveLength(plan.unit.length);
+    }
+  }
 });

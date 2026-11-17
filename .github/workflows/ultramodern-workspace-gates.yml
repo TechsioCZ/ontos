@@ -87,15 +87,15 @@ jobs:
     timeout-minutes: 10
     outputs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
+      lintSweep: ${{ steps.changes.outputs.lintSweep }}
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
-      sourceExtra: ${{ steps.selection.outputs.sourceExtra || steps.changes.outputs.sourceExtra }}
-      unitAfterStatic: ${{ steps.selection.outputs.unitAfterStatic || steps.changes.outputs.unitAfterStatic }}
-      unitAfterBrowser: ${{ steps.selection.outputs.unitAfterBrowser || steps.changes.outputs.unitAfterBrowser }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
+      unitAfterLint: ${{ steps.selection.outputs.unitAfterLint || steps.changes.outputs.unitAfterLint }}
+      unitAfterStatic: ${{ steps.selection.outputs.unitAfterStatic || steps.changes.outputs.unitAfterStatic }}
+      unitAfterTopology: ${{ steps.selection.outputs.unitAfterTopology || steps.changes.outputs.unitAfterTopology }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
-      integrationAfterContracts: ${{ steps.selection.outputs.integrationAfterContracts || steps.changes.outputs.integrationAfterContracts }}
-      integrationAfterTooling: ${{ steps.selection.outputs.integrationAfterTooling || steps.changes.outputs.integrationAfterTooling }}
+      integrationEarly: ${{ steps.selection.outputs.integrationEarly || steps.changes.outputs.integrationEarly }}
       integrationSetup: ${{ steps.selection.outputs.integrationSetup || steps.changes.outputs.integrationSetup }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
     steps:
@@ -103,10 +103,15 @@ jobs:
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
+      # A pull request's merge commit has its base as first parent, so two commits compare it exactly. A merge
+      # group rebases every queued commit onto its base, so only the whole history reaches that base; without
+      # file contents that history stays small. An unreachable base would force the complete suite and a
+      # whole-tree lint on every multi-commit pull request in the queue.
       - name: Checkout the exact comparison history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: ${{ github.event_name != 'merge_group' && 2 || 0 }}
+          filter: blob:none
           persist-credentials: false
       - name: Classify the complete diff without app dependencies
         id: changes
@@ -125,12 +130,14 @@ jobs:
       # path nor recompute the diff. Publishing the planner's exact NUL-delimited list is the only way that
       # gate can lint the run's changed files. The list is empty whenever the comparison is unavailable
       # (full, docs and proven modes), so an empty file is a valid result and must not fail the upload.
+      # A re-run of this job replaces its own earlier upload instead of failing on the existing name.
       - name: Publish the exact changed-path list
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-changed-paths
           path: ${{ runner.temp }}/ci-changed-paths
           if-no-files-found: warn
+          overwrite: true
           retention-days: 1
       - name: Select the preinstalled Node runtime for dependency-free planning
         if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
@@ -143,6 +150,7 @@ jobs:
         working-directory: app
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
+          LINT_SWEEP: ${{ steps.changes.outputs.lintSweep }}
         run: |
           bash scripts/plan-ci-without-install.sh "$RUNNER_TEMP/ci-changed-paths"
 
@@ -241,19 +249,21 @@ jobs:
           key: ${{ steps.chromium-debs.outputs.key }}
 
   # Source checks start immediately after planning; they do not wait for Node artifacts.
+  # One install serves the compiler pass, the repository tooling tests and, beside them, the source and
+  # deployment contracts, which run in one process each.
   workspace-gate:
     name: ${{ matrix.name }}
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env: &source-check-environment
+    env:
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.source) }}
-    steps: &source-check-steps
+    steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -271,16 +281,16 @@ jobs:
           restore-typescript-build: ${{ matrix.typescript-build == true }}
           save-node-modules: ${{ matrix.typescript-build == true && github.ref != 'refs/heads/main' }}
 
-      - name: Run ${{ matrix.name }}
+      - name: Run the background commands of ${{ matrix.name }}
+        id: background-commands
+        background: true
+        if: matrix.background-commands != ''
         working-directory: app
         env:
-          COMMANDS: ${{ matrix.commands }}
-          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
-          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
-          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
+          COMMANDS: ${{ matrix.background-commands }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: |
+        run: &run-gate-commands |
           failed=()
           while IFS= read -r command; do
             [[ -n "$command" ]] || continue
@@ -297,23 +307,27 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  workspace-source-extra:
-    name: ${{ matrix.name }}
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env: *source-check-environment
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.sourceExtra) }}
-    steps: *source-check-steps
+      - name: Run ${{ matrix.name }}
+        working-directory: app
+        env:
+          COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: *run-gate-commands
 
+      # `wait` always runs, including on rows without background commands.
+      - name: Wait for the background commands
+        wait: background-commands
+
+  # Unit rows start on a freed slot: the build slots, then the lint, static and topology slots. A whole-tree
+  # lint holds its slot for minutes, so the planner moves that row behind the topology proof instead.
   workspace-unit:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: &unit-check-environment
@@ -361,27 +375,25 @@ jobs:
           ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: |
-          failed=()
-          while IFS= read -r command; do
-            [[ -n "$command" ]] || continue
-            echo "::group::$command"
-            started=$SECONDS
-            if ! mise exec -- bash -c "$command"; then
-              failed+=("$command")
-            fi
-            printf 'Command wall time: %ss — %s\n' "$((SECONDS - started))" "$command"
-            echo '::endgroup::'
-          done <<<"$COMMANDS"
-          for command in "${failed[@]}"; do
-            echo "::error title=Gate command failed::$command"
-          done
-          [[ ${#failed[@]} -eq 0 ]]
+        run: *run-gate-commands
+
+  workspace-unit-after-lint:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build, format-and-lint]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.format-and-lint.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterLint != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: *unit-check-environment
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterLint) }}
+    steps: *unit-check-steps
 
   workspace-unit-after-static:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, static-contracts]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterStatic != '[]' }}
+    needs: [ci-plan, node-artifact-build, static-contracts]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.static-contracts.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterStatic != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
@@ -391,17 +403,17 @@ jobs:
         include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterStatic) }}
     steps: *unit-check-steps
 
-  workspace-unit-after-browser:
+  workspace-unit-after-topology:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, service-integration-setup]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && (needs.service-integration-setup.result == 'success' || needs.service-integration-setup.result == 'skipped') && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterBrowser != '[]' }}
+    needs: [ci-plan, node-artifact-build, node-topology-proof]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-topology-proof.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterTopology != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterBrowser) }}
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterTopology) }}
     steps: *unit-check-steps
 
   # Independent source analyzers share this runner rather than delaying the third unit runner.
@@ -526,9 +538,10 @@ jobs:
   # It can only prove that already-committed files are formatted and linted, and the same lefthook hook
   # proves that at commit time, so it runs over the run's changed files instead of the whole tree. The one
   # real failure a changed-file sweep would miss is a changed formatter, linter or hook configuration,
-  # which reformats files nobody touched: that sweeps every tracked file, as do the nightly cron and any
-  # run whose exact diff is unavailable. ci-plan publishes the list; $RUNNER_TEMP is job-local and this
-  # job checks out at depth 1, so it can neither read that path nor recompute the diff.
+  # which reformats files nobody touched: ci-plan then selects a sweep of every tracked file, as it does
+  # for the nightly cron and any run whose exact diff is unavailable. ci-plan publishes the list;
+  # $RUNNER_TEMP is job-local and this job checks out at depth 1, so it can neither read that path nor
+  # recompute the diff.
   format-and-lint:
     name: Format, Lint, and Repository Tooling
     needs: [ci-plan]
@@ -567,10 +580,19 @@ jobs:
           mise exec -- pnpm api:check:ontos
           mise exec -- pnpm test:generation
 
+      - name: Check lint rules and shared contract types
+        id: lint-rule-checks
+        background: true
+        working-directory: app
+        run: |
+          mise exec -- pnpm typecheck:lint-rules
+          mise exec -- pnpm test:lint-rules
+          mise exec -- pnpm lint:repository-policy
+          mise exec -- pnpm --filter ./packages/shared-contracts test:types
+
       - name: Format and Lint the run's changed files through the pre-commit hook
         env:
-          FULL_SWEEP: ${{ github.event_name == 'schedule' }}
-          PLAN_MODE: ${{ needs.ci-plan.outputs.mode }}
+          LINT_SWEEP: ${{ needs.ci-plan.outputs.lintSweep }}
         run: |
           changed="$RUNNER_TEMP/ci-plan/ci-changed-paths"
           files="$RUNNER_TEMP/hook-files"
@@ -580,42 +602,25 @@ jobs:
             echo "::error title=No changed-path list::ci-plan published no changed-path list, so this gate cannot prove anything."
             exit 1
           fi
-          sweep=changed
-          paths=()
-          while IFS= read -r -d '' path; do
-            paths+=("$path")
-            # A formatter, linter or hook configuration reformats files nobody touched: the one real
-            # failure a changed-file sweep would miss.
-            if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|oxfmt|lefthook)[^/]*$ ||
-              "$path" == app/tools/oxlint/* || "$path" == app/patches/* ||
-              "$path" =~ ^app/tsconfig[^/]*\.json$ ||
-              "$path" == app/pnpm-lock.yaml || "$path" == app/pnpm-workspace.yaml || "$path" == app/.mise.toml ]]; then
-              sweep=all
-              echo "::notice title=Tool configuration changed::$path changes a formatter, linter or hook configuration; every tracked file is linted."
-            fi
-          done <"$changed"
-          if [[ "$FULL_SWEEP" == true ]]; then
-            sweep=all
-            echo 'The nightly run lints every tracked file.'
-          elif [[ ${#paths[@]} -eq 0 ]]; then
-            # plan-ci-changes.sh writes an empty list exactly when the exact comparison is unavailable.
-            if [[ "$PLAN_MODE" == affected ]]; then
-              echo "::error title=Empty changed-path list::Affected mode selected this gate with an empty changed-path list, so it would prove nothing."
+          case "$LINT_SWEEP" in
+            all)
+              echo 'ci-plan selected a sweep of every tracked file.'
+              git ls-files -z >"$files"
+              ;;
+            changed)
+              if [[ ! -s "$changed" ]]; then
+                echo "::error title=Empty changed-path list::ci-plan selected a changed-file lint with an empty list, so it would prove nothing."
+                exit 1
+              fi
+              # A path the diff deleted, or that this commit does not track, has nothing to check.
+              xargs -0 git ls-files -z -- <"$changed" >"$files"
+              ;;
+            *)
+              echo "::error title=Unknown lint sweep::ci-plan selected '$LINT_SWEEP'."
               exit 1
-            fi
-            sweep=all
-            echo "The exact diff is unavailable in '$PLAN_MODE' mode; every tracked file is linted."
-          elif [[ ${#paths[@]} -gt 2000 ]]; then
-            sweep=all
-            echo "${#paths[@]} changed paths exceed one argument list; every tracked file is linted instead."
-          fi
-          if [[ "$sweep" == all ]]; then
-            git ls-files -z >"$files"
-          else
-            # A path the diff deleted, or that this commit does not track, has nothing to check.
-            git ls-files -z -- "${paths[@]}" >"$files"
-          fi
-          if [[ "$sweep" == all ]]; then
+              ;;
+          esac
+          if [[ "$LINT_SWEEP" == all ]]; then
             # Directory arguments keep one linter process and one program per tsconfig, not one per
             # Lefthook argument chunk. Use the same formatter, configuration and rules as the hook.
             mise exec --cd app -- pnpm format:check
@@ -626,26 +631,23 @@ jobs:
           fi
           git diff --exit-code HEAD
 
-      - name: Check lint rules and shared contract types
-        working-directory: app
-        run: |
-          mise exec -- pnpm typecheck:lint-rules
-          mise exec -- pnpm test:lint-rules
-          mise exec -- pnpm lint:repository-policy
-          mise exec -- pnpm --filter ./packages/shared-contracts test:types
+      - name: Wait for lint rule checks
+        wait: lint-rule-checks
 
       - name: Wait for API and generator checks
         wait: generator-checks
 
   # The database/browser producer publishes a fresh migrated baseline before its browser tests.
-  # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
-  # While builds finish: 11 owners + 2 builds + 2 source + browser + static = 17.
-  # Two unit rows and topology use the two finished build slots and the idle slot.
-  # Short owner rows replace source checks; short unit rows replace browser and static.
+  # Consumers restore isolated clusters from that same-run archive instead of migrating per row.
+  # Runner budget, at most 17 of the organisation's 20 hosted jobs, leaving the pull request's Quality
+  # Audit a slot: while the builds run, 6 builds + lint + source + static + browser + topology + 6 early
+  # owner rows = 17. The early rows and the topology proof install, start services and wait for this
+  # run's uploads inside the job. Each later job takes exactly one finished job's slot: 5 owner rows and
+  # one unit row take the 6 build slots, and one unit row each takes the lint, static and topology slots.
   node-topology-proof:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -695,15 +697,19 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # Bootstrap already waits for every build. Start its network transfer before the independent
-      # fresh-database proofs, rather than adding storage-service latency after those proofs.
+      # Bootstrap starts with the builds. Its source-only migrator and outbox proofs run while this waits
+      # for every build shard of this run to upload, then transfers them; a failed shard fails it by name.
       - name: Prefetch the same-run bootstrap Node artifacts
         id: bootstrap-node-artifacts
         if: matrix.suite == 'bootstrap'
         background: true
+        working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+        run: |
+          bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 6
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'node-units-*' --dir "$RUNNER_TEMP/native-composition-units"
 
       # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
       # Only warm-caches on main saves it, so parallel jobs never race to save.
@@ -851,6 +857,7 @@ jobs:
         working-directory: app
         run: bash scripts/ci/export-integration-database.sh
 
+      # Browser tests run after this upload; a re-run of a failed browser job replaces its own archive.
       - name: Upload the migrated integration database
         if: matrix.suite == 'browser' || matrix.suite == 'database'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -859,6 +866,7 @@ jobs:
           path: ${{ runner.temp }}/integration-database
           compression-level: 0
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
       # Stage-shaped: the host is materialized by its zerops.yaml build command, ships only its
@@ -872,11 +880,13 @@ jobs:
           SPICEDB_DATABASE_PASSWORD: spicedb
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
+      # Early rows poll from their install until the archive lands, about 1.5 minutes later.
       - name: Wait for the same-run migrated database archive
         if: matrix.suite == 'integration'
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
           WAIT_FOR_BUILD_UPLOAD_STEP: Upload the migrated integration database
         run: bash scripts/wait-for-build-shards.sh 'Prepare integration database' 1
 
@@ -902,7 +912,8 @@ jobs:
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 7
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '10'
+        run: bash scripts/wait-for-build-shards.sh 'Build node artifacts (' 6
 
       # Native receiving fixtures and Inventory workers use genuine published owner metadata, and the
       # proof row derives the whole Composition from every delivery unit.
@@ -976,15 +987,8 @@ jobs:
           APP_ENV_PATH: /dev/null
           SPICEDB_DATABASE_PASSWORD: spicedb
           INTEGRATION_TASKS: ${{ toJSON(matrix.tasks) }}
-          PACKAGE_FILTERS: ${{ matrix.package-filters }}
-          PACKAGE_PARTITION: ${{ matrix.package-partition }}
-          NATIVE_PREPROPOSAL: ${{ matrix.native-preproposal }}
-          NATIVE_PREPROPOSAL_CASE: ${{ matrix.preproposal-case }}
-          ROOT_SUITE: ${{ matrix.root-suite }}
-          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ONTOS_CI_ISOLATED_WORKERS: '2'
           INTEGRATION_LANES: ${{ matrix.lanes }}
-          WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
 
@@ -1060,10 +1064,27 @@ jobs:
     env: *integration-environment
     steps: *integration-steps
 
+  # Early rows hold the longest proofs: they install and restore their clusters while the builds run.
+  service-integration-early:
+    name: ${{ matrix.name }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' && needs.ci-plan.outputs.integrationEarly != '[]' }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.integrationEarly) }}
+    env: *integration-environment
+    steps: *integration-steps
+
   service-integration:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, format-and-lint]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.format-and-lint.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1076,41 +1097,13 @@ jobs:
     env: *integration-environment
     steps: *integration-steps
 
-  service-integration-after-contracts:
-    name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, format-and-lint, workspace-source-extra]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.format-and-lint.result == 'success' && needs.workspace-source-extra.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' && needs.ci-plan.outputs.integrationAfterContracts != '[]' }}
-    permissions:
-      actions: read
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.integrationAfterContracts) }}
-    env: *integration-environment
-    steps: *integration-steps
-
-  service-integration-after-tooling:
-    name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, format-and-lint, workspace-gate]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.format-and-lint.result == 'success' && needs.workspace-gate.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' && needs.ci-plan.outputs.integrationAfterTooling != '[]' }}
-    permissions:
-      actions: read
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.integrationAfterTooling) }}
-    env: *integration-environment
-    steps: *integration-steps
-
-  # Release identities and compiler outputs are built from this exact commit.
+  # Release identities and compiler outputs are built from this exact commit. Each shard builds two units at
+  # a time; shards are packed by measured unit build time (seconds, two builds sharing a runner): catalog 98,
+  # customer context 71, inventory 70, shell 68, symmy 66, pricing 55, market catalog 54, party 53,
+  # assortment 50, projects 41, tax 38, price group 38, order 37, payment 37, promotion 35, privacy 35,
+  # payment term 34, storefront 31, cart 27, availability 19.
   node-artifact-build:
-    name: Build node artifacts (${{ matrix.shard }}/7)
+    name: Build node artifacts (${{ matrix.shard }}/6)
     needs: [ci-plan]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
@@ -1118,18 +1111,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 3, 4, 6, 7]
+        shard: [1, 2, 3, 4, 5, 6]
         include:
-          - { shard: 1, units: verticals/price-group-catalog verticals/tax verticals/commerce-order }
-          - { shard: 3, units: verticals/privacy verticals/availability }
-          - { shard: 4, units: verticals/party-registry verticals/promotion }
-          - { shard: 6, units: verticals/commerce-market-catalog verticals/pricing verticals/commerce-cart }
-          - { shard: 7, units: apps/shell-super-app verticals/symmy-integration }
-    env: &node-build-environment
+          - { shard: 1, units: verticals/catalog verticals/commerce-customer-context verticals/availability }
+          - { shard: 2, units: verticals/inventory apps/shell-super-app verticals/commerce-cart }
+          - { shard: 3, units: verticals/symmy-integration verticals/pricing verticals/payment-term-catalog }
+          - { shard: 4, units: verticals/commerce-market-catalog verticals/party-registry verticals/privacy }
+          - { shard: 5, units: verticals/assortment verticals/commerce-order verticals/promotion verticals/payment }
+          - { shard: 6, units: verticals/price-group-catalog verticals/tax verticals/projects verticals/storefront-registry }
+    env:
       NODE_COMPILE_CACHE: /tmp/ontos-node-compile-cache
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-    steps: &node-build-steps
+    steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -1179,22 +1173,6 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
-
-  node-artifact-build-remaining:
-    name: Build node artifacts (${{ matrix.shard }}/7)
-    needs: [ci-plan]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [2, 5]
-        include:
-          - { shard: 2, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry verticals/commerce-customer-context verticals/projects }
-          - { shard: 5, units: verticals/catalog verticals/inventory verticals/assortment }
-    env: *node-build-environment
-    steps: *node-build-steps
 
   cloudflare-artifact-build:
     name: Build cloudflare artifacts (${{ matrix.shard }}/5)
@@ -1442,17 +1420,15 @@ jobs:
         queue-proof,
         ci-plan,
         workspace-gate,
-        workspace-source-extra,
         workspace-unit,
+        workspace-unit-after-lint,
         workspace-unit-after-static,
-        workspace-unit-after-browser,
+        workspace-unit-after-topology,
         static-contracts,
         format-and-lint,
         service-integration,
+        service-integration-early,
         node-artifact-build,
-        service-integration-after-contracts,
-        service-integration-after-tooling,
-        node-artifact-build-remaining,
         node-topology-proof,
         service-integration-setup,
       ]

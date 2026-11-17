@@ -41,7 +41,28 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
   fi
 fi
 
+# A formatter, linter or hook configuration reformats or re-lints files nobody touched: the one real
+# failure a changed-file lint would miss. Such a run, the nightly run and any run without the exact
+# changed-path list lint every tracked file. The planner reads this to keep the lint slot's successors off
+# a sweep that holds it for minutes.
+lint_sweep=changed
+changed=0
+while IFS= read -r -d '' path; do
+  changed=$((changed + 1))
+  if [[ "$path" =~ (^|/)[^/]*(prettier|oxlint|oxfmt|lefthook)[^/]*$ ||
+    "$path" == app/tools/oxlint/* || "$path" == app/patches/* ||
+    "$path" =~ ^app/tsconfig[^/]*\.json$ ||
+    "$path" == app/pnpm-lock.yaml || "$path" == app/pnpm-workspace.yaml || "$path" == app/.mise.toml ]]; then
+    lint_sweep=all
+  fi
+done <"$paths_file"
+# 2000 paths exceed one lefthook argument list.
+if [[ "${GITHUB_EVENT_NAME:-}" == schedule || "$changed" -eq 0 || "$changed" -gt 2000 ]]; then
+  lint_sweep=all
+fi
+
 printf 'mode=%s\n' "$mode" >>"$GITHUB_OUTPUT"
+printf 'lintSweep=%s\n' "$lint_sweep" >>"$GITHUB_OUTPUT"
 printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
 if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
@@ -49,6 +70,6 @@ if [[ "$mode" == docs || "$mode" == proven ]]; then
     "format-and-lint":"skipped", "service-integration":"skipped",
     "node-artifact-build":"skipped"
   }' | sed 's/^/expected=/' >>"$GITHUB_OUTPUT"
-  printf 'source=[]\nsourceExtra=[]\nunit=[]\nunitAfterStatic=[]\nunitAfterBrowser=[]\nintegration=[]\nintegrationAfterContracts=[]\nintegrationAfterTooling=[]\nintegrationSetup=[]\nintegrationTopology=[]\n' >>"$GITHUB_OUTPUT"
+  printf 'source=[]\nunit=[]\nunitAfterLint=[]\nunitAfterStatic=[]\nunitAfterTopology=[]\nintegration=[]\nintegrationEarly=[]\nintegrationSetup=[]\nintegrationTopology=[]\n' >>"$GITHUB_OUTPUT"
 fi
 printf '%s\n' "$reason"
