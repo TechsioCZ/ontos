@@ -114,11 +114,15 @@ const exactDeadlinePurpose = 'stabilization-1271-exact-obligation-deadline';
 const shellAuthPurpose = 'stabilization-1287-shell-auth';
 const assortmentAuthorizationPurpose = 'implementation-1290-assortment-authorization';
 const retainedPrivacyPurpose = 'stabilization-1258-privacy-drain';
+const preproposalSourcePurpose = 'implementation-1290-preproposal-native-source';
 type IsolatedNativeDatabaseInput = (
   | {
       readonly compositionSnapshot?: never;
       readonly mode: typeof schemaOnly;
-      readonly purpose: typeof browserCompositionPurpose | typeof retainedPrivacyPurpose;
+      readonly purpose:
+        | typeof browserCompositionPurpose
+        | typeof retainedPrivacyPurpose
+        | typeof preproposalSourcePurpose;
     }
   | {
       readonly compositionSnapshot: ActiveApplicationCompositionSnapshot;
@@ -226,6 +230,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
     ? [
         browserCompositionPurpose,
         retainedPrivacyPurpose,
+        preproposalSourcePurpose,
         'stabilization-1196-product-create',
         'implementation-1126-group-definition',
         'implementation-1134-inventory-source-import-receipt',
@@ -345,9 +350,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     }
     const ownedPurpose = input.purpose;
     const snapshot =
-      input.mode === schemaOnly &&
-      input.purpose !== browserCompositionPurpose &&
-      input.purpose !== retainedPrivacyPurpose
+      input.mode === schemaOnly && input.compositionSnapshot !== undefined
         ? yield* validateActiveApplicationCompositionSnapshot(input.compositionSnapshot).pipe(
             Effect.mapError((cause) => unavailable('Invalid isolated test composition', cause)),
           )
