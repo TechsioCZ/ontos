@@ -14,6 +14,7 @@ const CommandEntrySchema = Schema.Struct({
   'typescript-build': Schema.optionalKey(Schema.Boolean),
 });
 const IntegrationEntrySchema = Schema.Struct({
+  'after-source': Schema.optionalKey(Schema.Literals(['contracts', 'tooling'])),
   lanes: Schema.optionalKey(Schema.Literals([2, 4])),
   name: Schema.String,
   'native-composition': Schema.optionalKey(Schema.Boolean),
@@ -187,6 +188,8 @@ const cli = Command.make(
       const encoded = yield* Effect.all({
         expected: encode(plan.expected),
         integration: encode(phases.work),
+        integrationAfterContracts: encode(phases.afterContracts),
+        integrationAfterTooling: encode(phases.afterTooling),
         integrationSetup: encode(phases.preparation),
         integrationTopology: encode(phases.topology),
         source: encode(plan.source.filter((row) => row['typescript-build'] === true)),

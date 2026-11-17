@@ -27,8 +27,27 @@ it('prepares the database even when browser tests are not selected, without addi
   const phases = integrationPhases(templates.integration.filter(({ suite }) => suite !== 'browser'));
   expect(phases.preparation).toEqual([{ name: 'Prepare integration database', suite: 'database' }]);
   expect(phases.topology).toEqual(templates.integration.filter(({ suite }) => suite === 'bootstrap'));
-  expect(phases.work).toEqual(templates.integration.filter((entry) => entry.suite === 'integration'));
-  expect(integrationPhases([])).toEqual({ preparation: [], topology: [], work: [] });
+  expect(phases.work).toEqual(
+    templates.integration.filter((entry) => entry.suite === 'integration' && entry['after-source'] === undefined),
+  );
+  expect(phases.afterContracts).toEqual(templates.integration.filter((entry) => entry['after-source'] === 'contracts'));
+  expect(phases.afterTooling).toEqual(templates.integration.filter((entry) => entry['after-source'] === 'tooling'));
+  expect(integrationPhases([])).toEqual({
+    afterContracts: [],
+    afterTooling: [],
+    preparation: [],
+    topology: [],
+    work: [],
+  });
+});
+
+it('promotes a lone deferred integration selection into the required integration gate', () => {
+  const selected = templates.integration.filter((entry) => entry['after-source'] === 'tooling');
+  expect(selected).toHaveLength(1);
+  const phases = integrationPhases(selected);
+  expect(phases.work).toEqual(selected);
+  expect(phases.afterContracts).toEqual([]);
+  expect(phases.afterTooling).toEqual([]);
 });
 const CATALOG = '@app/catalog';
 const PRICING = '@app/pricing';
@@ -81,6 +100,18 @@ const workspacePackages = ['apps', 'packages', 'verticals'].flatMap((area) =>
 const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) => directory)]);
 const selectedDirectories = (filters: string) =>
   matchingPackages(filters, workspacePackages).map(({ directory }) => directory);
+
+it('preserves the authored worker budget when affected selection narrows package filters', () => {
+  const pricing = templates.unit.find((row) => row['after-preparation'] === true);
+  expect(pricing).toBeDefined();
+  const plan = planCiChecks({
+    changedPaths: ['app/verticals/pricing/src/service.ts'],
+    packages: workspacePackages,
+    templates,
+  });
+  expect(plan.mode).toBe('affected');
+  expect(plan.unit).toEqual([pricing]);
+});
 
 it('selects owner and transitive consumer tests without selecting an unrelated owner', () => {
   const plan = planCiChecks({ changedPaths: [CATALOG_SOURCE], packages, templates });
@@ -430,7 +461,14 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       };
       const documentationPlan = run('pull_request');
       expect(documentationPlan).toContain('mode=docs\n');
-      for (const helper of ['sourceExtra', 'unitAfterPreparation', 'integrationSetup', 'integrationTopology']) {
+      for (const helper of [
+        'sourceExtra',
+        'unitAfterPreparation',
+        'integrationSetup',
+        'integrationTopology',
+        'integrationAfterContracts',
+        'integrationAfterTooling',
+      ]) {
         expect(documentationPlan).toContain(`${helper}=[]\n`);
       }
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');

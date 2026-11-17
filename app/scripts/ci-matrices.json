@@ -15,7 +15,7 @@
       "name": "Workspace Unit and Component Tests (1/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/commerce-customer-context --filter ./packages/core-runtime --filter ./verticals/party-registry --filter ./verticals/payment --filter ./verticals/commerce-market-catalog run test:unit --pool.maxWorkers 1\npnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/commerce-customer-context --filter ./packages/core-runtime --filter ./verticals/party-registry --filter ./verticals/payment --filter ./verticals/commerce-market-catalog run test:component --pool.maxWorkers 1\n"
+      "commands": "pnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/commerce-customer-context --filter ./packages/core-runtime --filter ./verticals/party-registry --filter ./verticals/payment --filter ./verticals/commerce-market-catalog --filter ./verticals/price-group-catalog --filter ./verticals/payment-term-catalog --filter ./verticals/storefront-registry --filter ./verticals/commerce-cart --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/storefront-registry-contracts --filter ./verticals/projects --filter ./verticals/promotion --filter ./packages/price-group-catalog-contracts --filter ./packages/email-delivery --filter ./packages/better-auth-effect-drizzle --filter ./packages/commerce-order-contracts --filter ./packages/shared-design-tokens --filter ./packages/pricing-contracts --filter ./verticals/commerce-order --filter ./verticals/assortment --filter ./verticals/availability --filter ./packages/shared-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/catalog-selection-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts run test:unit --pool.maxWorkers 1\npnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/commerce-customer-context --filter ./packages/core-runtime --filter ./verticals/party-registry --filter ./verticals/payment --filter ./verticals/commerce-market-catalog --filter ./verticals/price-group-catalog --filter ./verticals/payment-term-catalog --filter ./verticals/storefront-registry --filter ./verticals/commerce-cart --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/storefront-registry-contracts --filter ./verticals/projects --filter ./verticals/promotion --filter ./packages/price-group-catalog-contracts --filter ./packages/email-delivery --filter ./packages/better-auth-effect-drizzle --filter ./packages/commerce-order-contracts --filter ./packages/shared-design-tokens --filter ./packages/pricing-contracts --filter ./verticals/commerce-order --filter ./verticals/assortment --filter ./verticals/availability --filter ./packages/shared-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/catalog-selection-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts run test:component --pool.maxWorkers 1\n"
     },
     {
       "name": "Workspace Unit and Component Tests (2/3)",
@@ -27,7 +27,7 @@
       "name": "Workspace Unit and Component Tests (3/3)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/pricing --filter ./verticals/price-group-catalog --filter ./verticals/payment-term-catalog --filter ./verticals/storefront-registry --filter ./verticals/commerce-cart --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/storefront-registry-contracts --filter ./verticals/projects --filter ./verticals/promotion --filter ./packages/price-group-catalog-contracts --filter ./packages/email-delivery --filter ./packages/better-auth-effect-drizzle --filter ./packages/commerce-order-contracts --filter ./packages/shared-design-tokens --filter ./packages/pricing-contracts --filter ./verticals/commerce-order --filter ./verticals/assortment --filter ./verticals/availability --filter ./packages/shared-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/catalog-selection-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts run test:unit --pool.maxWorkers 2\npnpm -r --no-sort --workspace-concurrency=2 --if-present --filter ./verticals/pricing --filter ./verticals/price-group-catalog --filter ./verticals/payment-term-catalog --filter ./verticals/storefront-registry --filter ./verticals/commerce-cart --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/storefront-registry-contracts --filter ./verticals/projects --filter ./verticals/promotion --filter ./packages/price-group-catalog-contracts --filter ./packages/email-delivery --filter ./packages/better-auth-effect-drizzle --filter ./packages/commerce-order-contracts --filter ./packages/shared-design-tokens --filter ./packages/pricing-contracts --filter ./verticals/commerce-order --filter ./verticals/assortment --filter ./verticals/availability --filter ./packages/shared-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/catalog-selection-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts run test:component --pool.maxWorkers 2\n",
+      "commands": "pnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing run test:unit --pool.maxWorkers 4\npnpm -r --no-sort --workspace-concurrency=1 --if-present --filter ./verticals/pricing run test:component --pool.maxWorkers 4\n",
       "after-preparation": true
     }
   ],
@@ -38,7 +38,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (1/12)",
+      "name": "Owner Integration (1/14)",
       "native-composition": true,
       "root-suite": false,
       "package-filters": "--filter ./verticals/privacy --filter ./verticals/promotion --filter ./verticals/commerce-customer-context --filter ./verticals/symmy-integration --filter ./verticals/commerce-market-catalog",
@@ -57,7 +57,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (2/12)",
+      "name": "Owner Integration (2/14)",
       "native-composition": true,
       "root-suite": false,
       "package-filters": "--filter ./verticals/party-registry --filter ./verticals/payment --filter ./packages/core-runtime --filter ./verticals/catalog --filter ./apps/shell-super-app --filter ./verticals/symmy-integration --filter ./verticals/tax --filter ./verticals/inventory --filter ./verticals/commerce-customer-context --filter ./verticals/commerce-market-catalog --filter ./verticals/assortment",
@@ -94,7 +94,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (3/12)",
+      "name": "Owner Integration (3/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/pricing --filter ./verticals/commerce-customer-context --filter ./apps/shell-super-app --filter ./verticals/commerce-order --filter ./verticals/inventory --filter ./verticals/tax --filter ./verticals/assortment",
@@ -129,18 +129,16 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (4/12)",
+      "name": "Owner Integration (4/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./packages/core-runtime --filter ./verticals/payment --filter ./apps/shell-super-app --filter ./verticals/catalog --filter ./verticals/symmy-integration --filter ./verticals/commerce-customer-context --filter ./verticals/payment-term-catalog --filter ./verticals/storefront-registry",
       "lanes": 2,
       "tasks": [
         "root:9/40",
-        "./packages/core-runtime#1/4",
         "./verticals/commerce-market-catalog#1/4",
         "./verticals/commerce-market-catalog#3/4",
         "./verticals/payment#1/4",
-        "./verticals/catalog#2/4",
         "./apps/shell-super-app#8/8",
         "./verticals/commerce-customer-context#50/56",
         "./verticals/symmy-integration#2/4",
@@ -155,7 +153,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (5/12)",
+      "name": "Owner Integration (5/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/commerce-customer-context --filter ./verticals/price-group-catalog --filter ./verticals/pricing",
@@ -164,8 +162,6 @@
         "./apps/shell-super-app#3/8",
         "root:23/40",
         "./verticals/pricing#4/4",
-        "root:10/40",
-        "root:17/40",
         "whole:pricing",
         "root:20/40",
         "./verticals/commerce-customer-context#46/56",
@@ -182,7 +178,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (6/12)",
+      "name": "Owner Integration (6/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/party-registry --filter ./verticals/pricing --filter ./verticals/commerce-customer-context --filter ./verticals/payment-term-catalog",
@@ -190,10 +186,7 @@
       "tasks": [
         "./apps/shell-super-app#2/8",
         "root:7/40",
-        "./verticals/commerce-customer-context#29/56",
-        "./verticals/party-registry#2/4",
         "./apps/shell-super-app#1/8",
-        "./verticals/pricing#1/4",
         "./verticals/commerce-customer-context#28/56",
         "./verticals/commerce-customer-context#22/56",
         "./verticals/commerce-customer-context#44/56",
@@ -205,7 +198,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (7/12)",
+      "name": "Owner Integration (7/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/inventory --filter ./verticals/commerce-order --filter ./verticals/projects",
@@ -213,10 +206,6 @@
       "tasks": [
         "./verticals/commerce-customer-context#41/56",
         "./verticals/privacy#5/8",
-        "./verticals/inventory#2/4",
-        "./verticals/commerce-customer-context#17/56",
-        "./verticals/commerce-customer-context#23/56",
-        "./verticals/privacy#6/8",
         "root:18/40",
         "./verticals/commerce-customer-context#51/56",
         "root:16/40",
@@ -228,7 +217,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (8/12)",
+      "name": "Owner Integration (8/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./packages/core-runtime --filter ./verticals/payment --filter ./verticals/privacy --filter ./verticals/commerce-customer-context --filter ./verticals/assortment --filter ./verticals/tax",
@@ -252,7 +241,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (9/12)",
+      "name": "Owner Integration (9/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/commerce-customer-context --filter ./apps/shell-super-app --filter ./verticals/catalog --filter ./verticals/privacy --filter ./verticals/party-registry --filter ./verticals/pricing",
@@ -278,7 +267,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (10/12)",
+      "name": "Owner Integration (10/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry --filter ./verticals/inventory --filter ./verticals/tax --filter ./verticals/price-group-catalog --filter ./verticals/payment-term-catalog",
@@ -302,7 +291,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (11/12)",
+      "name": "Owner Integration (11/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/payment --filter ./verticals/symmy-integration --filter ./verticals/price-group-catalog",
@@ -316,9 +305,7 @@
         "./verticals/commerce-customer-context#31/56",
         "root:5/40",
         "./verticals/commerce-customer-context#45/56",
-        "./verticals/commerce-customer-context#25/56",
         "./verticals/symmy-integration#3/4",
-        "./verticals/commerce-customer-context#36/56",
         "./verticals/price-group-catalog#2/4",
         "./verticals/commerce-customer-context#54/56"
       ],
@@ -326,7 +313,7 @@
     },
     {
       "suite": "integration",
-      "name": "Owner Integration (12/12)",
+      "name": "Owner Integration (12/14)",
       "native-composition": true,
       "root-suite": true,
       "package-filters": "--filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry --filter ./apps/shell-super-app --filter ./verticals/price-group-catalog",
@@ -337,8 +324,6 @@
         "./verticals/catalog#1/4",
         "root:2/40",
         "./verticals/party-registry#3/4",
-        "./verticals/commerce-customer-context#32/56",
-        "./verticals/commerce-customer-context#3/56",
         "root:3/40",
         "./apps/shell-super-app#7/8",
         "root:4/40",
@@ -352,6 +337,43 @@
     {
       "suite": "browser",
       "name": "Authenticated Browser Tests"
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (13/14)",
+      "after-source": "contracts",
+      "native-composition": true,
+      "root-suite": false,
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/commerce-customer-context --filter ./verticals/party-registry --filter ./verticals/catalog --filter ./verticals/pricing",
+      "lanes": 2,
+      "tasks": [
+        "./packages/core-runtime#1/4",
+        "./verticals/commerce-customer-context#29/56",
+        "./verticals/party-registry#2/4",
+        "./verticals/commerce-customer-context#32/56",
+        "./verticals/catalog#2/4",
+        "./verticals/commerce-customer-context#3/56",
+        "./verticals/pricing#1/4"
+      ]
+    },
+    {
+      "suite": "integration",
+      "name": "Owner Integration (14/14)",
+      "after-source": "tooling",
+      "native-composition": true,
+      "root-suite": false,
+      "package-filters": "--filter ./verticals/inventory --filter ./verticals/commerce-customer-context --filter ./verticals/privacy",
+      "lanes": 2,
+      "tasks": [
+        "root:10/40",
+        "root:17/40",
+        "./verticals/inventory#2/4",
+        "./verticals/commerce-customer-context#17/56",
+        "./verticals/commerce-customer-context#23/56",
+        "./verticals/privacy#6/8",
+        "./verticals/commerce-customer-context#25/56",
+        "./verticals/commerce-customer-context#36/56"
+      ]
     }
   ]
 }

@@ -10,17 +10,20 @@ export interface CiWorkspacePackage {
   readonly uncertain?: boolean;
 }
 
-/** Source preparation and topology proofs are independent of artifact-consuming test work. */
+/** Partition selected integration work by the completed check slots it reuses. */
 export const integrationPhases = (entries: readonly IntegrationEntry[]) => {
   const browser = entries.filter(({ suite }) => suite === 'browser');
-  const work = entries.filter(({ suite }) => suite === 'integration');
+  const suites = entries.filter(({ suite }) => suite === 'integration');
+  const work = suites.filter((entry) => entry['after-source'] === undefined);
   return {
+    afterContracts: work.length === 0 ? [] : suites.filter((entry) => entry['after-source'] === 'contracts'),
+    afterTooling: work.length === 0 ? [] : suites.filter((entry) => entry['after-source'] === 'tooling'),
     preparation:
       entries.length === 0 || browser.length > 0
         ? browser
         : [{ name: 'Prepare integration database', suite: 'database' as const }],
     topology: entries.filter(({ suite }) => suite === 'bootstrap'),
-    work,
+    work: work.length === 0 ? suites : work,
   };
 };
 
@@ -213,12 +216,7 @@ export const planCiChecks = (input: {
     return [
       {
         ...entry,
-        commands: ['test:unit', 'test:component']
-          .map(
-            (script) =>
-              `pnpm -r --no-sort --workspace-concurrency=4 --if-present ${filters} run ${script} --pool.maxWorkers 1`,
-          )
-          .join('\n'),
+        commands: entry.commands.replaceAll(/(?:--filter\s+\S+\s*)+/gu, `${filters} `),
       },
     ];
   });
