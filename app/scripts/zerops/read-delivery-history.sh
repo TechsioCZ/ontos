@@ -4,7 +4,8 @@
 #
 #   GH_TOKEN=… GITHUB_REPOSITORY=… GITHUB_RUN_NUMBER=… GITHUB_SHA=… read-delivery-history.sh >history.json
 #
-#   runs         this workflow's latest runs on the stage branch (null when the list cannot be read)
+#   runs         this workflow's latest push and dispatch runs on the stage branch in this repository (null when the
+#                list cannot be read)
 #   mutations    for every earlier run after the newest successful one: whether any attempt reached the step that
 #                precedes every stage mutation (`mutated`, null when its jobs cannot be read), and the services its
 #                own plan artifact selected (`services`, null when the plan cannot be read or was not needed)
@@ -28,8 +29,11 @@ trap 'rm -rf "$work"' EXIT
 
 empty() { jq -n '{runs: null, mutations: [], comparison: null}'; }
 
+# Push and dispatch runs in this repository only: a pull request from a fork can name its branch demo/sales-crm and
+# run its own copy of this workflow, and both push and dispatch need write access here.
 if ! runs="$(gh api "$repository/actions/workflows/zerops-stage.yml/runs?branch=demo%2Fsales-crm&per_page=50" \
-  --jq '[.workflow_runs[] | {conclusion, head_branch, head_sha, id, path, run_attempt, run_number, status}]')" ||
+  --jq '[.workflow_runs[] | select((.event == "push" or .event == "workflow_dispatch") and .head_repository.id == .repository.id) |
+    {conclusion, head_branch, head_sha, id, path, run_attempt, run_number, status}]')" ||
   ! jq -e 'type == "array"' <<<"$runs" >/dev/null 2>&1; then
   echo 'the run history could not be read; every service deploys' >&2
   empty

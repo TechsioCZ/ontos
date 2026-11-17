@@ -25,9 +25,14 @@ inputs:
     default: ''
   keep-units:
     description: >-
-      Upload the packed unit builds as this run's zerops-units-0, so the next push lends them unit by unit ('true'
-      when no build matrix of this run uploaded its own).
+      Upload every unit build of this commit as this run's zerops-units-0, so the next push lends them unit by unit
+      ('true' when no build matrix of this run uploaded its own).
     default: 'false'
+  build-units:
+    description: >-
+      The units the app push leaves to the Zerops build (space-separated ids). With keep-units, they build on this
+      runner too while Zerops builds the app, so zerops-units-0 holds every unit of this commit.
+    default: ''
   upload-warmup:
     description: Share one warmed connection with the first upload of each service ('true' or 'false').
     default: 'false'
@@ -131,15 +136,67 @@ runs:
         ZEROPS_TOKEN: ${{ inputs.zerops-token }}
       run: bash app/scripts/zerops/app-boot-stages.sh start
 
-    # The exact archive this push carries, under the name the next run's front path reads (units.tar.zst).
-    - name: Name the pushed unit builds for the next push
-      if: inputs.app == 'true' && inputs.keep-units == 'true'
+    # The push has read its own copy of the unit archive by now (stage-push.sh start returns once Zerops builds). Set
+    # aside, it leaves the checkout clean for the unit builds below, and it is what the next push lends from.
+    - name: Set the pushed unit builds aside
+      if: inputs.app == 'true'
       shell: bash
       run: |
         mkdir -p "$RUNNER_TEMP/units-keep"
-        cp app/.zerops-prebuilt.tar.zst "$RUNNER_TEMP/units-keep/units.tar.zst"
+        mv app/.zerops-prebuilt.tar.zst "$RUNNER_TEMP/units-keep/units.tar.zst"
 
-    - name: Keep the pushed unit builds for the next push
+    # The unit and storefront builds and the verification need the whole workspace; the caller installed the root
+    # importer.
+    - name: Install the app workspace
+      shell: bash
+      working-directory: app
+      run: mise exec -- pnpm install --frozen-lockfile --trust-lockfile
+
+    # The next push lends every unit it has not changed from this run's zerops-units-0 (reuse-shard-units.sh
+    # take-units). The units this push left to the Zerops build exist only there, so they build here as well, while
+    # Zerops builds the app: without them the next push counts them as missing again, and they pile up push after push
+    # until a one-module change goes through the build matrix. Before the storefront builds, on a clean checkout (an
+    # untracked file makes every release identity `workspace`), with the identity step's declared build environment;
+    # each build must carry the identity this commit gives its unit, or the run fails here.
+    - name: Build the units the Zerops build builds, for the next push
+      if: inputs.app == 'true' && inputs.keep-units == 'true' && inputs.build-units != ''
+      shell: bash
+      working-directory: app
+      env:
+        DISTS: ${{ inputs.dists }}
+        UNITS: ${{ inputs.build-units }}
+        # Outside the checkout, like the build matrix's.
+        UNIT_CACHE_DIR: ${{ runner.temp }}/zerops-runner-unit-cache
+        ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+        ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
+        ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
+      run: |
+        dirty="$(git status --porcelain --untracked-files=all)"
+        if [ -n "$dirty" ]; then
+          echo '::error::the unit builds need a clean checkout of this commit:'
+          printf '%s\n' "$dirty" | head -40
+          exit 1
+        fi
+        # shellcheck disable=SC2086 # one unit id per word.
+        BUILD_JOBS=2 mise exec -- sh scripts/zerops/build-app.sh $UNITS
+        for unit in $UNITS; do
+          if [ "$unit" = shell-super-app ]; then dir=apps/shell-super-app; else dir="verticals/$unit"; fi
+          expected="$(awk -F '\t' -v unit="$unit" '$1 == unit { print $2 }' "$RUNNER_TEMP/zerops-unit-identities/digests.tsv")"
+          if [ -z "$expected" ] || [ "$(cat "$dir/dist/.zerops-build-digest")" != "$expected" ]; then
+            echo "::error::$unit was built here under another identity than the one this commit gives it"
+            exit 1
+          fi
+        done
+        # Packed as a build shard packs, then together with the units the push carried, as the push packed those.
+        # shellcheck disable=SC2086
+        bash scripts/zerops/reuse-shard-units.sh pack "$RUNNER_TEMP/zerops-runner-units.tar.zst" $UNITS
+        tar --extract --zstd --file "$RUNNER_TEMP/zerops-runner-units.tar.zst" -C "$DISTS"
+        sh scripts/zerops/pack-prebuilt-units.sh "$DISTS" "$RUNNER_TEMP/units-keep/units.tar.zst"
+
+    # Under the name the next run's front path reads (units.tar.zst).
+    - name: Keep this commit's unit builds for the next push
       if: inputs.app == 'true' && inputs.keep-units == 'true'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
@@ -149,12 +206,6 @@ runs:
         compression-level: 0
         overwrite: true
         retention-days: 3
-
-    # The storefront builds and the verification need the whole workspace; the caller installed the root importer.
-    - name: Install the app workspace
-      shell: bash
-      working-directory: app
-      run: mise exec -- pnpm install --frozen-lockfile --trust-lockfile
 
     # Webpack's compiler cache only speeds the build; its contents never decide what ships. The entry is named by the
     # storefront's own sources and the install, so a push that does not touch them saves nothing; a change saves once.

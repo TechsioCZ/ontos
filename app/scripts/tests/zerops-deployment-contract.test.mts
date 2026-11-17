@@ -582,6 +582,7 @@ it('declares no project-level variable that could carry a database credential', 
 
 const DeliveryStepSchema = Schema.Struct({
   'continue-on-error': Schema.optional(Schema.Boolean),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
   id: Schema.optional(Schema.String),
   if: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
@@ -680,6 +681,41 @@ it('keeps the worker only with its closure, all hosted identities, materializer 
   expect(digest).toContain('--app outbox-worker-host --package app --package-dir . --worker');
   expect(digest).toContain('scripts/materialize-outbox-worker.mjs');
   expect(digest).toContain('pnpm-lock.yaml');
+});
+
+it('keeps every unit of an app push for the next one, building those the Zerops build builds while the app deploys', () => {
+  const steps = deliverySteps();
+  const at = (predicate: (step: DeliveryStep) => boolean) => steps.findIndex(predicate);
+  const appPush = at(({ id }) => id === 'push-app');
+  const aside = at(({ name }) => name === 'Set the pushed unit builds aside');
+  const install = at(({ name }) => name === 'Install the app workspace');
+  const build = at(({ name }) => name === 'Build the units the Zerops build builds, for the next push');
+  const kept = at(({ with: options }) => options?.name === 'zerops-units-0');
+  const storefront = at(({ run }) => run?.includes('build-storefront.sh') === true);
+  const appWait = at(({ run }) => run === 'bash app/scripts/zerops/stage-push.sh wait app');
+  // After the app upload and before the wait for it, so off the delivery's critical path; on a clean checkout (the
+  // pushed archive set aside, no storefront build yet); kept only after the build.
+  expect(appPush).toBeGreaterThanOrEqual(0);
+  expect(aside).toBeGreaterThan(appPush);
+  expect(steps[aside]?.run).toContain('mv app/.zerops-prebuilt.tar.zst "$RUNNER_TEMP/units-keep/units.tar.zst"');
+  expect(install).toBeGreaterThan(aside);
+  expect(build).toBeGreaterThan(install);
+  expect(storefront).toBeGreaterThan(build);
+  expect(kept).toBeGreaterThan(build);
+  expect(appWait).toBeGreaterThan(kept);
+  expect(steps[build]?.run).toContain('git status --porcelain --untracked-files=all');
+  expect(steps[build]?.run).toContain('pack-prebuilt-units.sh "$DISTS" "$RUNNER_TEMP/units-keep/units.tar.zst"');
+  // The same declared build environment as the identity step, so each build carries this commit's identity.
+  const { deliver } = stageJobs();
+  const identities = deliver.steps.find(({ name }) => name === 'Write the unit identities and shard lists');
+  expect(Object.keys(identities?.env ?? {}).length).toBeGreaterThan(0);
+  for (const [variable, value] of Object.entries(identities?.env ?? {})) {
+    expect(steps[build]?.env?.[variable], variable).toBe(value);
+  }
+  expect(steps[build]?.run).toContain('zerops-unit-identities/digests.tsv');
+  // The units it builds are the ones the front path could not lend.
+  const delivery = deliver.steps.find(({ uses }) => uses === './.github/actions/deliver-stage');
+  expect(delivery?.with?.['build-units']).toBe(`\${{ steps.taken.outputs.missing }}`);
 });
 
 it('plans from the run history with only the root importer and a depth-1 checkout', () => {

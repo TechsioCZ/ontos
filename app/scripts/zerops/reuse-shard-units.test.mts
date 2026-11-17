@@ -532,53 +532,89 @@ const artifact = (id: number, branch: string, created: string, expired = false) 
   workflow_run: { head_branch: branch, id },
 });
 
-/** A `gh` stub that answers the artifact listing from $GH_ANSWER, or fails when it is empty. */
+/**
+ * A `gh` stub that answers this workflow's run listing from $GH_RUNS and the artifact listing from $GH_ANSWER, and
+ * fails like an unreachable API when its answer is empty.
+ */
 const fakeGh = `#!/usr/bin/env bash
-[ -n "\${GH_ANSWER:-}" ] || exit 1
+answer="\${GH_ANSWER:-}"
 jq_filter=''
 while [ "$#" -gt 0 ]; do
-  case "$1" in --jq) jq_filter="$2"; shift 2 ;; *) shift ;; esac
+  case "$1" in
+    --jq) jq_filter="$2"; shift 2 ;;
+    */actions/workflows/zerops-stage.yml/runs*) answer="\${GH_RUNS:-}"; shift ;;
+    *) shift ;;
+  esac
 done
-printf '%s' "$GH_ANSWER" | jq -r "$jq_filter"
+[ -n "$answer" ] || exit 1
+printf '%s' "$answer" | jq -r "$jq_filter"
 `;
 
-it.live('names the newest other unexpired run of the branch that holds unit builds, or nothing', () =>
-  Effect.gen(function* earlierRun() {
-    const fs = yield* FileSystem.FileSystem;
-    const { app, root } = yield* fixture({});
-    const bin = path.join(root, 'bin');
-    yield* fs.makeDirectory(bin);
-    yield* fs.writeFileString(path.join(bin, 'gh'), fakeGh);
-    yield* fs.chmod(path.join(bin, 'gh'), 0o700);
-    const searchPath = `${bin}:${yield* Config.String('PATH')}`;
-    // An empty answer makes the stub fail like an unreachable API.
-    const run = (answer = '') =>
-      collectToolingProcess(
-        ChildProcess.make('bash', [REUSE, 'earlier', BRANCH, '30'], {
-          cwd: app,
-          env: { GH_ANSWER: answer, GITHUB_REPOSITORY: 'owner/repo', PATH: searchPath },
-          extendEnv: true,
-        }),
-      );
-    const listing = {
-      artifacts: [
-        artifact(30, BRANCH, '2026-11-16T03:00:00Z'),
-        artifact(29, 'main', '2026-11-16T02:00:00Z'),
-        artifact(28, BRANCH, '2026-11-16T01:00:00Z'),
-        artifact(27, BRANCH, '2026-11-16T00:00:00Z'),
-        artifact(26, BRANCH, '2026-11-16T04:00:00Z', true),
-      ],
-    };
-    const found = yield* run(JSON.stringify(listing));
-    expect(found.status, found.stderr).toBe(0);
-    expect(found.stdout).toBe('run_id=28\n');
-    const none = yield* run(JSON.stringify({ artifacts: [artifact(30, BRANCH, '2026-11-16T03:00:00Z')] }));
-    expect(none.status).toBe(0);
-    expect(none.stdout).toBe('');
-    const failed = yield* run();
-    expect(failed.status).toBe(0);
-    expect(failed.stdout).toBe('');
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+const REPOSITORY_ID = 1;
+/** One entry of this workflow's run listing. */
+const workflowRun = (id: number, event = 'push', headRepository = REPOSITORY_ID, branch = BRANCH) => ({
+  event,
+  head_branch: branch,
+  head_repository: { id: headRepository },
+  id,
+  path: '.github/workflows/zerops-stage.yml',
+  repository: { id: REPOSITORY_ID },
+});
+
+it.live(
+  'names the newest other unexpired push or dispatch run of this workflow that holds unit builds, or nothing',
+  () =>
+    Effect.gen(function* earlierRun() {
+      const fs = yield* FileSystem.FileSystem;
+      const { app, root } = yield* fixture({});
+      const bin = path.join(root, 'bin');
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(path.join(bin, 'gh'), fakeGh);
+      yield* fs.chmod(path.join(bin, 'gh'), 0o700);
+      const searchPath = `${bin}:${yield* Config.String('PATH')}`;
+      const runs = {
+        workflow_runs: [
+          workflowRun(30),
+          workflowRun(28),
+          workflowRun(27, 'workflow_dispatch'),
+          workflowRun(26),
+          // A pull request from a fork whose branch is named like the stage branch, running its own copy of the workflow.
+          workflowRun(25, 'pull_request', 2),
+          workflowRun(24, 'pull_request'),
+        ],
+      };
+      // An empty answer makes the stub fail like an unreachable API.
+      const run = (artifacts = '', listed = JSON.stringify(runs)) =>
+        collectToolingProcess(
+          ChildProcess.make('bash', [REUSE, 'earlier', BRANCH, '30'], {
+            cwd: app,
+            env: { GH_ANSWER: artifacts, GH_RUNS: listed, GITHUB_REPOSITORY: 'owner/repo', PATH: searchPath },
+            extendEnv: true,
+          }),
+        );
+      const listing = {
+        artifacts: [
+          artifact(30, BRANCH, '2026-11-16T03:00:00Z'),
+          artifact(29, 'main', '2026-11-16T02:00:00Z'),
+          artifact(28, BRANCH, '2026-11-16T01:00:00Z'),
+          artifact(27, BRANCH, '2026-11-16T00:00:00Z'),
+          artifact(26, BRANCH, '2026-11-16T04:00:00Z', true),
+          artifact(25, BRANCH, '2026-11-16T05:00:00Z'),
+          artifact(24, BRANCH, '2026-11-16T05:00:00Z'),
+        ],
+      };
+      const found = yield* run(JSON.stringify(listing));
+      expect(found.status, found.stderr).toBe(0);
+      expect(found.stdout).toBe('run_id=28\n');
+      const none = yield* run(JSON.stringify({ artifacts: [artifact(30, BRANCH, '2026-11-16T03:00:00Z')] }));
+      expect(none.status).toBe(0);
+      expect(none.stdout).toBe('');
+      // Neither listing readable, or only the artifacts: no run is trusted, so none lends.
+      for (const failed of [yield* run(), yield* run(JSON.stringify(listing), '')]) {
+        expect(failed.status).toBe(0);
+        expect(failed.stdout).toBe('');
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.live(

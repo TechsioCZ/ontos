@@ -14,8 +14,9 @@
 # exits 3: the job installs and builds as before, and build-app.sh proves every kept unit again. The Zerops build
 # proves them a third time before it keeps them.
 #
-# `earlier` names the newest other run of <branch> that still holds unit builds (artifact zerops-units-0), from the
-# Actions API (GH_TOKEN with `actions: read`). No such run, or any API failure, prints nothing: the matrix builds.
+# `earlier` names the newest other push or dispatch run of this workflow on <branch>, in this repository, that still
+# holds unit builds (artifact zerops-units-0), from the Actions API (GH_TOKEN with `actions: read`). No such run, or any
+# API failure, prints nothing: the matrix builds.
 #
 # `take-units` is the delivery job's front path, unit by unit. Every unit of this commit's identity table that the
 # archives under <archives-dir> (an earlier run's unit builds, at any depth) hold exactly once, with its entry and the
@@ -88,11 +89,20 @@ reuse() {
 }
 
 earlier() {
-  local branch="$1" run_id="$2" found
-  found="$(BRANCH="$branch" RUN_ID="$run_id" gh api \
-    "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}/actions/artifacts?name=zerops-units-0&per_page=30" \
-    --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == env.BRANCH and
-      (.workflow_run.id | tostring) != env.RUN_ID)] | sort_by(.created_at) | last | .workflow_run.id // empty' \
+  local branch="$1" run_id="$2" repository trusted found
+  repository="repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+  # Only this workflow's own push and dispatch runs in this repository can lend units: a pull request from a fork can
+  # name its branch <branch> and upload an artifact called zerops-units-0 from a workflow of its own, and both push
+  # and dispatch need write access to this repository.
+  trusted="$(BRANCH="$branch" RUN_ID="$run_id" gh api --method GET "$repository/actions/workflows/zerops-stage.yml/runs" \
+    -f branch="$branch" -f per_page=50 \
+    --jq '[.workflow_runs[] | select((.event == "push" or .event == "workflow_dispatch") and
+      .head_repository.id == .repository.id and .head_branch == env.BRANCH and
+      .path == ".github/workflows/zerops-stage.yml" and (.id | tostring) != env.RUN_ID) | .id]' \
+    2>/dev/null)" || trusted='[]'
+  found="$(TRUSTED="$trusted" gh api "$repository/actions/artifacts?name=zerops-units-0&per_page=100" \
+    --jq '(env.TRUSTED | fromjson) as $trusted | [.artifacts[] | select(.expired == false and
+      (.workflow_run.id | IN($trusted[])))] | sort_by(.created_at) | last | .workflow_run.id // empty' \
     2>/dev/null)" || found=''
   if [[ "$found" =~ ^[0-9]+$ ]]; then
     echo "earlier unit builds: run $found" >&2

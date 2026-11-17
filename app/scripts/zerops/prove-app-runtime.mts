@@ -25,7 +25,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Console, Data, Duration, Effect, FileSystem, Match, Option, Schema, Stream } from 'effect';
+import { Clock, Console, Data, Duration, Effect, FileSystem, Match, Option, Schema, Stream } from 'effect';
 import { Command } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -41,8 +41,18 @@ export const RUNTIME_ENTRIES = ['scripts/zerops/app-host.mts', 'scripts/run-zero
 const WORKSPACE_PARENTS = ['apps', 'verticals', 'packages'] as const;
 /** Runtime files read at once by check 3 (one by one it took 40 s of the Zerops build over ~5100 files). */
 const FILE_CONCURRENCY = 32;
-/** Each entry's own import; a process of n entries gets n budgets. */
-const ENTRY_BUDGET = Duration.minutes(2);
+/**
+ * Each entry's own import, from the end of the one before it to its own record. The parent enforces it: an entry that
+ * blocks its process (a synchronous loop, a blocking child process) never lets a timer inside that process fire.
+ */
+export const ENTRY_BUDGET = Duration.minutes(2);
+/**
+ * After an entry ran over its budget, the entries after it import one process each, this many at a time: a hang in a
+ * module they share then costs one budget per round of four, not one per entry.
+ */
+const ALONE_CONCURRENCY = 4;
+/** How often the parent reads the results file for the next entry's record. */
+const RECORD_POLL = Duration.millis(200);
 const RESOLUTION_FAILURE =
   /ERR_RUNTIME_EXCLUDED|ERR_MODULE_NOT_FOUND|ERR_PACKAGE_PATH_NOT_EXPORTED|MODULE_NOT_FOUND|Cannot find (?:module|package)/u;
 
@@ -340,16 +350,17 @@ export const workspaceImportViolations = (root: string, entries: readonly string
 
 /**
  * Check 4's importer: imports its entries one after another, in this order, in one process, and appends one line per
- * entry to the results file as it ends: proven, failed (with the error as Node prints it) or over its own budget. An
- * error thrown or rejected outside an import (a timer, a promise nobody awaits) is recorded against the entry being
- * imported at the time. A process that ends early (an entry that exits it) leaves the rest without a line.
+ * entry to the results file as it ends: proven, or failed (with the error as Node prints it). An error thrown or
+ * rejected outside an import (a timer, a promise nobody awaits) is recorded against the entry being imported at the
+ * time. A process that ends early (an entry that exits it) or that the parent ends (an entry over its budget) leaves
+ * the rest without a line.
  *
- *   node --input-type=module --eval IMPORTER <results file> <budget ms> <entry URL>...
+ *   node --input-type=module --eval IMPORTER <results file> <entry URL>...
  */
 const IMPORTER = [
   "import { appendFileSync } from 'node:fs';",
   "import { inspect } from 'node:util';",
-  'const [results, budget, ...entries] = process.argv.slice(1);',
+  'const [results, ...entries] = process.argv.slice(1);',
   "let current = '';",
   'const record = (entry, outcome, reason) =>',
   String.raw`  appendFileSync(results, JSON.stringify({ entry, outcome, reason }) + '\n');`,
@@ -358,12 +369,7 @@ const IMPORTER = [
   "process.on('unhandledRejection', late);",
   'for (const entry of entries) {',
   '  current = entry;',
-  '  let timer;',
-  '  const [outcome, reason] = await Promise.race([',
-  "    import(entry).then(() => ['proven', ''], (cause) => ['failed', inspect(cause)]),",
-  "    new Promise((resolve) => { timer = setTimeout(() => resolve(['timeout', '']), Number(budget)); }),",
-  '  ]);',
-  '  clearTimeout(timer);',
+  "  const [outcome, reason] = await import(entry).then(() => ['proven', ''], (cause) => ['failed', inspect(cause)]);",
   '  record(entry, outcome, reason);',
   '}',
   'process.exit(0);',
@@ -372,50 +378,76 @@ const IMPORTER = [
 const ImportRecordSchema = Schema.fromJsonString(
   Schema.Struct({
     entry: Schema.String,
-    outcome: Schema.Literals(['proven', 'failed', 'timeout', 'late']),
+    outcome: Schema.Literals(['proven', 'failed', 'late']),
     reason: Schema.String,
   }),
 );
 type ImportRecord = typeof ImportRecordSchema.Type;
+const decodeRecord = Schema.decodeUnknownOption(ImportRecordSchema);
 
-const NOT_STARTED = { status: -1, stderr: 'could not be started' };
+const NOT_STARTED = { stalled: false, status: -1, stderr: 'could not be started' };
 
-/** One importer process over <entries> (file URLs); its exit status, its stderr and the lines it recorded. */
-const importProcess = (root: string, entries: readonly string[]) =>
+/** The complete lines of the results file: a line the importer was still writing when it ended is not one. */
+const completeLines = (text: string) => text.split('\n').slice(0, -1);
+
+/** How many entries the results so far have ended (proven or failed). */
+const endedEntries = (text: string) =>
+  completeLines(text).filter((line) => Option.exists(decodeRecord(line), ({ outcome }) => outcome !== 'late')).length;
+
+/** Succeeds once <results> has recorded no further entry for <budget>: the entry importing then is over its budget. */
+const stalled = (results: string, budget: Duration.Duration) =>
+  Effect.gen(function* stalledProgram() {
+    const fs = yield* FileSystem.FileSystem;
+    let ended = 0;
+    let since = yield* Clock.currentTimeMillis;
+    for (;;) {
+      yield* Effect.sleep(RECORD_POLL);
+      const now = yield* Clock.currentTimeMillis;
+      const count = endedEntries(yield* fs.readFileString(results).pipe(Effect.orElseSucceed(() => '')));
+      if (count !== ended) {
+        ended = count;
+        since = now;
+      } else if (now - since >= Duration.toMillis(budget)) {
+        return { stalled: true, status: -1, stderr: '' };
+      }
+    }
+  });
+
+/**
+ * One importer process over <entries> (file URLs): its exit status, its stderr and the lines it recorded, or `stalled`
+ * when the parent ended it because an entry ran over <budget>.
+ */
+const importProcess = (root: string, entries: readonly string[], budget: Duration.Duration) =>
   Effect.scoped(
     Effect.gen(function* importProcessProgram() {
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const results = yield* fs.makeTempFileScoped({ prefix: 'prove-app-runtime-' });
-      // Each entry has its own budget inside the process; this bounds a process that stops answering altogether.
-      const budget = Duration.times(ENTRY_BUDGET, entries.length);
-      const ended = yield* Effect.scoped(
-        Effect.gen(function* runImporter() {
-          const handle = yield* spawner.spawn(
-            ChildProcess.make(
-              process.execPath,
-              ['--input-type=module', '--eval', IMPORTER, results, String(Duration.toMillis(ENTRY_BUDGET)), ...entries],
-              { cwd: root, env: { NODE_ENV: 'production' }, extendEnv: true, stdout: 'ignore' },
-            ),
-          );
-          const [status, stderr] = yield* Effect.all(
-            [handle.exitCode.pipe(Effect.map(Number)), handle.stderr.pipe(Stream.decodeText(), Stream.mkString)],
-            { concurrency: 'unbounded' },
-          );
-          return { status, stderr };
-        }),
-      ).pipe(
-        Effect.timeoutOrElse({
-          duration: budget,
-          orElse: () => Effect.succeed({ status: -1, stderr: `did not finish within ${Duration.format(budget)}` }),
-        }),
-        Effect.orElseSucceed(() => NOT_STARTED),
+      // The race's loser is interrupted, and closing the importer's scope ends the process: with SIGKILL, because an
+      // entry that blocks the event loop never runs a SIGTERM handler it installed.
+      const ended = yield* Effect.raceFirst(
+        Effect.scoped(
+          Effect.gen(function* runImporter() {
+            const handle = yield* spawner.spawn(
+              ChildProcess.make(process.execPath, ['--input-type=module', '--eval', IMPORTER, results, ...entries], {
+                cwd: root,
+                env: { NODE_ENV: 'production' },
+                extendEnv: true,
+                killSignal: 'SIGKILL',
+                stdout: 'ignore',
+              }),
+            );
+            const [status, stderr] = yield* Effect.all(
+              [handle.exitCode.pipe(Effect.map(Number)), handle.stderr.pipe(Stream.decodeText(), Stream.mkString)],
+              { concurrency: 'unbounded' },
+            );
+            return { stalled: false, status, stderr };
+          }),
+        ).pipe(Effect.orElseSucceed(() => NOT_STARTED)),
+        stalled(results, budget),
       );
-      const lines = (yield* fs.readFileString(results).pipe(Effect.orElseSucceed(() => '')))
-        .split('\n')
-        .filter((line) => line !== '');
       const records: ImportRecord[] = [];
-      for (const line of lines) {
+      for (const line of completeLines(yield* fs.readFileString(results).pipe(Effect.orElseSucceed(() => '')))) {
         records.push(yield* Schema.decodeUnknownEffect(ImportRecordSchema)(line));
       }
       return { ...ended, records };
@@ -452,18 +484,58 @@ const recordFinding = (name: string, record: ImportRecord): Option.Option<EntryF
   Match.value(record.outcome).pipe(
     Match.when('proven', () => Option.none<EntryFinding>()),
     Match.when('failed', () => Option.some(classified(name, record.reason))),
-    Match.when('timeout', () =>
-      Option.some(reported(`${name} (not counted): did not finish within ${Duration.format(ENTRY_BUDGET)}`)),
-    ),
     Match.when('late', () => Option.some(classified(`${name} (while it imported)`, record.reason))),
     Match.exhaustive,
   );
 
+interface ImporterRun {
+  readonly records: readonly ImportRecord[];
+  readonly stalled: boolean;
+  readonly status: number;
+  readonly stderr: string;
+}
+
 /**
- * One unit process's entries, imported in order in one process as the app host loads them: the findings of each, and
- * when an entry ends the process, that entry's exit as its finding and the entries after it in a new process.
+ * What one importer process over <pending> found: a finding for every entry it ended, and for the entry it stopped at,
+ * if any (over its budget, or the process ended); `rest` is every entry after that one.
  */
-const proveProcess = (root: string, entries: readonly string[]) =>
+const runFindings = (
+  nameOf: ReadonlyMap<string, string>,
+  pending: readonly string[],
+  { records, stalled: over, status, stderr }: ImporterRun,
+  budget: Duration.Duration,
+) => {
+  const findings: EntryFinding[] = [];
+  const ended = new Set<string>();
+  for (const record of records) {
+    const finding = recordFinding(nameOf.get(record.entry) ?? record.entry, record);
+    if (Option.isSome(finding)) {
+      findings.push(finding.value);
+    }
+    if (record.outcome !== 'late') {
+      ended.add(record.entry);
+    }
+  }
+  const stopped = pending.findIndex((entry) => !ended.has(entry));
+  if (stopped === -1) {
+    return { findings, over: false, rest: [] };
+  }
+  const name = nameOf.get(pending[stopped] ?? '') ?? '';
+  findings.push(
+    over
+      ? reported(`${name} (not counted): did not finish within ${Duration.format(budget)}`)
+      : classified(name, stderr.trim() === '' ? `ended the process (exit status ${String(status)})` : stderr),
+  );
+  return { findings, over, rest: pending.slice(stopped + 1) };
+};
+
+/**
+ * One unit process's entries, imported in order in one process as the app host loads them: the findings of each. When
+ * an entry ends the process, the entries after it import in a new one. When an entry runs over <budget>, the parent
+ * ends the process and imports each entry after it in a process of its own, ALONE_CONCURRENCY at a time: a hang they
+ * share then costs one budget per round, never one per entry.
+ */
+const proveProcess = (root: string, entries: readonly string[], budget: Duration.Duration) =>
   Effect.gen(function* proveProcessProgram() {
     const fs = yield* FileSystem.FileSystem;
     const findings: EntryFinding[] = [];
@@ -478,26 +550,21 @@ const proveProcess = (root: string, entries: readonly string[]) =>
     const nameOf = new Map(present.map((entry) => [pathToFileURL(entry).href, path.relative(root, entry)]));
     let pending = [...nameOf.keys()];
     while (pending.length > 0) {
-      const { records, status, stderr } = yield* importProcess(root, pending);
-      const ended = new Set<string>();
-      for (const record of records) {
-        const finding = recordFinding(nameOf.get(record.entry) ?? record.entry, record);
-        if (Option.isSome(finding)) {
-          findings.push(finding.value);
-        }
-        if (record.outcome !== 'late') {
-          ended.add(record.entry);
-        }
-      }
-      const stopped = pending.findIndex((entry) => !ended.has(entry));
-      if (stopped === -1) {
+      const run = runFindings(nameOf, pending, yield* importProcess(root, pending, budget), budget);
+      findings.push(...run.findings);
+      if (run.over) {
+        const alone = yield* Effect.forEach(
+          run.rest,
+          (entry) =>
+            importProcess(root, [entry], budget).pipe(
+              Effect.map((result) => runFindings(nameOf, [entry], result, budget).findings),
+            ),
+          { concurrency: ALONE_CONCURRENCY },
+        );
+        findings.push(...alone.flat());
         break;
       }
-      const name = nameOf.get(pending[stopped] ?? '') ?? '';
-      findings.push(
-        classified(name, stderr.trim() === '' ? `ended the process (exit status ${String(status)})` : stderr),
-      );
-      pending = pending.slice(stopped + 1);
+      pending = run.rest;
     }
     return findings;
   });
@@ -510,11 +577,15 @@ export const unitProcesses = (units: readonly HostedUnit[]): readonly (readonly 
 
 /**
  * Check 4 over every unit process (each its entries, in load order), the processes side by side: resolution failures
- * count, any other failure is only reported.
+ * count, any other failure is only reported. Each entry has <budget> (ENTRY_BUDGET) of its own.
  */
-export const entryImportFindings = (root: string, processes: readonly (readonly string[])[]) =>
+export const entryImportFindings = (
+  root: string,
+  processes: readonly (readonly string[])[],
+  budget: Duration.Duration = ENTRY_BUDGET,
+) =>
   Effect.gen(function* entryImportFindingsProgram() {
-    const results = (yield* Effect.forEach(processes, (entries) => proveProcess(root, entries), {
+    const results = (yield* Effect.forEach(processes, (entries) => proveProcess(root, entries, budget), {
       concurrency: 'unbounded',
     })).flat();
     return {

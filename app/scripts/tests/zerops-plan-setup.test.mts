@@ -16,10 +16,13 @@ const HEAD = 'b'.repeat(40);
 const WORKFLOW = '.github/workflows/zerops-stage.yml';
 const run = (id: number, number: number, conclusion: string | null, status = 'completed') => ({
   conclusion,
+  event: 'push',
   head_branch: 'demo/sales-crm',
+  head_repository: { id: 1 },
   head_sha: id === 10 ? BASE : 'c'.repeat(40),
   id,
   path: WORKFLOW,
+  repository: { id: 1 },
   run_attempt: 1,
   run_number: number,
   status,
@@ -121,11 +124,17 @@ it.effect('reads the newest green run as the base, every later run that changed 
             run(10, 10, 'success'),
             run(9, 9, 'failure'),
             { ...run(14, 14, 'success'), head_branch: 'other' },
+            // Pull requests that name their branch like the stage branch and run their own copy of this workflow,
+            // one from a fork: never a base, never a run that changed stage.
+            { ...run(16, 16, 'success'), event: 'pull_request', head_repository: { id: 2 } },
+            { ...run(15, 15, 'failure'), event: 'pull_request' },
           ],
         }),
       },
       { 'repos/owner/repo/actions/artifacts/77/zip': ['storefront', 'shop'] },
     );
+    // An array matches only with the same length: neither pull request is listed.
+    expect(history).toMatchObject({ runs: [13, 12, 10, 9, 14].map((id) => ({ id })) });
     expect(history).toMatchObject({
       comparison: {
         ancestor: true,

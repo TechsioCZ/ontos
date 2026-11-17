@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Option } from 'effect';
+import { Duration, Effect, FileSystem, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -116,6 +116,8 @@ it.live('follows the host into helpers, started scripts and workspace packages, 
 
 const entryOf = (root: string, unit: string) => path.join(root, `verticals/${unit}/dist/zerops-entry.mjs`);
 const MISSING_OXLINT = "Cannot find package 'oxlint'";
+/** How the entry that imports the left-out oxlint is counted. */
+const B_COUNTED = 'verticals/b/dist/zerops-entry.mjs: ';
 const hostedUnit = (id: string, directory: string) => ({ browser: true, directory, id, port: 1 });
 
 it.live('counts an entry that needs a left-out package or is missing, reports others, and restores the store', () =>
@@ -128,7 +130,7 @@ it.live('counts an entry that needs a left-out package or is missing, reports ot
     const { failures, notes } = yield* withLeftOutAside(root, excluded, entryImportFindings(root, processes));
     expect(failures).toHaveLength(2);
     expect(failures).toContain('verticals/d/dist/zerops-entry.mjs is missing');
-    const missingPackage = failures.find((failure) => failure.startsWith('verticals/b/dist/zerops-entry.mjs: '));
+    const missingPackage = failures.find((failure) => failure.startsWith(B_COUNTED));
     expect(missingPackage).toContain(MISSING_OXLINT);
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain('verticals/c/dist/zerops-entry.mjs (not counted): ');
@@ -162,8 +164,62 @@ it.live('proves the entries after one that ends its process, and counts a left-o
     // Recorded against the entry that was importing when it fired: `later` itself or `slow` after it.
     expect(failures[0]).toMatch(/^verticals\/(?:later|slow)\/dist\/zerops-entry\.mjs \(while it imported\): /u);
     expect(failures[0]).toContain(MISSING_OXLINT);
-    expect(failures[1]).toContain('verticals/b/dist/zerops-entry.mjs: ');
+    expect(failures[1]).toContain(B_COUNTED);
     expect(failures[1]).toContain(MISSING_OXLINT);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const OVER_BUDGET = 'did not finish within';
+
+it.live('ends an entry that blocks its process at its own budget, and still proves the entries after it', () =>
+  Effect.gen(function* blockedEntry() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* workspace;
+    const excluded = yield* excludedStoreDirectories(root, LEFT_OUT);
+    // No timer inside its process can fire: only the parent can end it (the test never ends otherwise).
+    const blocks = entryOf(root, 'blocks');
+    yield* fs.makeDirectory(path.dirname(blocks), { recursive: true });
+    yield* fs.writeFileString(blocks, 'for (;;) {}\nexport const start = 1;\n');
+    const processes = [['blocks', 'b', 'a'].map((unit) => entryOf(root, unit))];
+    const { failures, notes } = yield* withLeftOutAside(
+      root,
+      excluded,
+      entryImportFindings(root, processes, Duration.millis(500)),
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain(`verticals/blocks/dist/zerops-entry.mjs (not counted): ${OVER_BUDGET}`);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain(B_COUNTED);
+    expect(failures[0]).toContain(MISSING_OXLINT);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live('reports every entry that waits on a shared module that never settles, each over its own budget', () =>
+  Effect.gen(function* sharedHang() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* workspace;
+    const excluded = yield* excludedStoreDirectories(root, LEFT_OUT);
+    // A top-level await that keeps its process alive and never settles, shared by three owners.
+    yield* fs.writeFileString(
+      path.join(root, 'verticals/hangs.mjs'),
+      'await new Promise(() => setInterval(() => {}, 60_000));\n',
+    );
+    const waiting = ['first', 'second', 'third'];
+    for (const unit of waiting) {
+      yield* fs.makeDirectory(path.dirname(entryOf(root, unit)), { recursive: true });
+      yield* fs.writeFileString(entryOf(root, unit), "import '../../hangs.mjs';\nexport const start = 1;\n");
+    }
+    const processes = [[...waiting, 'a'].map((unit) => entryOf(root, unit))];
+    const { failures, notes } = yield* withLeftOutAside(
+      root,
+      excluded,
+      entryImportFindings(root, processes, Duration.millis(500)),
+    );
+    expect(failures).toEqual([]);
+    expect(notes).toHaveLength(waiting.length);
+    for (const [index, unit] of waiting.entries()) {
+      expect(notes[index]).toContain(`verticals/${unit}/dist/zerops-entry.mjs (not counted): ${OVER_BUDGET}`);
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

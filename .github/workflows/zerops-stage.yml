@@ -166,11 +166,12 @@ jobs:
           overwrite: true
           retention-days: 3
 
-      # FRONT PATH (artifacts, not caches), unit by unit. The newest earlier run of this branch that holds unit builds
-      # (zerops-units-*) lends every unit whose build there carries this commit's identity. When the rest fits the
-      # Zerops build's budget, this job delivers and the Zerops build builds them (build-app.sh builds every unit it
-      # cannot keep, and keeps those it built before from its own cache). Otherwise the build matrix builds and
-      # deliver_app delivers. rebuild_units never reuses. The Zerops build proves every kept unit again.
+      # FRONT PATH (artifacts, not caches), unit by unit. The newest earlier push or dispatch run of this workflow on
+      # this branch that holds unit builds (zerops-units-*) lends every unit whose build there carries this commit's
+      # identity. When the rest fits the Zerops build's budget, this job delivers and the Zerops build builds them
+      # (build-app.sh builds every unit it cannot keep, and keeps those it built before from its own cache); this runner
+      # builds them too, off the critical path, so this run's zerops-units-0 holds every unit. Otherwise the build matrix
+      # builds and deliver_app delivers. rebuild_units never reuses. The Zerops build proves every kept unit again.
       - name: Find the newest earlier unit builds of this branch
         id: earlier
         if: steps.plan.outputs.app == 'true' && inputs.rebuild_units != true
@@ -242,6 +243,7 @@ jobs:
           n1: ${{ steps.plan.outputs.n1 }}
           dists: ${{ runner.temp }}/dists
           keep-units: ${{ steps.plan.outputs.app }}
+          build-units: ${{ steps.taken.outputs.missing }}
           zerops-token: ${{ secrets.ZEROPS_TOKEN }}
           owner-secrets: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
           smtp-password: ${{ secrets.STAGE_SMTP_PASSWORD }}
