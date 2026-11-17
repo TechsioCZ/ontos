@@ -971,7 +971,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     },
   });
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
-    mode: 'empty',
+    mode: 'schema-only',
     purpose: 'stabilization-1258-privacy-drain',
   });
   yield* Effect.logInfo('Privacy fixture setup: owned database created');
@@ -1032,23 +1032,8 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     Effect.flatMap((valid) => (valid ? Effect.void : Effect.fail(failure('Native fixture identity was refused')))),
   );
   yield* verifyNativeIdentity;
-  yield* isolated.migrateCoreSchema();
-  yield* Effect.logInfo('Privacy fixture setup: Core migrated');
-  const databaseEnv = {
-    DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
-    DATABASE_URL: isolated.connections.runtime.connectionString,
-  };
-  for (const owner of ['@app/shell-super-app', '@app/party-registry', '@app/privacy']) {
-    yield* command(['--filter', owner, 'db:migrate'], databaseEnv);
-    if (owner === '@app/shell-super-app') {
-      yield* Effect.logInfo('Privacy fixture setup: Shell migrated');
-    } else if (owner === '@app/party-registry') {
-      yield* Effect.logInfo('Privacy fixture setup: Party migrated');
-    } else {
-      yield* Effect.logInfo('Privacy fixture setup: Privacy migrated');
-    }
-  }
-  yield* verifyNativeIdentity;
+  // This suite tests composition transitions, not deployment bootstrap. The job
+  // already migrated and verified these schemas; clone their empty structure.
   // Fixed current objects only. Core owns its pre-existing separate migration/grant policy.
   yield* Effect.tryPromise({
     catch: () => failure('The fixed owned fixture privilege bootstrap was refused'),

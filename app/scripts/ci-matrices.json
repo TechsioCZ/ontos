@@ -47,7 +47,7 @@
       "root-rstest-shard": "1/4",
       "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry",
       "whole-owner-proofs": "organization",
-      "lanes": 2
+      "lanes": 4
     },
     {
       "suite": "integration",
@@ -77,7 +77,7 @@
         "@app/pricing",
         "@app/commerce-customer-context"
       ],
-      "lanes": 2
+      "lanes": 4
     },
     {
       "suite": "integration",
@@ -87,7 +87,7 @@
       "root-rstest-shard": "4/4",
       "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/tax --filter ./verticals/projects --filter ./verticals/catalog --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog",
       "whole-owner-proofs": "pricing",
-      "lanes": 2
+      "lanes": 4
     },
     {
       "suite": "browser",

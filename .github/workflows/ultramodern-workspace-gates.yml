@@ -45,6 +45,11 @@ defaults:
   run:
     shell: bash
 
+# Native fixtures start many short-lived Node owners and migration tools. Reuse
+# V8's compiled code within this runner, never database state or test results.
+env:
+  NODE_COMPILE_CACHE: ${{ runner.temp }}/node-compile-cache
+
 concurrency:
   group: ultramodern-workspace-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -578,6 +583,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
     env:
+      RAYON_NUM_THREADS: '1'
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
       BETTER_AUTH_URL: http://localhost:3020

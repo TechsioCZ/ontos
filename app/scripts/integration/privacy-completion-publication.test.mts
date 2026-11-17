@@ -203,11 +203,10 @@ const makeFixture = Effect.fn('OperatorPublicationTest.makeFixture')(function* m
     DATABASE_URL: Redacted.value(settings.runtime),
   });
   const owned = yield* makeIsolatedNativeDatabaseFixture({
-    mode: 'empty',
+    mode: 'schema-only',
     purpose: 'stabilization-1258-privacy-drain',
     sourceConnections,
   });
-  yield* owned.migrateCoreSchema();
   const database = yield* makeCoreDatabase(owned.connections.admin);
   const [identity] = yield* database.executor.execute<{
     readonly databaseOid: string;
