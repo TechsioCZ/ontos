@@ -90,7 +90,7 @@ jobs:
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
       sourceExtra: ${{ steps.selection.outputs.sourceExtra || steps.changes.outputs.sourceExtra }}
-      unitAfterTooling: ${{ steps.selection.outputs.unitAfterTooling || steps.changes.outputs.unitAfterTooling }}
+      unitAfterPreparation: ${{ steps.selection.outputs.unitAfterPreparation || steps.changes.outputs.unitAfterPreparation }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
       integrationSetup: ${{ steps.selection.outputs.integrationSetup || steps.changes.outputs.integrationSetup }}
@@ -374,17 +374,17 @@ jobs:
           done
           [[ ${#failed[@]} -eq 0 ]]
 
-  workspace-unit-after-tooling:
+  workspace-unit-after-preparation:
     name: ${{ matrix.name }}
-    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, workspace-gate]
-    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && needs.workspace-gate.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterTooling != '[]' }}
+    needs: [ci-plan, node-artifact-build, node-artifact-build-remaining, service-integration-setup]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && needs.node-artifact-build-remaining.result == 'success' && (needs.service-integration-setup.result == 'success' || needs.service-integration-setup.result == 'skipped') && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' && needs.ci-plan.outputs.unitAfterPreparation != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env: *unit-check-environment
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterTooling) }}
+        include: ${{ fromJSON(needs.ci-plan.outputs.unitAfterPreparation) }}
     steps: *unit-check-steps
 
   # The API analyzer follows source/generation checks on their runner, freeing a third unit runner.
@@ -621,7 +621,7 @@ jobs:
   # Consumers restore isolated clusters from that same-run archive instead of migrating ten times.
   # While builds finish: 11 owners + 4 builds + 2 source + browser = 18.
   # After builds: 11 owners + 2 unit + 2 source + static + topology + browser = 18.
-  # The third unit row replaces the tooling runner only after that runner finishes.
+  # The third unit row replaces the database/browser runner only after preparation finishes.
   node-topology-proof:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build-remaining]
@@ -1038,7 +1038,7 @@ jobs:
         shard: [1, 2, 3, 4]
         include:
           - { shard: 1, units: verticals/price-group-catalog verticals/tax verticals/commerce-order }
-          - { shard: 2, units: apps/shell-super-app verticals/symmy-integration }
+          - { shard: 2, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry }
           - { shard: 3, units: verticals/privacy verticals/availability }
           - { shard: 4, units: verticals/party-registry verticals/promotion }
     env: &node-build-environment
@@ -1118,7 +1118,7 @@ jobs:
         include:
           - { shard: 5, units: verticals/catalog verticals/inventory verticals/assortment }
           - { shard: 6, units: verticals/commerce-market-catalog verticals/pricing verticals/commerce-cart }
-          - { shard: 7, units: verticals/payment verticals/payment-term-catalog verticals/storefront-registry }
+          - { shard: 7, units: apps/shell-super-app verticals/symmy-integration }
           - { shard: 8, units: verticals/commerce-customer-context verticals/projects }
     env: *node-build-environment
     steps: *node-build-steps
@@ -1371,7 +1371,7 @@ jobs:
         workspace-gate,
         workspace-source-extra,
         workspace-unit,
-        workspace-unit-after-tooling,
+        workspace-unit-after-preparation,
         static-contracts,
         format-and-lint,
         service-integration,

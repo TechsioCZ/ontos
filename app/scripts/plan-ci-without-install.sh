@@ -37,7 +37,7 @@ appendFileSync(process.env.GITHUB_OUTPUT, Object.entries({
   mode: plan.mode, expected: JSON.stringify(plan.expected), source: JSON.stringify(plan.source.filter(row => row['typescript-build'] === true)),
   sourceExtra: JSON.stringify(plan.source.filter(row => row['typescript-build'] !== true)),
   unit: JSON.stringify(units.work),
-  unitAfterTooling: JSON.stringify(units.afterTooling), integration: JSON.stringify(phases.work),
+  unitAfterPreparation: JSON.stringify(units.afterPreparation), integration: JSON.stringify(phases.work),
   integrationSetup: JSON.stringify(phases.preparation),
   integrationTopology: JSON.stringify(phases.topology),
 }).map(([key, value]) => `${key}=${value}\n`).join(''));
