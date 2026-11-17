@@ -742,6 +742,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # A slow build, cluster start or test is read against measured CPU, iowait, steal and write-back of
+      # this runner; the runner ends the sampler with the job and the samples print after the tests.
+      - name: Sample runner pressure until the job ends
+        working-directory: app
+        run: nohup bash scripts/ci/sample-runner-pressure.sh "$RUNNER_TEMP/runner-pressure.txt" >/dev/null 2>&1 &
+
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
@@ -1135,6 +1141,13 @@ jobs:
         run: |
           docker compose ps
           docker compose logs --no-color --tail 200
+
+      - name: Print the runner pressure samples
+        if: always()
+        run: |
+          if [[ -s "$RUNNER_TEMP/runner-pressure.txt" ]]; then
+            cat "$RUNNER_TEMP/runner-pressure.txt"
+          fi
 
       - name: Remove isolated service containers and volumes
         if: always()
