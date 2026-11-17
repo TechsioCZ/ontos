@@ -142,7 +142,9 @@ jobs:
       # A push to the demo trunk compares with the newest commit whose push run of this workflow succeeded, not with
       # the commit before the push: that run may have failed, been cancelled or still be running, and its changes would
       # then never be checked. Every green run compared with an earlier green commit, so the diff covers every commit not
-      # yet proven. No such ancestor among the 100 newest green push runs leaves the comparison empty: every gate runs.
+      # yet proven. No such ancestor among the 100 newest push runs leaves the comparison empty: every gate runs.
+      # The list is read unfiltered: with `status=success` it omitted a run that had ended green 24 s before (run
+      # 44196254683 planned against an older base), and a queued push run starts exactly when the one before it ends.
       - name: Find the newest proven commit of the demo trunk
         id: proven-base
         if: github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'
@@ -151,8 +153,8 @@ jobs:
         run: |
           # An unreadable answer finds no base, so the complete suite runs.
           workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')" || workflow_id=''
-          proven="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?branch=demo/sales-crm&event=push&status=success&per_page=100" \
-            --jq '.workflow_runs[].head_sha')" || proven=''
+          proven="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?branch=demo/sales-crm&event=push&per_page=100" \
+            --jq '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | .head_sha')" || proven=''
           while IFS= read -r sha; do
             if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$sha" != "$GITHUB_SHA" ]] && git merge-base --is-ancestor "$sha" HEAD; then
               echo "base=$sha" >>"$GITHUB_OUTPUT"
