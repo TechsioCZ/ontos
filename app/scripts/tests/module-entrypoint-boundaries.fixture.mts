@@ -344,15 +344,11 @@ export const assertRejectedSources = Effect.fn(function* rejectGovernedSources(
   }
 });
 
-export const makeFixture = Effect.fn(function* mergedScenario1(
-  includeParty = false,
-  initialize: (root: string) => Effect.Effect<void, unknown> = () => Effect.void,
-) {
+export const makeFixture = Effect.fn(function* mergedScenario1(includeParty = false) {
   const root = yield* Effect.acquireRelease(
     Effect.promise(async () => await mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
     (directory) => Effect.promise(async () => await rm(directory, { force: true, recursive: true })),
   );
-  yield* initialize(root);
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -801,10 +797,6 @@ export const outboxProducerModuleKey = '${PARTY_MODULE_ID}' as const;
 
 export const UNMOUNTED_ISSUER_ENDPOINT = "post('unusedNeighbor'";
 export const UNRECOGNIZED_ISSUER_PATH = "'/auth/tampered'";
-
-export const EARLY_FAILURE = 'early failure';
-
-export const PARTIAL_FAILURE = 'partial failure';
 
 /** The sources of one workspace folder as `[relative path, text]` pairs, for byte-for-byte tree comparisons. */
 export const readPricingSourceTree = (root: string, folder: string) => {

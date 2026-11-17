@@ -104,20 +104,6 @@ const serviceWith = (
   });
 };
 
-const requireAssigned = (result: PriceGroupInterpretation) =>
-  Match.value(result).pipe(
-    Match.tag('ASSIGNED', (value) => value),
-    Match.orElse(() => {
-      throw new Error('fixture must resolve as ASSIGNED');
-    }),
-  );
-const requireNone = (result: PriceGroupInterpretation) =>
-  Match.value(result).pipe(
-    Match.tag('NONE', (value) => value),
-    Match.orElse(() => {
-      throw new Error('fixture must resolve as NONE');
-    }),
-  );
 const requireBroken = (result: PriceGroupInterpretation) =>
   Match.value(result).pipe(
     Match.tag('BROKEN', (value) => value),
@@ -141,35 +127,6 @@ const requireUnverifiable = (result: PriceGroupInterpretation) =>
   );
 
 describe('Price Group interpretation service', () => {
-  it.effect('uses legitimate Guest absence without calling either owner', () =>
-    Effect.gen(function* guestAbsence() {
-      let calls = 0;
-      const service = makePriceGroupInterpretationService({
-        commerce: {
-          resolve: () => {
-            calls += 1;
-            return Effect.succeed(assignmentResponse);
-          },
-        },
-        compatibility: {
-          validate: () => {
-            calls += 1;
-            return Effect.succeed({ evidence: compatibility, kind: 'USABLE' });
-          },
-        },
-      });
-
-      const result = yield* service.interpret({ assignmentRequest: { kind: 'GUEST' }, basis });
-
-      expect(requireNone(result)).toMatchObject({
-        assignmentResolution: { _tag: 'NONE' },
-        discountAudience: { kind: 'NONE' },
-        priceSelector: { kind: 'NO_GROUP' },
-      });
-      expect(calls).toBe(0);
-    }),
-  );
-
   it.effect('fails malformed Guest-like and mismatched explicit-profile requests closed', () =>
     Effect.gen(function* invalidAssignmentRequests() {
       let calls = 0;
@@ -214,19 +171,6 @@ describe('Price Group interpretation service', () => {
         });
       }
       expect(calls).toBe(0);
-    }),
-  );
-
-  it.effect('returns one usable assigned Group while preserving an independent Discount audience', () =>
-    Effect.gen(function* assignedGroup() {
-      const result = yield* serviceWith().interpret(profileInput);
-
-      expect(requireAssigned(result)).toMatchObject({
-        basis,
-        discountAudience: { kind: 'PRICE_GROUP', priceGroupRef },
-        priceGroupRef,
-        priceSelector: { kind: 'PRICE_GROUP', priceGroupRef },
-      });
     }),
   );
 

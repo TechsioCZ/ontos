@@ -15,6 +15,7 @@ import {
   defineScopedRoutine,
   parseDatabaseConnectionPair,
   OntosModuleDeploymentContractSchema,
+  ONTOS_MODULE_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
   canonicalizeApplicationComposition,
   validateActiveApplicationCompositionSnapshot,
@@ -35,7 +36,6 @@ import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { PgClient } from '@effect/sql-pg';
 import {
-  Config,
   Context,
   Crypto,
   Deferred,
@@ -475,62 +475,20 @@ const temporalContract = Effect.fn('TemporalNative.actualOwnerContract')(functio
   owner: typeof commerceAppId | 'party-registry' | 'price-group-catalog',
 ) {
   const path = yield* Path.Path;
-  const program = `import { Effect, FileSystem, ManagedRuntime, Schema } from 'effect';
-    import { NodeServices } from '@effect/platform-node';
-    import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-    import { deriveOntosModuleDeploymentContract } from './scripts/generate-ontos-module-contract.mts';
-    import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
-    const runtime = ManagedRuntime.make(NodeServices.layer);
-    try { const text = await runtime.runPromise(Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const ownerSchema = Schema.Struct({id: Schema.String,
-        deliveryUnit: Schema.Struct({buildMarker: Schema.String, unitId: Schema.String})});
-      const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({
-        verticals: Schema.Array(ownerSchema)
-      })))(yield* fs.readFileString('./topology/reference-topology.json'));
-      const owner = yield* Schema.decodeUnknownEffect(ownerSchema)(
-        topology.verticals.find(owner => owner.id === ${JSON.stringify(owner)}));
-      // Resolve before contract extraction or bundling writes any test artifacts.
-      const buildIdentity = yield* Effect.try(() => resolveUltramodernReleaseIdentity({
-        generationBuildMarker: owner.deliveryUnit.buildMarker,
-        unitId: owner.deliveryUnit.unitId, workspaceRoot: process.cwd()
-      }));
-      const contract = yield* deriveOntosModuleDeploymentContract({vertical:owner.id});
-      return yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Struct({
-        buildIdentity: Schema.Struct({buildMarker: Schema.String, sourceRevision: Schema.String}),
-        contract: OntosModuleDeploymentContractSchema
-      })))({buildIdentity, contract});
-    })); process.stdout.write(text); } finally { await runtime.dispose(); }`;
-  const child = yield* ChildProcess.make(
-    process.execPath,
-    ['--experimental-strip-types', '--input-type=module', '--eval', program],
-    {
-      cwd: path.resolve(directory, '../..'),
-      env: {
-        APP_ENV_PATH: '/dev/null',
-        HOME: yield* Config.String('HOME'),
-        PATH: yield* Config.String('PATH'),
-        TMPDIR: yield* Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
-      },
-      extendEnv: false,
-      stderr: 'pipe',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    },
-  ).pipe(Effect.provide(NodeServices.layer, { local: true }));
-  const [output, code] = yield* Effect.all(
-    [child.stdout.pipe(Stream.decodeText(), Stream.runCollect), child.exitCode, Stream.runDrain(child.stderr)],
-    { concurrency: 3 },
-  );
-  yield* requireCondition(code === 0, 'actual-owner-contract');
-  const description = yield* Schema.decodeUnknownEffect(
+  const fs = yield* FileSystem.FileSystem;
+  // CI already built and published this exact owner. Read those bytes instead of
+  // reloading the whole TypeScript graph and regenerating its contract per case.
+  const build = yield* Schema.decodeUnknownEffect(
     Schema.fromJsonString(
       Schema.Struct({
-        buildIdentity: Schema.Struct({ buildMarker: Schema.String, sourceRevision: Schema.String }),
-        contract: OntosModuleDeploymentContractSchema,
+        deliveryUnit: Schema.Struct({ buildMarker: Schema.String, sourceRevision: Schema.String }),
       }),
     ),
-  )(output.join(''));
+  )(yield* fs.readFileString(path.join(directory, '.output/ultramodern-build.json')));
+  const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    yield* fs.readFileString(path.join(directory, '.output/public', ONTOS_MODULE_CONTRACT_PATH.slice(1))),
+  );
+  const description = { buildIdentity: build.deliveryUnit, contract };
   yield* requireCondition(
     description.contract.deployment.appId === owner &&
       description.contract.deployment.buildMarker === description.buildIdentity.buildMarker,

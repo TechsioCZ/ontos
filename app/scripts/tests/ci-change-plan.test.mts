@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,12 +7,40 @@ import { fileURLToPath } from 'node:url';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CiTemplatesSchema, planCiChecks, withCiTopologyDependencies } from '../plan-ci-checks.mts';
+import {
+  CiTemplatesSchema,
+  filterPaths,
+  matchingPackages,
+  planCiChecks,
+  rootLevelPackageDirectories,
+  unknownFilters,
+  withCiTopologyDependencies,
+} from '../plan-ci-checks.mts';
 import { workspaceConsumerClosure } from '../workspace-consumer-closure.mts';
 
 const templates = Schema.decodeUnknownSync(Schema.fromJsonString(CiTemplatesSchema))(
   readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
 );
+const appRoot = path.resolve(import.meta.dirname, '../..');
+const PACKAGE_MANIFEST = 'package.json';
+const ManifestFromJson = Schema.fromJsonString(
+  Schema.Struct({ name: Schema.String, scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)) }),
+);
+/** Every pnpm workspace member the planner can see, read from disk rather than restated here. */
+const workspacePackages = [
+  ...['apps', 'packages', 'verticals'].flatMap((area) =>
+    readdirSync(path.join(appRoot, area), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(path.join(appRoot, area, entry.name, PACKAGE_MANIFEST)))
+      .map((entry) => `${area}/${entry.name}`),
+  ),
+  ...rootLevelPackageDirectories,
+].map((directory) => {
+  const manifest = Schema.decodeUnknownSync(ManifestFromJson)(
+    readFileSync(path.join(appRoot, directory, PACKAGE_MANIFEST), 'utf-8'),
+  );
+  return { dependencies: [], directory, name: manifest.name, scripts: manifest.scripts ?? {} };
+});
+const knownSelectors = new Set(['.', ...workspacePackages.map(({ directory }) => directory)]);
 const CATALOG = '@app/catalog';
 const PRICING = '@app/pricing';
 const CATALOG_SOURCE = 'app/verticals/catalog/src/service.ts';
@@ -477,3 +505,67 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
     }
   }),
 );
+
+it('keeps every unit and integration template resolvable so one glob cannot disable affected selection', () => {
+  for (const command of [
+    ...templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean)),
+    ...templates.integration.map((entry) => entry['package-filters'] ?? ''),
+  ]) {
+    expect(unknownFilters(command)).toBe(false);
+    expect(filterPaths(command).filter(({ path: selected }) => !knownSelectors.has(selected ?? ''))).toEqual([]);
+  }
+});
+
+const WEIGHTED_SHARD_LINE =
+  /^pnpm --filter \.\/[a-z0-9/-]+ exec bash \S*rstest-weighted-shard\.sh"? (?<index>\d+)\/(?<count>\d+) (?<project>[a-z-]+)(?:\s|$)/u;
+const RECURSIVE_SCRIPT_LINE = / run (?<script>test:[a-z]+)(?:\s|$)/u;
+
+// Demo carries many verticals the engineered line does not have: a matrix that names packages one by one would
+// silently skip a new one, so the catch-all rows must keep every suite in exactly one place.
+it('runs every unit and component suite of every workspace package exactly once across the unit rows', () => {
+  const recursive: string[] = [];
+  const weighted = new Map<string, { readonly count: string; readonly indices: string[] }>();
+  for (const line of templates.unit.flatMap(({ commands }) => commands.split('\n').filter(Boolean))) {
+    const shard = WEIGHTED_SHARD_LINE.exec(line)?.groups;
+    const script = RECURSIVE_SCRIPT_LINE.exec(line)?.groups?.script;
+    const directories = matchingPackages(line, workspacePackages).map(({ directory }) => directory);
+    expect(shard !== undefined || script !== undefined).toBe(true);
+    for (const directory of directories) {
+      if (shard === undefined) {
+        recursive.push(`${directory} ${script ?? ''}`);
+      } else {
+        const key = `${directory} test:${shard.project ?? ''}`;
+        const family = weighted.get(key) ?? { count: shard.count ?? '', indices: [] };
+        expect(family.count).toBe(shard.count);
+        family.indices.push(shard.index ?? '');
+        weighted.set(key, family);
+      }
+    }
+  }
+  // A weighted family runs each of its shards exactly once, and together they run the whole project.
+  for (const { count, indices } of weighted.values()) {
+    expect(indices.toSorted()).toEqual(Array.from({ length: Number(count) }, (_, index) => String(index + 1)));
+  }
+  const runs = [...recursive, ...weighted.keys()];
+  expect(new Set(runs).size).toBe(runs.length);
+  const required = workspacePackages.flatMap(({ directory, scripts }) =>
+    ['test:unit', 'test:component']
+      .filter((script) => scripts[script] !== undefined)
+      .map((script) => `${directory} ${script}`),
+  );
+  expect(required.filter((run) => !runs.includes(run))).toEqual([]);
+});
+
+it('runs the integration suite of every workspace package that declares one in some integration row', () => {
+  const covered = new Set(
+    templates.integration.flatMap((entry) =>
+      matchingPackages(entry['package-filters'] ?? '', workspacePackages).map(({ directory }) => directory),
+    ),
+  );
+  expect(
+    workspacePackages
+      .filter(({ scripts }) => scripts['test:integration'] !== undefined)
+      .map(({ directory }) => directory)
+      .filter((directory) => !covered.has(directory)),
+  ).toEqual([]);
+});

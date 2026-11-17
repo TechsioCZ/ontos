@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Data, Effect, Redacted } from 'effect';
+import { Context, Crypto, Effect, Layer, Redacted } from 'effect';
+import { ProbeRollback } from '../support/probe-rollback.ts';
 import { expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -14,7 +15,6 @@ import {
 type Client = PgClient.PgClient;
 const query = (client: Client, statement: string, parameters: readonly unknown[] = []) =>
   client.unsafe<Row>(statement, parameters);
-class ProbeRollback<Value> extends Data.TaggedError('LegalEntityProbeRollback')<{ readonly value: Value }> {}
 
 /** Each probe, including successful writes, rolls back and keeps the registered grant unchanged. */
 const inScope = <Value>(client: Client, assertion: Redacted.Redacted<string>, body: Effect.Effect<Value, SqlError>) =>
@@ -26,7 +26,7 @@ const inScope = <Value>(client: Client, assertion: Redacted.Redacted<string>, bo
         return yield* new ProbeRollback({ value });
       }),
     )
-    .pipe(Effect.catchTag('LegalEntityProbeRollback', ({ value }) => Effect.succeed(value)));
+    .pipe(Effect.catchTag('ProbeRollback', ({ value }) => Effect.succeed(value)));
 
 const denied = (client: Client, statement: string, parameters: readonly unknown[]) =>
   query(client, statement, parameters).pipe(
@@ -158,10 +158,22 @@ const openFixture = Effect.gen(function* openLegalEntityFixture() {
   return { ...clients, ids, selected, tenantWide };
 });
 
-it.layer(NodeCrypto.layer, { excludeTestServices: true })('sealed legal-entity scope', (suite) => {
+/**
+ * Each setup registers two gateway grants and inserts the legal entity, principal, party, both
+ * counterparties, role periods, projections, invocations, audit events and Search entries. `inScope`
+ * aborts unconditionally, so no probe — including the accepted UPDATE, DELETE and evidence INSERT
+ * probes — is durable, and the one statement outside a rolled-back transaction is a read-only
+ * SELECT. One fixture, and therefore one id set, per file is therefore sound.
+ */
+class LegalEntityScopeFixture extends Context.Service<LegalEntityScopeFixture, Effect.Success<typeof openFixture>>()(
+  '@app/party-registry/tests/integration/legal-entity-scope.test/LegalEntityScopeFixture',
+) {}
+const scopeLayer = Layer.effect(LegalEntityScopeFixture, openFixture).pipe(Layer.provideMerge(NodeCrypto.layer));
+
+it.layer(scopeLayer, { excludeTestServices: true, timeout: 120_000 })('sealed legal-entity scope', (suite) => {
   suite.effect('hides other-entity base rows, both projections, Search documents and Core evidence', () =>
     Effect.gen(function* selectScope() {
-      const { runtime, ids, selected, tenantWide } = yield* openFixture;
+      const { runtime, ids, selected, tenantWide } = yield* LegalEntityScopeFixture;
       for (const [table, column, expectedSelected, expectedWide] of [
         ['party.counterparties', 'counterparty_id', [ids.c1], [ids.c1, ids.c2]],
         ['party.counterparty_role_periods', 'role_period_id', [ids.r1], [ids.r1, ids.r2]],
@@ -206,7 +218,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('sealed legal-entity s
 
   suite.effect('blocks cross-entity projection UPDATE and DELETE while preserving own and tenant-wide writes', () =>
     Effect.gen(function* projectionWrites() {
-      const { runtime, ids, selected, tenantWide } = yield* openFixture;
+      const { runtime, ids, selected, tenantWide } = yield* LegalEntityScopeFixture;
       for (const [table, key, own, other, assignment] of [
         ['party.counterparty_admin_read_models', 'counterparty_id', ids.c1, ids.c2, 'archived_at = now()'],
         [
@@ -288,7 +300,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('sealed legal-entity s
 
   suite.effect('confines invocation updates and rejects cross-entity evidence attribution, not global evidence', () =>
     Effect.gen(function* evidenceWrites() {
-      const { runtime, ids, selected, tenantWide } = yield* openFixture;
+      const { runtime, ids, selected, tenantWide } = yield* LegalEntityScopeFixture;
       const update =
         "update core.action_invocations set status = 'failed' where action_invocation_id = $1 returning action_invocation_id";
       expect(yield* inScope(runtime, selected, query(runtime, update, [ids.i2]))).toEqual([]);
@@ -338,7 +350,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('sealed legal-entity s
 
   suite.effect('keeps Search and append-only evidence UPDATE and DELETE forbidden even within an entity', () =>
     Effect.gen(function* readOnlyAndAppendOnly() {
-      const { runtime, ids, selected } = yield* openFixture;
+      const { runtime, ids, selected } = yield* LegalEntityScopeFixture;
       for (const entity of [ids.l1, ids.l2]) {
         for (const [table, assignment] of [
           ['core.search_index_entries', "title = 'tampered'"],

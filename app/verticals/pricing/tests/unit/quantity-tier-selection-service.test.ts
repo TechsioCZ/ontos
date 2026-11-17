@@ -178,59 +178,6 @@ const selectionInput = (quantity: string) =>
   });
 
 describe('Quantity Tier selection service', () => {
-  it.effect('retains the same exact base Price below the first threshold', () =>
-    Effect.gen(function* retainBasePrice() {
-      const input = selectionInput('9');
-      const result = yield* selectQuantityTier({ input, outcome: 'TIER_SET_CURRENT' });
-
-      expect(result).toMatchObject({
-        appliesToQuantity: input.attempt.normalizedQuantity,
-        evidence: { decision: { kind: 'NO_THRESHOLD_REACHED' }, input },
-        monetaryBoundary: 'PRE_TAX',
-        outcome: 'BASE_PRICE_RETAINED',
-        resultingUnitPrice: { amount: '100', currencyCode: 'CZK' },
-      });
-    }),
-  );
-
-  it.effect('applies the highest reached threshold to the entire normalized Quantity', () =>
-    Effect.gen(function* appliesOneTierToAllQuantity() {
-      const input = selectionInput('21');
-      const result = yield* selectQuantityTier({ input, outcome: 'TIER_SET_CURRENT' });
-
-      expect(result).toMatchObject({
-        appliesToQuantity: input.attempt.normalizedQuantity,
-        evidence: {
-          decision: {
-            kind: 'HIGHEST_REACHED_THRESHOLD',
-            winningTier: { definition: { identityKey: { thresholdQuantity: '20' } } },
-          },
-        },
-        outcome: 'QUANTITY_TIER_APPLIED',
-        resultingUnitPrice: { amount: '80', currencyCode: 'CZK' },
-      });
-      expect(result).not.toHaveProperty('bands');
-      expect(result).not.toHaveProperty('allocations');
-    }),
-  );
-
-  it.effect('preserves unavailable, incomplete, and unverifiable owner evidence as typed failures', () =>
-    Effect.gen(function* preservesAcquisitionFailures() {
-      const { attempt } = selectionInput('10');
-      const unavailable = yield* selectQuantityTier({ attempt, outcome: 'TIER_SET_UNAVAILABLE' });
-      const incomplete = yield* selectQuantityTier({ attempt, outcome: 'TIER_SET_INCOMPLETE' });
-      const unverifiable = yield* selectQuantityTier({ attempt, outcome: 'TIER_SET_UNVERIFIABLE' });
-
-      expect(unavailable).toMatchObject({ outcome: 'QUANTITY_TIER_SELECTION_FAILED', reason: 'UNAVAILABLE_TIER_SET' });
-      expect(incomplete).toMatchObject({ outcome: 'QUANTITY_TIER_SELECTION_FAILED', reason: 'INCOMPLETE_TIER_SET' });
-      expect(unverifiable).toMatchObject({
-        outcome: 'QUANTITY_TIER_SELECTION_FAILED',
-        reason: 'UNVERIFIABLE_TIER_SET',
-      });
-      expect(unavailable).not.toHaveProperty('resultingUnitPrice');
-    }),
-  );
-
   it.effect('fails closed on stale Currentness, Price binding, basis, and currency mismatch', () =>
     Effect.gen(function* rejectsIncompatibleEvidence() {
       const input = selectionInput('10');

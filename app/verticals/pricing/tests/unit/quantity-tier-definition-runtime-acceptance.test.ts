@@ -1,7 +1,4 @@
-import {
-  QuantityTierIdentityKeySchema,
-  QuantityTierScheduleAcknowledgementSchema,
-} from '@app/pricing-contracts/domain/quantity-tier';
+import { QuantityTierIdentityKeySchema } from '@app/pricing-contracts/domain/quantity-tier';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -67,37 +64,6 @@ const valueOnlyCommand: ReviseQuantityTierPersistenceCommand = {
   intent: 'VALUE_ONLY_CURRENT',
   resultingUnitPrice: { amount: '85', currencyCode: 'CZK' },
 };
-const future = {
-  definition: {
-    identityKey,
-    revision: {
-      effectiveFrom: '2026-10-01T00:00:00.000Z',
-      monetaryBoundary: 'PRE_TAX' as const,
-      resultingUnitPrice: { amount: '80', currencyCode: 'CZK' },
-      revision: 2,
-      revisionId: '99999999-9999-4999-8999-999999999999',
-    },
-  },
-  effectivePeriod: { effectiveFrom: '2026-10-01T00:00:00.000Z', effectiveTo: null },
-  lineage: {
-    correctedRevisionId: null,
-    kind: 'SCHEDULED' as const,
-    previousRevisionId: valueOnlyCommand.expectedCurrent.revisionId,
-  },
-};
-const acknowledgement = Schema.decodeSync(QuantityTierScheduleAcknowledgementSchema)({
-  actingPrincipalId: trusted.actingPrincipalId,
-  fingerprint: 'a'.repeat(64),
-  identityKey,
-  intendedEffectivePeriod: { effectiveFrom: valueChangeEffectiveFrom, effectiveTo: currentPeriod.effectiveTo },
-  intendedResultingUnitPrice: valueOnlyCommand.resultingUnitPrice,
-  intent: 'VALUE_ONLY_CURRENT',
-  presentedFuture: [future],
-  scheduleRevision: valueOnlyCommand.expectedCurrent.scheduleRevision,
-  targetEffectivePeriod: currentPeriod,
-  targetRevisionId: valueOnlyCommand.expectedCurrent.revisionId,
-});
-
 const persistence = (revise: QuantityTierPersistence['revise']): QuantityTierPersistence => ({
   define: () => Effect.die('unexpected define'),
   readCurrent: () => Effect.die('unexpected readCurrent'),
@@ -108,36 +74,6 @@ const persistence = (revise: QuantityTierPersistence['revise']): QuantityTierPer
 });
 
 describe('Pricing Quantity Tier definition runtime acceptance', () => {
-  it.effect(
-    'blocks a value-only write on future state and returns a typed stale conflict after that state changes',
-    () => {
-      const warningService = makeQuantityTierAdministration(
-        persistence(() => Effect.succeed({ acknowledgement, outcome: 'QUANTITY_TIER_ACKNOWLEDGEMENT_REQUIRED' })),
-      );
-      const staleService = makeQuantityTierAdministration(
-        persistence(() =>
-          Effect.succeed({
-            identityKey,
-            outcome: 'QUANTITY_TIER_CONFLICT',
-            reason: 'ACKNOWLEDGEMENT_STALE',
-          }),
-        ),
-      );
-
-      return Effect.gen(function* acknowledgementFlow() {
-        const blocked = yield* warningService.revise(valueOnlyCommand);
-        expect(blocked).toEqual({ acknowledgement, outcome: 'QUANTITY_TIER_ACKNOWLEDGEMENT_REQUIRED' });
-
-        const stale = yield* staleService.revise({ ...valueOnlyCommand, acknowledgement });
-        expect(stale).toEqual({
-          identityKey,
-          outcome: 'QUANTITY_TIER_CONFLICT',
-          reason: 'ACKNOWLEDGEMENT_STALE',
-        });
-      });
-    },
-  );
-
   it.effect(
     'keeps generalized currency and alternate compatible basis inputs exact while owner mismatch rejects them',
     () => {

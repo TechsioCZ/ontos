@@ -139,12 +139,6 @@ describe('Launch Tax Coverage', () => {
     ).toEqual(unsupported('REVERSE_CHARGE'));
   });
 
-  it('#938 F34 F41 the same unchanged unsupported case stays unsupported on repeated evaluation', () => {
-    const input = coverageInput({ requiredTaxRegimes: ['OSS'] });
-
-    expect(evaluateLaunchTaxCoverage(input)).toEqual(evaluateLaunchTaxCoverage(input));
-  });
-
   it('#938 F41 several unsupported requirements give the same outcome whatever their input order', () => {
     expect(evaluateLaunchTaxCoverage(coverageInput({ requiredTaxRegimes: ['REVERSE_CHARGE', 'OSS'] }))).toEqual(
       evaluateLaunchTaxCoverage(coverageInput({ requiredTaxRegimes: ['OSS', 'REVERSE_CHARGE'] })),

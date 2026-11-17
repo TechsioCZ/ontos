@@ -77,6 +77,7 @@ import { eq, sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
   Order,
+  Clock,
   ConfigProvider,
   Context,
   Crypto,
@@ -944,7 +945,37 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
     ),
     (value) => Effect.promise(value.dispose.bind(value)).pipe(Effect.orDie),
   );
-  const emptyContext = Context.makeUnsafe<unknown>(new Map());
+  // The served routes are this receiver's only wall-clock consumers: `DateTime.now` decides which
+  // effective revision a read assesses. `observedAt` pins that instant for the requests one
+  // observation makes, so a future-effective publication is read at an exact instant instead of
+  // racing real time on a loaded worker. Requests outside an observation keep the live clock.
+  const liveClock = yield* Clock.Clock;
+  let pinnedMillis: number | null = null;
+  const servedMillis = () => pinnedMillis ?? liveClock.currentTimeMillisUnsafe();
+  const servedClock: Clock.Clock = {
+    currentTimeMillis: Effect.sync(servedMillis),
+    currentTimeMillisUnsafe: servedMillis,
+    currentTimeNanos: Effect.sync(() => BigInt(servedMillis()) * 1_000_000n),
+    currentTimeNanosUnsafe: () => BigInt(servedMillis()) * 1_000_000n,
+    monotonicTimeNanos: liveClock.monotonicTimeNanos,
+    monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
+    sleep: (duration) => liveClock.sleep(duration),
+  };
+  const observedAt = <Value, Failure, Requirements>(
+    instant: DateTime.Utc,
+    observation: Effect.Effect<Value, Failure, Requirements>,
+  ) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        pinnedMillis = DateTime.toEpochMillis(instant);
+      }),
+      () => observation,
+      () =>
+        Effect.sync(() => {
+          pinnedMillis = null;
+        }),
+    );
+  const requestContext = Context.add(Context.makeUnsafe<unknown>(new Map()), Clock.Clock, servedClock);
   const serverContext = yield* Layer.build(NodeHttpServer.layerTest);
   const server = Context.get(serverContext, HttpServer.HttpServer);
   yield* server.serve(
@@ -953,7 +984,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
       const webRequest = yield* HttpServerRequest.toWeb(request);
       const response = yield* Effect.tryPromise({
         catch: () => new ProductAxisReceiverFailure({ reason: 'The Catalog test HTTP adapter failed' }),
-        try: async () => await app.handler(webRequest, emptyContext),
+        try: async () => await app.handler(webRequest, requestContext),
       });
       return HttpServerResponse.fromWeb(response);
     }),
@@ -995,6 +1026,7 @@ const makeSetEffectiveFixture = Effect.fn('SetEffectiveRevision.makeFixture')(fu
     fixtureContext,
     nativeFetch,
     nativeRead,
+    observedAt,
     otherProduct,
     owner,
     produced,
@@ -1077,8 +1109,13 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
         .pipe(Effect.map(Option.map(canonicalStored))),
     );
     expect(Option.isSome(original)).toBe(true);
-    const t2 = DateTime.toEpochMillis(yield* DateTime.now) + 4000;
+    // The successor is published as genuinely future-effective, and every clock-sensitive
+    // observation below names the exact instant it reads at, so no step has a wall-clock deadline.
+    const publishedAt = yield* DateTime.now;
+    const t2 = DateTime.toEpochMillis(publishedAt) + 4000;
     const at2 = new Date(t2);
+    const beforeInstant = DateTime.makeUnsafe(t2 - 1);
+    const afterInstant = DateTime.makeUnsafe(t2);
     const next = yield* Schema.decodeUnknownEffect(SetCompositionMutationPayloadSchema)({
       effectiveFrom: at2.toISOString(),
       expectedRevision: 1,
@@ -1098,20 +1135,23 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
       },
     });
     const requestKeys = [yield* nextId, yield* nextId];
-    const attempts = yield* Effect.all(
-      requestKeys.map((idempotencyKey) =>
-        Effect.gen(function* competingSuccessor() {
-          const result = yield* requireExecutionResult(
-            SetCompositionMutationResultSchema,
-            executeReviseSetCompositionWithAuthorization(next, yield* owner.authorization(), yield* nextId, {
-              ...options,
-              idempotencyKey,
-            }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
-          ).pipe(Effect.result);
-          return { idempotencyKey, result };
-        }),
+    const attempts = yield* owner.observedAt(
+      publishedAt,
+      Effect.all(
+        requestKeys.map((idempotencyKey) =>
+          Effect.gen(function* competingSuccessor() {
+            const result = yield* requireExecutionResult(
+              SetCompositionMutationResultSchema,
+              executeReviseSetCompositionWithAuthorization(next, yield* owner.authorization(), yield* nextId, {
+                ...options,
+                idempotencyKey,
+              }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
+            ).pipe(Effect.result);
+            return { idempotencyKey, result };
+          }),
+        ),
+        { concurrency: 2 },
       ),
-      { concurrency: 2 },
     );
     // Only finite labels and schema-validated literal codes may enter diagnostic output.
     // Never log the captured failure, request, response, credential, or private cause.
@@ -1188,8 +1228,7 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
     expect(afterPublication.owner[0]?.currentRevision).toBe(2);
     expect(afterPublication.revisions).toHaveLength(2);
     expect(afterPublication.components).toHaveLength(4);
-    expect(DateTime.toEpochMillis(yield* DateTime.now)).toBeLessThan(t2);
-    const beforeAt = DateTime.toDateUtc(yield* DateTime.now);
+    const beforeAt = DateTime.toDateUtc(beforeInstant);
     const beforeOwner = yield* owner.owner((transaction, scope) =>
       setCompositionPersistenceForScope(transaction, scope).readCurrent({
         at: beforeAt,
@@ -1201,21 +1240,26 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
       catalogSelectionPackageUnitBasisForScope(transaction, scope).read(selected(1), beforeAt),
     );
     expect(beforeUnit).toMatchObject({ setCompositionRevision: 1, status: 'CURRENT' });
-    const beforePublic = yield* owner.read(selected(1));
+    const beforePublic = yield* owner.observedAt(beforeInstant, owner.read(selected(1)));
     expect(beforePublic.evidence).toMatchObject({ selection: selected(1), status: 'VALID' });
     if (Schema.is(CatalogSelectionValidEvidenceSchema)(beforePublic.evidence)) {
       expect(
         beforePublic.evidence.basis.filter(({ role }) => role === 'SET_COMPOSITION').map(({ source }) => source),
       ).toEqual([revision.reference]);
-      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(beforePublic.evidence.assessedAt))).toBeLessThan(t2);
+      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(beforePublic.evidence.assessedAt))).toBe(t2 - 1);
     }
-    expect((yield* owner.read(selected(2))).evidence).toMatchObject({ status: 'INVALID' });
-    const beforeCurrent = yield* executeSetCompositionCurrentWithAuthorization(
-      { resourceRef: revision.reference.resourceRef },
-      yield* owner.authorization(),
-      yield* nextId,
-      options,
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch));
+    expect((yield* owner.observedAt(beforeInstant, owner.read(selected(2)))).evidence).toMatchObject({
+      status: 'INVALID',
+    });
+    const beforeCurrent = yield* owner.observedAt(
+      beforeInstant,
+      executeSetCompositionCurrentWithAuthorization(
+        { resourceRef: revision.reference.resourceRef },
+        yield* owner.authorization(),
+        yield* nextId,
+        options,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
+    );
     expect(beforeCurrent.revision.reference.revision).toBe(1);
     for (const at of [at2, new Date(t2 + 1)]) {
       const current = yield* owner.owner((transaction, scope) =>
@@ -1253,18 +1297,13 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
     if (Result.isFailure(repeated)) {
       expect(Schema.is(ReviseSetCompositionActionAlreadyCommittedProblemSchema)(repeated.failure)).toBe(true);
     }
-    // The public route observes actual wall-clock time. Explicit-at owner checks above prove exact boundary equality separately.
-    const remaining = t2 - DateTime.toEpochMillis(yield* DateTime.now);
-    if (remaining > 0) {
-      yield* Effect.sleep(remaining + 1);
-    }
-    const afterPublic = yield* owner.read(selected(2));
+    const afterPublic = yield* owner.observedAt(afterInstant, owner.read(selected(2)));
     expect(afterPublic.evidence).toMatchObject({ selection: selected(2), status: 'VALID' });
     if (Schema.is(CatalogSelectionValidEvidenceSchema)(afterPublic.evidence)) {
       expect(
         afterPublic.evidence.basis.filter(({ role }) => role === 'SET_COMPOSITION').map(({ source }) => source),
       ).toEqual([next.revision.reference]);
-      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(afterPublic.evidence.assessedAt))).toBeGreaterThanOrEqual(t2);
+      expect(DateTime.toEpochMillis(DateTime.makeUnsafe(afterPublic.evidence.assessedAt))).toBe(t2);
     }
     for (const invalidSelection of [
       Schema.decodeUnknownSync(CatalogSelectionSchema)({
@@ -1285,9 +1324,13 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
         variantRef: otherProduct.selected.variantRef,
       }),
     ]) {
-      expect((yield* owner.read(invalidSelection)).evidence).not.toMatchObject({ status: 'VALID' });
+      expect((yield* owner.observedAt(afterInstant, owner.read(invalidSelection))).evidence).not.toMatchObject({
+        status: 'VALID',
+      });
     }
-    expect((yield* owner.read(selected(1))).evidence).toMatchObject({ status: 'INVALID' });
+    expect((yield* owner.observedAt(afterInstant, owner.read(selected(1)))).evidence).toMatchObject({
+      status: 'INVALID',
+    });
     const history = yield* executeSetCompositionHistoryWithAuthorization(
       { reference: { resourceRef: revision.reference.resourceRef, revision: revision.reference.revision } },
       yield* owner.authorization(),
@@ -1317,7 +1360,10 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
           .pipe(Effect.map(Option.map(canonicalStored))),
       ),
     ).toEqual(original);
-    const t3 = DateTime.toEpochMillis(yield* DateTime.now) + 1500;
+    const draftedAt = afterInstant;
+    const t3 = t2 + 1500;
+    const beforeDraftInstant = DateTime.makeUnsafe(t3 - 1);
+    const atDraftInstant = DateTime.makeUnsafe(t3);
     const draft = yield* Schema.decodeUnknownEffect(SetCompositionMutationPayloadSchema)({
       effectiveFrom: new Date(t3).toISOString(),
       expectedRevision: 2,
@@ -1336,17 +1382,18 @@ it.live('keeps effective R1 through public future R2 publication and preserves e
         reference: { resourceRef: ref, revision: 3 },
       },
     });
-    yield* executeReviseSetCompositionWithAuthorization(draft, yield* owner.authorization(), yield* nextId, {
-      ...options,
-      idempotencyKey: yield* nextId,
-    }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch));
-    expect((yield* owner.read(selected(2))).evidence).toMatchObject({ status: 'VALID' });
-    const untilDraft = t3 - DateTime.toEpochMillis(yield* DateTime.now);
-    if (untilDraft > 0) {
-      yield* Effect.sleep(untilDraft + 1);
-    }
+    yield* owner.observedAt(
+      draftedAt,
+      executeReviseSetCompositionWithAuthorization(draft, yield* owner.authorization(), yield* nextId, {
+        ...options,
+        idempotencyKey: yield* nextId,
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, owner.nativeFetch)),
+    );
+    expect((yield* owner.observedAt(beforeDraftInstant, owner.read(selected(2)))).evidence).toMatchObject({
+      status: 'VALID',
+    });
     for (const number of [2, 1, 3]) {
-      const refused = yield* owner.read(selected(number));
+      const refused = yield* owner.observedAt(atDraftInstant, owner.read(selected(number)));
       expect(refused.evidence).toMatchObject({
         purpose: 'PRICING',
         reason: 'Set Composition Current revision is unavailable or missing',

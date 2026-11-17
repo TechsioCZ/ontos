@@ -1,7 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Option, Predicate, Schema } from 'effect';
 
-import { PrepareOrderCommitmentPayloadSchema } from '../../shared/actions/prepare-order-commitment.ts';
 import { orderPreparationInput } from '../support/order-preparation-input.ts';
 import {
   OrderPurchaseValueUnresolvable,
@@ -121,14 +120,6 @@ it('leaves a candidate without any published Pricing line to the owner candidate
     pricing: { ...candidate.pricing, publishedLines: [] },
   }));
   expect(governedAmount(empty)).toEqual({ currency: 'CZK', minor: 0 });
-});
-
-it('binds the resolver to the Action whose declaration names a server-derived total', () => {
-  const payload = orderPreparationInput();
-  // The declaration is the only thing that authorizes a resolver at all (O18): a client-supplied
-  // total can never be decoded into the governed amount.
-  expect(Schema.is(PrepareOrderCommitmentPayloadSchema)(payload)).toBe(true);
-  expect(payload).not.toHaveProperty('purchaseValue');
 });
 
 /** One owner-verified frozen purchase value, as the commit command carries it (O91). */

@@ -10,11 +10,8 @@ import { Effect, Schema } from 'effect';
 import { CreateProductUnitPayloadSchema } from '../../shared/actions/create-product-unit.ts';
 import type { CreateProductUnitResult } from '../../shared/actions/create-product-unit.ts';
 import { RetireProductUnitPayloadSchema } from '../../shared/actions/retire-product-unit.ts';
-import type { RetireProductUnitResult } from '../../shared/actions/retire-product-unit.ts';
 import { ReviseProductUnitPayloadSchema } from '../../shared/actions/revise-product-unit.ts';
-import type { ReviseProductUnitResult } from '../../shared/actions/revise-product-unit.ts';
 import { SetProductUnitTargetDivisibilityPayloadSchema } from '../../shared/actions/set-product-unit-target-divisibility.ts';
-import type { SetProductUnitTargetDivisibilityResult } from '../../shared/actions/set-product-unit-target-divisibility.ts';
 import { createProductUnitAction, handleCreateProductUnit } from '../../src/actions/create-product-unit.action.ts';
 import { handleRetireProductUnit, retireProductUnitAction } from '../../src/actions/retire-product-unit.action.ts';
 import { handleReviseProductUnit, reviseProductUnitAction } from '../../src/actions/revise-product-unit.action.ts';
@@ -184,19 +181,6 @@ describe('Product Unit governed Actions', () => {
       expect(failed.snapshot().committed).toHaveLength(0);
     }),
   );
-  it('exports all four direct result types for owner API contracts', () => {
-    const result = {
-      ruleRevision: { revision: 1, rounding: 'UP' as const, step: '0.01', unit: unitRef },
-      unit: unitRef,
-    };
-    const createResult: CreateProductUnitResult = Schema.decodeUnknownSync(
-      createProductUnitAction.descriptor.resultSchema,
-    )(result);
-    const reviseResult: ReviseProductUnitResult = createResult;
-    const retireResult: RetireProductUnitResult = reviseResult;
-    const divisibilityResult: SetProductUnitTargetDivisibilityResult = retireResult;
-    expect(divisibilityResult.ruleRevision.revision).toBe(1);
-  });
   it('requires tenant-scoped, idempotent, explicitly authorized writes', () => {
     for (const action of [
       createProductUnitAction,

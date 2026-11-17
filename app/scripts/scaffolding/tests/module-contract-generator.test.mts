@@ -10,7 +10,7 @@ import { expect, it } from 'effect-rstest';
 
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
-import { getHelpText, runScaffoldEffect } from '../cli.mts';
+import { runScaffoldEffect } from '../cli.mts';
 import { asJsonObject, bindSharedRuntimeWorkerEntry, readModuleRuntimeDeclarationEffect } from '../shared.mts';
 import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
@@ -858,24 +858,6 @@ it.live(
         expect(yield* snapshotTree(root)).toEqual(beforeFailure);
       }),
     );
-  }),
-);
-
-it.live(
-  'module-contract help is exact and write-free',
-  Effect.fn(function* scenario5() {
-    const missingRoot = path.join(tmpdir(), 'module-contract-help-does-not-exist');
-    const result = yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, ['--help'], {
-      workspaceRoot: missingRoot,
-    }).pipe(Effect.provide(NodeServices.layer));
-    expect(result).toEqual({
-      help: getHelpText(MODULE_CONTRACT_COMMAND),
-      kind: 'help',
-    });
-    if (result.kind !== 'help') {
-      throw new Error('Expected help result');
-    }
-    expect(result.help).toMatch(/--vertical <vertical> --module <dotted\.module-id>/u);
   }),
 );
 

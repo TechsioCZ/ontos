@@ -17,7 +17,7 @@ import { Reactivity } from 'effect/reactivity';
 import {
   SymmyC14ProductFixtureUnavailable,
   encodeProductComposition,
-  nativePort,
+  nativePortList,
   productComposition,
 } from './symmy-c14-product-runtime.mts';
 import type { C14PolicyFixtureOwner } from './symmy-c14-product-runtime.mts';
@@ -41,7 +41,7 @@ const symmyApp = 'symmy-integration';
 
 const admissionReceipt = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
-  status: Schema.Literal('admitted'),
+  status: Schema.Literal('queued'),
 });
 const polledJob = Schema.Struct({
   items: Schema.optionalKey(Schema.Array(Schema.Struct({ outcome: Schema.String }))),
@@ -103,23 +103,16 @@ export const makeSymmyC14PolicyFixture = Effect.fn('SymmyC14Policy.makeFixture')
   readonly owner: C14PolicyFixtureOwner;
   readonly workloadKey: string;
 }) {
-  const ownerPort = yield* nativePort;
-  const currentnessReceivers =
-    owner === 'assortment'
-      ? yield* Effect.forEach(
-          assortmentCurrentnessAudiences,
-          Effect.fn('SymmyC14Policy.currentnessPort')(function* currentnessPort(
-            audience: (typeof assortmentCurrentnessAudiences)[number],
-          ) {
-            return { audience, port: yield* nativePort };
-          }),
-          { concurrency: 1 },
-        )
-      : [];
-  let symmyPort = yield* nativePort;
-  while (symmyPort === ownerPort) {
-    symmyPort = yield* nativePort;
-  }
+  const receiverAudiences = owner === 'assortment' ? assortmentCurrentnessAudiences : [];
+  const allocatedPorts = yield* nativePortList(2 + receiverAudiences.length);
+  const [ownerPort, symmyPort] = allocatedPorts;
+  assert.isDefined(ownerPort);
+  assert.isDefined(symmyPort);
+  const currentnessReceivers = receiverAudiences.map((audience, index) => {
+    const port = allocatedPorts[index + 2];
+    assert.isDefined(port);
+    return { audience, port };
+  });
   const { contracts, snapshot } = yield* productComposition(
     {
       ...Object.fromEntries(currentnessReceivers.map(({ audience, port }) => [audience, `http://127.0.0.1:${port}/`])),

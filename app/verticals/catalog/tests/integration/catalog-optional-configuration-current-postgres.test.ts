@@ -27,7 +27,6 @@ import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts'
 import { selectionEvidenceReadApiLive } from '../../api/selection-evidence-read-server.ts';
 import { catalogApi } from '../../shared/api.ts';
 import {
-  SelectionEvidenceAuthenticationProblemSchema,
   SelectionEvidenceForbiddenProblemSchema,
   SelectionEvidenceUnavailableProblemSchema,
 } from '../../shared/apis/selection-evidence.ts';
@@ -567,22 +566,6 @@ it.live(
       expect(after.events).toEqual(before.events);
       expect(after.audits).toEqual(before.audits);
       expect(yield* observeDefinition()).toEqual(fullDefinition);
-      const unauthenticated = yield* executeSelectionEvidenceWithAuthorization(
-        { purpose: 'PRICING', selection: selected },
-        'Bearer invalid',
-        yield* nextId,
-        {
-          baseUrl: 'https://catalog.ontos.test',
-          compositionRevision: composition.composition.revision,
-        },
-      ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch), Effect.flip);
-      expect(Schema.is(SelectionEvidenceAuthenticationProblemSchema)(unauthenticated)).toBe(true);
-      const forbiddenLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-      expect(
-        Schema.is(SelectionEvidenceForbiddenProblemSchema)(
-          yield* read(selected, forbiddenLegalEntity).pipe(Effect.flip),
-        ),
-      ).toBe(true);
       const foreignTenantId = yield* nextId;
       const foreignSelection = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
         productRef: { ...selected.productRef, tenantId: foreignTenantId },

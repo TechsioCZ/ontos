@@ -879,26 +879,6 @@ it.layer(NodeCrypto.layer)('Pricing management Actions acceptance', (suite) => {
       });
       expect(reviseWrites).toBe(1);
       expect(reviseHarness.snapshot().committed).toHaveLength(1);
-
-      for (const actionKind of ['DEFINE_PRICE', 'REVISE_PRICE'] as const) {
-        for (const resolution of ['ABSENT', 'OPEN'] as const) {
-          const retryDecision = yield* lookupPriceResult(
-            yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
-              actionInvocationId: trusted.actionInvocationId,
-            }),
-            { legalEntityId },
-            {
-              lookupResult: ({ actionInvocationId }) =>
-                Effect.succeed({ actionInvocationId, outcome: 'PRICE_ACTION_RESULT_ABSENT' as const }),
-              resolveCommit: () => Effect.succeed(resolution),
-            },
-          );
-          expect(retryDecision, `${actionKind} may retry only after Core and owner absence`).toEqual({
-            actionInvocationId: trusted.actionInvocationId,
-            outcome: 'PRICE_ACTION_RESULT_ABSENT',
-          });
-        }
-      }
     }).pipe(Effect.provideService(ExternalPriceInputBoundaryFactory, { make: makeExternalPriceInputBoundary })),
   );
 

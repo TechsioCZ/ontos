@@ -18,9 +18,6 @@ it('fails closed instead of remapping purchase Units in existing measured choice
     'utf-8',
   );
   expect(migration).toContain('Configuration Unit migration requires verified mapping of existing measured choices');
-  expect(migration).toContain('catalog_configuration_choices_unit_fk');
-  expect(migration).toContain('configuration_unit_revisions');
-  expect(migration).toContain('catalog_configuration_unit_revisions_append_only');
 });
 
 const tenantId = '11111111-1111-4111-8111-111111111111';

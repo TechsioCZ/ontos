@@ -90,6 +90,8 @@ export interface ApiKeyGatewayNativeFixtureOptions {
   readonly productionGate?: true;
   readonly regionsProjectionJson?: string;
   readonly relaySource?: Pick<typeof ShellNativeRelaySourceSchema.Type, 'registeredWorkloads' | 'sourceAppId'>;
+  /** Seconds one dispatched request may take under the production gate; 20 by default, 60 at most. */
+  readonly requestDeadlineSeconds?: number;
   readonly snapshotJson: string;
 }
 export const ShellNativeRelaySourceSchema = Schema.Struct({
@@ -286,19 +288,25 @@ const appendRequestOutcome = Effect.fn('ShellNativeFixture.recordRequestPhase')(
   yield* Ref.update(outcomes, (previous) => [...previous, outcome].slice(-32));
 });
 
+/** The default hang guard of one dispatched request; a suite that composes more owner reads may ask for longer. */
+const DEFAULT_DISPATCH_DEADLINE = Duration.seconds(20);
+/** The most a suite may ask for: the request diagnostics record at most this many milliseconds. */
+const MAX_DISPATCH_DEADLINE_SECONDS = 60;
+
 export const observeShellNativeRequestDispatch = Effect.fn('ShellNativeFixture.observeRequestDispatch')(
   function* observeRequestDispatch<DispatchFailure, TimeoutFailure>(
     dispatch: Effect.Effect<Response, DispatchFailure>,
     onTimeout: Effect.Effect<never, TimeoutFailure>,
     outcomes: Ref.Ref<readonly (typeof ShellNativeRequestDiagnosticSchema.Type)[]>,
     surface: typeof ShellNativeRequestDiagnosticSchema.Type.surface,
+    deadline: Duration.Duration = DEFAULT_DISPATCH_DEADLINE,
   ) {
     const started = yield* Clock.currentTimeMillis;
     yield* appendRequestOutcome(outcomes, surface, started, 'dispatch_started');
     return yield* dispatch.pipe(
       Effect.tapError(() => appendRequestOutcome(outcomes, surface, started, 'dispatch_failed')),
       Effect.timeoutOrElse({
-        duration: Duration.seconds(20),
+        duration: deadline,
         orElse: () =>
           appendRequestOutcome(outcomes, surface, started, 'dispatch_timeout').pipe(Effect.andThen(onTimeout)),
       }),
@@ -807,6 +815,9 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(
         Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
       )(relaySource === undefined ? Option.none() : Option.some(relaySource)),
+      ONTOS_SHELL_NATIVE_REQUEST_DEADLINE_SECONDS: String(
+        Math.min(MAX_DISPATCH_DEADLINE_SECONDS, options.requestDeadlineSeconds ?? 20),
+      ),
       ONTOS_SHELL_NATIVE_SOCKET: privateChannel.socketPath,
     };
     const issuerConnectionString =

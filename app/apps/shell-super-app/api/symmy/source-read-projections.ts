@@ -1,19 +1,27 @@
-import { CatalogSourceProductsRequestSchema } from '@app/catalog/api/catalog-source-products';
-import type { CatalogSourceProductsResponse } from '@app/catalog/api/catalog-source-products';
-import { executeCatalogSourceProductsWithAuthorization } from '@app/catalog/api/catalog-source-products-client';
+import { CatalogSourceProductPageRequestSchema } from '@app/catalog/api/catalog-source-product-page';
+import type { CatalogSourceProductPageResponse } from '@app/catalog/api/catalog-source-product-page';
+import { executeCatalogSourceProductPageWithAuthorization } from '@app/catalog/api/catalog-source-product-page-client';
 import { CustomerProfileIcoRequestSchema } from '@app/commerce-customer-context/api/customer-profile-ico';
 import { executeCustomerProfileIcoWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-ico/client';
 import { OrganizationCustomerProfileIcoRequestSchema } from '@app/commerce-customer-context/api/organization-customer-profile-ico';
 import type { OrganizationCustomerProfileIcoResponseSchema } from '@app/commerce-customer-context/api/organization-customer-profile-ico';
 import { executeOrganizationCustomerProfileIcoWithAuthorization } from '@app/commerce-customer-context/api/organization-customer-profile-ico/client';
-import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
-import type {
-  CustomerProfileSourceItem,
-  CustomerProfileSourceResponse,
-} from '@app/commerce-customer-context/api/customer-profile-source';
-import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
+import type { CustomerProfileSourceItem } from '@app/commerce-customer-context/api/customer-profile-source';
+import { CustomerProfileSourcePageRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source-page';
+import type { CustomerProfileSourcePageResponse } from '@app/commerce-customer-context/api/customer-profile-source-page';
+import { executeCustomerProfileSourcePageWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source-page/client';
+import {
+  CUSTOMER_PROFILE_SOURCE_PARTIES_MAX,
+  CustomerProfileSourcePartiesRequestSchema,
+} from '@app/commerce-customer-context/api/customer-profile-source-parties';
+import { executeCustomerProfileSourcePartiesWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source-parties/client';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import {
+  SOURCE_PARTY_SEARCH_MAX_TERMS,
+  SourcePartySearchRequestSchema,
+} from '@app/party-registry/apis/source-party-search';
+import { executeSourcePartySearchWithAuthorization } from '@app/party-registry/apis/source-party-search/client';
 import { SourceProfileExportRequestSchema } from '@app/party-registry/apis/source-profile-export';
 import { executeSourceProfileExportWithAuthorization } from '@app/party-registry/apis/source-profile-export/client';
 import { OrganizationBusinessNameExportRequestSchema } from '@app/party-registry/apis/organization-business-name-export';
@@ -33,7 +41,7 @@ import { SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
 import { Config, DateTime, Effect, Match, Option, Schema, Redacted } from 'effect';
 
 import { symmyInvalidProblem, symmyUnavailableProblem, symmyUnsupportedProblem } from './contract.ts';
-import type { SymmyInternalReadQuerySchema, SymmyIngressProblem } from './contract.ts';
+import type { SymmyCustomerFieldName, SymmyInternalReadQuerySchema, SymmyIngressProblem } from './contract.ts';
 import { resolveSymmyOwnerReleaseBase } from './owner-release-transport.ts';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
 import type {
@@ -65,11 +73,15 @@ export interface SymmySourceReadScope {
 type ReadQuery = typeof SymmyInternalReadQuerySchema.Type;
 type RequestIdentifier = Effect.Effect<string, typeof symmyUnavailableProblem>;
 type PriceGroupSourceAssociation = typeof PriceGroupSourceAssociationSchema.Type;
+export const priceGroupCatalogAudience = 'price-group-catalog';
 const customerContextModule = 'commerce.customer-context';
 const customerContextAudience = 'commerce-customer-context';
 const partyModule = 'party.registry';
+const partyAudience = 'party-registry';
 const partyProfileRead = 'party.registry.api.source-profile-export';
 const organizationNameRead = 'party.registry.api.organization-business-name-export';
+const partySearchRead = 'party.registry.api.source-party-search';
+const customerPartiesRead = 'commerce.customer-context.api.customer-profile-source-parties';
 const personalIcoReadKey = 'commerce.customer-context.api.customer-profile-ico';
 const organizationIcoReadKey = 'commerce.customer-context.api.organization-customer-profile-ico';
 type IcoAuthority = NonNullable<CustomerProfileSourceItem['icoAuthority']>;
@@ -119,28 +131,23 @@ const routeAllows = (scope: SymmySourceReadScope, moduleId: string, entrypointKe
     (operation) =>
       operation.moduleId === moduleId && operation.entrypointKey === entrypointKey && operation.schemaVersion === '1',
   );
-const requireRouteRead = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string) =>
+export const requireRouteRead = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string) =>
   routeAllows(scope, moduleId, entrypointKey) ? Effect.void : Effect.fail(forbidden);
-const cursorQueryIsInvalid = (query: ReadQuery): boolean =>
-  query.offset !== undefined ||
-  query.priceLimit !== undefined ||
-  query.priceOffset !== undefined ||
-  (query.code !== undefined && query.afterRecordId !== undefined);
+/** The paging and `q` the products read takes. The route has no cursor and no single-record lookup. */
+type ProductsQuery = Pick<ReadQuery, 'limit' | 'offset'> & { readonly q?: string };
 const catalogItemsAreValid = (
-  result: CatalogSourceProductsResponse,
+  result: CatalogSourceProductPageResponse,
   scope: SymmySourceReadScope,
-  query: ReadQuery,
+  query: Required<Pick<ReadQuery, 'limit' | 'offset'>>,
 ): boolean =>
-  result.items.length <= (query.code === undefined ? (query.limit ?? 50) : 1) &&
-  (result.outcome !== 'NOT_FOUND' || (result.items.length === 0 && result.nextRecordId === undefined)) &&
+  result.items.length <= query.limit &&
+  result.count >= query.offset + result.items.length &&
   result.items.every(
     (item) =>
-      item.entityKind === 'PRODUCT' &&
       item.product.productRef.tenantId === scope.tenantId &&
       item.source.issuerId === scope.issuerId &&
       item.source.routeScope === (scope.sourceRouteId ?? scope.routeId) &&
       item.source.recordNamespace === scope.sourceNamespace &&
-      (query.code === undefined || item.source.recordId === query.code) &&
       item.variantSources.every(
         (variant) =>
           variant.source.issuerId === scope.issuerId &&
@@ -151,30 +158,24 @@ const catalogItemsAreValid = (
   );
 export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.products')(function* sourceProducts(
   scope: SymmySourceReadScope,
-  query: ReadQuery,
+  query: ProductsQuery,
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<SymmyInternalProductsProjection, SymmyIngressProblem> {
-  if (cursorQueryIsInvalid(query)) {
-    return yield* Effect.fail(symmyInvalidProblem);
-  }
-  yield* requireRouteRead(scope, 'commerce.catalog', 'commerce.catalog.api.catalog-source-products');
-  const qualifier = {
+  yield* requireRouteRead(scope, 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page');
+  const paging = { limit: query.limit ?? 50, offset: query.offset ?? 0 };
+  const page = {
     issuerId: scope.issuerId,
+    ...paging,
     recordNamespace: scope.sourceNamespace,
     routeScope: scope.sourceRouteId ?? scope.routeId,
   };
-  const listing = { ...qualifier, limit: query.limit ?? 50, operation: 'LIST' as const };
-  const listInput = query.afterRecordId === undefined ? listing : { ...listing, afterRecordId: query.afterRecordId };
-  const raw =
-    query.code === undefined
-      ? listInput
-      : { ...qualifier, entityKind: 'PRODUCT', operation: 'LOOKUP', recordId: query.code };
-  const payload = yield* Schema.decodeUnknownEffect(CatalogSourceProductsRequestSchema)(raw).pipe(
+  const raw = query.q === undefined ? page : { ...page, search: query.q };
+  const payload = yield* Schema.decodeUnknownEffect(CatalogSourceProductPageRequestSchema)(raw).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
   );
   const assertion = yield* acquireSymmyReadAssertion(admission, 'catalog');
-  const result = yield* executeCatalogSourceProductsWithAuthorization(
+  const result = yield* executeCatalogSourceProductPageWithAuthorization(
     payload,
     `Bearer ${Redacted.value(assertion.assertion)}`,
     yield* newRequestIdentifier,
@@ -183,12 +184,14 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
       compositionRevision: assertion.compositionRevision,
     },
   ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
-  if (!catalogItemsAreValid(result, scope, query)) {
+  if (!catalogItemsAreValid(result, scope, paging)) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
-  const projection: SymmyInternalProductsProjection = {
+  return {
     contractVersion: 'INTERNAL_C14',
-    limit: query.limit ?? 50,
+    count: result.count,
+    limit: paging.limit,
+    offset: paging.offset,
     products: result.items.map((item) => ({
       id: qualifySymmyReadId(scope, 'PRODUCT', item.source.recordId),
       product: item.product,
@@ -202,31 +205,12 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
     projection: 'products',
     unsupported_fields: ['tax', 'assortment', 'prices', 'stock'],
   };
-  return result.nextRecordId === undefined ? projection : { ...projection, nextRecordId: result.nextRecordId };
 });
-interface CustomerSourcePage {
-  readonly items: readonly CustomerProfileSourceItem[];
-  readonly nextCursor: string | null;
-}
-const selectCustomers = (
-  response: CustomerProfileSourceResponse,
-  query: ReadQuery,
-): Effect.Effect<CustomerSourcePage, SymmyIngressProblem> =>
-  Match.value(response).pipe(
-    Match.tag('ABSENT', () =>
-      query.code === undefined ? Effect.fail(symmyUnavailableProblem) : Effect.succeed({ items: [], nextCursor: null }),
-    ),
-    Match.tag('CURRENT', ({ item }) =>
-      query.code === undefined
-        ? Effect.fail(symmyUnavailableProblem)
-        : Effect.succeed({ items: [item], nextCursor: null }),
-    ),
-    Match.tag('PAGE', ({ items, nextCursor }) =>
-      query.code === undefined ? Effect.succeed({ items, nextCursor }) : Effect.fail(symmyUnavailableProblem),
-    ),
-    Match.tag('RECEIPT', 'MINIMAL_RECEIPT', 'ORG_RECEIPT', () => Effect.fail(symmyUnavailableProblem)),
-    Match.exhaustive,
-  );
+/** The paging, `q` and part selection the customers read takes. The route has no cursor and no single-record lookup. */
+type CustomersQuery = Pick<ReadQuery, 'limit' | 'offset'> & {
+  readonly fields?: readonly SymmyCustomerFieldName[] | undefined;
+  readonly q?: string;
+};
 const customerSubjectIsValid = (item: CustomerProfileSourceItem, scope: SymmySourceReadScope): boolean =>
   Match.value(item.profile).pipe(
     Match.when(
@@ -247,11 +231,7 @@ const customerSubjectIsValid = (item: CustomerProfileSourceItem, scope: SymmySou
     ),
     Match.orElse(() => false),
   );
-const customerSourceIsValid = (
-  item: CustomerProfileSourceItem,
-  scope: SymmySourceReadScope,
-  query: ReadQuery,
-): boolean =>
+const customerSourceIsValid = (item: CustomerProfileSourceItem, scope: SymmySourceReadScope): boolean =>
   item.source.issuer === scope.issuerId &&
   item.source.namespace === scope.sourceNamespace &&
   item.source.recordType === scope.sourceEntityKind &&
@@ -260,8 +240,15 @@ const customerSourceIsValid = (
   item.source.route.revision === (scope.sourceRouteRevision ?? scope.routeRevision) &&
   item.partyRef.tenantId === scope.tenantId &&
   item.profile.profileRef.tenantId === scope.tenantId &&
-  customerSubjectIsValid(item, scope) &&
-  (query.code === undefined || item.source.recordId === query.code);
+  customerSubjectIsValid(item, scope);
+const customerPageIsValid = (
+  page: CustomerProfileSourcePageResponse,
+  scope: SymmySourceReadScope,
+  paging: Required<Pick<ReadQuery, 'limit' | 'offset'>>,
+): boolean =>
+  page.items.length <= paging.limit &&
+  page.count >= paging.offset + page.items.length &&
+  page.items.every((item) => customerSourceIsValid(item, scope));
 const customerIcoAuthority = (
   item: CustomerProfileSourceItem,
 ): Effect.Effect<Option.Option<IcoAuthority>, SymmyIngressProblem> =>
@@ -372,7 +359,7 @@ const readCustomerParty = Effect.fn('SymmyReadProjection.customerParty')(functio
     partyRef: item.partyRef,
     sourceReference: item.partySourceReference,
   }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'party-registry', scope.legalEntityId);
+  const assertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
   const result = yield* executeSourceProfileExportWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,
@@ -404,7 +391,7 @@ const readOrganizationName = Effect.fn('SymmyReadProjection.organizationName')(f
     partyRef: item.partyRef,
     sourceReference: item.partySourceReference,
   }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'party-registry', scope.legalEntityId);
+  const assertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
   const result = yield* executeOrganizationBusinessNameExportWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,
@@ -424,12 +411,15 @@ const readOrganizationName = Effect.fn('SymmyReadProjection.organizationName')(f
     Match.exhaustive,
   );
 });
+/** An absent `fields` selects every part. An unselected part is never read from its owner. */
 const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* customer(
   item: CustomerProfileSourceItem,
   scope: SymmySourceReadScope,
+  fields: CustomersQuery['fields'],
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<CustomerRow, SymmyIngressProblem> {
+  const selects = (name: SymmyCustomerFieldName) => fields === undefined || fields.includes(name);
   const authority = yield* customerIcoAuthority(item);
   let result: CustomerRow = {
     id: qualifySymmyReadId(scope, `CUSTOMER:${item.source.recordType}`, item.source.recordId),
@@ -440,14 +430,14 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
   if (Option.isSome(authority)) {
     result = yield* Match.value(authority.value).pipe(
       Match.when('PERSONAL', () =>
-        routeAllows(scope, partyModule, partyProfileRead)
+        selects('party') && routeAllows(scope, partyModule, partyProfileRead)
           ? readCustomerParty(item, scope, admission, newRequestIdentifier).pipe(
               Effect.map((party) => ({ ...result, party })),
             )
           : Effect.succeed(result),
       ),
       Match.when('ORGANIZATION', () =>
-        routeAllows(scope, partyModule, organizationNameRead)
+        selects('businessName') && routeAllows(scope, partyModule, organizationNameRead)
           ? readOrganizationName(item, scope, admission, newRequestIdentifier).pipe(
               Effect.map((businessName) => ({ ...result, business_name: businessName })),
             )
@@ -456,7 +446,11 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
       Match.exhaustive,
     );
   }
-  if (Option.isSome(authority) && routeAllows(scope, customerContextModule, icoReadKey(authority.value))) {
+  if (
+    Option.isSome(authority) &&
+    selects('ico') &&
+    routeAllows(scope, customerContextModule, icoReadKey(authority.value))
+  ) {
     const ico = yield* Match.value(authority.value).pipe(
       Match.when('PERSONAL', () => readCustomerIco(item, scope, admission, newRequestIdentifier)),
       Match.when('ORGANIZATION', () => readOrganizationCustomerIco(item, scope, admission, newRequestIdentifier)),
@@ -486,19 +480,97 @@ const customerUnsupportedFields = (scope: SymmySourceReadScope, customers: reado
   }
   return unsupported;
 };
+/** Whitespace-separated terms, each of which must match at least one searched field of a customer. */
+const searchTerms = (q: string): readonly string[] => [...new Set(q.split(/\s+/u).filter((term) => term.length > 0))];
+interface SearchTerm {
+  readonly partyIds: readonly string[];
+  readonly term: string;
+}
+/**
+ * The search of a customers read, in three owner steps so that the filter is applied before `count`, `offset` and
+ * `limit`: the route's own customers as candidates (at most 500; more is refused, never a partial search), the
+ * Party owner's match of each term over those candidates only (it applies the current Privacy export checks), and
+ * then, in the caller, the customer page read filtered by the matched Party ids or the customer key.
+ */
+const readCustomerSearch = Effect.fn('SymmyReadProjection.customerSearch')(function* customerSearch(
+  scope: SymmySourceReadScope,
+  authority: Pick<
+    typeof CustomerProfileSourcePartiesRequestSchema.Type,
+    'issuer' | 'mappingRevision' | 'namespace' | 'recordType' | 'route'
+  >,
+  q: string,
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: RequestIdentifier,
+): Effect.fn.Return<readonly SearchTerm[], SymmyIngressProblem> {
+  const includePersonProfile = routeAllows(scope, partyModule, partyProfileRead);
+  const includeOrganizationName = routeAllows(scope, partyModule, organizationNameRead);
+  if (
+    !(includePersonProfile || includeOrganizationName) ||
+    !routeAllows(scope, partyModule, partySearchRead) ||
+    !routeAllows(scope, customerContextModule, customerPartiesRead)
+  ) {
+    return yield* Effect.fail(symmyUnsupportedProblem('filter_not_supported'));
+  }
+  const terms = searchTerms(q);
+  if (terms.length > SOURCE_PARTY_SEARCH_MAX_TERMS) {
+    return yield* Effect.fail(symmyUnsupportedProblem('search_too_broad'));
+  }
+  const partiesInput = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePartiesRequestSchema)({
+    ...authority,
+    limit: CUSTOMER_PROFILE_SOURCE_PARTIES_MAX,
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+  const customersAssertion = yield* acquireSymmyReadAssertion(admission, customerContextAudience, scope.legalEntityId);
+  const candidates = yield* executeCustomerProfileSourcePartiesWithAuthorization(
+    partiesInput,
+    `Bearer ${Redacted.value(customersAssertion.assertion)}`,
+    yield* newRequestIdentifier,
+    { baseUrl: customersAssertion.apiBaseUrl, compositionRevision: customersAssertion.compositionRevision },
+  ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+  if (candidates.count > CUSTOMER_PROFILE_SOURCE_PARTIES_MAX) {
+    return yield* Effect.fail(symmyUnsupportedProblem('search_too_broad'));
+  }
+  if (
+    candidates.items.length !== candidates.count ||
+    candidates.items.some(({ partyRef }) => partyRef.tenantId !== scope.tenantId)
+  ) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
+  const byParty = new Map(candidates.items.map((item) => [item.partyRef.resourceId, item]));
+  if (byParty.size === 0) {
+    return terms.map((term) => ({ partyIds: [], term }));
+  }
+  const searchInput = yield* Schema.decodeUnknownEffect(SourcePartySearchRequestSchema)({
+    candidates: [...byParty.values()].map(({ partyRef, partySourceReference }) => ({
+      partyRef,
+      sourceReference: partySourceReference,
+    })),
+    includeOrganizationName,
+    includePersonProfile,
+    terms,
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+  const partyAssertion = yield* acquireSymmyReadAssertion(admission, partyAudience, scope.legalEntityId);
+  const found = yield* executeSourcePartySearchWithAuthorization(
+    searchInput,
+    `Bearer ${Redacted.value(partyAssertion.assertion)}`,
+    yield* newRequestIdentifier,
+    { baseUrl: partyAssertion.apiBaseUrl, compositionRevision: partyAssertion.compositionRevision },
+  ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+  if (found.matches.length !== terms.length || found.matches.some((ids) => ids.some((id) => !byParty.has(id)))) {
+    return yield* Effect.fail(symmyUnavailableProblem);
+  }
+  return terms.map((term, index) => ({ partyIds: found.matches[index] ?? [], term }));
+});
 export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.customers')(function* sourceCustomers(
   scope: SymmySourceReadScope,
-  query: ReadQuery,
+  query: CustomersQuery,
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<SymmyInternalCustomersProjection, SymmyIngressProblem> {
   if (scope.sourceEntityKind === undefined) {
     return yield* Effect.fail(symmyUnsupportedProblem('projection_not_configured'));
   }
-  if (cursorQueryIsInvalid(query)) {
-    return yield* Effect.fail(symmyInvalidProblem);
-  }
-  yield* requireRouteRead(scope, customerContextModule, 'commerce.customer-context.api.customer-profile-source');
+  yield* requireRouteRead(scope, customerContextModule, 'commerce.customer-context.api.customer-profile-source-page');
+  const paging = { limit: query.limit ?? 50, offset: query.offset ?? 0 };
   const authority = {
     issuer: scope.issuerId,
     mappingRevision: scope.sourceMappingVersion ?? scope.mappingVersion,
@@ -506,15 +578,16 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
     recordType: scope.sourceEntityKind,
     route: { id: scope.sourceRouteId ?? scope.routeId, revision: scope.sourceRouteRevision ?? scope.routeRevision },
   };
-  const raw =
-    query.code === undefined
-      ? { ...authority, cursor: query.afterRecordId ?? null, limit: query.limit ?? 50, mode: 'LIST' }
-      : { ...authority, mode: 'CURRENT', recordId: query.code };
-  const input = yield* Schema.decodeUnknownEffect(CustomerProfileSourceRequestSchema)(raw).pipe(
-    Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)),
-  );
+  const terms =
+    query.q === undefined
+      ? undefined
+      : yield* readCustomerSearch(scope, authority, query.q, admission, newRequestIdentifier);
+  const pageRequest = { ...authority, ...paging };
+  const input = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageRequestSchema)(
+    terms === undefined ? pageRequest : { ...pageRequest, search: { terms } },
+  ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
   const assertion = yield* acquireSymmyReadAssertion(admission, customerContextAudience, scope.legalEntityId);
-  const result = yield* executeCustomerProfileSourceWithAuthorization(
+  const page = yield* executeCustomerProfileSourcePageWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,
     yield* newRequestIdentifier,
@@ -523,27 +596,23 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
       compositionRevision: assertion.compositionRevision,
     },
   ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
-  const selected = yield* selectCustomers(result, query);
-  if (
-    selected.items.length > (query.limit ?? 50) ||
-    !selected.items.every((item) => customerSourceIsValid(item, scope, query))
-  ) {
+  if (!customerPageIsValid(page, scope, paging)) {
     return yield* Effect.fail(symmyUnavailableProblem);
   }
   const customers = yield* Effect.forEach(
-    selected.items,
-    (item) => projectCustomer(item, scope, admission, newRequestIdentifier),
+    page.items,
+    (item) => projectCustomer(item, scope, query.fields, admission, newRequestIdentifier),
     { concurrency: 1 },
   );
-  const unsupported = customerUnsupportedFields(scope, customers);
-  const projection: SymmyInternalCustomersProjection = {
+  return {
     contractVersion: 'INTERNAL_C14',
+    count: page.count,
     customers,
-    limit: query.limit ?? 50,
+    limit: paging.limit,
+    offset: paging.offset,
     projection: 'customers',
-    unsupported_fields: unsupported,
+    unsupported_fields: customerUnsupportedFields(scope, customers),
   };
-  return selected.nextCursor === null ? projection : { ...projection, nextRecordId: selected.nextCursor };
 });
 export const SymmyPriceReadProjectionConfigurationSchema = Schema.Struct({
   routes: Schema.Array(
@@ -558,8 +627,8 @@ export const SymmyPriceReadProjectionConfigurationSchema = Schema.Struct({
   ).check(Schema.isMaxLength(64)),
   schemaVersion: Schema.Literal(1),
 });
-type PriceReadSource = (typeof SymmyPriceReadProjectionConfigurationSchema.Type.routes)[number];
-const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSource')(function* priceSource(
+export type PriceReadSource = (typeof SymmyPriceReadProjectionConfigurationSchema.Type.routes)[number];
+export const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSource')(function* priceSource(
   scope: SymmySourceReadScope,
 ) {
   const configuration = yield* Config.option(
@@ -581,7 +650,7 @@ const configuredPriceSource = Effect.fn('SymmyReadProjection.configuredPriceSour
   }
   return Option.fromNullishOr(matches[0]);
 });
-const sourcePricesAreValid = (
+export const sourcePricesAreValid = (
   page: PriceGroupSourcePricesResponse,
   request: typeof PriceGroupSourcePricesRequestSchema.Type,
   scope: SymmySourceReadScope,
@@ -644,7 +713,7 @@ const projectPriceList = Effect.fn('SymmyReadProjection.priceList')(function* pr
   admission: SymmyIngressAdmission,
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<SymmyInternalPriceListsProjection['price_lists'][number], SymmyIngressProblem> {
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'price-group-catalog');
+  const assertion = yield* acquireSymmyReadAssertion(admission, priceGroupCatalogAudience);
   const definition = yield* executePriceGroupDefinitionWithAuthorization(
     { priceGroupRef: association.priceGroupRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
     `Bearer ${Redacted.value(assertion.assertion)}`,
@@ -675,6 +744,7 @@ const projectPriceList = Effect.fn('SymmyReadProjection.priceList')(function* pr
       association.priceGroupRef.resourceId,
     ),
     name: definition.definition.displayName,
+    priceGroupRef: association.priceGroupRef,
     source_record_id: association.sourceCorrelation.recordKey,
     starts_at: definition.definition.effectivePeriod.effectiveFrom,
   };
@@ -733,7 +803,7 @@ export const projectSymmySourcePriceLists: (
   if (Option.isNone(source) && (query.priceLimit !== undefined || query.priceOffset !== undefined)) {
     return yield* Effect.fail(symmyUnsupportedProblem('projection_not_configured'));
   }
-  const assertion = yield* acquireSymmyReadAssertion(admission, 'price-group-catalog');
+  const assertion = yield* acquireSymmyReadAssertion(admission, priceGroupCatalogAudience);
   const page = yield* executePriceGroupSourceAssociationsWithAuthorization(
     input,
     `Bearer ${Redacted.value(assertion.assertion)}`,

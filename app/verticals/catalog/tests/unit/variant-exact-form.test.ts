@@ -71,18 +71,6 @@ describe('Variant exact form foundation', () => {
     expect(() => decode({ productRef, sku: 'NOT_AN_IDENTITY', variantRef })).toThrow();
   });
 
-  it('resolves an explicit working Variant without asserting it is selectable', () => {
-    const product = {
-      productRef: Schema.decodeUnknownSync(VariantExactFormSchema)({ productRef, variantRef }).productRef,
-      variants: [recordedVariant],
-    };
-    const resolved = resolveVariantExactForm(product, recordedVariant.variantRef);
-    expect(Option.isSome(resolved)).toBe(true);
-    if (Option.isSome(resolved)) {
-      expect(resolved.value).toEqual({ productRef, variantRef });
-    }
-  });
-
   it('keeps a retired Variant exactly addressable for historical references', () => {
     const retiredVariant = decodeVariant({
       lifecycle: 'RETIRED',

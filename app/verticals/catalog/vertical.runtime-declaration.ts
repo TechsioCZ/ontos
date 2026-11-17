@@ -225,6 +225,8 @@ import { assortmentProductClassificationV1Read } from './src/api/assortment-prod
 import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
 import { BindInitialVariantSourceRecoveryApi } from './shared/apis/bind-initial-variant-source-recovery.ts';
 import { bindInitialVariantSourceRecoveryRead } from './src/api/bind-initial-variant-source-recovery.read.ts';
+import { CatalogSourceProductPageApi } from './shared/apis/catalog-source-product-page.ts';
+import { catalogSourceProductPageRead } from './src/api/catalog-source-product-page.read.ts';
 import { CatalogSourceProductsApi } from './shared/apis/catalog-source-products.ts';
 import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
 import { SetVariantLocalizedFactsActionApi } from './shared/apis/set-variant-localized-facts-action.ts';
@@ -375,6 +377,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'brand-history': BrandHistoryApi,
       'catalog-document-current': CatalogDocumentCurrentApi,
       'catalog-media-current': CatalogMediaCurrentApi,
+      'catalog-source-product-page': CatalogSourceProductPageApi,
       'catalog-source-products': CatalogSourceProductsApi,
       'catalog-source-resolution': CatalogSourceResolutionApi,
       'change-local-override-recovery': ChangeLocalOverrideRecoveryApi,
@@ -578,6 +581,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: bindInitialVariantSourceRecoveryRead,
       },
       {
+        apiKey: 'catalog-source-product-page',
+        operationKey: 'catalogSourceProductPage.execute',
+        registration: catalogSourceProductPageRead,
+      },
+      {
         apiKey: 'catalog-source-products',
         operationKey: 'catalogSourceProducts.execute',
         registration: catalogSourceProductsRead,
@@ -674,6 +682,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
+    catalogSourceProductPageRead,
     catalogSourceProductsRead,
     // </generated-module-registration-reads>
   ],

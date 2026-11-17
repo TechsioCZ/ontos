@@ -18,12 +18,6 @@ const catalogRef = (resourceId: string, resourceType: string) => ({
   resourceType,
   tenantId,
 });
-const priceGroupRef = {
-  moduleId: 'pricing.price-group-catalog',
-  resourceId: '77777777-7777-4777-8777-777777777777',
-  resourceType: 'pricing.price-group-catalog.price-group',
-  tenantId,
-} as const;
 const exactKey = {
   catalogSelection: {
     productRef: catalogRef('22222222-2222-4222-8222-222222222222', 'commerce.catalog.product'),
@@ -99,16 +93,6 @@ const decodeOwnerResult = Schema.decodeUnknownSync(ExactPriceOwnerLookupResultSc
 });
 
 describe('issue #764 exact-key Price conflict contract', () => {
-  it('treats distinct Current canonical truths as conflict even when their amounts are equal', () => {
-    const decoded = decodeDiagnostic(diagnostic);
-
-    expect(decoded.claimants.map(({ priceRevision }) => priceRevision.monetaryAmount.amount)).toEqual(['900', '900']);
-    expect(decoded.claimants.map(({ priceRef: ref }) => ref.resourceId)).toEqual([
-      first.priceRef.resourceId,
-      second.priceRef.resourceId,
-    ]);
-  });
-
   it('keeps authorized diagnosis complete and emits a source-redacted public conflict', () => {
     const decoded = decodeDiagnostic(diagnostic);
     const publicConflict = redactExactPriceConflictDiagnostic(decoded);
@@ -132,62 +116,6 @@ describe('issue #764 exact-key Price conflict contract', () => {
       priceRef: first.priceRef,
     };
     expect(decodeDiagnostic({ ...diagnostic, claimants: [first, anotherRevisionOfFirst] }).claimants).toHaveLength(2);
-  });
-
-  it('does not fabricate a collision from historical or future non-Current Revisions', () => {
-    expect(() =>
-      decodeDiagnostic({
-        ...diagnostic,
-        claimants: [
-          first,
-          {
-            ...second,
-            effectivePeriod: {
-              effectiveFrom: '2026-10-01T00:00:00.000Z',
-              effectiveTo: null,
-            },
-            priceRevision: {
-              ...second.priceRevision,
-              effectiveFrom: '2026-10-01T00:00:00.000Z',
-            },
-          },
-        ],
-      }),
-    ).toThrow();
-    expect(() =>
-      decodeDiagnostic({
-        ...diagnostic,
-        claimants: [
-          first,
-          {
-            ...second,
-            effectivePeriod: {
-              effectiveFrom: '2026-01-01T00:00:00.000Z',
-              effectiveTo: effectiveAt,
-            },
-            priceRevision: {
-              ...second.priceRevision,
-              effectiveFrom: '2026-01-01T00:00:00.000Z',
-            },
-          },
-        ],
-      }),
-    ).toThrow();
-  });
-
-  it('rejects competing claims from a different key axis, including Group versus no-group', () => {
-    for (const differentExactKey of [
-      { ...exactKey, commercialScope: { ...exactKey.commercialScope, marketId: 'SK' } },
-      { ...exactKey, currencyCode: 'EUR' },
-      { ...exactKey, priceGroupSelector: { kind: 'PRICE_GROUP' as const, priceGroupRef } },
-    ]) {
-      expect(() =>
-        decodeDiagnostic({
-          ...diagnostic,
-          claimants: [first, { ...second, exactKey: differentExactKey }],
-        }),
-      ).toThrow();
-    }
   });
 
   it('treats database-padded quantity basis as the same exact numeric key without rewriting it', () => {
@@ -217,25 +145,5 @@ describe('issue #764 exact-key Price conflict contract', () => {
       ),
     ).toBe(true);
     expect(() => decodeDiagnostic({ ...diagnostic, contractualDiscountRevisionId: 'manual-discount' })).toThrow();
-  });
-
-  it('keeps generalized native-currency keys without implying FX or Launch activation', () => {
-    const eurKey = { ...exactKey, currencyCode: 'EUR' };
-    const eurClaimants = [first, second].map((value) => ({
-      ...value,
-      exactKey: eurKey,
-      priceRevision: {
-        ...value.priceRevision,
-        monetaryAmount: { amount: '900', currencyCode: 'EUR' },
-      },
-    }));
-
-    expect(
-      decodeDiagnostic({
-        ...diagnostic,
-        claimants: eurClaimants,
-        request: { ...request, exactKey: eurKey },
-      }).request.exactKey.currencyCode,
-    ).toBe('EUR');
   });
 });

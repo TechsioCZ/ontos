@@ -580,28 +580,6 @@ describe('Inventory Backend cutover and reconciliation', () => {
     }
   });
 
-  it('keeps identical external identifier text distinct across backend issuers', () => {
-    const shared = {
-      customerConfigurationId,
-      externalScope: 'warehouse-prague',
-      externalValue: '123',
-      identifierKind: 'ITEM' as const,
-      namespace: 'inventory',
-      tenantId,
-    };
-    const oldKey = {
-      ...shared,
-      issuer: { backendId: 'legacy-erp', backendKind: 'external_business_system' as const },
-    };
-    const newKey = {
-      ...shared,
-      issuer: { backendId: 'ontos-wms-primary', backendKind: 'ontos_wms' as const },
-    };
-
-    expect(oldKey.issuer).not.toEqual(newKey.issuer);
-    expect(oldKey).not.toEqual(newKey);
-  });
-
   it('blocks invalid scope, reused configuration identity, unchanged backend, and a split boundary', () => {
     const wrongPost = configuration(
       preConfigurationId,

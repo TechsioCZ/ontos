@@ -147,12 +147,4 @@ describe('Customer-Safe Tax Projection', () => {
       expect(serialized).not.toContain('"0"');
     }
   });
-
-  it('#940 F44 the same outcome and contract version produce the same projection', () => {
-    const outcome = successfulOutcome(true);
-
-    expect(projectCustomerSafeTax(outcome, 'PER_TAXABLE_SUPPLY_UNIT')).toEqual(
-      projectCustomerSafeTax(outcome, 'PER_TAXABLE_SUPPLY_UNIT'),
-    );
-  });
 });

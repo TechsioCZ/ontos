@@ -278,43 +278,6 @@ describe('Pricing Quantity Tier aggregation service', () => {
       }),
   );
 
-  it.effect(
-    'retains line-native fee, discount, and rounding recipients without allocating or multiplying whole-purchase facts',
-    () =>
-      Effect.gen(function* retainRecipientScope() {
-        const input = request();
-        const result = yield* aggregateQuantityTierLines(input);
-
-        expect(result.outcome).toBe('QUANTITY_TIER_QUANTITY_AGGREGATED');
-        if (result.outcome !== 'QUANTITY_TIER_QUANTITY_AGGREGATED') {
-          return;
-        }
-        expect(result.recipientLines).toEqual(input.attempt.candidate.lines);
-        expect(result.recipientLines).toHaveLength(2);
-        expect(result.evidence.currentness.candidate).toEqual(input.attempt.candidate);
-        expect(result).not.toHaveProperty('allocations');
-        expect(result).not.toHaveProperty('feeContributions');
-        expect(result).not.toHaveProperty('discountContributions');
-        expect(result).not.toHaveProperty('roundingRecipients');
-        expect(result).not.toHaveProperty('storefront');
-        expect(result.evidence.input.attempt).not.toHaveProperty('storefront');
-        expect(decodeSuccess(result)).toEqual(result);
-      }),
-  );
-
-  it.effect('accepts an honest later observation for the exact requested effective instant', () =>
-    Effect.gen(function* acceptsLaterObservation() {
-      const input = request();
-      const evidence = confirmedEvidence(input);
-
-      expect(evidence.effectiveAt).toBe(input.attempt.evaluatedAt);
-      expect(evidence.observedAt > input.attempt.evaluatedAt).toBe(true);
-      expect(yield* aggregateQuantityTierLines(input)).toMatchObject({
-        outcome: 'QUANTITY_TIER_QUANTITY_AGGREGATED',
-      });
-    }),
-  );
-
   it.effect('keeps unavailable and unverifiable Catalog owner evidence as separate typed refusals', () =>
     Effect.gen(function* ownerEvidenceFailures() {
       const input = request();

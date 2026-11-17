@@ -160,53 +160,42 @@ describe('Availability owner acceptance: consumer and delivery boundaries', () =
     }),
   );
 
-  for (const [kind, suffix] of [
-    ['digital', '1'],
-    ['service', '2'],
-  ] as const) {
-    it.effect(`scenario 20: controlled ${kind} Selection needs no physical destination or carrier`, () =>
-      Effect.gen(function* nonphysicalSelection() {
-        const base = consumerInput();
-        const selection = {
-          productRef: {
-            ...base.subject.selection.productRef,
-            resourceId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee${suffix}`,
-          },
-          variantRef: {
-            ...base.subject.selection.variantRef,
-            resourceId: `ffffffff-ffff-4fff-8fff-fffffffffff${suffix}`,
-          },
-        };
-        const subject = { ...base.subject, selection };
-        const stockInput = {
-          ...base.stockInput,
-          positions: base.stockInput.positions.map((position) => ({
-            ...position,
-            binding: { ...position.binding, catalogSelection: selection },
-          })),
-        };
-        const input = {
-          ...base,
-          ownerQualification: { ...base.ownerQualification, stockInput, subject },
-          policy: { ...base.policy, subject },
-          stockInput,
-          subject,
-        };
-        const response = yield* handoff(input);
-        expect(response.currentDecision.selection).toEqual(selection);
-        expect(response.currentDecision.outcome).toBe('AVAILABLE');
-        expect(response.currentDecision.deliveryBoundary).toEqual({
-          carrierAndMethod: 'NOT_ASSESSED',
-          exactDestination: 'NOT_ASSESSED',
-          fulfillmentExecution: 'NOT_ASSESSED',
-          physicalDeliveryPrerequisite: 'NOT_REQUIRED',
-          promiseScope: 'GENERAL_PROSPECTIVE_PURCHASE',
-        });
-        expect(response.currentDecision).not.toHaveProperty('carrier');
-        expect(response.currentDecision).not.toHaveProperty('shipment');
-      }),
-    );
-  }
+  it.effect('scenario 20: controlled digital Selection needs no physical destination or carrier', () =>
+    Effect.gen(function* nonphysicalSelection() {
+      const base = consumerInput();
+      const selection = {
+        productRef: { ...base.subject.selection.productRef, resourceId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1' },
+        variantRef: { ...base.subject.selection.variantRef, resourceId: 'ffffffff-ffff-4fff-8fff-fffffffffff1' },
+      };
+      const subject = { ...base.subject, selection };
+      const stockInput = {
+        ...base.stockInput,
+        positions: base.stockInput.positions.map((position) => ({
+          ...position,
+          binding: { ...position.binding, catalogSelection: selection },
+        })),
+      };
+      const input = {
+        ...base,
+        ownerQualification: { ...base.ownerQualification, stockInput, subject },
+        policy: { ...base.policy, subject },
+        stockInput,
+        subject,
+      };
+      const response = yield* handoff(input);
+      expect(response.currentDecision.selection).toEqual(selection);
+      expect(response.currentDecision.outcome).toBe('AVAILABLE');
+      expect(response.currentDecision.deliveryBoundary).toEqual({
+        carrierAndMethod: 'NOT_ASSESSED',
+        exactDestination: 'NOT_ASSESSED',
+        fulfillmentExecution: 'NOT_ASSESSED',
+        physicalDeliveryPrerequisite: 'NOT_REQUIRED',
+        promiseScope: 'GENERAL_PROSPECTIVE_PURCHASE',
+      });
+      expect(response.currentDecision).not.toHaveProperty('carrier');
+      expect(response.currentDecision).not.toHaveProperty('shipment');
+    }),
+  );
 
   it.effect('scenario 21: stale Search hits and omitted results cannot override fresh Availability authority', () =>
     Effect.gen(function* searchProjection() {

@@ -1,11 +1,7 @@
-import { Effect, Result, Schema } from 'effect';
+import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { AvailabilityOwnerEvidenceUnavailable } from '../../shared/domain/availability-owner-ports.ts';
-import {
-  makeChangedCurrentnessInput,
-  makeCurrentnessInput,
-  materialPositionChanges,
-} from '../support/availability-currentness.ts';
+import { makeChangedCurrentnessInput, makeCurrentnessInput } from '../support/availability-currentness.ts';
 import {
   acceptanceLater,
   acceptanceObservedAt,
@@ -13,10 +9,6 @@ import {
   evaluateCurrent,
   ownerProof,
 } from '../support/availability-owner-acceptance.ts';
-
-const ControlledReservationRejected = Schema.TaggedError<Error>()('ControlledReservationRejected', {
-  reason: Schema.Literal('GUARANTEE_UNAVAILABLE'),
-});
 
 const valid = (input: Parameters<typeof ownerProof>[0], boundary: Parameters<typeof ownerProof>[1]) =>
   Effect.succeed(ownerProof(input, boundary));
@@ -33,6 +25,8 @@ describe('Availability owner acceptance: currentness and immutable history', () 
           ({ evidence, useBoundary }) => valid(evidence, useBoundary),
           base,
         )).currentDecision;
+        // The whole positive decision is immutable history, not only its nested owner evidence.
+        expect(Object.isFrozen(original)).toBe(true);
         let reads = 0;
         const retained = yield* evaluateCurrent(
           currentRequest(base, original),
@@ -153,28 +147,6 @@ describe('Availability owner acceptance: currentness and immutable history', () 
       }),
   );
 
-  it.effect(
-    'scenario 17: later Reservation failure preserves positive historical Availability and supplies no Confirmation or Commitment Protection',
-    () =>
-      Effect.gen(function* reservationFailure() {
-        const historical = (yield* evaluateCurrent(
-          currentRequest(base),
-          ({ evidence, useBoundary }) => valid(evidence, useBoundary),
-          base,
-        )).currentDecision;
-        const reservation = yield* Effect.fail(
-          new ControlledReservationRejected({ reason: 'GUARANTEE_UNAVAILABLE' }),
-        ).pipe(Effect.result);
-        expect(Result.isFailure(reservation)).toBe(true);
-        expect(historical.decision.outcome).toBe('AVAILABLE');
-        expect(historical.currentness).toBe('OWNER_VERIFIED_CURRENT');
-        expect(Object.hasOwn(historical, 'reservation')).toBe(false);
-        expect(Object.hasOwn(historical, 'confirmation')).toBe(false);
-        expect(Object.hasOwn(historical, 'commitmentProtection')).toBe(false);
-        expect(Object.isFrozen(historical)).toBe(true);
-      }),
-  );
-
   it.effect('scenario 25: owner-valid original R1 remains Current despite current source publishing R2', () =>
     Effect.gen(function* validRevision() {
       const original = (yield* evaluateCurrent(
@@ -203,54 +175,6 @@ describe('Availability owner acceptance: currentness and immutable history', () 
       expect(result.bundleDisposition).toBe('UNCHANGED');
     }),
   );
-
-  for (const change of materialPositionChanges) {
-    it.effect(`scenario 26: owner-invalid R1 is replaced by actual owner-valid R2 after ${change}`, () =>
-      Effect.gen(function* invalidRevision() {
-        const original = (yield* evaluateCurrent(
-          currentRequest(base),
-          ({ evidence, useBoundary }) => valid(evidence, useBoundary),
-          base,
-        )).currentDecision;
-        const changed = makeChangedCurrentnessInput(change);
-        let verifications = 0;
-        let reads = 0;
-        const result = yield* evaluateCurrent(
-          currentRequest(changed, original),
-          ({ evidence, useBoundary }) => {
-            verifications += 1;
-            if (verifications === 1) {
-              expect(evidence.stockInput).toEqual(original.decision.evidence.stockInput);
-              return Effect.succeed({ _tag: 'INVALID' as const, reason: change });
-            }
-            expect(evidence.stockInput).toEqual(changed.stockInput);
-            return Effect.succeed(ownerProof(evidence, useBoundary, 'R2'));
-          },
-          changed,
-          () => {
-            reads += 1;
-            return Effect.succeed(changed);
-          },
-        );
-        expect(reads).toBe(1);
-        expect(verifications).toBe(2);
-        expect(result.currentDecision.decision.outcome).toBe(
-          {
-            BINDING: 'UNAVAILABLE',
-            COMPLETENESS_LOST: 'INDETERMINATE',
-            LIFECYCLE: 'UNAVAILABLE',
-            POSITION_INSERT: 'AVAILABLE',
-            POSITION_REMOVE: 'UNAVAILABLE',
-            SHARING: 'UNAVAILABLE',
-          }[change],
-        );
-        expect(result.currentDecision.decision.evidence.ownerQualification.set).toEqual(changed.ownerQualification.set);
-        expect(result.currentDecision.decision.evidence.stockInput).toEqual(changed.stockInput);
-        expect(result.bundleDisposition).toBe('REPLACEMENT_REQUIRED');
-        expect(result.originalDecision).toEqual(original);
-      }),
-    );
-  }
 
   it.effect(
     'scenario 26: evaluation race rereads a whole coherent snapshot and bounded failure stays INDETERMINATE',

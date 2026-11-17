@@ -111,15 +111,40 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
     check(
       'symmy_job_routes_selector_ck',
       sql`(
-        ${table.routeKey} in ('customerGroupCustomersBatch', 'priceListPricesBatch')
+        ${table.routeKey} = 'customerGroupCustomersBatch'
         and ${table.routeCode} is not null and char_length(${table.routeCode}) between 1 and 300
       ) or (
         ${table.routeKey} in ('customersBatch', 'priceListsBatchUpsert', 'productsBatch', 'customerGroupsBatch', 'inventoryStockBatch', 'adminCustomers', 'adminProducts', 'adminRegions', 'priceLists', 'assortmentRulesFixtureBatch', 'sellerVatDeclarationsFixtureBatch') and ${table.routeCode} is null
+      ) or (
+        ${table.routeKey} = 'priceListPricesBatch'
+        and (${table.routeCode} is null or (not ${table.active} and char_length(${table.routeCode}) between 1 and 300))
       )`,
     ),
     check(
       'symmy_job_routes_fixture_ids_ck',
       sql`cardinality(${table.fixtureIds}) between 1 and 32 and array_position(${table.fixtureIds}, null) is null`,
+    ),
+    // Only the stock route enrolls positions, and an enrolled stock route names at least one.
+    check(
+      'symmy_job_routes_stock_scope_ck',
+      sql`(
+        ${table.routeKey} = 'inventoryStockBatch'
+        and (
+          ${table.fixturePlan} is null
+          or (jsonb_typeof(${table.fixturePlan} -> 'stockScope') = 'array' and jsonb_array_length(${table.fixturePlan} -> 'stockScope') between 1 and 10000)
+        )
+      ) or (
+        ${table.routeKey} <> 'inventoryStockBatch' and (${table.fixturePlan} is null or not (${table.fixturePlan} ? 'stockScope'))
+      )`,
+    ),
+    // Only the routes that write prices enroll the grant refs of a price assertion, and then with both of its parts.
+    check(
+      'symmy_job_routes_price_source_ck',
+      sql`${table.fixturePlan} is null or not (${table.fixturePlan} ? 'priceSource') or (
+        ${table.routeKey} in ('priceListsBatchUpsert', 'priceListPricesBatch', 'productsBatch')
+        and jsonb_typeof(${table.fixturePlan} -> 'priceSource' -> 'mapping') = 'object'
+        and jsonb_typeof(${table.fixturePlan} -> 'priceSource' -> 'sourceAuthority') = 'object'
+      )`,
     ),
     check(
       'symmy_job_routes_versions_ck',

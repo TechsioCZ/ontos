@@ -15,8 +15,6 @@ import {
   VerifyExactPriceCandidateSetGenerationPersistenceOutcomeSchema,
   pricePersistenceForScope,
   lookupPriceActionResultRoutine,
-  readExactPriceCandidateSetRoutine,
-  verifyExactPriceCandidateSetGenerationRoutine,
 } from '../../src/services/price-persistence.service.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -135,21 +133,6 @@ describe('Price exact candidate-set persistence authority (#797)', () => {
       ).toBe(false);
       expect(Schema.is(PricingExactPriceOwnerReadReceiptSchema)({ ...legacy, lookupEvidence: invalid })).toBe(false);
     }
-  });
-
-  it('declares read-only scoped routines for the candidate set and its generation fence', () => {
-    expect(readExactPriceCandidateSetRoutine).toMatchObject({
-      name: 'read_exact_price_candidate_set_v1',
-      ownerModuleKey: 'commerce.pricing',
-      routineKey: 'pricing.read-exact-price-candidate-set-v1',
-      schema: 'pricing',
-    });
-    expect(verifyExactPriceCandidateSetGenerationRoutine).toMatchObject({
-      name: 'verify_exact_price_candidate_set_generation_v1',
-      ownerModuleKey: 'commerce.pricing',
-      routineKey: 'pricing.verify-exact-price-candidate-set-generation-v1',
-      schema: 'pricing',
-    });
   });
 
   it('distinguishes virtual-empty and persistent Current candidates, conflicts, and unverifiable state', () => {

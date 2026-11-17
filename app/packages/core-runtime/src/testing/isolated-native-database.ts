@@ -1,7 +1,9 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
+  Clock,
   Config,
+  Console,
   Crypto,
   DateTime,
   Effect,
@@ -312,6 +314,40 @@ const supportsOwnedReplacement = (input: IsolatedNativeDatabaseInput): boolean =
   (input.mode === 'empty' && (input.purpose === exactDeadlinePurpose || input.purpose === retainedPrivacyPurpose)) ||
   (input.mode === schemaOnly && input.purpose === shellAuthPurpose);
 
+const databaseCreation = Effect.fn('IsolatedNativeDatabase.databaseCreation')(function* databaseCreation(input: {
+  readonly admin: Effect.Success<ReturnType<typeof makeCoreDatabase>>;
+  readonly databaseName: string;
+  readonly mode: IsolatedNativeDatabaseInput['mode'];
+  readonly sourceDatabase: string;
+}) {
+  const template = yield* Config.all({
+    database: Config.option(Config.String('ONTOS_TEST_SCHEMA_TEMPLATE')),
+    source: Config.option(Config.String('ONTOS_TEST_SCHEMA_TEMPLATE_SOURCE')),
+  });
+  const useTemplate =
+    input.mode === schemaOnly &&
+    Option.isSome(template.database) &&
+    Option.isSome(template.source) &&
+    template.source.value === input.sourceDatabase;
+  let createDatabase = sql`create database ${sql.identifier(input.databaseName)}`;
+  if (useTemplate && Option.isSome(template.database)) {
+    const name = template.database.value;
+    if (!/^ontos_ci_schema_template$/u.test(name)) {
+      return yield* unavailable('Invalid CI schema template');
+    }
+    const [identity] = yield* input.admin.executor.execute<{ readonly valid: boolean }>(
+      sql`select datistemplate and not datallowconn and pg_get_userbyid(datdba)=current_user as valid
+        from pg_database where datname=${name}`,
+      'objects',
+    );
+    if (identity?.valid !== true) {
+      return yield* unavailable('CI schema template must be immutable and owned by the source administrator');
+    }
+    createDatabase = sql`create database ${sql.identifier(input.databaseName)} template ${sql.identifier(name)}`;
+  }
+  return { createDatabase, restoreSchema: input.mode === schemaOnly && !useTemplate, useTemplate };
+});
+
 /** A fresh schema-only database; it never drains, copies, or deletes the source database's data. */
 export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDatabase.make')(
   function* makeIsolatedNativeDatabaseFixture(input: IsolatedNativeDatabaseInput) {
@@ -343,6 +379,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       return yield* unavailable('Isolated native test databases require localhost');
     }
     const crypto = yield* Crypto.Crypto;
+    const cloneStarted = yield* Clock.monotonicTimeNanos;
     const databaseName = `${prefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
     /**
      * The enrollment the clone's roles and trust routines are matched against. A suite with dedicated
@@ -361,9 +398,15 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       Scope.provide(sourceScope),
       Effect.mapError((cause) => unavailable(undefined, cause)),
     );
+    const creation = yield* databaseCreation({
+      admin,
+      databaseName,
+      mode: input.mode,
+      sourceDatabase: source.admin.database,
+    });
     yield* Effect.acquireRelease(
       admin.executor
-        .execute(sql`create database ${sql.identifier(databaseName)}`, 'objects')
+        .execute(creation.createDatabase, 'objects')
         .pipe(Effect.mapError((cause) => unavailable('Unable to create the isolated test database', cause))),
       () => {
         if (
@@ -380,7 +423,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         );
       },
     );
-    if (input.mode === schemaOnly) {
+    if (creation.restoreSchema) {
       // Finish the schema-only archive before restoring it. Plain SQL can end cleanly
       // before its trailing grants; pg_restore validates the archive and commits schema,
       // policies and grants together. No source data or keys enter this archive.
@@ -418,6 +461,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         }),
       );
     }
+    const schemaPrepared = yield* Clock.monotonicTimeNanos;
     const isolatedScope = yield* Scope.make();
     yield* Effect.addFinalizer((exit) => Scope.close(isolatedScope, exit));
     const { clone, runtimeRole } = yield* Effect.all(
@@ -476,6 +520,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       }),
       { concurrency: 1 },
     );
+    const emptyVerified = yield* Clock.monotonicTimeNanos;
     if (
       input.mode === schemaOnly &&
       tables.some(
@@ -527,6 +572,15 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
         )
         .pipe(Effect.mapError((cause) => unavailable('Unable to initialize isolated trust configuration', cause)));
     }
+    // Native receiver stdout is a JSON protocol, not a diagnostic stream.
+    yield* Console.error('Native database clone:', {
+      emptyVerificationSeconds: Number(emptyVerified - schemaPrepared) / 1e9,
+      event: 'native-fixture-database-prepared',
+      mode: input.mode,
+      schemaSeconds: Number(schemaPrepared - cloneStarted) / 1e9,
+      template: creation.useTemplate,
+      trustSeconds: Number((yield* Clock.monotonicTimeNanos) - emptyVerified) / 1e9,
+    });
     const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
     const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
     const replacementEnabled = supportsOwnedReplacement(input);

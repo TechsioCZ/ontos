@@ -5,13 +5,15 @@ import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
-import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
-import { CreatePriceGroupActionApi } from './shared/apis/create-price-group-action.ts';
-import { CreatePriceGroupDefinitionRevisionActionApi } from './shared/apis/create-price-group-definition-revision-action.ts';
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
+import { CreatePriceGroupActionApi } from './shared/apis/create-price-group-action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
+import { CreatePriceGroupDefinitionRevisionActionApi } from './shared/apis/create-price-group-definition-revision-action.ts';
+import { PriceGroupCatalogHeadApi } from './shared/apis/price-group-catalog-head.ts';
+import { priceGroupCatalogHeadRead } from './src/api/price-group-catalog-head.read.ts';
 import { priceGroupCatalogRootResourceDescriptor } from './shared/resources/price-group-catalog-root.ts';
 import { PriceGroupDefinitionApi } from './shared/apis/price-group-definition.ts';
+import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { priceGroupResourceDescriptor } from './shared/resources/price-group.ts';
 import { PriceGroupResultLookupApi } from './shared/apis/price-group-result-lookup.ts';
 import { priceGroupResultLookupRead } from './src/api/price-group-result-lookup.read.ts';
@@ -54,6 +56,7 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
       'create-price-group-action': CreatePriceGroupActionApi,
       'create-price-group-definition-revision-action': CreatePriceGroupDefinitionRevisionActionApi,
       'owner-action-approvals': OwnerActionApprovalApi,
+      'price-group-catalog-head': PriceGroupCatalogHeadApi,
       'price-group-definition': PriceGroupDefinitionApi,
       'price-group-result-lookup': PriceGroupResultLookupApi,
       'price-group-source-associations': PriceGroupSourceAssociationsApi,
@@ -77,11 +80,6 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       {
-        apiKey: 'price-group-definition',
-        operationKey: 'priceGroupDefinition.execute',
-        registration: priceGroupDefinitionRead,
-      },
-      {
         apiKey: 'create-price-group-action',
         operationKey: 'createPriceGroupAction.execute',
         registration: createPriceGroupAction,
@@ -90,6 +88,16 @@ export const priceGroupCatalogManifest: OntosModuleManifestInput = defineOntosMo
         apiKey: 'create-price-group-definition-revision-action',
         operationKey: 'createPriceGroupDefinitionRevisionAction.execute',
         registration: createPriceGroupDefinitionRevisionAction,
+      },
+      {
+        apiKey: 'price-group-catalog-head',
+        operationKey: 'priceGroupCatalogHead.execute',
+        registration: priceGroupCatalogHeadRead,
+      },
+      {
+        apiKey: 'price-group-definition',
+        operationKey: 'priceGroupDefinition.execute',
+        registration: priceGroupDefinitionRead,
       },
       {
         apiKey: 'price-group-result-lookup',

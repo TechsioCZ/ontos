@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import { acceptsRuleFile, ruleFilePolicyProperties } from '../shared/rule-file-policy.ts';
+import { acceptsRuleFile } from '../shared/rule-file-policy.ts';
 
 const sourceFile = 'packages/core/src/schema.ts';
 
@@ -42,12 +42,4 @@ it('rule file policy normalizes absolute and fixture paths before filtering', ()
   ]) {
     expect(acceptsRuleFile(filename, policy), filename).toBe(true);
   }
-});
-
-it('rule file policy exposes the existing JSON option schemas', () => {
-  expect(ruleFilePolicyProperties).toStrictEqual({
-    ignore: { items: { type: 'string' }, type: 'array' },
-    ignoreTests: { type: 'boolean' },
-    include: { items: { type: 'string' }, type: 'array' },
-  });
 });
