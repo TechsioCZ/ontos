@@ -66,7 +66,7 @@ const SERVICE_SETUP_JOB = 'service-integration-setup';
 const TOPOLOGY_PROOF_JOB = 'node-topology-proof';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const SOURCE_EXTRA_JOB = 'workspace-source-extra';
-const UNIT_AFTER_TOOLING_JOB = 'workspace-unit-after-tooling';
+const UNIT_AFTER_PREPARATION_JOB = 'workspace-unit-after-preparation';
 
 /** Expand only matrix references for the full-run contract tests; separately test the actual planner. */
 const readGateWorkflow = () => {
@@ -1814,7 +1814,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     WORKSPACE_GATE_JOB,
     SOURCE_EXTRA_JOB,
     WORKSPACE_UNIT_JOB,
-    UNIT_AFTER_TOOLING_JOB,
+    UNIT_AFTER_PREPARATION_JOB,
     ...GATE_JOBS.slice(2),
     REMAINING_NODE_BUILD_JOB,
     TOPOLOGY_PROOF_JOB,
@@ -1831,7 +1831,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
           ),
         ),
         mode,
-        unitAfterTooling: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
+        unitAfterPreparation: ['docs', 'proven'].includes(mode) ? '[]' : '[{}]',
       },
       result: 'success',
     },
@@ -1840,7 +1840,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
     [SERVICE_SETUP_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [SOURCE_EXTRA_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     [TOPOLOGY_PROOF_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
-    [UNIT_AFTER_TOOLING_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
+    [UNIT_AFTER_PREPARATION_JOB]: { result: ['docs', 'proven'].includes(mode) ? 'skipped' : 'success' },
     ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { result: results[index] }])),
   });
   const passed = GATE_JOBS.map(() => 'success');
@@ -3157,12 +3157,20 @@ it('leaves two organization slots free in both dependency-bounded runner waves',
       topology.strategy.matrix.include.length +
       setup.strategy.matrix.include.length,
   ).toBeLessThanOrEqual(18);
+  // Once preparation has finished, the third unit row replaces that runner.
+  expect(
+    source +
+      staticRows +
+      commands[WORKSPACE_UNIT_JOB].strategy.matrix.include.length +
+      work.strategy.matrix.include.length +
+      topology.strategy.matrix.include.length,
+  ).toBeLessThanOrEqual(18);
   expect(setup.needs).toEqual([CI_PLAN_JOB]);
   expect(work.needs).toEqual(GATE_JOB_NEEDS[SERVICE_INTEGRATION_JOB]);
   const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
-  expect(all[UNIT_AFTER_TOOLING_JOB]?.needs).toContain(WORKSPACE_GATE_JOB);
-  expect(all[UNIT_AFTER_TOOLING_JOB]?.if).toContain("needs.workspace-gate.result == 'success'");
-  expect(all[UNIT_AFTER_TOOLING_JOB]?.if).toContain("needs.ci-plan.outputs.unitAfterTooling != '[]'");
+  expect(all[UNIT_AFTER_PREPARATION_JOB]?.needs).toContain(SERVICE_SETUP_JOB);
+  expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.service-integration-setup.result == 'success'");
+  expect(all[UNIT_AFTER_PREPARATION_JOB]?.if).toContain("needs.ci-plan.outputs.unitAfterPreparation != '[]'");
   expect(all[SOURCE_EXTRA_JOB]?.needs).toEqual([CI_PLAN_JOB]);
 });
 

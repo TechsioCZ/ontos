@@ -430,7 +430,7 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
       };
       const documentationPlan = run('pull_request');
       expect(documentationPlan).toContain('mode=docs\n');
-      for (const helper of ['sourceExtra', 'unitAfterTooling', 'integrationSetup', 'integrationTopology']) {
+      for (const helper of ['sourceExtra', 'unitAfterPreparation', 'integrationSetup', 'integrationTopology']) {
         expect(documentationPlan).toContain(`${helper}=[]\n`);
       }
       expect(documentationPlan).not.toContain('cloudflare-artifact-build');
@@ -525,11 +525,11 @@ it('plans with no installed dependencies using the same tested impact algorithm'
 });
 
 it('promotes a lone affected deferred unit row instead of expanding an empty required matrix', () => {
-  const deferred = templates.unit.filter((row) => row['after-tooling'] === true);
+  const deferred = templates.unit.filter((row) => row['after-preparation'] === true);
   expect(deferred).toHaveLength(1);
-  expect(unitPhases(deferred)).toEqual({ afterTooling: [], work: deferred });
+  expect(unitPhases(deferred)).toEqual({ afterPreparation: [], work: deferred });
   const full = unitPhases(templates.unit);
-  expect(full.afterTooling).toEqual(deferred);
-  expect([...full.work, ...full.afterTooling]).toEqual(templates.unit);
-  expect(unitPhases([])).toEqual({ afterTooling: [], work: [] });
+  expect(full.afterPreparation).toEqual(deferred);
+  expect([...full.work, ...full.afterPreparation]).toEqual(templates.unit);
+  expect(unitPhases([])).toEqual({ afterPreparation: [], work: [] });
 });

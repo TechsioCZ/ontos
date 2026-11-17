@@ -28,7 +28,7 @@
       "node-artifacts": true,
       "fetch_depth": 512,
       "commands": "pnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/catalog --filter ./verticals/party-registry --filter ./apps/shell-super-app --filter ./packages/pricing-contracts --filter ./verticals/commerce-order --filter ./verticals/assortment --filter ./verticals/availability --filter ./packages/shared-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/catalog-selection-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts run test:unit --pool.maxWorkers 1\npnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/catalog --filter ./verticals/party-registry --filter ./apps/shell-super-app --filter ./packages/pricing-contracts --filter ./verticals/commerce-order --filter ./verticals/assortment --filter ./verticals/availability --filter ./packages/shared-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/catalog-selection-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts run test:component --pool.maxWorkers 1\n",
-      "after-tooling": true
+      "after-preparation": true
     }
   ],
   "integration": [
