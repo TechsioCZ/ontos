@@ -508,7 +508,7 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
   // Use exactly drizzle-kit's pg driver, without reloading its CLI per owned fixture.
   const pool = yield* Effect.acquireRelease(
     Effect.sync(() => new Pool({ connectionString: Redacted.value(bootstrap.database.adminUrl), max: 1 })),
-    (ownedPool) => Effect.promise(() => ownedPool.end()),
+    (ownedPool) => Effect.promise(async () => await ownedPool.end()),
   );
   const database = drizzle({ client: pool });
   if (owner === 'party') {
