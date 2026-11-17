@@ -11,6 +11,7 @@ import {
   CiTemplatesSchema,
   filterPaths,
   integrationPhases,
+  unitPhases,
   matchingPackages,
   planCiChecks,
   unknownFilters,
@@ -518,4 +519,14 @@ it('plans with no installed dependencies using the same tested impact algorithm'
   } finally {
     rmSync(fixture, { force: true, recursive: true });
   }
+});
+
+it('promotes a lone affected deferred unit row instead of expanding an empty required matrix', () => {
+  const deferred = templates.unit.filter((row) => row['after-tooling'] === true);
+  expect(deferred).toHaveLength(1);
+  expect(unitPhases(deferred)).toEqual({ afterTooling: [], work: deferred });
+  const full = unitPhases(templates.unit);
+  expect(full.afterTooling).toEqual(deferred);
+  expect([...full.work, ...full.afterTooling]).toEqual(templates.unit);
+  expect(unitPhases([])).toEqual({ afterTooling: [], work: [] });
 });

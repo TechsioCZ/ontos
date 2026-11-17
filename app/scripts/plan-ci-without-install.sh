@@ -4,7 +4,7 @@
 set -euo pipefail
 node --input-type=module - "$@" <<'JS'
 import { readFileSync, readdirSync, existsSync, appendFileSync } from 'node:fs';
-import { integrationPhases, planCiChecks, withCiTopologyDependencies } from './scripts/ci-impact.mts';
+import { integrationPhases, planCiChecks, unitPhases, withCiTopologyDependencies } from './scripts/ci-impact.mts';
 
 const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const templates = read('scripts/ci-matrices.json');
@@ -32,11 +32,12 @@ const plan = planCiChecks({
   templates,
 });
 const phases = integrationPhases(plan.integration);
+const units = unitPhases(plan.unit);
 appendFileSync(process.env.GITHUB_OUTPUT, Object.entries({
   mode: plan.mode, expected: JSON.stringify(plan.expected), source: JSON.stringify(plan.source.filter(row => row['typescript-build'] === true)),
   sourceExtra: JSON.stringify(plan.source.filter(row => row['typescript-build'] !== true)),
-  unit: JSON.stringify(plan.unit.filter(row => row['after-tooling'] !== true)),
-  unitAfterTooling: JSON.stringify(plan.unit.filter(row => row['after-tooling'] === true)), integration: JSON.stringify(phases.work),
+  unit: JSON.stringify(units.work),
+  unitAfterTooling: JSON.stringify(units.afterTooling), integration: JSON.stringify(phases.work),
   integrationSetup: JSON.stringify(phases.preparation),
   integrationTopology: JSON.stringify(phases.topology),
 }).map(([key, value]) => `${key}=${value}\n`).join(''));

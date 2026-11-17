@@ -89,12 +89,12 @@ jobs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
       source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
-      sourceExtra: ${{ steps.selection.outputs.sourceExtra }}
-      unitAfterTooling: ${{ steps.selection.outputs.unitAfterTooling }}
+      sourceExtra: ${{ steps.selection.outputs.sourceExtra || steps.changes.outputs.sourceExtra }}
+      unitAfterTooling: ${{ steps.selection.outputs.unitAfterTooling || steps.changes.outputs.unitAfterTooling }}
       unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
       integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
-      integrationSetup: ${{ steps.selection.outputs.integrationSetup }}
-      integrationTopology: ${{ steps.selection.outputs.integrationTopology }}
+      integrationSetup: ${{ steps.selection.outputs.integrationSetup || steps.changes.outputs.integrationSetup }}
+      integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3

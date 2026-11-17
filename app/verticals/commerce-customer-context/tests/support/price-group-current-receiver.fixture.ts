@@ -527,13 +527,29 @@ const migrateOwner = Effect.fn('PriceGroupTemporal.migrateOwner')(function* migr
     );
     yield* requireCondition(code === 0, 'owned-party-migration');
   }
-  const histories =
-    owner === 'party'
-      ? [
-          { folder: 'drizzle-contacts', journal: '__drizzle_migrations_contacts' },
-          { folder: 'drizzle', journal: '__drizzle_migrations_party' },
-        ]
-      : [{ folder: 'drizzle', journal: '__drizzle_migrations_commerce_customer_context' }];
+  if (owner === 'party') {
+    // Party owns both histories and their journal names through these source configurations.
+    for (const configuration of ['drizzle.contacts.config.ts', 'drizzle.config.ts']) {
+      const child = yield* ChildProcess.make(
+        process.execPath,
+        ['node_modules/drizzle-kit/bin.cjs', 'migrate', '--config', configuration],
+        {
+          cwd: directory,
+          env: { APP_ENV_PATH: '/dev/null', DATABASE_ADMIN_URL: Redacted.value(bootstrap.database.adminUrl) },
+          extendEnv: true,
+          stderr: 'pipe',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        },
+      );
+      const [code] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
+        concurrency: 3,
+      });
+      yield* requireCondition(code === 0, 'owned-party-migration');
+    }
+    return;
+  }
+  const histories = [{ folder: 'drizzle', journal: '__drizzle_migrations_commerce_customer_context' }];
   for (const history of histories) {
     yield* Effect.tryPromise({
       catch: () => failure('owned-migration'),
