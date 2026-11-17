@@ -178,7 +178,7 @@ export const planCiChecks = (input: {
       return [narrowed];
     }
     const tasks = entry.tasks.filter((task) => {
-      if (task.startsWith('root:')) {
+      if (task.startsWith('root:') || task === 'whole:migrations') {
         return rootSuite;
       }
       if (task.startsWith('whole:preproposal-')) {

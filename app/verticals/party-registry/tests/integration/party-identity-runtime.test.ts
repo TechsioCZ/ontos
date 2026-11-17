@@ -528,7 +528,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           if (worker.isolatedWorkers === '') {
             expect(resetDatabase.port).toBe('5433');
           } else {
-            expect(['2', '3', '4']).toContain(worker.isolatedWorkers);
+            expect(['2', '4']).toContain(worker.isolatedWorkers);
             expect(Number(resetDatabase.port)).toBeGreaterThan(5540);
             expect(Number(resetDatabase.port)).toBeLessThanOrEqual(5540 + Number(worker.isolatedWorkers));
             expect(worker.container).toBe(`ontos-ci-db-${Number(resetDatabase.port) - 5540}`);

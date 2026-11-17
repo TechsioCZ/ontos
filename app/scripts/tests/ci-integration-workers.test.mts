@@ -316,10 +316,10 @@ it('runs the explicit measured schedule without adding implicit package or root 
   }
 });
 
-it('accepts three active lanes but refuses the unprovisioned fourth cluster', () => {
-  const settings = { ...environment, ONTOS_CI_ISOLATED_WORKERS: '3', RSTEST_WORKER_ID: '3' };
+it('accepts two active lanes but refuses an unprovisioned third cluster', () => {
+  const settings = { ...environment, ONTOS_CI_ISOLATED_WORKERS: '2', RSTEST_WORKER_ID: '2' };
   expect(Result.isSuccess(decode(settings))).toBe(true);
-  expect(Result.isFailure(decode({ ...settings, RSTEST_WORKER_ID: '4' }))).toBe(true);
-  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-3', isolatedWorkers: '3', port: 5543 })).toBe(true);
-  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-4', isolatedWorkers: '3', port: 5544 })).toBe(false);
+  expect(Result.isFailure(decode({ ...settings, RSTEST_WORKER_ID: '3' }))).toBe(true);
+  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-2', isolatedWorkers: '2', port: 5542 })).toBe(true);
+  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-3', isolatedWorkers: '2', port: 5543 })).toBe(false);
 });
