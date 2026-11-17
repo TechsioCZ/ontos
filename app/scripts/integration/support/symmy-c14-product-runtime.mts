@@ -224,6 +224,16 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
   // Keep the native artifacts in their owning package scope for generated package self-imports.
   const cache = `${directory}/dist/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
+  const identity = createHash('sha256').update(contract.deployment.buildMarker).digest('hex').slice(0, 32);
+  const publishedOwner = path.join(cache, `owner-${identity}.mjs`);
+  const receiverArtifact = yield* receiverArtifactFor({
+    buildMarker: contract.deployment.buildMarker,
+    cache,
+    directory,
+  });
+  if (yield* fs.exists(publishedOwner)) {
+    return { ownerArtifact: publishedOwner, receiverArtifact };
+  }
   const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'owner-' });
   const ownerArtifact = path.join(temporary, 'owner.mjs');
   const entry = path.join(temporary, 'owner-entry.ts');
@@ -234,11 +244,7 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
     entry,
     `export { default as assembly } from ${yield* sourceLiteral(api)};\nexport { ultramodernApiMarker as marker } from ${yield* sourceLiteral(marker)};\n`,
   );
-  const receiverArtifact = yield* receiverArtifactFor({
-    buildMarker: contract.deployment.buildMarker,
-    cache,
-    directory,
-  });
+
   yield* command(
     [
       'esbuild',
@@ -249,7 +255,8 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
     ],
     directory,
   );
-  return { ownerArtifact, receiverArtifact };
+  yield* fs.rename(ownerArtifact, publishedOwner);
+  return { ownerArtifact: publishedOwner, receiverArtifact };
 });
 
 const readySchema = Schema.Struct({
@@ -359,7 +366,15 @@ export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker'
   const cache = `${directory}/node_modules/.cache/INTERNAL_C14_PRODUCT`;
   yield* fs.makeDirectory(cache, { recursive: true });
   const workerHost = createRequire(`${c14AppRoot}/package.json`).resolve('@app/symmy-integration/outbox-worker-host');
-  // The alias bundles worker-host and its relative imports; rebuild them in each fixture's scope.
+  const identity = createHash('sha256')
+    .update(yield* fs.readFileString(workerChild))
+    .update(contract.deployment.buildMarker)
+    .digest('hex')
+    .slice(0, 32);
+  const publishedWorker = path.join(cache, `worker-${identity}.mjs`);
+  if (yield* fs.exists(publishedWorker)) {
+    return publishedWorker;
+  }
   const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'worker-' });
   const artifact = path.join(temporary, 'worker.mjs');
   yield* command(
@@ -373,7 +388,8 @@ export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker'
     ],
     directory,
   );
-  return artifact;
+  yield* fs.rename(artifact, publishedWorker);
+  return publishedWorker;
 });
 
 export const startProductWorker = Effect.fn('SymmyC14ProductFixture.startWorker')(function* startWorker(

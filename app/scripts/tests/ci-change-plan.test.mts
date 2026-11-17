@@ -76,22 +76,23 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   const plan = planCiChecks({ changedPaths: [CATALOG_SOURCE], packages, templates });
   expect(plan.mode).toBe('affected');
   expect(plan.affectedPackages).toEqual([CATALOG, PRICING]);
-  // Template order decides the order here. The preproposal row is retained through its proof-packages, and
-  // the bootstrap and federation proof rows are retained unconditionally because their suite is neither
-  // integration nor browser: they prove the deployment bootstrap and the build outputs, not a package.
+  // Standalone and whole-owner proofs remain selected even without package-filter matches.
+  // Ordinary package tests remain restricted to the affected owner and its consumers.
   expect(plan.integration.map(({ name }) => name)).toEqual([
     'Deployment Bootstrap and Node Federation Proof',
-    'Commerce, Pricing, and Inventory Integration',
-    'Core, Shell, Privacy, and Registry Integration',
+    'Customer Context and Native Approval Integration',
+    'Shell and Privacy Integration',
+    'Commerce Owners and Federation Integration',
   ]);
   const tests = plan.integration.filter(({ suite }) => suite === 'integration');
   expect(
     matchingPackages(tests.map((entry) => entry['package-filters'] ?? '').join(' '), packages).map(({ name }) => name),
   ).toEqual([CATALOG, PRICING]);
-  expect(plan.unit).toHaveLength(1);
-  expect(plan.unit[0]?.commands).toContain('--filter ./verticals/catalog');
-  expect(plan.unit[0]?.commands).toContain('--filter ./verticals/pricing');
-  expect(plan.unit[0]?.commands).not.toContain('--filter ./verticals/privacy');
+  expect(plan.unit).toHaveLength(2);
+  const unitCommands = plan.unit.map(({ commands }) => commands).join('\n');
+  expect(unitCommands).toContain('--filter ./verticals/catalog');
+  expect(unitCommands).toContain('--filter ./verticals/pricing');
+  expect(unitCommands).not.toContain('--filter ./verticals/privacy');
 });
 
 it('plans affected selection by default and keeps the forced backstop on the complete suite', () => {
@@ -124,9 +125,7 @@ it('retains the native preproposal proof for each runtime owner even without ord
     expect(plan.integration.some((entry) => entry['native-preproposal'] === true)).toBe(true);
     if (owner === PRICING) {
       expect(plan.affectedPackages).toEqual([PRICING]);
-      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters']).toBe(
-        '--filter ./verticals/pricing',
-      );
+      expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['package-filters']).toBe('');
       expect(plan.integration.find((entry) => entry['native-preproposal'] === true)?.['root-suite']).toBe(false);
     }
   }
@@ -226,7 +225,7 @@ it('selects browser checks and all root integration shards when they consume a c
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/2', '2/2']);
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
   expect(filters).toContain('--filter ./apps/shell-super-app');
   expect(filters).toContain('--filter ./verticals/catalog');

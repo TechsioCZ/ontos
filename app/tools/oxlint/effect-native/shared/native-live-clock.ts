@@ -195,6 +195,10 @@ const excludedLayerOptions = (input: ESTree.Node | undefined): { readonly memoMa
         return null;
       }
       excluded = true;
+    } else if (property.key.name === 'concurrent') {
+      if (property.value.type !== 'Literal' || !Predicate.isBoolean(property.value.value)) {
+        return null;
+      }
     } else if (property.key.name === 'memoMap') {
       memoMap = property.value;
     } else if (property.key.name === 'timeout') {

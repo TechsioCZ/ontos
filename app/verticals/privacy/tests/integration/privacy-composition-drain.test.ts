@@ -2014,7 +2014,7 @@ const coreDebtSettled = (f: Effect.Success<typeof fixture>) =>
     return receipt.value;
   });
 
-it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 seconds' })(
+it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, timeout: '30 seconds' })(
   'Privacy message-bound completion admission',
   (suite) => {
     suite.effect(

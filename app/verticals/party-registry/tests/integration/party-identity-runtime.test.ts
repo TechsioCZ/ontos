@@ -525,8 +525,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             container: Config.String('ONTOS_TEST_DB_CONTAINER').pipe(Config.withDefault('ontos-db')),
             isolatedWorkers: Config.String('ONTOS_CI_ISOLATED_WORKERS').pipe(Config.withDefault('')),
           });
-          if (worker.isolatedWorkers === '2') {
-            expect(['5541', '5542']).toContain(resetDatabase.port);
+          if (worker.isolatedWorkers === '4') {
+            expect(['5541', '5542', '5543', '5544']).toContain(resetDatabase.port);
             expect(worker.container).toBe(`ontos-ci-db-${Number(resetDatabase.port) - 5540}`);
           } else {
             expect(resetDatabase.port).toBe('5433');

@@ -17,7 +17,7 @@ const decode = Schema.decodeUnknownResult(IntegrationWorkerSettingsSchema);
 const environment = {
   DATABASE_ADMIN_URL: 'postgresql://admin:admin@localhost:5433/ontos_ci',
   DATABASE_URL: 'postgresql://runtime:runtime@localhost:5433/ontos_ci',
-  ONTOS_CI_ISOLATED_WORKERS: '2',
+  ONTOS_CI_ISOLATED_WORKERS: '4',
   PARTY_REGISTRY_DATABASE_URL: 'postgresql://party:party@localhost:5433/ontos_ci',
   PARTY_REGISTRY_WORKER_DATABASE_URL: 'postgresql://worker:worker@localhost:5433/ontos_ci',
   SHELL_GATEWAY_ISSUER_DATABASE_URL: 'postgresql://issuer:issuer@localhost:5433/ontos_ci',
@@ -29,8 +29,8 @@ it('leaves ordinary local test configuration untouched', () => {
   ).toBeUndefined();
 });
 
-it('retargets every identity and child fixture to two distinct clusters and datastores', () => {
-  for (const worker of ['1', '2']) {
+it('retargets every identity and child fixture to four distinct clusters and datastores', () => {
+  for (const worker of ['1', '2', '3', '4']) {
     const current = Result.getOrThrow(
       decode({ ...environment, RSTEST_WORKER_ID: worker }).pipe(
         Result.map(integrationWorkerEnvironment),
@@ -62,7 +62,7 @@ it('refuses a missing or unprovisioned slot instead of sharing the source cluste
   for (const worker of [undefined, '0', '5', 'invalid']) {
     expect(Result.isFailure(decode({ ...environment, RSTEST_WORKER_ID: worker }))).toBe(true);
   }
-  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '4' }))).toBe(true);
+  expect(Result.isFailure(decode({ ...environment, ONTOS_CI_ISOLATED_WORKERS: '2' }))).toBe(true);
   expect(Result.isFailure(decode({ ...environment, ONTOS_CI_WORKER_SLOT: '5', RSTEST_WORKER_ID: '1' }))).toBe(true);
 });
 
@@ -128,7 +128,7 @@ it('launches package and root suites with the assigned lane and propagates failu
     ).toThrow();
     expect(() =>
       execFileSync('/bin/bash', [script, '--task', pricingSelector], {
-        env: { ...launchEnvironment, ONTOS_CI_WORKER_SLOT: '4' },
+        env: { ...launchEnvironment, ONTOS_CI_WORKER_SLOT: '5' },
         stdio: 'pipe',
       }),
     ).toThrow();
@@ -138,52 +138,40 @@ it('launches package and root suites with the assigned lane and propagates failu
 });
 
 it('recognizes only a provisioned worker container and port pair in isolated CI mode', () => {
-  for (const slot of [1, 2]) {
-    const endpoint = { container: `ontos-ci-db-${slot}`, isolatedWorkers: '2', port: 5540 + slot };
+  for (const slot of [1, 2, 3, 4]) {
+    const endpoint = { container: `ontos-ci-db-${slot}`, isolatedWorkers: '4', port: 5540 + slot };
     expect(isIntegrationWorkerEndpoint(endpoint)).toBe(true);
     expect(isIntegrationWorkerEndpoint({ ...endpoint, isolatedWorkers: '' })).toBe(false);
     expect(isIntegrationWorkerEndpoint({ ...endpoint, port: 5433 })).toBe(false);
     expect(isIntegrationWorkerEndpoint({ ...endpoint, container: 'unowned-cluster' })).toBe(false);
   }
-  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-5', isolatedWorkers: '2', port: 5545 })).toBe(false);
+  expect(isIntegrationWorkerEndpoint({ container: 'ontos-ci-db-5', isolatedWorkers: '4', port: 5545 })).toBe(false);
 });
 
-it('partitions the two long direct-Rstest suites without duplicating compound package scripts', () => {
-  const directory = mkdtempSync(path.join(tmpdir(), 'ontos-integration-tasks-'));
-  const output = path.join(directory, 'tasks');
-  const xargs = path.join(directory, 'xargs');
+it('partitions root and package files without duplicating compound scripts or whole-owner proofs', () => {
   const script = fileURLToPath(new URL('../ci/run-integration-suites.sh', import.meta.url));
-  writeFileSync(xargs, '#!/bin/sh\ncat > "$TASK_OUTPUT"\n');
-  chmodSync(xargs, 0o755);
-  try {
-    execFileSync('/bin/bash', [script], {
-      env: {
-        PACKAGE_FILTERS:
-          '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
-        PATH: `${directory}:/usr/bin:/bin`,
-        ROOT_RSTEST_SHARD: '1/2',
-        ROOT_SUITE: 'true',
-        TASK_OUTPUT: output,
-      },
-    });
-    const tasks = readFileSync(output, 'utf-8').split('\0').filter(Boolean);
-    expect(tasks.filter((task) => task.startsWith('root:'))).toEqual(['root:1/2']);
-    const directScript = Schema.decodeUnknownSync(
-      Schema.fromJsonString(
-        Schema.Struct({
-          scripts: Schema.Struct({ 'test:integration': Schema.Literal('rstest --project integration') }),
-        }),
-      ),
+  const result = execFileSync('/bin/bash', [script, '--list'], {
+    env: {
+      PACKAGE_FILTERS:
+        '--filter ./verticals/commerce-customer-context --filter ./verticals/privacy --filter ./verticals/party-registry',
+      PATH: '/usr/bin:/bin',
+      ROOT_RSTEST_SHARD: '1/2',
+      ROOT_SUITE: 'true',
+      WHOLE_OWNER_PROOFS: 'organization pricing privacy',
+    },
+  });
+  const tasks = result.toString().split('\0').filter(Boolean);
+  expect(tasks.filter((task) => task.startsWith('root:'))).toEqual(['root:1/8', 'root:3/8', 'root:5/8', 'root:7/8']);
+  for (const owner of ['commerce-customer-context', 'privacy']) {
+    expect(tasks.filter((task) => task.startsWith(`./verticals/${owner}#`))).toEqual(
+      ['1/4', '2/4', '3/4', '4/4'].map((shard) => `./verticals/${owner}#${shard}`),
     );
-    for (const owner of ['commerce-customer-context', 'privacy']) {
-      directScript(readFileSync(new URL(`../../verticals/${owner}/package.json`, import.meta.url), 'utf-8'));
-      expect(tasks.filter((task) => task.startsWith(`./verticals/${owner}#`))).toEqual(
-        ['1/4', '2/4', '3/4', '4/4'].map((shard) => `./verticals/${owner}#${shard}`),
-      );
-    }
-    expect(tasks.filter((task) => task.includes('party-registry'))).toEqual(['./verticals/party-registry']);
-    expect(new Set(tasks).size).toBe(tasks.length);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
   }
+  expect(tasks.filter((task) => task.includes('party-registry'))).toEqual(['./verticals/party-registry']);
+  expect(tasks.filter((task) => task.startsWith('whole:'))).toEqual([
+    'whole:organization',
+    'whole:pricing',
+    'whole:privacy',
+  ]);
+  expect(new Set(tasks).size).toBe(tasks.length);
 });
