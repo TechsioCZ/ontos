@@ -65,10 +65,11 @@ start_worker() {
   # archive create the database too, including the source's REVOKE TEMPORARY FROM PUBLIC.
   docker exec --interactive "$database" pg_restore --username "$POSTGRES_USER" --dbname postgres \
     --create --exit-on-error <"$scratch/database.dump"
+  bash scripts/ci/prepare-schema-template.sh "$database" "$scratch/database.dump"
 }
 
 pids=()
-for worker in 1 2; do
+for worker in 1 2 3 4; do
   start_worker "$worker" &
   pids+=("$!")
 done
@@ -88,7 +89,7 @@ acl_query="select coalesce(grantor_role.rolname, 'PUBLIC'), coalesce(grantee_rol
   left join pg_roles grantee_role on grantee_role.oid = acl.grantee
   where d.datname = '$POSTGRES_DB' order by 1, 2, 3, 4"
 source_acl="$(docker exec ontos-db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$acl_query")"
-for worker in 1 2; do
+for worker in 1 2 3 4; do
   identifier="$(docker exec "ontos-ci-db-$worker" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select system_identifier from pg_control_system()')"
   [[ -n "$identifier" ]]
   for existing in "${identifiers[@]}"; do
@@ -101,4 +102,4 @@ for worker in 1 2; do
     exit 1
   fi
 done
-echo 'Two independent PostgreSQL clusters and SpiceDB datastores are ready.'
+echo 'Four independent PostgreSQL clusters and SpiceDB datastores are ready.'

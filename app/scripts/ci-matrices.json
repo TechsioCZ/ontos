@@ -3,31 +3,29 @@
     {
       "name": "Workspace Typecheck and Lint Rules",
       "typescript-build": true,
-      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\n"
+      "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm --filter ./packages/shared-contracts test:types\n"
     },
     {
-      "name": "Source and Generation Gates",
-      "commands": "pnpm api:check:ontos\npnpm test:generation\n"
+      "name": "Source, Generation, and Deployment Contracts",
+      "commands": "pnpm api:check:ontos\npnpm test:generation\nnode scripts/generate-outbox-worker-deployment.mjs\npnpm module-entrypoints:check\nnode scripts/plan-deployment-impact.mts --outbox-worker-mode host\n"
     },
     {
-      "name": "Module and Deployment Contracts",
-      "commands": "node scripts/generate-outbox-worker-deployment.mjs\npnpm module-entrypoints:check\nnode scripts/plan-deployment-impact.mts --outbox-worker-mode host\n"
-    },
-    {
-      "name": "Repository Tooling (1/2)",
-      "commands": "pnpm test:scripts --shard 1/2\n"
-    },
-    {
-      "name": "Repository Tooling (2/2)",
-      "commands": "pnpm test:scripts --shard 2/2\n"
+      "name": "Repository Tooling",
+      "commands": "pnpm test:scripts\n"
     }
   ],
   "unit": [
     {
-      "name": "Workspace Unit and Component Tests",
+      "name": "Workspace Unit and Component Tests (1/2)",
       "node-artifacts": true,
       "fetch_depth": 512,
-      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/assortment --filter ./verticals/availability --filter ./verticals/commerce-cart --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/privacy --filter ./verticals/projects --filter ./verticals/promotion --filter ./verticals/storefront-registry --filter ./verticals/symmy-integration --filter ./verticals/tax --filter ./packages/better-auth-effect-drizzle --filter ./packages/catalog-selection-contracts --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/commerce-order-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts --filter ./packages/email-delivery --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/price-group-catalog-contracts --filter ./packages/pricing-contracts --filter ./packages/shared-contracts --filter ./packages/shared-design-tokens --filter ./packages/storefront-registry-contracts --filter ./packages/core-runtime --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/pricing --filter ./apps/shell-super-app --filter ./verticals/party-registry run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/assortment --filter ./verticals/availability --filter ./verticals/commerce-cart --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/privacy --filter ./verticals/projects --filter ./verticals/promotion --filter ./verticals/storefront-registry --filter ./verticals/symmy-integration --filter ./verticals/tax --filter ./packages/better-auth-effect-drizzle --filter ./packages/catalog-selection-contracts --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/commerce-order-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/customer-payment-term-contracts --filter ./packages/email-delivery --filter ./packages/gateway-principal-verifier --filter ./packages/payment-term-catalog-contracts --filter ./packages/price-group-catalog-contracts --filter ./packages/pricing-contracts --filter ./packages/shared-contracts --filter ./packages/shared-design-tokens --filter ./packages/storefront-registry-contracts --filter ./packages/core-runtime --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/pricing --filter ./apps/shell-super-app --filter ./verticals/party-registry run test:component\n"
+      "commands": "pnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/catalog --filter ./packages/core-runtime --filter ./apps/shell-super-app --filter ./verticals/privacy --filter ./verticals/assortment --filter ./verticals/commerce-cart --filter ./verticals/commerce-order --filter ./verticals/price-group-catalog --filter ./verticals/promotion --filter ./verticals/symmy-integration --filter ./packages/better-auth-effect-drizzle --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-order-contracts --filter ./packages/customer-payment-term-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/price-group-catalog-contracts --filter ./packages/shared-contracts --filter ./packages/storefront-registry-contracts run test:unit --pool.maxWorkers 1\npnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/catalog --filter ./packages/core-runtime --filter ./apps/shell-super-app --filter ./verticals/privacy --filter ./verticals/assortment --filter ./verticals/commerce-cart --filter ./verticals/commerce-order --filter ./verticals/price-group-catalog --filter ./verticals/promotion --filter ./verticals/symmy-integration --filter ./packages/better-auth-effect-drizzle --filter ./packages/commerce-cart-contracts --filter ./packages/commerce-order-contracts --filter ./packages/customer-payment-term-contracts --filter ./packages/gateway-principal-verifier --filter ./packages/price-group-catalog-contracts --filter ./packages/shared-contracts --filter ./packages/storefront-registry-contracts run test:component --pool.maxWorkers 1\n"
+    },
+    {
+      "name": "Workspace Unit and Component Tests (2/2)",
+      "node-artifacts": true,
+      "fetch_depth": 512,
+      "commands": "pnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/commerce-customer-context --filter ./verticals/pricing --filter ./verticals/party-registry --filter ./verticals/inventory --filter ./verticals/availability --filter ./verticals/commerce-market-catalog --filter ./verticals/payment-term-catalog --filter ./verticals/projects --filter ./verticals/storefront-registry --filter ./verticals/tax --filter ./packages/catalog-selection-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/email-delivery --filter ./packages/payment-term-catalog-contracts --filter ./packages/pricing-contracts --filter ./packages/shared-design-tokens --filter ./verticals/payment run test:unit --pool.maxWorkers 1\npnpm -r --no-sort --workspace-concurrency=4 --if-present --filter ./verticals/commerce-customer-context --filter ./verticals/pricing --filter ./verticals/party-registry --filter ./verticals/inventory --filter ./verticals/availability --filter ./verticals/commerce-market-catalog --filter ./verticals/payment-term-catalog --filter ./verticals/projects --filter ./verticals/storefront-registry --filter ./verticals/tax --filter ./packages/catalog-selection-contracts --filter ./packages/commerce-cart-finalization-contracts --filter ./packages/customer-market-retirement-contracts --filter ./packages/email-delivery --filter ./packages/payment-term-catalog-contracts --filter ./packages/pricing-contracts --filter ./packages/shared-design-tokens --filter ./verticals/payment run test:component --pool.maxWorkers 1\n"
     }
   ],
   "integration": [
@@ -37,8 +35,11 @@
     },
     {
       "suite": "integration",
-      "name": "Commerce, Pricing, and Inventory Integration",
+      "name": "Customer Context and Native Approval Integration",
       "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "1/4",
+      "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry",
       "native-preproposal": true,
       "proof-packages": [
         "@app/shell-super-app",
@@ -49,18 +50,33 @@
         "@app/commerce-market-catalog",
         "@app/pricing",
         "@app/commerce-customer-context"
-      ],
-      "root-suite": true,
-      "package-filters": "--filter ./verticals/commerce-customer-context --filter ./verticals/storefront-registry --filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/tax --filter ./verticals/projects",
-      "root-rstest-shard": "1/2"
+      ]
     },
     {
       "suite": "integration",
-      "name": "Core, Shell, Privacy, and Registry Integration",
+      "name": "Shell and Privacy Integration",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/privacy --filter ./packages/core-runtime --filter ./verticals/catalog --filter ./verticals/party-registry --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog",
-      "root-rstest-shard": "2/2"
+      "root-rstest-shard": "2/4",
+      "package-filters": "--filter ./apps/shell-super-app --filter ./verticals/privacy",
+      "whole-owner-proofs": "privacy"
+    },
+    {
+      "suite": "integration",
+      "name": "Core and Party Registry Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "3/4",
+      "package-filters": "--filter ./packages/core-runtime --filter ./verticals/party-registry"
+    },
+    {
+      "suite": "integration",
+      "name": "Commerce Owners and Federation Integration",
+      "native-composition": true,
+      "root-suite": true,
+      "root-rstest-shard": "4/4",
+      "package-filters": "--filter ./verticals/pricing --filter ./verticals/inventory --filter ./verticals/payment --filter ./verticals/tax --filter ./verticals/projects --filter ./verticals/catalog --filter ./verticals/symmy-integration --filter ./verticals/assortment --filter ./verticals/promotion --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog",
+      "whole-owner-proofs": "organization pricing"
     },
     {
       "suite": "browser",

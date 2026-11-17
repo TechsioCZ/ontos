@@ -570,10 +570,9 @@ jobs:
           fi
           git diff --exit-code HEAD
 
-  # Four service runners: bootstrap and whole-owner proofs, two integration batches, and browsers.
-  # Each integration runner owns two PostgreSQL clusters and SpiceDB datastores.
-  # Two active lanes on four CPUs leave room for their native owner processes.
-  # This avoids paying for another hosted runner, install and migration per shard.
+  # Four integration batches own four independent clusters each. Whole-owner proofs join
+  # those lanes instead of serially extending the deployment bootstrap critical path.
+  # Consolidated source checks keep the complete run within eighteen hosted jobs.
   service-integration:
     name: ${{ matrix.name }}
     needs: [ci-plan, node-artifact-build]
@@ -745,10 +744,10 @@ jobs:
           ULTRAMODERN_ZEROPS_SERVICE: migrator
         run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
 
-      # Every row migrates its own fresh cluster, which is the only database preparation left here: the
-      # bootstrap row runs the stage-shaped migrator artifact, the grant audit and the Outbox Worker host
-      # proof once for the whole run, because none of the three reads a matrix input.
+      # Bootstrap already migrated and verified every owner through its assembled stage entry point.
+      # Other rows prepare their source database once; isolated workers copy it rather than migrate again.
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
+        if: matrix.suite != 'bootstrap'
         working-directory: app
         # The Commerce portal authentication realm is optional and owns its own Drizzle
         # configuration, migration journal and runtime role. Naming its database pair here is what
@@ -821,38 +820,6 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm active-composition:publish prove-build
 
-      # These whole-owner scenarios launch several native processes. Run them on
-      # this otherwise idle runner, not beside four lanes competing for four CPUs.
-      - name: Prove whole native Current Pricing without competing fixture processes
-        if: matrix.suite == 'bootstrap'
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: >-
-          mise exec -- pnpm --filter ./verticals/pricing run test:integration
-          tests/integration/market-revision-whole-current-pricing-postgres.test.ts --pool.maxWorkers 1
-
-      - name: Prove native Organization customer lifecycle without competing fixture processes
-        if: matrix.suite == 'bootstrap'
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: >-
-          mise exec -- pnpm exec rstest --project integration
-          scripts/integration/organization-source-customer-owner-conformance.test.mts --pool.maxWorkers 1
-
-      - name: Prove native Privacy composition drain without competing fixture processes
-        if: matrix.suite == 'bootstrap'
-        working-directory: app
-        env:
-          APP_ENV_PATH: /dev/null
-          SPICEDB_DATABASE_PASSWORD: spicedb
-        run: >-
-          mise exec -- pnpm --filter ./verticals/privacy run test:integration
-          tests/integration/privacy-composition-drain.test.ts --pool.maxWorkers 1
-
       - name: Give each integration worker its own PostgreSQL cluster and SpiceDB datastore
         if: matrix.suite == 'integration'
         working-directory: app
@@ -870,7 +837,8 @@ jobs:
           NATIVE_PREPROPOSAL: ${{ matrix.native-preproposal }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
-          ONTOS_CI_ISOLATED_WORKERS: '2'
+          ONTOS_CI_ISOLATED_WORKERS: '4'
+          WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
 

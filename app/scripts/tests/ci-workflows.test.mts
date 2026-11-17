@@ -214,6 +214,7 @@ const DATABASE_ADMIN_EXPRESSION = expression('secrets.DATABASE_ADMIN_URL');
 const RUNNER_TEMP_EXPRESSION = expression('runner.temp');
 /** The artifact that carries ci-plan's exact changed-path list to the format and lint gate. */
 const CHANGED_PATHS_ARTIFACT = 'ci-changed-paths';
+const SCRIPTS_TEST_COMMAND = 'pnpm test:scripts';
 const UNPACK_NATIVE_ARTIFACTS_SCRIPT = 'bash scripts/unpack-unit-build-outputs.sh';
 const UNPACK_NATIVE_ARTIFACTS_COMMAND = `${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/native-composition-units" .output`;
 
@@ -2171,17 +2172,15 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm module-entrypoints:check',
     'node scripts/plan-deployment-impact.mts --outbox-worker-mode host',
     'pnpm test:generation',
+    'pnpm --filter ./packages/shared-contracts test:types',
   ]) {
     expect(commands).toContain(check);
   }
-  // The complete tooling suite runs once across two shards, never serially after lint. Its
-  // deployment impact tests also cover the old source job's duplicate filtered Rstest invocation.
+  // One work-stealing tooling pool replaces two uneven count-based shards.
+  // Its deployment tests also cover the former duplicate filtered invocation.
   const format = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
-  expect(format.steps.some(({ run }) => run?.includes('pnpm test:scripts') === true)).toBe(false);
-  expect(commands.filter((command) => command.startsWith('pnpm test:scripts'))).toEqual([
-    'pnpm test:scripts --shard 1/2',
-    'pnpm test:scripts --shard 2/2',
-  ]);
+  expect(format.steps.some(({ run }) => run?.includes(SCRIPTS_TEST_COMMAND) === true)).toBe(false);
+  expect(commands.filter((command) => command.startsWith(SCRIPTS_TEST_COMMAND))).toEqual([SCRIPTS_TEST_COMMAND]);
   expect(commands.filter((command) => command === TYPECHECK_COMMAND)).toHaveLength(1);
   expect(commands).not.toContain('pnpm test:deployment-impact');
   const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
@@ -2247,16 +2246,20 @@ it('runs the root unit and component tests of every workspace package in exactly
   const { scripts } = readRootScripts();
   // The shards run exactly what the root script runs, split by package.
   expect(scripts['test:unit']).toBe(
-    'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component',
+    'pnpm -r --no-sort --if-present run test:unit && pnpm -r --no-sort --if-present run test:component && pnpm --filter @app/shared-contracts test:types',
   );
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
-    if (unit === undefined || !unit.endsWith(' run test:unit')) {
+    if (unit === undefined || !unit.endsWith(' run test:unit --pool.maxWorkers 1')) {
       return [];
     }
-    const filters = unit.replace(/^pnpm -r --no-sort --if-present /u, '').replace(/ run test:unit$/u, '');
+    const filters = unit
+      .replace(/^pnpm -r --no-sort --workspace-concurrency=4 --if-present /u, '')
+      .replace(/ run test:unit --pool.maxWorkers 1$/u, '');
     // Each shard runs test:component over the same packages, after test:unit, and nothing else.
-    expect(component).toBe(`pnpm -r --no-sort --if-present ${filters} run test:component`);
+    expect(component).toBe(
+      `pnpm -r --no-sort --workspace-concurrency=4 --if-present ${filters} run test:component --pool.maxWorkers 1`,
+    );
     expect(rest).toEqual([]);
     return [
       [...filters.matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter?.replaceAll("'", '') ?? ''),
@@ -2315,6 +2318,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'root-rstest-shard': Schema.optional(Schema.String),
               'root-suite': Schema.optional(Schema.Boolean),
               suite: Schema.Literals([BOOTSTRAP_SUITE, 'integration', 'browser']),
+              'whole-owner-proofs': Schema.optional(Schema.String),
             }),
           ),
         }),
@@ -2552,7 +2556,7 @@ it('covers every root integration shard and assigns each package integration sui
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
-    ONTOS_CI_ISOLATED_WORKERS: '2',
+    ONTOS_CI_ISOLATED_WORKERS: '4',
     SPICEDB_DATABASE_PASSWORD: 'spicedb',
   });
   const isolate = job.steps.findIndex((step) => step.run === 'bash scripts/ci/start-integration-workers.sh');
@@ -2581,7 +2585,7 @@ it('covers every root integration shard and assigns each package integration sui
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
   const roots = shards.filter((shard) => shard['root-suite'] === true);
-  expect(roots.map((row) => row['root-rstest-shard'])).toEqual(['1/2', '2/2']);
+  expect(roots.map((row) => row['root-rstest-shard'])).toEqual(['1/4', '2/4', '3/4', '4/4']);
   const packages = shards.filter((shard) => shardFilters(shard).length > 0);
   // Every row names exactly the packages it runs; none negates, so no row silently inherits a package
   // a reshard forgot.
@@ -2809,10 +2813,10 @@ it('proves the deployment bootstrap once, on a row beside the suites', () => {
     const step = steps.find((candidate) => candidate.name === name);
     expect(step?.if, name).toBe(BOOTSTRAP_CONDITION);
   }
-  // The migrations are the one database preparation every row decides for itself, bootstrap row included:
-  // it is what proves the migrator left a cluster the ordinary migrations still converge on.
+  // Bootstrap's assembled migrator already applies and verifies every owner. Other rows
+  // prepare their own database once. Scoped-owner tests separately prove replay convergence.
   const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
-  expect(migrations?.if).toBeUndefined();
+  expect(migrations?.if).toBe("matrix.suite != 'bootstrap'");
   expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
   // Bootstrap and federation share this row, so it restores the same-run Node artifacts too.
   for (const name of [BACKEND_ARTIFACT_DOWNLOAD_STEP, 'Unpack the Node artifacts for native owner fixtures']) {
@@ -3036,21 +3040,24 @@ it('proves each target on its own shards only after every other shard of the tar
   }
 });
 
-it('runs excluded whole-owner scenarios exactly once on the bootstrap runner', () => {
+it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
   const job = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
     SERVICE_INTEGRATION_JOB
   ];
   const scheduler = readFileSync(new URL('../ci/run-integration-suites.sh', import.meta.url), 'utf-8');
+  const proofs = job.strategy.matrix.include.flatMap((row) =>
+    (row['whole-owner-proofs'] ?? '').split(' ').filter(Boolean),
+  );
+  expect(sorted(proofs)).toEqual(['organization', 'pricing', 'privacy']);
   for (const file of [
     'scripts/integration/organization-source-customer-owner-conformance.test.mts',
     'tests/integration/market-revision-whole-current-pricing-postgres.test.ts',
     'tests/integration/privacy-composition-drain.test.ts',
   ]) {
     expect(scheduler).toContain(`--exclude ${file}`);
-    const proofs = job.steps.filter(({ run }) => run?.includes(file) === true);
-    expect(proofs).toHaveLength(1);
-    expect(proofs[0]?.if).toBe(BOOTSTRAP_CONDITION);
-    expect(proofs[0]?.env?.APP_ENV_PATH).toBe('/dev/null');
-    expect(proofs[0]?.run).toContain('--pool.maxWorkers 1');
+    expect(job.steps.some(({ run }) => run?.includes(file) === true)).toBe(false);
+    expect(scheduler).toContain(file);
   }
+  const run = job.steps.find(({ env }) => env?.PACKAGE_FILTERS !== undefined);
+  expect(run?.env?.WHOLE_OWNER_PROOFS).toBe(expression('matrix.whole-owner-proofs'));
 });

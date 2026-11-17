@@ -151,7 +151,7 @@ export const planCiChecks = (input: {
     const selected = packageFilters.length === 0 ? [] : matchingPackages(packageFilters, affected);
     const rootSuite = entry['root-suite'] === true && affected.some(({ directory }) => directory === '.');
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
-    if (selected.length === 0 && !rootSuite && !proofAffected) {
+    if (selected.length === 0 && !rootSuite && !proofAffected && (entry['whole-owner-proofs'] ?? '').length === 0) {
       return [];
     }
     const filters = selected.length === 0 ? '' : selected.map(({ directory }) => `--filter ./${directory}`).join(' ');
@@ -174,7 +174,10 @@ export const planCiChecks = (input: {
       {
         ...entry,
         commands: ['test:unit', 'test:component']
-          .map((script) => `pnpm -r --no-sort --if-present ${filters} run ${script}`)
+          .map(
+            (script) =>
+              `pnpm -r --no-sort --workspace-concurrency=4 --if-present ${filters} run ${script} --pool.maxWorkers 1`,
+          )
           .join('\n'),
       },
     ];
