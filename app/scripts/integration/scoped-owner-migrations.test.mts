@@ -148,6 +148,7 @@ const childEnvironment = Effect.gen(function* childEnvironmentEffect() {
   return {
     APP_ENV_PATH: '/dev/null',
     MIGRATOR_PORT: '0',
+    NODE_COMPILE_CACHE: yield* Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
     PATH: yield* Config.String('PATH'),
   };
 });

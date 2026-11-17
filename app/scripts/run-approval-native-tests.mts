@@ -29,6 +29,7 @@ const cli = Command.make(
       const permissions = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
       const inherited = yield* Config.all({
         HOME: Config.String('HOME'),
+        NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
         // The container the isolated-database fixture runs pg_dump/psql in; a lane-owned stack names its own.
         ONTOS_TEST_DB_CONTAINER: Config.String('ONTOS_TEST_DB_CONTAINER').pipe(Config.withDefault('ontos-db')),
         PATH: Config.String('PATH'),

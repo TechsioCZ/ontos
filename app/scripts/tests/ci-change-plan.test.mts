@@ -80,10 +80,10 @@ it('selects owner and transitive consumer tests without selecting an unrelated o
   // Ordinary package tests remain restricted to the affected owner and its consumers.
   expect(plan.integration.map(({ name }) => name)).toEqual([
     'Deployment Bootstrap and Node Federation Proof',
-    'Customer Context Schedules and Owner Integration',
     'Privacy Integration',
     'Commerce Owners and Federation Integration',
     'Native Preproposal and Commerce Integration',
+    'Native Approval and Organization Integration',
   ]);
   const tests = plan.integration.filter(({ suite }) => suite === 'integration');
   expect(
@@ -226,7 +226,16 @@ it('selects browser checks and all root integration shards when they consume a c
   });
   expect(plan.integration.some(({ suite }) => suite === 'browser')).toBe(true);
   const roots = plan.integration.filter((entry) => entry['root-suite'] === true);
-  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual(['1/7', '2/7', '3/7', '4/7', '5/7', '6/7', '7/7']);
+  expect(roots.map((entry) => entry['root-rstest-shard'])).toEqual([
+    '1/8',
+    '2/8',
+    '3/8',
+    '4/8',
+    '5/8',
+    '6/8',
+    '7/8',
+    '8/8',
+  ]);
   const filters = roots.map((entry) => entry['package-filters'] ?? '').join(' ');
   expect(filters).toContain('--filter ./apps/shell-super-app');
   expect(filters).toContain('--filter ./verticals/catalog');
@@ -297,7 +306,7 @@ it('selects both disjoint customer-context partitions and retains its independen
     (entry['package-filters'] ?? '').includes('./verticals/commerce-customer-context'),
   );
   expect(selected.map((entry) => entry['package-partition'])).toEqual(['1/2', '2/2']);
-  expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(1);
+  expect(plan.integration.filter((entry) => entry['native-preproposal'] === true)).toHaveLength(2);
 });
 
 it('widens changed shared infrastructure, unknown paths and package metadata to the complete suite', () => {

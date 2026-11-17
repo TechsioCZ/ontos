@@ -1067,6 +1067,16 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       await bootstrapAdmin.query(
         'create table privacy_completion_test.redemptions (issuer text not null, audience text not null, jti text not null, primary key (issuer,audience,jti))',
       );
+      // A schema clone carries deployment bootstrap grants, not this fixture's
+      // narrower owner policy. Replace only direct grants on these exact owned
+      // tables; inherited capabilities are still refused by the checks below.
+      await Promise.all(
+        inventory.flatMap((item) =>
+          item.tables.map((table) =>
+            bootstrapAdmin.query(`revoke all on table "${item.schema}"."${table}" from ${role}`),
+          ),
+        ),
+      );
       await Promise.all(
         inventory
           .filter(({ operations }) => operations !== 'none')

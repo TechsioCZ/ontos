@@ -963,7 +963,11 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
   readonly environment: Readonly<Record<string, string>>;
   readonly stage: string;
 }) {
-  const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const inherited = yield* Config.all({
+    HOME: Config.String('HOME'),
+    NODE_COMPILE_CACHE: Config.String('NODE_COMPILE_CACHE').pipe(Config.withDefault('')),
+    PATH: Config.String('PATH'),
+  });
   const commands = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const standardInput = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const publicLines = yield* Queue.unbounded<string, Cause.Done>();

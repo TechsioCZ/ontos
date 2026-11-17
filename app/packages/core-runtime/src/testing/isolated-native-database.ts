@@ -1,4 +1,5 @@
 import { asc, eq, sql } from 'drizzle-orm';
+import { migrate } from 'drizzle-orm/effect-postgres/migrator';
 import {
   Clock,
   Config,
@@ -633,33 +634,24 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       if (input.mode !== 'empty') {
         return yield* unavailable('Core schema bootstrap requires the empty test database mode');
       }
-      const migration = yield* ChildProcess.make(
-        new URL('../../node_modules/.bin/drizzle-kit', import.meta.url).pathname,
-        ['migrate', '--config', 'drizzle.config.ts'],
-        {
-          cwd: new URL('../../', import.meta.url).pathname,
-          env: {
-            DATABASE_ADMIN_URL: connections.admin.connectionString,
-            DATABASE_URL: connections.runtime.connectionString,
-          },
-          extendEnv: true,
-          stderr: 'pipe',
-          stdout: 'pipe',
-        },
-      ).pipe(Effect.mapError((cause) => unavailable('Unable to start the isolated Core migration', cause)));
-      const [migrationExit] = yield* Effect.all(
-        [migration.exitCode, Stream.runDrain(migration.stdout), Stream.runDrain(migration.stderr)],
-        { concurrency: 3 },
-      ).pipe(
+      // Use the same journaled Drizzle migrations through this already-owned
+      // connection. A fresh CLI/TypeScript process per case adds no SQL coverage.
+      const migration = yield* Effect.try({
+        catch: (cause) => unavailable('Unable to read the isolated Core migrations', cause),
+        try: () =>
+          migrate(clone.executor, {
+            migrationsFolder: new URL('../../drizzle/', import.meta.url).pathname,
+            migrationsSchema: 'drizzle',
+            migrationsTable: '__drizzle_migrations_core',
+          }),
+      });
+      yield* migration.pipe(
         Effect.mapError((cause) => unavailable('Unable to migrate the isolated Core schema', cause)),
         Effect.timeoutOrElse({
           duration: '30 seconds',
           orElse: () => Effect.fail(unavailable('The isolated Core migration timed out')),
         }),
       );
-      if (migrationExit !== 0) {
-        return yield* unavailable('The isolated Core migration failed');
-      }
       // Match the Core-only portion of the repository runtime bootstrap. No role flags,
       // passwords, source database privileges or other owner's schema are changed.
       const roleIdentifier = sql.identifier(connections.runtime.user);

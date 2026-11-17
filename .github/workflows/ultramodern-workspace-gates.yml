@@ -568,8 +568,8 @@ jobs:
           fi
           git diff --exit-code HEAD
 
-  # Seven integration batches and four build shards use at most seventeen hosted slots:
-  # 2 source + format + static + 4 builds + 9 service rows = 17.
+  # Eight integration batches and four build shards use at most eighteen hosted slots:
+  # 2 source + format + static + 4 builds + 10 service rows = 18.
   # Three unit rows replace completed build slots; repository tooling shares the typecheck runner.
   service-integration:
     name: ${{ matrix.name }}
@@ -777,12 +777,16 @@ jobs:
       # This acceptance uses only source, PostgreSQL and SpiceDB, not a single Node artifact.
       # It previously spent 289 seconds behind the build and another native test in root shard 6/16.
       - name: Prove scoped owner migrations while the Node artifacts build
-        if: matrix.root-suite == true && matrix.root-rstest-shard == '3/7'
+        id: scoped-migrations
+        background: true
+        if: matrix.root-suite == true && matrix.root-rstest-shard == '3/8'
         working-directory: app
         env:
           APP_ENV_PATH: /dev/null
           ONTOS_CI_ISOLATED_WORKERS: '4'
-          ONTOS_CI_WORKER_SLOT: '0'
+          # Shell's two lanes use clusters 1/2. Reserve cluster 4 for this proof,
+          # including its cluster-global role changes, while Node artifacts build.
+          ONTOS_CI_WORKER_SLOT: '3'
           SPICEDB_DATABASE_PASSWORD: spicedb
         run: bash scripts/ci/run-integration-suites.sh --task whole:migrations
 
@@ -873,6 +877,7 @@ jobs:
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
           PACKAGE_PARTITION: ${{ matrix.package-partition }}
           NATIVE_PREPROPOSAL: ${{ matrix.native-preproposal }}
+          NATIVE_PREPROPOSAL_CASE: ${{ matrix.preproposal-case }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ONTOS_CI_ISOLATED_WORKERS: '4'
@@ -880,6 +885,9 @@ jobs:
           WHOLE_OWNER_PROOFS: ${{ matrix.whole-owner-proofs }}
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
+
+      - name: Wait for the scoped owner migration proof
+        wait: scoped-migrations
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install

@@ -14,9 +14,10 @@ import {
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
-import { makeQuantityProfileOwnedDatabase } from '../support/quantity-profile-owned-database.ts';
+import { applyQuantityProfileCurrentMigrations } from '../support/quantity-profile-owned-database.ts';
 import { makeQuantityProfileDatabaseTransport } from '../support/quantity-profile-database-transport.ts';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
@@ -101,7 +102,11 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
     { contract: ownContract, marker: ownContract.deployment },
     { contract: party.contract, marker: party.marker },
   ]);
-  const { isolated } = yield* makeQuantityProfileOwnedDatabase(snapshot);
+  const isolated = yield* makeIsolatedNativeDatabaseFixture({
+    compositionSnapshot: snapshot,
+    mode: 'schema-only',
+    purpose: 'stabilization-1266-quantity-profile-admission',
+  });
   const databaseTransport =
     databaseTransportMode === 'OWNER_LOOKUP_OUTAGE'
       ? yield* makeQuantityProfileDatabaseTransport(Redacted.make(isolated.connections.runtime.connectionString))
@@ -383,6 +388,9 @@ it.live(
     Effect.scoped(
       Effect.gen(function* concreteProfileTargets() {
         const owner = yield* makeQuantityProfileFixture();
+        // Keep the complete migration replay, verifier, journal, and routine-body
+        // assertions once; the other six business scenarios use the same current schema.
+        yield* applyQuantityProfileCurrentMigrations(owner.isolated.connections);
         const ruleId = yield* createRule(owner);
         const retail = { kind: 'RETAIL' as const, profileRef: owner.retail.profileRef };
         const counterparty = { kind: 'COUNTERPARTY' as const, profileRef: owner.counterparty.profileRef };
