@@ -64,28 +64,112 @@ const names = (entries: readonly { readonly name: string }[]) => entries.map(({ 
 const EVERY_OTHER_PACKAGE = 'Unit and Component Tests (every other package)';
 const STOREFRONT_TYPECHECK = 'Storefront Typecheck (AKROS and N1)';
 const ROOT_TOOLING_FILE = 'app/scripts/check-local.mts';
+const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
+const TOOLING_ROWS = [1, 2, 3].map((shard) => `Repository Tooling Tests (${shard}/3)`);
+/** A scoped plan builds no unit, starts no service and always runs its source rows, the static contracts and lint. */
+const SCOPED = {
+  'browser-integration': 'skipped',
+  'format-and-lint': 'success',
+  'integration-seed-proof': 'skipped',
+  'node-artifact-build': 'skipped',
+  'node-artifact-proof': 'skipped',
+  'service-integration': 'skipped',
+  'static-contracts': 'success',
+  'workspace-gate': 'success',
+  'workspace-unit': 'skipped',
+  'workspace-unit-artifacts': 'skipped',
+};
+const SCOPED_WITH_UNIT = { ...SCOPED, 'workspace-unit': 'success' };
 const fresh = (entries: readonly { readonly 'fresh-database-tests'?: string }[]) =>
   entries.filter((entry) => entry['fresh-database-tests'] === 'only');
 
-it('selects the storefront typecheck and the storefront unit rows for a change confined to a storefront', () => {
+it('runs only the storefront scope for a change confined to the storefronts', () => {
   for (const directory of rootLevelPackageDirectories) {
     const storefront = plan(`app/${directory}/src/app/page.tsx`);
-    expect(storefront.mode, directory).toBe('affected');
+    expect(storefront.mode, directory).toBe('scoped');
     expect(storefront.affectedPackages, directory).toEqual([directory]);
-    // The storefront typecheck is a source row: it runs in every round, narrowed or not.
-    expect(names(storefront.source), directory).toContain(STOREFRONT_TYPECHECK);
+    // The storefront typecheck and the tooling tests that read storefront files, nothing else from the source rows.
+    expect(names(storefront.source), directory).toEqual([...TOOLING_ROWS, STOREFRONT_TYPECHECK]);
     expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
     expect(storefront.unit[0]?.commands, directory).toContain(`--filter ./${directory} run test:unit`);
-    // A storefront is a leaf with no integration or browser suite: no service, seed or browser job is paid for.
+    // A storefront is in no unit build: no build, Node proof, service, seed or browser job is paid for.
     expect(storefront.integration, directory).toEqual([]);
-    expect(storefront.expected['service-integration'], directory).toBe('skipped');
-    expect(storefront.expected['integration-seed-proof'], directory).toBe('skipped');
-    expect(storefront.expected['browser-integration'], directory).toBe('skipped');
+    expect(storefront.expected, directory).toEqual(SCOPED_WITH_UNIT);
   }
   const both = plan(`app/${AKROS}/src/lib/cart.ts`, `app/${N1}/src/catalog/view.tsx`, 'README.md');
-  expect(both.mode).toBe('affected');
+  expect(both.mode).toBe('scoped');
   expect(both.affectedPackages).toEqual([AKROS, N1]);
   expect(both.unit[0]?.commands).toContain(`--filter ./${AKROS} --filter ./${N1} run test:unit`);
+  // The generated catalogue a Merchandise script reads is outside the scope.
+  expect(plan(`app/${AKROS}/src/catalog-import/generated/catalog.generated.json`).mode).toBe('affected');
+});
+
+it('runs only the tooling tests for a change confined to the stage delivery or the tooling tests', () => {
+  for (const changedPaths of [
+    // 2d3ec0217 and 7795ec87d on the demo trunk, 17 Nov.
+    [
+      '.github/actions/deliver-stage/action.yml',
+      STAGE_WORKFLOW,
+      'app/scripts/tests/zerops-deployment-contract.test.mts',
+      'app/scripts/tests/zerops-plan-setup.test.mts',
+      'app/scripts/zerops/prove-app-runtime.mts',
+      'app/scripts/zerops/prove-app-runtime.test.mts',
+      'app/scripts/zerops/read-delivery-history.sh',
+      'app/scripts/zerops/reuse-shard-units.sh',
+      'app/scripts/zerops/reuse-shard-units.test.mts',
+    ],
+    ['app/scripts/zerops/app-boot-stages.sh', 'app/scripts/zerops/app-boot-stages.test.mts'],
+    ['app/scripts/tests/ci-workflows.test.mts', 'docs/README.md'],
+  ]) {
+    const stage = plan(...changedPaths);
+    expect(stage.mode, changedPaths[0]).toBe('scoped');
+    expect(names(stage.source), changedPaths[0]).toEqual(TOOLING_ROWS);
+    expect(stage.unit, changedPaths[0]).toEqual([]);
+    expect(stage.expected, changedPaths[0]).toEqual(SCOPED);
+  }
+  // Both scopes at once run both scopes' rows.
+  const both = plan(STAGE_WORKFLOW, `app/${AKROS}/src/app/page.tsx`);
+  expect(both.mode).toBe('scoped');
+  expect(names(both.source)).toEqual([...TOOLING_ROWS, STOREFRONT_TYPECHECK]);
+  // What the app host, the unit builds, the gates or the integration suites run is outside the scope.
+  for (const changedPath of [
+    'app/scripts/zerops/app-host.mts',
+    'app/scripts/zerops/build-app.sh',
+    'app/scripts/zerops/owner-entry.mts',
+    'app/scripts/zerops/delivery-plan.mts',
+    'app/scripts/zerops/app-runtime-paths.txt',
+    'app/zerops.yaml',
+    '.github/workflows/ultramodern-workspace-gates.yml',
+    'app/scripts/integration/stage-recovery-lifecycle.test.mts',
+    'app/scripts/tests/outbox-worker-host-proof-native.fixture.mts',
+  ]) {
+    expect(plan(STAGE_WORKFLOW, changedPath).mode, changedPath).not.toBe('scoped');
+  }
+  // An authority-named tooling test stays sensitive, and nothing is scoped outside a narrowed run.
+  expect(plan('app/scripts/tests/authorization-catalog.test.mts').mode).toBe('full');
+  expect(planCiChecks({ applyAffected: false, changedPaths: [STAGE_WORKFLOW], packages, templates }).mode).toBe('full');
+  expect(
+    planCiChecks({
+      applyAffected: true,
+      changedPaths: [STAGE_WORKFLOW],
+      forceFull: true,
+      packages,
+      templates,
+    }).mode,
+  ).toBe('full');
+});
+
+it('refuses a scope that names a source row the matrices do not have', () => {
+  const renamed = {
+    ...templates,
+    source: templates.source.map((entry) =>
+      entry.name === STOREFRONT_TYPECHECK ? { ...entry, name: 'Storefront Typecheck' } : entry,
+    ),
+  };
+  expect(
+    planCiChecks({ applyAffected: true, changedPaths: [`app/${AKROS}/src/app/page.tsx`], packages, templates: renamed })
+      .mode,
+  ).toBe('affected');
 });
 
 it('keeps the manifest, config, schema and authority rules widening inside the storefront trees', () => {
@@ -210,8 +294,6 @@ it('satisfies the gate aggregator for every narrowed plan it can produce', () =>
     'browser-integration',
   ]);
   for (const changedPath of [
-    `app/${AKROS}/src/app/page.tsx`,
-    `app/${N1}/src/catalog/view.tsx`,
     ROOT_TOOLING_FILE,
     'app/scripts/ci/integration-seed-model.mts',
     `app/${WORK_TASKS_DIRECTORY}/src/services/task-state.ts`,

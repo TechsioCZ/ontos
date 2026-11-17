@@ -46,10 +46,23 @@ const IntegrationEntrySchema = Schema.Struct({
       : undefined,
   ),
 );
+/**
+ * A change confined to these paths is proved by the named source rows, the static contracts, the lint of the changed
+ * files and the unit rows of the packages it changes; it builds no unit and starts no service. A path matches when it
+ * matches a glob and no `!` glob. app/scripts/tests/demo-trunk-ci.test.mts proves that nothing outside those rows reads
+ * a scoped file.
+ */
+const CiScopeSchema = Schema.Struct({
+  name: Schema.String,
+  paths: Schema.NonEmptyArray(Schema.String),
+  source: Schema.NonEmptyArray(Schema.String),
+});
+export type CiScope = typeof CiScopeSchema.Type;
 export const CiTemplatesSchema = Schema.Struct({
   /** Test files that must migrate or recover their job's database; the seed model refuses exactly these. */
   'fresh-database-tests': Schema.optionalKey(Schema.Array(Schema.String)),
   integration: Schema.Array(IntegrationEntrySchema),
+  scopes: Schema.optionalKey(Schema.Array(CiScopeSchema)),
   source: Schema.Array(CommandEntrySchema),
   /** Measured seconds of a test-file family by file-name prefix; scripts/ci/rstest-weighted-shard.sh deals by it. */
   'test-weights': Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
@@ -170,19 +183,19 @@ const pathOwners = (changedPath: string, packages: readonly CiWorkspacePackage[]
       : changedPath.startsWith(`app/${directory}/`),
   );
 
+/** A shared package, a manifest or configuration, or an authority or database file: no scope or owner narrows it. */
+const sensitivePath = (changedPath: string) =>
+  /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
+    changedPath,
+  ) ||
+  /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts)$/u.test(
+    changedPath,
+  ) ||
+  /\/[^/]*(?:auth|permission|policy|grant)[^/]*\.[cm]?[jt]sx?$/iu.test(changedPath) ||
+  /\/(?:drizzle[^/]*|database|db|auth|authorization|permissions|policies|migrations|shared|api)\//u.test(changedPath);
+
 const broadPath = (changedPath: string) =>
-  !rootDocumentation(changedPath) &&
-  (!ownedTree(changedPath) ||
-    /^app\/packages\/(?:core-runtime|shared-contracts|shared-design-tokens|gateway-principal-verifier|better-auth-effect-drizzle)\//u.test(
-      changedPath,
-    ) ||
-    /\/(?:package\.json|schema\.ts|[^/]*config\.[^/]+|vertical\.manifest\.ts|vertical\.registration\.ts)$/u.test(
-      changedPath,
-    ) ||
-    /\/[^/]*(?:auth|permission|policy|grant)[^/]*\.[cm]?[jt]sx?$/iu.test(changedPath) ||
-    /\/(?:drizzle[^/]*|database|db|auth|authorization|permissions|policies|migrations|shared|api)\//u.test(
-      changedPath,
-    ));
+  !rootDocumentation(changedPath) && (!ownedTree(changedPath) || sensitivePath(changedPath));
 
 /** Every literal workspace selector a `--filter` list names, with its exclusion sense. */
 export const filterPaths = (filters: string) =>
@@ -288,6 +301,31 @@ const namesNewSeed = (changedPath: string) =>
   seedInputs.some((pattern) => pattern.test(changedPath)) &&
   !seedExclusions.some((pattern) => pattern.test(changedPath));
 
+/** Whether a path is one of the scope's paths: some glob matches it and no `!` glob does. */
+export const inScope = (scope: CiScope, changedPath: string) =>
+  scope.paths.some((glob) => !glob.startsWith('!') && seedInputMatcher(glob).test(changedPath)) &&
+  !scope.paths.some((glob) => glob.startsWith('!') && seedInputMatcher(glob.slice(1)).test(changedPath));
+
+/**
+ * The scopes a diff stays inside: every changed path that is not root documentation lies in one of them and none is
+ * sensitive. Empty when any path is outside every scope, when a scope names a source row the matrices do not have,
+ * or when nothing but documentation changed.
+ */
+const diffScopes = (changedPaths: readonly string[], templates: Templates): readonly CiScope[] => {
+  const scopes = templates.scopes ?? [];
+  const valid = scopes.every((scope) =>
+    scope.source.every((name) => templates.source.some((entry) => entry.name === name)),
+  );
+  const paths = changedPaths.filter((changedPath) => !rootDocumentation(changedPath));
+  if (!valid || paths.length === 0 || paths.some(sensitivePath)) {
+    return [];
+  }
+  const owners = paths.map((changedPath) => scopes.filter((scope) => inScope(scope, changedPath)));
+  return owners.some((matched) => matched.length === 0)
+    ? []
+    : scopes.filter((scope) => owners.some((matched) => matched.includes(scope)));
+};
+
 /**
  * Whether the workspace graph itself cannot be trusted: a package outside the directory and naming conventions, a
  * duplicate name, or a dependency or contract producer that is not in the workspace. Nothing is narrowed from a
@@ -321,13 +359,45 @@ const unprovenTemplates = (templates: Templates, packages: readonly CiWorkspaceP
       (entry['proof-packages'] ?? []).some((dependency) => !packages.some(({ name }) => name === dependency)),
   );
 
-export const planCiChecks = (input: {
+interface PlanInput {
   readonly applyAffected: boolean;
   readonly changedPaths: readonly string[];
   readonly forceFull?: boolean;
   readonly packages: readonly CiWorkspacePackage[];
   readonly templates: Templates;
-}) => {
+}
+/** How much of the suite a plan runs: everything, the changed owners and their consumers, or the rows of scopes. */
+const PlanModeSchema = Schema.Literals(['affected', 'full', 'scoped']);
+type PlanMode = typeof PlanModeSchema.Type;
+
+/**
+ * The scopes a narrowed diff stays inside. A diff inside them runs their source rows and the unit rows of the packages
+ * it changes; a unit row that reads build outputs needs the builds, so such a diff is not scoped.
+ */
+const selectedScopes = (input: PlanInput, narrowedUnit: readonly { readonly 'node-artifacts'?: boolean }[]) => {
+  const trusted =
+    input.applyAffected &&
+    input.forceFull !== true &&
+    !unaccountedWorkspace(input.packages) &&
+    !unprovenTemplates(input.templates, input.packages);
+  return trusted && narrowedUnit.every((entry) => entry['node-artifacts'] !== true)
+    ? diffScopes(input.changedPaths, input.templates)
+    : [];
+};
+
+const planReason = (mode: PlanMode, input: PlanInput, broad: boolean, scopes: readonly CiScope[]) => {
+  if (mode === 'scoped') {
+    return `Every changed path is inside ${scopes.map(({ name }) => name).join(' and ')}: their rows, the static contracts and the lint of the changed files run; no unit is built and no service starts.`;
+  }
+  if (broad || (mode !== 'affected' && input.applyAffected)) {
+    return 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
+  }
+  return input.applyAffected
+    ? 'Required tests include the changed owners and their transitive consumers.'
+    : 'Affected selection is recorded in shadow mode; the complete suite remains required.';
+};
+
+export const planCiChecks = (input: PlanInput) => {
   const { packages, templates } = input;
   const owned = input.changedPaths.flatMap((changedPath) =>
     pathOwners(changedPath, packages).map((owner) => ({
@@ -404,10 +474,19 @@ export const planCiChecks = (input: {
     ];
   });
   const selectedUnit = rootOnly ? templates.unit : narrowedUnit;
+  const scopes = selectedScopes(input, narrowedUnit);
   // A malformed/empty unit mapping never becomes a green no-op.
-  const effectiveMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
-  const integration = effectiveMode === 'full' ? templates.integration : selectedIntegration;
-  const unit = effectiveMode === 'full' ? templates.unit : selectedUnit;
+  let effectiveMode: PlanMode = mode === 'affected' && selectedUnit.length > 0 ? mode : 'full';
+  if (scopes.length > 0) {
+    effectiveMode = 'scoped';
+  }
+  const integration = { affected: selectedIntegration, full: templates.integration, scoped: [] }[effectiveMode];
+  const unit = { affected: selectedUnit, full: templates.unit, scoped: narrowedUnit }[effectiveMode];
+  const source =
+    effectiveMode === 'scoped'
+      ? templates.source.filter(({ name }) => scopes.some((scope) => scope.source.includes(name)))
+      : templates.source;
+  const built = effectiveMode === 'scoped' ? 0 : 1;
   // Each matrix job gets only its own rows: artifact consumers wait for the build shards, every other row starts
   // right after planning. A matrix job with no row is planned as skipped instead of failing on an empty matrix.
   // Eligible rows restore the cached seed when it exists and prepare their own database otherwise; the seed
@@ -418,27 +497,21 @@ export const planCiChecks = (input: {
     unitArtifacts: unit.filter((entry) => entry['node-artifacts'] === true),
     unitPlain: unit.filter((entry) => entry['node-artifacts'] !== true),
   };
-  // Every gate names its row count; gates without a matrix always run one row. The seed producer runs whenever an
-  // integration row does.
+  // Every gate names its row count; gates without a matrix always run one row, except that a scoped plan builds no
+  // unit. The seed producer runs whenever an integration row does.
   const rows = {
     'browser-integration': jobs.browser.length,
     'format-and-lint': 3,
     'integration-seed-proof': jobs.services.length,
-    'node-artifact-build': 1,
-    'node-artifact-proof': 1,
+    'node-artifact-build': built,
+    'node-artifact-proof': built,
     'service-integration': jobs.services.length,
     'static-contracts': 1,
-    'workspace-gate': 1,
+    'workspace-gate': source.length,
     'workspace-unit': jobs.unitPlain.length,
     'workspace-unit-artifacts': jobs.unitArtifacts.length,
   } satisfies Readonly<Record<(typeof gateIds)[number], number>>;
   const expected = Object.fromEntries(gateIds.map((gate) => [gate, rows[gate] === 0 ? 'skipped' : 'success']));
-  let reason = 'Shared, sensitive, unknown or explicitly full impact requires the complete suite.';
-  if (!broad && (effectiveMode === 'affected' || !input.applyAffected)) {
-    reason = input.applyAffected
-      ? 'Required tests include the changed owners and their transitive consumers.'
-      : 'Affected selection is recorded in shadow mode; the complete suite remains required.';
-  }
   return {
     affectedPackages,
     candidateIntegration: broad ? templates.integration : selectedIntegration,
@@ -446,8 +519,8 @@ export const planCiChecks = (input: {
     integration,
     jobs,
     mode: effectiveMode,
-    reason,
-    source: templates.source,
+    reason: planReason(effectiveMode, input, broad, scopes),
+    source,
     unit,
   };
 };
@@ -606,8 +679,8 @@ const cli = Command.make(
           `Required integration shards: ${plan.integration.length} of ${templates.integration.length}.`,
           `Affected-plan integration shards: ${plan.candidateIntegration.map(({ name }) => name).join(', ') || 'none'}.`,
           '',
-          'Node artifact proof, static policy, compiler diagnostics and lint enforcement remain blocking.',
-          'Only a candidate/* dispatch without force-ci-full applies affected selection; every other run is complete.',
+          `Mode: ${plan.mode}. Source rows: ${plan.source.map(({ name }) => name).join(', ')}.`,
+          'Only a candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates; every other run is complete.',
           '',
         ].join('\n'),
         { flag: 'a' },

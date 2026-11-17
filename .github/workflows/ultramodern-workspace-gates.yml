@@ -51,13 +51,17 @@ defaults:
 
 # One candidate at a time: every candidate/* run shares one group, so a newer candidate dispatch cancels the older
 # candidate run instead of competing with it for the 20 runners. A run dispatched with `keep` gets a group of its own.
-# Every other ref keeps its own group; main is never cancelled.
+# Every other ref keeps its own group. The trunks are never cancelled: a newer push waits as the group's one pending
+# run (GitHub replaces an older pending run with it), so every run ends with a verdict and runs never pile up. On the
+# demo trunk, where a push came every 3 to 25 minutes, cancelling left the pushes from 12:20 to 21:04 UTC on 17 Nov
+# without one green run; the pending push run compares with the newest green push (ci-plan), so it covers every
+# unproven commit.
 concurrency:
   group: >-
     ${{ startsWith(github.ref, 'refs/heads/candidate/')
     && (inputs.keep && format('ultramodern-workspace-kept-{0}', github.run_id) || 'ultramodern-workspace-candidates')
     || format('ultramodern-workspace-{0}-{1}', github.workflow, github.ref) }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/demo/sales-crm' }}
 
 jobs:
   # A push to main or a dispatch on main carries a commit the merge queue may already have proven: its
@@ -95,6 +99,10 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # actions: read finds the newest green push run of the demo trunk.
+    permissions:
+      actions: read
+      contents: read
     outputs:
       mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
       expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
@@ -131,6 +139,28 @@ jobs:
           else
             echo "::warning title=Complete suite::origin/$BASE_REF has no merge base with this commit; every gate runs."
           fi
+      # A push to the demo trunk compares with the newest commit whose push run of this workflow succeeded, not with
+      # the commit before the push: that run may have failed, been cancelled or still be running, and its changes would
+      # then never be checked. Every green run compared with an earlier green commit, so the diff covers every commit not
+      # yet proven. No such ancestor among the 100 newest green push runs leaves the comparison empty: every gate runs.
+      - name: Find the newest proven commit of the demo trunk
+        id: proven-base
+        if: github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # An unreadable answer finds no base, so the complete suite runs.
+          workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')" || workflow_id=''
+          proven="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?branch=demo/sales-crm&event=push&status=success&per_page=100" \
+            --jq '.workflow_runs[].head_sha')" || proven=''
+          while IFS= read -r sha; do
+            if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$sha" != "$GITHUB_SHA" ]] && git merge-base --is-ancestor "$sha" HEAD; then
+              echo "base=$sha" >>"$GITHUB_OUTPUT"
+              echo "Comparing with $sha, the newest commit of this branch whose push run of this workflow succeeded."
+              exit 0
+            fi
+          done <<<"$proven"
+          echo "::warning title=Complete suite::No green push run of this workflow is on an ancestor of this commit; every gate runs."
       # The migrated integration database changes only with these inputs: every Drizzle migration and config, the
       # database identity, role and grant scripts, the stage migrator and its activation and convergence scripts, the
       # verifier and trust audit, the seed tool itself, SpiceDB's bootstrap schema, the topology and authorization
@@ -144,7 +174,8 @@ jobs:
       - name: Classify the complete diff without app dependencies
         id: changes
         env:
-          BASE_SHA: ${{ steps.candidate.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          # A demo trunk push without a proven base gets none, never github.event.before.
+          BASE_SHA: ${{ steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '') }}
           CANDIDATE_DISPATCH: ${{ steps.candidate.outputs.base != '' }}
           HEAD_SHA: ${{ github.sha }}
           QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
@@ -179,15 +210,16 @@ jobs:
         env:
           BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
           # A candidate/* dispatch without force-ci-full and a push to the demo trunk narrow the gates to the changed
-          # owners and their consumers. Pull requests, merge groups and pushes to main still run the complete suite.
+          # owners and their consumers, or to the rows of the scopes the diff stays inside (scripts/ci-matrices.json).
+          # Pull requests, merge groups and pushes to main still run the complete suite.
           APPLY_AFFECTED: ${{ (steps.candidate.outputs.base != '' || (github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm')) && 'true' || 'false' }}
         run: |
           args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
           [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
           [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
           mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
-      # A narrowed (affected) run lints only its changed files, on one runner (shard 0), through the same hook. The one
-      # real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
+      # A narrowed (affected or scoped) run lints only its changed files, on one runner (shard 0), through the same
+      # hook. The one real failure a changed-file run would miss is a changed formatter, linter, hook, type-program or dependency
       # configuration, which changes the result for files nobody touched: such a change, an empty or oversized list and
       # every complete run keep the three whole-tree shards.
       - name: Choose the format and lint shards
@@ -198,7 +230,7 @@ jobs:
           PLAN_MODE: ${{ steps.selection.outputs.mode }}
         run: |
           shards='[1,2,3]'
-          if [[ "$PLAN_MODE" == affected && -s "$CHANGED_PATHS" ]]; then
+          if [[ "$PLAN_MODE" =~ ^(affected|scoped)$ && -s "$CHANGED_PATHS" ]]; then
             shards='[0]'
             count=0
             while IFS= read -r -d '' path; do
@@ -226,7 +258,8 @@ jobs:
   # The build mode is the stage deploy's (scripts/zerops/build-app.sh): two unit builds per runner, no build-time
   # TS checker and no server typecheck or server declaration pass, because the typecheck gate proves the types of the
   # whole workspace with TS-Go. The `.output` contract is unchanged: the same `build` script of every unit runs and
-  # owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in.
+  # owner-entry writes dist/zerops-entry.mjs. Unlike the deploy, no public origin is baked in and no JavaScript source
+  # map is written.
   # The Shell builds alone in shard 1; the verticals are balanced by their measured build seconds (about 580 s of
   # one-at-a-time work per shard) and listed heaviest first, so two build lanes finish together.
   # Listed first among the jobs that start after planning, so on a full run the build shards take free runners
@@ -268,8 +301,10 @@ jobs:
     env:
       BUILD_JOBS: '2'
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
-      ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1'
-      ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
+      # As on main: the typecheck gate proves the types, so the build runs no TS checker and no server typecheck or
+      # declaration pass, and writes no JavaScript source maps, which no gate reads (shared-contracts modern-config.ts).
+      # With maps a unit was about 54 MB against 18 MB on main, and every artifact consumer downloads every unit.
+      ONTOS_CI_TYPECHECK_SEPARATE: '1'
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
@@ -290,10 +325,9 @@ jobs:
       # `plan` keeps a restored unit only when its recorded input digest matches this checkout, and `verify` checks
       # the complete shard before anything is saved or packed.
       # Cache scope: a run reads caches of its own ref and of the default branch (main), plus the base branch of a
-      # pull request. The demo trunk is not the default branch, so its caches are invisible to candidate/* refs (and
-      # this workflow does not run on trunk pushes at all). A fix round therefore reuses its own earlier runs only
-      # when it keeps dispatching on the same candidate/<name> ref. The key names the shard, so rebalancing the
-      # shards makes the next run cold.
+      # pull request. The demo trunk is not the default branch, so its caches are invisible to candidate/* refs; its own
+      # push runs reuse each other's. A fix round therefore reuses its own earlier runs only when it keeps dispatching
+      # on the same candidate/<name> ref. The key names the shard, so rebalancing the shards makes the next run cold.
       - name: Name the shard's cached output paths
         id: unit-cache-paths
         env:

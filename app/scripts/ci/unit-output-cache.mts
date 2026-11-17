@@ -49,9 +49,9 @@
  * paths/modes/blob IDs of the runtime workspace closure, everything the build reaches, the scripts it
  * runs and the root build configuration) with the three public origins; Node target, package build command,
  * production/default build mode, map/type-bundle policy and owner-entry policy; effective public
- * build environment (MODERN_*, ULTRAMODERN_*, PUBLIC_*, ONTOS_*ORIGIN*, NODE_ENV, NODE_OPTIONS,
- * NODE_PATH, BABEL_ENV, RSPACK_*, RSBUILD_*, BROWSERSLIST*, TZ, LANG, LC_*, SOURCE_DATE_EPOCH
- * and CI); actual Node/component versions, pnpm, platform and architecture.
+ * build environment (MODERN_*, ULTRAMODERN_*, PUBLIC_*, ONTOS_*ORIGIN*, ONTOS_CI_TYPECHECK_SEPARATE,
+ * NODE_ENV, NODE_OPTIONS, NODE_PATH, BABEL_ENV, RSPACK_*, RSBUILD_*, BROWSERSLIST*, TZ, LANG, LC_*,
+ * SOURCE_DATE_EPOCH and CI); actual Node/component versions, pnpm, platform and architecture.
  * Lockfile, mise pins, scripts and workflow are already common committed deploy inputs. Actual
  * versions additionally prevent a runner/toolchain mismatch despite unchanged pins. Source SHA
  * and build-marker overrides are NOT digest inputs: unchanged units keep their OLD source/build
@@ -222,8 +222,9 @@ const run = (executable: string, args: readonly string[], cwd: string) =>
   }).pipe(Effect.scoped);
 const git = (args: readonly string[], root: string) => run('git', args, root);
 const identityOverride = /^(?:ULTRAMODERN_SOURCE_REVISION|ULTRAMODERN_BUILD_MARKER)$/u;
+// ONTOS_CI_TYPECHECK_SEPARATE drops the JavaScript source maps and server declarations (shared-contracts modern-config.ts).
 const buildVariable =
-  /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
+  /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|ONTOS_.*ORIGIN|ONTOS_CI_TYPECHECK_SEPARATE$|NODE_(?:ENV|OPTIONS|PATH)$|BABEL_ENV$|RSPACK_|RSBUILD_|BROWSERSLIST|TZ$|LANG$|LC_|SOURCE_DATE_EPOCH$|CI$)/u;
 /** `name=value` pairs of the environment every build child inherits, NUL-separated so values may hold newlines. */
 const inheritedEnvironment = (root: string) =>
   run('env', ['-0'], root).pipe(

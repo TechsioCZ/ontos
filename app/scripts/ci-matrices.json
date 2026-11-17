@@ -1,4 +1,43 @@
 {
+  "scopes": [
+    {
+      "name": "the stage delivery and the repository tooling tests",
+      "paths": [
+        ".github/workflows/zerops-stage.yml",
+        ".github/actions/deliver-stage/**",
+        "app/scripts/zerops/app-boot-stages.sh",
+        "app/scripts/zerops/build-shard-units.mts",
+        "app/scripts/zerops/build-storefront.sh",
+        "app/scripts/zerops/pack-app-release.sh",
+        "app/scripts/zerops/pack-prebuilt-units.sh",
+        "app/scripts/zerops/prove-app-runtime.mts",
+        "app/scripts/zerops/push-service.sh",
+        "app/scripts/zerops/read-delivery-history.sh",
+        "app/scripts/zerops/reuse-shard-units.sh",
+        "app/scripts/zerops/route-stage-domains.sh",
+        "app/scripts/zerops/stage-proofs.sh",
+        "app/scripts/zerops/stage-push.sh",
+        "app/scripts/zerops/sync-service-secret.sh",
+        "app/scripts/zerops/unpack-app-release.sh",
+        "app/scripts/zerops/verify-service.mjs",
+        "app/scripts/zerops/zerops-unit-build-seconds.mts",
+        "app/scripts/zerops/*.test.mts",
+        "app/scripts/tests/*.test.mts",
+        "app/scripts/tests/zerops-deployment.fixture.mts"
+      ],
+      "source": ["Repository Tooling Tests (1/3)", "Repository Tooling Tests (2/3)", "Repository Tooling Tests (3/3)"]
+    },
+    {
+      "name": "the storefronts",
+      "paths": ["app/akros-storefront/**", "app/n1-storefront/**", "!app/akros-storefront/src/catalog-import/**"],
+      "source": [
+        "Storefront Typecheck (AKROS and N1)",
+        "Repository Tooling Tests (1/3)",
+        "Repository Tooling Tests (2/3)",
+        "Repository Tooling Tests (3/3)"
+      ]
+    }
+  ],
   "test-weights": {
     "access-admin-people-stage-shape.test.ts": 35,
     "access-admin-people-writes-admission": 110,

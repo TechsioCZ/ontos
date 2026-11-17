@@ -179,12 +179,13 @@ const isPackageTestStep = ({
 }) => env?.PACKAGE_FILTERS !== undefined && name?.startsWith('Run ') === true;
 const DERIVE_BUILT_COMPOSITION_COMMAND = 'node scripts/derive-built-application-composition.mts --snapshot-output';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
+const STATIC_CONTRACTS_JOB = 'static-contracts';
 /** Gate jobs rooted at the merge queue proof. */
 const ROOT_GATE_JOBS = [
   WORKSPACE_GATE_JOB,
   WORKSPACE_UNIT_JOB,
   WORKSPACE_UNIT_ARTIFACTS_JOB,
-  'static-contracts',
+  STATIC_CONTRACTS_JOB,
   FORMAT_AND_LINT_JOB,
   SERVICE_INTEGRATION_JOB,
   INTEGRATION_SEED_PROOF_JOB,
@@ -296,9 +297,14 @@ it('classifies documentation before installation and schedules full regression w
     "github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/') && inputs.force-ci-full != true",
   );
   expect(steps[candidate]?.env).toEqual({ BASE_REF: expression('inputs.base-ref') });
+  // A demo trunk push compares with the newest commit whose push run succeeded, never with the commit before it.
+  const provenBase = steps.findIndex(({ id }) => id === 'proven-base');
+  expect(provenBase).toBeGreaterThan(-1);
+  expect(provenBase).toBeLessThan(classify);
+  expect(steps[provenBase]?.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/demo/sales-crm'");
   expect(steps[classify]?.env?.BASE_SHA).toBe(
     expression(
-      'steps.candidate.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before',
+      "steps.candidate.outputs.base || steps.proven-base.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.ref != 'refs/heads/demo/sales-crm' && github.event.before || '')",
     ),
   );
   expect(steps[classify]?.env?.CANDIDATE_DISPATCH).toBe(expression("steps.candidate.outputs.base != ''"));
@@ -314,7 +320,10 @@ it('runs one candidate at a time without changing main, pull request or merge qu
     }),
   });
   const workflow = Schema.decodeUnknownSync(ConcurrencySchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  expect(workflow.concurrency['cancel-in-progress']).toBe(expression("github.ref != 'refs/heads/main'"));
+  // Neither trunk cancels a running push run: a newer push waits as the one pending run, so every run gets a verdict.
+  expect(workflow.concurrency['cancel-in-progress']).toBe(
+    expression("github.ref != 'refs/heads/main' && github.ref != 'refs/heads/demo/sales-crm'"),
+  );
   expect(workflow.concurrency.group.replaceAll(/\s+/gu, ' ')).toBe(
     expression(
       "startsWith(github.ref, 'refs/heads/candidate/') && (inputs.keep && format('ultramodern-workspace-kept-{0}', github.run_id) || 'ultramodern-workspace-candidates') || format('ultramodern-workspace-{0}-{1}', github.workflow, github.ref)",
@@ -400,6 +409,19 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(passes(planned([NODE_ARTIFACT_PROOF_JOB]))).toBe(false);
   expect(passes(planned([NODE_ARTIFACT_BUILD_JOB]))).toBe(false);
   expect(passes(needs('affected', skipped))).toBe(false);
+  // A scoped plan builds nothing and starts no service, but its source rows, static contracts and lint always run.
+  const scoped = (skippedGates: readonly string[]) => {
+    const value = planned(skippedGates);
+    value[CI_PLAN_JOB].outputs.mode = 'scoped';
+    return value;
+  };
+  const unbuilt = [...testMatrices, NODE_ARTIFACT_BUILD_JOB, NODE_ARTIFACT_PROOF_JOB];
+  expect(passes(scoped(unbuilt))).toBe(true);
+  expect(passes(scoped(unbuilt.filter((gate) => gate !== WORKSPACE_UNIT_JOB)))).toBe(true);
+  for (const required of [WORKSPACE_GATE_JOB, STATIC_CONTRACTS_JOB, FORMAT_AND_LINT_JOB]) {
+    expect(passes(scoped([...unbuilt, required])), required).toBe(false);
+  }
+  expect(passes(needs('scoped', passed, 'success', 'true'))).toBe(false);
   expect(passes(needs('invented', passed))).toBe(false);
   const missing = needs('docs', skipped);
   missing[CI_PLAN_JOB].outputs.expected = '{}';
@@ -704,11 +726,11 @@ const gateCommands = () => {
 it('builds in the stage deploy mode because the typecheck gate proves the types', () => {
   const job = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   expect(job['timeout-minutes']).toBe(30);
-  expect(job.env).toMatchObject({
-    BUILD_JOBS: '2',
-    ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1',
-    ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1',
-  });
+  // As on main: no build-time checker, no server typecheck or declarations, and no JavaScript source maps, which made
+  // every unit artifact about three times larger.
+  expect(job.env).toMatchObject({ BUILD_JOBS: '2', ONTOS_CI_TYPECHECK_SEPARATE: '1' });
+  expect(job.env.ULTRAMODERN_DISABLE_BUILD_TS_CHECKER).toBeUndefined();
+  expect(job.env.ULTRAMODERN_SKIP_SERVER_TYPECHECK).toBeUndefined();
   // No public origin is baked into the gate artifacts, unlike the stage deploy.
   expect(Object.keys(job.env).some((key) => key.startsWith('ULTRAMODERN_PUBLIC_URL_'))).toBe(false);
   expect(job.env.ONTOS_PUBLIC_ORIGIN).toBeUndefined();
@@ -1709,7 +1731,9 @@ it('lints only the changed files of a narrowed run unless a tool configuration c
   try {
     const ordinary = ['app/verticals/catalog/src/a b.ts', 'app/verticals/catalog/src/index.ts'];
     expect(shardsFor('affected', ordinary)).toBe('shards=[0]');
+    expect(shardsFor('scoped', ordinary)).toBe('shards=[0]');
     expect(shardsFor('full', ordinary)).toBe(WHOLE_TREE_LINT_SHARDS);
+    expect(shardsFor('scoped', [])).toBe(WHOLE_TREE_LINT_SHARDS);
     expect(shardsFor('affected', [])).toBe(WHOLE_TREE_LINT_SHARDS);
     for (const configuration of [
       'app/oxlint.config.ts',
