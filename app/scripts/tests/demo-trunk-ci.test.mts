@@ -162,7 +162,7 @@ it('keeps every scoped storefront file out of everything a scoped plan skips', (
 /** A push run as the run list returns it; a run without a conclusion is still running. */
 const run = (sha: string, conclusion: string | null) => ({
   conclusion,
-  'head_sha': sha,
+  head_sha: sha,
   status: conclusion === null ? 'in_progress' : 'completed',
 });
 const green = (sha: string) => run(sha, 'success');
