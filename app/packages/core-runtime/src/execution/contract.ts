@@ -17,7 +17,7 @@
  *                                              (reads `ModuleCallRoute` with `Effect.serviceOption`; see `module-call-route.ts`)
  *                  `execution/requirements.ts` `CallRequirementsLive: Layer<CallRequirements>`,
  *                                              `selectCaller: SelectCaller`, `validateDeclaredCalls: ValidateDeclaredCalls`
- *                  `execution/core-route.ts`   `makeCoreCallRoute: MakeCoreCallRoute`
+ *                  `execution/core-route.ts`   `coreCallRouteFor: CoreCallRouteFor`
  *                  `execution/core-operations.ts` `coreOperationRegistrations` and the two new Core reads
  *                  `@app/shared-contracts/server/sdk-module-call-route` `ModuleCallRouteLive: Layer<ModuleCallRoute>`
  * - access lane:   `reads/access-questions.ts` (types in `reads/sdk-contract.ts`)
@@ -121,10 +121,12 @@ export class ExecutionRuleViolation extends Schema.TaggedError<ExecutionRuleViol
  * Whose authority a call carries, supplied by the kind adapter. Only `RequestPrincipal` exists now (a
  * read, later an Action served for a request). Reserved, added by their adapters: an admitted Action
  * invocation (gateway `Admission`, `RegisteredAdmission`, `Originator`) and an attested worker delivery
- * (`RegisteredWorkload`).
+ * (`RegisteredWorkload`). The adapter passes the very scope object the execution's lease was opened with,
+ * never a copy made by this schema: the lease and the gateway delegation recognise that instance, and a
+ * copy would fail requirement lookup and delegation for every call.
  */
 export const RequestPrincipalCallerSourceSchema = Schema.TaggedStruct('RequestPrincipal', {
-  /** The decoded trusted principal: requirement lookup, delegation, and Core's in-process route. */
+  /** The execution's verified scope: requirement lookup, delegation, and Core's in-process route. */
   principal: TrustedPrincipalContextSchema,
 });
 export const CallerSourceSchema = RequestPrincipalCallerSourceSchema;
@@ -333,7 +335,7 @@ export interface CallRoute {
 }
 
 /**
- * Core's in-process route (`execution/core-route.ts`, built by `makeCoreCallRoute` inside the read
+ * Core's in-process route (`execution/core-route.ts`, built by `coreCallRouteFor` inside the read
  * runtime, which provides it). Obligations:
  *
  * - Its registry is derived from `coreOperationRegistrations` (`execution/core-operations.ts`), keyed
@@ -364,7 +366,7 @@ export type CoreRunRead = (input: {
   readonly transport: unknown;
 }) => Effect.Effect<unknown, ReadCoreError>;
 
-export type MakeCoreCallRoute = (runRead: CoreRunRead) => CallRoute;
+export type CoreCallRouteFor = (runRead: CoreRunRead) => CallRoute;
 
 /**
  * The HTTP route to verticals (`@app/shared-contracts/server/sdk-module-call-route`, `ModuleCallRouteLive`;

@@ -14034,6 +14034,50 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "core.identity.assignable-principal.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [
+            {
+              "fieldClass": "personal_data",
+              "fields": [
+                "eligible.displayName"
+              ],
+              "key": "core.identity.assignable-principals.names",
+              "kind": "field_read",
+              "modes": [
+                "run"
+              ],
+              "placement": {
+                "group": "identity",
+                "level": "extended"
+              },
+              "risk": "sensitive",
+              "selectors": []
+            }
+          ],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.api.assignable-principals",
+            "moduleKey": "core.identity",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "core.identity.binding-subject.read",
             "kind": "read",
             "modes": [
@@ -14478,6 +14522,32 @@
     },
     {
       "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "core.modules.action-commit-state.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "modules",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.modules.api.action-commit-state",
+            "moduleKey": "core.modules",
+            "role": "api",
+            "scope": "system"
+          }
+        },
         {
           "accessDeclaration": {
             "key": "core.modules.tenant-module.change-state",

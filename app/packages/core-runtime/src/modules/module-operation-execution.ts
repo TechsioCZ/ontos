@@ -1,10 +1,11 @@
-import { selfApiKeyBindingsRead, managedPrincipalsRead } from '../auth/principal-administration-reads.ts';
+import { selfApiKeyBindingsRead } from '../auth/principal-administration-reads.ts';
 import {
   bindingSubjectRead,
   readPrincipalBinding,
   resolveExternalSubjectRead,
 } from '../auth/external-identity/read.ts';
-import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
+import { coreOperationRegistrations } from '../execution/core-operations.ts';
+import type { RequirementCaller } from '../sdk/index.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import {
   isVerifiedGatewayPrincipalContext,
@@ -23,6 +24,7 @@ import type { ActiveApplicationCompositionServiceContract } from './active-appli
 import { copyOntosModuleRequirements } from './manifest.ts';
 import type { OntosDeploymentIdentitySchema } from './manifest.ts';
 import {
+  isCoreOperationProvider,
   OntosModuleRequirementsSchema,
   OntosOperationContractSchema,
   tenantModuleIntrinsicDependencyClosure,
@@ -209,6 +211,26 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
     if (!registered) {
       return yield* unavailable();
     }
+    // A Core provider is satisfied by Core itself, never by the composition: it must be one of Core's own
+    // registered operations at the exact required version.
+    if (isCoreOperationProvider(requirement.provider)) {
+      const core = coreOperationRegistrations.find(
+        ({ operation }) =>
+          operation.provider.moduleId === requirement.provider.moduleId &&
+          operation.provider.entrypointKey === requirement.provider.entrypointKey &&
+          operation.provider.schemaVersion === requirement.provider.schemaVersion,
+      );
+      if (core === undefined) {
+        return yield* unsatisfied();
+      }
+      return {
+        catalog,
+        consumer,
+        ownerRegistration: owner,
+        providerAppId: core.operation.provider.moduleId,
+        requirement,
+      };
+    }
     const provider = catalog.getByModuleId(requirement.provider.moduleId);
     if (
       provider === undefined ||
@@ -216,7 +238,7 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
     ) {
       return yield* unsatisfied();
     }
-    return { catalog, consumer, ownerRegistration: owner, provider, requirement };
+    return { catalog, consumer, ownerRegistration: owner, providerAppId: provider.deployment.appId, requirement };
   },
 );
 
@@ -252,13 +274,12 @@ export const readBoundOperationOwner = Effect.fn('ModuleOperation.readBoundOwner
   return owner;
 });
 
-const coreReads = Object.freeze([
+const coreReads: readonly AnyReadRegistration[] = Object.freeze([
   selfApiKeyBindingsRead,
-  managedPrincipalsRead,
-  legalEntityDetailRead,
   readPrincipalBinding,
   bindingSubjectRead,
   resolveExternalSubjectRead,
+  ...coreOperationRegistrations.map(({ registration }) => registration),
 ]);
 /** Exact existing Core registration identities, independent of caller-chosen strings. */
 export const isGenuineCoreOperation = (registration: ModuleOperationRegistration): boolean =>
@@ -300,6 +321,8 @@ const validateOwnerContractProjection = Effect.fn('ModuleOperation.validateOwner
 );
 
 export interface ModuleOperationRequirementFact {
+  /** The caller identities the requirement permits for a call; present exactly when it declares them. */
+  readonly callers?: readonly RequirementCaller[];
   readonly compositionRevision: string;
   readonly consumerEntrypointKey: string;
   readonly consumerSchemaVersion: string;
@@ -381,17 +404,19 @@ export const readModuleOperationRequirement = Effect.fn('ModuleOperation.readReq
     if (!matchesGatewayExecutionScope(lease, scope)) {
       return yield* unavailable();
     }
-    return Object.freeze({
+    const { callers } = resolved.requirement;
+    const fact = {
       compositionRevision: lease.input.revision,
       consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
       consumerSchemaVersion: registration.descriptor.schemaVersion,
-      providerAppId: resolved.provider.deployment.appId,
+      providerAppId: resolved.providerAppId,
       providerEntrypointKey: resolved.requirement.provider.entrypointKey,
       providerModuleId: resolved.requirement.provider.moduleId,
       providerSchemaVersion: resolved.requirement.provider.schemaVersion,
       requirementKey: resolved.requirement.key,
       tenantId: scope.tenantId,
-    });
+    };
+    return Object.freeze(callers === undefined ? fact : { ...fact, callers: Object.freeze([...callers]) });
   },
 );
 
@@ -488,7 +513,7 @@ export const readWorkerModuleOperationRequirement = Effect.fn('ModuleOperation.r
       compositionRevision: lease.input.revision,
       consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
       kind: 'worker' as const,
-      providerAppId: resolved.provider.deployment.appId,
+      providerAppId: resolved.providerAppId,
       providerEntrypointKey: resolved.requirement.provider.entrypointKey,
       providerModuleId: resolved.requirement.provider.moduleId,
       providerSchemaVersion: resolved.requirement.provider.schemaVersion,

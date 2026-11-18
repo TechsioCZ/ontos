@@ -11,7 +11,10 @@ import type { AnyActionRegistration } from '../actions/definition.ts';
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
 import type { AnyReadRegistration } from '../reads/definition.ts';
-import { isReadRegistration } from '../reads/definition.ts';
+import { getReadCalls, isReadRegistration } from '../reads/definition.ts';
+import { declaredCallsIssues } from './module-dependency-contracts.ts';
+import { OntosRegisteredWorkloadCallsSchema } from './registered-workload-calls.ts';
+import type { OntosRegisteredWorkloadCall } from './registered-workload-calls.ts';
 import type {
   OntosActionContract,
   OntosManifestActionValue,
@@ -131,6 +134,49 @@ const validateRuntimeActions = (input: VerticalRuntimeRegistrationInput): void =
   }
 };
 
+/**
+ * The registered-workload calls the manifest declares. The runtime manifest type carries no such field,
+ * but a registration is built from the full manifest, so the field is read when present and decoded by
+ * its own schema.
+ */
+const registeredWorkloadCallsOf = (manifest: OntosRuntimeManifestInput): readonly OntosRegisteredWorkloadCall[] => {
+  const declared: unknown = Predicate.hasProperty(manifest, 'registeredWorkloadCalls')
+    ? manifest.registeredWorkloadCalls
+    : undefined;
+  if (declared === undefined) {
+    return [];
+  }
+  const decoded = Schema.decodeUnknownResult(OntosRegisteredWorkloadCallsSchema, { onExcessProperty: 'error' })(
+    declared,
+  );
+  return Result.isSuccess(decoded)
+    ? decoded.success
+    : failRuntimeRegistration('manifest registeredWorkloadCalls must be valid registered-workload calls');
+};
+
+/**
+ * Every call a `{ run }` read declares must be covered by this module's manifest: the kernel's
+ * `validateDeclaredCalls` (`execution/requirements.ts`), whose rules live in `module-dependency-contracts.ts`.
+ */
+const validateRuntimeReadCalls = (input: VerticalRuntimeRegistrationInput, reads: readonly AnyReadRegistration[]) => {
+  const registeredWorkloadCalls = registeredWorkloadCallsOf(input.manifest);
+  for (const read of reads) {
+    const calls = getReadCalls(read);
+    if (Object.keys(calls).length > 0) {
+      const [issue] = declaredCallsIssues({
+        calls,
+        consumerEntrypointKey: read.descriptor.entrypoint.entrypointKey,
+        consumerKind: 'read',
+        registeredWorkloadCalls,
+        requirements: input.manifest.requirements,
+      });
+      if (issue !== undefined) {
+        failRuntimeRegistration(`runtime Read ${read.descriptor.readKey}: ${issue}`);
+      }
+    }
+  }
+};
+
 const validateRuntimeOperationContracts = (
   input: VerticalRuntimeRegistrationInput,
   workers: readonly AnyOutboxWorkerRegistration[],
@@ -150,6 +196,7 @@ const validateRuntimeOperationContracts = (
       failRuntimeRegistration('operation requirement must bind an actual registered Action, Read, or Worker');
     }
   }
+  validateRuntimeReadCalls(input, reads);
   const operationRegistrations = new Set([...input.actions, ...reads]);
   for (const binding of input.manifest.publicSurface.operationContracts ?? []) {
     if (!operationRegistrations.has(binding.registration)) {
