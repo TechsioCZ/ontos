@@ -532,11 +532,17 @@ it.live(
         expect(accepted.phase).toBe('COMMERCE');
         // The exact retry answers the saved result; the committed invocation is read from Core's ledger.
         expect(yield* apply(acceptedCommand, exactRequest, otherHome.manager)).toEqual(accepted);
-        const [committedRow] = yield* admin<{ invocation_id: string }>`
-          select action_invocation_id::text invocation_id from core.action_invocations
-          where tenant_id=${fixture.tenantId}::uuid and idempotency_key=${exactRequest.idempotencyKey}
-            and status='succeeded'
+        // Exactly one invocation exists for the full idempotency tuple, and it committed.
+        const committedRows = yield* admin<{ invocation_id: string; status: string }>`
+          select action_invocation_id::text invocation_id, status from core.action_invocations
+          where tenant_id=${fixture.tenantId}::uuid
+            and action_key=${migrateOrganizationCustomerProfileIcoAction.descriptor.actionKey}
+            and principal_id=${otherHome.manager.principalId}::uuid
+            and idempotency_key=${exactRequest.idempotencyKey}
         `;
+        expect(committedRows).toHaveLength(1);
+        const [committedRow] = committedRows;
+        expect(committedRow?.status).toBe('succeeded');
         const committed = yield* Schema.decodeUnknownEffect(Schema.Struct({ invocationId: ActionInvocationIdSchema }))({
           invocationId: committedRow?.invocation_id,
         });
