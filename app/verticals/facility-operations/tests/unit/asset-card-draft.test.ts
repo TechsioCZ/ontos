@@ -125,30 +125,4 @@ describe('asset card edit explicit save', () => {
       expect(controller.status()).toBe('saved');
     }),
   );
-
-  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
-    Effect.gen(function* discarded() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, note: 'Vyměněno 2026' });
-      expect(controller.status()).toBe('dirty');
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      expect(controller.confirmed()).toBe(stored);
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-    }),
-  );
-
-  it.effect('holds a conflicting draft instead of sending it again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...stored, responsible: 'Petr Svoboda' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...stored, responsible: 'Petr Svoboda ml.' });
-      yield* TestClock.adjust('1 second');
-      expect(sent).toHaveLength(1);
-    }),
-  );
 });

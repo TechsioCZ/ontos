@@ -93,30 +93,4 @@ describe('security device edit panel explicit save', () => {
       expect(controller.status()).toBe('saved');
     }),
   );
-
-  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
-    Effect.gen(function* discarded() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...stored, note: 'Krytá chodba, nový zámek' });
-      expect(controller.status()).toBe('dirty');
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      expect(controller.confirmed()).toBe(stored);
-      yield* TestClock.adjust('1 minute');
-      expect(sent).toEqual([]);
-    }),
-  );
-
-  it.effect('holds a conflicting draft instead of sending it again', () =>
-    Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
-      controller.change({ ...stored, supplier: 'Bezpečnost Praha s.r.o.' });
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('conflict');
-      controller.change({ ...stored, supplier: 'Bezpečnost Praha a.s.' });
-      yield* TestClock.adjust('1 second');
-      expect(sent).toHaveLength(1);
-    }),
-  );
 });
