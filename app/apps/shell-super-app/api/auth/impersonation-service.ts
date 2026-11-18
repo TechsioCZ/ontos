@@ -560,6 +560,8 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
         };
       }
       const originalPrincipal = originalPrincipalExit.value;
+      // A retry of a stop checkpoint that already committed gets Core's saved reply. ActionAlreadyCommitted
+      // remains only for a checkpoint committed before Core saved replies; both mean the checkpoint is recorded.
       const checkpointExit = yield* Effect.exit(
         checkpoint({
           idempotencyKey: `${input.recovery.actionId}:stopped`,

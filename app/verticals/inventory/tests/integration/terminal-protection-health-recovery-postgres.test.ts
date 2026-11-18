@@ -744,8 +744,8 @@ it.live(
         assert(Exit.isFailure(invalidRevision));
         expect(Option.isSome(findPostgresFailure(invalidRevision.cause, ({ code }) => code === '23514'))).toBe(true);
         expect(yield* scenario.observe()).toEqual(affected);
-        const replay = yield* scenario.recover('after-correction').pipe(Effect.flip);
-        expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+        // The same key and request get the reply Core saved with that Recovery; nothing runs again.
+        expect(yield* scenario.recover('after-correction')).toEqual(recovered);
         expect(yield* scenario.observe()).toEqual(affected);
         // v2: the one access gate decides the Recovery capability in the selected company's scope
         // (O67-Q2), so a principal it does not admit is refused before any owner work. The retired
@@ -900,7 +900,7 @@ it.live(
         expect(evidenceRollback.code).toBe('action_transaction_failed');
         expect(evidenceRollback.reason).toBe('Controlled precommit rollback');
         expect(yield* scenario.observe()).toEqual(before);
-        yield* scenario.correct({ key: 'lawful-after-rollback' });
+        const lawful = yield* scenario.correct({ key: 'lawful-after-rollback' });
         const after = yield* scenario.observe();
         expect(after.stockItems).toHaveLength(2);
         expect(after.bindingHistory).toHaveLength(1);
@@ -908,8 +908,8 @@ it.live(
         expect(after.protections[0]?.currentHealthState).toBe('AT_RISK');
         expect(after.ledger).toEqual(before.ledger);
         expect(after.history).toEqual(before.history);
-        const replay = yield* scenario.correct({ key: 'lawful-after-rollback' }).pipe(Effect.flip);
-        expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+        // The same key and request get the reply Core saved with that Correction; nothing runs again.
+        expect(yield* scenario.correct({ key: 'lawful-after-rollback' })).toEqual(lawful);
         expect(yield* scenario.observe()).toEqual(after);
       }),
     ).pipe(Effect.provide(nativeServices)),

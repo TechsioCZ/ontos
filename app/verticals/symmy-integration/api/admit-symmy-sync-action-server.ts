@@ -101,6 +101,8 @@ const execute = Effect.fn('AdmitSymmySyncActionServer.execute')(function* execut
     invalidCorrelationProblem: admitSymmySyncActionProblem.invalid,
     mapError: mapAdmitSymmySyncActionProblem,
     payload: decoded,
+    // A same-key resend of a committed admission gets Core's saved result. AlreadyCommitted only answers an
+    // admission committed before Core saved replies; it is then reread through the private admission read.
     recoverAlreadyCommitted: (failure) => ({
       admissionId: failure.invocationId,
       recovery: 'already_committed' as const,

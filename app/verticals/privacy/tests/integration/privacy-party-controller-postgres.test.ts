@@ -982,13 +982,11 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
       expect(effective.currentLifecycle).toBe('EFFECTIVE');
       expect(effective.lifecycle).toHaveLength(2);
       expect(
-        yield* Effect.flip(
-          runAction(transition).pipe(
-            Effect.provideService(ProcessingActivityCoverageAuthority, coverageService),
-            Effect.provideContext(context),
-          ),
+        yield* runAction(transition).pipe(
+          Effect.provideService(ProcessingActivityCoverageAuthority, coverageService),
+          Effect.provideContext(context),
         ),
-      ).toMatchObject({ code: 'action_already_committed' });
+      ).toEqual(effective);
       const reloaded = yield* runtime
         .runRead({
           input: { activityRefs: [activity.activityRef], includeEnded: false },

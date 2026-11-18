@@ -2072,12 +2072,7 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
             },
           ]);
           expect(yield* f.ownerCount()).toBe('1');
-          const replay = yield* Effect.result(f.dispatch(f.suffix));
-          expect(Result.isFailure(replay)).toBe(true);
-          if (Result.isFailure(replay)) {
-            expect(Schema.is(DispatchPrivacyMeasureActionAlreadyCommittedProblemSchema)(replay.failure)).toBe(true);
-            expect(replay.failure).toMatchObject({ code: 'action_already_committed' });
-          }
+          expect(yield* f.dispatch(f.suffix)).toEqual(accepted);
           const replayEvidence = yield* f.evidence();
           expect(replayEvidence.outbox).toEqual(evidence.outbox);
           expect(replayEvidence.events).toEqual(evidence.events);

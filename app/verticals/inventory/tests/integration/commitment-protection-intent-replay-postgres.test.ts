@@ -575,9 +575,9 @@ it.live(
         expect(Predicate.isTagged(replay, 'PENDING')).toBe(true);
         expect(replay.replayed).toBe(true);
         expect(yield* scenario.observe()).toEqual(original);
-        expect(Predicate.isTagged(yield* scenario.invoke('original').pipe(Effect.flip), 'ActionAlreadyCommitted')).toBe(
-          true,
-        );
+        // The same key and request get the reply Core saved with the original commit; nothing runs again.
+        expect(yield* scenario.invoke('original')).toEqual(first);
+        expect(yield* scenario.observe()).toEqual(original);
         const races = yield* Effect.all([scenario.invoke('race-a'), scenario.invoke('race-b')], { concurrency: 2 });
         expect(races.every((result) => result.replayed)).toBe(true);
         expect(yield* scenario.originalRequest()).toEqual(request);

@@ -44,7 +44,6 @@ import { productHistoryReadApiLive } from '../../api/product-history-read-server
 import { variantHistoryReadApiLive } from '../../api/variant-history-read-server.ts';
 import { CreateProductPayloadSchema, CreateProductResultSchema } from '../../shared/actions/create-product.ts';
 import {
-  CreateProductActionAlreadyCommittedProblemSchema,
   CreateProductActionCommitIndeterminateProblemSchema,
   CreateProductActionConflictProblemSchema,
   CreateProductActionForbiddenProblemSchema,
@@ -82,7 +81,6 @@ import {
 } from '../../shared/domain/native-action-request-identity.ts';
 import { bindInitialVariantSourceRecoveryReadApiLive } from '../../api/bind-initial-variant-source-recovery-read-server.ts';
 import {
-  BindInitialVariantSourceActionAlreadyCommittedProblemSchema,
   BindInitialVariantSourceActionCommitIndeterminateProblemSchema,
   BindInitialVariantSourceActionConflictProblemSchema,
 } from '../../shared/apis/bind-initial-variant-source-action.ts';
@@ -372,8 +370,15 @@ it.live(
       );
       assert(originalAudit !== undefined);
       expect(originalAudit.evidenceJson).not.toHaveProperty('reason');
-      const repeated = yield* create({}, firstKey).pipe(Effect.flip);
-      expect(Schema.is(CreateProductActionAlreadyCommittedProblemSchema)(repeated)).toBe(true);
+      const repeated = yield* create({}, firstKey);
+      expect(repeated).toEqual(first);
+      const afterRepeat = yield* observe();
+      expect(afterRepeat).toEqual(committed);
+      expect(
+        (yield* fixture.evidence(coreEvidenceExecutor)).audits.filter(
+          (audit) => audit.actionInvocationId === snapshot.actionInvocationId && audit.outcome === 'succeeded',
+        ),
+      ).toHaveLength(1);
       const changed = yield* create({ name: 'Changed intent' }, firstKey).pipe(Effect.flip);
       expect(Schema.is(CreateProductActionConflictProblemSchema)(changed)).toBe(true);
       expect((yield* observe()).products).toHaveLength(1);
@@ -533,11 +538,8 @@ it.live(
         yield* Effect.tryPromise(() => recoveredLost.json()),
       );
       expect(lostResult.product.name).toBe('Lost response');
-      expect(
-        Schema.is(CreateProductActionAlreadyCommittedProblemSchema)(
-          yield* create({ name: 'Lost response' }, lostKey).pipe(Effect.flip),
-        ),
-      ).toBe(true);
+      expect(yield* create({ name: 'Lost response' }, lostKey)).toEqual(lostResult);
+      expect((yield* observe()).products).toHaveLength(afterLost.products.length);
       const [productRevision] = committed.revisions;
       const [variantRevision] = committed.variantRevisions;
       assert(productRevision !== undefined && variantRevision !== undefined);
@@ -814,9 +816,11 @@ it.live(
           productId: unresolved.product.productRef.resourceId,
           variantId: unresolved.variantId,
         });
-        const repeatedBinding = yield* bind(unresolvedSource.sourceOccurrenceId, bindingKey).pipe(Effect.flip);
-        expect(Schema.is(BindInitialVariantSourceActionAlreadyCommittedProblemSchema)(repeatedBinding)).toBe(true);
-        expect(repeatedBinding).toMatchObject({ invocationId: lostBinding.invocationId });
+        const repeatedBinding = yield* requireExecutionResult(
+          BindInitialVariantSourceResultSchema,
+          bind(unresolvedSource.sourceOccurrenceId, bindingKey),
+        );
+        expect(repeatedBinding).toEqual(bound);
 
         const reused = yield* requireExecutionResult(
           BindInitialVariantSourceResultSchema,

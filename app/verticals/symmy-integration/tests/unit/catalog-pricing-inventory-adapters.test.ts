@@ -741,6 +741,8 @@ const harness = (
       );
     }
 
+    // A same-key resend of a committed CreateProduct normally gets Core's saved reply, the same 200 as `replay`
+    // false. This 409 is what Core still answers for an invocation committed before it saved replies.
     if (replay && !request.url.includes('/reads/')) {
       const problem = CreateProductActionAlreadyCommittedProblemSchema.make({
         code: 'action_already_committed',

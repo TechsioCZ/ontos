@@ -550,6 +550,7 @@ describe('payment reconciliation relay', () => {
           409,
           'payment_recovery_operation_already_resolved',
         ],
+        // A10 answers a same-key retry with its saved reply; this 409 remains for an invocation without one.
         [
           () =>
             problemResponse(409, {

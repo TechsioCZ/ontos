@@ -99,9 +99,8 @@ it.effect('replaying the same authorized rebuild request queues only once', () =
       access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
     });
-    yield* harness.runtime.runAction(request);
-    const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+    const original = yield* harness.runtime.runAction(request);
+    expect(yield* harness.runtime.runAction(request)).toEqual(original);
     const snapshot = harness.snapshot();
     expect(snapshot.committed.length).toBe(1);
     expect(snapshot.committed[0]?.evidence.domainEvents.length).toBe(1);

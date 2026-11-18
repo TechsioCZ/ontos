@@ -78,7 +78,7 @@ const retirementPayload = {
 };
 
 describe('Price Group management Action contracts', () => {
-  it('defines a transport-only successful receipt for an exact committed retry', () => {
+  it('defines a transport-only successful receipt for an exact committed retry without a saved reply', () => {
     expect(
       Schema.decodeUnknownSync(PriceGroupActionCommittedRetryReceiptSchema)({
         invocationId: '55555555-5555-4555-8555-555555555555',

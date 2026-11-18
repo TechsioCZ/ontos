@@ -312,6 +312,9 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
             onSuccess: (result) => ({ failed: false as const, result }),
           }),
         );
+        // A same-key retry normally receives the saved issuance result from Core. Only a confirmation
+        // committed before Core saved replies still answers AlreadyCommitted; its invocation id keys the
+        // verification read below.
         const recovery =
           issued.failed && Schema.is(ManageCommitmentConfirmationActionAlreadyCommittedProblemSchema)(issued.error)
             ? issued.error

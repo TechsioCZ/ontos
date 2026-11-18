@@ -102,12 +102,10 @@ import {
   AssignCustomerPriceGroupActionIneligibleProblemSchema,
   AssignCustomerPriceGroupActionNotFoundProblemSchema,
   AssignCustomerPriceGroupActionUnavailableProblemSchema,
-  AssignCustomerPriceGroupActionAlreadyCommittedProblemSchema,
 } from '../../shared/apis/assign-customer-price-group-action.ts';
 import {
   AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
   AssignCounterpartyPriceGroupActionNotFoundProblemSchema,
-  AssignCounterpartyPriceGroupActionAlreadyCommittedProblemSchema,
   AssignCounterpartyPriceGroupActionUnavailableProblemSchema,
 } from '../../shared/apis/assign-counterparty-price-group-action.ts';
 import {
@@ -115,10 +113,7 @@ import {
   CustomerPriceGroupResolutionForbiddenProblemSchema,
   CustomerPriceGroupResolutionUnavailableProblemSchema,
 } from '../../shared/apis/customer-price-group-resolution.ts';
-import {
-  RemoveCustomerPriceGroupActionConflictProblemSchema,
-  RemoveCustomerPriceGroupActionAlreadyCommittedProblemSchema,
-} from '../../shared/apis/remove-customer-price-group-action.ts';
+import { RemoveCustomerPriceGroupActionConflictProblemSchema } from '../../shared/apis/remove-customer-price-group-action.ts';
 import type {
   CommerceCustomerProfileTargetSchema,
   PriceGroupAuthorizationSubjectSchema,
@@ -1593,15 +1588,30 @@ const assignmentReceiptScenario = Effect.fn('TemporalNative.originalAssignmentRe
       AssignCustomerPriceGroupResultSchema,
       executeAssignCustomerPriceGroupWithAuthorization(payload, yield* native.credential(), yield* nextId, options),
     );
-    // Model a lost first response: recover the original invocation only by the saved exact command/key.
+    // The Core invocation that committed under an exact idempotency key, read from Core's own ledger.
+    const committedInvocation = (idempotencyKey: string) =>
+      native.fixture.evidence(native.coreEvidenceExecutor).pipe(
+        Effect.map(({ invocations }) =>
+          invocations.filter(
+            (invocation) => invocation.idempotencyKey === idempotencyKey && invocation.status === 'succeeded',
+          ),
+        ),
+        Effect.tap((invocations) => Effect.sync(() => expect(invocations).toHaveLength(1))),
+        Effect.map(([invocation]) => ({ invocationId: invocation?.actionInvocationId ?? '' })),
+      );
+    // Model a lost first response: the exact command/key, retried concurrently, answers the saved result.
+    const evidenceBeforeRecovery = yield* native.fixture.evidence(native.coreEvidenceExecutor);
     const recoverOriginal = Effect.gen(function* recoverOriginalInvocation() {
-      const response = yield* Effect.flip(
+      return yield* requireExecutionResult(
+        AssignCustomerPriceGroupResultSchema,
         executeAssignCustomerPriceGroupWithAuthorization(payload, yield* native.credential(), yield* nextId, options),
       );
-      return yield* Schema.decodeUnknownEffect(AssignCustomerPriceGroupActionAlreadyCommittedProblemSchema)(response);
     });
-    const [first, concurrent] = yield* Effect.all([recoverOriginal, recoverOriginal], { concurrency: 2 });
-    expect(first.invocationId).toBe(concurrent.invocationId);
+    const [recovered, concurrent] = yield* Effect.all([recoverOriginal, recoverOriginal], { concurrency: 2 });
+    expect(recovered).toEqual(original);
+    expect(concurrent).toEqual(original);
+    expect((yield* native.fixture.evidence(native.coreEvidenceExecutor)).events).toEqual(evidenceBeforeRecovery.events);
+    const first = yield* committedInvocation(options.idempotencyKey);
     const changedOriginal = yield* Effect.flip(
       executeAssignCustomerPriceGroupWithAuthorization(
         { ...payload, reason: 'Changed original command under the same key' },
@@ -1698,7 +1708,8 @@ const assignmentReceiptScenario = Effect.fn('TemporalNative.originalAssignmentRe
         counterpartyOptions,
       ),
     );
-    const counterpartyRetry = yield* Effect.flip(
+    const counterpartyRetry = yield* requireExecutionResult(
+      AssignCounterpartyPriceGroupResultSchema,
       executeAssignCounterpartyPriceGroupWithAuthorization(
         counterpartyPayload,
         yield* native.credential(),
@@ -1706,9 +1717,8 @@ const assignmentReceiptScenario = Effect.fn('TemporalNative.originalAssignmentRe
         counterpartyOptions,
       ),
     );
-    const counterpartyInvocation = yield* Schema.decodeUnknownEffect(
-      AssignCounterpartyPriceGroupActionAlreadyCommittedProblemSchema,
-    )(counterpartyRetry);
+    expect(counterpartyRetry).toEqual(counterpartyOriginal);
+    const counterpartyInvocation = yield* committedInvocation(counterpartyOptions.idempotencyKey);
     const counterpartyRequest = yield* Schema.decodeUnknownEffect(CustomerPriceGroupAssignmentReceiptRequestSchema)({
       actionInvocationId: counterpartyInvocation.invocationId,
       authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
@@ -2373,7 +2383,8 @@ const cancellationScenario = Effect.fn('TemporalNative.cancellations')(function*
   );
   expect(cancellation.assignment).toMatchObject({ effectiveFrom: cancelAt, effectiveTo: cancelAt, state: 'CANCELLED' });
   const evidenceBeforeReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
-  const cancellationReplay = yield* Effect.flip(
+  const cancellationReplay = yield* requireExecutionResult(
+    RemoveCustomerPriceGroupResultSchema,
     executeRemoveCustomerPriceGroupWithAuthorization(
       cancellationPayload,
       yield* native.credential(),
@@ -2381,7 +2392,7 @@ const cancellationScenario = Effect.fn('TemporalNative.cancellations')(function*
       cancellationOptions,
     ),
   );
-  expect(Schema.is(RemoveCustomerPriceGroupActionAlreadyCommittedProblemSchema)(cancellationReplay)).toBe(true);
+  expect(cancellationReplay).toEqual(cancellation);
   expect((yield* native.fixture.evidence(native.coreEvidenceExecutor)).events).toEqual(evidenceBeforeReplay.events);
   yield* observe(cancelAt);
   yield* diagnosticStage('P_SAME_START_CANCELLATION_NONE_BEGIN');

@@ -803,10 +803,10 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
         ({ eventType }) => eventType === 'commerce.customer-context.guest-retail-customer-attributed.v1',
       ),
     ).toHaveLength(1);
-    // Core exact replay requires identical intent, including requestedAt; native correlation retry
-    // under a fresh invocation must reuse the same profile, never grant Portal access.
-    const exactReplay = yield* attribute(provenRoot, evidenceRef, idempotencyKey, requestedAt).pipe(Effect.flip);
-    expect(Predicate.isTagged(exactReplay, 'ActionAlreadyCommitted')).toBe(true);
+    // Core exact replay requires identical intent, including requestedAt, and answers the saved result;
+    // native correlation retry under a fresh invocation must reuse the same profile, never grant Portal access.
+    const exactReplay = yield* attribute(provenRoot, evidenceRef, idempotencyKey, requestedAt);
+    expect(exactReplay).toEqual(attributed);
     expect((yield* fixture.evidence(coreEvidenceExecutor)).events).toEqual(afterCommit.events);
     const retry = yield* attribute(provenRoot, evidenceRef, yield* nextId, requestedAt);
     expect(retry).toEqual(attributed);
@@ -1177,15 +1177,13 @@ const publicConcurrentRetry = Effect.fn('GuestEvidenceTest.publicConcurrentRetry
   yield* Deferred.await(secondReady);
   yield* Deferred.succeed(release, true);
   const results = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+  // The concurrent loser of the same key and payload answers the winner's saved result.
   const successful = results.filter(Result.isSuccess);
-  const failed = results.filter(Result.isFailure);
-  expect(successful).toHaveLength(1);
-  expect(failed).toHaveLength(1);
-  const [success] = successful;
-  const [failure] = failed;
-  assert.isOk(success !== undefined && failure !== undefined);
+  expect(successful).toHaveLength(2);
+  const [success, replayed] = successful;
+  assert.isOk(success !== undefined && replayed !== undefined);
   expect(success.success).toMatchObject({ outcome: 'ATTRIBUTED', partyRef: party });
-  expect(Predicate.isTagged(failure.failure, 'ActionAlreadyCommitted')).toBe(true);
+  expect(replayed.success).toEqual(success.success);
   const original = yield* test.attributions(root);
   expect(original).toHaveLength(1);
   expect(yield* test.profiles()).toHaveLength(1);

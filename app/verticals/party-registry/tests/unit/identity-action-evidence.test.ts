@@ -1,6 +1,6 @@
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -181,8 +181,7 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
       },
     };
     expect(yield* harness.runtime.runAction(request)).toEqual(blocked);
-    const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+    expect(yield* harness.runtime.runAction(request)).toEqual(blocked);
     expect(calls).toBe(1);
     const snapshot = harness.snapshot();
     expect(snapshot.committed.length).toBe(1);

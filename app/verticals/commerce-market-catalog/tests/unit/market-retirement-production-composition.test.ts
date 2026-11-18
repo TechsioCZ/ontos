@@ -468,6 +468,7 @@ const makeWorkflowFixture = Effect.fn('MarketRetirementTest.makeWorkflowFixture'
           invocationId: sourceActionInvocationId,
           reason: 'Modeled original result acknowledgement lost',
         });
+        // Core reports a same-key retry of a committed original to the hook as AlreadyCommitted.
         outcome = { _tag: 'AlreadyCommitted' };
       }
     }

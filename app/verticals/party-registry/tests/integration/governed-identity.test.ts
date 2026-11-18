@@ -401,10 +401,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 },
                 principal: managerPrincipal,
                 transport: transport(key),
-              }).pipe(Effect.asVoid),
-            (key: string) => create(candidate('45274649'), key).pipe(Effect.asVoid),
-            (key: string) => create(exact, key).pipe(Effect.asVoid),
-            (key: string) => create(split, key).pipe(Effect.asVoid),
+              }).pipe(Effect.map(({ decisionRef }) => decisionRef?.resourceId ?? null)),
+            (key: string) =>
+              create(candidate('45274649'), key).pipe(Effect.map(({ decisionRef }) => decisionRef.resourceId)),
+            (key: string) => create(exact, key).pipe(Effect.map(({ decisionRef }) => decisionRef.resourceId)),
+            (key: string) => create(split, key).pipe(Effect.map(({ decisionRef }) => decisionRef.resourceId)),
           ];
           yield* Effect.forEach(
             recoveryOperations,
@@ -453,7 +454,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               expect(recoveredResult.decisionRef.resourceId).toBe(original.matchDecisionId);
               expect(recovered.partyRef?.resourceId ?? null).toBe(original.partyId);
               expect(recovered.caseRef?.resourceId ?? null).toBe(original.candidateCaseId);
-              assert.isOk(Predicate.isTagged(yield* run(invoke(key).pipe(Effect.flip)), 'ActionAlreadyCommitted'));
+              // A same-key resend gets Core's saved reply: the original decision, and nothing runs again.
+              expect(yield* run(invoke(key))).toBe(original.matchDecisionId);
 
               const after = yield* snapshot();
               expect(after.partyRows).toEqual(before.partyRows);
@@ -919,19 +921,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(afterEqualUpdate.core.events.length).toBe(beforeEqualUpdate.core.events.length + 1);
           expect(afterEqualUpdate.core.outbox.length).toBe(beforeEqualUpdate.core.outbox.length + 1);
           expect(afterEqualUpdate.core.audits.length).toBe(beforeEqualUpdate.core.audits.length + 1);
-          assert.isOk(
-            Predicate.isTagged(
-              yield* run(
-                runAction({
-                  registration: updatePartyAction,
-                  payload: equalUpdatePayload,
-                  principal: managerPrincipal,
-                  transport: equalUpdateTransport,
-                }).pipe(Effect.flip),
-              ),
-              'ActionAlreadyCommitted',
+          expect(
+            yield* run(
+              runAction({
+                registration: updatePartyAction,
+                payload: equalUpdatePayload,
+                principal: managerPrincipal,
+                transport: equalUpdateTransport,
+              }),
             ),
-          );
+          ).toEqual(equalUpdated);
           expect(yield* snapshot()).toEqual(afterEqualUpdate);
 
           const corrections = [

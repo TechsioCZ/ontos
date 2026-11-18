@@ -252,7 +252,8 @@ it.live(
         const key = randomUUID();
         const added = yield* add(addPayload, key);
         expect(added.outcome).toBe('ADDED');
-        expect(yield* Effect.flip(add(addPayload, key))).toMatchObject({ code: 'action_already_committed' });
+        // The same-key, same-payload retry answers the saved result of the committed add.
+        expect(yield* add(addPayload, key)).toEqual(added);
         expect(yield* Effect.flip(add())).toBeInstanceOf(SavedAddressSourceRejected);
         const changedRetry = yield* Schema.decodeUnknownEffect(AddSavedAddressPayloadSchema)({
           ...addPayload,

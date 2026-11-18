@@ -315,7 +315,16 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
       const retirement = yield* Schema.encodeEffect(RetireMarketPayloadSchema)(payload).pipe(
         Effect.mapError(retirementUnavailable),
       );
-      return yield* base
+      const current = recover(source, payload).pipe(
+        Effect.flatMap((receipt) =>
+          receipt.outcome === 'NOT_FOUND' ? Effect.fail(retirementUnavailable()) : Effect.succeed(receipt),
+        ),
+      );
+      // The admission is a state machine (PENDING, then ABORTED or COMMITTED) under one key per
+      // operation. A same-key retry answers Core's saved reply, which is the state when the admission
+      // first committed, so a PENDING answer is confirmed against the current receipt. An admission
+      // committed before Core saved replies still answers ActionAlreadyCommitted and is read the same way.
+      const admission = yield* base
         .runAction({
           audience: MARKET_RUNTIME_AUDIENCE,
           payload: { operation, retirement, sourceActionInvocationId: source.actionInvocationId },
@@ -329,14 +338,9 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
         .pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.provideService(MarketRetirementImpactAuthorityFactory, authorityFactory),
-          Effect.catchTag('ActionAlreadyCommitted', () =>
-            recover(source, payload).pipe(
-              Effect.flatMap((receipt) =>
-                receipt.outcome === 'NOT_FOUND' ? Effect.fail(retirementUnavailable()) : Effect.succeed(receipt),
-              ),
-            ),
-          ),
+          Effect.catchTag('ActionAlreadyCommitted', () => current),
         );
+      return admission.outcome === 'PENDING' ? yield* current : admission;
     });
     const authorityFor = (
       source: ActionAuthorizationPreflightInput,
