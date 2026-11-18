@@ -18,6 +18,7 @@ import {
 } from '../check-ontos-module-contracts.mts';
 import { policyReleaseEntries } from '../demo/access-policy.mts';
 import { demoModuleIds } from '../demo/permissions.mts';
+import type { DesiredState } from '../demo/reviewed-people-plan.mts';
 import { desiredState } from '../demo/reviewed-people-plan.mts';
 import { deriveOntosModuleRelease } from '../generate-ontos-module-contract.mts';
 
@@ -29,10 +30,12 @@ import { deriveOntosModuleRelease } from '../generate-ontos-module-contract.mts'
  * - every vertical's contract derivation; an MCP coverage gap gives one finding per key. A module's commands and
  *   actions gaps appear only after its reads gap is fixed, because the coverage check stops at the first group.
  * - every registered-workload call, one call at a time, against the reviewed callers and its receiver. A call whose
- *   receiver failed to derive is not checked (a note counts them), so a derivation gap gives no false call finding.
+ *   receiver failed to derive is checked against the reviewed callers only (a note counts them), so a derivation
+ *   gap gives no false call finding. The calls of a caller that failed to derive are unknown and not checked.
  * - the committed authorization catalog artifact against the workspace.
  * - the reviewed roles: a target policy that does not compile is a finding. The unreviewed and withdrawn cells of
- *   the reviewed-cell allowlist are information, never findings; each says whether the base release lacked it.
+ *   the reviewed-cell allowlist are information, never findings; an unreviewed cell says whether the base release
+ *   lacked it. A commit from before the allowlist has no such cells, and a note says so.
  * Packaging gaps (an import that needs a new package export) need the node build; the gates prove those.
  * Writes `ontos-merge-adaptation/1` JSON and exits non-zero when there is any finding.
  */
@@ -73,7 +76,7 @@ const FindingSchema = Schema.Struct({
 type Finding = typeof FindingSchema.Type;
 
 const RoleDiagnosticSchema = Schema.Struct({
-  /** Whether the base release lacked the capability; null when the base release does not compile. */
+  /** Whether the base release lacked the capability; null for withdrawn cells and when the base is unusable. */
   introduced: Schema.OptionFromNullOr(Schema.Boolean),
   kind: Schema.Literals(['unreviewed', 'withdrawn']),
   owner: Schema.String,
@@ -206,15 +209,15 @@ const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFinding
       .filter((other) => other !== caller)
       .map(({ contract }) => ({ ...contract, manifest: { ...contract.manifest, registeredWorkloadCalls: [] } }));
     for (const call of calls) {
-      if (failedAppIds.has(call.audience)) {
-        skipped += 1;
-        continue;
-      }
       const alone = { ...caller.contract, manifest: { ...caller.contract.manifest, registeredWorkloadCalls: [call] } };
+      const receiverMissing = failedAppIds.has(call.audience);
+      if (receiverMissing) {
+        skipped += 1;
+      }
       const exits = yield* Effect.all(
         [
           Effect.exit(assertRegisteredWorkloadCallers([alone])),
-          Effect.exit(assertRegisteredWorkloadCallsReceived([alone, ...others])),
+          ...(receiverMissing ? [] : [Effect.exit(assertRegisteredWorkloadCallsReceived([alone, ...others]))]),
         ],
         { concurrency: 1 },
       );
@@ -234,8 +237,9 @@ const registeredWorkloadFindings = Effect.fn(function* registeredWorkloadFinding
 const decodeBaseArtifact = Schema.decodeUnknownEffect(Schema.fromJsonString(AccessCatalogArtifactSchema));
 
 /**
- * The target policy compiled over the target artifact, and its review diagnostics. A diagnostic is `introduced`
- * when its capability is absent from the release the same policy compiles from the base artifact.
+ * The target policy compiled over the target artifact, and its review diagnostics. An unreviewed diagnostic is
+ * `introduced` when its capability is absent from the release the same policy compiles from the base artifact.
+ * The base only marks diagnostics, so a base that is unreadable or does not compile leaves them unmarked with a note.
  */
 const reviewedRoles = Effect.fn(function* reviewedRoles(base: string) {
   const targetModules = yield* Effect.exit(readAccessCatalogArtifact(APP_ROOT));
@@ -254,16 +258,29 @@ const reviewedRoles = Effect.fn(function* reviewedRoles(base: string) {
       notes: [],
     } as const;
   }
-  const baseArtifact = yield* git(['show', `${base}:${BASE_CATALOG_PATH}`]).pipe(
-    Effect.flatMap(decodeBaseArtifact),
-    Effect.mapError((cause) => checkFailure(`${base}:${BASE_CATALOG_PATH} is unreadable: ${cause.message}`)),
+  // A DesiredState from before the reviewed-cell allowlist has no diagnostics.
+  const { diagnostics: reviewed }: Partial<Pick<DesiredState, 'diagnostics'>> = desired.success;
+  if (reviewed === undefined) {
+    return {
+      diagnostics: [],
+      findings: [],
+      notes: ['this commit predates the reviewed-cell allowlist; role growth is not diagnosed'],
+    } as const;
+  }
+  const baseArtifact = yield* Effect.exit(
+    git(['show', `${base}:${BASE_CATALOG_PATH}`]).pipe(Effect.flatMap(decodeBaseArtifact)),
   );
-  const baseEntries = policyReleaseEntries(baseArtifact.modules, demoModuleIds);
+  const baseEntries = Exit.isSuccess(baseArtifact)
+    ? policyReleaseEntries(baseArtifact.value.modules, demoModuleIds)
+    : Result.fail(`${base}:${BASE_CATALOG_PATH} is unreadable: ${innermost(messageChain(baseArtifact.cause))}`);
   const baseKeys = Result.isSuccess(baseEntries)
     ? Option.some(new Set(baseEntries.success.map((entry) => String(entry.key))))
     : Option.none<ReadonlySet<string>>();
-  const diagnostics = desired.success.diagnostics.map(({ kind, roleKey, slot }): RoleDiagnostic => ({
-    introduced: baseKeys.pipe(Option.map((keys) => !keys.has(slot.split(' ')[0] ?? slot))),
+  const diagnostics = reviewed.map(({ kind, roleKey, slot }): RoleDiagnostic => ({
+    introduced:
+      kind === 'unreviewed'
+        ? baseKeys.pipe(Option.map((keys) => !keys.has(slot.split(' ')[0] ?? slot)))
+        : Option.none(),
     kind,
     owner: roleKey,
     slot,
@@ -272,7 +289,7 @@ const reviewedRoles = Effect.fn(function* reviewedRoles(base: string) {
     diagnostics,
     findings: [],
     notes: Result.isFailure(baseEntries)
-      ? [`the base release does not compile with this policy (${baseEntries.failure}); diagnostics are not marked`]
+      ? [`the base release is unusable for this policy (${baseEntries.failure}); diagnostics are not marked`]
       : [],
   } as const;
 });
@@ -337,7 +354,7 @@ export const checkMergeAdaptation = Effect.fn(function* checkMergeAdaptation(opt
     notes: [
       ...(failed.length > 0
         ? [
-            `partial: ${failed.length} contracts missing, ${registered.skipped} registered-workload calls to them not checked`,
+            `partial: ${failed.length} contracts missing; their registered-workload calls are not checked, and ${registered.skipped} calls to them are checked against the reviewed callers only`,
           ]
         : []),
       ...roles.notes,
