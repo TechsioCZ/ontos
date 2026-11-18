@@ -204,7 +204,7 @@ const assertExistingListDoesNotBlockNewOne = Effect.fn('InternalC14PricingRoutes
     ]);
     expect(outcomesOf(settled)).toEqual(['conflict', 'accepted_change']);
     expect((yield* groupCount)[0]?.count).toBe((before?.count ?? 0) + 1);
-    // This control proves acceptance, not Current: later price assertions select the original lists only.
+    // This control proves acceptance, not Current. Subsequent reader controls select the original list only.
   },
 );
 
@@ -222,7 +222,6 @@ const assertForeignTenantPrices = Effect.fn('InternalC14PricingRoutes.foreignTen
   function* foreignTenantPrices<E, R>(
     fixture: PricingFixture,
     input: {
-      readonly expectedPrices: number;
       readonly priceFacts: Omit<Parameters<typeof publicPrice>[0], 'at'>;
       readonly settleLists: (key: string, lists: readonly unknown[]) => Effect.Effect<typeof statusSchema.Type, E, R>;
     },
@@ -254,8 +253,8 @@ const assertForeignTenantPrices = Effect.fn('InternalC14PricingRoutes.foreignTen
     const [prices] = yield* fixture.admin<{
       count: number;
     }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
-    expect(prices?.count).toBe(input.expectedPrices);
-    // No later assertion reads this scheduled list's definition.
+    expect(prices?.count).toBe(1);
+    // No later assertion reads these scheduled definitions; the reader controls select the original list.
   },
 );
 
@@ -735,10 +734,6 @@ export const runPricingRoutesConformance = Effect.fn('runPricingRoutesConformanc
           ),
         ),
       );
-    if (scenario === 'revisions') {
-      yield* assertExistingListDoesNotBlockNewOne(fixture, groupLists[0], settleLists);
-      yield* assertForeignTenantPrices(fixture, { expectedPrices: 0, priceFacts, settleLists });
-    }
 
     const selectedAt = DateTime.formatIso(yield* DateTime.now);
     const batchPrice = { ...publicPrice({ ...priceFacts, at: selectedAt }), operation: 'DEFINE' };
@@ -1015,6 +1010,12 @@ export const runPricingRoutesConformance = Effect.fn('runPricingRoutesConformanc
       });
       expect(yield* fixture.priceBarrier.armedPriceCommandCount).toBe(1);
     }
+    if (scenario === 'revisions') {
+      // These controls only prove admission/independence, not Current. Run them after every broad
+      // projection: a page containing a scheduled Group correctly fails closed until its start.
+      yield* assertExistingListDoesNotBlockNewOne(fixture, groupLists[0], settleLists);
+      yield* assertForeignTenantPrices(fixture, { priceFacts, settleLists });
+    }
     const reader = yield* makeOwnedIntegrationPriceGroupReaderWorkloadControlNative({
       integrationPrincipalId: fixture.integration.principalId,
       operatorPrincipalId: fixture.integration.issuerPrincipalId,
@@ -1024,7 +1025,7 @@ export const runPricingRoutesConformance = Effect.fn('runPricingRoutesConformanc
       tenantId: fixture.tenantId,
     });
     yield* reader.revoke();
-    const denied = yield* get(firstPageQuery, 403);
+    const denied = yield* get(`${firstPageQuery}&code=${fixture.firstRecordId}`, 403);
     expect(denied.status).toBe(403);
     const rebound = yield* reader.rebind();
     expect(rebound.bindingId).not.toBe(reader.originalBinding.bindingId);
@@ -1050,10 +1051,10 @@ export const runPricingRoutesConformance = Effect.fn('runPricingRoutesConformanc
       revoked: false,
       status: 'active',
     });
-    expect((yield* get(firstPageQuery)).status).toBe(200);
+    expect((yield* get(`${firstPageQuery}&code=${fixture.firstRecordId}`)).status).toBe(200);
     yield* fixture.groupOwner.child.kill();
     yield* fixture.groupOwner.child.exitCode;
-    const unavailable = yield* get(firstPageQuery, 503);
+    const unavailable = yield* get(`${firstPageQuery}&code=${fixture.firstRecordId}`, 503);
     expect(unavailable.status).toBe(503);
     assert.isTrue(all.every(({ code }) => code.length > 0));
     yield* Effect.logInfo({ phase: 'pricing-scenario-complete' });
