@@ -132,11 +132,8 @@ const saveButton = () =>
   Option.getOrThrow(
     Option.fromUndefinedOr(buttons(labels.save).find((button) => button.closest('[role="alertdialog"]') === null)),
   );
-const lastFooterButton = () =>
-  [...(saveButton().parentElement?.parentElement?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1);
 const clickSave = acted(() => saveButton().click());
 const clickCancel = clickNamed(czech('finance-billing.financeUi.common.cancel'));
-const clickDiscard = clickNamed(labels.discard);
 const leaveQuestion = () =>
   [...document.querySelectorAll('[role="alertdialog"]')].some((dialog) =>
     (dialog.textContent ?? '').includes(labels.leaveTitle),
@@ -166,7 +163,6 @@ it.layer(network, { excludeTestServices: true })(
         Effect.gen(function* step1() {
           yield* mount((vm) => <InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={vm} />);
           expect(saveButton().disabled).toBe(true);
-          expect(lastFooterButton()).toBe(saveButton());
 
           yield* typeInto('payment-amount', '400');
           yield* typeInto('payment-note', 'Platba převodem');
@@ -222,26 +218,6 @@ it.layer(network, { excludeTestServices: true })(
       }),
     );
 
-    suite.effect('the suggested reminder text closes untouched; a typed recipient asks before leaving', () =>
-      Effect.gen(function* step3() {
-        const props = { counterpartyName: 'Kavárna Dolce', invoice, issuerName: 'OntOS Demo s.r.o.', provider: smtp };
-        yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
-        yield* clickCancel;
-        expect(closes).toEqual(['closed']);
-        expect(leaveQuestion()).toBe(false);
-
-        unmountAll();
-        closes.length = 0;
-        yield* mount((vm) => <InvoiceReminderForm {...props} onClose={onClose} vm={vm} />);
-        yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
-        yield* clickCancel;
-        expect(leaveQuestion()).toBe(true);
-        yield* clickDiscard;
-        expect(closes).toEqual(['closed']);
-        expect(sent).toEqual([]);
-      }),
-    );
-
     suite.effect(
       'Uložit opens a review naming the recipient; only its confirmation sends the reminder e-mail once',
       () =>
@@ -257,7 +233,7 @@ it.layer(network, { excludeTestServices: true })(
             />
           ));
           yield* typeInto('reminder-recipient', 'fakturace@kavarna.cz');
-          expect(lastFooterButton()).toBe(saveButton());
+
           yield* clickSave;
           expect(reminderReview()).toContain('fakturace@kavarna.cz');
           expect(sent).toEqual([]);

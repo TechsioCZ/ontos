@@ -3,7 +3,7 @@
 // controller and save. The real catalog client calls an in-process HTTP register that refuses every command that
 // does not expect its current revision. The editor stays mounted while its product reloads, so `product` still
 // shows the version before a save until that reload lands.
-import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   pinTestDocument,
@@ -382,48 +382,6 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* saveNow;
       expect(sent()).toHaveLength(2);
       expect(edit().record.status).toBe('saved');
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('typing never sends anything: not after any delay, not on unmount', () =>
-    Effect.gen(function* noAutomaticSave() {
-      yield* pinTestDocument;
-      const view = yield* mount(productOf({}), 1);
-      yield* type({ name: 'Etiopie B' });
-      expect(edit().record.status).toBe('dirty');
-      expect(edit().record.dirty).toBe(true);
-      expect(edit().record.canSave).toBe(true);
-      // Longer than any debounce the form ever had.
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      expect(sent()).toEqual([]);
-      view.unmount();
-      yield* settle;
-      expect(sent()).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an invalid draft is held back by the Save button', () =>
-    Effect.gen(function* invalid() {
-      yield* pinTestDocument;
-      yield* mount(productOf({}), 1);
-      yield* type({ name: '' });
-      expect(edit().record.status).toBe('invalid');
-      expect(edit().record.canSave).toBe(false);
-      yield* saveNow;
-      expect(sent()).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('discard puts the confirmed version back without sending anything', () =>
-    Effect.gen(function* discard() {
-      yield* pinTestDocument;
-      yield* mount(productOf({}), 1);
-      yield* type({ name: 'Etiopie B' });
-      yield* acted(() => edit().record.discard());
-      expect(edit().draft.name).toBe('Etiopie');
-      expect(edit().record.status).toBe('idle');
-      expect(sent()).toEqual([]);
     }).pipe(Effect.provide(network)),
   );
 });

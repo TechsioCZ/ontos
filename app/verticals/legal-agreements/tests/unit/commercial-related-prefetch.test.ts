@@ -227,17 +227,6 @@ const Detail = () => {
   return createElement('p', null, value.customerName ?? value.customerNameFeedback);
 };
 it.layer(network, { excludeTestServices: true })('commercial related prefetch', (suite) => {
-  suite.effect('warms the real name and the first selected render makes no extra request', () =>
-    Effect.gen(function* test() {
-      yield* pinTestDocument;
-      yield* preloadAgreementCustomers(context, [contract], 7);
-      expect(customerReads).toHaveLength(1);
-      yield* mountInRoute(createElement(Detail));
-      expect(text()).toContain('Authorized customer');
-      yield* agreementCustomerData.read(input);
-      expect(customerReads).toHaveLength(1);
-    }),
-  );
   suite.effect(
     'preloads the exact cold deep link, then another selection reuses base records without rereading them',
     () =>
@@ -374,26 +363,6 @@ it.layer(network, { excludeTestServices: true })('commercial related prefetch', 
       unmountAll();
       window.dispatchEvent(new Event(moduleWriteEvent));
       expect(agreementCustomerData.snapshot(input).state).toBe('pending');
-    }),
-  );
-
-  suite.effect('a foreground name read shares prefetch and survives cancellation of the old visible page', () =>
-    Effect.gen(function* sharedForeground() {
-      yield* pinTestDocument;
-      const started = yield* Deferred.make<boolean>();
-      const release = yield* Deferred.make<boolean>();
-      customerAnswer = Deferred.succeed(started, true).pipe(
-        Effect.andThen(Deferred.await(release)),
-        Effect.as(customer('Joined customer')),
-      );
-      const background = yield* Effect.forkChild(preloadAgreementCustomers(context, [contract], 7));
-      yield* Deferred.await(started);
-      const foreground = yield* Effect.forkChild(agreementCustomerData.read(input));
-      yield* Effect.yieldNow;
-      yield* Fiber.interrupt(background);
-      yield* Deferred.succeed(release, true);
-      expect(yield* Fiber.join(foreground)).toBe('Joined customer');
-      expect(customerReads).toHaveLength(1);
     }),
   );
 

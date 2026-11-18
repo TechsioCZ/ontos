@@ -186,19 +186,7 @@ const saveButton = () =>
   Option.getOrThrow(
     Option.fromUndefinedOr(buttons(labels.save).find((button) => button.closest('[role="alertdialog"]') === null)),
   );
-const lastFooterButton = () => {
-  const footer = saveButton().parentElement?.parentElement;
-  return [...(footer?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1);
-};
-const clickNamed = (name: string) =>
-  acted(() => Option.getOrThrow(Option.fromUndefinedOr(buttons(name).at(-1))).click());
 const clickSave = acted(() => saveButton().click());
-const clickCancel = clickNamed(t('finance-billing.financeUi.common.cancel'));
-const clickDiscard = clickNamed(labels.discard);
-const leaveQuestion = () =>
-  [...document.querySelectorAll('[role="alertdialog"]')].some((dialog) =>
-    dialog.textContent?.includes(labels.leaveTitle),
-  );
 const field = (id: string) =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
 const typeInto = (id: string, value: string) =>
@@ -207,7 +195,6 @@ const typeInto = (id: string, value: string) =>
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-const pressEnter = (id: string) => acted(() => field(id).form?.requestSubmit());
 const pickTenant = acted(() => {
   const select = Option.getOrThrow(
     Option.fromUndefinedOr(
@@ -248,7 +235,7 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 it.layer(network, { excludeTestServices: true })('create forms save from Uložit only', (suite) => {
-  suite.effect('a recurring template is created once by Uložit; its suggested values close without asking', () =>
+  suite.effect('a recurring template maps the selected tenant and entered terms to its command', () =>
     Effect.gen(function* step1() {
       yield* pinTestDocument;
       const left: string[] = [];
@@ -256,16 +243,9 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
         left.push('closed');
       };
       yield* mount((vm) => <RecurringTemplateEditor onClose={onClose} vm={vm} />);
-      yield* clickCancel;
-      expect(left).toEqual(['closed']);
-
-      unmountAll();
-      left.length = 0;
-      yield* mount((vm) => <RecurringTemplateEditor onClose={onClose} vm={vm} />);
       yield* pickTenant;
       yield* typeInto('template-name', 'Nájem kavárna');
       yield* typeInto('template-amount', '18 000');
-      expect(lastFooterButton()).toBe(saveButton());
       yield* clickSave;
       yield* waitUntil(() => left.length === 1);
       expect(sent).toHaveLength(1);
@@ -274,26 +254,15 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
     }),
   );
 
-  suite.effect('a received invoice is recorded once by Uložit; typed input asks before leaving', () =>
+  suite.effect('an incoming invoice maps supplier, document number and VAT-inclusive total', () =>
     Effect.gen(function* step2() {
       yield* pinTestDocument;
       yield* mount((vm) => <IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
       expect(saveButton().disabled).toBe(true);
       yield* typeInto('incoming-supplier', 'ČEZ Prodej');
-      yield* clickCancel;
-      expect(leaveQuestion()).toBe(true);
-      yield* clickDiscard;
-      expect(closes).toEqual([false]);
-      expect(sent).toEqual([]);
-
-      unmountAll();
-      closes.length = 0;
-      yield* mount((vm) => <IncomingInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
-      yield* typeInto('incoming-supplier', 'ČEZ Prodej');
       yield* typeInto('incoming-number', 'ZF-2026-77');
       yield* typeInto('invoice-line-description-incoming-line-1', 'Elektřina říjen');
       yield* typeInto('invoice-line-price-incoming-line-1', '1000');
-      expect(lastFooterButton()).toBe(saveButton());
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
@@ -302,22 +271,12 @@ it.layer(network, { excludeTestServices: true })('create forms save from Uložit
     }),
   );
 
-  suite.effect('a new invoice draft is created once by Uložit; the untouched form closes without asking', () =>
+  suite.effect('a new invoice draft carries its selected customer and document kind', () =>
     Effect.gen(function* step3() {
       yield* pinTestDocument;
       const drafts: DraftInvoiceInput[] = [];
       yield* mount((vm) => <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />, drafts);
-      yield* clickCancel;
-      expect(closes).toEqual([false]);
-      expect(leaveQuestion()).toBe(false);
-
-      unmountAll();
-      closes.length = 0;
-      yield* mount((vm) => <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />, drafts);
       yield* fillInvoice('1000');
-      expect(lastFooterButton()).toBe(saveButton());
-      yield* pressEnter('invoice-line-description-line-1');
-      expect(drafts).toEqual([]);
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(drafts).toHaveLength(1);

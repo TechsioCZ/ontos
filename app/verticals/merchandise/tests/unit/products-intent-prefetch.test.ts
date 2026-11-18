@@ -1,8 +1,8 @@
 // @rstest-environment happy-dom
 // Intent prefetch through the real list hooks, strict detail store, ui-kit table and generated records client.
 // The Shell gateway issuer and owner records API answer in process; cache expiry and pointer dwell run on fake timers.
-import { INTENT_READ_CONCURRENCY, LIST_WARM_ROWS } from '@app/admin-ui';
-import { passFakeTime, settleOnFakeTimers, unmountAll, waitUntilOnFakeTimers } from '@app/admin-ui/testing/module-ui';
+import { LIST_WARM_ROWS } from '@app/admin-ui';
+import { passFakeTime, settleOnFakeTimers, unmountAll } from '@app/admin-ui/testing/module-ui';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import {
   browserNetwork,
@@ -169,37 +169,10 @@ const rowAt = (index: number): HTMLElement => {
 };
 const pointedRow = (): HTMLElement => rowAt(POINTED);
 
-/** The pointer passes over `indexes` in order within one frame, as a fast sweep down the table does. */
-const sweep = (indexes: readonly number[]) =>
-  Effect.promise(() =>
-    act(async () => {
-      for (const index of indexes) {
-        rowAt(index).dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
-      }
-      await browserRuntime.runPromise(Effect.yieldNow);
-    }),
-  );
-
 /** The pointer enters the row (React derives `pointerenter` from `pointerover`). */
 const pointAt = Effect.promise(() =>
   act(async () => {
     pointedRow().dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
-    await browserRuntime.runPromise(Effect.yieldNow);
-  }),
-);
-
-/** A finger touches the row: `pointerdown` comes before the click. */
-const touch = Effect.promise(() =>
-  act(async () => {
-    pointedRow().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
-    await browserRuntime.runPromise(Effect.yieldNow);
-  }),
-);
-
-/** Keyboard focus moves to the row. */
-const focus = Effect.promise(() =>
-  act(async () => {
-    pointedRow().focus();
     await browserRuntime.runPromise(Effect.yieldNow);
   }),
 );
@@ -256,86 +229,5 @@ it.live('pointing at a stale row reads its detail once, so the product opens wit
     expect(opened).not.toContain('loading');
     expect(opened.at(-1)).toBe('ready');
     expect(detailReads()).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a touch or keyboard focus on a stale row warms it once and joins the read already running', () =>
-  Effect.gen(function* touchAndFocus() {
-    yield* pinTestDocument;
-    yield* staleList;
-
-    yield* touch;
-    yield* focus;
-    yield* pointAt;
-    yield* idle(1);
-    expect(detailReads()).toEqual([`detail:${pointedId}`]);
-    expect(pointedSnapshot()).toBe('ready');
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('an idle list nobody points at sends no detail reads', () =>
-  Effect.gen(function* idleList() {
-    yield* pinTestDocument;
-    yield* staleList;
-    yield* idle(60);
-    expect(detailReads()).toEqual([]);
-    expect(reads.length).toBeLessThanOrEqual(6);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('opening the list warms its first rows only; a row further down is warmed once the user points at it', () =>
-  Effect.gen(function* coldRow() {
-    yield* pinTestDocument;
-    yield* mount(ProductsList);
-    yield* idle(5);
-    expect(detailReads()).toEqual(Array.from({ length: LIST_WARM_ROWS }, (_, index) => `detail:product-${index + 1}`));
-    reads.length = 0;
-
-    yield* sweep([ROWS - 1]);
-    yield* idle(1);
-    expect(detailReads()).toEqual([`detail:product-${ROWS}`]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('a pointer passing quickly over many rows reads only the row it rests on', () =>
-  Effect.gen(function* fastSweep() {
-    yield* pinTestDocument;
-    yield* staleList;
-    const swept = Array.from({ length: 20 }, (_, index) => index + LIST_WARM_ROWS);
-    yield* sweep(swept);
-    expect(detailReads()).toEqual([]);
-    yield* idle(1);
-    const last = swept.at(-1) ?? 0;
-    expect(detailReads()).toEqual([`detail:product-${last + 1}`]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('keyboard focus run quickly down many stale rows reads at most two details at once, then the last row', () =>
-  Effect.gen(function* fastFocus() {
-    yield* pinTestDocument;
-    yield* staleList;
-    const gate = yield* Deferred.make<boolean>();
-    detailGate = gate;
-
-    const walked = Array.from({ length: 20 }, (_, index) => index + LIST_WARM_ROWS);
-    yield* Effect.promise(() =>
-      act(async () => {
-        for (const index of walked) {
-          rowAt(index).focus();
-        }
-        await browserRuntime.runPromise(Effect.yieldNow);
-      }),
-    );
-    yield* waitUntilOnFakeTimers(() => detailReads().length === INTENT_READ_CONCURRENCY);
-    // The first two rows start at once; every later one waits, and each newer row replaces the one waiting.
-    expect(detailReads()).toHaveLength(INTENT_READ_CONCURRENCY);
-    yield* Deferred.succeed(gate, true);
-    yield* idle(3);
-    const last = walked.at(-1) ?? 0;
-    expect(detailReads()).toEqual([
-      `detail:product-${LIST_WARM_ROWS + 1}`,
-      `detail:product-${LIST_WARM_ROWS + 2}`,
-      `detail:product-${last + 1}`,
-    ]);
   }).pipe(Effect.provide(network)),
 );

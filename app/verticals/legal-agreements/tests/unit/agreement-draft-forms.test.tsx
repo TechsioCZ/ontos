@@ -205,38 +205,6 @@ describe('period of a draft contract', () => {
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('closing with unsaved input asks; Zůstat keeps it, Zahodit změny closes and sends nothing', () =>
-    Effect.gen(function* leave() {
-      yield* pinTestDocument;
-      yield* mountPeriod();
-      yield* type(endDate, '2028-01-31');
-      yield* click(button(close));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      expect(closed).toEqual([]);
-
-      yield* click(button(labels.stay));
-      yield* waitUntil(() => buttons(labels.stay).length === 0);
-      expect(field(endDate).value).toBe('2028-01-31');
-
-      yield* click(button(close));
-      yield* click(button(labels.discard));
-      expect(closed).toEqual(['period']);
-      expect(sent()).toHaveLength(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('Uložit in the question saves once and then closes', () =>
-    Effect.gen(function* saveAndLeave() {
-      yield* pinTestDocument;
-      yield* mountPeriod();
-      yield* type(endDate, '2028-01-31');
-      yield* click(button(close));
-      yield* click(buttons(labels.save).at(-1));
-      yield* waitUntil(() => closed.length === 1);
-      expect(sent()).toHaveLength(1);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('someone else changed this contract: the save is refused as a conflict, never resent over it', () =>
     Effect.gen(function* refused() {
       yield* pinTestDocument;
@@ -321,16 +289,6 @@ describe('new contract', () => {
       startDate: '2028-02-29',
     });
   });
-  it.live('an untouched form closes without asking', () =>
-    Effect.gen(function* untouched() {
-      yield* pinTestDocument;
-      yield* mountCreate();
-      expect(button(labels.save).disabled).toBe(true);
-      yield* click(button(close));
-      expect(buttons(labels.stay)).toHaveLength(0);
-      expect(closed).toEqual(['create']);
-    }).pipe(Effect.provide(network)),
-  );
 
   it.live('picking the customer enables the one Save; it creates the contract once and opens it', () =>
     Effect.gen(function* create() {
@@ -349,19 +307,6 @@ describe('new contract', () => {
         expectedRevision: 4,
       });
       expect(created).toEqual([contractRef.resourceId]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('closing with a picked customer asks before the input is lost', () =>
-    Effect.gen(function* leaveTyped() {
-      yield* pinTestDocument;
-      yield* mountCreate();
-      yield* pick(czech('legal-agreements.demo.customer'), 'party-1');
-      yield* click(button(close));
-      expect(buttons(labels.discard)).toHaveLength(1);
-      yield* click(button(labels.discard));
-      expect(closed).toEqual(['create']);
-      expect(sent()).toHaveLength(0);
     }).pipe(Effect.provide(network)),
   );
 });

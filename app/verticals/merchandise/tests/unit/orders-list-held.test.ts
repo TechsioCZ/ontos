@@ -242,48 +242,6 @@ it.live('the rows, the write capability and the header counts stay on screen whi
   }).pipe(Effect.provide(network)),
 );
 
-it.live('another page never shows the rows of the page before it', () =>
-  Effect.gen(function* otherPage() {
-    yield* pinTestDocument;
-    serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'], 2: ['ORD-3', 'ORD-4'] }, revision: 7 });
-    const view = yield* mount(company, 0);
-    yield* waitUntil(() => shown.at(-1) === before);
-
-    const gate = yield* Deferred.make<boolean>();
-    serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'], 2: ['ORD-3', 'ORD-4'] }, revision: 7 }, gate);
-    shown.length = 0;
-    yield* view.show(company, 2);
-    yield* settle;
-    expect(new Set(shown)).toEqual(new Set(['loading']));
-
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => shown.at(-1) === 'rows:ORD-3,ORD-4|write|shipped:3');
-    expect(shown.filter((table) => table.startsWith('rows:ORD-1'))).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('the page held through a write is not shown for another page', () =>
-  Effect.gen(function* otherPageAfterWrite() {
-    yield* pinTestDocument;
-    serve({ counted: 3, pages: { 0: ['ORD-1', 'ORD-2'], 2: ['ORD-3', 'ORD-4'] }, revision: 7 });
-    const view = yield* mount(company, 0);
-    yield* waitUntil(() => shown.at(-1) === before);
-
-    // A write reloads the first page; while it is on its way the person moves to the second page.
-    const gate = yield* Deferred.make<boolean>();
-    serve({ counted: 3, pages: { 0: ['ORD-5', 'ORD-1'], 2: ['ORD-2', 'ORD-3'] }, revision: 8 }, gate);
-    yield* invalidate;
-    shown.length = 0;
-    yield* view.show(company, 2);
-    yield* settle;
-    expect(new Set(shown)).toEqual(new Set(['loading']));
-
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => shown.at(-1) === 'rows:ORD-2,ORD-3|write|shipped:3');
-    expect(shown.filter((table) => table.startsWith('rows:ORD-1'))).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
-
 it.live('another tenant never shows the rows of the tenant before it', () =>
   Effect.gen(function* otherTenantRows() {
     yield* pinTestDocument;

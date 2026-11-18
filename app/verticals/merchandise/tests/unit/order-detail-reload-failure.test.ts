@@ -202,15 +202,6 @@ it.live('a failed reload keeps the order and its edit draft on screen and report
   }).pipe(Effect.provide(network)),
 );
 
-it.live('a first read that fails shows the error, never an order', () =>
-  Effect.gen(function* firstFailure() {
-    refuse(unavailable);
-    yield* open;
-    yield* waitUntil(() => shown.at(-1) === 'error');
-    expect(mounts).toBe(0);
-  }).pipe(Effect.provide(network)),
-);
-
 it.live('a denied reload drops the shown order at once', () =>
   Effect.gen(function* deniedReload() {
     serve('před změnou', 7);

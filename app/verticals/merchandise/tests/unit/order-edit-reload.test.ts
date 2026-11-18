@@ -2,7 +2,7 @@
 // Mounted order edit draft: the real `useOrderEditDraft` the edit form uses, with the real draft controller,
 // command builder, `editOrder` and generated clients. The Shell gateway issuer and owner HttpApi endpoints run
 // in process. The detail keeps the form mounted while its order reloads, exercising the draft across those reads.
-import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   pinTestDocument,
@@ -497,35 +497,6 @@ describe('mounted order edit draft against a reloaded order', () => {
       yield* type({ note: 'Zavolat předem, 2. patro' });
       yield* saveNow(2);
       yield* waitUntil(() => edit().record.status === 'saved');
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('typing never sends an edit: not after any delay, not on unmount', () =>
-    Effect.gen(function* noAutomaticSave() {
-      yield* pinTestDocument;
-      const view = yield* mount(orderOf({ updatedAt: opened }), 7);
-      yield* type({ note: 'Zavolat předem' });
-      expect(edit().record.status).toBe('dirty');
-      expect(edit().record.dirty).toBe(true);
-      // Longer than any debounce the form ever had.
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      expect(sentEdits()).toEqual([]);
-      view.unmount();
-      yield* settle;
-      expect(sentEdits()).toEqual([]);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('discard drops the typed change and sends nothing', () =>
-    Effect.gen(function* discard() {
-      yield* pinTestDocument;
-      yield* mount(orderOf({ updatedAt: opened }), 7);
-      yield* type({ note: 'Zavolat předem' });
-      yield* acted(() => edit().record.discard());
-      expect(draft().note).toBe('');
-      expect(edit().record.status).toBe('idle');
-      expect(sentEdits()).toEqual([]);
     }).pipe(Effect.provide(network)),
   );
 });

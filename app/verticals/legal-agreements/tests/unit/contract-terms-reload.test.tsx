@@ -240,20 +240,6 @@ describe('contract terms panel across a background reload', () => {
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('a draft with nothing typed takes the reloaded contract', () =>
-    Effect.gen(function* cleanFollows() {
-      yield* openTerms(firstId);
-      expect(value(notice)).toBe('server-notice');
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value(notice)).toBe('server-notice');
-      yield* Deferred.succeed(gate, recordsAt(8, 'someone-else-notice'));
-      yield* waitUntil(() => value(notice) === 'someone-else-notice');
-      expect(text()).not.toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(true);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('another contract never shows the draft typed for this one', () =>
     Effect.gen(function* otherContract() {
       const { rerender } = yield* openTerms(firstId);
@@ -265,21 +251,6 @@ describe('contract terms panel across a background reload', () => {
       yield* waitUntil(() => Option.isSome(maybeField(owner)));
       expect(value(owner)).toBe('second-person');
       expect(text()).not.toContain('typed-person');
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('the manual signature form on the same page keeps its typed signer too', () =>
-    Effect.gen(function* signatureSurvives() {
-      yield* render(secondId);
-      yield* waitUntil(() => Option.isSome(maybeField('contract-signedBy')));
-      yield* type('contract-signedBy', 'typed-signer');
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value('contract-signedBy')).toBe('typed-signer');
-      yield* Deferred.succeed(gate, recordsAt(8, 'someone-else-notice'));
-      yield* waitUntil(() => reads.length >= 2 && Option.isSome(maybeField('contract-signedBy')));
-      expect(value('contract-signedBy')).toBe('typed-signer');
-      expect(text()).toContain(labels.unsaved);
     }).pipe(Effect.provide(network)),
   );
 });

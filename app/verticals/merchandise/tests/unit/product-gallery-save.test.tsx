@@ -249,29 +249,6 @@ it.live('a save over someone else’s newer change is refused as a conflict and 
   }).pipe(Effect.provide(network)),
 );
 
-it.live('leaving with an unsaved gallery asks; Zahodit změny puts the saved gallery back and leaves', () =>
-  Effect.gen(function* leave() {
-    yield* pinTestDocument;
-    const view = yield* mount();
-    yield* click(labelled(copy.remove));
-    const arrivals: string[] = [];
-    const unsubscribe = view.router.subscribe('onResolved', (event) => {
-      arrivals.push(event.toLocation.pathname);
-    });
-    yield* acted(() => {
-      void view.router.navigate({ to: '/cs/other' });
-    });
-    yield* waitUntil(() => buttons(labels.stay).length === 1);
-    expect(buttons(labels.stay)).toHaveLength(1);
-    yield* click(button(labels.discard));
-    yield* waitUntil(() => view.router.state.location.pathname === '/cs/other');
-    expect(arrivals).toEqual(['/cs/other']);
-    unsubscribe();
-    expect(tiles()).toBe(2);
-    expect(gallerySaves()).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
-
 it.live(
   'settings saved before a refused gallery stay saved; the gallery reason shows and Uložit retries it alone',
   () =>

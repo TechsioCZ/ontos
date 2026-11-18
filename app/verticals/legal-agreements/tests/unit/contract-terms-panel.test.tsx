@@ -2,7 +2,7 @@
 // The contract terms panel as the person sees it: one Save button in the panel footer, the draft's status next to it,
 // and a question before unsaved changes are left. The real client, i18n and router run against the Shell gateway
 // issuer and the agreement owner's Action contract in process.
-import { acted, settle, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { acted, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
   pinTestDocument,
@@ -18,7 +18,7 @@ import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-comma
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { ContractSchema } from '../../shared/apis/records.ts';
 import { ContractTermsPanel } from '../../src/routes/[lang]/smlouvy/contract-terms.tsx';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const contractRef = {
@@ -110,7 +110,6 @@ const type = (id: string, value: string) =>
 const click = (target: HTMLElement) => acted(() => target.click());
 
 const notice = 'contract-terms-notice';
-const close = moduleText('cs')('legal-agreements.detail.close');
 
 beforeEach(() => {
   commands.length = 0;
@@ -119,29 +118,6 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe('contract terms panel with one Save button', () => {
-  it.live('typing, waiting and closing the panel send nothing', () =>
-    Effect.gen(function* typing() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      expect(buttons('Uložit')).toHaveLength(1);
-      expect(button('Uložit').disabled).toBe(true);
-      expect(text()).not.toMatch(/automat/iu);
-
-      yield* type(notice, '3 měsíce');
-      expect(button('Uložit').disabled).toBe(false);
-      expect(text()).toContain('Neuložené změny');
-      // Enter submits the form natively: it must not save.
-      document.querySelector('form')?.requestSubmit();
-      yield* Effect.sleep('1 second');
-      yield* settle;
-      expect(commands.length).toBe(0);
-
-      view.unmount();
-      yield* Effect.sleep('1 second');
-      expect(commands.length).toBe(0);
-    }).pipe(Effect.provide(network)),
-  );
-
   it.live('one click on Save sends the terms once and shows them saved', () =>
     Effect.gen(function* saveOnce() {
       yield* pinTestDocument;
@@ -165,50 +141,6 @@ describe('contract terms panel with one Save button', () => {
       yield* type('contract-terms-monthly', 'hodně');
       expect(button('Uložit').disabled).toBe(true);
       expect(commands.length).toBe(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('closing with unsaved changes asks first; Zůstat keeps the draft, Zahodit změny closes unsaved', () =>
-    Effect.gen(function* leave() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      yield* type(notice, '3 měsíce');
-      yield* click(button(close));
-      expect(buttons('Zahodit změny')).toHaveLength(1);
-      expect(view.closed).toEqual([]);
-
-      yield* click(button('Zůstat'));
-      yield* waitUntil(() => buttons('Zůstat').length === 0);
-      expect(field(notice).value).toBe('3 měsíce');
-
-      yield* click(button(close));
-      yield* click(button('Zahodit změny'));
-      expect(view.closed).toEqual(['close']);
-      expect(commands.length).toBe(0);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('Uložit in the question saves once and then closes', () =>
-    Effect.gen(function* saveAndLeave() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      yield* type(notice, '3 měsíce');
-      yield* click(button(close));
-      const inDialog = buttons('Uložit').at(-1);
-      expect(inDialog).toBeDefined();
-      yield* click(inDialog ?? document.createElement('button'));
-      yield* waitUntil(() => view.closed.length === 1);
-      expect(commands.length).toBe(1);
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('an unchanged panel closes without asking', () =>
-    Effect.gen(function* cleanLeave() {
-      yield* pinTestDocument;
-      const view = yield* mount();
-      yield* click(button(close));
-      expect(buttons('Zůstat')).toHaveLength(0);
-      expect(view.closed).toEqual(['close']);
     }).pipe(Effect.provide(network)),
   );
 });

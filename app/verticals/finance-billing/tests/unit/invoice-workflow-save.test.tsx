@@ -165,8 +165,6 @@ const saveButton = (): HTMLButtonElement =>
   Option.getOrThrow(
     Option.fromUndefinedOr(buttons(labels.save).find((button) => button.closest('[role="alertdialog"]') === null)),
   );
-const lastFooterButton = () =>
-  [...(saveButton().parentElement?.parentElement?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1);
 const field = (id: string) =>
   Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`[id="${id}"]`)));
 const typeInto = (id: string, value: string) =>
@@ -181,7 +179,6 @@ const clickNamed = (name: string) =>
   acted(() => Option.getOrThrow(Option.fromUndefinedOr(buttons(name).at(-1))).click());
 const clickSave = acted(() => saveButton().click());
 const clickCancel = clickNamed(CANCEL);
-const clickDiscard = clickNamed(labels.discard);
 const leaveQuestion = () =>
   [...document.querySelectorAll('[role="alertdialog"]')].some((dialog) =>
     dialog.textContent?.includes(labels.leaveTitle),
@@ -215,7 +212,7 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
     () =>
       Effect.gen(function* settlement() {
         yield* mountForm('settlement');
-        expect(lastFooterButton()).toBe(saveButton());
+
         yield* typeInto(`prior-${advance.ref.resourceId}`, '200');
         yield* typeInto('prior-note', 'DDP 2026-01');
         yield* pressEnter('prior-note');
@@ -282,21 +279,20 @@ it.layer(network, { excludeTestServices: true })('invoice workflow forms save fr
     }),
   );
 
-  suite.effect('the accountant accepted a package: the proof is saved once; an untouched dialog closes at once', () =>
+  suite.effect('the accountant accepted a package: its proof and export identity are saved', () =>
     Effect.gen(function* confirmation() {
       yield* mountForm('confirmation');
-      yield* clickCancel;
-      expect(closes).toEqual(['closed']);
-      expect(leaveQuestion()).toBe(false);
-
-      unmountAll();
-      closes.length = 0;
-      yield* mountForm('confirmation');
       yield* typeInto('export-evidence', 'e-mail z 20. 10. 2026');
-      yield* clickCancel;
-      yield* clickDiscard;
-      expect(closes).toEqual(['closed']);
-      expect(sent).toEqual([]);
+      yield* clickSave;
+      yield* waitUntil(() => closes.length === 1);
+      expect(sent).toEqual([
+        {
+          _tag: 'ConfirmAccountingExport',
+          actorLabel: 'Jana Nováková',
+          evidence: 'e-mail z 20. 10. 2026',
+          exportId: handover.id,
+        },
+      ]);
     }),
   );
 

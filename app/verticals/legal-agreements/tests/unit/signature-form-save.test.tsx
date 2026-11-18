@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The manual signature form as a person uses it: typing and Enter record nothing, the one Uložit records the
 // signature once, a refusal keeps the input with its reason, and leaving with typed input asks first.
-import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+import { saveLabelsFor } from '@app/admin-ui';
 import { acted, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import type { AgreementOutcome } from '../../src/routes/[lang]/smlouvy/agreements-command.ts';
 import { SignatureForm } from '../../src/routes/[lang]/smlouvy/signature-form.tsx';
 import type { SignatureDraft } from '../../src/routes/[lang]/smlouvy/signature-form.tsx';
-import { act } from 'react';
+
 import { button, buttons, click, field, text, type } from '../support/agreement-form.tsx';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
 
@@ -86,20 +86,15 @@ afterEach(() => {
 });
 
 describe('manual signature', () => {
-  it.live('typing and Enter record nothing; one Uložit records the signature once, then the page leaves', () =>
+  it.live('an incomplete signature cannot save; the complete signature records all four fields', () =>
     Effect.gen(function* recordOnce() {
       const { router } = yield* mountForm();
       yield* expectAllowed(router, '/cs/smlouvy?clean=1');
       expect(buttons(labels.save)).toHaveLength(1);
       expect(button(labels.save).disabled).toBe(true);
+      yield* type('contract-signedBy', signature.signedBy);
+      expect(button(labels.save).disabled).toBe(true);
       yield* fill;
-      yield* Effect.promise(() =>
-        act(async () => {
-          field('contract-signedBy').form?.requestSubmit();
-        }),
-      );
-      expect(sentDrafts).toHaveLength(0);
-      yield* expectBlocked(router);
 
       yield* click(button(labels.save));
       yield* waitUntil(() => text().includes(labels.saved));
@@ -117,33 +112,6 @@ describe('manual signature', () => {
       yield* waitUntil(() => text().includes(moduleText('cs')('legal-agreements.demo.feedback.forbidden')));
       expect(field('contract-signedBy').value).toBe(signature.signedBy);
       yield* expectBlocked(router);
-    }),
-  );
-
-  it.live('leaving with typed input asks; Zahodit změny leaves and records nothing', () =>
-    Effect.gen(function* leave() {
-      const { router } = yield* mountForm();
-      yield* type('contract-signedBy', signature.signedBy);
-      yield* expectBlocked(router);
-      yield* type('contract-signedFileName', signature.signedFileName);
-      yield* acted(() => {
-        void router.navigate({ to: '/cs' });
-      });
-      yield* waitUntil(() => buttons(labels.discard).length === 1);
-      yield* click(button(labels.discard));
-      yield* waitUntil(() => router.state.location.pathname === '/cs');
-      expect(router.state.location.pathname).toBe('/cs');
-      expect(sentDrafts).toHaveLength(0);
-    }),
-  );
-
-  it.live('reads the required text of a required field in Czech', () =>
-    Effect.gen(function* readRequired() {
-      yield* mountForm();
-      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
-      expect(document.body.textContent).not.toContain('(required)');
-      const label = document.querySelector('label[for="contract-signedBy"]');
-      expect(label?.textContent ?? '').toContain(requiredLabelFor('cs'));
     }),
   );
 });

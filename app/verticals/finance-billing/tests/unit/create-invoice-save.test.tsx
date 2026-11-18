@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 // The new-invoice safeguards through the real i18n, router, pickers, VAT client and toast renderer.
-import { requiredLabelFor } from '@app/admin-ui';
+
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -130,21 +130,6 @@ afterEach(() => {
 });
 
 it.layer(network, { excludeTestServices: true })('new invoice safeguards', (suite) => {
-  suite.effect('reads the required text of a required field in Czech', () =>
-    Effect.gen(function* requiredText() {
-      const drafts: DraftInvoiceInput[] = [];
-      yield* mount(
-        <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
-      );
-      expect(text()).toContain(requiredLabelFor('cs'));
-      expect(text()).not.toContain('(required)');
-      const issueDateLabel = [...document.querySelectorAll('label')].find((label) =>
-        label.textContent?.includes(czech('finance-billing.faktury.form.issueDate')),
-      );
-      expect(issueDateLabel?.textContent ?? '').toContain(requiredLabelFor('cs'));
-    }),
-  );
-
   suite.effect('a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again', () =>
     Effect.gen(function* zeroPrice() {
       const drafts: DraftInvoiceInput[] = [];

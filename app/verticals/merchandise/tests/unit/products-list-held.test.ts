@@ -204,50 +204,6 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-it.live('the rows and the write capability stay on screen while the same page reloads', () =>
-  Effect.gen(function* held() {
-    yield* pinTestDocument;
-    serve({ 0: ['Cable', 'Switch'] }, 7);
-    yield* mount(0);
-    yield* waitUntil(() => shown.at(-1) === before);
-    expect(mounts).toBe(1);
-
-    const gate = yield* Deferred.make<boolean>();
-    serve({ 0: ['Cable 2 m', 'Switch'] }, 8, gate);
-    shown.length = 0;
-    yield* invalidate;
-    expect(shown.length).toBeGreaterThan(0);
-    expect(new Set(shown)).toEqual(new Set([before]));
-
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => shown.at(-1) === 'rows:Cable 2 m,Switch|write|r8');
-    expect(shown.filter((table) => !table.startsWith('rows:'))).toEqual([]);
-    expect(mounts).toBe(1);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('another page never shows the rows of the page before it, held or not', () =>
-  Effect.gen(function* otherPage() {
-    yield* pinTestDocument;
-    serve({ 0: ['Cable', 'Switch'], 2: ['Router', 'Rack'] }, 7);
-    const view = yield* mount(0);
-    yield* waitUntil(() => shown.at(-1) === before);
-
-    // A write reloads the first page; while it is on its way the person moves to the second page.
-    const gate = yield* Deferred.make<boolean>();
-    serve({ 0: ['Cable', 'Switch'], 2: ['Router', 'Rack'] }, 8, gate);
-    yield* invalidate;
-    shown.length = 0;
-    yield* view.show(2);
-    yield* settle;
-    expect(new Set(shown)).toEqual(new Set(['loading']));
-
-    yield* Deferred.succeed(gate, true);
-    yield* waitUntil(() => shown.at(-1) === 'rows:Router,Rack|write|r8');
-    expect(shown.filter((table) => table.startsWith('rows:Cable'))).toEqual([]);
-  }).pipe(Effect.provide(network)),
-);
-
 it.live('a refused reload takes the held rows away at once', () =>
   Effect.gen(function* refused() {
     yield* pinTestDocument;

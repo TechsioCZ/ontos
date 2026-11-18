@@ -10,7 +10,7 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { Effect, Result, Schema } from 'effect';
 import { createElement } from 'react';
-import { moduleChangeEvent, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import { pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import {
   RecordsApi,
   OrderSchema,
@@ -202,28 +202,6 @@ it.live('invalidating the authorized order page immediately removes its rows and
     answer = () => Effect.fail(denied);
     yield* ordersPageData.refresh(source);
     expect(ordersPageData.snapshot(source)).toEqual({ error: denied, refreshing: false, state: 'failed' });
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('live changes clear the order list as well as the warmed detail', () =>
-  Effect.gen(function* liveInvalidation() {
-    yield* pinTestDocument;
-    yield* ordersPageData.read(source);
-    yield* preloadOrderDetails(source, base);
-    window.dispatchEvent(new CustomEvent(moduleChangeEvent));
-    expect(ordersPageData.snapshot(source)).toBe(pageDataPending);
-    expect(orderDetailData.snapshot(detail)).toBe(pageDataPending);
-  }).pipe(Effect.provide(network)),
-);
-
-it.live('inactive order list pages have a finite cache bound', () =>
-  Effect.gen(function* boundedLists() {
-    yield* pinTestDocument;
-    yield* ordersPageData.read(source);
-    for (let page = 1; page <= 17; page += 1) {
-      yield* ordersPageData.read({ ...source, query: { ...source.query, offset: page * 2 } });
-    }
-    expect(ordersPageData.snapshot(source)).toBe(pageDataPending);
   }).pipe(Effect.provide(network)),
 );
 

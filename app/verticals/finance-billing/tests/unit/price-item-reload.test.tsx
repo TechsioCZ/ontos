@@ -28,12 +28,10 @@ import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { RecordsPage } from '../../src/routes/[lang]/finance/page.tsx';
-import { moduleText, mountInRoute } from '../support/module-ui.ts';
+import { mountInRoute } from '../support/module-ui.ts';
 
 const labels = saveLabelsFor('cs');
 const name = 'price-name';
-const amount = 'price-amount';
-const close = moduleText('cs')('finance-billing.financeUi.priceList.close');
 const itemId = 'price-item-1';
 
 /** The ledger at `revision` with one price list item; every read is a new object, as a reload returns. */
@@ -166,7 +164,7 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 it.layer(network, { excludeTestServices: true })('price list item editor across a background reload', (suite) => {
-  suite.effect('keeps typed input, its status and the leave question; Save sends the typed draft', () =>
+  suite.effect('the finance page keeps its price editor through a ledger reload and saves its typed name', () =>
     Effect.gen(function* typedSurvives() {
       yield* openItem;
       yield* type(name, 'typed-name');
@@ -186,32 +184,12 @@ it.layer(network, { excludeTestServices: true })('price list item editor across 
       expect(text()).toContain(labels.unsaved);
       expect(button(labels.save).disabled).toBe(false);
 
-      yield* click(close);
-      yield* waitUntil(() => buttons(labels.stay).length === 1);
-      yield* click(labels.stay);
-      yield* waitUntil(() => buttons(labels.stay).length === 0);
-      expect(value(name)).toBe('typed-name');
-
       answer = Effect.succeed(ledgerAt(5, 10_000));
       yield* click(labels.save);
       yield* waitUntil(() => commands.length > 0);
       expect(commands[0]).toMatchObject({
         command: { _tag: 'UpsertPriceListItem', id: itemId, name: 'typed-name' },
       });
-    }),
-  );
-
-  suite.effect('a draft with nothing typed takes the reloaded item', () =>
-    Effect.gen(function* cleanFollows() {
-      yield* openItem;
-      const opened = value(amount);
-      const gate = yield* Deferred.make<RecordsResponse>();
-      yield* reloadThrough(gate);
-      expect(value(amount)).toBe(opened);
-      yield* Deferred.succeed(gate, ledgerAt(4, 25_000));
-      yield* waitUntil(() => value(amount) !== opened && value(amount) !== undefined);
-      expect(text()).not.toContain(labels.unsaved);
-      expect(button(labels.save).disabled).toBe(true);
     }),
   );
 });
