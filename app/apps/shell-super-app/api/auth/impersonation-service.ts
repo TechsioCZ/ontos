@@ -6,8 +6,14 @@ import type {
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
-  ActionCommitIndeterminate,
+  ActionAlreadyCommitted,
+  ActionPermissionDenied,
+  ActionPolicyDenied,
+  ActionRequestHashConflict,
   ActionRuntime,
+  IdentityLifecycleConflictError,
+  IdentityTargetInvalidError,
+  ModuleStateDeniedError,
   PrincipalResolver,
   recordSupportImpersonationAction,
   SupportRecoveryPrincipalContextResolver,
@@ -17,15 +23,28 @@ import { isAPIError } from 'better-auth/api';
 import { parseCookies, SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import type { Duration } from 'effect';
-import { Clock, Context, Data, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Ref, Schema } from 'effect';
+import {
+  Clock,
+  Context,
+  Data,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { Cookies } from 'effect/http';
 
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
-import { session, supportImpersonationRecovery } from './db/schema.ts';
+import { session, supportImpersonationRecovery, supportImpersonationStarts } from './db/schema.ts';
 import type { AuthDatabaseExecutor, BetterAuthDatabaseAdapter } from './db/types.ts';
 import { AuthenticationInternalError, AuthenticationUnavailableError } from './errors.ts';
 import type { AuthenticationRuntimeError } from './errors.ts';
@@ -34,12 +53,22 @@ import type { AuthenticationServiceContract } from './service.ts';
 import { SupportAuthProviderService } from './support-auth-provider-service.ts';
 import { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 import { SupportImpersonationStoreService } from './support-impersonation-store-service.ts';
-import type { SupportImpersonationStore, SupportRecoveryRecord } from './support-impersonation-store-service.ts';
+import type {
+  SupportImpersonationStartClaim,
+  SupportImpersonationStartKey,
+  SupportImpersonationStore,
+  SupportRecoveryRecord,
+} from './support-impersonation-store-service.ts';
 
 export { SupportAuthProviderService } from './support-auth-provider-service.ts';
 export { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 export { SupportImpersonationStoreService } from './support-impersonation-store-service.ts';
-export type { SupportImpersonationStore, SupportRecoveryRecord } from './support-impersonation-store-service.ts';
+export type {
+  SupportImpersonationStartClaim,
+  SupportImpersonationStartKey,
+  SupportImpersonationStore,
+  SupportRecoveryRecord,
+} from './support-impersonation-store-service.ts';
 
 const SupportImpersonationDeniedErrorSchema = Schema.TaggedStruct('SupportImpersonationDeniedError', {
   code: Schema.Literal('support_impersonation_denied'),
@@ -76,7 +105,21 @@ const cookieHeaders = (headers: Headers): readonly string[] =>
   Predicate.isFunction(headers.getSetCookie) ? headers.getSetCookie() : [];
 const isAuthenticationUnavailable = Schema.is(AuthenticationUnavailableError);
 const isAuthenticationInternal = Schema.is(AuthenticationInternalError);
-const isCommitIndeterminate = Schema.is(ActionCommitIndeterminate);
+/**
+ * Checkpoint failures that answer for good: the caller is refused, or the key is bound to another
+ * request. Every other failure is retryable and must leave a started impersonation resumable.
+ */
+const isDefiniteRefusal = Schema.is(
+  Schema.Union([
+    ActionAlreadyCommitted,
+    ActionPermissionDenied,
+    ActionPolicyDenied,
+    ActionRequestHashConflict,
+    IdentityLifecycleConflictError,
+    IdentityTargetInvalidError,
+    ModuleStateDeniedError,
+  ]),
+);
 const isResolverUnavailable = (error: PrincipalResolutionError) =>
   Predicate.isTagged(error, 'PrincipalResolverUnavailableError');
 const mapAuthenticationError = (error: AuthenticationRuntimeError) =>
@@ -96,6 +139,18 @@ const providerOperation = <Value>(operation: () => PromiseLike<Value>) =>
   Effect.tryPromise({ catch: mapProviderError, try: operation }).pipe(impersonationTimeout);
 const databasePolicy = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
   operation.pipe(Effect.mapError(unavailable), impersonationTimeout);
+/**
+ * How long a start claim counts as in flight. The claimant's provider call, session labelling and
+ * recovery insert are each bounded by IMPERSONATION_IO_TIMEOUT, so after this lease its recovery row
+ * exists or the claimant has failed.
+ */
+const START_CLAIM_LEASE = sql.raw(`interval '1 minute'`);
+const startKeyMatches = (key: SupportImpersonationStartKey) =>
+  and(
+    eq(supportImpersonationStarts.tenantId, key.tenantId),
+    eq(supportImpersonationStarts.originalPrincipalId, key.originalPrincipalId),
+    eq(supportImpersonationStarts.actionId, key.actionId),
+  );
 
 interface SupportProviderSession {
   readonly activeTenantId?: null | string | undefined;
@@ -196,6 +251,26 @@ export const makeSupportAuthProvider = (
   }) satisfies SupportAuthProvider;
 
 export const makeSupportImpersonationStore = (database: AuthDatabaseExecutor): SupportImpersonationStore => ({
+  claimStart: Effect.fn('SupportImpersonationStore.claimStart')(function* claimStart(key) {
+    const inserted = yield* databasePolicy(
+      database
+        .insert(supportImpersonationStarts)
+        .values(key)
+        .onConflictDoNothing()
+        .returning({ actionId: supportImpersonationStarts.actionId }),
+    );
+    if (inserted.length > 0) {
+      return 'claimed' as const;
+    }
+    const held = yield* databasePolicy(
+      database
+        .select({ actionId: supportImpersonationStarts.actionId })
+        .from(supportImpersonationStarts)
+        .where(and(startKeyMatches(key), gt(supportImpersonationStarts.createdAt, sql`now() - ${START_CLAIM_LEASE}`)))
+        .limit(1),
+    );
+    return held.length > 0 ? ('held' as const) : ('lapsed' as const);
+  }),
   deleteRecovery: (impersonationSessionId) =>
     databasePolicy(
       database
@@ -285,6 +360,8 @@ export const makeSupportImpersonationStore = (database: AuthDatabaseExecutor): S
         Option.map(Option.fromNullishOr(loaded), (found) => ({ ...found, token: Redacted.make(found.token) })),
       ),
     ),
+  releaseStart: (key) =>
+    databasePolicy(database.delete(supportImpersonationStarts).where(startKeyMatches(key))).pipe(Effect.asVoid),
   updateImpersonationSession: (sessionId, metadata) =>
     databasePolicy(
       database
@@ -436,6 +513,7 @@ interface StartedCheckpointInput {
 }
 
 interface ResumeStartInput {
+  readonly claim: Exclude<SupportImpersonationStartClaim, 'claimed'>;
   readonly originalSessionId: string;
   readonly requestHeaders: Headers;
   readonly started: Omit<StartedCheckpointInput, 'impersonationSessionId'>;
@@ -471,16 +549,12 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
     input: SupportCheckpointInput,
   ) {
     const correlationId = yield* SupportImpersonationCorrelationId;
-    const replayed = yield* Ref.make(false);
-    yield* actionRuntime.runAction({
-      onReplay: () => Ref.set(replayed, true),
+    return yield* actionRuntime.runAction({
       payload: input.payload,
       principal: input.principal,
       registration: recordSupportImpersonationAction,
       transport: { correlationId, idempotencyKey: input.idempotencyKey },
     });
-    // Whether Core answered with the saved reply of a checkpoint an earlier request committed.
-    return { replayed: yield* Ref.get(replayed) };
   });
   const loadExpiredImpersonationRecovery = Effect.fn(
     'makeSupportImpersonationService.loadExpiredImpersonationRecovery',
@@ -626,11 +700,7 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
       };
     },
   );
-  /**
-   * Records the 'started' checkpoint for one provider session. A refused checkpoint leaves nothing
-   * behind: the session and its recovery are removed. A commit Core cannot confirm keeps both, since
-   * the checkpoint may have committed with this session, and a same-key retry resumes it.
-   */
+  /** Records the 'started' checkpoint for one provider session; a replay answers Core's saved reply. */
   const recordStarted = (input: StartedCheckpointInput) =>
     checkpoint({
       idempotencyKey: `${input.idempotencyKey}:started`,
@@ -642,19 +712,7 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
         targetPrincipalId: input.targetPrincipalId,
       },
       principal: input.principal,
-    }).pipe(
-      Effect.tapError((failure) =>
-        isCommitIndeterminate(failure)
-          ? Effect.void
-          : Effect.all(
-              [
-                terminateImpersonationSession(input.impersonationSessionId),
-                store.deleteRecovery(input.impersonationSessionId),
-              ],
-              { concurrency: 1, discard: true },
-            ).pipe(Effect.ignore),
-      ),
-    );
+    });
   /**
    * The cookies `impersonateUser` set for this impersonation session, issued again: the support
    * user's own session kept in the admin cookie, and the impersonation session as a browser-session
@@ -709,10 +767,12 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
     },
   );
   /**
-   * Resumes a start whose 'requested' checkpoint an earlier request with the same key committed. The
-   * session that request created carries this key in its recovery; its 'started' checkpoint is
-   * replayed, or committed now if that request stopped before it, and the session's cookies are the
-   * answer. Without such a recovery the earlier request created no session this start can use.
+   * Answers a start whose key another request claimed. That request is the only one that asks the
+   * provider for a session; its recovery row carries the key once the session exists. The session's
+   * 'started' checkpoint is replayed, or committed now if that request stopped before it, and the
+   * session's cookies are the answer. A claim still within its lease is in flight and answers
+   * retryable. A lapsed claim without a recovery row created no session this start can use, or its
+   * impersonation has ended: a definite refusal, and the provider is never asked again for the key.
    */
   const resumeStart = Effect.fn('makeSupportImpersonationService.resumeStart')(function* resumeStartEffect(
     input: ResumeStartInput,
@@ -720,9 +780,23 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
     const recoveries = yield* store.loadRecoveries(input.originalSessionId);
     const recovery = recoveries.find((candidate) => candidate.actionId === input.started.idempotencyKey);
     if (recovery === undefined) {
-      return Option.none();
+      return yield* input.claim === 'held' ? Effect.fail(unavailable()) : denied();
     }
-    yield* recordStarted({ ...input.started, impersonationSessionId: recovery.impersonationSessionId });
+    const endImpersonation = completeRecovery({
+      recovery,
+      restoredSessionId: input.originalSessionId,
+      sessionTerminated: false,
+      setCookieHeaders: [],
+    }).pipe(Effect.andThen(denied()));
+    // Only a definite refusal ends the impersonation; any other failure keeps the session and its
+    // recovery so that the next retry resumes them.
+    const started = yield* recordStarted({
+      ...input.started,
+      impersonationSessionId: recovery.impersonationSessionId,
+    }).pipe(Effect.result);
+    if (Result.isFailure(started)) {
+      return yield* isDefiniteRefusal(started.failure) ? endImpersonation : Effect.fail(started.failure);
+    }
     const cookies = yield* reissuedImpersonationCookies(
       input.originalSessionId,
       recovery.impersonationSessionId,
@@ -731,19 +805,13 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
     if (Option.isNone(cookies)) {
       // The impersonation this key started has ended: it is stopped like any other, and the start
       // answers a definite refusal rather than a session nobody can use.
-      yield* completeRecovery({
-        recovery,
-        restoredSessionId: input.originalSessionId,
-        sessionTerminated: false,
-        setCookieHeaders: [],
-      });
-      return yield* denied();
+      return yield* endImpersonation;
     }
-    return Option.some({
+    return {
       active: true as const,
       setCookieHeaders: cookies.value,
       targetPrincipalId: input.started.targetPrincipalId,
-    });
+    };
   });
   const stopAbsentSession = Effect.fn('makeSupportImpersonationService.stopAbsentSession')(
     function* stopAbsentSessionEffect(requestHeaders: Headers, headers: Headers) {
@@ -822,7 +890,7 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
           tenantId: shell.principal.tenantId,
         })
         .pipe(Effect.mapError(mapResolverError));
-      const requested = yield* checkpoint({
+      yield* checkpoint({
         idempotencyKey: `${input.idempotencyKey}:requested`,
         payload: {
           checkpoint: 'requested',
@@ -839,24 +907,29 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
         reason,
         targetPrincipalId: input.targetPrincipalId,
       };
-      if (requested.replayed) {
-        // A same-key retry of a start that got past this checkpoint: the session that start created, if
-        // any, is the answer, and the provider is not asked for another one.
-        const resumed = yield* resumeStart({
-          originalSessionId,
-          requestHeaders: input.requestHeaders,
-          started,
-        });
-        if (Option.isSome(resumed)) {
-          return resumed.value;
-        }
+      // A same-key retry replays 'requested' with Core's saved reply. Only the request that claims the
+      // key asks the provider for a session, so a key never creates a second one.
+      const startKey = {
+        actionId: input.idempotencyKey,
+        originalPrincipalId: shell.principal.principalId,
+        tenantId: shell.principal.tenantId,
+      };
+      const claim = yield* store.claimStart(startKey);
+      if (claim !== 'claimed') {
+        return yield* resumeStart({ claim, originalSessionId, requestHeaders: input.requestHeaders, started });
       }
-      const created = yield* providerOperation(
-        auth.api.impersonateUser.bind(auth.api, {
+      const created = yield* Effect.tryPromise({
+        catch: mapProviderError,
+        try: auth.api.impersonateUser.bind(auth.api, {
           body: { userId: targetUserId },
           headers: input.requestHeaders,
           returnHeaders: true,
         }),
+      }).pipe(
+        // The provider answered without a session, so the key may be claimed again. A timed-out call
+        // keeps the claim: its session may still appear.
+        Effect.tapError(() => store.releaseStart(startKey).pipe(Effect.ignore)),
+        impersonationTimeout,
       );
       yield* store
         .updateImpersonationSession(created.response.session.id, {
@@ -893,7 +966,21 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
             ),
           ),
         );
-      yield* recordStarted({ ...started, impersonationSessionId: created.response.session.id });
+      // A refused checkpoint leaves nothing behind. Any other failure keeps the session and its
+      // recovery, since the checkpoint may still commit, and a same-key retry resumes them.
+      yield* recordStarted({ ...started, impersonationSessionId: created.response.session.id }).pipe(
+        Effect.tapError((failure) =>
+          isDefiniteRefusal(failure)
+            ? Effect.all(
+                [
+                  terminateImpersonationSession(created.response.session.id),
+                  store.deleteRecovery(created.response.session.id),
+                ],
+                { concurrency: 1, discard: true },
+              ).pipe(Effect.ignore)
+            : Effect.void,
+        ),
+      );
       return {
         active: true as const,
         setCookieHeaders: cookieHeaders(created.headers),

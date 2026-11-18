@@ -1,5 +1,6 @@
 import {
   ActionCommitIndeterminate,
+  ActionInvocationPersistenceError,
   ActionRequestHashConflict,
   ActionRuntime,
   PrincipalResolver,
@@ -9,14 +10,14 @@ import {
 import type { ActionRuntimeService, SupportRecoveryPrincipalContextResolverService } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { makeSignature } from 'better-auth/crypto';
-import { Context, Effect, Option, Predicate, Redacted, Schema } from 'effect';
+import { Context, Effect, Fiber, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { PrincipalManagementRepository } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
-import type { SupportRecoveryRecord } from '../../api/auth/impersonation-service.ts';
+import type { SupportImpersonationStartKey, SupportRecoveryRecord } from '../../api/auth/impersonation-service.ts';
 import {
   makeSupportImpersonationService,
   SupportAuthProviderService,
@@ -34,7 +35,9 @@ import {
 
 /**
  * A support impersonation start retried with its key after a lost reply ends with the original
- * session: the provider creates one session for the key, whichever checkpoint's reply was lost.
+ * session: the provider creates one session for the key, whichever checkpoint's reply was lost, and
+ * never a second one, whether the retry overlaps the first request or comes after the impersonation
+ * ended.
  */
 
 const originalAuthBindingId = '10000000-0000-4000-8000-000000000011';
@@ -84,10 +87,12 @@ const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
  * Core's saved replies for one support user: a key commits once, the same key and payload replays
  * the saved reply, and another payload under it is a request-hash conflict. A key named in `loseReply`
  * commits and then answers ActionCommitIndeterminate once, as when the commit acknowledgement is lost.
+ * A key named in `failReplay` answers its first replay with a retryable persistence failure.
  */
-const makeSavedReplyCore = (loseReply: ReadonlySet<string>) => {
+const makeSavedReplyCore = (loseReply: ReadonlySet<string>, failReplay: ReadonlySet<string> = new Set()) => {
   const committed = new Map<string, string>();
   const lost = new Set<string>();
+  const failedReplays = new Set<string>();
   const calls: { readonly key: string; readonly payload: unknown; readonly replayed: boolean }[] = [];
   const runtime: ActionRuntimeService = {
     resolveActionCommit: () => Effect.die('resolveActionCommit is not used'),
@@ -114,8 +119,14 @@ const makeSavedReplyCore = (loseReply: ReadonlySet<string>) => {
               reason: 'This idempotency key was already used for a different Action request',
             });
           }
+          if (failReplay.has(key) && !failedReplays.has(key)) {
+            failedReplays.add(key);
+            return yield* new ActionInvocationPersistenceError({
+              code: 'action_invocation_persistence_failed',
+              reason: 'The saved reply could not be read',
+            });
+          }
           calls.push({ key, payload, replayed: true });
-          yield* input.onReplay?.({ invocationId: `invocation-${key}` }) ?? Effect.void;
           return result;
         }
         committed.set(key, hash);
@@ -140,7 +151,13 @@ interface StoredSession {
   readonly token: string;
 }
 
-/** The provider and the auth tables: each impersonateUser call creates one new session. */
+const claimKey = (key: SupportImpersonationStartKey) =>
+  JSON.stringify([key.tenantId, key.originalPrincipalId, key.actionId]);
+
+/**
+ * The provider and the auth tables: each impersonateUser call creates one new session, which
+ * `holdProvider` delays until its release. A start claim is held until `lapseClaims` ends its lease.
+ */
 const makeAuthState = (options: { readonly impersonationExpiresAt?: Date } = {}) => {
   const sessions = new Map<string, StoredSession>([
     [
@@ -149,22 +166,38 @@ const makeAuthState = (options: { readonly impersonationExpiresAt?: Date } = {})
     ],
   ]);
   const recoveries: SupportRecoveryRecord[] = [];
+  const claims = new Set<string>();
+  let claimsLapsed = false;
   let created = 0;
+  let providerCalls = 0;
+  let providerGate = Promise.resolve(null);
+  const createSession = () => {
+    created += 1;
+    const id = `impersonation-session-${created}`;
+    sessions.set(id, {
+      expiresAt: options.impersonationExpiresAt ?? new Date('2099-01-01T00:00:00.000Z'),
+      impersonatedBy: 'original-provider-user',
+      token: `impersonation-token-${created}`,
+    });
+    const headers = new Headers();
+    headers.append('set-cookie', `better-auth.session_token=impersonation-token-${created}; Path=/; HttpOnly`);
+    return { headers, response: { session: { id } } };
+  };
   const provider = makeSupportAuthProviderDouble({
     impersonateUser: () => {
-      created += 1;
-      const id = `impersonation-session-${created}`;
-      sessions.set(id, {
-        expiresAt: options.impersonationExpiresAt ?? new Date('2099-01-01T00:00:00.000Z'),
-        impersonatedBy: 'original-provider-user',
-        token: `impersonation-token-${created}`,
-      });
-      const headers = new Headers();
-      headers.append('set-cookie', `better-auth.session_token=impersonation-token-${created}; Path=/; HttpOnly`);
-      return Promise.resolve({ headers, response: { session: { id } } });
+      providerCalls += 1;
+      return providerGate.then(createSession);
     },
   });
   const store = makeSupportImpersonationStoreDouble({
+    claimStart: (key) =>
+      Effect.sync(() => {
+        if (!claims.has(claimKey(key))) {
+          claims.add(claimKey(key));
+          return 'claimed' as const;
+        }
+        return claimsLapsed ? ('lapsed' as const) : ('held' as const);
+      }),
     deleteRecovery: (sessionId) =>
       Effect.sync(() => {
         const index = recoveries.findIndex((recovery) => recovery.impersonationSessionId === sessionId);
@@ -191,9 +224,28 @@ const makeAuthState = (options: { readonly impersonationExpiresAt?: Date } = {})
           token: Redacted.make(stored.token),
         })),
       ),
+    releaseStart: (key) =>
+      Effect.sync(() => {
+        claims.delete(claimKey(key));
+      }),
     updateImpersonationSession: () => Effect.void,
   });
-  return { createdSessions: () => created, provider, recoveries, sessions, store };
+  return {
+    createdSessions: () => created,
+    holdProvider: () => {
+      const held = Promise.withResolvers<null>();
+      providerGate = held.promise;
+      return () => held.resolve(null);
+    },
+    lapseClaims: () => {
+      claimsLapsed = true;
+    },
+    provider,
+    providerCalls: () => providerCalls,
+    recoveries,
+    sessions,
+    store,
+  };
 };
 
 const makeStart = (core: ReturnType<typeof makeSavedReplyCore>, auth: ReturnType<typeof makeAuthState>) => {
@@ -344,5 +396,76 @@ it.effect('stops an ended impersonation and refuses its retry without a new sess
     expect(auth.sessions.has('impersonation-session-1')).toBe(false);
     expect(auth.recoveries).toEqual([]);
     expect(core.calls.at(-1)?.key).toBe(`${idempotencyKey}:stopped`);
+  }),
+);
+
+it.effect('answers a same-key start that overlaps the running one retryable, then resumes its session', () =>
+  Effect.gen(function* overlappingRetry() {
+    const core = makeSavedReplyCore(new Set());
+    const auth = makeAuthState();
+    const releaseProvider = auth.holdProvider();
+    const start = makeStart(core, auth);
+
+    const first = yield* Effect.forkChild(start());
+    while (auth.providerCalls() === 0) {
+      yield* Effect.yieldNow;
+    }
+    // The browser gave up on the first request and retried while the provider was creating its session.
+    const overlapping = yield* Effect.flip(start());
+    releaseProvider();
+    yield* Fiber.join(first);
+
+    expect(Predicate.isTagged(overlapping, 'SupportImpersonationUnavailableError')).toBe(true);
+    expect(auth.providerCalls()).toBe(1);
+    const retry = yield* start();
+    expect(auth.providerCalls()).toBe(1);
+    expect(auth.createdSessions()).toBe(1);
+    expect(retry.setCookieHeaders).toContain(
+      `better-auth.session_token=${yield* signed('impersonation-token-1')}; Path=/; HttpOnly; SameSite=Lax`,
+    );
+  }),
+);
+
+it.effect('refuses a same-key start after its impersonation was stopped without asking the provider again', () =>
+  Effect.gen(function* retryAfterStop() {
+    const core = makeSavedReplyCore(new Set());
+    const auth = makeAuthState();
+    const start = makeStart(core, auth);
+
+    yield* start();
+    // The support user stopped the impersonation: its session and its recovery are gone.
+    auth.sessions.delete('impersonation-session-1');
+    auth.recoveries.splice(0);
+
+    // Within the claim lease the start may still be running, so the answer is retryable.
+    const early = yield* Effect.flip(start());
+    expect(Predicate.isTagged(early, 'SupportImpersonationUnavailableError')).toBe(true);
+    auth.lapseClaims();
+    const refused = yield* Effect.flip(start());
+
+    expect(Predicate.isTagged(refused, 'SupportImpersonationDeniedError')).toBe(true);
+    expect(auth.createdSessions()).toBe(1);
+    expect(startedSessionRefs(core)).toEqual(['better-auth-session:impersonation-session-1']);
+  }),
+);
+
+it.effect('keeps the started session when replaying its checkpoint fails retryably', () =>
+  Effect.gen(function* resumeFailsRetryably() {
+    const startedKey = `${idempotencyKey}:started`;
+    const core = makeSavedReplyCore(new Set([startedKey]), new Set([startedKey]));
+    const auth = makeAuthState();
+    const start = makeStart(core, auth);
+
+    yield* Effect.flip(start());
+    const failed = yield* Effect.flip(start());
+
+    expect(Schema.is(ActionInvocationPersistenceError)(failed)).toBe(true);
+    expect(auth.sessions.has('impersonation-session-1')).toBe(true);
+    expect(auth.recoveries.map((recovery) => recovery.impersonationSessionId)).toEqual(['impersonation-session-1']);
+    const retry = yield* start();
+    expect(auth.createdSessions()).toBe(1);
+    expect(retry.setCookieHeaders).toContain(
+      `better-auth.session_token=${yield* signed('impersonation-token-1')}; Path=/; HttpOnly; SameSite=Lax`,
+    );
   }),
 );

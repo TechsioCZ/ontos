@@ -10,6 +10,7 @@ export const AUTH_TABLE_INVENTORY = [
   'apikey',
   'support_impersonation_recovery',
   'gateway_relay_exchanges',
+  'support_impersonation_starts',
 ] as const;
 
 export const authSchema = pgSchema(AUTH_SCHEMA_NAME);
@@ -68,6 +69,27 @@ export const supportImpersonationRecovery = authSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index('auth_support_impersonation_recovery_original_session_idx').on(table.originalSessionId)],
+);
+
+/**
+ * One row per support impersonation start key, claimed before the provider is asked for a session.
+ * Only the request that inserts it creates a session for the key; a same-key retry resumes that session.
+ */
+export const supportImpersonationStarts = authSchema.table(
+  'support_impersonation_starts',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    originalPrincipalId: uuid('original_principal_id').notNull(),
+    actionId: text('action_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('auth_support_impersonation_starts_key_uk').on(
+      table.tenantId,
+      table.originalPrincipalId,
+      table.actionId,
+    ),
+  ],
 );
 
 export const account = authSchema.table(
@@ -175,6 +197,7 @@ export const authDatabaseSchema = {
   gatewayRelayExchanges,
   session,
   supportImpersonationRecovery,
+  supportImpersonationStarts,
   user,
   verification,
 } as const;
@@ -220,4 +243,5 @@ export const AUTH_TABLES = [
   apikey,
   supportImpersonationRecovery,
   gatewayRelayExchanges,
+  supportImpersonationStarts,
 ] as const;
