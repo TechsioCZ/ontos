@@ -6175,6 +6175,10 @@ it.effect('answers a saved reply only for the exact invocation, principal and re
     expect(harness.committedReplyLoads).toEqual([
       {
         actionInvocationId: 'invocation-1',
+        // The recovery window ends seven days before PostgreSQL's transaction time.
+        committedSince: DateTime.toDateUtc(
+          DateTime.makeUnsafe(transactionOperationAt.getTime() - 7 * 24 * 60 * 60 * 1000),
+        ),
         principal: harness.preparedPrincipals[0],
         requestHash: harness.requestHashes[0],
       },
@@ -6316,34 +6320,39 @@ it.layer(NodeCrypto.layer)('Action saved reply persistence', (suite) => {
     }),
   );
 
-  suite.effect('loads a saved reply only for its tenant, principal, request hash and succeeded state', () =>
-    Effect.gen(function* savedReplySelect() {
-      const statements: { readonly sql: string; readonly values: readonly unknown[] }[] = [];
-      const executor = yield* makeTestDatabase((statement, values) => {
-        statements.push({ sql: statement, values });
-        return Effect.succeed([{ committedReplyJson: { encoded: { total: 4 }, kind: 'result' } }]);
-      });
-      const repository = makeActionRepository(yield* Crypto.Crypto);
-      const reply = yield* repository.loadCommittedReply(executor, {
-        actionInvocationId: 'invocation-1',
-        principal,
-        requestHash: 'b'.repeat(64),
-      });
-      const [query] = statements;
+  suite.effect(
+    'loads a saved reply only for its tenant, principal, request hash, succeeded state and recovery window',
+    () =>
+      Effect.gen(function* savedReplySelect() {
+        const statements: { readonly sql: string; readonly values: readonly unknown[] }[] = [];
+        const executor = yield* makeTestDatabase((statement, values) => {
+          statements.push({ sql: statement, values });
+          return Effect.succeed([{ committedReplyJson: { encoded: { total: 4 }, kind: 'result' } }]);
+        });
+        const repository = makeActionRepository(yield* Crypto.Crypto);
+        const reply = yield* repository.loadCommittedReply(executor, {
+          actionInvocationId: 'invocation-1',
+          committedSince: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-11T12:00:00.000Z')),
+          principal,
+          requestHash: 'b'.repeat(64),
+        });
+        const [query] = statements;
 
-      expect(Option.getOrUndefined(reply)).toEqual({ encoded: { total: 4 }, kind: 'result' });
-      expect(statements).toHaveLength(1);
-      for (const column of ['action_invocation_id', 'tenant_id', 'principal_id', 'request_hash', 'status']) {
-        expect(query?.sql).toContain(`"${column}" =`);
-      }
-      expect(query?.values).toEqual([
-        'invocation-1',
-        principal.tenantId,
-        principal.principalId,
-        'b'.repeat(64),
-        'succeeded',
-        1,
-      ]);
-    }),
+        expect(Option.getOrUndefined(reply)).toEqual({ encoded: { total: 4 }, kind: 'result' });
+        expect(statements).toHaveLength(1);
+        for (const column of ['action_invocation_id', 'tenant_id', 'principal_id', 'request_hash', 'status']) {
+          expect(query?.sql).toContain(`"${column}" =`);
+        }
+        expect(query?.sql).toContain(`"completed_at" >=`);
+        expect(query?.values).toEqual([
+          'invocation-1',
+          principal.tenantId,
+          principal.principalId,
+          'b'.repeat(64),
+          'succeeded',
+          '2026-11-11T12:00:00.000Z',
+          1,
+        ]);
+      }),
   );
 });

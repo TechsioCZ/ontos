@@ -133,6 +133,11 @@ export interface ActionTestHarnessOptions extends Pick<
   readonly actionPermission?: ContextAccessDecision;
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
+  /**
+   * The database clock: PostgreSQL's transaction time and the completion time the harness records.
+   * Defaults to the epoch.
+   */
+  readonly databaseTime?: () => Date;
   readonly legalEntityAccess?: ContextAccessDecision;
   readonly legalEntityPermission?: ContextAccessDecision;
   /** Test-only fence lock; defaults to an in-memory no-op because this database has no fence SQL. */
@@ -186,6 +191,7 @@ const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionErro
 const actionTestHarness = Effect.fn('ActionTestHarness.make')(
   function* actionTestHarness(options: ActionTestHarnessOptions = {}) {
     const crypto = yield* Crypto.Crypto;
+    const databaseTime = options.databaseTime ?? completionTime;
     const invocations = new Map<string, ActionTestInvocation>();
     const idempotency = new Map<string, string>();
     const committed: FlushActionSuccessInput[] = [];
@@ -254,7 +260,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       committedReplies.set(input.actionInvocationId, input.committedReply);
       invocations.set(input.actionInvocationId, {
         ...invocation,
-        completedAt: completionTime(),
+        completedAt: databaseTime(),
         status: 'succeeded',
       });
     });
@@ -265,7 +271,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
             denials.push(input);
             invocations.set(input.actionInvocationId, {
               ...invocation,
-              completedAt: completionTime(),
+              completedAt: databaseTime(),
               status: 'rejected',
             });
             return Option.none<ActionRecordedRejection>();
@@ -283,6 +289,8 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         Effect.sync(() => {
           const invocation = invocations.get(input.actionInvocationId);
           return invocation?.status === 'succeeded' &&
+            invocation.completedAt !== null &&
+            invocation.completedAt.getTime() >= input.committedSince.getTime() &&
             invocation.tenantId === input.principal.tenantId &&
             invocation.principalId === input.principal.principalId &&
             invocation.requestHash === input.requestHash
@@ -374,7 +382,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         };
       } else if (sql.includes('transaction_timestamp')) {
         return {
-          rows: [{ operation_at: completionTime() }],
+          rows: [{ operation_at: databaseTime() }],
         };
       } else {
         return yield* Effect.die('Owner SQL is unavailable in the Action test harness; bind typed services');

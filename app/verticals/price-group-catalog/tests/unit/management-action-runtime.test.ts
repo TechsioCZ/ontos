@@ -267,7 +267,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   // The reply Core saves with the success, bound like the real row to its tenant and principal.
   let savedReply: Option.Option<{
     readonly principalId: string;
-    readonly reply: ActionCommittedReplyJson;
+    readonly reply: ActionCommittedReplyJson | null;
     readonly tenantId: string;
   }> = Option.none();
   const loadCommittedReplyInputs: Parameters<ActionRepositoryService['loadCommittedReply']>[1][] = [];
@@ -316,7 +316,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
               input.principal.tenantId === saved.tenantId &&
               input.principal.principalId === saved.principalId,
           ),
-          Option.map((saved) => saved.reply),
+          Option.flatMap((saved) => Option.fromNullishOr(saved.reply)),
         ),
       );
     },

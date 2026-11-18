@@ -1,7 +1,7 @@
 import { readVerifiedGatewayRecovery } from '../auth/system-principal-context-provenance.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Cause, Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -259,8 +259,11 @@ export interface FlushActionSuccessInput {
   readonly actionKey: string;
   readonly allowedPolicies: readonly ActionPolicyEvidence[];
   readonly auditProfile: ActionAuditProfile;
-  /** Saved by the same UPDATE that marks the invocation succeeded, so it commits with it or not at all. */
-  readonly committedReply: ActionCommittedReplyJson;
+  /**
+   * Saved by the same UPDATE that marks the invocation succeeded, so it commits with it or not at all.
+   * `null` for an invocation without an idempotency key: nothing can ever replay it.
+   */
+  readonly committedReply: ActionCommittedReplyJson | null;
   readonly evidence: ActionEvidenceSnapshot;
   readonly principal: TrustedPrincipalContext;
   readonly resultHash: string;
@@ -273,6 +276,8 @@ export interface FlushActionSuccessInput {
  */
 export interface LoadActionCommittedReplyInput {
   readonly actionInvocationId: string;
+  /** The earliest completion time whose reply is still answered (the recovery window's start). */
+  readonly committedSince: Date;
   readonly principal: Pick<TrustedPrincipalContext, 'principalId' | 'tenantId'>;
   readonly requestHash: string;
 }
@@ -656,7 +661,8 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
 
   // The saved reply is read only after the caller resolved this invocation through the idempotency
   // index and compared its request hash. The SQL binds the same facts again, so it never answers for
-  // another tenant, principal, request or a row that is not committed.
+  // another tenant, principal, request, a row that is not committed or one committed before the
+  // recovery window.
   const loadCommittedReply: ActionRepositoryService['loadCommittedReply'] = Effect.fn(
     'makeActionRepository.loadCommittedReply',
   )(function* loadCommittedReplyEffect(
@@ -673,6 +679,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
           eq(actionInvocations.principalId, input.principal.principalId),
           eq(actionInvocations.requestHash, input.requestHash),
           eq(actionInvocations.status, 'succeeded'),
+          gte(actionInvocations.completedAt, input.committedSince),
         ),
       )
       .limit(1)

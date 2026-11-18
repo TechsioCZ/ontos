@@ -30,6 +30,7 @@ import {
   Cause,
   Context,
   DateTime,
+  Duration,
   Effect,
   Exit,
   Match,
@@ -73,7 +74,7 @@ import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
-import type { CoreTransaction } from '../db/types.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
@@ -742,10 +743,16 @@ const encodeCommittedReplyJson = <Value>(schema: Schema.Constraint, value: Value
   Schema.encodeUnknownResult(Schema.toCodecJson(Schema.make<Schema.ConstraintEncoder<unknown>>(schema.ast)))(value);
 
 /**
+ * How long after its commit a saved reply is still answered to a same-key retry. After it the reply
+ * is withheld and the retry answers ActionAlreadyCommitted, as for an invocation without one.
+ */
+const ACTION_SAVED_REPLY_RECOVERY_WINDOW = Duration.days(7);
+
+/**
  * A same-key request that meets a succeeded invocation with its own request hash. `stageSavedReply`
  * runs only on that branch, after the hash comparison, and prepares the saved reply; the request
- * still fails with ActionAlreadyCommitted here, so whatever follows it (a rollback, the post-attempt
- * hook) behaves as before, and the runner answers the prepared reply at its one answer point.
+ * still fails with ActionAlreadyCommitted here, and `decideReplay` alone decides whether the staged
+ * reply becomes the answer.
  */
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
@@ -994,6 +1001,12 @@ interface ActionAttemptState<Payload, Success, DomainError> {
   committedRejection: DomainError | undefined;
   disposition: 'unstarted' | 'uncommitted' | 'indeterminate' | 'committed';
   original: ActionAttemptOriginal<Payload> | undefined;
+  /**
+   * The replay decision for a staged saved reply: `true` answers it, `false` refuses the replay (its
+   * own failure is the answer, never replaced by a post-attempt recovery or hook failure), and
+   * `undefined` is no decision, which answers as an invocation without a saved reply.
+   */
+  replayAllowed: boolean | undefined;
   revision: string | undefined;
   savedReply: ActionSavedReply<Success, DomainError> | undefined;
 }
@@ -1096,9 +1109,30 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           SqlError: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),
         }),
       );
-  const loadCommittedReplyInScope = (scope: OperationalScope, replyInput: LoadActionCommittedReplyInput) =>
+  /**
+   * The saved reply of this exact invocation, if it committed inside the recovery window. The window
+   * is measured from PostgreSQL's transaction time, never the process clock.
+   */
+  const loadAnswerableReply = (
+    transaction: CoreTransaction,
+    replyInput: Omit<LoadActionCommittedReplyInput, 'committedSince'>,
+    reader: Pick<CoreDatabaseExecutor, 'select'> = transaction,
+  ) =>
+    Effect.suspend(() => trustedTransactionTime(transaction)).pipe(
+      Effect.mapError(committedReplyPersistenceFailure),
+      Effect.flatMap((now) =>
+        repository.loadCommittedReply(reader, {
+          ...replyInput,
+          committedSince: DateTime.toDateUtc(DateTime.subtractDuration(now, ACTION_SAVED_REPLY_RECOVERY_WINDOW)),
+        }),
+      ),
+    );
+  const loadCommittedReplyInScope = (
+    scope: OperationalScope,
+    replyInput: Omit<LoadActionCommittedReplyInput, 'committedSince'>,
+  ) =>
     invocationScopeExecutor(scope)
-      .transaction((transaction) => repository.loadCommittedReply(transaction, replyInput))
+      .transaction((transaction) => loadAnswerableReply(transaction, replyInput))
       .pipe(
         recoverSqlTransactionError,
         Effect.catchTags({
@@ -1290,6 +1324,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       committedRejection: undefined,
       disposition: 'unstarted',
       original: undefined,
+      replayAllowed: undefined,
       revision: undefined,
       savedReply: undefined,
     };
@@ -1299,7 +1334,10 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
      * prepares nothing, so the request keeps answering ActionAlreadyCommitted; nothing runs again.
      */
     const stageSavedReply = (
-      load: Effect.Effect<Option.Option<FlushActionSuccessInput['committedReply']>, ActionInvocationPersistenceError>,
+      load: Effect.Effect<
+        Option.Option<NonNullable<FlushActionSuccessInput['committedReply']>>,
+        ActionInvocationPersistenceError
+      >,
       invocationId: string,
     ): Effect.Effect<void, ActionInvocationPersistenceError> =>
       load.pipe(
@@ -1331,16 +1369,21 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         }),
       );
     /**
-     * The one place a saved reply becomes the answer. A same-key request with the same request hash
-     * that meets a succeeded invocation is a replay, and a replay runs nothing again:
-     * - it returns before the owner transaction body or after rolling it back, so no handler, Policy
-     *   write, outbox message, domain event or audit is written twice, and onDecodedSuccess (which
-     *   runs only inside the first attempt's transaction) never runs for it;
-     * - the post-attempt hook sees `AlreadyCommitted`, never `Committed` or `CommittedRejection`, so
-     *   an owner recovers or reconciles but never settles the same commit twice;
-     * - the answer is the saved reply whatever the hook answers (Settled or Recovered): the decoded
-     *   result, or the decoded committed domain rejection as the failure the first request received.
-     * Without a decodable saved reply the request keeps answering ActionAlreadyCommitted.
+     * The one place a saved reply becomes the answer, for a replay `decideReplay` allowed. What
+     * happens exactly once, on the transaction that committed the invocation and never for a replay:
+     * the handler, onDecodedSuccess, the write audit, the collected data-access evidence, the domain
+     * events and the outbox messages. What does not:
+     * - Policy evaluation runs before the invocation lock, so two concurrent requests with the same key
+     *   can each evaluate the Policies; only the one that wins the lock writes. A replay found at the
+     *   first lookup evaluates none.
+     * - onPostAttempt runs once per attempt, so once more for the replay, which it sees as
+     *   `AlreadyCommitted` (never `Committed` or `CommittedRejection`): an owner can recover or
+     *   reconcile but never settles the same commit twice.
+     * - the access gate deciding a replay may record its own decision evidence.
+     * The answer is the saved reply whatever the hook answers (Settled or Recovered): the decoded
+     * result, or the decoded committed domain rejection as the failure the first request received. A
+     * refused replay keeps its own failure, and without a saved reply the request keeps answering
+     * ActionAlreadyCommitted.
      */
     const answerSavedReply = <Success, Failure>(
       exit: Exit.Exit<Success, Failure>,
@@ -1348,6 +1391,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       const saved = attempt.savedReply;
       if (
         saved === undefined ||
+        attempt.replayAllowed !== true ||
         Exit.isSuccess(exit) ||
         exit.cause.reasons.some(Cause.isInterruptReason) ||
         !exit.cause.reasons.some(
@@ -1805,9 +1849,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             return { invocation, normalizedPayload, parked, replay: false, requestHash };
           }
         }
-        // A staged saved reply is not answered here: this lookup runs before the access gate, so the
-        // request goes on to `answerReplayAfterAccess`, which answers it only to a caller the gate
-        // still allows. Every other outcome of the check fails here exactly as before.
+        // A staged saved reply is not answered here: the request goes on to `decideReplay`, the one
+        // place that decides whether it is answered. Every other outcome of the check fails here.
         const replay = yield* verifyInvocation(
           invocation,
           requestHash,
@@ -2154,14 +2197,79 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return fieldWrites.failure === undefined;
       });
 
-      // A replay found a saved reply before any access decision ran. It is answered only to a caller
-      // the gate still allows; a refused caller keeps the answer it had before replies were saved,
-      // ActionAlreadyCommitted without the reply. Either way nothing runs again.
-      if (replay) {
-        if (!(yield* replayAccessAllowed())) {
-          attempt.savedReply = undefined;
+      /**
+       * This deployment's admission of the Action and the composition revision it runs under, refused
+       * when the revision the request was admitted with is no longer the approved one.
+       */
+      const admitComposition = Effect.fn('ActionRuntime.admitComposition')(function* admitCompositionEffect() {
+        const admission =
+          options.applicationComposition !== undefined && options.expectedDeployment !== undefined
+            ? yield* loadModuleOperationAdmission(
+                options.applicationComposition,
+                options.expectedDeployment,
+                input.registration,
+                principal,
+                options.ownerRegistration,
+              ).pipe(Effect.mapError(unavailableActionComposition))
+            : undefined;
+        const revision = admission === undefined ? yield* resolveCompositionRevision(principal) : admission.revision;
+        if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== revision) {
+          return yield* unavailableActionComposition();
         }
-        return yield* alreadyCommitted(invocation.actionInvocationId);
+        if (admission?.catalog !== undefined) {
+          const { catalog } = admission;
+          yield* validateBoundOperationOwner(input.registration, catalog, options.ownerRegistration).pipe(
+            Effect.mapError(unavailableActionComposition),
+          );
+        }
+        return revision;
+      });
+
+      /**
+       * The one place a replay is decided, for both ways a request meets its committed invocation: at
+       * the first lookup, and after waiting on the invocation lock while a concurrent first attempt
+       * committed it. It runs when the reply is about to be answered, after any wait on the lock.
+       *
+       * The rule: a saved reply is the original caller's own committed answer. It is answered only when
+       * the tenant, Action, principal, idempotency key and request hash are the original request's (the
+       * lookup and `loadCommittedReply` bind all of them), the invocation committed inside the recovery
+       * window, and Core's current admission and access for this caller are decided here and allow it:
+       * module state, deployment admission and composition revision as a first attempt gets them, then
+       * the read-only access decision (the gate with its field-write groups, or the older permission
+       * checks; an Action that only reduces the caller's own authority skips it as it does when it
+       * runs). The owner checks that govern whether the write may happen (the authorization preflight,
+       * Policies, the owner authorization rule, mandate claims) are not run for a replay: the write
+       * already happened, they often cannot pass again precisely because it did, and running them would
+       * turn a lost reply back into manual work.
+       *
+       * A refused replay is terminal for this request: a denied caller answers the bodyless
+       * ActionAlreadyCommitted, an undecidable admission or access answers the retryable failure a
+       * first attempt would get, and neither a post-attempt recovery nor a hook failure replaces it.
+       */
+      const decideReplay = Effect.fn('ActionRuntime.decideReplay')(function* decideReplayEffect(invocationId: string) {
+        const committed = alreadyCommitted(invocationId);
+        if (attempt.savedReply?.invocationId !== invocationId) {
+          return yield* committed;
+        }
+        const allowed = yield* Effect.exit(
+          Effect.gen(function* admitReplay() {
+            const { entrypoint } = input.registration.descriptor;
+            const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(
+              scope,
+              [entrypoint],
+              intrinsicDependencies,
+            );
+            yield* moduleEntrypointGateway.check(moduleStateSnapshot, entrypoint);
+            attempt.revision = yield* admitComposition();
+            return yield* replayAccessAllowed();
+          }),
+        );
+        attempt.replayAllowed = Exit.isSuccess(allowed) && allowed.value;
+        return yield* Exit.isSuccess(allowed) ? Effect.fail(committed) : allowed;
+      });
+
+      if (replay) {
+        return yield* decideReplay(invocation.actionInvocationId);
       }
 
       const authorizePermissions = Effect.fn('ActionRuntime.authorizePermissions')(
@@ -2191,26 +2299,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               return yield* rejectPermission(permissionDeniedFailure());
             }
           }
-          const admission =
-            options.applicationComposition !== undefined && options.expectedDeployment !== undefined
-              ? yield* loadModuleOperationAdmission(
-                  options.applicationComposition,
-                  options.expectedDeployment,
-                  input.registration,
-                  principal,
-                  options.ownerRegistration,
-                ).pipe(Effect.mapError(unavailableActionComposition))
-              : undefined;
-          const revision = admission === undefined ? yield* resolveCompositionRevision(principal) : admission.revision;
-          if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== revision) {
-            return yield* unavailableActionComposition();
-          }
-          if (admission?.catalog !== undefined) {
-            const { catalog } = admission;
-            yield* validateBoundOperationOwner(input.registration, catalog, options.ownerRegistration).pipe(
-              Effect.mapError(unavailableActionComposition),
-            );
-          }
+          const revision = yield* admitComposition();
           attempt.revision = revision;
           if (preflightPermit !== undefined) {
             yield* withModuleOperationExecution(
@@ -2499,13 +2588,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             }
             return { lockedInvocation, parked };
           }
-          // A request that waited here while a concurrent first attempt committed answers its saved reply.
+          // A request that waited here while a concurrent first attempt committed stages its saved reply;
+          // `decideReplay` decides it once this transaction has rolled back.
           yield* verifyInvocation(
             lockedInvocation,
             requestHash,
             repository.loadRecordedRejection(transaction, lockedInvocation.actionInvocationId),
             stageSavedReply(
-              repository.loadCommittedReply(transaction, {
+              loadAnswerableReply(transaction, {
                 actionInvocationId: lockedInvocation.actionInvocationId,
                 principal,
                 requestHash,
@@ -2560,6 +2650,23 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         });
         return yield* Effect.void;
       });
+
+      /**
+       * The reply this commit saves for a same-key retry. Only an invocation with an idempotency key can
+       * ever be replayed, so an invocation without one saves none.
+       */
+      const replyToSave = <Value, Failure extends object>(
+        kind: NonNullable<FlushActionSuccessInput['committedReply']>['kind'],
+        schema: Schema.Constraint,
+        value: Value,
+        failure: () => Failure,
+      ): Effect.Effect<FlushActionSuccessInput['committedReply'], Failure> =>
+        transport.idempotencyKey === undefined
+          ? Effect.succeed(null)
+          : Effect.try({
+              catch: (cause) => attachFailureCause(failure(), cause),
+              try: () => ({ encoded: Result.getOrThrow(encodeCommittedReplyJson(schema, value)), kind }),
+            });
 
       const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
         function* executeTransactionAndHandleExitEffect() {
@@ -2671,11 +2778,15 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               requestHash,
               repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
               stageSavedReply(
-                repository.loadCommittedReply(scopedTransaction, {
-                  actionInvocationId: runningInvocation.actionInvocationId,
-                  principal,
-                  requestHash,
-                }),
+                loadAnswerableReply(
+                  drizzleTransaction,
+                  {
+                    actionInvocationId: runningInvocation.actionInvocationId,
+                    principal,
+                    requestHash,
+                  },
+                  scopedTransaction,
+                ),
                 runningInvocation.actionInvocationId,
               ),
             );
@@ -2750,19 +2861,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
                 try: () => computeCanonicalValueHash(committedDomainError.encodedDomainError),
               });
-              committedReply = {
-                encoded: yield* Effect.try({
-                  catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
-                  try: () =>
-                    Result.getOrThrow(
-                      encodeCommittedReplyJson(
-                        input.registration.descriptor.domainErrorSchema,
-                        committedDomainError.domainError,
-                      ),
-                    ),
-                }),
-                kind: 'rejection',
-              };
+              committedReply = yield* replyToSave(
+                'rejection',
+                input.registration.descriptor.domainErrorSchema,
+                committedDomainError.domainError,
+                makeHandlerExecutionError,
+              );
             } else {
               const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerValue);
               transactionValue = result;
@@ -2784,21 +2888,16 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                     ),
                   ),
               });
-              committedReply = {
-                encoded: yield* Effect.try({
-                  catch: (cause) =>
-                    attachFailureCause(
-                      new ActionResultValidationError({
-                        code: 'action_result_invalid',
-                        reason: 'The decoded Action result cannot be saved as its committed reply',
-                      }),
-                      cause,
-                    ),
-                  try: () =>
-                    Result.getOrThrow(encodeCommittedReplyJson(input.registration.descriptor.resultSchema, result)),
-                }),
-                kind: 'result',
-              };
+              committedReply = yield* replyToSave(
+                'result',
+                input.registration.descriptor.resultSchema,
+                result,
+                () =>
+                  new ActionResultValidationError({
+                    code: 'action_result_invalid',
+                    reason: 'The decoded Action result cannot be saved as its committed reply',
+                  }),
+              );
               const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
               if (onDecodedSuccess !== undefined) {
                 const hookExit = yield* Effect.exit(
@@ -2953,7 +3052,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           return transactionResult;
         },
       );
-      return yield* executeTransactionAndHandleExit();
+      // A request that waited on the invocation lock while a concurrent first attempt committed meets
+      // the committed invocation inside the owner transaction; it is decided after that rolled back.
+      return yield* executeTransactionAndHandleExit().pipe(
+        Effect.catchIf(Schema.is(ActionAlreadyCommitted), (committed) => decideReplay(committed.invocationId)),
+      );
     });
     const classifyAttemptOutcome = Effect.fn('ActionRuntime.classifyPostAttemptOutcome')(
       function* classifyPostAttemptOutcome(
@@ -2973,6 +3076,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         } else if (executionExit.cause.reasons.some(Cause.isInterruptReason)) {
           outcome = Object.freeze({ _tag: 'Interrupted' });
         } else if (
+          // A replay refused for an undecidable admission or access still met a committed invocation.
+          attempt.replayAllowed === false ||
           executionExit.cause.reasons.some(
             (reason) => Cause.isFailReason(reason) && Schema.is(ActionAlreadyCommitted)(reason.error),
           )
@@ -3083,73 +3188,81 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           }),
           Match.exhaustive,
         );
-        let { revision } = attempt;
-        if (revision === undefined) {
-          if (options.applicationComposition !== undefined && options.expectedDeployment !== undefined) {
-            const admission = yield* loadModuleOperationAdmission(
-              options.applicationComposition,
-              options.expectedDeployment,
-              input.registration,
-              original.principal,
-            ).pipe(Effect.mapError(unavailableActionComposition));
-            if (admission.catalog !== undefined) {
-              yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
-                Effect.mapError(unavailableActionComposition),
-              );
+        const settleAttempt = Effect.gen(function* settleAttemptWithOwner() {
+          let { revision } = attempt;
+          if (revision === undefined) {
+            if (options.applicationComposition !== undefined && options.expectedDeployment !== undefined) {
+              const admission = yield* loadModuleOperationAdmission(
+                options.applicationComposition,
+                options.expectedDeployment,
+                input.registration,
+                original.principal,
+              ).pipe(Effect.mapError(unavailableActionComposition));
+              if (admission.catalog !== undefined) {
+                yield* validateBoundOperationOwner(
+                  input.registration,
+                  admission.catalog,
+                  options.ownerRegistration,
+                ).pipe(Effect.mapError(unavailableActionComposition));
+              }
+              ({ revision } = admission);
+            } else {
+              revision = yield* resolveCompositionRevision(original.principal);
             }
-            ({ revision } = admission);
-          } else {
-            revision = yield* resolveCompositionRevision(original.principal);
           }
-        }
-        const settleAndConfirm = Effect.gen(function* settleAndConfirmUnderSourceFence() {
-          const settlementExit = yield* Effect.exit(
-            withModuleOperationExecution(
-              {
-                loadCatalog: operationCatalogLoader(operationAuthority, revision),
-                ownerRegistration: options.ownerRegistration,
-                phase: mode.phase,
-                registration: input.registration,
-                revision,
-                scope: original.scope,
-              },
-              Effect.suspend(() =>
-                postAttemptHook(
-                  Object.freeze({
-                    actionInvocationId: original.invocationId,
-                    compositionRevision: revision,
-                    outcome,
-                    payload: original.payload,
-                    scope: original.scope,
-                  }),
+          const settleAndConfirm = Effect.gen(function* settleAndConfirmUnderSourceFence() {
+            const settlementExit = yield* Effect.exit(
+              withModuleOperationExecution(
+                {
+                  loadCatalog: operationCatalogLoader(operationAuthority, revision),
+                  ownerRegistration: options.ownerRegistration,
+                  phase: mode.phase,
+                  registration: input.registration,
+                  revision,
+                  scope: original.scope,
+                },
+                Effect.suspend(() =>
+                  postAttemptHook(
+                    Object.freeze({
+                      actionInvocationId: original.invocationId,
+                      compositionRevision: revision,
+                      outcome,
+                      payload: original.payload,
+                      scope: original.scope,
+                    }),
+                  ),
                 ),
               ),
-            ),
-          );
-          if (mode.interrupted) {
-            return yield* executionExit;
-          }
-          if (Exit.isFailure(settlementExit)) {
-            return yield* failSettlement(settlementExit.cause);
-          }
-          const settlement = yield* decodeActionPostAttemptResult(
-            input.registration.descriptor.resultSchema,
-            settlementExit.value,
-          ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
-          return yield* Match.value(settlement).pipe(
-            Match.tags({
-              Recovered: ({ result }) =>
-                attempt.savedReply === undefined
-                  ? confirmOriginalRecovery(result, original, mode.recoverable)
-                  : answerSavedReply(executionExit),
-              Settled: () => answerSavedReply(executionExit),
-            }),
-            Match.exhaustive,
-          );
+            );
+            if (mode.interrupted) {
+              return yield* executionExit;
+            }
+            if (Exit.isFailure(settlementExit)) {
+              return yield* failSettlement(settlementExit.cause);
+            }
+            const settlement = yield* decodeActionPostAttemptResult(
+              input.registration.descriptor.resultSchema,
+              settlementExit.value,
+            ).pipe(Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)));
+            return yield* Match.value(settlement).pipe(
+              Match.tags({
+                Recovered: ({ result }) =>
+                  attempt.replayAllowed === true
+                    ? answerSavedReply(executionExit)
+                    : confirmOriginalRecovery(result, original, mode.recoverable),
+                Settled: () => answerSavedReply(executionExit),
+              }),
+              Match.exhaustive,
+            );
+          });
+          return yield* mode.interrupted
+            ? settleAndConfirm
+            : withRegisteredSourceExecutionFence(original.scope, settleAndConfirm);
         });
-        return yield* mode.interrupted
-          ? settleAndConfirm
-          : withRegisteredSourceExecutionFence(original.scope, settleAndConfirm);
+        const settled = yield* Effect.exit(settleAttempt);
+        // A refused replay is terminal: the hook still sees its AlreadyCommitted attempt once, but
+        // neither a recovered value nor a hook failure replaces the refusal.
+        return yield* attempt.replayAllowed === false && !mode.interrupted ? executionExit : settled;
       }),
     );
   });
