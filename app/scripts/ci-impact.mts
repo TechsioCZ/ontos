@@ -1,5 +1,6 @@
 import type { CiTopologySchema, IntegrationEntry, Templates } from './plan-ci-checks.mts';
 
+import { packIntegrationRows } from './ci-integration-packing.mts';
 import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
 export interface CiWorkspacePackage {
@@ -326,10 +327,19 @@ export const knownTask = (task: string) =>
 export const planCiChecks = (input: {
   readonly changedPaths: readonly string[];
   readonly forceFull?: boolean;
+  readonly integrationCosts?: Readonly<Record<string, number>>;
   readonly packages: readonly CiWorkspacePackage[];
   readonly templates: Templates;
 }) => {
-  const { packages, templates } = input;
+  const { packages } = input;
+  const packed = packIntegrationRows(input.templates.integration, input.integrationCosts);
+  if ('invalid' in packed) {
+    return packed;
+  }
+  const templates = {
+    ...input.templates,
+    integration: packed,
+  };
   const seeds = input.changedPaths.flatMap((changedPath) =>
     packages
       .filter(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`))
@@ -439,7 +449,10 @@ export const planCiChecks = (input: {
 };
 
 /** Every ci-plan job output except `mode`, keyed exactly as the workflow reads them. */
-export const ciPlanOutputs = (plan: ReturnType<typeof planCiChecks>, lintSweep: LintSweep) => {
+export const ciPlanOutputs = (
+  plan: Exclude<ReturnType<typeof planCiChecks>, { readonly invalid: string }>,
+  lintSweep: LintSweep,
+) => {
   const phases = integrationPhases(plan.integration, plan.build);
   const units = unitPhases(plan.unit, lintSweep);
   return {
