@@ -84,10 +84,12 @@ export const configureProviderAccountBindingActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConfigureProviderAccountBindingActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConfigureProviderAccountBindingActionForbiddenProblem'> =>
     ConfigureProviderAccountBindingActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -207,7 +209,8 @@ const mapCoreProblem = (error: ActionCoreError): ConfigureProviderAccountBinding
       ActionInvocationStateError: (failure) => configureProviderAccountBindingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: configureProviderAccountBindingActionProblem.invalid,
       ActionPermissionCheckError: (failure) => configureProviderAccountBindingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => configureProviderAccountBindingActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        configureProviderAccountBindingActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => configureProviderAccountBindingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => configureProviderAccountBindingActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => configureProviderAccountBindingActionProblem.conflict(failure.code),

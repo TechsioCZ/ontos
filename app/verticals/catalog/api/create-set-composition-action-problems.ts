@@ -76,10 +76,12 @@ export const createSetCompositionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreateSetCompositionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreateSetCompositionActionForbiddenProblem'> =>
     CreateSetCompositionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -191,7 +193,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateSetCompositionActionProbl
       ActionInvocationStateError: (failure) => createSetCompositionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createSetCompositionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createSetCompositionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createSetCompositionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createSetCompositionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createSetCompositionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createSetCompositionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createSetCompositionActionProblem.conflict(failure.code),

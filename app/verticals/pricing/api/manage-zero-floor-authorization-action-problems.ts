@@ -111,10 +111,12 @@ export const manageZeroFloorAuthorizationActionProblem = {
   },
   forbidden: (
     code: ProblemOf<'ManageZeroFloorAuthorizationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageZeroFloorAuthorizationActionForbiddenProblem'> =>
     ManageZeroFloorAuthorizationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -241,7 +243,8 @@ const mapCoreProblem = (error: ActionCoreError): ManageZeroFloorAuthorizationAct
       ActionInvocationStateError: (failure) => manageZeroFloorAuthorizationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageZeroFloorAuthorizationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageZeroFloorAuthorizationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageZeroFloorAuthorizationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        manageZeroFloorAuthorizationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageZeroFloorAuthorizationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageZeroFloorAuthorizationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageZeroFloorAuthorizationActionProblem.conflict(failure.code),

@@ -139,7 +139,8 @@ const mapCoreProblem = (error: ActionCoreError): OpenProfileReconciliationAction
       ActionInvocationStateError: (failure) => openProfileReconciliationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: openProfileReconciliationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => openProfileReconciliationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        openProfileReconciliationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => openProfileReconciliationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => openProfileReconciliationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => openProfileReconciliationActionProblem.conflict(failure.code),

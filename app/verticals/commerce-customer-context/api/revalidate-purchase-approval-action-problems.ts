@@ -138,7 +138,8 @@ const mapCoreProblem = (error: ActionCoreError): RevalidatePurchaseApprovalActio
       ActionInvocationStateError: (failure) => revalidatePurchaseApprovalActionProblem.conflict(failure.code),
       ActionPayloadValidationError: revalidatePurchaseApprovalActionProblem.invalid,
       ActionPermissionCheckError: (failure) => revalidatePurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => revalidatePurchaseApprovalActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        revalidatePurchaseApprovalActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => revalidatePurchaseApprovalActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => revalidatePurchaseApprovalActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => revalidatePurchaseApprovalActionProblem.conflict(failure.code),

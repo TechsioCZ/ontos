@@ -73,10 +73,12 @@ export const manageQuotationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ManageQuotationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageQuotationActionForbiddenProblem'> =>
     ManageQuotationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -190,7 +192,7 @@ const mapCoreProblem = (error: ActionCoreError): ManageQuotationActionProblem =>
       ActionInvocationStateError: (failure) => manageQuotationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageQuotationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageQuotationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageQuotationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => manageQuotationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageQuotationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageQuotationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageQuotationActionProblem.conflict(failure.code),

@@ -31,6 +31,7 @@ export const ReservePaymentTermRetirementActionForbiddenProblemSchema = makeProb
       'operation_context_invalid',
       'SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ReservePaymentTermRetirementActionNotFoundProblemSchema = makeProblemDetailsSchema(

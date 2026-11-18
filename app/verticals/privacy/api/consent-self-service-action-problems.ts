@@ -81,10 +81,12 @@ export const consentSelfServiceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConsentSelfServiceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConsentSelfServiceActionForbiddenProblem'> =>
     ConsentSelfServiceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -195,7 +197,8 @@ const mapCoreProblem = (error: ActionCoreError): ConsentSelfServiceActionProblem
       ActionInvocationStateError: (failure) => consentSelfServiceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: consentSelfServiceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => consentSelfServiceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => consentSelfServiceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        consentSelfServiceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => consentSelfServiceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => consentSelfServiceActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => consentSelfServiceActionProblem.conflict(failure.code),

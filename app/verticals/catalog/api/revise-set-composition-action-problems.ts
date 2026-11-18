@@ -76,10 +76,12 @@ export const reviseSetCompositionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReviseSetCompositionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReviseSetCompositionActionForbiddenProblem'> =>
     ReviseSetCompositionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -191,7 +193,8 @@ const mapCoreProblem = (error: ActionCoreError): ReviseSetCompositionActionProbl
       ActionInvocationStateError: (failure) => reviseSetCompositionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reviseSetCompositionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reviseSetCompositionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reviseSetCompositionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reviseSetCompositionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reviseSetCompositionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reviseSetCompositionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reviseSetCompositionActionProblem.conflict(failure.code),

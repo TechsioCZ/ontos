@@ -61,10 +61,12 @@ export const removeCounterpartyPriceGroupActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveCounterpartyPriceGroupActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveCounterpartyPriceGroupActionForbiddenProblem'> =>
     RemoveCounterpartyPriceGroupActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -181,7 +183,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCounterpartyPriceGroupAct
       ActionInvocationStateError: (failure) => removeCounterpartyPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeCounterpartyPriceGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeCounterpartyPriceGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeCounterpartyPriceGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeCounterpartyPriceGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeCounterpartyPriceGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeCounterpartyPriceGroupActionProblem.conflict(failure.code),

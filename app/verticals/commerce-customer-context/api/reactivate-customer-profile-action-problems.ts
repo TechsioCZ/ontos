@@ -131,7 +131,8 @@ const mapCoreProblem = (error: ActionCoreError): ReactivateCustomerProfileAction
       ActionInvocationStateError: (failure) => reactivateCustomerProfileActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reactivateCustomerProfileActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reactivateCustomerProfileActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reactivateCustomerProfileActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reactivateCustomerProfileActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reactivateCustomerProfileActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reactivateCustomerProfileActionProblem.conflict(failure.code),

@@ -28,6 +28,7 @@ export const AssignCustomerGroupActionForbiddenProblemSchema = makeProblemDetail
       'operation_context_invalid',
       'customer_group_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const AssignCustomerGroupActionNotFoundProblemSchema = makeProblemDetailsSchema(

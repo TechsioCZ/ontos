@@ -31,6 +31,7 @@ export const ChangeRetailPaymentTermPreferenceActionForbiddenProblemSchema = mak
       'operation_context_invalid',
       'SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ChangeRetailPaymentTermPreferenceActionNotFoundProblemSchema = makeProblemDetailsSchema(

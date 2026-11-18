@@ -27,6 +27,7 @@ export const CreateTaxRuleActionForbiddenProblemSchema = makeProblemDetailsSchem
       'operation_context_denied',
       'operation_context_invalid',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const CreateTaxRuleActionNotFoundProblemSchema = makeProblemDetailsSchema(

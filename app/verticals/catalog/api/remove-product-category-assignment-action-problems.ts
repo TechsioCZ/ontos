@@ -80,10 +80,12 @@ export const removeProductCategoryAssignmentActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveProductCategoryAssignmentActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveProductCategoryAssignmentActionForbiddenProblem'> =>
     RemoveProductCategoryAssignmentActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -204,7 +206,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveProductCategoryAssignment
       ActionInvocationStateError: (failure) => removeProductCategoryAssignmentActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeProductCategoryAssignmentActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeProductCategoryAssignmentActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeProductCategoryAssignmentActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeProductCategoryAssignmentActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeProductCategoryAssignmentActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeProductCategoryAssignmentActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeProductCategoryAssignmentActionProblem.conflict(failure.code),

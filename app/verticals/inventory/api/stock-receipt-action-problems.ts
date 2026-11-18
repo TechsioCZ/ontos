@@ -61,10 +61,12 @@ export const stockReceiptActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'StockReceiptActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'StockReceiptActionForbiddenProblem'> =>
     StockReceiptActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,7 @@ const mapCoreProblem = (error: ActionCoreError): StockReceiptActionProblem =>
       ActionInvocationStateError: (failure) => stockReceiptActionProblem.conflict(failure.code),
       ActionPayloadValidationError: stockReceiptActionProblem.invalid,
       ActionPermissionCheckError: (failure) => stockReceiptActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => stockReceiptActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => stockReceiptActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => stockReceiptActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => stockReceiptActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => stockReceiptActionProblem.conflict(failure.code),

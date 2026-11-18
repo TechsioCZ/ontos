@@ -61,10 +61,12 @@ export const retireControlledAttributeValueActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RetireControlledAttributeValueActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RetireControlledAttributeValueActionForbiddenProblem'> =>
     RetireControlledAttributeValueActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -171,7 +173,8 @@ const mapCoreProblem = (error: ActionCoreError): RetireControlledAttributeValueA
       ActionInvocationStateError: (failure) => retireControlledAttributeValueActionProblem.conflict(failure.code),
       ActionPayloadValidationError: retireControlledAttributeValueActionProblem.invalid,
       ActionPermissionCheckError: (failure) => retireControlledAttributeValueActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => retireControlledAttributeValueActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        retireControlledAttributeValueActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => retireControlledAttributeValueActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => retireControlledAttributeValueActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => retireControlledAttributeValueActionProblem.conflict(failure.code),

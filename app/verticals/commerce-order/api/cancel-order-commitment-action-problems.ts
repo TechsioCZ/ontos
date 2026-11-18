@@ -78,10 +78,12 @@ export const cancelOrderCommitmentActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CancelOrderCommitmentActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CancelOrderCommitmentActionForbiddenProblem'> =>
     CancelOrderCommitmentActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -194,7 +196,8 @@ const mapCoreProblem = (error: ActionCoreError): CancelOrderCommitmentActionProb
       ActionInvocationStateError: (failure) => cancelOrderCommitmentActionProblem.conflict(failure.code),
       ActionPayloadValidationError: cancelOrderCommitmentActionProblem.invalid,
       ActionPermissionCheckError: (failure) => cancelOrderCommitmentActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => cancelOrderCommitmentActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        cancelOrderCommitmentActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => cancelOrderCommitmentActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => cancelOrderCommitmentActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => cancelOrderCommitmentActionProblem.conflict(failure.code),

@@ -100,10 +100,12 @@ export const requestPaymentCancellationActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RequestPaymentCancellationActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RequestPaymentCancellationActionForbiddenProblem'> =>
     RequestPaymentCancellationActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -223,7 +225,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestPaymentCancellationActio
       ActionInvocationStateError: (failure) => requestPaymentCancellationActionProblem.conflict(failure.code),
       ActionPayloadValidationError: requestPaymentCancellationActionProblem.invalid,
       ActionPermissionCheckError: (failure) => requestPaymentCancellationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => requestPaymentCancellationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        requestPaymentCancellationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => requestPaymentCancellationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => requestPaymentCancellationActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => requestPaymentCancellationActionProblem.conflict(failure.code),

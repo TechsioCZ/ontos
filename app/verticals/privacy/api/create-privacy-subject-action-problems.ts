@@ -81,10 +81,12 @@ export const createPrivacySubjectActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreatePrivacySubjectActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreatePrivacySubjectActionForbiddenProblem'> =>
     CreatePrivacySubjectActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -197,7 +199,8 @@ const mapCoreProblem = (error: ActionCoreError): CreatePrivacySubjectActionProbl
       ActionInvocationStateError: (failure) => createPrivacySubjectActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createPrivacySubjectActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createPrivacySubjectActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createPrivacySubjectActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createPrivacySubjectActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createPrivacySubjectActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createPrivacySubjectActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createPrivacySubjectActionProblem.conflict(failure.code),

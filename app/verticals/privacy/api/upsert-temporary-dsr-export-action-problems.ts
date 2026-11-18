@@ -81,10 +81,12 @@ export const upsertTemporaryDsrExportActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'UpsertTemporaryDsrExportActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'UpsertTemporaryDsrExportActionForbiddenProblem'> =>
     UpsertTemporaryDsrExportActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): UpsertTemporaryDsrExportActionP
       ActionInvocationStateError: (failure) => upsertTemporaryDsrExportActionProblem.conflict(failure.code),
       ActionPayloadValidationError: upsertTemporaryDsrExportActionProblem.invalid,
       ActionPermissionCheckError: (failure) => upsertTemporaryDsrExportActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => upsertTemporaryDsrExportActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        upsertTemporaryDsrExportActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => upsertTemporaryDsrExportActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => upsertTemporaryDsrExportActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => upsertTemporaryDsrExportActionProblem.conflict(failure.code),

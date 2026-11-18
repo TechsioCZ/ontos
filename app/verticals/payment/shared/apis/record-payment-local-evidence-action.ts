@@ -33,6 +33,7 @@ export const RecordPaymentLocalEvidenceActionForbiddenProblemSchema = makeProble
       'operation_context_invalid',
       'payment_source_authority_forbidden',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const RecordPaymentLocalEvidenceActionNotFoundProblemSchema = makeProblemDetailsSchema(

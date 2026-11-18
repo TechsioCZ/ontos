@@ -81,10 +81,12 @@ export const recordOwnerExecutionOutcomeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordOwnerExecutionOutcomeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordOwnerExecutionOutcomeActionForbiddenProblem'> =>
     RecordOwnerExecutionOutcomeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -198,7 +200,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordOwnerExecutionOutcomeActi
       ActionInvocationStateError: (failure) => recordOwnerExecutionOutcomeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordOwnerExecutionOutcomeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordOwnerExecutionOutcomeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordOwnerExecutionOutcomeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordOwnerExecutionOutcomeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordOwnerExecutionOutcomeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordOwnerExecutionOutcomeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordOwnerExecutionOutcomeActionProblem.conflict(failure.code),

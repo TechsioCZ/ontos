@@ -85,10 +85,12 @@ export const setBasisPolicyActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetBasisPolicyActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetBasisPolicyActionForbiddenProblem'> =>
     SetBasisPolicyActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -197,7 +199,7 @@ const mapCoreProblem = (error: ActionCoreError): SetBasisPolicyActionProblem =>
       ActionInvocationStateError: (failure) => setBasisPolicyActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setBasisPolicyActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setBasisPolicyActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setBasisPolicyActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => setBasisPolicyActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setBasisPolicyActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setBasisPolicyActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setBasisPolicyActionProblem.conflict(failure.code),

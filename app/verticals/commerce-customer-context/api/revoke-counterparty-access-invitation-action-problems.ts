@@ -149,7 +149,8 @@ const mapCoreProblem = (error: ActionCoreError): RevokeCounterpartyAccessInvitat
       ActionPayloadValidationError: revokeCounterpartyAccessInvitationActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         revokeCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => revokeCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        revokeCounterpartyAccessInvitationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => revokeCounterpartyAccessInvitationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         revokeCounterpartyAccessInvitationActionProblem.unavailable(failure.code),

@@ -101,10 +101,12 @@ export const createPromotionSuccessorActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CreatePromotionSuccessorActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CreatePromotionSuccessorActionForbiddenProblem'> =>
     CreatePromotionSuccessorActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -225,7 +227,8 @@ const mapCoreProblem = (error: ActionCoreError): CreatePromotionSuccessorActionP
       ActionInvocationStateError: (failure) => createPromotionSuccessorActionProblem.conflict(failure.code),
       ActionPayloadValidationError: createPromotionSuccessorActionProblem.invalid,
       ActionPermissionCheckError: (failure) => createPromotionSuccessorActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createPromotionSuccessorActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createPromotionSuccessorActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createPromotionSuccessorActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => createPromotionSuccessorActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => createPromotionSuccessorActionProblem.conflict(failure.code),

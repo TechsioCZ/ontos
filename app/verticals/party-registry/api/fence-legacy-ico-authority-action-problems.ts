@@ -61,10 +61,12 @@ export const fenceLegacyIcoAuthorityActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'FenceLegacyIcoAuthorityActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'FenceLegacyIcoAuthorityActionForbiddenProblem'> =>
     FenceLegacyIcoAuthorityActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -165,7 +167,8 @@ const mapCoreProblem = (error: ActionCoreError): FenceLegacyIcoAuthorityActionPr
       ActionInvocationStateError: (failure) => fenceLegacyIcoAuthorityActionProblem.conflict(failure.code),
       ActionPayloadValidationError: fenceLegacyIcoAuthorityActionProblem.invalid,
       ActionPermissionCheckError: (failure) => fenceLegacyIcoAuthorityActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => fenceLegacyIcoAuthorityActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        fenceLegacyIcoAuthorityActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => fenceLegacyIcoAuthorityActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => fenceLegacyIcoAuthorityActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => fenceLegacyIcoAuthorityActionProblem.conflict(failure.code),

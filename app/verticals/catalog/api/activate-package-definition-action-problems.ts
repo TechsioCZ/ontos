@@ -74,10 +74,12 @@ export const activatePackageDefinitionActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ActivatePackageDefinitionActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ActivatePackageDefinitionActionForbiddenProblem'> =>
     ActivatePackageDefinitionActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -191,7 +193,8 @@ const mapCoreProblem = (error: ActionCoreError): ActivatePackageDefinitionAction
       ActionInvocationStateError: (failure) => activatePackageDefinitionActionProblem.conflict(failure.code),
       ActionPayloadValidationError: activatePackageDefinitionActionProblem.invalid,
       ActionPermissionCheckError: (failure) => activatePackageDefinitionActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => activatePackageDefinitionActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        activatePackageDefinitionActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => activatePackageDefinitionActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => activatePackageDefinitionActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => activatePackageDefinitionActionProblem.conflict(failure.code),

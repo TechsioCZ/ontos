@@ -118,10 +118,12 @@ export const consumeOrderPurchaseApprovalActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ConsumeOrderPurchaseApprovalActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ConsumeOrderPurchaseApprovalActionForbiddenProblem'> =>
     ConsumeOrderPurchaseApprovalActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -241,7 +243,8 @@ const mapCoreProblem = (error: ActionCoreError): ConsumeOrderPurchaseApprovalAct
       ActionInvocationStateError: (failure) => consumeOrderPurchaseApprovalActionProblem.conflict(failure.code),
       ActionPayloadValidationError: consumeOrderPurchaseApprovalActionProblem.invalid,
       ActionPermissionCheckError: (failure) => consumeOrderPurchaseApprovalActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => consumeOrderPurchaseApprovalActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        consumeOrderPurchaseApprovalActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => consumeOrderPurchaseApprovalActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => consumeOrderPurchaseApprovalActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => consumeOrderPurchaseApprovalActionProblem.conflict(failure.code),

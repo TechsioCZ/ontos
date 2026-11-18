@@ -63,10 +63,12 @@ export const admitSymmyJobActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'AdmitSymmyJobActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'AdmitSymmyJobActionForbiddenProblem'> =>
     AdmitSymmyJobActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -165,7 +167,7 @@ const mapCoreProblem = (error: ActionCoreError): AdmitSymmyJobActionProblem =>
       ActionInvocationStateError: (failure) => admitSymmyJobActionProblem.conflict(failure.code),
       ActionPayloadValidationError: admitSymmyJobActionProblem.invalid,
       ActionPermissionCheckError: (failure) => admitSymmyJobActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => admitSymmyJobActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => admitSymmyJobActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => admitSymmyJobActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => admitSymmyJobActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => admitSymmyJobActionProblem.conflict(failure.code),

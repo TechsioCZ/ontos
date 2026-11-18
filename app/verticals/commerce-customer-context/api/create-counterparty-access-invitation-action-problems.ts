@@ -149,7 +149,8 @@ const mapCoreProblem = (error: ActionCoreError): CreateCounterpartyAccessInvitat
       ActionPayloadValidationError: createCounterpartyAccessInvitationActionProblem.invalid,
       ActionPermissionCheckError: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => createCounterpartyAccessInvitationActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        createCounterpartyAccessInvitationActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => createCounterpartyAccessInvitationActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         createCounterpartyAccessInvitationActionProblem.unavailable(failure.code),

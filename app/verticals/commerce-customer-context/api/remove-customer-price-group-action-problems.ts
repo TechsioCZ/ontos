@@ -61,10 +61,12 @@ export const removeCustomerPriceGroupActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveCustomerPriceGroupActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveCustomerPriceGroupActionForbiddenProblem'> =>
     RemoveCustomerPriceGroupActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -176,7 +178,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveCustomerPriceGroupActionP
       ActionInvocationStateError: (failure) => removeCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeCustomerPriceGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeCustomerPriceGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeCustomerPriceGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeCustomerPriceGroupActionProblem.conflict(failure.code),
