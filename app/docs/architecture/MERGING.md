@@ -6,14 +6,15 @@
 conflict in the plan. A row matches when one of its path globs matches the conflicted path and one of
 its kinds admits the conflict: `any`, a conflict kind (`content`, `modify-delete`, `add-add`,
 `rename`, `other`), or `demo-deleted`, which admits a modify/delete where demo deleted the file and
-`git grep` of the file's name on the merge result tree finds no file outside the conflicted paths that
-names it (each conflicted path is settled by its own verdict). A conflict
-no row matches gets `verdict: null`. Those are the only conflicts a person or a model decides. Rows
+`git grep` of the file's name on the merge result tree finds no other file that names it, conflicted
+files included. A conflict no row matches gets `verdict: null`. Those are the only conflicts a person or a model decides. Rows
 without globs apply to the merge preflight findings and to the plan's migration lists, not to
 conflicts.
 
-Everything under `app/verticals/*/src` or `app/verticals/*/shared` that conflicts has no row on
-purpose, so it is always `verdict: null`.
+Everything under `app/verticals/*/src` or `app/verticals/*/shared` that conflicts is always
+`verdict: null`, whatever row would match it.
+
+The plan reads this table from pinned demo, and from the checkout only while demo has no copy yet.
 
 <!-- verdicts:start -->
 

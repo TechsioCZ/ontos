@@ -29,6 +29,8 @@ const VERDICTS_END = '<!-- verdicts:end -->';
 const VERDICTS_DOCUMENT = 'app/docs/architecture/MERGING.md';
 const TYPESCRIPT_PATHSPECS = ['app/*.ts', 'app/*.tsx', 'app/*.mts'] as const;
 const MODIFY_DELETE = 'modify-delete';
+const NAME_ONLY = '--name-only';
+const NO_RENAMES = '--no-renames';
 
 const OWNER_CONTRACT_GLOBS = [
   'app/verticals/*/shared/api.ts',
@@ -46,6 +48,8 @@ const OWNER_CONTRACT_GLOBS = [
   'app/packages/core-runtime/drizzle/**',
   'app/packages/core-runtime/src/**',
 ] as const;
+
+const ALWAYS_DECIDED_GLOBS = ['app/verticals/*/src/**', 'app/verticals/*/shared/**'] as const;
 
 const WORKSPACE_PACKAGE_JSON = /^app\/(?:(?:apps|packages|verticals)\/)?[^/]+\/package\.json$/u;
 const WORKSPACE_PACKAGE_DIRECTORY = /^app\/(?:(?:apps|packages|verticals)\/)?[^/]+/u;
@@ -195,7 +199,7 @@ const git = (args: readonly string[], accepted?: readonly number[]) => run('git'
 
 const lines = (output: string): readonly string[] => output.split('\n').filter((line) => line.length > 0);
 
-const listTree = (ref: string) => git(['ls-tree', '-r', '--name-only', ref, '--', 'app']).pipe(Effect.map(lines));
+const listTree = (ref: string) => git(['ls-tree', '-r', NAME_ONLY, ref, '--', 'app']).pipe(Effect.map(lines));
 
 const resolveCommit = (ref: string) =>
   git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], [0, 1]).pipe(
@@ -265,19 +269,22 @@ const admits = (conflict: UndecidedConflict, kind: string) =>
 
 /**
  * The first verdict whose globs match the path and whose kinds admit the conflict. Kind `demo-deleted`
- * admits a modify/delete where demo deleted the file and nothing outside the conflicts names it.
+ * admits a modify/delete where demo deleted the file and no other file on the result tree names it.
+ * Owner source and shared contracts never get a standing verdict.
  */
 const verdictFor = (rules: readonly VerdictRule[], conflict: UndecidedConflict): Conflict['verdict'] =>
-  Option.map(
-    Option.fromNullishOr(
-      rules.find(
-        (rule) =>
-          rule.globs.some((glob) => nodePath.matchesGlob(conflict.path, glob)) &&
-          rule.kinds.some((kind) => admits(conflict, kind)),
-      ),
-    ),
-    ({ id, rule }) => ({ id, rule }),
-  );
+  ALWAYS_DECIDED_GLOBS.some((glob) => nodePath.matchesGlob(conflict.path, glob))
+    ? Option.none()
+    : Option.map(
+        Option.fromNullishOr(
+          rules.find(
+            (rule) =>
+              rule.globs.some((glob) => nodePath.matchesGlob(conflict.path, glob)) &&
+              rule.kinds.some((kind) => admits(conflict, kind)),
+          ),
+        ),
+        ({ id, rule }) => ({ id, rule }),
+      );
 
 const CONFLICT_KINDS = new Map<string, ConflictKind>([
   ['add/add', 'add-add'],
@@ -341,30 +348,22 @@ const parseMergeTree = (output: string): MergeTree => {
   return { messages, stages, tree: tokens[0] ?? '' };
 };
 
-interface Change {
-  readonly path: string;
-  readonly status: string;
-}
-
 interface Commit {
-  readonly changes: readonly Change[];
+  readonly paths: readonly string[];
   readonly sha: string;
 }
 
-/** Every incoming main commit, oldest first, with its name-status changes. */
+/**
+ * Every incoming main commit, oldest first, with the paths it changed. A merge commit lists the paths
+ * its conflict resolution changed against an automatic re-merge of its parents.
+ */
 const parseLog = (output: string): readonly Commit[] =>
   output
     .split('\u0001')
     .filter((chunk) => chunk.trim().length > 0)
     .map((chunk) => {
-      const [sha = '', ...rest] = lines(chunk);
-      return {
-        changes: rest.flatMap((line) => {
-          const [status = '', path] = line.split('\t');
-          return path === undefined ? [] : [{ path, status }];
-        }),
-        sha: sha.trim(),
-      };
+      const [sha = '', ...paths] = lines(chunk);
+      return { paths, sha: sha.trim() };
     });
 
 const isTestFile = (path: string) => TEST_FILE.test(path);
@@ -466,8 +465,8 @@ const deletingCommitOf = (ref: string, path: string) =>
     { concurrency: 2 },
   ).pipe(Effect.map((shas) => Option.fromNullishOr(shas.map((sha) => sha.trim()).find((sha) => sha !== ''))));
 
-/** Files on the result tree outside the conflicted paths that name a file by its stem. */
-const importersOf = (tree: string, path: string, conflicted: ReadonlyMap<string, unknown>) =>
+/** Files on the result tree, other than the file itself, that name a file by its stem. */
+const importersOf = (tree: string, path: string) =>
   git(
     ['grep', '-l', '-F', nodePath.basename(path).replace(/\.[^.]+$/u, ''), tree, '--', 'app', '.github'],
     [0, 1],
@@ -475,7 +474,7 @@ const importersOf = (tree: string, path: string, conflicted: ReadonlyMap<string,
     Effect.map((output) =>
       lines(output)
         .map((line) => line.slice(tree.length + 1))
-        .filter((file) => !conflicted.has(file)),
+        .filter((file) => file !== path),
     ),
   );
 
@@ -502,9 +501,7 @@ const conflictEntry = Effect.fn(function* conflictEntry(
         onNone: () => Effect.succeed(Option.none<string>()),
         onSome: (ref) => deletingCommitOf(ref, path),
       }),
-      Option.contains(deletedBy, 'demo')
-        ? importersOf(mergeTree.tree, path, mergeTree.stages)
-        : Effect.succeed<readonly string[]>([]),
+      Option.contains(deletedBy, 'demo') ? importersOf(mergeTree.tree, path) : Effect.succeed<readonly string[]>([]),
     ],
     { concurrency: 2 },
   );
@@ -590,8 +587,8 @@ const intentsOf = Effect.fn(function* intentsOf(commits: readonly Commit[], conf
       title: Option.match(pull, { onNone: () => '', onSome: (found) => found.title }),
     };
     group.commits.push(commit.sha);
-    for (const change of commit.changes) {
-      group.paths.add(change.path);
+    for (const path of commit.paths) {
+      group.paths.add(path);
     }
     grouped.set(key, group);
   }
@@ -619,7 +616,7 @@ const intentsOf = Effect.fn(function* intentsOf(commits: readonly Commit[], conf
 
 const ownerContractsOf = (commits: readonly Commit[]): readonly OwnerContract[] => {
   const contractPaths = new Map<string, string[]>();
-  const changed = new Set(commits.flatMap((commit) => commit.changes.map((change) => change.path)));
+  const changed = new Set(commits.flatMap((commit) => commit.paths));
   for (const path of [...changed].toSorted()) {
     for (const owner of Option.toArray(ownerOf(path))) {
       contractPaths.set(owner, [...(contractPaths.get(owner) ?? []), path]);
@@ -681,16 +678,14 @@ const consumersOf = Effect.fn(function* consumersOf(
   );
 });
 
-/** Main changes, other than additions, to files of migration folders that already exist at the base. */
-const migrationEditsOf = (commits: readonly Commit[], baseFiles: ReadonlySet<string>) =>
-  [
-    ...new Set(
-      commits
-        .flatMap((commit) => commit.changes)
-        .filter((change) => change.status !== 'A' && MIGRATION_FOLDER.test(change.path) && baseFiles.has(change.path))
-        .map((change) => change.path),
-    ),
-  ].toSorted();
+/**
+ * Migration files already on pinned demo, so applied on stage, that the merge result changes, removes
+ * or leaves conflicted. Main's additions of new files are not edits.
+ */
+const migrationEditsOf = (resultChanges: string, demoFiles: ReadonlySet<string>, conflicted: ReadonlySet<string>) =>
+  [...new Set([...lines(resultChanges), ...conflicted])]
+    .filter((path) => MIGRATION_FOLDER.test(path) && demoFiles.has(path))
+    .toSorted();
 
 const summaryOf = (plan: MergePlan, out: string) => {
   const conflictCount = (kind: ConflictKind) => plan.conflicts.filter((conflict) => conflict.kind === kind).length;
@@ -723,6 +718,18 @@ const requireRerere = git(['config', '--type=bool', '--get', 'rerere.enabled'], 
   ),
 );
 
+/** The verdict table as pinned demo declares it; the checkout's copy only while demo has none yet. */
+const verdictDocumentOf = (demo: string, fileSystem: FileSystem.FileSystem) =>
+  git(['ls-tree', NAME_ONLY, demo, '--', VERDICTS_DOCUMENT]).pipe(
+    Effect.flatMap((listed) =>
+      listed.trim() === VERDICTS_DOCUMENT
+        ? git(['show', `${demo}:${VERDICTS_DOCUMENT}`])
+        : fileSystem
+            .readFileString(nodePath.join(REPOSITORY_ROOT, VERDICTS_DOCUMENT))
+            .pipe(Effect.mapError((cause) => planFailure(`unable to read ${VERDICTS_DOCUMENT}: ${cause.message}`))),
+    ),
+  );
+
 /** Fetches, pins main and demo, analyses the merge and writes the plan; returns the summary. */
 export const writeMergePlan = Effect.fn(function* writeMergePlan(options: {
   readonly demo: string;
@@ -739,8 +746,8 @@ export const writeMergePlan = Effect.fn(function* writeMergePlan(options: {
     [
       git(['merge-base', '--all', demo, main]),
       git(['merge-tree', '--write-tree', '-z', '--messages', demo, main], [0, 1]),
-      git(['log', '--reverse', '--no-merges', '--no-renames', '--format=%x01%H', '--name-status', `${demo}..${main}`]),
-      fileSystem.readFileString(nodePath.join(REPOSITORY_ROOT, VERDICTS_DOCUMENT)).pipe(Effect.orElseSucceed(() => '')),
+      git(['log', '--reverse', '--diff-merges=remerge', NO_RENAMES, '--format=%x01%H', NAME_ONLY, `${demo}..${main}`]),
+      verdictDocumentOf(demo, fileSystem),
     ],
     { concurrency: 'unbounded' },
   );
@@ -751,13 +758,14 @@ export const writeMergePlan = Effect.fn(function* writeMergePlan(options: {
   }
   const mergeTree = parseMergeTree(mergeTreeOutput);
   const commits = parseLog(logOutput);
-  const [baseFiles, demoFiles, mainFiles, resultFiles, importDiff, demoImports] = yield* Effect.all(
+  const [baseFiles, demoFiles, mainFiles, resultFiles, resultChanges, importDiff, demoImports] = yield* Effect.all(
     [
       listTree(base),
       listTree(demo),
       listTree(main),
       listTree(mergeTree.tree),
-      git(['diff', '-U0', '--no-color', '--no-renames', '--diff-filter=AM', base, main, '--', ...TYPESCRIPT_PATHSPECS]),
+      git(['diff', NAME_ONLY, NO_RENAMES, demo, mergeTree.tree, '--', 'app']),
+      git(['diff', '-U0', '--no-color', NO_RENAMES, '--diff-filter=AM', base, main, '--', ...TYPESCRIPT_PATHSPECS]),
       git(
         [
           'grep',
@@ -797,7 +805,7 @@ export const writeMergePlan = Effect.fn(function* writeMergePlan(options: {
     interleavedMigrations: interleavedMigrationsOf(baseFiles, demoFiles, mainFiles),
     main,
     mergeBases,
-    migrationEdits: migrationEditsOf(commits, new Set(baseFiles)),
+    migrationEdits: migrationEditsOf(resultChanges, new Set(demoFiles), new Set(mergeTree.stages.keys())),
     newImportEdges: [...addedImportEdges(importDiff).entries()]
       .filter(([key]) => !demoEdges.has(key))
       .map(([, edge]) => ({ files: [...edge.files].toSorted(), importer: edge.importer, specifier: edge.specifier }))
