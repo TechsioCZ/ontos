@@ -6278,6 +6278,7 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
           ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
           ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
           ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
+          ['packages/core-runtime/src/resources', 'packages/core-runtime/src/resources', 'dir'],
           ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
           ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
           ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
