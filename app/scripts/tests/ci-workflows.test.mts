@@ -1769,7 +1769,6 @@ const WHOLE_FILES = {
     'scripts/integration/symmy-c14-customer-owner-conformance.test.mts',
     'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
     'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
-    'scripts/integration/symmy-c14-pricing-revisions-conformance.test.mts',
     'scripts/integration/scoped-owner-migrations.test.mts',
   ],
 } satisfies Readonly<Record<string, readonly string[]>>;
@@ -1785,7 +1784,6 @@ const NATIVE_TOPOLOGY_PROOFS = [
   'whole:customer-readback',
   'whole:customer-roundtrip',
   'whole:pricing-recovery',
-  'whole:pricing-revisions',
   'whole:privacy',
   'whole:privacy-recovery',
   'whole:pricing',

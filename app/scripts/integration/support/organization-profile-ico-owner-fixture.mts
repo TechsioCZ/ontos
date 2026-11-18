@@ -286,8 +286,9 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
           Effect.gen(function* recordFailureDiagnostics() {
             for (const [appId, diagnostic] of diagnostics) {
               const fs = yield* FileSystem.FileSystem;
-              yield* fs.writeFileString(`/tmp/commerce-org-http-${appId}.diag.log`, yield* diagnostic);
-              yield* Effect.logError({ appId, diagnosticFile: `/tmp/commerce-org-http-${appId}.diag.log` });
+              const diagnosticFile = `/tmp/commerce-org-http-${appId}-${prepared.decisionRef}.diag.log`;
+              yield* fs.writeFileString(diagnosticFile, yield* diagnostic);
+              yield* Effect.logError({ appId, decisionRef: prepared.decisionRef, diagnosticFile });
             }
             yield* Effect.logError({ gateway: yield* shell.gatewayDiagnostics() });
           }),

@@ -318,7 +318,7 @@ export const taskDirectory = (task: string) =>
 /** Every task form run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
 export const knownTask = (task: string) =>
   /^root:\d+\/\d+$/u.test(task) ||
-  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-recovery|pricing-revisions|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
+  /^whole:(?:organization|organization-identity|customer-readback|customer-roundtrip|pricing-recovery|privacy|privacy-recovery|pricing|migrations|party-worker|preproposal-basis|preproposal-approval)$/u.test(
     task,
   ) ||
   taskDirectory(task) !== undefined;
@@ -384,7 +384,12 @@ export const planCiChecks = (input: {
     }
     const proofAffected = entry['proof-packages']?.some((name) => affectedNames.has(name)) === true;
     const tasks = (entry.tasks ?? []).filter((task) => {
-      if (task.startsWith('root:') || task === 'whole:migrations') {
+      if (
+        task.startsWith('root:') ||
+        ['whole:migrations', 'whole:customer-readback', 'whole:customer-roundtrip', 'whole:pricing-recovery'].includes(
+          task,
+        )
+      ) {
         return rootAffected;
       }
       if (task.startsWith('whole:preproposal-')) {
