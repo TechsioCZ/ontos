@@ -1484,7 +1484,9 @@ const testProgram9 = () =>
       const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(successResult.value).toBe('same');
-      expect(hasFailure(rejectedExit, 'ActionInvocationPersistenceError')).toBe(true);
+      // The loser's denial found the invocation already committed, so it is a same-key retry of a
+      // committed Action: it answers the saved reply, and its denial is recorded nowhere.
+      expect(Exit.isSuccess(rejectedExit) && rejectedExit.value.value).toBe('same');
       expect(invocation.status).toBe('succeeded');
       expect(audits.filter((row) => row.eventType === 'action.rejected').length).toBe(0);
     }),
