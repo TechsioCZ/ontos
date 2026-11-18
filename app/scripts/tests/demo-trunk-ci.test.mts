@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { Result, Schema } from 'effect';
@@ -286,96 +285,17 @@ it('runs the demo-only Effect diagnostics in pnpm check, beside the shared ones 
   );
 });
 
-/** A push run as the run list returns it; a run without a conclusion is still running. */
-const run = (sha: string, conclusion: string | null) => ({
-  conclusion,
-  head_sha: sha,
-  status: conclusion === null ? 'in_progress' : 'completed',
-});
-const green = (sha: string) => run(sha, 'success');
-
-const StepsSchema = Schema.Struct({
+const PlanJobSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
-    Schema.Struct({
-      permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-      steps: Schema.optional(
-        Schema.Array(Schema.Struct({ id: Schema.optional(Schema.String), run: Schema.optional(Schema.String) })),
-      ),
-    }),
+    Schema.Struct({ permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
   ),
 });
 
-it('compares a demo push with the newest green ancestor, and runs everything without one', () => {
-  const plan = Schema.decodeUnknownSync(StepsSchema)(
+it('lets the plan job read the run list that the newest-green-push lookup needs', () => {
+  // The lookup is main's, in scripts/plan-ci-changes.sh; scripts/tests/ci-change-plan.test.mts proves it.
+  const plan = Schema.decodeUnknownSync(PlanJobSchema)(
     parse(readFileSync(path.join(repository, '.github/workflows/ultramodern-workspace-gates.yml'), 'utf-8')),
   ).jobs['ci-plan'];
-  // The run list of this workflow is read with the job's own token.
   expect(plan?.permissions).toEqual({ actions: 'read', contents: 'read' });
-  const script = plan?.steps?.find(({ id }) => id === 'proven-base')?.run ?? 'exit 1';
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-proven-base-'));
-  const git = (...args: readonly string[]) =>
-    execFileSync('/usr/bin/git', ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
-      cwd: directory,
-      encoding: 'utf-8',
-    }).trim();
-  const commit = (message: string) => {
-    git('commit', '--allow-empty', '--quiet', '--message', message);
-    return git('rev-parse', 'HEAD');
-  };
-  try {
-    git('init', '--quiet', '--initial-branch', 'demo');
-    const first = commit('first');
-    const second = commit('second');
-    git('checkout', '--quiet', '--orphan', 'elsewhere');
-    const unrelated = commit('unrelated');
-    git('checkout', '--quiet', 'demo');
-    const head = commit('head');
-    const bin = path.join(directory, '.bin');
-    mkdirSync(bin);
-    // The fake GitHub API answers `gh api <path> --jq <filter>` through jq: the workflow of this run, then its push
-    // runs on the branch, newest first, as the unfiltered list returns them.
-    writeFileSync(
-      path.join(bin, 'gh'),
-      [
-        '#!/bin/bash',
-        '[[ "$FAIL" != true ]] || exit 1',
-        'body="$RUNS"',
-        '[[ "$2" != */actions/runs/* ]] || body=\'{"workflow_id":7}\'',
-        'exec jq -r "$4" <<<"$body"',
-        '',
-      ].join('\n'),
-    );
-    chmodSync(path.join(bin, 'gh'), 0o755);
-    const base = (runs: readonly ReturnType<typeof run>[], fail = false) => {
-      const output = path.join(directory, '.output');
-      writeFileSync(output, '');
-      execFileSync('/bin/bash', ['-e', '-c', script], {
-        cwd: directory,
-        env: {
-          FAIL: String(fail),
-          GITHUB_OUTPUT: output,
-          GITHUB_REPOSITORY: 'owner/repository',
-          GITHUB_RUN_ID: '1',
-          GITHUB_SHA: head,
-          PATH: `${bin}:/usr/bin:/bin`,
-          RUNS: JSON.stringify({ workflow_runs: runs }),
-        },
-        stdio: 'pipe',
-      });
-      return readFileSync(output, 'utf-8').trim();
-    };
-    // The commit itself and a commit outside its history never count; the newest green ancestor does.
-    expect(base([green(head), green(unrelated), green(second), green(first)])).toBe(`base=${second}`);
-    // A failed, cancelled or still running run proves nothing, so its commit is compared past.
-    expect(base([run(head, null), run(second, 'failure'), run(second, 'cancelled'), green(first)])).toBe(
-      `base=${first}`,
-    );
-    // No green ancestor, no answer or an unreadable answer: no base, so the complete suite runs.
-    expect(base([green(unrelated), green(head), run(first, 'failure')])).toBe('');
-    expect(base([])).toBe('');
-    expect(base([green(second)], true)).toBe('');
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
 });
