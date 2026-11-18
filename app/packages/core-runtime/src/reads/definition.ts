@@ -1257,6 +1257,9 @@ type ReadPipelineRequirements<Requirements, PrepareRequirements, FinishRequireme
 const noOwnerTransaction: ReadOwnerTransaction<never> = () =>
   Effect.die('These owner steps run without Core; pass `transaction` to give finish its owner transaction');
 
+/** The steps an owner read pipeline may declare. */
+const readPipelineStepNames = ['prepare', 'load', 'finish'] as const;
+
 type AnyReadPipeline<
   Input,
   Result,
@@ -1524,9 +1527,23 @@ export function defineRead<
   ) {
     return failReadDefinition('Read policies must be an explicit array of Policy references');
   }
-  // The owner steps as they are now: the spread reads each step once into a frozen copy only Core holds,
+  // A step is the pipeline's own data property or absent: one inherited from a prototype (a class method)
+  // or answered by a getter is refused here, so the steps Core classifies are exactly the steps it runs.
+  if (
+    !Predicate.isFunction(ownerWork) &&
+    readPipelineStepNames.some((name) => {
+      if (!(name in ownerWork)) {
+        return false;
+      }
+      const step = Object.getOwnPropertyDescriptor(ownerWork, name);
+      return step === undefined || !('value' in step) || step.enumerable !== true;
+    })
+  ) {
+    return failReadDefinition('Read pipeline steps must be own data properties of the pipeline');
+  }
+  // The owner steps as they are now: the spread copies each step once into a frozen copy only Core holds,
   // and both the staged classification and the executed steps come from it, so changing the caller's
-  // pipeline object (or a step getter that answers differently) after definition changes nothing.
+  // pipeline object after definition changes nothing.
   const pipeline: AnyReadPipeline<
     InputSchema['Type'],
     ResultSchema['Type'],

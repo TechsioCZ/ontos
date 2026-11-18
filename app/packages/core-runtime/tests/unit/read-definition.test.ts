@@ -886,8 +886,7 @@ it.effect('runs and classifies only the pipeline steps that existed when the Rea
     yield* runOwnerSteps(registration);
     expect(calls).toEqual(['load']);
 
-    // A step that is a getter is read once, when the Read is defined: a later answer changes nothing.
-    calls.length = 0;
+    // A step answered by a getter could answer differently later, so it is refused without being read.
     let prepareReads = 0;
     const flipping = Object.defineProperty(
       {
@@ -906,10 +905,30 @@ it.effect('runs and classifies only the pipeline steps that existed when the Rea
         },
       },
     );
-    const flippingRegistration = defineRead(declaredReadDescriptor(), flipping, readServices, modulePermissionTarget);
-    expect(isStagedRead(flippingRegistration)).toBe(false);
-    yield* runOwnerSteps(flippingRegistration);
-    expect(calls).toEqual(['load']);
-    expect(prepareReads).toBe(1);
+    expect(() => defineRead(declaredReadDescriptor(), flipping, readServices, modulePermissionTarget)).toThrow(
+      /own data properties/u,
+    );
+    expect(prepareReads).toBe(0);
   }),
 );
+
+const emptyReadResult = () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+const stagedSteps = () => ({ finish: emptyReadResult, load: () => Effect.succeed('loaded') });
+
+it('refuses a pipeline step it would otherwise drop: inherited or non-enumerable', () => {
+  // A pipeline whose finish sits only on its prototype, as a class method would.
+  const inherited = { load: emptyReadResult };
+  Object.setPrototypeOf(inherited, { finish: emptyReadResult });
+  // A finish the pipeline holds itself, but hidden from enumeration.
+  const hidden = Object.defineProperty(stagedSteps(), 'finish', { enumerable: false });
+  expect(() => defineRead(declaredReadDescriptor(), inherited, readServices, modulePermissionTarget)).toThrow(
+    /own data properties/u,
+  );
+  expect(() => defineRead(declaredReadDescriptor(), hidden, readServices, modulePermissionTarget)).toThrow(
+    /own data properties/u,
+  );
+  // Negative control: the same steps as own data properties define a staged Read.
+  expect(isStagedRead(defineRead(declaredReadDescriptor(), stagedSteps(), readServices, modulePermissionTarget))).toBe(
+    true,
+  );
+});
