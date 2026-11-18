@@ -1454,6 +1454,18 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        // A person is relayed as itself and a verified workload calls as this module under the Catalog's
+        // compatibility declaration, as the hand-built delegation did; Core now also selects the registered
+        // caller for a recovery or system requester. Both carry a tenant-only credential, as before.
+        callers: [
+          { kind: 'person', legalEntityScope: 'tenant' },
+          {
+            declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+            kind: 'registered',
+            legalEntityScope: 'tenant',
+            pinPrincipal: false,
+          },
+        ],
         condition: 'commerce.customer-context.condition.complete-current-single-price-group-assignment',
         entrypointKey: customerPriceGroupResolutionRead.descriptor.entrypoint.entrypointKey,
         evidence: [

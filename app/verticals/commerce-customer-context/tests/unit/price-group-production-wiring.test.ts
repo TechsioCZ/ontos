@@ -10,6 +10,7 @@ import {
   makeActionTestHarness,
   getActionServiceFactory,
 } from '@app/core-runtime/testing/actions';
+import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import {
@@ -53,7 +54,6 @@ import { delegatedGatewayConfiguration } from '../support/delegated-gateway-shel
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
-const compositionRevision = 'a'.repeat(64);
 const scopeFields = {
   authBindingId: '30000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:price-group-production-wiring',
@@ -79,8 +79,6 @@ const scopeWithoutLegalEntity: OperationalScope = {
   principalId: scope.principalId,
   tenantId: scope.tenantId,
 };
-// No verified composition revision: the cross-owner Read must refuse before wiring the catalog.
-const absentCompositionRevision: string | undefined = new Map<string, string>().get('composition-revision');
 
 // Construction must not acquire delegated context: with no delegated configuration at all, wiring still succeeds.
 const constructionWithoutDelegation = Layer.mergeAll(
@@ -119,8 +117,10 @@ it('attaches every Price Group Action and the governed resolution Read to produc
   expect(getReadServiceFactory(customerPriceGroupResolutionRead)).toBe(
     customerPriceGroupResolutionServicesForTransaction,
   );
+  // The Read reaches the Catalog only through Core's call: its owner services build no catalog client.
   const readFactorySource = customerPriceGroupResolutionServicesForTransaction.toString();
-  expect(readFactorySource).toContain('priceGroupCatalogPortFromEnvironment');
+  expect(readFactorySource).not.toContain('priceGroupCatalogPortFromEnvironment');
+  expect(readFactorySource).not.toContain('acquireDelegatedGatewayContext');
   expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
 });
 
@@ -131,7 +131,7 @@ it('declares the Pricing caller with an identity subject on the customer Price G
   });
 });
 
-it.effect('creates a fresh catalog adapter for every governed Action and Read attempt', () =>
+it.effect('creates a fresh catalog adapter for every governed Action attempt and none for the Read', () =>
   Effect.gen(function* freshPerAttempt() {
     const firstActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
       Effect.provide(constructionWithoutDelegation),
@@ -139,14 +139,14 @@ it.effect('creates a fresh catalog adapter for every governed Action and Read at
     const secondActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
       Effect.provide(constructionWithoutDelegation),
     );
-    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(constructionWithoutDelegation));
+    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scope);
 
     expect(firstActionServices.catalog).not.toBe(secondActionServices.catalog);
-    expect(readServices.catalog).not.toBe(firstActionServices.catalog);
+    expect(readServices).toEqual({
+      now: expect.anything(),
+      profileValidation: expect.anything(),
+      store: expect.anything(),
+    });
   }),
 );
 
@@ -165,16 +165,39 @@ it.effect('keeps both remove Actions catalog-free and rejects missing Legal Enti
   }),
 );
 
-it.effect('rejects a cross-owner Read without a verified composition revision before wiring the catalog', () =>
-  Effect.gen(function* missingCompositionRevision() {
+it.effect('rejects a Read scope without a trusted Legal Entity before building owner services', () =>
+  Effect.gen(function* missingLegalEntity() {
     const failure = yield* Effect.flip(
-      customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scope, absentCompositionRevision).pipe(
-        Effect.provide(constructionWithoutDelegation),
-      ),
+      customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scopeWithoutLegalEntity),
     );
     expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
   }),
 );
+
+it('declares the Catalog call with the caller identities the hand-built delegation used', () => {
+  const requirement = commerceCustomerContextManifest.requirements?.operations.find(
+    ({ key }) => key === 'commerce.customer-context.requirement.price-group-single-assignment',
+  );
+  expect(requirement?.entrypointKey).toBe(customerPriceGroupResolutionRead.descriptor.entrypoint.entrypointKey);
+  // A person is relayed as itself; any other requester calls as this module under the Catalog's
+  // compatibility declaration, which the module's registered workload calls carry.
+  expect(requirement?.callers).toEqual([
+    { kind: 'person', legalEntityScope: 'tenant' },
+    {
+      declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+      kind: 'registered',
+      legalEntityScope: 'tenant',
+      pinPrincipal: false,
+    },
+  ]);
+  expect(
+    commerceCustomerContextManifest.registeredWorkloadCalls?.some(
+      ({ declarationKey, entrypointKey }) =>
+        declarationKey === 'pricing.price-group-catalog.price-group.read.compatibility' &&
+        entrypointKey === requirement?.provider.entrypointKey,
+    ),
+  ).toBe(true);
+});
 
 it.effect('sends the verified request scope to the catalog as an Assertion subject, not an Originator', () =>
   Effect.gen(function* assertionCallSite() {
@@ -193,21 +216,6 @@ it.effect('sends the verified request scope to the catalog as an Assertion subje
     expect(actionFailure).toMatchObject({
       cause: { cause: { reason: 'Verified gateway scope is required to act for the requester' } },
     });
-
-    // The Read gates its catalog behind the module operation requirement, which only a genuine Read execution
-    // satisfies; its port is built with the same Assertion subject.
-    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
-      priceGroupInvoker,
-      scope,
-      compositionRevision,
-    ).pipe(Effect.provide(Layer.mergeAll(nodeCryptoLayer, delegatedCallerConfiguration)));
-    const readFailure = yield* Effect.flip(
-      readServices.catalog
-        .resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt)
-        .pipe(Effect.provide(delegatedCallerConfiguration)),
-    );
-    expect(readFailure).toMatchObject({ cause: { code: 'module_operation_requirement_unavailable' } });
-    expect(customerPriceGroupResolutionServicesForTransaction.toString()).toMatch(/_tag:\s*["']Assertion["']/u);
   }),
 );
 
