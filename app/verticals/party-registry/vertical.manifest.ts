@@ -22,6 +22,7 @@ import { personEngagementProfileResourceDescriptor } from './shared/resources/pe
 // </generated-module-manifest-imports>
 
 import { partyRegistryRuntimeManifest } from './vertical.runtime-declaration.ts';
+import { partyRegistryRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   ...partyRegistryRuntimeManifest,
@@ -88,4 +89,5 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
       // </generated-module-manifest-search>
     ],
   },
+  registeredWorkloadCalls: partyRegistryRegisteredWorkloadCalls,
 });

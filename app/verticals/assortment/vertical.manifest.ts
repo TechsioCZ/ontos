@@ -44,6 +44,7 @@ import { ruleRevisionResourceDescriptor } from './shared/resources/rule-revision
 import { stableRuleResourceDescriptor } from './shared/resources/stable-rule.ts';
 import { VisibilityApi } from './shared/apis/visibility.ts';
 // </generated-module-manifest-imports>
+import { assortmentRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -171,6 +172,7 @@ export const assortmentManifest = defineOntosModuleManifest({
       timelines: [],
     },
   },
+  registeredWorkloadCalls: assortmentRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],
