@@ -6723,6 +6723,31 @@ it.live(
 );
 
 it.live(
+  "owner context admits only that owner's own backend-only registration in the Privacy runtime",
+  Effect.fn(function* privacyBackendRegistrationBinding() {
+    const { accepts, context } = yield* readPrivacyRootProof();
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    const binding =
+      "import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';";
+    expect(handler).toContain(binding);
+    expect(accepts(shared, handler)).toBe(true);
+    for (const forged of [
+      "import { partyRegistryBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';",
+      "import { privacyBackendRegistration as privacyRegistration } from '../foreign/vertical.runtime-declaration.ts';",
+      "import { privacyBackendRegistration as privacyRegistration } from './vertical.runtime-declaration.ts';",
+      "import { privacyRuntimeDeclaration as privacyRegistration } from '../vertical.runtime-declaration.ts';",
+    ]) {
+      expect(accepts(shared, handler.replace(binding, forged)), forged).toBe(false);
+    }
+    // Another owner's context never admits Privacy's backend registration.
+    expect(
+      hasValidGovernedHttpCompositionRoot(shared, handler, { ...context, ownerPath: 'verticals/party-registry' }),
+    ).toBe(false);
+  }),
+);
+
+it.live(
   'configured owner redemption remains bound to the actual Privacy runtime',
   Effect.fn(function* configuredPrivacyRedemptionRuntime() {
     const { accepts: hasPrivacyRuntimeRoot } = yield* readPrivacyRootProof();

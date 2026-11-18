@@ -461,6 +461,7 @@ it('widens changed shared infrastructure, unknown paths and package metadata to 
     'app/verticals/catalog/drizzle/0001.sql',
     'app/verticals/catalog/src/database/schema.ts',
     'app/verticals/catalog/src/permissions/owner.ts',
+    'app/verticals/catalog/vertical.runtime-declaration.ts',
     'app/docs/architecture/DEPLOYMENT.md',
     '.github/workflows/ultramodern-workspace-gates.yml',
     'app/pnpm-lock.yaml',
