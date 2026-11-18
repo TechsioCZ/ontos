@@ -277,7 +277,7 @@ export const marketBootstrapResolutionRead = defineRead(
     // After commit: the Market owner calls, and the one owner-state read between them in its own short transaction.
     finish: Effect.fn('MarketBootstrapResolutionRead.finish')(function* finish(
       input: MarketBootstrapResolutionRequest,
-      context: ReadFinishContext<undefined, MarketBootstrapResolutionRequest>,
+      context: ReadFinishContext<undefined, MarketBootstrapResolutionRequest, MarketBootstrapResolutionServices>,
     ) {
       const crypto = yield* Crypto.Crypto;
       const market = marketBootstrapMarketPortFromPublishedClient(context.scope, crypto);
@@ -315,11 +315,7 @@ export const marketBootstrapResolutionRead = defineRead(
       };
       const services = marketBootstrapResolutionServices(requiredMarket, (sellerIds, at) =>
         context
-          .transaction((transaction) =>
-            customerCommercePolicyRepositoryForScope(transaction, context.scope).pipe(
-              Effect.flatMap((repository) => repository.loadCurrentMarketBootstrapPolicyCandidates(sellerIds, at)),
-            ),
-          )
+          .transaction((owner) => owner.loadPolicyCandidates(sellerIds, at))
           .pipe(
             Effect.mapError((cause) => {
               const failure = new MarketBootstrapDependencyUnavailable({

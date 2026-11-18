@@ -1,13 +1,11 @@
 import { Effect, Predicate, Schema } from 'effect';
 
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
-import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type { OperationContextUnavailable } from '../operations/errors.ts';
 import { ResourceIdentitySchema } from '../resources/scoped-resource-id.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
-import type { ReadHandlerExecutionError, ReadHandlerUnavailable } from './errors.ts';
+import type { ReadHandlerUnavailable } from './errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -61,14 +59,15 @@ export interface ReadPrepareContext {
  * scope installed, and guarded like the Read's own transaction. It is for evaluations that interleave remote owner
  * calls with owner-state reads: each owner-state read gets its own short transaction, and no remote call ever runs
  * while one is open.
+ *
+ * The callback receives the owner's read services, built by the same factory as `load`, never a database executor,
+ * and the transaction is READ ONLY in the database, so `finish` can read owner state but cannot write it. A failure
+ * of the transaction itself (database, scope, composition fence, service factory) is `ReadHandlerUnavailable`; the
+ * callback's own typed failures reach `finish` unchanged.
  */
-export type ReadOwnerTransaction = <Value, Failure, Requirements>(
-  use: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
-) => Effect.Effect<
-  Value,
-  Failure | OperationContextUnavailable | ReadHandlerExecutionError | ReadHandlerUnavailable,
-  Requirements
->;
+export type ReadOwnerTransaction<Services> = <Value, Failure, Requirements>(
+  use: (services: Services) => Effect.Effect<Value, Failure, Requirements>,
+) => Effect.Effect<Value, Failure | ReadHandlerUnavailable, Requirements>;
 
 /**
  * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
@@ -78,11 +77,14 @@ export type ReadLoadContext<Services, Prepared = undefined> = ReadPrepareContext
   readonly services: Services;
 } & (undefined extends Prepared ? { readonly prepared?: Prepared } : { readonly prepared: Prepared });
 
-/** The step after commit: what `prepare` established and what `load` read. */
-export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext {
+/**
+ * The step after commit: what `prepare` established and what `load` read. `Services` is what the owner's read
+ * service factory builds; a `finish` that never opens an owner transaction may leave it unnamed.
+ */
+export interface ReadFinishContext<Prepared, Loaded, Services = unknown> extends ReadPrepareContext {
   readonly loaded: Loaded;
   readonly prepared: Prepared;
-  readonly transaction: ReadOwnerTransaction;
+  readonly transaction: ReadOwnerTransaction<Services>;
 }
 
 /** What a single-handler Read receives: the Read, its Core-verified scope, and the scoped owner services. */

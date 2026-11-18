@@ -10,12 +10,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ReadFinishContext,
-  ReadHandlerExecutionError,
-  ReadLoadContext,
-} from '@app/core-runtime';
+import type { OperationalScope, ReadFinishContext, ReadLoadContext } from '@app/core-runtime';
 import type { Crypto } from 'effect';
 import { DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -169,15 +164,11 @@ export const recheckCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupRe
 
 /** Catalog I/O runs after commit; the scoped recheck completes before any result is released. */
 export const finishCustomerPriceGroupSnapshot = Effect.fn('CustomerPriceGroupResolution.finishSnapshot')(
-  function* finishSnapshot<Requirements>(
+  function* finishSnapshot<RecheckFailure, Requirements>(
     input: CustomerPriceGroupResolutionRequest,
     snapshot: CustomerPriceGroupSnapshot,
     catalog: PriceGroupCatalogPort,
-    recheck: Effect.Effect<
-      void,
-      ReadHandlerExecutionError | ReadHandlerNotFound | ReadHandlerUnavailable | OperationContextUnavailable,
-      Requirements
-    >,
+    recheck: Effect.Effect<void, RecheckFailure, Requirements>,
     now: Effect.Effect<PriceGroupInstant>,
   ) {
     const { effectiveAt, generation } = snapshot;
@@ -344,16 +335,13 @@ export const customerPriceGroupResolutionRead = defineRead(
     ) => loadCustomerPriceGroupSnapshot(input, context.scope.tenantId, context.services),
     finish: Effect.fn('CustomerPriceGroupResolution.finish')(function* finish(
       input: CustomerPriceGroupResolutionRequest,
-      context: ReadFinishContext<undefined, CustomerPriceGroupSnapshot>,
+      context: ReadFinishContext<undefined, CustomerPriceGroupSnapshot, CustomerPriceGroupResolutionServices>,
     ) {
-      const { compositionRevision, scope } = context;
+      const { scope } = context;
       const catalog = yield* customerPriceGroupCatalogForScope(scope);
-      const recheck = context.transaction((transaction) =>
-        customerPriceGroupResolutionServicesForTransaction(transaction, scope, compositionRevision).pipe(
-          Effect.flatMap((services) =>
-            recheckCustomerPriceGroupSnapshot(input, scope.tenantId, services, context.loaded),
-          ),
-        ),
+      // The recheck reads owner state through the read's own services, in a short read-only transaction.
+      const recheck = context.transaction((services) =>
+        recheckCustomerPriceGroupSnapshot(input, scope.tenantId, services, context.loaded),
       );
       const result = yield* finishCustomerPriceGroupSnapshot(
         input,

@@ -190,6 +190,8 @@ const makeHarness = Effect.fn(function* makeHarness(
       readonly tenantId: string;
     };
     readonly sqlEvents?: string[];
+    /** Every statement text in order, for a test that reads what one transaction executed. */
+    readonly statementEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
     readonly transactionSettlementFailure?: SqlError;
@@ -214,6 +216,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     tenant_id: options.resolvedScope?.tenantId ?? scope.tenantId,
   });
   const query = (text: string, values: readonly unknown[]) => {
+    options.statementEvents?.push(text);
     if (text.includes('read_source_execution_fence')) {
       const [tenantId, admissionInvocationId] = values;
       const fence = options.sourceExecutionFence;
@@ -4374,6 +4377,8 @@ it.effect(
 );
 
 type StagedReadServices = Readonly<Record<string, never>>;
+/** The one services value the staged Read's own factory builds, so a test can recognise it. */
+const stagedReadServices: StagedReadServices = Object.freeze({});
 const StagedReadInputSchema = Schema.Struct({});
 type StagedReadInput = typeof StagedReadInputSchema.Type;
 
@@ -4387,8 +4392,11 @@ const makeStagedRead = (
   events: string[],
   options: {
     readonly duringFinish?: () => void;
+    readonly onOwnerStateServices?: (services: StagedReadServices) => void;
     readonly ownerState?: boolean;
+    readonly ownerStateFailure?: ReadHandlerNotFound | ReadPermissionDenied;
     readonly policy?: ReturnType<typeof defineGlobalPolicy<Readonly<Record<string, never>>>>;
+    readonly prepareFailure?: ReadHandlerNotFound;
   } = {},
 ) =>
   defineRead(
@@ -4412,14 +4420,16 @@ const makeStagedRead = (
       schemaVersion: '1',
     },
     {
-      finish: (_input: StagedReadInput, context: ReadFinishContext<string, readonly string[]>) =>
+      finish: (_input: StagedReadInput, context: ReadFinishContext<string, readonly string[], StagedReadServices>) =>
         Effect.gen(function* finishAfterCommit() {
           events.push('finish');
           options.duringFinish?.();
           if (options.ownerState !== false) {
-            yield* context.transaction(() =>
-              Effect.sync(() => {
+            yield* context.transaction((services) =>
+              Effect.suspend(() => {
                 events.push('owner-state');
+                options.onOwnerStateServices?.(services);
+                return options.ownerStateFailure === undefined ? Effect.void : Effect.fail(options.ownerStateFailure);
               }),
             );
           }
@@ -4431,12 +4441,14 @@ const makeStagedRead = (
           return [context.prepared];
         }),
       prepare: () =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           events.push('prepare');
-          return 'prepared-owner-value';
+          return options.prepareFailure === undefined
+            ? Effect.succeed('prepared-owner-value')
+            : Effect.fail(options.prepareFailure);
         }),
     },
-    (): Effect.Effect<StagedReadServices> => Effect.succeed({}),
+    (): Effect.Effect<StagedReadServices> => Effect.succeed(stagedReadServices),
     undefined,
     undefined,
     options.policy === undefined ? [] : [options.policy],
@@ -4449,6 +4461,9 @@ const runStagedRead = Effect.fn(function* runStagedRead(
     readonly access?: 'allowed' | 'denied';
     readonly authority?: StagedReadAuthority;
     readonly ownerAuthorizationOverlay?: OwnerAuthorizationOverlayService;
+    readonly statements?: string[];
+    /** Run the Read for a gateway-verified principal that carries the inbound composition revision. */
+    readonly verified?: boolean;
   } = {},
 ) {
   const owner = makeTestOperationOwner({ moduleId: 'test.read-stages', reads: [read] });
@@ -4472,11 +4487,12 @@ const runStagedRead = Effect.fn(function* runStagedRead(
       ownerRegistration: owner.ownerRegistration,
     },
     sqlEvents: events,
+    statementEvents: options.statements ?? [],
   });
   const exit = yield* Effect.exit(
     harness.runtime.runRead({
       input: {},
-      principal: scope,
+      principal: options.verified === true ? trustVerifiedGatewayPrincipalContext(scope, revision) : scope,
       registration: read,
       transport: { correlationId: scope.correlationId },
     }),
@@ -4713,6 +4729,43 @@ it.effect('releases no result and no allowed evidence when the projection breaks
     expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
   }),
 );
+
+it.effect('gives finish only the owner read services, in a read-only transaction', () =>
+  Effect.gen(function* finishReadOnlyServices() {
+    const events: string[] = [];
+    const statements: string[] = [];
+    const seen: unknown[] = [];
+    const read = makeStagedRead(events, {
+      onOwnerStateServices: (services) => {
+        seen.push(services);
+        statements.push('owner-state');
+      },
+    });
+    const { exit } = yield* runStagedRead(events, read, { statements });
+    expect(exit).toEqual(Exit.succeed(['prepared-owner-value']));
+    // The owner's own factory built what finish received: no raw insert, update or delete executor.
+    expect(seen).toEqual([stagedReadServices]);
+    expect(seen[0]).toBe(stagedReadServices);
+    // The database itself refuses a write: READ ONLY is the first statement of finish's transaction.
+    const ownerState = statements.indexOf('owner-state');
+    const begin = statements.lastIndexOf('BEGIN', ownerState);
+    expect(statements[begin + 1]?.toLowerCase()).toBe('set transaction read only');
+  }),
+);
+
+for (const failure of [
+  new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'The profile disappeared during finish' }),
+  new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'The owner recheck refused the subject' }),
+]) {
+  it.effect(`preserves a finish owner-state ${failure._tag} instead of reporting an outage`, () =>
+    Effect.gen(function* finishTypedFailure() {
+      const events: string[] = [];
+      const { exit, harness } = yield* runStagedRead(events, makeStagedRead(events, { ownerStateFailure: failure }));
+      expect(Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()).toEqual(Option.some(failure));
+      expect(evidenceOutcomeCodes(harness.evidenceParameterRows())).not.toContain('read_allowed');
+    }),
+  );
+}
 
 const pipelineLoad = () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
 const pipelineServices = () => Effect.succeed({});

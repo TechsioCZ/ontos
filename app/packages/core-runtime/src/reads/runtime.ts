@@ -24,6 +24,7 @@ import type { ShellSystemReadRegistrations } from '../modules/module-operation-e
 import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
+import { sql } from 'drizzle-orm';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
@@ -1798,20 +1799,62 @@ const readRuntimeFromDependencies = <
       const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
         sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
       );
+      /** The transaction-bound access gate a registered Shell system read's service factory receives. */
+      const shellAccessFor = (transaction: CoreTransaction) => {
+        const decideMany = accessDecision?.decideMany;
+        return isBoundShellSystemRead(input.registration, shellSystemReads) &&
+          accessDecision !== undefined &&
+          decideMany !== undefined
+          ? {
+              decide: (question: GateInput) => accessDecision.decide({ ...question, scope }, transaction),
+              decideMany: (questions: readonly GateInput[]) =>
+                decideMany(
+                  questions.map((question) => ({ ...question, scope })),
+                  transaction,
+                ),
+              list: (question: ListGateInput) => accessDecision.list({ ...question, scope }, transaction),
+            }
+          : undefined;
+      };
+      const readServiceFactory = getReadServiceFactory(input.registration);
+      // The owner factory's requirements are the read's own, already provided to this read.
+      const readRequirements = yield* Effect.context<Requirements>();
       /**
        * A short, admitted, scoped owner transaction for `finish`: an evaluation that interleaves remote
        * owner calls with owner-state reads opens one per read, and no remote call ever runs while one is
-       * open (D14).
+       * open (D14). It is READ ONLY in the database, and the callback receives only what the owner's own
+       * read service factory builds, so `finish` cannot write. Only the transaction's own failures are
+       * an outage; the callback's typed failures (not found, permission denied) reach `finish` unchanged.
        */
-      const ownerTransaction: ReadOwnerTransaction = (use) =>
-        executor
-          .transaction((transaction) =>
-            fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision).pipe(
-              Effect.andThen(() => installOperationalScope(transaction, scope)),
-              Effect.flatMap((nextScoped) => use(nextScoped)),
-            ),
+      const ownerTransaction: ReadOwnerTransaction<Services> = (use) => {
+        let closeOwnerAdmission: (() => void) | undefined;
+        return executor
+          .transaction(
+            Effect.fn('ReadRuntime.finishOwnerTransaction')(function* finishOwnerTransaction(
+              transaction: CoreTransaction,
+            ) {
+              // The first statement, so every later one, a routine call included, runs read-only.
+              yield* transaction.execute(sql`set transaction read only`, 'objects');
+              yield* fenceReadRevision(transaction, compositionRevision, admittedCompositionRevision);
+              const installed = yield* installOperationalScope(transaction, scope);
+              const ownerAdmission = bindScopedWorkloadAdmission(
+                installed,
+                { carrier: accessCarrier, scope },
+                gateAuthorization.mainAccessDecision,
+              );
+              closeOwnerAdmission = ownerAdmission.close;
+              const services = yield* readServiceFactory(
+                ownerAdmission.transaction,
+                scope,
+                admittedCompositionRevision,
+                gateAuthorization.listAccess,
+                shellAccessFor(transaction),
+              ).pipe(Effect.provideContext(readRequirements));
+              return yield* Effect.exit(Effect.suspend(() => use(services)));
+            }),
           )
           .pipe(
+            Effect.ensuring(Effect.sync(() => closeOwnerAdmission?.())),
             Effect.mapError((cause) =>
               preserveFailureCause(
                 new ReadHandlerUnavailable({
@@ -1821,7 +1864,11 @@ const readRuntimeFromDependencies = <
                 cause,
               ),
             ),
+            Effect.flatMap((callbackExit) =>
+              Exit.isSuccess(callbackExit) ? Effect.succeed(callbackExit.value) : Effect.failCause(callbackExit.cause),
+            ),
           );
+      };
       // The gate's own row and field answers reach every owner step, exactly as a single-handler Read
       // receives them (O17, O25): a staged `load` applies the row filter in its own query and a staged
       // `finish` filters fields with the same answer.
@@ -1901,27 +1948,12 @@ const readRuntimeFromDependencies = <
                   reason: 'Owner-local Read authorization is temporarily unavailable',
                 });
               }
-              const decideMany = accessDecision?.decideMany;
-              const shellAccess =
-                isBoundShellSystemRead(input.registration, shellSystemReads) &&
-                accessDecision !== undefined &&
-                decideMany !== undefined
-                  ? {
-                      decide: (question: GateInput) => accessDecision.decide({ ...question, scope }, transaction),
-                      decideMany: (questions: readonly GateInput[]) =>
-                        decideMany(
-                          questions.map((question) => ({ ...question, scope })),
-                          transaction,
-                        ),
-                      list: (question: ListGateInput) => accessDecision.list({ ...question, scope }, transaction),
-                    }
-                  : undefined;
-              const services = yield* getReadServiceFactory(input.registration)(
+              const services = yield* readServiceFactory(
                 scoped,
                 scope,
                 admittedCompositionRevision,
                 gateAuthorization.listAccess,
-                shellAccess,
+                shellAccessFor(transaction),
               );
               // Owner `load` (scoped database reads only) runs inside this transaction and returns the
               // after-commit `finish`; the connection is back in the pool before `finish` runs.
