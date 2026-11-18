@@ -553,6 +553,20 @@ export type ReadHandler<
   context: ReadHandlerContext<Services>,
 ) => Effect.Effect<ReadHandlerResult<ResultSchema['Type']>, Error, Requirements>;
 
+/**
+ * The same read handler written as `{ load: handler }`. It is only another spelling: `defineRead`
+ * unwraps it once, at definition, and from there the handler runs exactly as the bare one does.
+ */
+export interface ReadLoadStep<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Services,
+  Error,
+  Requirements = never,
+> {
+  readonly load: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>;
+}
+
 export interface ReadDescriptorValidationInput {
   readonly accessActor?: AccessActorInput;
   readonly accessDeclaration?: AccessDeclarationInput;
@@ -907,6 +921,43 @@ const validateReadVocabulary = <
   }
 };
 
+/**
+ * The handler a read is defined with. A bare handler function passes through untouched. Anything else
+ * must be the `{ load }` form: a plain object whose only own key is an enumerable data property `load`
+ * holding a function. Every other value, a `prepare`, `prepared` or `finish` step above all, has no
+ * meaning here and is refused.
+ */
+const readHandlerOf = <
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Services,
+  Error,
+  Requirements,
+>(
+  readKey: string,
+  definition:
+    | ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>
+    | ReadLoadStep<InputSchema, ResultSchema, Services, Error, Requirements>,
+): ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements> => {
+  if (Predicate.isFunction(definition)) {
+    return definition;
+  }
+  const keys = Predicate.isObject(definition) ? Reflect.ownKeys(definition) : [];
+  const steps = keys.filter((key) => key === 'prepare' || key === 'prepared' || key === 'finish');
+  if (steps.length > 0) {
+    return failReadDefinition(
+      `Read ${readKey}: a read has no ${steps.map(String).join(', ')} step; it is defined with its handler or { load: handler }`,
+    );
+  }
+  const load = keys.length === 1 ? Object.getOwnPropertyDescriptor(definition, 'load') : undefined;
+  if (load === undefined || load.enumerable !== true || !('value' in load) || !Predicate.isFunction(load.value)) {
+    return failReadDefinition(
+      `Read ${readKey}: { load } must hold the read handler as its only own enumerable data property`,
+    );
+  }
+  return definition.load;
+};
+
 export const defineRead = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -920,7 +971,9 @@ export const defineRead = <
 >(
   descriptor: ReadDescriptor<InputSchema, ResultSchema, Owner, DomainErrorSchema>,
   ...definition: readonly [
-    handler: ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>,
+    handler:
+      | ReadHandler<InputSchema, ResultSchema, Services, Error, Requirements>
+      | ReadLoadStep<InputSchema, ResultSchema, Services, Error, Requirements>,
     serviceFactory: ReadServiceFactory<Services, Requirements>,
     /**
      * The legacy positional permission-target resolver. A v2 `protected` read omits it and declares
@@ -935,8 +988,14 @@ export const defineRead = <
     executablePolicies?: readonly ActionPolicy<InputSchema['Type'], NoInfer<Owner>>[],
   ]
 ): ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema> => {
-  const [handler, serviceFactory, declaredPermissionResolver, resultPermissionTargetResolver, executablePolicies = []] =
-    definition;
+  const [
+    authoredHandler,
+    serviceFactory,
+    declaredPermissionResolver,
+    resultPermissionTargetResolver,
+    executablePolicies = [],
+  ] = definition;
+  const handler = readHandlerOf(descriptor.readKey, authoredHandler);
   const {
     accessActor: _authoredActor,
     accessDeclaration: _authoredDeclaration,

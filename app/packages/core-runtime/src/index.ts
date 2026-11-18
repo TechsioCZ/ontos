@@ -545,7 +545,7 @@ export type {
   ResolvedReadPermissionTarget,
   ResolvedReadConditionalPermissionRequirement,
 } from './reads/definition.ts';
-export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from './reads/context.ts';
+export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult, ReadLoadContext } from './reads/context.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
