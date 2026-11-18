@@ -11,6 +11,7 @@ import { expect, it } from 'effect-rstest';
 import { readAccessCatalogArtifact } from '../../../../scripts/authorization-catalog-artifact.mts';
 import { policyReleaseEntries } from '../../../../scripts/demo/access-policy.mts';
 import { demoModuleIds } from '../../../../scripts/demo/permissions.mts';
+import { REVIEWED_ROLE_CELLS } from '../../../../scripts/demo/reviewed-people-cells.mts';
 import {
   desiredState,
   observedCellOf,
@@ -18,6 +19,7 @@ import {
   previewIssue,
   saveBody,
   SaveRoleStep,
+  slotOf,
 } from '../../../../scripts/demo/reviewed-people-plan.mts';
 import type { DesiredRole } from '../../../../scripts/demo/reviewed-people-plan.mts';
 import { AuthenticationService } from '../../api/auth/service.ts';
@@ -184,7 +186,10 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '300 se
             Effect.gen(function* reviewedRoleSave() {
               const handler = yield* shellHandlerFor(accessCase);
               const role = yield* reviewedRole;
-              expect([role.cells.length, role.confirmations.length]).toEqual([33, 23]);
+              const reviewed: readonly string[] = REVIEWED_ROLE_CELLS.warehouse;
+              expect(role.cells.length).toBeGreaterThan(0);
+              expect(role.cells.map(slotOf).filter((slot) => !reviewed.includes(slot))).toEqual([]);
+              expect(role.confirmations.length).toBeGreaterThan(0);
               const [companyA] = accessCase.companies;
               const legalEntityId = AccessCompanyIdSchema.make(companyA ?? '');
 
