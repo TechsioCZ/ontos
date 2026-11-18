@@ -136,6 +136,8 @@ interface StartOwnerInput {
   readonly environment: Readonly<Record<string, string>>;
   readonly moduleKeys: ReadonlyMap<string, string>;
   readonly ownerDiagnostics: Map<string, Effect.Effect<string>>;
+  /** Transport faults one receiver injects, by application. */
+  readonly ownerFaults: Readonly<Partial<Record<string, Readonly<Record<string, string>>>>>;
   readonly ownerRuntimes: Map<string, OwnerRuntime>;
   readonly ports: ReadonlyMap<string, number>;
   readonly prefixes: Readonly<Record<string, OwnerPrefix>>;
@@ -143,7 +145,8 @@ interface StartOwnerInput {
 
 /** Builds and starts one actual owner receiver with its own independent module credential. */
 const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner(input: StartOwnerInput) {
-  const { appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerRuntimes, ports, prefixes } = input;
+  const { appId, contracts, environment, moduleKeys, ownerDiagnostics, ownerFaults, ownerRuntimes, ports, prefixes } =
+    input;
   const contract = contracts.find(({ deployment }) => deployment.appId === appId);
   const port = ports.get(appId);
   const moduleKey = moduleKeys.get(appId);
@@ -158,12 +161,51 @@ const startOwner = Effect.fn('SymmyC14Customer.startOwner')(function* startOwner
   const receiver = yield* startProductOwner({
     artifacts,
     contract,
-    environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+    environment: { ...environment, ...ownerFaults[appId], ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
     port,
     prefix,
   });
   ownerDiagnostics.set(appId, receiver.diagnostic);
   ownerRuntimes.set(appId, { artifacts, contract, moduleKey, port, receiver });
+  return yield* Effect.void;
+});
+
+/**
+ * The recovered create-party settled to the Party Core saved with its one commit, and Party decided once:
+ * the worker's same-key retry answered the saved reply and ran nothing again.
+ */
+const expectSavedPartyReply = Effect.fn('SymmyC14Customer.expectSavedPartyReply')(function* expectSavedPartyReply(
+  admin: PgClient.PgClient,
+  input: {
+    readonly partyInvocationId: string;
+    readonly partyRef: typeof PartyRefSchema.Type;
+    readonly tenantId: string;
+  },
+) {
+  const { partyInvocationId, tenantId } = input;
+  const [savedReply] = yield* admin<{ reply: unknown }>`select committed_reply_json as reply
+    from core.action_invocations where tenant_id=${tenantId} and action_invocation_id=${partyInvocationId}
+    and action_key='party.registry.create-party' and status='succeeded'`;
+  const savedParty = yield* Schema.decodeUnknownEffect(
+    Schema.Struct({ encoded: CreatePartyResultSchema, kind: Schema.Literal('result') }),
+  )(savedReply?.reply);
+  if (savedParty.encoded.outcome !== 'CREATED') {
+    return yield* unavailable('The lost create-party must have committed a new Party');
+  }
+  expect(input.partyRef).toEqual(savedParty.encoded.partyRef);
+  const decisions = yield* admin<{
+    actionInvocationId: string;
+    matchDecisionId: string;
+    partyId: string | null;
+  }>`select action_invocation_id::text as "actionInvocationId",match_decision_id::text as "matchDecisionId",
+    party_id::text as "partyId" from party.party_match_decisions where tenant_id=${tenantId}`;
+  expect(decisions).toEqual([
+    {
+      actionInvocationId: partyInvocationId,
+      matchDecisionId: savedParty.encoded.decisionRef.resourceId,
+      partyId: savedParty.encoded.partyRef.resourceId,
+    },
+  ]);
   return yield* Effect.void;
 });
 
@@ -712,9 +754,10 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
             startOwner({
               appId,
               contracts,
-              environment: appId === 'party-registry' ? { ...environment, ...partyFault } : environment,
+              environment,
               moduleKeys,
               ownerDiagnostics,
+              ownerFaults: { 'party-registry': partyFault },
               ownerRuntimes,
               ports,
               prefixes,
@@ -849,30 +892,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles,
           (select count(*)::integer from commerce_customer_context.retail_customer_profiles p join party.parties a on a.party_id::text=p.party_resource_id and a.tenant_id=p.tenant_id where p.tenant_id=${tenantId} and a.current_type='PERSON' and a.first_name='Internal' and a.last_name='Customer') as linked`;
     expect(counts).toEqual({ linked: 1, parties: 1, profiles: 1 });
-    // The recovered effect settled to the Party Core saved with the one create-party commit, and Party decided once.
-    const [savedReply] = yield* admin<{ reply: unknown }>`select committed_reply_json as reply
-      from core.action_invocations where tenant_id=${tenantId} and action_invocation_id=${partyInvocationId}
-      and action_key='party.registry.create-party' and status='succeeded'`;
-    const savedParty = yield* Schema.decodeUnknownEffect(
-      Schema.Struct({ encoded: CreatePartyResultSchema, kind: Schema.Literal('result') }),
-    )(savedReply?.reply);
-    if (savedParty.encoded.outcome !== 'CREATED') {
-      return yield* unavailable('The lost create-party must have committed a new Party');
-    }
-    expect(partyReceipt.partyRef).toEqual(savedParty.encoded.partyRef);
-    const decisions = yield* admin<{
-      actionInvocationId: string;
-      matchDecisionId: string;
-      partyId: string | null;
-    }>`select action_invocation_id::text as "actionInvocationId",match_decision_id::text as "matchDecisionId",
-      party_id::text as "partyId" from party.party_match_decisions where tenant_id=${tenantId}`;
-    expect(decisions).toEqual([
-      {
-        actionInvocationId: partyInvocationId,
-        matchDecisionId: savedParty.encoded.decisionRef.resourceId,
-        partyId: savedParty.encoded.partyRef.resourceId,
-      },
-    ]);
+    yield* expectSavedPartyReply(admin, { partyInvocationId, partyRef: partyReceipt.partyRef, tenantId });
     expect(yield* submit).toEqual(accepted);
     const [writes] = yield* admin<{ party: number; profile: number }>`select
           count(*) filter(where action_key='party.registry.create-party' and status='succeeded')::integer as party,
