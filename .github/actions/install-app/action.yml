@@ -9,13 +9,21 @@ inputs:
     description: Export the app/.mise.toml environment.
     default: 'true'
   save-store:
-    description: Save a missed pnpm store on main. Exactly one job sets this, so parallel jobs never race to save.
+    description: >-
+      Save a missed pnpm store on a trunk push. Exactly one job of a workflow sets this, so parallel jobs never race to
+      save.
+    default: 'false'
+  restore-node-modules:
+    description: >-
+      Restore the installed workspace saved for this exact toolchain, lockfile and set of manifests instead of
+      installing. Only callers whose own install is a complete `pnpm install --frozen-lockfile` opt in, so an install
+      with other arguments never takes their tree.
     default: 'false'
   save-node-modules:
     description: >-
-      Save a missed complete installed workspace. The typecheck row saves a missed PR install; the main cache warmer publishes it
-      for future pull requests and merge groups.
-      GitHub scopes pull-request caches to that pull request; they cannot replace main caches.
+      Save a missed complete installed workspace; implies restore-node-modules, so an exact hit is never saved again.
+      The typecheck row saves a missed PR install; the main cache warmer publishes it for future pull requests and
+      merge groups. GitHub scopes pull-request caches to that pull request; they cannot replace main caches.
     default: 'false'
   restore-typescript-build:
     description: >-
@@ -51,42 +59,90 @@ runs:
     # a manifest asks for a dependency the lockfile does not lock, and a manifest change that leaves the
     # lockfile alone (5 of the last 120 commits on main) is exactly when that install must really run.
     #
+    # The entry holds the node_modules of every package app/pnpm-workspace.yaml lists, read from that file rather
+    # than spelled out here: pnpm refuses to run in a tree where any listed package lacks its node_modules
+    # (ERR_PNPM_VERIFY_DEPS_BEFORE_RUN), so an entry that misses one package fails every job that restores it.
+    #
     # The store is deliberately NOT in this entry. app/pnpm-workspace.yaml pins
     # `packageImportMethod: clone-or-copy` and `enableGlobalVirtualStore: false`, so app/node_modules/.pnpm
     # holds real files and the only symlinks are relative ones inside it - verified: zero dangling links and
     # zero link targets outside app/. Adding the 619 MB store would roughly double a ~0.6 GB entry and spend
     # the saved time restoring it again. A tree that is somehow not self-contained must not become a
-    # confusing module-resolution failure later: the next step turns it into a clean miss, and the save
-    # below refuses to publish such a tree at all.
+    # confusing module-resolution failure later: the verify step turns dangling links into a clean miss, and
+    # the save below refuses to publish such a tree at all.
+    #
+    # Workspace patterns are limited to `dir` and `dir/*`, so every manifest sits at app/*/package.json or
+    # app/*/*/package.json, which the key hashes.
+    - name: List the workspace packages
+      id: packages
+      if: inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'
+      shell: bash
+      working-directory: app
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        packages=()
+        listing=false
+        entry='^[[:space:]]+-[[:space:]]+["'"'"']?([^"'"'"'[:space:]]+)["'"'"']?[[:space:]]*$'
+        while IFS= read -r line; do
+          if [[ "$line" == 'packages:' ]]; then
+            listing=true
+            continue
+          fi
+          [[ "$listing" == 'true' ]] || continue
+          [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+          [[ "$line" =~ $entry ]] || break
+          pattern="${BASH_REMATCH[1]}"
+          if [[ ! "$pattern" =~ ^[A-Za-z0-9._-]+(/\*)?$ ]]; then
+            echo "::error::app/pnpm-workspace.yaml lists '$pattern'; the installed-workspace cache supports only 'dir' and 'dir/*'."
+            exit 1
+          fi
+          for directory in $pattern; do
+            [[ -f "$directory/package.json" ]] && packages+=("$directory")
+          done
+        done <pnpm-workspace.yaml
+        if [[ "${#packages[@]}" == '0' ]]; then
+          echo '::error::app/pnpm-workspace.yaml lists no package directory.'
+          exit 1
+        fi
+        {
+          echo 'directories<<EOF'
+          printf '%s\n' "${packages[@]}"
+          echo 'EOF'
+          echo 'paths<<EOF'
+          printf '%s\n' app/node_modules '!app/node_modules/.cache'
+          printf 'app/%s/node_modules\n' "${packages[@]}"
+          echo 'EOF'
+        } >>"$GITHUB_OUTPUT"
+
     - name: Restore the installed workspace
       id: workspace
+      if: inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: |
-          app/node_modules
-          !app/node_modules/.cache
-          app/apps/*/node_modules
-          app/packages/*/node_modules
-          app/verticals/*/node_modules
-        key: pnpm-workspace-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/package.json', 'app/*/*/package.json', 'app/patches/**', '!app/node_modules/**') }}
+        path: ${{ steps.packages.outputs.paths }}
+        key: pnpm-workspace-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml', 'app/pnpm-workspace.yaml', 'app/package.json', 'app/*/package.json', 'app/*/*/package.json', 'app/patches/**', '!app/node_modules/**') }}
 
     # A restored tree is used only if it resolves: the virtual store and pnpm's own state file are present
     # and no dependency link of the root or of a workspace package dangles. Anything else is removed and
-    # installed from the store below, so a bad entry costs one install instead of failing 34 jobs with a
-    # module-resolution error.
+    # installed from the store below. This catches a broken tree, not every tree pnpm would refuse: a tree
+    # that missed a workspace package passed it and failed every job (353b91df5).
     - name: Verify the restored workspace resolves
       id: restored
+      if: inputs.restore-node-modules == 'true' || inputs.save-node-modules == 'true'
       shell: bash
       working-directory: app
       env:
         RESTORED: ${{ steps.workspace.outputs.cache-hit }}
+        PACKAGES: ${{ steps.packages.outputs.directories }}
       run: |
         set -euo pipefail
+        mapfile -t packages <<<"$PACKAGES"
         usable=false
         if [[ "$RESTORED" == 'true' && -d node_modules/.pnpm && -f node_modules/.modules.yaml ]]; then
           farms=(node_modules)
-          for farm in apps/*/node_modules packages/*/node_modules verticals/*/node_modules; do
-            [[ -d "$farm" ]] && farms+=("$farm")
+          for package in "${packages[@]}"; do
+            [[ -d "$package/node_modules" ]] && farms+=("$package/node_modules")
           done
           # Each farm's direct dependency links and the links inside its @scope directories, such as
           # node_modules/@effect/sql-pg; with -L, `-type l` matches only the links that do not resolve.
@@ -99,7 +155,10 @@ runs:
         fi
         if [[ "$RESTORED" == 'true' && "$usable" != 'true' ]]; then
           echo '::warning::Installing instead of using the restored workspace.'
-          rm -rf node_modules apps/*/node_modules packages/*/node_modules verticals/*/node_modules
+          rm -rf node_modules
+          for package in "${packages[@]}"; do
+            rm -rf "$package/node_modules"
+          done
         fi
         echo "usable=$usable" >>"$GITHUB_OUTPUT"
 
@@ -131,7 +190,7 @@ runs:
 
     - name: Save the pnpm store
       if: >-
-        inputs.save-store == 'true' && github.ref == 'refs/heads/main' &&
+        inputs.save-store == 'true' && github.event_name == 'push' &&
         steps.restored.outputs.usable != 'true' && steps.restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -145,13 +204,15 @@ runs:
       id: publishable
       if: >-
         inputs.save-node-modules == 'true' &&
-        steps.restored.outputs.usable != 'true'
+        steps.restored.outputs.usable != 'true' && steps.workspace.outputs.cache-hit != 'true'
       shell: bash
       working-directory: app
       env:
         INSTALL_ARGS: ${{ inputs.install-args }}
+        PACKAGES: ${{ steps.packages.outputs.directories }}
       run: |
         set -euo pipefail
+        mapfile -t packages <<<"$PACKAGES"
         if [[ -n "${INSTALL_ARGS// /}" ]]; then
           echo "::error::save-node-modules needs a complete install; this job installed with $INSTALL_ARGS."
           exit 1
@@ -161,8 +222,8 @@ runs:
           exit 1
         fi
         farms=(node_modules)
-        for farm in apps/*/node_modules packages/*/node_modules verticals/*/node_modules; do
-          [[ -d "$farm" ]] && farms+=("$farm")
+        for package in "${packages[@]}"; do
+          [[ -d "$package/node_modules" ]] && farms+=("$package/node_modules")
         done
         dangling="$(find -L "${farms[@]}" -mindepth 1 -maxdepth 2 \( -path '*/node_modules/@*/*' -o ! -path '*/node_modules/*/*' \) -type l -print | wc -l | tr -d ' ')"
         outside="$(find "${farms[@]}" -type l -print0 | xargs -0 -r readlink -f -- | grep -cv "^$PWD/" || true)"
@@ -174,18 +235,14 @@ runs:
 
     # The same condition as the check above, not its outcome: a composite action stops at the failing step, so
     # reaching this one means the check passed, and an unsupported `outcome` could silently never save anything.
+    # An exact hit that did not resolve is not saved again: the entry already exists under that key.
     - name: Save the installed workspace
       if: >-
         inputs.save-node-modules == 'true' &&
-        steps.restored.outputs.usable != 'true'
+        steps.restored.outputs.usable != 'true' && steps.workspace.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: |
-          app/node_modules
-          !app/node_modules/.cache
-          app/apps/*/node_modules
-          app/packages/*/node_modules
-          app/verticals/*/node_modules
+        path: ${{ steps.packages.outputs.paths }}
         key: ${{ steps.workspace.outputs.cache-primary-key }}
 
     # Restored after the install, which creates app/node_modules. The key names this commit, so the
