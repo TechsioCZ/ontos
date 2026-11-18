@@ -274,6 +274,8 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
           input.listAccess,
         );
         const exit = yield* Effect.exit(Effect.suspend(() => run(decodedInput, Object.freeze(context))));
+        // No new work, every admitted call and transaction ended and accounted for, then the snapshot.
+        yield* session.settle;
         const ownerDenied = yield* session.ownerDenied;
         const callRecords = yield* session.callRecords;
         return { callRecords, exit, ownerDenied };
@@ -353,9 +355,10 @@ const executeRunFormReadEffect = Effect.fn('ReadRuntime.executeRunFormRead')(fun
         readRow({ outcome: 'denied', outcomeCode: 'read_permission_denied', outcomeStage: 'authz', resultCount: 0 }),
       ),
     );
-    // The denial comes first, so the caller gets it even when its evidence could not be written.
+    // As on the one-transaction path: required evidence that could not be committed is the answer (the
+    // denial stays in the cause), and no data is released either way.
     return yield* Effect.failCause(
-      Exit.isFailure(evidenceExit) ? Cause.combine(Cause.fail(denial), evidenceExit.cause) : Cause.fail(denial),
+      Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, Cause.fail(denial)) : Cause.fail(denial),
     );
   }
 

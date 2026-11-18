@@ -1923,15 +1923,18 @@ const readRuntimeFromDependencies = <
       const accessAnswers = yield* answerReadAccessQuestions(gateAuthorization, scope, ownedTransaction);
       const ownerQuestion = ownerQuestionOf(scope, ownerAuthorizationTargets, accessTarget, accessOwnerFacts);
       if (getReadRun(input.registration) !== undefined) {
-        return yield* executeRunForm({
-          accessAnswers,
-          admittedCompositionRevision,
-          executionRevision,
-          gateAuthorization,
-          ownerQuestion,
-          permissionTargetMetadata,
-          scope,
-        });
+        // Admitted: the caller runs it after the admission transaction ended (see below).
+        return {
+          admittedRun: executeRunForm({
+            accessAnswers,
+            admittedCompositionRevision,
+            executionRevision,
+            gateAuthorization,
+            ownerQuestion,
+            permissionTargetMetadata,
+            scope,
+          }),
+        };
       }
 
       const trustedSettlement = makeReadSettlementRecovery();
@@ -2132,7 +2135,7 @@ const readRuntimeFromDependencies = <
         ),
       );
       if (Exit.isSuccess(transactionExit)) {
-        return transactionExit.value;
+        return { released: transactionExit.value };
       }
       const { cause } = transactionExit;
       if (
@@ -2167,67 +2170,71 @@ const readRuntimeFromDependencies = <
       );
       return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
     });
-    // A `{ run }` read holds no governed transaction or composition lock across its module code: the
-    // kernel fences the admitted revision in each transaction it opens instead. Its access decision
-    // therefore runs before that fence; a decision made under a composition that changes afterwards
-    // cannot commit anything, because every kernel transaction, the evidence write and the module
-    // route each check the admitted revision.
-    if (compositionRevision === undefined || getReadRun(input.registration) !== undefined) {
-      return yield* executeTrustedRead(database.executor);
-    }
-    const governedSettlement = makeReadSettlementRecovery();
-    const governedExit = yield* database.executor
-      .transaction(
-        Effect.fn('ReadRuntime.governedReadTransaction')(function* governedReadTransaction(
-          transaction: CoreTransaction,
-        ) {
-          yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
-            Effect.mapError((cause) =>
-              preserveFailureCause(
-                new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: 'The approved Application Composition no longer admits this Read',
-                }),
-                cause,
-              ),
-            ),
-          );
-          // The decision row was written into this transaction, so an owner's typed answer commits it and
-          // the caller still receives that same failure below. Defects and interrupts roll back, and so do an
-          // owner outage and a failed evidence write, either of which may leave the transaction unusable.
-          const executionExit = yield* Effect.exit(executeTrustedRead(transaction, transaction));
-          if (
-            Exit.isFailure(executionExit) &&
-            !executionExit.cause.reasons.every(
-              (reason) =>
-                Cause.isFailReason(reason) &&
-                !Schema.is(ReadEvidencePersistenceError)(reason.error) &&
-                !Schema.is(ReadHandlerUnavailable)(reason.error),
-            )
+    /** The admission, or the whole read, in one governed transaction fenced on the inbound revision. */
+    const governedRead = Effect.fn('ReadRuntime.governedRead')(function* governedReadEffect(governedRevision: string) {
+      const governedSettlement = makeReadSettlementRecovery();
+      const governedExit = yield* database.executor
+        .transaction(
+          Effect.fn('ReadRuntime.governedReadTransaction')(function* governedReadTransaction(
+            transaction: CoreTransaction,
           ) {
-            return yield* Effect.failCause(executionExit.cause);
-          }
-          return executionExit;
-        }, governedSettlement.capture),
-      )
-      .pipe(
-        governedSettlement.recover,
-        Effect.catchCause((cause) =>
-          Effect.failCause(
-            cause.pipe(
-              Cause.map((transactionFailure) =>
-                Schema.is(SqlError)(transactionFailure)
-                  ? mapReadTransactionSqlFailure(transactionFailure)
-                  : transactionFailure,
+            yield* lockApplicationCompositionAuthority(transaction, governedRevision, 'read').pipe(
+              Effect.mapError((cause) =>
+                preserveFailureCause(
+                  new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'The approved Application Composition no longer admits this Read',
+                  }),
+                  cause,
+                ),
+              ),
+            );
+            // The decision row was written into this transaction, so an owner's typed answer commits it and
+            // the caller still receives that same failure below. Defects and interrupts roll back, and so do an
+            // owner outage and a failed evidence write, either of which may leave the transaction unusable.
+            const executionExit = yield* Effect.exit(executeTrustedRead(transaction, transaction));
+            if (
+              Exit.isFailure(executionExit) &&
+              !executionExit.cause.reasons.every(
+                (reason) =>
+                  Cause.isFailReason(reason) &&
+                  !Schema.is(ReadEvidencePersistenceError)(reason.error) &&
+                  !Schema.is(ReadHandlerUnavailable)(reason.error),
+              )
+            ) {
+              return yield* Effect.failCause(executionExit.cause);
+            }
+            return executionExit;
+          }, governedSettlement.capture),
+        )
+        .pipe(
+          governedSettlement.recover,
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              cause.pipe(
+                Cause.map((transactionFailure) =>
+                  Schema.is(SqlError)(transactionFailure)
+                    ? mapReadTransactionSqlFailure(transactionFailure)
+                    : transactionFailure,
+                ),
               ),
             ),
           ),
-        ),
-      );
-    if (Exit.isSuccess(governedExit)) {
-      return governedExit.value;
-    }
-    return yield* Effect.failCause(governedExit.cause);
+        );
+      if (Exit.isSuccess(governedExit)) {
+        return governedExit.value;
+      }
+      return yield* Effect.failCause(governedExit.cause);
+    });
+    // A governed `{ run }` read is admitted (gate, policies, access questions and any admission denial
+    // evidence) in the same fenced governed transaction as any other governed read, and that transaction
+    // ends before `run` starts: no transaction or composition lock is held across its module code, whose
+    // kernel transactions, evidence write and module route each check the admitted revision again.
+    const outcome =
+      compositionRevision === undefined
+        ? yield* executeTrustedRead(database.executor)
+        : yield* governedRead(compositionRevision);
+    return 'admittedRun' in outcome ? yield* outcome.admittedRun : outcome.released;
   });
 
   const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));

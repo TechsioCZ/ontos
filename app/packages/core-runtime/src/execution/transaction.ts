@@ -4,12 +4,18 @@
  * built by the operation's own factory, body run with its forks joined, the handle revoked, then
  * commit or rollback. Kind-neutral: it never sees a read type (see `kernel-transactions.ts`).
  */
-import { Cause, Effect, Exit, Fiber, Layer, Schema } from 'effect';
+import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from 'effect';
+import { PgClient } from '@effect/sql-pg';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { Reactivity } from 'effect/reactivity';
+import { SqlClient } from 'effect/sql';
+import type { Connection } from 'effect/sql/SqlConnection';
 import { isSqlError } from 'effect/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
+import { coreRelations } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
-import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import {
   ApplicationCompositionAuthorityError,
@@ -59,34 +65,65 @@ const makeLifetime = (sequence: number): Lifetime => {
   };
 };
 
-/**
- * The same function, refused once the lifetime ended. The wrapper forwards its arguments and its result
- * unchanged, so it has exactly the signature of `fn` (overloads included); the overload states that
- * without an assertion.
- */
-function revocable<Fn extends (...args: never[]) => object>(fn: Fn, lifetime: Lifetime): Fn;
-function revocable(fn: (...args: never[]) => object, lifetime: Lifetime): (...args: never[]) => object {
-  return (...args) => {
-    lifetime.assertLive();
-    return fn(...args);
+/** The transaction's own connection, refused once the lifetime ended: no statement reaches it then. */
+const lifetimeBoundConnection = (connection: Connection, lifetime: Lifetime): Connection => {
+  const live = <A>(statement: () => Effect.Effect<A, SqlError>): Effect.Effect<A, SqlError> =>
+    Effect.suspend(() => {
+      lifetime.assertLive();
+      return statement();
+    });
+  return {
+    execute: (sql, params, transformRows) => live(() => connection.execute(sql, params, transformRows)),
+    executeRaw: (sql, params) => live(() => connection.executeRaw(sql, params)),
+    executeStream: (sql, params, transformRows) =>
+      Stream.suspend(() => {
+        lifetime.assertLive();
+        return connection.executeStream(sql, params, transformRows);
+      }),
+    executeUnprepared: (sql, params, transformRows) =>
+      live(() => connection.executeUnprepared(sql, params, transformRows)),
+    executeValues: (sql, params) => live(() => connection.executeValues(sql, params)),
+    executeValuesUnprepared: (sql, params) => live(() => connection.executeValuesUnprepared(sql, params)),
   };
-}
+};
 
 /**
- * Every database entry of the scoped executor, refused after the body ended. Services are built on this
- * executor, so any database use of a service after its transaction dies `transaction_ended` instead of
- * running on a pooled connection outside the transaction and its scope. The guard is copied by the
- * workload seal, which spreads the executor's properties.
+ * The executor a transaction's services are built on: its own client over the driver transaction's
+ * connection, which checks the lifetime where each statement executes, not where a query, a builder or
+ * an Effect is made. A statement prepared inside the body and evaluated after it ended (outside any
+ * transaction or inside a later one) dies `transaction_ended` and issues no SQL. The scoped routine path
+ * runs on it as well.
  */
-const revocableExecutor = (executor: ScopedTransactionExecutor, lifetime: Lifetime): ScopedTransactionExecutor =>
-  Object.freeze({
-    ...executor,
-    delete: revocable(executor.delete, lifetime),
-    insert: revocable(executor.insert, lifetime),
-    invoke: revocable(executor.invoke, lifetime),
-    select: revocable(executor.select, lifetime),
-    update: revocable(executor.update, lifetime),
+const lifetimeBoundExecutor = Effect.fn('KernelTransactions.lifetimeBoundExecutor')(function* lifetimeBoundExecutor(
+  database: KernelDatabase,
+  lifetime: Lifetime,
+) {
+  const driverClient = database.executor.$client;
+  const open = yield* Effect.serviceOption(driverClient.transactionService);
+  if (Option.isNone(open)) {
+    return yield* Effect.die('A kernel transaction executor was built outside its driver transaction');
+  }
+  const [connection] = open.value;
+  const reactivity = yield* Reactivity.make;
+  const client = yield* SqlClient.make({
+    acquirer: Effect.succeed(lifetimeBoundConnection(connection, lifetime)),
+    compiler: PgClient.makeCompiler(),
+    driver: 'pg',
+    spanAttributes: [['db.system.name', 'postgresql']],
+  }).pipe(
+    Effect.updateContext((context: Context.Context<never>) => Context.add(context, Reactivity.Reactivity, reactivity)),
+  );
+  const pgClient: PgClient.PgClient = Object.assign(client, {
+    config: driverClient.config,
+    json: driverClient.json,
+    listen: driverClient.listen,
+    notify: driverClient.notify,
+    [PgClient.TypeId]: PgClient.TypeId,
   });
+  return yield* makeWithDefaults({ relations: coreRelations }).pipe(
+    Effect.updateContext((context: Context.Context<never>) => Context.add(context, PgClient.PgClient, pgClient)),
+  );
+});
 
 /** What one transaction keeps while it runs; changed only by the transaction's own fiber. */
 interface TransactionFrame<A, E> {
@@ -165,16 +202,18 @@ const driverConfig = (request: TransactionRequest) =>
  * fence, scope, seal, clock, owner rule. Returns the sealed executor and the facts.
  */
 const openOwnerScope = Effect.fn('KernelTransactions.openOwnerScope')(function* openOwnerScope<A, E>(
+  database: KernelDatabase,
   transaction: CoreTransaction,
   request: TransactionRequest,
   owner: Pick<OwnerBinding<unknown, never>, 'decide' | 'seal'>,
   frame: TransactionFrame<A, E>,
 ) {
   yield* fence(transaction, request);
-  const scoped = yield* installOperationalScope(transaction, request.execution.scope).pipe(
+  const bound = yield* lifetimeBoundExecutor(database, frame.lifetime);
+  const scoped = yield* installOperationalScope(bound, request.execution.scope).pipe(
     Effect.mapError(abortedBy('database_unavailable')),
   );
-  const sealed = owner.seal(revocableExecutor(scoped, frame.lifetime));
+  const sealed = owner.seal(scoped);
   frame.closeSeal = sealed.close;
   // After the fence wait and the scope install: never earlier than either.
   const operationAt = yield* trustedStatementTime(transaction).pipe(Effect.mapError(abortedBy('database_unavailable')));
@@ -207,13 +246,14 @@ const ownerTransaction = Effect.fn('KernelTransactions.ownerTransaction')(functi
   E,
   R,
 >(
+  database: KernelDatabase,
   transaction: CoreTransaction,
   request: TransactionRequest,
   owner: OwnerBinding<Services, FactoryRequirements>,
   body: (services: Services, facts: TransactionFacts) => Effect.Effect<A, E, R>,
   frame: TransactionFrame<A, E>,
 ) {
-  const opened = yield* openOwnerScope(transaction, request, owner, frame);
+  const opened = yield* openOwnerScope(database, transaction, request, owner, frame);
   const services = yield* owner
     .build(opened.transaction, request.execution.scope, request.execution.facts.compositionRevision)
     .pipe(Effect.mapError(abortedBy('database_unavailable')));
@@ -246,7 +286,7 @@ const openTransaction = Effect.fn('KernelTransactions.open')(function* openTrans
   const driverExit = yield* Effect.exit(
     executor.transaction(
       (transaction) =>
-        ownerTransaction(transaction, request, owner, body, frame).pipe(Effect.ensuring(endFrame(frame))),
+        ownerTransaction(database, transaction, request, owner, body, frame).pipe(Effect.ensuring(endFrame(frame))),
       driverConfig(request),
     ),
   );
@@ -273,7 +313,7 @@ const checkOwnerTransaction = Effect.fn('KernelTransactions.checkOwner')(functio
   const exit = yield* Effect.exit(
     executor.transaction(
       (transaction) =>
-        openOwnerScope(transaction, request, owner, frame).pipe(
+        openOwnerScope(database, transaction, request, owner, frame).pipe(
           // Decided: nothing else runs and nothing commits.
           Effect.andThen(Effect.fail(new RollbackRequested())),
           Effect.ensuring(endFrame(frame)),

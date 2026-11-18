@@ -3,27 +3,10 @@
  * a read, a list predicate, a field group or read evidence. The read adapter's private contract is
  * `reads/sdk-contract.ts`; Actions and workers will add theirs next to it.
  *
- * Collaborators are Context services. Each service's shape (`*Service`, with its obligations) lives
- * with its tag, one per file next to this one: `kernel-sessions.ts`, `kernel-transactions.ts`,
- * `kernel-calls.ts`, `call-requirements.ts`, `core-call-route.ts`, `module-call-route.ts`. The data they
- * exchange is declared here. Each lane provides the Layer of the services it owns, in the file named
- * below, and implements exactly the named functions:
+ * Each service's shape lives with its Context tag, one per file next to this one; the data they
+ * exchange is declared here.
  *
- * - runner lane:   `execution/runner.ts`       `KernelSessionsLive: Layer<KernelSessions, never, KernelTransactions | KernelCalls>`
- *                  `execution/transaction.ts`  `KernelTransactionsLive: Layer<KernelTransactions, never, CoreDatabase>`
- *                  `reads/run-evidence-live.ts` `ReadRunEvidenceLive: Layer<ReadRunEvidence, never, CoreDatabase>`,
- *                                              `callEvidenceRows: CallEvidenceRows` (tag and types in `reads/run-evidence.ts`)
- * - call lane:     `execution/call.ts`         `KernelCallsLive: Layer<KernelCalls, never, CallRequirements | CoreCallRoute>`
- *                                              (reads `ModuleCallRoute` with `Effect.serviceOption`; see `module-call-route.ts`)
- *                  `execution/requirements.ts` `CallRequirementsLive: Layer<CallRequirements>`,
- *                                              `selectCaller: SelectCaller`, `validateDeclaredCalls: ValidateDeclaredCalls`
- *                  `execution/core-route.ts`   `coreCallRouteFor: CoreCallRouteFor`
- *                  `execution/core-operations.ts` `coreOperationRegistrations` and the two new Core reads
- *                  `@app/shared-contracts/server/sdk-module-call-route` `ModuleCallRouteLive: Layer<ModuleCallRoute>`
- * - access lane:   `reads/access-questions.ts` (types in `reads/sdk-contract.ts`)
- * - read adapter:  `reads/run-form.ts`         (types in `reads/sdk-contract.ts`)
- *
- * Shared rules every lane keeps:
+ * Shared rules every part keeps:
  *
  * 1. The operation's own authority is decided before anything a module wrote runs, and a later
  *    failure never turns its denial into another error. An owner-rule denial is sticky (see
@@ -42,8 +25,6 @@ import type { OwnerAuthorizationDecision } from '../access/enforcement/owner-ove
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import type { OntosModuleRequirements } from '../modules/module-dependency-contracts.ts';
-import type { OntosRegisteredWorkloadCall } from '../modules/registered-workload-calls.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { AnyReadRegistration } from '../reads/definition.ts';
@@ -61,7 +42,6 @@ import type {
   RequirementCaller,
   WriteCallOutcome,
 } from '../sdk/index.ts';
-import type { CallerNotPermitted } from './caller-not-permitted.ts';
 
 /* ------------------------------------------------------------------------------------------------ */
 /* Budget and the kernel's one runtime rule                                                         */
@@ -129,7 +109,7 @@ export const RequestPrincipalCallerSourceSchema = Schema.TaggedStruct('RequestPr
   /** The execution's verified scope: requirement lookup, delegation, and Core's in-process route. */
   principal: TrustedPrincipalContextSchema,
 });
-export const CallerSourceSchema = RequestPrincipalCallerSourceSchema;
+const CallerSourceSchema = RequestPrincipalCallerSourceSchema;
 export type CallerSource = typeof CallerSourceSchema.Type;
 
 /**
@@ -172,12 +152,15 @@ export interface KernelExecution<Calls extends DeclaredCalls, Identity extends E
 /* Runner                                                                                           */
 /* ------------------------------------------------------------------------------------------------ */
 
-/** One call as it happened, for evidence. Never holds the input or the answer. */
+/**
+ * One call as it happened, for evidence. Never holds the input or the answer. A call the session
+ * interrupted before its executor reported is `Interrupted`, with `callerKind: 'unknown'`.
+ */
 export interface CallRecord {
-  readonly callerKind: SelectedCaller['kind'] | 'refused';
+  readonly callerKind: SelectedCaller['kind'] | 'refused' | 'unknown';
   readonly durationMillis: number;
   readonly name: string;
-  readonly outcome: CallOutcome<unknown>['_tag'] | WriteCallOutcome<unknown>['_tag'];
+  readonly outcome: CallOutcome<unknown>['_tag'] | WriteCallOutcome<unknown>['_tag'] | 'Interrupted';
   readonly placement: Exclude<Placement, 'inside'>;
   readonly provider: Readonly<OperationProvider>;
   readonly requirementKey: string;
@@ -196,10 +179,17 @@ export interface KernelSession<
   readonly callRecords: Effect.Effect<readonly CallRecord[]>;
   readonly capabilities: ExecutionCapabilities<Services, Calls, Identity>;
   /**
-   * True once any transaction of this execution answered `owner_denied`. Sticky; the adapter answers
-   * the operation as denied whenever it is true, whatever the module's code returned.
+   * True once the owner rule of any transaction of this execution answered denied (noted when it
+   * answers, not when its transaction settles). Sticky; the adapter answers the operation as denied
+   * whenever it is true, whatever the module's code returned.
    */
   readonly ownerDenied: Effect.Effect<boolean>;
+  /**
+   * Ends the session's work: admits no further call or transaction, interrupts and awaits every call
+   * and transaction still running (a transaction rolls back; a call is recorded `Interrupted`). The
+   * adapter settles before it reads `ownerDenied` and `callRecords`.
+   */
+  readonly settle: Effect.Effect<void>;
   /** How many transactions were opened so far. */
   readonly transactionCount: Effect.Effect<number>;
 }
@@ -273,43 +263,6 @@ export type SelectedCaller =
       readonly legalEntityScope: RequirementCaller['legalEntityScope'];
     }>;
 
-/**
- * For a vertical provider only (a Core provider is `in_process` without selection). Selects the one
- * caller kind the execution identity implies and requires it in `permitted`:
- *
- * - `Request` via `person` → `person`.
- * - `Request` via `workload`, `recovery` or `system` → `registered` (with `recoveryRequestHash` for
- *   `recovery`, and `expectedPrincipalId` = the principal's id when the caller pins it).
- * - `ActionInvocation` → refused (`wanted: 'none'`) until the Action adapter adds its admission caller
- *   kinds (gateway `Admission`, `RegisteredAdmission`).
- * - `WorkerDelivery` → `workload` (reserved).
- *
- * Absent from `permitted` → `CallerNotPermitted`. Never falls back to another kind.
- */
-export type SelectCaller = (
-  identity: ExecutionIdentity,
-  permitted: readonly RequirementCaller[],
-  facts: Readonly<{ readonly principalId: string; readonly recoveryRequestHash: string | undefined }>,
-) => Effect.Effect<SelectedCaller, CallerNotPermitted>;
-
-/**
- * Definition-time check, run where a vertical's runtime registration is built (manifest and reads
- * together, `modules/runtime-registration.ts`). Returns the issues; empty means valid. Every declared
- * call names a requirement of the same module whose `entrypointKey` is the declaring operation's
- * entrypoint and whose `provider` equals the reference's provider. A vertical provider's requirement
- * lists at least one caller, and each `registered` or `workload` caller matches an entry of
- * `registeredWorkloadCalls` with the same `declarationKey` and `entrypointKey` equal to
- * `provider.entrypointKey`; a Core provider's requirement lists none. A read declares only read calls.
- * A write call's `recovery` names a read call of the same `calls`.
- */
-export type ValidateDeclaredCalls = (input: {
-  readonly calls: DeclaredCalls;
-  readonly consumerEntrypointKey: string;
-  readonly consumerKind: 'action' | 'read' | 'worker';
-  readonly registeredWorkloadCalls: readonly OntosRegisteredWorkloadCall[];
-  readonly requirements: OntosModuleRequirements | undefined;
-}) => readonly string[];
-
 /* Routes ----------------------------------------------------------------------------------------- */
 
 export interface CallRouteRequest {
@@ -339,29 +292,6 @@ export interface CallRoute {
   readonly send: (request: CallRouteRequest) => Effect.Effect<RouteAnswer>;
 }
 
-/**
- * Core's in-process route (`execution/core-route.ts`, built by `coreCallRouteFor` inside the read
- * runtime, which provides it). Obligations:
- *
- * - Its registry is derived from `coreOperationRegistrations` (`execution/core-operations.ts`), keyed
- *   by `provider.entrypointKey`: `legalEntityDetailRead`, `managedPrincipalsRead`, and the two new
- *   Core reads `core.modules.api.action-commit-state` and `core.identity.api.assignable-principals`
- *   (schemas in `sdk/core-operations.ts`, their own access declarations; the assignable principals
- *   read declares the field group `ASSIGNABLE_PRINCIPAL_NAMES_FIELD_GROUP` on `eligible[].displayName`).
- *   An unknown key is `Problem 404`.
- * - Runs the operation through the read runtime's `runRead` (which clears the caller's module operation
- *   lease, so the Core read never borrows it) with the execution's own principal
- *   (`callerSource.principal`) and the scope's correlation and trace ids, so the Core operation's own
- *   access decision, field groups and evidence apply. There is no caller-kind check: no credential is
- *   used, and the Core operation's own gate decides for whatever principal the execution has.
- * - Encodes the result with `operation.response` into `Answered.encoded`.
- * - Maps Read errors to problems: not found 404, permission denied 403, policy denied its own status,
- *   input invalid 400, every unavailable 503, a domain error 409 with its `_tag` as code.
- * - The action commit state read binds tenant and principal of the caller and refuses (403) an
- *   `actionKey` the calling module (`execution.facts.owningModuleKey`) does not own.
- */
-// The Context tag is `CoreCallRoute` in `execution/core-call-route.ts`.
-
 /** The governed read runner the Core route delegates to: the read runtime's own `runRead`. */
 export type CoreRunRead = (input: {
   readonly input: unknown;
@@ -370,23 +300,3 @@ export type CoreRunRead = (input: {
   /** The read transport metadata built from the execution scope, exactly as a host builds it. */
   readonly transport: unknown;
 }) => Effect.Effect<unknown, ReadCoreError>;
-
-export type CoreCallRouteFor = (runRead: CoreRunRead) => CallRoute;
-
-/**
- * The HTTP route to verticals (`@app/shared-contracts/server/sdk-module-call-route`, `ModuleCallRouteLive`;
- * shared-contracts depends on core-runtime, not the other way round, and imports the tag and these
- * types from `@app/core-runtime/execution/module-call-route`). Obligations: build the gateway
- * delegation subject from `caller` (`person` → `Assertion` with the execution scope; `registered` →
- * `RegisteredAssertion` with `declarationKey`, `expectedPrincipalId` when present,
- * `operationRequirementKey: requirement.requirementKey` and `recoveryRequestHash` when present;
- * `workload` → `RegisteredWorkload`, reserved; `in_process` never reaches it); call
- * `acquireDelegatedGatewayContext({ audience: requirement.providerAppId, legalEntityScope:
- * caller.legalEntityScope, requestCorrelation: scope.correlationId, subject })`; answer `Problem 503`
- * when the issued `compositionRevision` differs from `execution.facts.compositionRevision`; POST `encodedInput`
- * as JSON to `new URL(route.path, apiBaseUrl)` with the headers `makeGovernedEffectBffClient` sends
- * (authorization, x-correlation-id, x-trace-id, x-ontos-composition-revision, idempotency-key for
- * writes); 2xx is `Answered` with the parsed JSON body; a problem body gives `status`, `code`,
- * `reason`; a delegation or network failure is `Unreachable`.
- */
-// The Context tag is `ModuleCallRoute` in `execution/module-call-route.ts`.
