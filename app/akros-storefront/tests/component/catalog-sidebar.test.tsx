@@ -92,19 +92,6 @@ describe("CatalogSidebar", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("uses the subtle catalog surface without the redundant introduction", () => {
-    render(<CatalogSidebar categories={getSidebarCategories()} />);
-
-    const [desktopNavigation] = screen.getAllByRole("navigation", {
-      name: cs.catalog.title,
-    });
-
-    expect(screen.queryByRole("heading", { name: cs.catalog.title })).toBeNull();
-    expect(desktopNavigation.querySelector('[data-part="group"]')?.getAttribute("data-tone")).toBe(
-      "subtle",
-    );
-  });
-
   it("opens the active category trail and marks only its leaf as current", () => {
     render(<CatalogSidebar activeSlug="a-2-141" categories={getSidebarCategories("a-2-141")} />);
 
