@@ -140,6 +140,19 @@ const invocation = Schema.decodeUnknownSync(ExecutionIdentitySchema)({
 
 /* Caller selection ------------------------------------------------------------------------------ */
 
+it('takes a registered caller declaration key as a plain string, checked as an access key', () => {
+  // Written in a manifest exactly like `registeredWorkloadCalls[].declarationKey`, with no constructor.
+  const written: OntosModuleRequirements['operations'][number]['callers'] = [
+    { declarationKey, kind: 'registered', legalEntityScope: 'tenant', pinPrincipal: false },
+  ];
+  expect(callersOf(written)).toEqual(written);
+  expect(() =>
+    callersOf([
+      { declarationKey: 'Not An Access Key', kind: 'registered', legalEntityScope: 'tenant', pinPrincipal: false },
+    ]),
+  ).toThrow();
+});
+
 it.effect('selects exactly the caller kind the identity implies (person -> person, others -> registered)', () =>
   Effect.gen(function* selection() {
     expect(yield* selectCaller(request('person'), [...person, ...registered(false)], facts)).toEqual({

@@ -76,6 +76,7 @@
     "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
     "./testing/reads": "./src/testing/reads.ts",
+    "./testing/sdk": "./src/testing/sdk.ts",
     "./testing/native-reads": "./src/testing/native-reads.ts",
     "./testing/isolated-native-database": "./src/testing/isolated-native-database.ts",
     "./testing/source-execution-fence-native": "./src/testing/source-execution-fence-native.ts",
