@@ -1578,6 +1578,73 @@ it.effect('a lost source Create reply replays the Party its stored decision crea
   }),
 );
 
+it.effect('the decision record of a recovered source Create needs the ordinary evidence read of its Party', () =>
+  Effect.gen(function* decisionReadIsNotACreateReply() {
+    const { input, sourceConfig } = yield* sourceAmbiguityInput;
+    const first = sourceAmbiguityHarness();
+    yield* createOrMatchParty(first.transaction, input).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+      Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('ALLOWED') }),
+    );
+    const created = {
+      ...recordedRow(first.inserts.find(({ table }) => table === partyMatchDecisions)?.values),
+      actionInvocationId,
+      candidateCaseId: null,
+      committedCreateOutcome: 'CREATED',
+      decidedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+      matchDecisionId: decisionId,
+      outcome: 'CREATED',
+      partyId: partyA,
+    };
+    const read = (evidenceRead: 'ALLOWED' | 'DENIED') => {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [
+            partyCreateSourceReceipts,
+            [
+              [
+                {
+                  actionInvocationId,
+                  legalEntityId: null,
+                  matchDecisionId: decisionId,
+                  principalId: input.sourceScope.principalId,
+                },
+              ],
+            ],
+          ],
+          [partyMatchDecisions, [[created], [created]]],
+          [partyAliases, [[]]],
+          [parties, [[{ partyId: partyA }], [{ archivedAt: null, partyType: 'ORGANIZATION' }]]],
+        ]),
+      );
+      const asked: string[] = [];
+      const result = findMatchDecision(subject.transaction, tenantId, { actionInvocationId }, input.sourceScope).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, sourceConfig),
+        Effect.provideService(PartyClientSourcePrivacy, {
+          checkImport: ({ intent }) =>
+            Effect.sync(() => {
+              if (!('target' in intent) || intent.target === undefined) {
+                return 'ALLOWED';
+              }
+              asked.push(intent.operation);
+              return intent.operation === 'EVIDENCE_READ' ? evidenceRead : 'ALLOWED';
+            }),
+        }),
+      );
+      return { asked, result };
+    };
+    // The create recovery admission alone never discloses the decision record (decidedAt, rule version).
+    const refused = read('DENIED');
+    expect(yield* Effect.flip(refused.result)).toMatchObject({ code: 'party_persistence_unavailable' });
+    expect(refused.asked).toEqual(['RECOVER_CREATE', 'EVIDENCE_READ']);
+    const admitted = read('ALLOWED');
+    const found = yield* admitted.result;
+    const recovered = 'value' in found ? found.value : undefined;
+    expect(recovered?.evidenceEvaluation).toBeNull();
+    expect(recovered?.partyRef).toEqual(makePartyRef(tenantId, partyA));
+  }),
+);
+
 it.effect('source Match checks exact prior case Privacy before its lookup', () =>
   Effect.gen(function* protectPriorCase() {
     const { input, sourceConfig } = yield* sourceAmbiguityInput;

@@ -136,28 +136,6 @@ const sourceRequestMatches = (
 
 export const sourceCreatedPartyCaller = 'party-registry';
 
-/** Privacy's own record that it governs the original create of this exact source occurrence for the same subject,
- * principal and company. A recovery context alone never stands in for it. */
-const originalSourceCreateGoverned = (
-  contexts: readonly SourceProcessingContext[],
-  recovery: SourceProcessingContext,
-  request: SourceProcessingEligibilityRequest,
-  evaluatedAt: string,
-): boolean =>
-  contexts.some(
-    (context) =>
-      context.targetAdmission === undefined &&
-      context.tenantId === recovery.tenantId &&
-      context.legalEntityId === recovery.legalEntityId &&
-      context.principalId === recovery.principalId &&
-      context.authMethod === recovery.authMethod &&
-      context.intendedScope.operation === 'CREATE' &&
-      context.intendedScope.subjectRef.tenantId === recovery.intendedScope.subjectRef.tenantId &&
-      context.intendedScope.subjectRef.resourceId === recovery.intendedScope.subjectRef.resourceId &&
-      isPrivacyInstantAtOrBefore(context.effectiveFrom, evaluatedAt) &&
-      requestEquivalent(context.request, { ...request, operation: 'CREATE', target: null }),
-  );
-
 const currentContextMatches = (
   context: SourceProcessingContext,
   request: SourceProcessingEligibilityRequest,
@@ -186,6 +164,24 @@ const currentContextMatches = (
   );
 };
 
+/** Privacy's own current governance of the original create of this exact source occurrence for the same subject,
+ * principal and company: an ordinary CREATE context that is still effective and whose applicability is still
+ * CURRENT. A recovery context alone never stands in for it. */
+const originalSourceCreateGoverned = (
+  contexts: readonly SourceProcessingContext[],
+  recovery: SourceProcessingContext,
+  request: SourceProcessingEligibilityRequest,
+  scope: OperationalScope,
+  evaluatedAt: string,
+): boolean =>
+  contexts.some(
+    (context) =>
+      context.targetAdmission === undefined &&
+      context.intendedScope.subjectRef.tenantId === recovery.intendedScope.subjectRef.tenantId &&
+      context.intendedScope.subjectRef.resourceId === recovery.intendedScope.subjectRef.resourceId &&
+      currentContextMatches(context, { ...request, operation: 'CREATE', target: null }, scope, evaluatedAt),
+  );
+
 /** The one current context for this exact request. The source created Party admission also needs the Shell-signed
  * Party Registry caller and Privacy's own record of the original create. */
 const currentExactContext = (
@@ -213,7 +209,8 @@ const currentExactContext = (
   }
   if (
     context.targetAdmission === 'SOURCE_CREATED_PARTY' &&
-    (callerAppId !== sourceCreatedPartyCaller || !originalSourceCreateGoverned(contexts, context, request, evaluatedAt))
+    (callerAppId !== sourceCreatedPartyCaller ||
+      !originalSourceCreateGoverned(contexts, context, request, scope, evaluatedAt))
   ) {
     return undefined;
   }
@@ -584,37 +581,24 @@ export const sourceSubjectMatchesRequest = (
   return subject.kind === 'DATA_SUBJECT' || request.target === null;
 };
 
-/** Privacy's own records of persons on a source created Party: each must have been admitted from this exact
- * source subject. A Party Privacy links to any other person was not created by this source. */
-export const sourceCreatedPartyPersonsMatch = (
-  linked: readonly PrivacySubjectRecord[],
-  sourceSubject: PrivacySubjectRecord['subjectRef'],
-): boolean =>
-  linked.every(
-    ({ subject }) =>
-      subject.kind === 'DATA_SUBJECT' &&
-      subject.sourceAdmission !== undefined &&
-      subject.sourceAdmission.sourceSubjectRef.tenantId === sourceSubject.tenantId &&
-      subject.sourceAdmission.sourceSubjectRef.resourceId === sourceSubject.resourceId,
-  );
-
-/** Reads Privacy's own persons on the recovered Party and admits only those from this exact source subject. */
-const sourceCreatedPartyPersonsCurrent = Effect.fn('Privacy.sourceCreatedPartyPersonsCurrent')(function* persons(
+/** Privacy's own records of persons on the recovered Party, across every company of the tenant. The admission covers
+ * only a Party Privacy knows no person for: once any Data Subject is linked to it, that person's own consent,
+ * restriction and objection govern it, so recovery falls back to the ordinary Party-target rule. Privacy has no record
+ * that this source created the Party; that fact is Party Registry's stored decision for this exact source occurrence. */
+const sourceCreatedPartyUnclaimed = Effect.fn('Privacy.sourceCreatedPartyUnclaimed')(function* unclaimed(
   transaction: SourceTransaction,
   scope: OperationalScope,
-  sourceSubject: PrivacySubjectRecord['subjectRef'],
   request: SourceProcessingEligibilityRequest,
 ) {
   if (request.target?.kind !== 'PARTY') {
     return false;
   }
   const linked = yield* transaction
-    .select({ record: privacySubjects.subjectRecord })
+    .select({ privacySubjectId: privacySubjects.privacySubjectId })
     .from(privacySubjects)
     .where(
       and(
         eq(privacySubjects.tenantId, scope.tenantId),
-        eq(privacySubjects.legalEntityId, scope.legalEntityId ?? ''),
         eq(privacySubjects.subjectKind, 'DATA_SUBJECT'),
         eq(
           sql<string>`${privacySubjects.subjectRecord}->'subject'->'partyRef'->>'resourceId'`,
@@ -622,11 +606,9 @@ const sourceCreatedPartyPersonsCurrent = Effect.fn('Privacy.sourceCreatedPartyPe
         ),
       ),
     )
+    .limit(1)
     .pipe(Effect.mapError(unavailable));
-  const records = yield* Schema.decodeUnknownEffect(Schema.Array(PrivacySubjectRecordSchema))(
-    linked.map(({ record }) => record),
-  ).pipe(Effect.mapError(unavailable));
-  return sourceCreatedPartyPersonsMatch(records, sourceSubject);
+  return linked.length === 0;
 });
 
 const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* subjectExists(
@@ -668,7 +650,7 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
     return yield* hasCurrentCustomerIntakeOrganizationProof(request, scope, crypto);
   }
   if (targetAdmission === 'SOURCE_CREATED_PARTY') {
-    return yield* sourceCreatedPartyPersonsCurrent(transaction, scope, subject.subjectRef, request);
+    return yield* sourceCreatedPartyUnclaimed(transaction, scope, request);
   }
   if (
     targetAdmission === 'CURRENT_SOURCE_PERSON' &&

@@ -13,7 +13,6 @@ import {
 import type { SourceProcessingEligibilityRequest } from '../../shared/apis/source-processing-eligibility.ts';
 import {
   evaluateSourceProcessingEligibility,
-  sourceCreatedPartyPersonsMatch,
   sourceSubjectMatchesRequest,
 } from '../../src/api/source-processing-eligibility.read.ts';
 import type { SourceProcessingEligibilityServices } from '../../src/api/source-processing-eligibility.read.ts';
@@ -511,8 +510,26 @@ describe('current exact source processing eligibility', () => {
       expect(yield* refused(request, { ...value, contexts: [otherSubject, context] })).toBe('DENIED');
       const otherPrincipal = { ...fixture.context, principalId: '10000000-0000-4000-8000-000000000098' };
       expect(yield* refused(request, { ...value, contexts: [otherPrincipal, context] })).toBe('DENIED');
-      // A Party whose persons Privacy did not admit from this exact source subject.
+      // Privacy's record of the original create must still be current: an expired CREATE context, or one whose
+      // applicability is no longer CURRENT, no longer governs that create.
+      const expiredCreate = { ...fixture.context, validUntil: fixture.evaluatedAt };
+      expect(yield* refused(request, { ...value, contexts: [expiredCreate, context] })).toBe('DENIED');
+      const notCurrentCreate = {
+        ...fixture.context,
+        applicabilityAuthority: { ...fixture.context.applicabilityAuthority, status: 'STALE' as const },
+      };
+      expect(yield* refused(request, { ...value, contexts: [notCurrentCreate, context] })).toBe('DENIED');
+      // A Party Privacy links any Data Subject to: that person's own consent and restrictions govern it, so the
+      // admission does not apply (sourceSubjectExists answers false for it).
       expect(yield* refused(request, { ...value, subjectExists: () => Effect.succeed(false) })).toBe('DENIED');
+      // What Privacy takes on trust: it has no record of which Party a source create produced. For a Party it knows
+      // no person for, any Party id is admitted; Party Registry names the target only from its stored decision for
+      // this exact source occurrence (its unit tests prove Privacy is asked for that Party and no other).
+      const otherUnclaimedParty = {
+        ...request,
+        target: { kind: 'PARTY' as const, resourceId: partyId.replace(/31$/u, '32') },
+      };
+      expect((yield* run(value, otherUnclaimedParty, caller)).outcome).toBe('ALLOWED');
     }),
   );
   it('binds the source created Party admission to the exact source-asserted subject and its own persons', () => {
@@ -570,17 +587,6 @@ describe('current exact source processing eligibility', () => {
     ]) {
       expect(sourceSubjectMatchesRequest(sourceSubject, variant, 'SOURCE_CREATED_PARTY')).toBe(false);
     }
-    // Privacy's own persons on the Party: none yet, or only those admitted from this exact source subject.
-    expect(sourceCreatedPartyPersonsMatch([], sourceSubject.subjectRef)).toBe(true);
-    expect(
-      sourceCreatedPartyPersonsMatch([dataSubject(sourceSubject.subjectRef.resourceId)], sourceSubject.subjectRef),
-    ).toBe(true);
-    expect(
-      sourceCreatedPartyPersonsMatch(
-        [dataSubject(sourceSubject.subjectRef.resourceId), dataSubject('10000000-0000-4000-8000-000000000042')],
-        sourceSubject.subjectRef,
-      ),
-    ).toBe(false);
     // The ordinary Party-target rule is unchanged: without the admission only a linked Data Subject serves it.
     expect(sourceSubjectMatchesRequest(sourceSubject, request)).toBe(false);
     expect(sourceSubjectMatchesRequest(dataSubject(sourceSubject.subjectRef.resourceId), request)).toBe(true);

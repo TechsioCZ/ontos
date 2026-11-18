@@ -2305,6 +2305,39 @@ const decisionEvidenceTargets = (row: typeof partyMatchDecisions.$inferSelect): 
   }
   return [];
 };
+const decodeDecisionSource = Effect.fn('PartyMatchingPersistenceService.decodeDecisionSource')(function* decode(
+  row: typeof partyMatchDecisions.$inferSelect,
+) {
+  if (row.evidenceEvaluation === null) {
+    return;
+  }
+  return yield* Schema.decodeUnknownEffect(PartyEvidenceEvaluationSchema)(row.evidenceEvaluation).pipe(
+    Effect.mapError(unavailable),
+  );
+});
+/** Reading a decision record is an evidence read of every subject it names, under Privacy's ordinary rule. */
+const authorizeDecisionTargets = Effect.fn('PartyMatchingPersistenceService.authorizeDecisionTargets')(
+  function* authorizeTargets(
+    transaction: Pick<PartyTransaction, 'select'>,
+    tenantId: string,
+    row: typeof partyMatchDecisions.$inferSelect,
+    assertion: PartyClientSourceAssertion | undefined,
+    sourceScope?: PartyClientSourceScope,
+  ) {
+    yield* authorizeSourceTargets(assertion, sourceScope, 'EVIDENCE_READ', decisionEvidenceTargets(row)).pipe(
+      Effect.mapError(unavailable),
+    );
+    if (row.candidateCaseId !== null) {
+      const partyIds = yield* findCasePartyIds(transaction, tenantId, row.candidateCaseId);
+      yield* authorizeSourceTargets(
+        assertion,
+        sourceScope,
+        'EVIDENCE_READ',
+        partyIds.map((partyId) => ({ kind: 'PARTY', partyId })),
+      ).pipe(Effect.mapError(unavailable));
+    }
+  },
+);
 const authorizeDecisionEvidenceRead = Effect.fn('PartyMatchingPersistenceService.authorizeDecisionEvidenceRead')(
   function* authorizeRead(
     transaction: Pick<PartyTransaction, 'select'>,
@@ -2313,27 +2346,8 @@ const authorizeDecisionEvidenceRead = Effect.fn('PartyMatchingPersistenceService
     sourceScope?: PartyClientSourceScope,
   ) {
     yield* requireSupportedPartyEvidenceOperation(row.evidenceEvaluation?.evidence, 'EVIDENCE_READ', sourceScope);
-    const evidence =
-      row.evidenceEvaluation === null
-        ? undefined
-        : yield* Schema.decodeUnknownEffect(PartyEvidenceEvaluationSchema)(row.evidenceEvaluation).pipe(
-            Effect.mapError(unavailable),
-          );
-    yield* authorizeSourceTargets(
-      clientSourceAssertion(evidence?.evidence),
-      sourceScope,
-      'EVIDENCE_READ',
-      decisionEvidenceTargets(row),
-    ).pipe(Effect.mapError(unavailable));
-    if (row.candidateCaseId !== null) {
-      const partyIds = yield* findCasePartyIds(transaction, tenantId, row.candidateCaseId);
-      yield* authorizeSourceTargets(
-        clientSourceAssertion(evidence?.evidence),
-        sourceScope,
-        'EVIDENCE_READ',
-        partyIds.map((partyId) => ({ kind: 'PARTY', partyId })),
-      ).pipe(Effect.mapError(unavailable));
-    }
+    const evidence = yield* decodeDecisionSource(row);
+    yield* authorizeDecisionTargets(transaction, tenantId, row, clientSourceAssertion(evidence?.evidence), sourceScope);
     if (sourceScope?.tenantId === tenantId) {
       // An erased evidence payload does not turn an existing source decision into generic read data.
       const [sourceReceipt] = yield* transaction
@@ -2385,6 +2399,11 @@ export const findMatchDecision = Effect.fn('PartyMatchingPersistenceService.find
   }
   if (recovery === undefined) {
     yield* authorizeDecisionEvidenceRead(transaction, tenantId, row, sourceScope);
+  } else {
+    // The decision record carries more than the create reply (decidedAt, rule version), so a create recovery
+    // admission alone never discloses it: the record also needs the ordinary evidence read of its subjects.
+    const evidence = yield* decodeDecisionSource(row);
+    yield* authorizeDecisionTargets(transaction, tenantId, row, clientSourceAssertion(evidence?.evidence), sourceScope);
   }
   return {
     _tag: 'found',
