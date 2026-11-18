@@ -83,9 +83,10 @@ export const workspaceClosure = (directory: string, packages: readonly Workspace
  *   folder; tests and documentation excluded);
  * - for a workspace package named by a bare specifier, its manifest and the targets of that subpath in its `exports`
  *   under every condition (packageEntries): the bundler, TypeScript, the deploy trace and Node all resolve the
- *   specifier through that map. The deploy trace also copies the subpath's legacy resolution (`<package><subpath>`
- *   with an extension, or its `index`), so that file counts too, without its references. A unit whose build walks
- *   every export of the packages it carries counts all of them (EXPORT_WALKING_STEPS). A package
+ *   specifier through that map. The deploy trace also resolves the subpath the legacy way and carries what it finds
+ *   with its imports, so every file that resolution can select counts, followed (legacyCandidates): `<package><subpath>`
+ *   with an extension, its `index`, and a `package.json` in that directory with the files its `main` selects. A unit
+ *   whose build walks every export of the packages it carries counts all of them (EXPORT_WALKING_STEPS). A package
  *   whose `exports` cannot be read that way (none, an unexported subpath, a pattern, a directory or an untracked
  *   target) counts whole. A declared dependency the unit never names is no input: no
  *   build step reads it (Module Federation shares only npm packages);
@@ -234,8 +235,6 @@ interface UnitWorkspace {
   readonly sources: ReadonlyMap<string, string>;
 }
 interface Reach {
-  /** Files the deploy trace copies without following their references (the legacy resolution of a bare subpath). */
-  readonly carried: readonly string[];
   /** Every tracked file below these directories: a Tailwind `@source` scan, tests included. */
   readonly directories: readonly string[];
   readonly files: readonly string[];
@@ -244,7 +243,10 @@ interface Reach {
   /** Whole workspace packages, without their tests and documentation. */
   readonly packages: readonly string[];
 }
-const NOTHING: Reach = { carried: [], directories: [], files: [], named: [], packages: [] };
+const NOTHING: Reach = { directories: [], files: [], named: [], packages: [] };
+const LegacyManifestSchema = Schema.fromJsonString(
+  Schema.Struct({ main: Schema.optionalKey(Schema.String), module: Schema.optionalKey(Schema.String) }),
+);
 /**
  * Code without its comments, for the path-literal scan only: a comment that names a file is prose, not a read.
  * A regex literal can confuse this scanner, so import references are always read from the full text.
@@ -401,6 +403,28 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     }
     return directories.has(target) ? { ...NOTHING, directories: [target] } : NOTHING;
   };
+  /**
+   * Every tracked file a legacy resolution of `target` can select, as the deploy trace and Node resolve it: the file
+   * with any extension, the directory's `index`, and the directory's own package.json with every file its `main` or
+   * `module` names (resolved the same way). All count, not only the first, so a file that starts to win changes the
+   * identity too.
+   */
+  const legacyCandidates = (target: string, depth = 0): readonly string[] => {
+    const manifest = `${target}/package.json`;
+    const selected = Option.match(Schema.decodeUnknownOption(LegacyManifestSchema)(workspace.sources.get(manifest)), {
+      onNone: () => [],
+      onSome: (decoded) => [decoded.main, decoded.module].filter(Predicate.isString),
+    });
+    return [
+      target,
+      ...RESOLVED_EXTENSIONS.map((suffix) => `${target}${suffix}`),
+      ...RESOLVED_EXTENSIONS.map((suffix) => `${target}/index${suffix}`),
+      manifest,
+      ...(depth > 0
+        ? []
+        : selected.flatMap((entry) => legacyCandidates(path.posix.normalize(path.posix.join(target, entry)), 1))),
+    ].filter((candidate) => tracked.has(candidate));
+  };
   /** A Tailwind scan: every file under a directory, or every file a glob matches, tests included. */
   const resolveScan = (from: string, raw: string): Reach => {
     const target = path.posix.normalize(path.posix.join(path.posix.dirname(from), raw));
@@ -447,8 +471,7 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     return entries.length > 0 && entries.every((file) => tracked.has(file))
       ? {
           ...NOTHING,
-          carried: resolvePath(`${named.directory}${subpath}`).files,
-          files: entries,
+          files: [...entries, ...legacyCandidates(`${named.directory}${subpath}`)],
           named: [named.directory],
         }
       : { ...NOTHING, packages: [named.directory] };
@@ -523,7 +546,6 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
             !byName.some((entry) => specifier === entry.name || specifier.startsWith(`${entry.name}/`)),
         ));
     const result: Reach = {
-      carried: resolved.flatMap((entry) => entry.carried),
       // A stylesheet's directories are Tailwind scans, which read every file below them, tests included.
       directories: style ? [...named, ...(scansProject ? [owner] : [])] : [],
       files: [
@@ -603,17 +625,10 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
     const pending: string[] = [];
     const reachedFrom = new Map<string, string>();
     let current = '';
-    const followed = new Set<string>();
-    const add = (filepath: string, follow = true) => {
-      if (!graph.tracked.has(filepath)) {
-        return;
-      }
-      if (!included.has(filepath)) {
+    const add = (filepath: string) => {
+      if (graph.tracked.has(filepath) && !included.has(filepath)) {
         reachedFrom.set(filepath, current);
         included.add(filepath);
-      }
-      if (follow && !followed.has(filepath)) {
-        followed.add(filepath);
         pending.push(filepath);
       }
     };
@@ -674,9 +689,6 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       const reached = graph.reach(filepath);
       for (const file of [...reached.files, ...reached.directories.flatMap((root) => graph.under(root))]) {
         add(file);
-      }
-      for (const file of reached.carried) {
-        add(file, false);
       }
       for (const root of reached.packages) {
         addPackage(root);

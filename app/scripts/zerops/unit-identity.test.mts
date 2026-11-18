@@ -272,8 +272,27 @@ it.effect('counts what the deploy trace carries and esbuild reads of an imported
     // The trace copies `<package>/api/index.ts` beside the `./api` target, and esbuild reads the package's tsconfig.
     expect(yield* identity(graphOf([shadow], added))).not.toBe(baseline);
     expect(yield* identity(graphOf([tsconfig], added))).not.toBe(baseline);
-    // The carried file is copied, not traced: what only it imports stays out.
-    expect(yield* identity(graphOf([shadowImport], added))).toBe(baseline);
+    // The trace follows the carried file's imports, and the Shell's packaging completes them: they count too.
+    expect(yield* identity(graphOf([shadowImport], added))).not.toBe(baseline);
+  }),
+);
+
+it.effect('resolves a carried subpath directory as Node does: its own package.json main, then its index', () =>
+  Effect.gen(function* nestedManifest() {
+    const principal = `${PARTY}/api/auth/action-principal.ts`;
+    const nested = [`${PARTY}/api/package.json`, '{"main":"./auth/action-principal.ts"}'] as const;
+    const base = [
+      [`${PARTY}/api/index.ts`, EMPTY_MODULE],
+      [principal, "import { server } from '../../src/server.ts';\nexport const principal = server;"],
+      [`${PARTY}/src/server.ts`, 'export const server = 1;'],
+    ] as const;
+    const baseline = yield* identity(graphOf([], base));
+    // A manifest that selects another file changes what the trace and Node load for `@app/party/api`.
+    const selected = yield* identity(graphOf([], [...base, nested]));
+    expect(selected).not.toBe(baseline);
+    // The selected file and what it imports are then read.
+    expect(yield* identity(graphOf([principal], [...base, nested]))).not.toBe(selected);
+    expect(yield* identity(graphOf([`${PARTY}/src/server.ts`], [...base, nested]))).not.toBe(selected);
   }),
 );
 
