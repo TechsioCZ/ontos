@@ -336,6 +336,17 @@ const contactsRenderInitializationFault = 'ontos-e2e-contacts-render-initializat
 const contactsSectionSelector = 'section[aria-labelledby="contacts-heading"]';
 const compositionRevisionSelector = 'meta[name="ontos-composition-revision"]';
 const moduleTargetPath = `${shellAuthenticationApiContract.apiPrefix}${ShellAuthenticationApi.groups.composition.endpoints.resolveModuleTarget.path}`;
+const ApprovedRemoteManifestSchema = Schema.fromJsonString(
+  Schema.Struct({
+    exposes: Schema.Array(
+      Schema.Struct({
+        assets: Schema.Struct({ js: Schema.Struct({ sync: Schema.Array(Schema.String) }) }),
+        path: Schema.String,
+      }),
+    ),
+    metaData: Schema.Struct({ publicPath: Schema.String }),
+  }),
+);
 
 // Redact initializes a newly created detached host inside its guarded renderNode call:
 // renderHost -> applyHostProps -> setAttribute. This exact Contacts attribute injects a
@@ -400,19 +411,34 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
   const expectApprovedManifestBytes = async () => {
     const manifest = await page.request.get(approved.federation.manifest.url);
     expect(manifest.status()).toBe(200);
-    expect(
-      createHash('sha256')
-        .update(await manifest.body())
-        .digest('hex'),
-    ).toBe(approved.federation.manifest.sha256);
+    const manifestBytes = await manifest.body();
+    expect(createHash('sha256').update(manifestBytes).digest('hex')).toBe(approved.federation.manifest.sha256);
+    return manifestBytes;
   };
-  await expectApprovedManifestBytes();
+  const approvedManifestBytes = await expectApprovedManifestBytes();
+  const approvedManifest = Schema.decodeUnknownSync(ApprovedRemoteManifestSchema)(
+    approvedManifestBytes.toString('utf-8'),
+  );
+  const approvedPublicPath = new URL(approvedManifest.metaData.publicPath, approved.federation.manifest.url);
+  const approvedExposeChunks = approvedManifest.exposes
+    .filter(({ path }) => path === approved.federation.expose)
+    .flatMap(({ assets }) => assets.js.sync.map((asset) => new URL(asset, approvedPublicPath).href));
+  expect(approvedExposeChunks).toHaveLength(1);
   const navigation = page.getByRole('navigation', { name: 'Dashboard navigation' });
   const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
   await expect(navigation.getByRole('link', { exact: true, name: 'Party Registry' })).toBeVisible();
   const restoreFault = await installContactsRenderInitializationFault(page);
   try {
+    // The containment deadline starts when the approved Contacts code reaches the browser. Before that the
+    // click waits on the Shell route loader, which shares the CI runner with every parallel worker (job
+    // 134923830551: the browser's module-target read went out 3.2 s after the click). Registered before the
+    // click: the Shell fetches this chunk only when the resolved Contacts target mounts.
+    const approvedRemoteCodeResponse = page.waitForResponse((response) =>
+      approvedExposeChunks.includes(response.url()),
+    );
     await navigation.getByRole('link', { exact: true, name: 'Party Registry' }).click();
+    const approvedRemoteCode = await approvedRemoteCodeResponse;
+    expect(approvedRemoteCode.ok()).toBe(true);
     const localFailure = page.getByRole('alert');
     await expect(localFailure).toHaveText('This module could not be displayed. Reload the page to try again.');
     await expect(localFailure).not.toContainText(contactsRenderInitializationFault);
