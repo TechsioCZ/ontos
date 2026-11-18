@@ -1,0 +1,163 @@
+{
+  "root-packages": [
+    "akros-storefront",
+    "n1-storefront"
+  ],
+  "build-origin-variables": [
+    "ONTOS_STOREFRONT_ORIGIN",
+    "ONTOS_SHOP_STOREFRONT_ORIGIN"
+  ],
+  "scopes": [
+    {
+      "name": "the stage delivery and the repository tooling tests",
+      "paths": [
+        ".github/workflows/zerops-stage.yml",
+        ".github/actions/deliver-stage/**",
+        "app/scripts/zerops/app-boot-stages.sh",
+        "app/scripts/zerops/build-shard-units.mts",
+        "app/scripts/zerops/build-storefront.sh",
+        "app/scripts/zerops/pack-app-release.sh",
+        "app/scripts/zerops/pack-prebuilt-units.sh",
+        "app/scripts/zerops/prove-app-runtime.mts",
+        "app/scripts/zerops/push-service.sh",
+        "app/scripts/zerops/read-delivery-history.sh",
+        "app/scripts/zerops/reuse-shard-units.sh",
+        "app/scripts/zerops/route-stage-domains.sh",
+        "app/scripts/zerops/stage-proofs.sh",
+        "app/scripts/zerops/stage-push.sh",
+        "app/scripts/zerops/sync-service-secret.sh",
+        "app/scripts/zerops/unpack-app-release.sh",
+        "app/scripts/zerops/verify-service.mjs",
+        "app/scripts/zerops/zerops-unit-build-seconds.mts",
+        "app/scripts/zerops/*.test.mts",
+        "app/scripts/tests/*.test.mts",
+        "app/scripts/tests/zerops-deployment.fixture.mts"
+      ],
+      "source": [
+        "Repository Tooling Tests (1/3)",
+        "Repository Tooling Tests (2/3)",
+        "Repository Tooling Tests (3/3)"
+      ]
+    },
+    {
+      "name": "the storefronts",
+      "paths": [
+        "app/akros-storefront/**",
+        "app/n1-storefront/**",
+        "!app/akros-storefront/src/catalog-import/**"
+      ],
+      "source": [
+        "Storefront Typecheck (AKROS and N1)",
+        "Repository Tooling Tests (1/3)",
+        "Repository Tooling Tests (2/3)",
+        "Repository Tooling Tests (3/3)"
+      ]
+    }
+  ],
+  "test-weights": {
+    "access-admin-people-stage-shape.test.ts": 35,
+    "access-admin-people-writes-admission": 110,
+    "access-admin-people-writes-admission.test.ts": 61,
+    "access-admin-people-writes-delegation": 61,
+    "access-admin-people-writes-delegation.test.ts": 20,
+    "access-admin-people-writes-membership": 111,
+    "access-admin-people-writes-membership.test.ts": 33,
+    "access-admin-people-writes-ownership": 58,
+    "access-admin-people-writes-ownership.test.ts": 24,
+    "access-admin-real-gate-administration": 72,
+    "access-admin-real-gate-administration.test.ts": 67,
+    "access-admin-real-gate-scope": 109,
+    "access-admin-real-gate-scope.test.ts": 57,
+    "action-live-v2-dispatch.test.ts": 19,
+    "action-live-v2-durable-dispatch.test.ts": 29,
+    "address-book-owner-rule-refusal-postgres.test.ts": 8,
+    "agent-approval-path-stage-shape.test.ts": 26,
+    "agent-caller-authority-full-catalog-actions": 39,
+    "agent-caller-authority-full-catalog-actions.test.ts": 37,
+    "agent-caller-authority-full-catalog-batch": 58,
+    "agent-caller-authority-full-catalog-batch.test.ts": 34,
+    "agent-caller-authority-full-catalog-installed": 54,
+    "agent-caller-authority-full-catalog-installed.test.ts": 24,
+    "agents-administration-real-gate.test.ts": 56,
+    "crm-party-intake-workload-native.test.ts": 31,
+    "current-retail-enrollment.test.ts": 1,
+    "customer-consent-receipt-postgres.test.ts": 1,
+    "customer-portal-carriers.test.ts": 24,
+    "customer-portal-generic-dispatch.test.ts": 3,
+    "demo-newsletter-choice-postgres.test.ts": 1,
+    "email-request-database.test.ts": 1,
+    "enrollment-parked-composition.test.ts": 2,
+    "enrollment-registration-account.test.ts": 6,
+    "enrollment-terminal-failure.test.ts": 3,
+    "gate-call-sites.test.ts": 144,
+    "gate-company-tenant-invariant.test.ts": 184,
+    "gateway-originator-message-company.test.ts": 14,
+    "legacy-context-access-v2.test.ts": 96,
+    "module-credential-provisioning.test.ts": 29,
+    "module-entrypoint-boundaries-aggregate": 91,
+    "module-entrypoint-boundaries-catalog": 49,
+    "module-entrypoint-boundaries-clients": 85,
+    "module-entrypoint-boundaries-customer-context": 98,
+    "module-entrypoint-boundaries-governance": 15,
+    "module-entrypoint-boundaries-pricing": 51,
+    "module-entrypoint-boundaries-recovery": 201,
+    "native-human-sessions-contract.test.ts": 1,
+    "oauth-acting-authority-full-catalog.test.ts": 191,
+    "original-request-diagnostic-postgres.test.ts": 2,
+    "owner-action-approvals-http-native.test.ts": 10,
+    "people-directory-scope-agreement.test.ts": 66,
+    "portal-auth-customer-address-book-http.test.ts": 2,
+    "portal-session-rule-journeys.test.ts": 1,
+    "price-group-effective-period-postgres-history": 86,
+    "price-group-effective-period-postgres-history.test.ts": 114,
+    "price-group-effective-period-postgres-receipts": 86,
+    "price-group-effective-period-postgres-receipts.test.ts": 80,
+    "price-group-effective-period-postgres-resolution": 86,
+    "price-group-effective-period-postgres-resolution.test.ts": 118,
+    "purchase-approval-fresh-proof-postgres-consumption": 105,
+    "purchase-approval-fresh-proof-postgres-consumption.test.ts": 83,
+    "purchase-approval-fresh-proof-postgres-expiry": 106,
+    "purchase-approval-fresh-proof-postgres-expiry.test.ts": 79,
+    "purchase-approval-fresh-proof-postgres-identity": 97,
+    "purchase-approval-fresh-proof-postgres-identity.test.ts": 70,
+    "purchase-approval-fresh-proof-postgres-order": 75,
+    "purchase-approval-fresh-proof-postgres-order.test.ts": 85,
+    "purchase-approval-fresh-proof-postgres-reconciliation": 95,
+    "purchase-approval-fresh-proof-postgres-reconciliation.test.ts": 92,
+    "purchase-approval-fresh-proof-postgres-scope": 107,
+    "purchase-approval-fresh-proof-postgres-scope.test.ts": 119,
+    "retail-enrollment-restart.test.ts": 2,
+    "reviewed-people-apply.test.ts": 23,
+    "shell-member-baseline-real-gate.test.ts": 29
+  },
+  "fresh-database-tests": [
+    "scripts/integration/migration-equivalence.test.mts",
+    "scripts/integration/stage-recovery-lifecycle.test.mts",
+    "scripts/integration/vat-deploy-sequence.test.mts",
+    "packages/core-runtime/tests/integration/action-authority-v2-migration.test.ts",
+    "packages/core-runtime/tests/integration/search-v2-cutover-migration.test.ts",
+    "verticals/commerce-customer-context/tests/integration/stage-recovery-lane15-lifecycle.test.ts",
+    "verticals/work-tasks/tests/integration/assignment-migration.test.mts",
+    "verticals/merchandise/tests/integration/tax-classification-migration-postgres.test.ts",
+    "verticals/finance-billing/tests/integration/imported-payment-records-migration-postgres.test.ts",
+    "verticals/finance-billing/tests/integration/vat-classification-migration-postgres.test.ts"
+  ],
+  "source": [
+    {
+      "name": "Storefront Typecheck (AKROS and N1)",
+      "commands": "pnpm --filter akros-storefront --filter n1-storefront run typecheck\n"
+    }
+  ],
+  "unit": [
+    {
+      "name": "Unit and Component Tests (Merchandise)",
+      "commands": "pnpm -r --no-sort --if-present --filter ./verticals/merchandise run test:unit\npnpm -r --no-sort --if-present --filter ./verticals/merchandise run test:component\n"
+    },
+    {
+      "name": "Unit and Component Tests (every other package)",
+      "fetch_depth": 512,
+      "setup": "command -v xmllint >/dev/null 2>&1 || sudo apt-get install --yes --no-install-recommends libxml2-utils\nmise exec -- pnpm provision:pohoda-xsd\n",
+      "commands": "pnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:unit\npnpm -r --no-sort --if-present --filter '!.' --filter '!./apps/shell-super-app' --filter '!./verticals/party-registry' --filter '!./packages/core-runtime' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' --filter '!./verticals/pricing' --filter '!./verticals/commerce-market-catalog' --filter '!./verticals/privacy' --filter '!./verticals/symmy-integration' --filter '!./verticals/merchandise' run test:component\n"
+    }
+  ]
+}

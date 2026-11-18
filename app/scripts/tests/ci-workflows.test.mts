@@ -1,15 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Effect, Order, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
-import { MUST_MIGRATE_TESTS } from '../ci/integration-seed-model.mts';
+import { parseCiMatrices } from '../ci/ci-matrices.mts';
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
@@ -42,7 +42,6 @@ const INITIALIZE_IDENTITIES_STEP = 'Initialize fresh local database login identi
 const ASSEMBLED_MIGRATOR_STEP = 'Run the assembled stage migrator artifact against the fresh database';
 const WORKER_PROVISION_STEP = 'Provision the worker host runtime and Bun that the app artifact ships';
 const WORKER_PROOF_STEP = 'Build and run the Outbox Worker host artifact against the job database';
-const CI_MATRICES_PATH = '../ci-matrices.json';
 const MATRIX_SHARD = 'matrix.shard';
 const SEED_KEY_OUTPUT = 'needs.ci-plan.outputs.seed-key';
 const QUALITY_AUDIT_WORKFLOW = 'quality-audit.yml';
@@ -50,10 +49,19 @@ const LEFTHOOK_CONFIG = 'lefthook.yml';
 const CACHE_SAVE_ACTION = 'actions/cache/save@';
 const INSTALL_APP_ACTION = './.github/actions/install-app';
 const WHOLE_TREE_LINT_SHARDS = 'shards=[1,2,3]';
+/** The overlay the gates workflow binds (CI_MATRICES_OVERLAY of its env), so the tests plan from what the gates run. */
+const MATRICES_OVERLAY = Schema.decodeUnknownSync(
+  Schema.Struct({ env: Schema.Struct({ CI_MATRICES_OVERLAY: Schema.NonEmptyString }) }),
+)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).env.CI_MATRICES_OVERLAY;
+/** The matrices the gates plan from (scripts/ci/ci-matrices.mts). */
+const MATRICES = Result.getOrThrow(
+  parseCiMatrices(
+    readFileSync(new URL('../ci-matrices.json', import.meta.url), 'utf-8'),
+    readFileSync(new URL(`../../${MATRICES_OVERLAY}`, import.meta.url), 'utf-8'),
+  ),
+);
 /** The test files that must migrate their own job database, as the matrices name them for the weighted runner. */
-const FRESH_DATABASE_TESTS = Schema.decodeUnknownSync(
-  Schema.Struct({ 'fresh-database-tests': Schema.Array(Schema.String) }),
-)(JSON.parse(readFileSync(new URL(CI_MATRICES_PATH, import.meta.url), 'utf-8')))['fresh-database-tests'];
+const FRESH_DATABASE_TESTS = MATRICES['fresh-database-tests'] ?? [];
 
 const MatrixRowsSchema = Schema.Array(Schema.Record(Schema.String, Schema.Unknown));
 const MatricesFileSchema = Schema.Struct({
@@ -67,9 +75,7 @@ const readGateWorkflow = () => {
   const record = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
   const workflow = record(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   const jobs = { ...record(workflow.jobs) };
-  const matrices = Schema.decodeUnknownSync(MatricesFileSchema)(
-    JSON.parse(readFileSync(new URL(CI_MATRICES_PATH, import.meta.url), 'utf-8')),
-  );
+  const matrices = Schema.decodeUnknownSync(MatricesFileSchema)(MATRICES);
   // The planner hands each matrix job only its own rows (scripts/plan-ci-checks.mts).
   for (const [job, key, rows] of [
     [WORKSPACE_GATE_JOB, 'source', matrices.source],
@@ -102,6 +108,14 @@ const ROOT_DOCUMENTATION_TRIGGERS = [
   readWorkflow(QUALITY_AUDIT_WORKFLOW).on.push,
   readWorkflow(QUALITY_AUDIT_WORKFLOW).on.pull_request,
 ];
+
+it('names only fresh-database tests that exist, so a renamed one is never silently run against the seed', () => {
+  expect(FRESH_DATABASE_TESTS.length).toBeGreaterThan(0);
+  const missing = FRESH_DATABASE_TESTS.filter(
+    (file) => !existsSync(fileURLToPath(new URL(`../../${file}`, import.meta.url))),
+  );
+  expect(missing).toEqual([]);
+});
 
 it('deploys nothing and audits nothing for changes to repository-root documentation only', () => {
   for (const trigger of ROOT_DOCUMENTATION_TRIGGERS) {
@@ -489,10 +503,12 @@ const TopologyUnitsSchema = Schema.Struct({
 
 const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
-/** The build step: each pending unit runs its own package `build` script, BUILD_JOBS at a time. */
+/** The build step runs the build driver: each pending unit runs its own package `build` script, BUILD_JOBS at a time. */
+const BUILD_DRIVER_COMMAND = 'mise exec -- bash scripts/ci/build-units.sh';
 const UNIT_BUILD_COMMAND = 'pnpm --filter "./$unit" run build';
 const buildStep = () =>
-  readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(({ run }) => run?.includes(UNIT_BUILD_COMMAND) === true);
+  readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB].steps.find(({ run }) => run === BUILD_DRIVER_COMMAND);
+const buildDriver = () => readFileSync(new URL('../ci/build-units.sh', import.meta.url), 'utf-8');
 
 it('builds every delivery unit of the topology in exactly one build shard, with the Shell alone', () => {
   const { strategy } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
@@ -510,15 +526,21 @@ it('builds every delivery unit of the topology in exactly one build shard, with 
 });
 
 it('writes the app host entry of every served unit it builds, after its build, as the app host build does', () => {
-  const build = buildStep()?.run ?? '';
+  const { env } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   // The native hosted-owner fixtures start an owner only from its dist/zerops-entry.mjs, from these same artifacts.
-  const entry = build.indexOf('node scripts/zerops/owner-entry.mts "$unit"');
+  expect(env.UNIT_POST_BUILD).toBe('scripts/zerops/owner-entry.mts');
+  expect(env.UNIT_SERVED_ENTRY).toBe('dist/zerops-entry.mjs');
+  const build = buildDriver();
+  const entry = build.indexOf('node "$UNIT_POST_BUILD" "$unit"');
   expect(entry).toBeGreaterThan(build.indexOf(UNIT_BUILD_COMMAND));
   expect(build).toContain('require("./topology/application-release-intent.json")');
   expect(build).toContain('console.log("shell-super-app")');
   // A rebuilt unit starts from clean outputs and gets its cache receipt only after its build and entry.
   expect(build.indexOf('rm -rf -- "$unit/dist" "$unit/.output"')).toBeLessThan(build.indexOf(UNIT_BUILD_COMMAND));
   expect(build.indexOf('node scripts/ci/unit-output-cache.mts stamp --unit "$id"')).toBeGreaterThan(entry);
+  // The post-build script and the entry it writes take part in every unit's identity and verification.
+  expect(build).toContain('--served-entry "$UNIT_SERVED_ENTRY"');
+  expect(build).toContain('--post-build "$UNIT_POST_BUILD"');
 });
 
 it('keeps only verified unit outputs from the unit output cache and saves them only after verification', () => {
@@ -527,9 +549,11 @@ it('keeps only verified unit outputs from the unit output cache and saves them o
   const paths = index(({ name }) => name === "Name the shard's cached output paths");
   const restore = index(({ uses }) => uses?.startsWith('actions/cache/restore@') === true);
   const plan = index(({ run }) => run?.includes('unit-output-cache.mts plan --units "$SHARD_UNITS"') === true);
-  const build = index(({ run }) => run?.includes(UNIT_BUILD_COMMAND) === true);
+  const build = index(({ run }) => run === BUILD_DRIVER_COMMAND);
   const verify = index(
-    ({ run }) => run === 'mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS"',
+    ({ run }) =>
+      run ===
+      'mise exec -- node scripts/ci/unit-output-cache.mts verify --units "$SHARD_UNITS" --served-entry "$UNIT_SERVED_ENTRY" --post-build "$UNIT_POST_BUILD"',
   );
   const save = index(({ uses }) => uses?.startsWith(CACHE_SAVE_ACTION) === true);
   const pack = index(({ name }) => name === "Pack the shard's build outputs");
@@ -605,6 +629,7 @@ const weightedShard = (shard: string, files: readonly string[]) => {
       [fileURLToPath(new URL('../ci/rstest-weighted-shard.sh', import.meta.url)), shard, 'unit'],
       {
         env: {
+          CI_MATRICES_OVERLAY: MATRICES_OVERLAY,
           FAKE_LIST: JSON.stringify(files.map((file) => ({ file, type: 'file' }))),
           PATH: `${directory}:${STEP_PATH}`,
           RUN_ARGUMENTS: runArguments,
@@ -736,7 +761,8 @@ it("builds in main's CI mode, not the stage deploy's, because the typecheck gate
   // No public origin is baked into the gate artifacts, unlike the stage deploy.
   expect(Object.keys(job.env).some((key) => key.startsWith('ULTRAMODERN_PUBLIC_URL_'))).toBe(false);
   expect(job.env.ONTOS_PUBLIC_ORIGIN).toBeUndefined();
-  expect(buildStep()?.run).toContain('xargs -P "$BUILD_JOBS" -n 1');
+  expect(buildStep()?.run).toBe(BUILD_DRIVER_COMMAND);
+  expect(buildDriver()).toContain('xargs -P "$BUILD_JOBS" -n 1');
   // The typecheck gate that makes the build-time checkers redundant is still a source gate.
   expect(gateCommands().flat()).toContain('pnpm typecheck');
 });
@@ -959,9 +985,9 @@ it('runs the root integration suite once and every package integration suite in 
   expect(run?.env?.RSTEST_WORKERS).toBe(expression('matrix.rstest-workers || 1'));
   // No integration row runs two file workers: in round 5 the Shell and Customer Context files run side by side
   // contended for the job database's one composition authority and timed out, so every row runs one file at a time.
-  const parallelRows = Schema.decodeUnknownSync(MatricesFileSchema)(
-    JSON.parse(readFileSync(new URL(CI_MATRICES_PATH, import.meta.url), 'utf-8')),
-  ).integration.filter((row) => row['rstest-workers'] !== undefined && row['rstest-workers'] !== 1);
+  const parallelRows = Schema.decodeUnknownSync(MatricesFileSchema)(MATRICES).integration.filter(
+    (row) => row['rstest-workers'] !== undefined && row['rstest-workers'] !== 1,
+  );
   expect(parallelRows).toEqual([]);
   // One suite's failure never hides another's: every status is kept and the step fails only at the end.
   expect(run?.run).toContain('exit "$status"');
@@ -1312,6 +1338,9 @@ const SEED_KEY_INPUTS = [
   "'app/packages/core-runtime/src/access/**'",
   "'app/packages/core-runtime/src/permissions/**'",
   "'app/scripts/ci/integration-seed*.mts'",
+  // The fresh-database tests the seed model refuses (scripts/ci/ci-matrices.mts).
+  "'app/scripts/ci-matrices*.json'",
+  "'app/scripts/ci/ci-matrices.mts'",
   "'app/packages/core-runtime/spicedb/**'",
   "'app/topology/**'",
   "'app/docker-compose.yml'",
@@ -1358,13 +1387,7 @@ const expectBrowserPreparesItsOwnDatabase = (steps: readonly (typeof GateCommand
   expect(restoreOf(steps)).toBeUndefined();
   expect(steps.some(({ run }) => run?.includes('integration-seed.mts') === true)).toBe(false);
   expect(steps.some(({ name }) => name === ASSEMBLED_MIGRATOR_STEP)).toBe(false);
-  const { integration } = Schema.decodeUnknownSync(
-    Schema.fromJsonString(
-      Schema.Struct({
-        integration: Schema.Array(Schema.Struct({ seed: Schema.optional(Schema.Boolean), suite: Schema.String })),
-      }),
-    ),
-  )(readFileSync(new URL(CI_MATRICES_PATH, import.meta.url), 'utf-8'));
+  const { integration } = MATRICES;
   expect(integration.filter(({ suite }) => suite === 'browser').every(({ seed }) => seed === undefined)).toBe(true);
   for (const name of [
     'Initialize fresh local database login identities',
@@ -1492,8 +1515,6 @@ it('restores the integration seed from its input-keyed cache and never makes a r
   expect(producer.env?.INTEGRATION_SEED_COMMERCE_AUTH_DATABASE_URL).toBe(
     'postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci',
   );
-  // The matrices name exactly the seed model's inventory of files that must migrate their own database.
-  expect(sorted(FRESH_DATABASE_TESTS)).toEqual(sorted(MUST_MIGRATE_TESTS));
 });
 
 it('downloads complete same-run artifacts without holding a runner to poll for them', () => {

@@ -7,6 +7,7 @@ import { expect, it } from 'effect-rstest';
 import {
   committedInputs,
   firstOutputMismatch,
+  gatesBuildDriver,
   gatesInputDigest,
   inventory,
   keepProof,
@@ -19,10 +20,11 @@ import {
 import type { CacheProfile } from '../ci/unit-output-cache.mts';
 import { CacheReceiptSchema, KEEP_PROOF, RECEIPT } from '../ci/unit-output-receipt.mts';
 import type { CacheIdentity, CacheReceipt, OutputFile } from '../ci/unit-output-receipt.mts';
-import { unitInputGraph } from '../zerops/delivery-plan.mts';
-import type { GitEntry, WorkspacePackage } from '../zerops/delivery-plan.mts';
+import { unitInputGraph } from '../ci/unit-inputs.mts';
+import type { GitEntry, WorkspacePackage } from '../ci/unit-inputs.mts';
 
-const STAGE_ORIGIN = 'https://stage.example.test';
+const OTHER_ORIGIN = 'https://deployed.example.test';
+const DIGEST_MISMATCH = 'input digest';
 
 const UNIT = 'catalog';
 const DIRECTORY = `app/verticals/${UNIT}`;
@@ -52,8 +54,12 @@ const profile: CacheProfile = {
   target: 'node',
   versions: { v8: 'example-v8' },
 };
-const DRIVER = 'app/scripts/zerops/build-app.sh';
+const DRIVER = 'app/scripts/ci/build-units.sh';
 const BUILD_TOOL = 'app/scripts/build.mts';
+/** The post-build script the driver runs through a variable, so only the driver's extra inputs name it. */
+const POST_BUILD = 'scripts/serve-entry.mts';
+const driver = gatesBuildDriver(POST_BUILD);
+const POST_BUILD_PATH = `app/${POST_BUILD}`;
 const baseEntries: readonly GitEntry[] = [
   { identity: '100644 blob first', path: SOURCE },
   { identity: '100644 blob manifest', path: `${DIRECTORY}/package.json` },
@@ -61,6 +67,7 @@ const baseEntries: readonly GitEntry[] = [
   { identity: '100644 blob lock', path: COMMON },
   { identity: '100644 blob tooling', path: BUILD_TOOL },
   { identity: '100644 blob driver', path: DRIVER },
+  { identity: '100644 blob post-build', path: POST_BUILD_PATH },
   { identity: '100644 blob shared', path: SHARED },
   { identity: '100644 blob isolated', path: `${UNRELATED}/src/service.ts` },
 ];
@@ -71,15 +78,17 @@ const basePackages: readonly WorkspacePackage[] = [
 ];
 /** The build driver names the build tool, so the tool is an input of every unit. */
 const sources = new Map([
-  [DRIVER, 'node "$root/scripts/build.mts"'],
+  [DRIVER, 'node "$root/scripts/build.mts"\n[ -z "$UNIT_POST_BUILD" ] || node "$UNIT_POST_BUILD" "$unit"'],
   [`${DIRECTORY}/package.json`, '{"name":"@app/catalog","scripts":{"build":"modern build"}}'],
 ]);
 const graphOf = (entries: readonly GitEntry[] = baseEntries, packages: readonly WorkspacePackage[] = basePackages) =>
   unitInputGraph({ entries, packages, sources });
 const inputs = {
   directory: DIRECTORY,
+  driver,
   graph: graphOf(),
   origins: [ORIGIN, 'http://localhost:3001', 'http://localhost:3002'],
+  originVariables: ['ONTOS_PUBLIC_ORIGIN', 'ONTOS_SECOND_ORIGIN', 'ONTOS_THIRD_ORIGIN'],
   profile,
 };
 const changeEntry = (filepath: string) =>
@@ -115,7 +124,7 @@ it.effect('is stable for identical inputs, documentation, and unrelated private 
 it.effect('changes for each committed input class, including Git modes and closure membership', () =>
   Effect.gen(function* committedInputClasses() {
     const expected = yield* gatesInputDigest(inputs);
-    const paths = [SOURCE, `${DEPENDENCY}/index.ts`, COMMON, BUILD_TOOL, DRIVER];
+    const paths = [SOURCE, `${DEPENDENCY}/index.ts`, COMMON, BUILD_TOOL, DRIVER, POST_BUILD_PATH];
     for (const filepath of paths) {
       expect(yield* gatesInputDigest({ ...inputs, graph: changeEntry(filepath) })).not.toBe(expected);
     }
@@ -134,6 +143,27 @@ it.effect('changes for each committed input class, including Git modes and closu
   }),
 );
 
+it.effect('counts the post-build script as an input only through the driver that runs it', () =>
+  Effect.gen(function* postBuildInput() {
+    // The driver names the script through a variable, so the text scan alone never reaches it.
+    const unnamed = { ...inputs, driver: gatesBuildDriver('') };
+    const expected = yield* gatesInputDigest(unnamed);
+    expect(yield* gatesInputDigest({ ...unnamed, graph: changeEntry(POST_BUILD_PATH) })).toBe(expected);
+    // Named as the driver's extra input, a change to it no longer matches a kept unit's receipt.
+    const kept = yield* gatesInputDigest(inputs);
+    const changed = yield* gatesInputDigest({ ...inputs, graph: changeEntry(POST_BUILD_PATH) });
+    expect(changed).not.toBe(kept);
+    expect(check({ digest: changed, receipt: { ...receipt, digest: kept } })).toContain(DIGEST_MISMATCH);
+    expect(yield* committedInputs(changeEntry(POST_BUILD_PATH), driver, CATALOG_PATH)).not.toBe(
+      yield* committedInputs(inputs.graph, driver, CATALOG_PATH),
+    );
+    // A post-build script that is not committed cannot be hashed, so no identity is computed without it.
+    const missing = graphOf(baseEntries.filter((entry) => entry.path !== POST_BUILD_PATH));
+    expect(Exit.isFailure(yield* Effect.exit(gatesInputDigest({ ...inputs, graph: missing })))).toBe(true);
+    return yield* Effect.void;
+  }),
+);
+
 it.effect('separates targets, modes, flags, origins, commands, policies and actual toolchain versions', () =>
   Effect.gen(function* buildInputs() {
     const expected = yield* gatesInputDigest(inputs);
@@ -142,7 +172,7 @@ it.effect('separates targets, modes, flags, origins, commands, policies and actu
       { mode: 'development' },
       { command: 'modern build --no-types' },
       { environment: [['ULTRAMODERN_DISABLE_BUILD_TS_CHECKER', '1']] },
-      { environment: [['MODERN_PUBLIC_SITE_URL', STAGE_ORIGIN]] },
+      { environment: [['MODERN_PUBLIC_SITE_URL', OTHER_ORIGIN]] },
       { policy: 'no maps' },
       { node: 'v27.0.0' },
       { pnpm: '13.0.0' },
@@ -154,7 +184,7 @@ it.effect('separates targets, modes, flags, origins, commands, policies and actu
       expect(yield* gatesInputDigest({ ...inputs, profile: { ...profile, ...change } })).not.toBe(expected);
     }
     for (const index of [0, 1, 2]) {
-      const origins = inputs.origins.map((origin, position) => (position === index ? STAGE_ORIGIN : origin));
+      const origins = inputs.origins.map((origin, position) => (position === index ? OTHER_ORIGIN : origin));
       expect(yield* gatesInputDigest({ ...inputs, origins })).not.toBe(expected);
     }
     return yield* Effect.void;
@@ -212,9 +242,9 @@ it.effect('rejects a receipt from another target or origin even when the output 
     const original = yield* gatesInputDigest(inputs);
     const cached = { ...receipt, digest: original };
     const target = yield* gatesInputDigest({ ...inputs, profile: { ...profile, target: 'cloudflare' } });
-    const origin = yield* gatesInputDigest({ ...inputs, origins: [STAGE_ORIGIN] });
-    expect(check({ digest: target, receipt: cached })).toContain('input digest');
-    expect(check({ digest: origin, receipt: cached })).toContain('input digest');
+    const origin = yield* gatesInputDigest({ ...inputs, origins: [OTHER_ORIGIN] });
+    expect(check({ digest: target, receipt: cached })).toContain(DIGEST_MISMATCH);
+    expect(check({ digest: origin, receipt: cached })).toContain(DIGEST_MISMATCH);
     return yield* Effect.void;
   }),
 );
@@ -302,10 +332,10 @@ it("matches a module's backend federation remote to its build by marker and sour
 it.effect('records committed inputs in receipts and keep proofs, and leaves both out of the output inventory', () =>
   Effect.gen(function* proofAndInputs() {
     // stamp and plan both record committedInputs: the unit's committed inputs without build variables.
-    const recorded = yield* committedInputs(inputs.graph, CATALOG_PATH);
+    const recorded = yield* committedInputs(inputs.graph, driver, CATALOG_PATH);
     expect(recorded).toMatch(/^[a-f0-9]{64}$/u);
-    expect(yield* committedInputs(changeEntry(SOURCE), CATALOG_PATH)).not.toBe(recorded);
-    expect(yield* committedInputs(changeEntry(`${UNRELATED}/src/service.ts`), CATALOG_PATH)).toBe(recorded);
+    expect(yield* committedInputs(changeEntry(SOURCE), driver, CATALOG_PATH)).not.toBe(recorded);
+    expect(yield* committedInputs(changeEntry(`${UNRELATED}/src/service.ts`), driver, CATALOG_PATH)).toBe(recorded);
     expect(yield* keepProof({ head: CURRENT_REVISION, inputs: recorded, unit: UNIT })).toEqual({
       inputs: recorded,
       revision: CURRENT_REVISION,

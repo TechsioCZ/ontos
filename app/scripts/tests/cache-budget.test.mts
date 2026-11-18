@@ -15,13 +15,6 @@ import { collectToolingProcess } from './tooling-process-fixture.mts';
  */
 const APP = path.resolve(import.meta.dirname, '../..');
 const REPOSITORY = path.resolve(APP, '..');
-const STAGE_WORKFLOW = '.github/workflows/zerops-stage.yml';
-const SOURCES = [
-  '.github/workflows/ultramodern-workspace-gates.yml',
-  STAGE_WORKFLOW,
-  '.github/actions/install-app/action.yml',
-  '.github/actions/deliver-stage/action.yml',
-] as const;
 const PER_RUN =
   /github\.(?:sha|run_id|run_attempt|event\.pull_request\.head\.sha)|\$\{?GITHUB_(?:SHA|RUN_ID|RUN_ATTEMPT)\b|\.github\/workflows\//u;
 const CACHE_ACTION = /^actions\/cache(?:\/restore|\/save)?@/u;
@@ -82,7 +75,15 @@ const cacheSteps = Effect.gen(function* readCacheSteps() {
   const installApp = (yield* Schema.decodeUnknownEffect(ActionSchema)(
     parse(yield* fs.readFileString(path.join(REPOSITORY, '.github/actions/install-app/action.yml'))),
   )).runs.steps;
-  for (const source of SOURCES) {
+  const sources = [
+    ...(yield* fs.readDirectory(path.join(REPOSITORY, '.github/workflows')))
+      .filter((name) => name.endsWith('.yml'))
+      .map((name) => `.github/workflows/${name}`),
+    ...(yield* fs.readDirectory(path.join(REPOSITORY, '.github/actions'))).map(
+      (name) => `.github/actions/${name}/action.yml`,
+    ),
+  ].toSorted();
+  for (const source of sources) {
     const document: unknown = parse(yield* fs.readFileString(path.join(REPOSITORY, source)));
     const jobs = source.endsWith('action.yml')
       ? [
@@ -176,20 +177,20 @@ it.live(
   'names the same entry for the same identities in any order, a new one for a changed unit, and refuses doubt',
   () =>
     Effect.gen(function* keyScript() {
-      const first = yield* runKey(`crm=${IDENTITY}\ntax=${IDENTITY}\n`);
-      const again = yield* runKey(`tax=${IDENTITY}\ncrm=${IDENTITY}\n`);
-      const changed = yield* runKey(`crm=${IDENTITY}\ntax=${OTHER}\n`);
+      const first = yield* runKey(`tax=${IDENTITY}\npricing=${IDENTITY}\n`);
+      const again = yield* runKey(`pricing=${IDENTITY}\ntax=${IDENTITY}\n`);
+      const changed = yield* runKey(`tax=${IDENTITY}\npricing=${OTHER}\n`);
       expect(first.status, first.stderr).toBe(0);
       expect(first.stdout).toMatch(/^key=gates-units-v2-Linux-X64-3-[a-f0-9]{64}\n$/u);
       expect(again.stdout).toBe(first.stdout);
       expect(changed.stdout).not.toBe(first.stdout);
       // Stage identity rows (unit, identity, inputs part, variables) name entries the same way.
-      const row = yield* runKey(`crm\t${IDENTITY}\tfiles\tNODE_ENV=1a2b\n`);
+      const row = yield* runKey(`tax\t${IDENTITY}\tfiles\tNODE_ENV=1a2b\n`);
       expect(row.status, row.stderr).toBe(0);
       for (const [label, input, reason] of [
         ['no identities', '', 'no unit identities on stdin'],
-        ['no identity', 'crm=\n', 'not a unit identity: crm='],
-        ['short identity', 'crm=abc\n', 'not a unit identity'],
+        ['no identity', 'tax=\n', 'not a unit identity: tax='],
+        ['short identity', 'tax=abc\n', 'not a unit identity'],
       ] as const) {
         const result = yield* runKey(input);
         expect(result.status, label).toBe(1);
@@ -205,7 +206,7 @@ it.live('refuses to name an entry when the hash fails', () =>
     const bin = yield* fs.makeTempDirectoryScoped({ prefix: 'cache-key-stub-' });
     yield* fs.writeFileString(path.join(bin, 'sha256sum'), '#!/bin/sh\nexit 1\n');
     yield* fs.chmod(path.join(bin, 'sha256sum'), 0o700);
-    const result = yield* runKey(`crm=${IDENTITY}\n`, { PATH: `${bin}:${yield* Config.String('PATH')}` });
+    const result = yield* runKey(`tax=${IDENTITY}\n`, { PATH: `${bin}:${yield* Config.String('PATH')}` });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe('');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -231,49 +232,6 @@ const runStep = (cwd: string, script: string, env: Readonly<Record<string, strin
       extendEnv: true,
     }),
   );
-
-it.live("runs the stage shard's naming step: a key from its units' rows, and a failure on a missing row", () =>
-  Effect.gen(function* stageNaming() {
-    const fs = yield* FileSystem.FileSystem;
-    const script = yield* stepRun(STAGE_WORKFLOW, 'build', "Name the shard's unit cache entry");
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-unit-key-' });
-    yield* fs.makeDirectory(path.join(root, 'app/scripts/ci'), { recursive: true });
-    yield* fs.copyFile(path.join(APP, KEY_SCRIPT), path.join(root, 'app', KEY_SCRIPT));
-    const identities = path.join(root, 'temp/zerops-unit-identities');
-    yield* fs.makeDirectory(identities, { recursive: true });
-    const name = (shards: string, digests: string) =>
-      Effect.gen(function* nameEntry() {
-        yield* fs.writeFileString(path.join(identities, 'shards.tsv'), shards);
-        yield* fs.writeFileString(path.join(identities, 'digests.tsv'), digests);
-        const outputs = path.join(root, 'outputs');
-        yield* fs.writeFileString(outputs, '');
-        const result = yield* runStep(root, script, {
-          GITHUB_OUTPUT: outputs,
-          RUNNER_TEMP: path.join(root, 'temp'),
-          SHARD: '2',
-        });
-        return { output: yield* fs.readFileString(outputs), result };
-      });
-    const rows = `crm\t${IDENTITY}\tf\tv\ntax\t${IDENTITY}\tf\tv\nshell-super-app\t${OTHER}\tf\tv\n`;
-    const unchanged = yield* name('2\tcrm tax\n', rows);
-    expect(unchanged.result.status, unchanged.result.stderr).toBe(0);
-    expect(unchanged.output).toMatch(/^key=zerops-units-v2-2-[a-f0-9]{64}\n$/u);
-    // Another shard's unit changing leaves this shard's entry; one of its own units changing names a new one.
-    const otherShard = yield* name('2\tcrm tax\n', rows.replace(OTHER, IDENTITY));
-    expect(otherShard.output).toBe(unchanged.output);
-    const ownChanged = yield* name('2\tcrm tax\n', rows.replace(`tax\t${IDENTITY}`, `tax\t${OTHER}`));
-    expect(ownChanged.output).not.toBe(unchanged.output);
-    // A unit without its row, or a shard without its list, names nothing and fails the step.
-    for (const [shards, digests] of [
-      ['2\tcrm tax\n', `crm\t${IDENTITY}\tf\tv\n`],
-      ['0\tshell-super-app\n', rows],
-    ] as const) {
-      const missing = yield* name(shards, digests);
-      expect(missing.result.status).not.toBe(0);
-      expect(missing.output).toBe('');
-    }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
 
 it.live("runs the gates shard's naming step with the unit digests the cache tool prints", () =>
   Effect.gen(function* gatesNaming() {
@@ -306,117 +264,18 @@ it.live("runs the gates shard's naming step with the unit digests the cache tool
           RUNNER_ARCH: 'X64',
           RUNNER_OS: 'Linux',
           SHARD: '3',
-          SHARD_UNITS: 'verticals/crm verticals/tax',
+          SHARD_UNITS: 'verticals/tax verticals/pricing',
         });
         return { output: yield* fs.readFileString(outputs), result };
       });
-    const kept = yield* name(`crm=${IDENTITY}\ntax=${IDENTITY}\n`);
+    const kept = yield* name(`tax=${IDENTITY}\npricing=${IDENTITY}\n`);
     expect(kept.result.status, kept.result.stderr).toBe(0);
     expect(kept.output).toMatch(/^key=gates-units-v2-Linux-X64-3-[a-f0-9]{64}\n$/u);
-    expect((yield* name(`crm=${IDENTITY}\ntax=${IDENTITY}\n`)).output).toBe(kept.output);
-    expect((yield* name(`crm=${IDENTITY}\ntax=${OTHER}\n`)).output).not.toBe(kept.output);
+    expect((yield* name(`tax=${IDENTITY}\npricing=${IDENTITY}\n`)).output).toBe(kept.output);
+    expect((yield* name(`tax=${IDENTITY}\npricing=${OTHER}\n`)).output).not.toBe(kept.output);
     // A failing digest (pipefail) fails the step without a key, so nothing is saved under a guess.
     const failed = yield* name('');
     expect(failed.result.status).not.toBe(0);
     expect(failed.output).toBe('');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-/** Evaluates a step `if` made of `steps.<id>.outputs.<name> ==|!= '<value>'` clauses joined by `&&`. */
-const evaluateIf = (condition: string, outputs: Readonly<Record<string, string>>) =>
-  condition.split('&&').every((clause) => {
-    const match = /^steps\.(?<ref>[\w-]+\.outputs\.[\w-]+) (?<op>==|!=) '(?<value>[^']*)'$/u.exec(clause.trim());
-    if (match?.groups === undefined) {
-      throw new Error(`unsupported condition: ${clause}`);
-    }
-    const actual = outputs[match.groups.ref ?? ''] ?? '';
-    return match.groups.op === '==' ? actual === match.groups.value : actual !== match.groups.value;
-  });
-
-const StageBuildSchema = Schema.Struct({
-  jobs: Schema.Struct({ build: Schema.Struct({ steps: Schema.Array(StepSchema) }) }),
-});
-
-it.live(
-  "saves the stage shard's entry after a reuse through a fallback, never after an exact hit, and after a build",
-  () =>
-    Effect.gen(function* stageSaveDecision() {
-      const fs = yield* FileSystem.FileSystem;
-      const { steps } = (yield* Schema.decodeUnknownEffect(StageBuildSchema)(
-        parse(yield* fs.readFileString(path.join(REPOSITORY, STAGE_WORKFLOW))),
-      )).jobs.build;
-      const named = (name: string) => {
-        const step = steps.find((candidate) => candidate.name === name);
-        if (step === undefined) {
-          throw new Error(`no step ${name}`);
-        }
-        return step;
-      };
-      const saveIf = named("Save the shard's unit builds").if ?? '';
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-save-' });
-      for (const script of [KEY_SCRIPT, 'scripts/zerops/reuse-shard-units.sh']) {
-        yield* fs.makeDirectory(path.dirname(path.join(root, 'app', script)), { recursive: true });
-        yield* fs.copyFile(path.join(APP, script), path.join(root, 'app', script));
-      }
-      const temp = path.join(root, 'temp');
-      const identities = path.join(temp, 'zerops-unit-identities');
-      yield* fs.makeDirectory(identities, { recursive: true });
-      yield* fs.writeFileString(path.join(identities, 'shards.tsv'), '2\tcrm tax\n');
-      yield* fs.writeFileString(
-        path.join(identities, 'digests.tsv'),
-        `crm\t${IDENTITY}\tf\tv\ntax\t${IDENTITY}\tf\tv\n`,
-      );
-      const cache = path.join(temp, 'zerops-unit-cache');
-      const fill = (units: readonly string[]) =>
-        Effect.gen(function* fillCache() {
-          yield* fs.remove(cache, { force: true, recursive: true });
-          yield* fs.makeDirectory(cache, { recursive: true });
-          for (const unit of units) {
-            yield* fs.makeDirectory(path.join(cache, unit), { recursive: true });
-            yield* fs.writeFileString(path.join(cache, unit, 'zerops-entry.mjs'), 'export {};\n');
-            yield* fs.writeFileString(path.join(cache, unit, '.zerops-build-digest'), `${IDENTITY}\n`);
-          }
-        });
-      const stepOutputs = (cwd: string, name: string, env: Readonly<Record<string, string>>) =>
-        Effect.gen(function* runForOutputs() {
-          const outputs = path.join(root, 'outputs');
-          yield* fs.writeFileString(outputs, '');
-          const result = yield* runStep(cwd, named(name).run ?? '', {
-            GITHUB_OUTPUT: outputs,
-            RUNNER_TEMP: temp,
-            SHARD: '2',
-            UNIT_CACHE_DIR: cache,
-            ...env,
-          });
-          expect(result.status, `${name}: ${result.stderr}`).toBe(0);
-          return Object.fromEntries(
-            (yield* fs.readFileString(outputs))
-              .split('\n')
-              .filter((line) => line.includes('='))
-              .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
-          );
-        });
-      const decide = (restored: readonly string[], cacheHit: boolean) =>
-        Effect.gen(function* decideSave() {
-          yield* fill(restored);
-          const naming = yield* stepOutputs(root, "Name the shard's unit cache entry", {});
-          const reuse = yield* stepOutputs(path.join(root, 'app'), "Reuse the shard's unchanged units", {});
-          const save = evaluateIf(saveIf, {
-            'reuse.outputs.reused': reuse.reused ?? '',
-            'unit-cache-key.outputs.key': naming.key ?? '',
-            'unit-cache.outputs.cache-hit': cacheHit ? 'true' : 'false',
-          });
-          return { cached: (yield* fs.readDirectory(cache)).toSorted(), reused: reuse.reused, save };
-        });
-      // Restored through a prefix (another entry, here with a foreign unit) and every unit reused: saved, exactly them.
-      const fallback = yield* decide(['crm', 'retired', 'tax'], false);
-      expect(fallback).toStrictEqual({ cached: ['crm', 'tax'], reused: 'true', save: true });
-      // The exact entry restored and reused: nothing saved.
-      const exact = yield* decide(['crm', 'tax'], true);
-      expect(exact).toStrictEqual({ cached: ['crm', 'tax'], reused: 'true', save: false });
-      // Nothing restored: the shard builds (reused=false), and the built set is saved.
-      const cold = yield* decide([], false);
-      expect(cold.reused).toBe('false');
-      expect(cold.save).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
