@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { OperationalScope } from '@app/core-runtime';
 import {
   ReadPermissionDenied,
@@ -9,8 +10,9 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
+import type { EligibleMarketTuplesRequest } from '../../shared/apis/eligible-market-tuples.ts';
 import type { EligibleMarketTuple } from '../../shared/market-contracts.ts';
-import { handleEligibleMarketTuples } from '../../src/api/eligible-market-tuples.read.ts';
+import { handleEligibleMarketTuples, prepareEligibleMarketTuples } from '../../src/api/eligible-market-tuples.read.ts';
 import type { MarketEligibilitySnapshot } from '../../src/domain/market-resolution.ts';
 import type { MarketResolutionPersistence } from '../../src/persistence/market-resolution-persistence.ts';
 
@@ -124,17 +126,20 @@ const request = (overrides: Partial<typeof EligibleMarketTuplesRequestSchema.Enc
     ...overrides,
   });
 
-const contextFor = (scope: OperationalScope) => ({
-  readKey: 'commerce.market-catalog.api.eligible-market-tuples',
-  scope,
-  services: { ...available, ...subjectReader },
-});
+/** prepare (trusted scope, Customer Context restrictions) then load (the owner snapshot), as the runtime runs them. */
+const eligibleMarketTuples = (input: EligibleMarketTuplesRequest, scope: OperationalScope) => {
+  const steps = { readKey: 'commerce.market-catalog.api.eligible-market-tuples', scope, services: available };
+  return prepareEligibleMarketTuples(input, steps, subjectReader).pipe(
+    Effect.flatMap((prepared) => handleEligibleMarketTuples(input, { ...steps, prepared })),
+    Effect.provide(NodeCrypto.layer),
+  );
+};
 
 describe('Commerce Market eligible tuples delegated module callers without a Storefront', () => {
   it.effect('admits a verified module actor that carries no trusted Storefront', () =>
     Effect.gen(function* admitsDelegatedActor() {
       expect(delegatedWithoutStorefront.trustedStorefrontId).toBeUndefined();
-      const result = yield* handleEligibleMarketTuples(request(), contextFor(delegatedWithoutStorefront));
+      const result = yield* eligibleMarketTuples(request(), delegatedWithoutStorefront);
       expect(result.result).toMatchObject({ outcome: 'ELIGIBLE_MARKET_TUPLES', tuples: [eligibleTuple] });
       expect(result.evidence.resultCount).toBe(1);
     }),
@@ -143,12 +148,10 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
   it.effect('denies a call without a verified module actor and no trusted Storefront', () =>
     Effect.gen(function* deniesWithoutActor() {
       const sessionScope = makeScope(sessionPrincipal, 'session:eligible-market-tuples', 'session');
-      const sessionError = yield* Effect.flip(handleEligibleMarketTuples(request(), contextFor(sessionScope)));
+      const sessionError = yield* Effect.flip(eligibleMarketTuples(request(), sessionScope));
       expect(Schema.is(ReadPermissionDenied)(sessionError)).toBe(true);
 
-      const apiKeyError = yield* Effect.flip(
-        handleEligibleMarketTuples(request(), contextFor(apiKeyWithoutStorefront)),
-      );
+      const apiKeyError = yield* Effect.flip(eligibleMarketTuples(request(), apiKeyWithoutStorefront));
       expect(Schema.is(ReadPermissionDenied)(apiKeyError)).toBe(true);
     }),
   );
@@ -160,14 +163,11 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
         'session:eligible-market-tuples-bound',
         'session',
       );
-      const admitted = yield* handleEligibleMarketTuples(request(), contextFor(scope));
+      const admitted = yield* eligibleMarketTuples(request(), scope);
       expect(admitted.result.outcome).toBe('ELIGIBLE_MARKET_TUPLES');
 
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
-          request({ storefrontRef: { ...storefrontRef, appId: 'untrusted-shop' } }),
-          contextFor(scope),
-        ),
+        eligibleMarketTuples(request({ storefrontRef: { ...storefrontRef, appId: 'untrusted-shop' } }), scope),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
@@ -176,9 +176,9 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
   it.effect('rejects a module actor whose requested Storefront belongs to another Tenant', () =>
     Effect.gen(function* crossTenantStorefront() {
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
+        eligibleMarketTuples(
           request({ storefrontRef: { appId: storefrontRef.appId, tenantId: otherTenantId } }),
-          contextFor(delegatedWithoutStorefront),
+          delegatedWithoutStorefront,
         ),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
@@ -188,11 +188,11 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
   it.effect('rejects a module actor whose seller restriction belongs to another Tenant', () =>
     Effect.gen(function* crossTenantSeller() {
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
+        eligibleMarketTuples(
           request({
             sellingLegalEntityRestriction: { ...eligibleTuple.sellingLegalEntityRef, tenantId: otherTenantId },
           }),
-          contextFor(delegatedWithoutStorefront),
+          delegatedWithoutStorefront,
         ),
       );
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
@@ -202,7 +202,7 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
   it.effect('rejects a module actor whose purchasing subject belongs to another Tenant', () =>
     Effect.gen(function* crossTenantSubject() {
       const error = yield* Effect.flip(
-        handleEligibleMarketTuples(
+        eligibleMarketTuples(
           request({
             subject: {
               kind: 'RETAIL_PROFILE',
@@ -214,9 +214,18 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
               },
             },
           }),
-          contextFor(delegatedWithoutStorefront),
+          delegatedWithoutStorefront,
         ),
       );
+      expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
+    }),
+  );
+
+  it.effect('rejects a session caller without a trusted Storefront', () =>
+    Effect.gen(function* sessionWithoutStorefront() {
+      const scope = makeScope(sessionPrincipal, 'session:eligible-market-tuples', 'session');
+      expect(scope.trustedStorefrontId).toBeUndefined();
+      const error = yield* Effect.flip(eligibleMarketTuples(request(), scope));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );
@@ -231,7 +240,7 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
         'impersonation:eligible-market-tuples',
         'support_impersonation',
       );
-      const error = yield* Effect.flip(handleEligibleMarketTuples(request(), contextFor(scope)));
+      const error = yield* Effect.flip(eligibleMarketTuples(request(), scope));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );
@@ -239,7 +248,7 @@ describe('Commerce Market eligible tuples delegated module callers without a Sto
   it.effect('rejects a system caller without a trusted Storefront', () =>
     Effect.gen(function* systemWithoutStorefront() {
       const scope = makeScope({}, 'job:eligible-market-tuples:run:1', 'system');
-      const error = yield* Effect.flip(handleEligibleMarketTuples(request(), contextFor(scope)));
+      const error = yield* Effect.flip(eligibleMarketTuples(request(), scope));
       expect(Schema.is(ReadPermissionDenied)(error)).toBe(true);
     }),
   );
