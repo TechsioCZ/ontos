@@ -6,6 +6,13 @@
  * The plan is limited to hard constants: one tenant, one company (Nájempark and every other company are out
  * of reach), exactly three people and exactly five roles whose ids are derived from fixed idempotency keys.
  * A planned write that names anything else is refused before it is returned, and again before it is sent.
+ *
+ * A role holds only cells a person reviewed: the cells pinned in `reviewed-people-cells.mts` that the role
+ * policy still produces from the release. A cell the policy produces that is not pinned is an `unreviewed`
+ * diagnostic, and a pinned cell the policy no longer produces is a `withdrawn` diagnostic; neither is ever
+ * sent. `withdrawn` covers only capabilities a role reaches through module access. A capability a role names
+ * in `capabilityKeys`, or a `capabilityModes` or `capabilitySelectors` override, that the release no longer
+ * accepts still fails the whole plan, because the role policy itself does not compile.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -50,6 +57,7 @@ import {
   reviewedDemoAssignments,
   taxAccountantKeys,
 } from './permissions.mts';
+import { REVIEWED_ROLE_CELLS } from './reviewed-people-cells.mts';
 
 export type HumanId = typeof AccessHumanIdSchema.Type;
 export type RoleId = typeof AccessRoleIdSchema.Type;
@@ -254,8 +262,20 @@ export interface DesiredAssignment {
   readonly scope: ScopeTarget;
 }
 
+/**
+ * A cell the role policy and the reviewed pin disagree on; never granted, never sent. `unreviewed`: the policy
+ * produces it and no person reviewed it (a capability declared after the review). `withdrawn`: it is pinned but
+ * the policy or the release no longer produces it.
+ */
+export interface ReviewDiagnostic {
+  readonly kind: 'unreviewed' | 'withdrawn';
+  readonly roleKey: ManagedRoleKey;
+  readonly slot: string;
+}
+
 export interface DesiredState {
   readonly assignments: readonly DesiredAssignment[];
+  readonly diagnostics: readonly ReviewDiagnostic[];
   /** The local release entries the desired cells name. */
   readonly entries: ReadonlyMap<string, CatalogSnapshotEntry>;
   readonly roles: readonly DesiredRole[];
@@ -267,101 +287,94 @@ const sortedSlots = (rows: readonly ReviewedCell[]): string =>
     .toSorted((left, right) => left.localeCompare(right))
     .join('\n');
 
-const customerContextReadsAfterReview = [
-  'commerce.customer-context.customer-group-definition-source.read',
-  'commerce.customer-context.customer-group-membership-source-receipt.read',
-  'commerce.customer-context.customer-price-group-assignment-receipt.read',
-  'commerce.customer-context.customer-profile-ico-migration.read',
-  'commerce.customer-context.customer-profile-ico.read',
-  'commerce.customer-context.customer-profile-organization-ico-facts.read',
-  'commerce.customer-context.customer-profile-source-page.read',
-  'commerce.customer-context.customer-profile-source-parties.read',
-  'commerce.customer-context.customer-profile-source.read',
-  'commerce.customer-context.organization-customer-profile-ico-migration.read',
-  'commerce.customer-context.organization-customer-profile-ico.read',
-  'commerce.customer-context.saved-address-source-receipt.read',
-] as const;
-
 /**
- * Capabilities the release declared after these roles were reviewed. No reviewed role gains them: they stay
- * with full access only, which follows the release by additions. A key here the release no longer declares
- * fails the plan, so the list cannot go stale silently.
+ * The reviewed cells of each role, parsed. A malformed or repeated slot fails the plan, so the pin cannot hold
+ * anything a person could not have reviewed.
  */
-export const reviewedExclusions = {
-  accounting: customerContextReadsAfterReview,
-  [accountingCompanyIdentityRoleKey]: [],
-  [demoShellRoutingRoleKey]: [],
-  sales: [
-    ...customerContextReadsAfterReview,
-    'commerce.customer-context.customer-group-membership-snapshot.admit',
-    'commerce.customer-context.customer-group-membership-source.apply',
-    'commerce.customer-context.customer-profile-ico.change',
-    'commerce.customer-context.customer-profile-ico.migrate',
-    'commerce.customer-context.organization-customer-profile-ico.change',
-    'commerce.customer-context.organization-customer-profile-ico.migrate',
-  ],
-  warehouse: [],
-} as const satisfies Readonly<Record<ManagedRoleKey, readonly string[]>>;
-const excludedFrom = (key: ManagedRoleKey): ReadonlySet<string> => new Set(reviewedExclusions[key]);
+const reviewedRoleCells = REVIEWED_ROLE_CELLS satisfies Readonly<Record<ManagedRoleKey, readonly string[]>>;
+const pinnedCells = (): Result.Result<ReadonlyMap<ManagedRoleKey, readonly ReviewedCell[]>, string> => {
+  const pinned = new Map<ManagedRoleKey, readonly ReviewedCell[]>();
+  for (const key of MANAGED_ROLE_KEYS) {
+    const seen = new Set<string>();
+    const cells: ReviewedCell[] = [];
+    for (const slot of reviewedRoleCells[key]) {
+      const [capabilityKey, mode, selector, ...rest] = slot.split(' ');
+      const cell = Schema.decodeUnknownResult(ReviewedCellSchema)({ capabilityKey, mode, selector });
+      if (rest.length > 0 || seen.has(slot) || Result.isFailure(cell) || slotOf(cell.success) !== slot) {
+        return Result.fail(`reviewed-people-cells.mts: ${slot} is not a reviewed cell`);
+      }
+      seen.add(slot);
+      cells.push(cell.success);
+    }
+    pinned.set(key, cells);
+  }
+  return Result.succeed(pinned);
+};
 
-const reviewedCells = (
-  key: ManagedRoleKey,
-  role: Parameters<typeof policyRoleCellRows>[0],
-  localEntries: readonly CatalogSnapshotEntry[],
-) =>
+const reviewedCells = (role: Parameters<typeof policyRoleCellRows>[0], localEntries: readonly CatalogSnapshotEntry[]) =>
   Result.map(policyRoleCellRows(role, localEntries, 'human'), (rows) =>
-    rows
-      .filter(({ capabilityKey }) => !excludedFrom(key).has(capabilityKey))
-      .map(({ capabilityKey, mode, selector }) => ({
-        capabilityKey: AccessCapabilityKeySchema.make(capabilityKey),
-        mode,
-        selector,
-      }))
-      .toSorted((left, right) => slotOf(left).localeCompare(slotOf(right))),
+    rows.map(({ capabilityKey, mode, selector }) => ({
+      capabilityKey: AccessCapabilityKeySchema.make(capabilityKey),
+      mode,
+      selector,
+    })),
   );
 
 type ReviewedAssignment = ReturnType<typeof reviewedDemoAssignments>[number];
 
 const compileRole = (
   key: ManagedRoleKey,
+  pinned: readonly ReviewedCell[],
   ours: readonly ReviewedAssignment[],
   localEntries: readonly CatalogSnapshotEntry[],
   entries: ReadonlyMap<string, CatalogSnapshotEntry>,
-): Result.Result<DesiredRole, string> => {
+): Result.Result<{ readonly diagnostics: readonly ReviewDiagnostic[]; readonly role: DesiredRole }, string> => {
   const held = ours.filter(({ roleKey }) => roleKey === key);
-  const undeclared = [...excludedFrom(key)].filter((capabilityKey) => !entries.has(capabilityKey));
-  if (undeclared.length > 0) {
-    return Result.fail(`role ${key} excludes ${undeclared.join(', ')}, which the release does not declare`);
-  }
-  const compiled = held.map(({ role }) => reviewedCells(key, role, localEntries));
+  const compiled = held.map(({ role }) => reviewedCells(role, localEntries));
   const [first] = held;
   const [firstCells] = compiled;
   if (first === undefined || firstCells === undefined || Result.isFailure(firstCells)) {
     return Result.fail(`role ${key} is not held by the three people, or does not compile`);
   }
-  const cells = firstCells.success;
-  const slots = sortedSlots(cells);
+  const produced = sortedSlots(firstCells.success);
   if (
     held.some(({ legalEntityId }) => legalEntityId !== first.legalEntityId) ||
-    compiled.some((result) => Result.isFailure(result) || sortedSlots(result.success) !== slots)
+    compiled.some((result) => Result.isFailure(result) || sortedSlots(result.success) !== produced)
   ) {
     return Result.fail(`role ${key} differs between its holders`);
   }
+  const producedSlots = new Set(firstCells.success.map(slotOf));
+  const pinnedSlots = new Set(pinned.map(slotOf));
+  const cells = pinned
+    .filter((cell) => producedSlots.has(slotOf(cell)))
+    .toSorted((left, right) => slotOf(left).localeCompare(slotOf(right)));
+  const slots = sortedSlots(cells);
+  const diagnostics: ReviewDiagnostic[] = [
+    ...[...producedSlots]
+      .filter((slot) => !pinnedSlots.has(slot))
+      .map((slot): ReviewDiagnostic => ({ kind: 'unreviewed', roleKey: key, slot })),
+    ...[...pinnedSlots]
+      .filter((slot) => !producedSlots.has(slot))
+      .map((slot): ReviewDiagnostic => ({ kind: 'withdrawn', roleKey: key, slot })),
+  ].toSorted((left, right) => left.slot.localeCompare(right.slot));
   return Result.map(confirmationsOf(cells, entries), (confirmations) => ({
-    adminCells: cells
-      .filter(({ capabilityKey }) => entries.get(capabilityKey)?.kind === 'admin')
-      .map((cell) => `${slotOf(cell)} (${entries.get(cell.capabilityKey)?.risk ?? 'unknown'})`),
-    cells,
-    confirmations,
-    createKey: roleCreateKey(key),
-    key,
-    name: first.role.label,
-    roleId: roleIdOf(key),
-    saveKey: keyOf(`ontos-demo-reviewed-role-save:v1:${key}:${digest(slots)}`),
-    scope:
-      first.legalEntityId === undefined
-        ? TENANT_SCOPE
-        : { kind: 'company', legalEntityId: AccessCompanyIdSchema.make(first.legalEntityId) },
+    diagnostics,
+    role: {
+      adminCells: cells
+        .filter(({ capabilityKey }) => entries.get(capabilityKey)?.kind === 'admin')
+        .map((cell) => `${slotOf(cell)} (${entries.get(cell.capabilityKey)?.risk ?? 'unknown'})`),
+      cells,
+      confirmations,
+      createKey: roleCreateKey(key),
+      key,
+      name: first.role.label,
+      roleId: roleIdOf(key),
+      saveKey: keyOf(`ontos-demo-reviewed-role-save:v1:${key}:${digest(slots)}`),
+      scope:
+        first.legalEntityId === undefined
+          ? TENANT_SCOPE
+          : { kind: 'company', legalEntityId: AccessCompanyIdSchema.make(first.legalEntityId) },
+    },
   }));
 };
 
@@ -387,16 +400,23 @@ export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Res
   }
   const ours = reviewedDemoAssignments().filter(({ principalId }) => isPrincipal(principalId));
   const entries = new Map(localEntries.map((entry) => [String(entry.key), entry]));
+  const pinned = pinnedCells();
+  if (Result.isFailure(pinned)) {
+    return Result.fail(pinned.failure);
+  }
   const roles: DesiredRole[] = [];
+  const diagnostics: ReviewDiagnostic[] = [];
   for (const key of MANAGED_ROLE_KEYS) {
-    const role = compileRole(key, ours, localEntries, entries);
-    if (Result.isFailure(role)) {
-      return Result.fail(role.failure);
+    const compiled = compileRole(key, pinned.success.get(key) ?? [], ours, localEntries, entries);
+    if (Result.isFailure(compiled)) {
+      return Result.fail(compiled.failure);
     }
-    if (!sameScope(role.success.scope, TENANT_SCOPE) && !sameScope(role.success.scope, COMPANY_SCOPE)) {
+    const { role } = compiled.success;
+    if (!sameScope(role.scope, TENANT_SCOPE) && !sameScope(role.scope, COMPANY_SCOPE)) {
       return Result.fail(`role ${key} belongs to another company`);
     }
-    roles.push(role.success);
+    roles.push(role);
+    diagnostics.push(...compiled.success.diagnostics);
   }
   const assignments: DesiredAssignment[] = [];
   for (const principalId of PRINCIPAL_IDS) {
@@ -412,7 +432,7 @@ export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Res
       });
     }
   }
-  return Result.succeed({ assignments, entries, roles });
+  return Result.succeed({ assignments, diagnostics, entries, roles });
 };
 
 // --- observed state ----------------------------------------------------------------------------------
@@ -674,7 +694,8 @@ const revisionOf = (observed: ObservedState, roleId: RoleId): Option.Option<Role
  * The capabilities that are new in this review: the only ones a role saved earlier is ever extended with. Today the
  * VAT reads of Phase 1, all reads: the accountant's four Tax reads and Finance's three VAT reads (no Tax write is in
  * any preset role). A reviewed cell outside this set that a saved role lacks was removed by a person and is never
- * given back by this script.
+ * given back by this script. A capability enters a role only through `reviewed-people-cells.mts`; it reaches a
+ * role saved earlier only if it is also listed here.
  */
 export const NEW_IN_THIS_REVIEW: ReadonlySet<string> = new Set<string>([...taxAccountantKeys, ...financeVatReadKeys]);
 

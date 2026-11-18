@@ -302,7 +302,17 @@ firma (`…0020`) through the Shell's own administration endpoints, signed in as
 four roles empty, previews and saves their reviewed cells, admits the three people to the company, and assigns
 `sales`, `accounting`, `warehouse` there and `demo-shell-routing` in the tenant. Nájempark and every other
 person, role and company are out of its reach; `scripts/demo/reviewed-people-plan.mts` holds those constants
-and every decision, and its unit test pins them.
+and every decision.
+
+A role holds only cells a person reviewed: `scripts/demo/reviewed-people-cells.mts` pins each role's cells as
+`<capability> <mode> <selector>`, and a role gets the pinned cells its role policy still produces. Plan mode prints
+two kinds of review diagnostics, and neither is ever sent. `unreviewed`: the policy produces a cell nobody
+reviewed, typically a capability the release declared later in a module the role reaches. `withdrawn`: a pinned
+cell the policy or release no longer produces. Only a capability reached through module access is withdrawn this
+way; a key a role names in `capabilityKeys`, or a `capabilityModes` or `capabilitySelectors` override, that the
+release no longer accepts still fails the whole plan. To grant a newly declared capability, review it, add its
+slot to the role in `reviewed-people-cells.mts`, and add its key to `NEW_IN_THIS_REVIEW` if stage roles saved
+earlier should gain it.
 
 ```bash
 printf %s "$OWNER_PASSWORD" | pnpm demo:stage:reviewed-people \
