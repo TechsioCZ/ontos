@@ -234,6 +234,7 @@ type GeneratedPrincipalErrorTag = typeof GeneratedPrincipalErrorTagSchema.Type;
 const isGeneratedPrincipalError = (tag: GeneratedPrincipalErrorTag) =>
   Schema.is(Schema.Struct({ _tag: Schema.Literal(tag) }));
 
+const coreRuntimePackagePath = 'packages/core-runtime';
 const sharedContractsPackagePath = 'packages/shared-contracts';
 
 const sharedContractsNodeModulePath = 'node_modules/@app/shared-contracts';
@@ -1199,6 +1200,7 @@ it.live(
           'item',
         ]);
         yield* linkFixtureDependencies(fixture.root, appRoot, {
+          '@app/core-runtime': coreRuntimePackagePath,
           '@app/shared-contracts': sharedContractsPackagePath,
           '@modern-js/bff-effect': bffEffectNodeModulePath,
           '@modern-js/plugin-bff': pluginBffNodeModulePath,
@@ -1720,6 +1722,11 @@ it.live(
         expect(moduleApiContract).not.toMatch(/export type ResourceDetailResponse\b/u);
         expect(moduleApiClient).toContain('client.resourceDetail.execute({ payload })');
         expect(moduleApiContract).toMatch(/HttpApiGroup\.make\('resourceDetail'\)/u);
+        // Every public read carries the typed reference a consumer passes to the Core SDK's `call`.
+        expect(moduleApiContract).toContain("import { moduleOperation } from '@app/core-runtime/sdk';");
+        expect(moduleApiContract).toMatch(
+          /export const resourceDetailOperation = moduleOperation\(\{\s+kind: 'read',\s+path: '\/reads\/resource-detail',\s+provider: \{ entrypointKey: 'inventory\.stock\.api\.resource-detail', moduleId: 'inventory\.stock', schemaVersion: '1' \},\s+request: ResourceDetailRequestSchema,\s+response: ResourceDetailResponseSchema,\s+\}\);/u,
+        );
         expect(secondModuleApiContract).toMatch(/HttpApiGroup\.make\('resourceHistory'\)/u);
         expect(secondModuleApiClient).toMatch(/client\.resourceHistory\.execute\(/u);
         assertGovernedReadClients([moduleApiClient, searchClient, reportClient]);
@@ -1758,7 +1765,7 @@ it.live(
         expect(searchContract).toMatch(/HttpApiGroup\.make\('inventoryItemsSearch'\)/u);
 
         yield* linkFixtureDependencies(fixture.root, appRoot, {
-          '@app/core-runtime': 'packages/core-runtime',
+          '@app/core-runtime': coreRuntimePackagePath,
           '@app/shared-contracts': sharedContractsPackagePath,
           '@effect/platform-node': 'packages/core-runtime/node_modules/@effect/platform-node',
           '@modern-js/bff-effect': bffEffectNodeModulePath,
@@ -2232,7 +2239,10 @@ it.live(
               /refusing to overwrite existing business file/u,
             );
           });
-        yield* assertInvalidApiContractRerunRejected(apiContract.replace('/reads/resource-detail', '/reads/wrong'));
+        // The endpoint path itself: the operation reference above the API names the same path.
+        yield* assertInvalidApiContractRerunRejected(
+          apiContract.replace("'execute', '/reads/resource-detail'", "'execute', '/reads/wrong'"),
+        );
         yield* assertInvalidApiContractRerunRejected(
           apiContract.replace(
             "HttpApiEndpoint.post('execute', '/reads/resource-detail', {",
@@ -2849,7 +2859,7 @@ it.live(
         );
         yield* Effect.promise(() =>
           symlink(
-            path.join(appRoot, 'packages/core-runtime'),
+            path.join(appRoot, coreRuntimePackagePath),
             path.join(fixture.root, 'node_modules/@app/core-runtime'),
             'dir',
           ),
@@ -6230,6 +6240,8 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
           ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
           ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
           ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
+          ['packages/core-runtime/src/execution', 'packages/core-runtime/src/execution', 'dir'],
+          ['packages/core-runtime/src/sdk', 'packages/core-runtime/src/sdk', 'dir'],
           [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
         ] as const
       ).map(([source, target, kind]) =>
