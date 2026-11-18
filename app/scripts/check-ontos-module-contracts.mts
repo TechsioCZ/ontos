@@ -12,6 +12,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
   OntosMcpToolCatalogJsonSchema,
@@ -272,6 +273,8 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
       if (tools.tools.length !== toolCatalogReference.toolCount) {
         yield* failure(`${toolCatalogPath} does not hold the tool count its contract declares`);
       }
+    } else if (yield* fileSystem.exists(path.join(publicDirectory, ONTOS_MODULE_MCP_TOOL_CATALOG_PATH.slice(1)))) {
+      yield* failure(`${target} output serves ${ONTOS_MODULE_MCP_TOOL_CATALOG_PATH} that its contract does not pin`);
     }
     const validateResponseHeaders = Effect.gen(function* validateResponseHeadersEffect() {
       const headersPath = path.join(publicDirectory, '_headers');
