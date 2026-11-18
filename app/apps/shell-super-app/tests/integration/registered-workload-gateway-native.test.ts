@@ -452,6 +452,8 @@ const processingRuntimeFixture = (
     read,
   };
 };
+/** What a receiving operation publishes about the registered workloads it admits. */
+const carrier = (declarationKey: string, workload: string) => ({ declarationKey, workloads: [workload] });
 
 const contractInputs = () => {
   const source = makeModuleContractFixture({
@@ -522,6 +524,7 @@ const contractInputs = () => {
               entrypoint: sourceFactsEntrypoint,
               operationKey: 'symmySourceOrganizationFacts.execute',
               schemaVersion: sourceFactsVersion,
+              workloadCarrier: carrier(sourceFactsCapability, sourceFactsWorkload),
             },
           ],
           resourceTypes: [importJobResourceDescriptor],
