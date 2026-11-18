@@ -23,6 +23,9 @@ export const REVIEWED_REGISTERED_WORKLOAD_CALLS = {
     'privacy.core.organization-business-check privacy privacy.core.organization-business-applicability.read 1': 1,
     'privacy.core.source-processing-check privacy privacy.core.source-processing-eligibility.read 1': 3,
   },
+  payment: {
+    'payment.source-ingress payment payment.core.observation.accept 1': 2,
+  },
   pricing: {
     'commerce.catalog.symmy-product-read catalog commerce.catalog.selection-evidence.read 1': 1,
     'commerce.market-catalog.source-read commerce-market-catalog commerce.market-catalog.market-catalog.read 1': 1,

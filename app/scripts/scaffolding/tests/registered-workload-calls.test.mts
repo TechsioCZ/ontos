@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 const { assertRegisteredWorkloadCallers, assertRegisteredWorkloadCallsReceived, REVIEWED_REGISTERED_WORKLOAD_CALLERS } =
@@ -27,6 +27,9 @@ const receivers = [
   'storefront-registry',
   'tax',
 ];
+const TopologySchema = Schema.fromJsonString(
+  Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })) }),
+);
 type Contract = Parameters<typeof assertRegisteredWorkloadCallsReceived>[0][number];
 type Call = NonNullable<Contract['manifest']['registeredWorkloadCalls']>[number];
 
@@ -79,6 +82,26 @@ it.effect('admits each registered workload only from its reviewed callers', () =
       /source-delete, which has no reviewed caller/u,
     );
   }),
+);
+
+it.effect('reviews the calls of every topology vertical whose manifest declares registered-workload calls', () =>
+  Effect.gen(function* everyDeclaringCaller() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
+      yield* fileSystem.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json')),
+    );
+    const manifests = yield* Effect.all(
+      topology.verticals.map(({ id, path: verticalPath }) =>
+        fileSystem
+          .readFileString(path.join(workspaceRoot, verticalPath, 'vertical.manifest.ts'))
+          .pipe(Effect.map((manifest) => ({ id, manifest }))),
+      ),
+    );
+    const callers = manifests
+      .filter(({ manifest }) => /^\s*registeredWorkloadCalls\b/mu.test(manifest))
+      .map(({ id }) => id);
+    expect(callers.toSorted()).toEqual(Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS).toSorted());
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it('reports a reviewed call a caller lost and a call nobody reviewed', () => {
